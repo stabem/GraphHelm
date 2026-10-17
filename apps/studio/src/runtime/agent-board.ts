@@ -28,6 +28,21 @@ export interface AgentRow {
   label?: string | null;
   /** Full "what" text override, e.g. "reviewing #7 Add board". */
   doing?: string | null;
+  /** #1556: the task step the lane is in: claimed, implement, proving (holds or waits for a build slot), review, merge. */
+  step?: "claimed" | "implement" | "proving" | "review" | "merge" | null;
+  /** #1556: the slot command label of the lane's build (what it runs), when it holds or waits for a slot. */
+  command?: string | null;
+  /** #1556: the slot root (D:/gh, /b, /c, /sub), when the lane holds or waits for a slot. */
+  root?: string | null;
+}
+
+/** #1556: the task step a row shows; a slot overrides it with "proving". */
+export function stepOf(r: Pick<AgentRow, "status" | "stage" | "pr">): NonNullable<AgentRow["step"]> | null {
+  if (r.status === "building" || r.status === "build_wait") return "proving";
+  if (r.stage === "review") return "review";
+  if (r.stage === "merge") return "merge";
+  if (r.stage === "implement") return r.pr === null ? "claimed" : "implement";
+  return null;
 }
 
 const ORDER: Record<AgentStatus, number> = { silent: 0, stale: 1, building: 2, build_wait: 3, working: 4, waiting: 5, free: 7, offline: 8 };
@@ -151,6 +166,7 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     const slotPr = pr ? Number(pr) : null;
     const slotTask = slotPr === null ? null : tasks.find((t) => t.pr === slotPr) ?? null;
     const d = slotDuration(slot.seconds);
+    r = { ...r, step: "proving", command: label ?? null, root: slot.root };
     return slot.kind === "building"
       ? { ...r, status: "building", pr: slotPr, title: slotTask?.title ?? null, href: slotTask?.repoUrl && slotPr ? `${slotTask.repoUrl}/pull/${slotPr}` : null,
         label: `Building · ${d}`, doing: `building in ${slot.root}${slotPr ? ` · #${slotPr}` : ""}`, stageMs: slot.seconds * 1000 }
@@ -169,13 +185,21 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     };
     const label = slot.kind === "building" ? `Building · ${slotDuration(slot.seconds)}`
       : `Waiting for build · ${ordinal(slot.position)} · ${slotDuration(slot.seconds)}`;
-    rows.push({ ...base, status: slot.kind === "building" ? "building" : "build_wait", label,
+    rows.push({ ...base, step: "proving", command: slotLabel(slots, slot, name), root: slot.root, status: slot.kind === "building" ? "building" : "build_wait", label,
       doing: `${slot.kind === "building" ? "building" : "waiting for a build slot"} in ${slot.root}` });
     represented.add(name);
   }
+  for (const r of rows) if (r.step === undefined) r.step = stepOf(r);
   return rows.sort((a, b) => ORDER[a.status] - ORDER[b.status]
     || (a.status === "working" ? (b.stageMs ?? 0) - (a.stageMs ?? 0) : 0)
     || a.name.localeCompare(b.name));
+}
+
+/** #1556: the slot label of the lane's holder or waiter entry in the slot it sits in. */
+function slotLabel(slots: SlotView[], slot: NonNullable<ReturnType<typeof slotStatus>>, lane: string): string | null {
+  const src = slots.find((s) => s.ok && s.root === slot.root);
+  if (!src?.ok) return null;
+  return slot.kind === "building" ? src.holder?.label ?? null : src.waiting.find((w) => w.lane === lane)?.label ?? null;
 }
 
 /** `1h 17m`, `23m`, `<1m`. */

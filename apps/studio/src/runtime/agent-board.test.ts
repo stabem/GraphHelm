@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TEST_FREE_MS, TEST_SILENT_MS, laneBarsOf } from "../test/task-fold";
-import { agentBoard, span } from "./agent-board";
+import { agentBoard, span, stepOf } from "./agent-board";
 import type { Bot } from "./team";
 import { type Lane, type TimedTaskEvent } from "./lane-bars";
 import type { MissionTask } from "./mission";
@@ -49,6 +49,22 @@ describe("agentBoard", () => {
     expect(agentBoard([bot("rev")], [old], [], now, slots)[0]).toMatchObject({ status: "building", pr: 806, doing: expect.stringContaining("#806") });
     slots[0]!.holder.label = "reached-batch-85";
     expect(agentBoard([bot("rev")], [old], [], now, slots)[0]).toMatchObject({ status: "building", pr: null, doing: "building in D:/gh/b" });
+  });
+
+  it("#1556: a slot row carries step, command label and root; a PR-less claim is claimed", () => {
+    const slots = [{ root: "D:/gh/c", ok: true as const, holder: { lane: "rev", label: "reached-batch-85", pid: 1, worktree: null, heldSeconds: 10 },
+      waiting: [{ lane: "w", label: "cargo test -p x", pid: 2, worktree: null, priority: null, ticket: null, waitedSeconds: 5 }] }];
+    const rows = agentBoard([bot("rev"), bot("w")], [lane("rev", []), lane("w", [])], [], now, slots);
+    expect(rows.find((r) => r.name === "rev")).toMatchObject({ step: "proving", command: "reached-batch-85", root: "D:/gh/c" });
+    expect(rows.find((r) => r.name === "w")).toMatchObject({ step: "proving", command: "cargo test -p x", root: "D:/gh/c", status: "build_wait" });
+    expect(stepOf({ status: "working", stage: "implement", pr: null })).toBe("claimed");
+    expect(stepOf({ status: "working", stage: "implement", pr: 5 })).toBe("implement");
+    expect(stepOf({ status: "free", stage: null, pr: null })).toBeNull();
+    expect(stepOf({ status: "waiting", stage: "review", pr: 5 })).toBe("review");
+    expect(stepOf({ status: "waiting", stage: "merge", pr: 5 })).toBe("merge");
+    expect(stepOf({ status: "building", stage: "implement", pr: 5 })).toBe("proving");
+    const orphan = agentBoard([], [], [], now, [{ root: "D:/gh/b", ok: true as const, holder: { lane: "ghost", label: "cargo fmt", pid: 1, worktree: null, heldSeconds: 3 }, waiting: [] }]);
+    expect(orphan.find((r) => r.name === "ghost")).toMatchObject({ command: "cargo fmt", root: "D:/gh/b" });
   });
 
   it("adds rows for slot holders and waiters missing from agents and lanes", () => {

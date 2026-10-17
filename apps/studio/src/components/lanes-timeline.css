@@ -86,6 +86,7 @@
 .ab-what { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; color: #C9CCD2; }
 .ab-doing { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 .ab-tag { display: inline-block; max-width: 100%; min-width: 0; box-sizing: border-box; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 6px; background: #1C1F25; border: 1px solid #2A2D35; color: #C7CBD3; }
+.ab-step, .ab-cmd { display: inline-block; max-width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 6px; border: 1px solid #2A2D35; color: #C7CBD3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ab-tag > span { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 .ab-last { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 .ab-what a { color: #8FB3D9; }

@@ -567,6 +567,9 @@ pub(crate) fn slot_target(
     };
     let mut held = Vec::new();
     let mut reclaimed = Vec::new();
+    // Records of this lane whose worktree is gone but whose build directory was made under another
+    // target root: reclaim cannot delete them (the record never supplies the path).
+    let mut moved: Vec<String> = Vec::new();
     let mut first_used = None;
     for (other, path) in target_records(root, lane) {
         if other == name {
@@ -589,7 +592,12 @@ pub(crate) fn slot_target(
         } else if record && sweep_lock.is_some() {
             match reclaim_target(root, rule, lane, &other) {
                 Ok(()) => reclaimed.push(json!({"lane": lane, "name": other})),
-                Err(_) => held.push(other),
+                Err(reason) => {
+                    if reason == "target_root_changed" {
+                        moved.push(other.clone());
+                    }
+                    held.push(other);
+                }
             }
         }
     }
@@ -625,6 +633,25 @@ pub(crate) fn slot_target(
                 free / 1024_u64.pow(3),
                 rule.min_free_gb
             ));
+        }
+    }
+    // #1542: a gone worktree's record that reclaim must keep (its directory sits under an earlier
+    // target root) would otherwise hold the lane at its cap for good. Under the slot lock, drop the
+    // record only, leave the directory, and say where it was left.
+    if record && sweep_lock.is_some() && first_used.is_none() {
+        for name in &moved {
+            if (held.len() as u64) < rule.cap {
+                break;
+            }
+            let left = std::fs::read(target_record_file(root, lane, name))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .and_then(|value| value["target"].as_str().map(str::to_owned));
+            if std::fs::remove_file(target_record_file(root, lane, name)).is_ok() {
+                held.retain(|other| other != name);
+                reclaimed.push(json!({"lane": lane, "name": name,
+                    "recordDropped": "target_root_changed", "leftAt": left}));
+            }
         }
     }
     if first_used.is_none() && held.len() as u64 >= rule.cap {

@@ -130,6 +130,22 @@ class RunnerContracts(unittest.TestCase):
                 log.write_text(json.dumps(invalid) + "\n", encoding="utf-8")
                 self.assertEqual(rr._batch_envelope(log, 7), (None, None, None))
 
+    def test_slot_refusal_is_named_instead_of_missing_batch_telemetry(self):
+        # #1542: a refused slot (queue wait limit, lane cap, floor) prints ok:false with no batch.
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "slot.log"
+            refusal = {"ok": False, "command": "workspace.slot", "data": {"heldSeconds": 0, "waitedSeconds": 600.0},
+                       "diagnostics": [{"code": "GHCLI037_WORKSPACE_REFUSED", "severity": "error",
+                                        "message": "not served within --max-wait"}]}
+            log.write_text("cargo noise\n" + json.dumps(refusal) + "\n", encoding="utf-8")
+            self.assertEqual(rr._batch_envelope(log, 3), (None, None, None))
+            self.assertEqual(rr._slot_refusal(log), "slot refused the batch: not served within --max-wait")
+            ok = {**refusal, "ok": True}
+            log.write_text(json.dumps(ok) + "\n", encoding="utf-8")
+            self.assertIsNone(rr._slot_refusal(log))
+            log.write_text("not json\n", encoding="utf-8")
+            self.assertIsNone(rr._slot_refusal(log))
+
     def test_batch_runner_resumes_boundary_without_duplicate_prefix(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)

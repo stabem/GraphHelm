@@ -285,6 +285,18 @@ def _last_json(path: Path) -> Any:
         return None
 
 
+def _slot_refusal(path: Path) -> str | None:
+    """The slot's own refusal (cap, floor, wait limit), when its final envelope is one (#1542)."""
+    value = _last_json(path)
+    if not isinstance(value, dict) or value.get("command") != "workspace.slot" or value.get("ok") is not False:
+        return None
+    diagnostics = value.get("diagnostics")
+    if not isinstance(diagnostics, list):
+        return None
+    messages = [d["message"] for d in diagnostics if isinstance(d, dict) and isinstance(d.get("message"), str)]
+    return "slot refused the batch: " + "; ".join(messages) if messages else None
+
+
 def _batch_envelope(path: Path, cli_returncode: int | None = None) -> tuple[dict[str, Any] | None, float | None, float | None]:
     value = _last_json(path)
     if not isinstance(value, dict) or value.get("command") != "workspace.slot":
@@ -636,7 +648,7 @@ def run(args: argparse.Namespace) -> int:
                 if entry["slot"]:
                     if is_batch:
                         batch, q, h = _batch_envelope(logfile, proc.returncode)
-                        parsed, error = _batch_result(batch, len(group), proc.returncode) if batch is not None else (None, "missing or malformed batch telemetry")
+                        parsed, error = _batch_result(batch, len(group), proc.returncode) if batch is not None else (None, _slot_refusal(logfile) or "missing or malformed batch telemetry")
                         if q is None or h is None:
                             queue = held = None
                         elif queue is not None and held is not None:

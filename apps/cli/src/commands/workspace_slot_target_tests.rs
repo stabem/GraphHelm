@@ -316,6 +316,50 @@ fn slot_cap_ignores_gone_targets_until_locked_reclaim() {
 }
 
 #[test]
+fn a_gone_worktree_record_under_an_earlier_target_root_does_not_hold_the_lane_at_its_cap() {
+    // #1542: the lane's only build directory was made under the old target root and its worktree
+    // is gone, so reclaim keeps it (nothing is deleted from a record's path). The next run must
+    // still start, and must say which directory it left.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let old_root = dir.path().join("fast-old");
+    let new_root = dir.path().join("fast-new");
+    let rules = root.join(".graphhelm-workspaces");
+    std::fs::create_dir_all(&rules).unwrap();
+    let configure = |target: &Path| {
+        std::fs::write(
+            rules.join("slot-targets.json"),
+            serde_json::json!({"targetRoot": target, "cap": 1, "minFreeGb": 0}).to_string(),
+        )
+        .unwrap();
+    };
+    let old = dir.path().join("wt-old");
+    let next = dir.path().join("wt-next");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::create_dir_all(&next).unwrap();
+    let log = dir.path().join("marker");
+    configure(&old_root);
+    let (code, reply) = slot_in(&root, "lane", &old, &log);
+    assert_eq!(code, 0, "{reply}");
+    let artifact = old_root.join("lane/wt-old/target/built.bin");
+    std::fs::write(&artifact, b"left in place").unwrap();
+    std::fs::remove_dir(&old).unwrap();
+    configure(&new_root);
+    let (code, reply) = slot_in(&root, "lane", &next, &log);
+    assert_eq!(code, 0, "refused at the cap: {reply}");
+    let dropped = &reply["data"]["reclaimedTargets"][0];
+    assert_eq!(dropped["name"], "wt-old", "{reply}");
+    assert_eq!(dropped["recordDropped"], "target_root_changed", "{reply}");
+    assert!(
+        dropped["leftAt"].as_str().unwrap().contains("wt-old"),
+        "{reply}"
+    );
+    assert!(!rules.join("targets/lane/wt-old.json").exists());
+    assert_eq!(std::fs::read(&artifact).unwrap(), b"left in place");
+    assert!(rules.join("targets/lane/wt-next.json").is_file());
+}
+
+#[test]
 fn the_slot_refuses_to_build_below_the_free_space_floor() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("root");

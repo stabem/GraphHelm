@@ -3,8 +3,7 @@
  * Nothing here reads a file or the clock: a missing event means "unknown", never a guess.
  */
 import type { EnvelopeRecord } from "../graph/ledger";
-import { timeOf } from "./team";
-import type { JourneyFlowView, JourneyRunView, JourneyView, LiveSession, LiveState, RuntimeEvent } from "./types";
+import type { JourneyFlowView, JourneyRunView, JourneyView, RuntimeEvent } from "./types";
 
 /** A flow approval must be backed by the current compiled contract and a complete replay. */
 export function approvalBlockReason(flow: JourneyFlowView, contract: { contractId: string; title: string; steps: readonly { stepId: string }[] }, run: JourneyRunView | null): string | null {
@@ -42,12 +41,6 @@ export function journeySummary(view: JourneyView): JourneySummary {
     else other += 1;
   }
   return { proven, stale, other, total: view.steps.length };
-}
-
-/** The capture's time in ms from the event at that sequence, or null when the tail lacks it. */
-export function captureAge(sequence: number, events: RuntimeEvent[]): number | null {
-  const event = events.find((candidate) => candidate.sequence === sequence);
-  return event === undefined ? null : timeOf(event.occurredAt);
 }
 
 export interface CaptureDocument {
@@ -128,20 +121,6 @@ export function beforeAfterPairs(captures: CaptureDocument[]): BeforeAfterPair[]
       observer: slot.after.observer, actorId: slot.after.actorId });
   }
   return pairs.sort((a, b) => Math.max(b.before.sequence, b.after.sequence) - Math.max(a.before.sequence, a.after.sequence));
-}
-
-/** The live chip of one step card (#409, spec §5 point 5): what the Runtime's session list says
- * about the newest session at that step, never what the Open live click returned. */
-export interface LiveChip { sessionId: string; state: LiveState; label: string; code: string | null }
-
-export function liveChipFor(contractId: string, stepId: string, sessions: LiveSession[]): LiveChip | null {
-  const mine = sessions.filter((session) => session.contractId === contractId && session.stepId === stepId);
-  if (mine.length === 0) return null;
-  const newest = mine.reduce((best, session) => Date.parse(session.since) > Date.parse(best.since) ? session : best);
-  const label = newest.state === "drift" ? `drift at ${newest.at ?? "?"}`
-    : newest.state === "fail" ? `at step · fail · ${newest.code ?? "unknown"}`
-    : `at step · ${newest.state}`;
-  return { sessionId: newest.sessionId, state: newest.state, label, code: newest.code };
 }
 
 /** #447: a flow with a second path compiles to `<flow>.<path>`. When `<flow>` is itself a journey

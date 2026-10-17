@@ -1,7 +1,8 @@
 import "./mission-graph.css";
 import "./work-kanban.css";
 import type { MissionTask } from "../runtime/mission";
-import type { StageHealth } from "../runtime/stage-health";
+import { stageDuration, type StageHealth } from "../runtime/stage-health";
+import type { BacklogIssue } from "../runtime/tasks-route";
 import type { PrRow, WorkStage } from "../runtime/work-groups";
 import { bucketKanban, kanbanColumn, KANBAN_COLUMNS, type KanbanColumn } from "../runtime/work-kanban";
 import { CurrentCard, type Pace } from "./mission-graph";
@@ -10,17 +11,41 @@ import { CurrentCard, type Pace } from "./mission-graph";
 export interface KanbanItem { groupKey: string; row: PrRow; stage: WorkStage; task: MissionTask; health: StageHealth | null; pace: Pace | null }
 
 const DOT: Record<KanbanColumn, string> = {
-  implement: "#F5A524", review: "#8FB3D9", blocked: "#FF9F43", build: "#9AA7FF", silent: "#FF6B5E", merge: "#7ED4A6",
+  backlog: "#8D929C", implement: "#F5A524", review: "#8FB3D9", blocked: "#FF9F43", build: "#9AA7FF", silent: "#FF6B5E", merge: "#7ED4A6",
 };
 
 /** #668: all open work by stage, no clicks needed; a card opens its PR on the Graph. */
-export function WorkKanban({ items, onOpen, historyLoading = false }: { items: KanbanItem[]; onOpen(groupKey: string, taskKey: string): void; historyLoading?: boolean }) {
+export function WorkKanban({ items, onOpen, historyLoading = false, backlog = [], now }: { items: KanbanItem[]; onOpen(groupKey: string, taskKey: string): void; historyLoading?: boolean; backlog?: BacklogIssue[]; now: number }) {
   if (historyLoading) return <section className="wk-loading" role="status">Loading the team's history…</section>;
   const cols = bucketKanban(items, (i) => kanbanColumn(i.stage, i.health));
   return (
     <section className="wk" aria-label="Work by stage">
       {KANBAN_COLUMNS.map((c) => {
-        const list = cols[c.id], id = `wk-col-${c.id}`;
+        const id = `wk-col-${c.id}`;
+        if (c.id === "backlog") {
+          return (
+            <section key={c.id} className="wk-col" data-col={c.id} aria-labelledby={id}>
+              <h3 className="wk-head" id={id}>
+                <span className="wk-dot" style={{ background: DOT[c.id] }} aria-hidden="true" />
+                <span className="wk-label">{c.label.toUpperCase()}</span>
+                <span className="wk-count">{` · ${backlog.length}`}</span>
+              </h3>
+              <ul className="wk-cards wk-backlog">
+                {backlog.length === 0 ? <li className="wk-none">none</li> : backlog.map((b) => {
+                  const opened = Date.parse(b.openedAt);
+                  return (
+                    <li key={b.issue} className="wk-backlog-card">
+                      <span className="wk-backlog-num">#{b.issue}</span>
+                      <span className="wk-backlog-title">{b.title}</span>
+                      <span className="wk-backlog-wait">{Number.isFinite(opened) ? `waiting ${stageDuration(Math.max(0, now - opened))}` : "waiting"}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          );
+        }
+        const list = cols[c.id];
         return (
           <section key={c.id} className="wk-col" data-col={c.id} aria-labelledby={id}>
             <h3 className="wk-head" id={id} aria-label={c.short ? `${c.label} · ${list.length}` : undefined}>

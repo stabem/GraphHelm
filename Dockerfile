@@ -7,8 +7,10 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY adapters ./adapters
 COPY apps ./apps
+COPY conformance ./conformance
 COPY core ./core
 COPY extensions ./extensions
+COPY plugins ./plugins
 COPY schemas ./schemas
 COPY tools ./tools
 

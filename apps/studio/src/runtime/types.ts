@@ -544,9 +544,6 @@ export interface JourneyPastRun extends JourneyRunView { run: string }
 export interface JourneyHistoryView { id: string; runs: JourneyPastRun[] }
 /** One frame's bytes and the tag to ask for a newer one with. */
 export interface JourneyFrame { blob: Blob; etag: string | null }
-/** One act sent into a live session: `POST /v1/journeys/sessions/{id}/act`. */
-export interface LiveAct { kind: string; role: string; name: string; text?: string; secret?: string }
-
 export interface JourneysView {
   head: string | null;
   journeys: JourneyView[];

@@ -60,7 +60,7 @@ export function useTeamReads({ clientRef, selected, events, eventList, openEvide
           return;
         }
         setTasksRouteMissing((current) => (current === run ? null : current));
-        setTaskGraphs({ executionId: run, tasks: reply.tasks, records: reply.records, slices: reply.slices, routes: reply.routes, liveness: reply.liveness, leases: reply.leases });
+        setTaskGraphs({ executionId: run, tasks: reply.tasks, records: reply.records, slices: reply.slices, routes: reply.routes, liveness: reply.liveness, leases: reply.leases, backlog: reply.backlog });
         setHistoryFailure(reply.rejected > 0 ? { executionId: run, count: reply.rejected } : null);
       })
       .catch((error: unknown) => { if (!cancelled && clientRef.current === client) {

@@ -3,7 +3,7 @@
   "kind": "Extension",
   "metadata": {
     "id": "graphhelm-development-contracts",
-    "version": "0.1.7",
+    "version": "0.1.8",
     "publisher": "GraphHelm",
     "source": {
       "repository": "https://github.com/stabem/GraphHelm"
@@ -611,7 +611,7 @@
           "id": "host/claude",
           "kind": "host-adapter",
           "path": ".claude-plugin/plugin.json",
-      "sha256": "sha256:45a8e29ca12a6a823e6c995e069864754916a718daab0529282a1e3f67a75c3b",
+      "sha256": "sha256:da4fecad8fd9d0c69bd8c0501de28c94275d107a38a4fe7c54fd14bff1c8a9b5",
           "effects": [
             "host.discover"
           ],
@@ -627,7 +627,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-      "sha256": "sha256:e348d1d63b44e008fa29f474a96ef5f923de2ff36bafc0fb1ac22ff4990f5369",
+      "sha256": "sha256:2757ef8459c441add09fa7ccf490b88f2657b81ec5079210a8ee6b23f9c050fb",
           "effects": [
             "host.discover"
           ],
@@ -1025,7 +1025,7 @@
           "id": "schema/task-event",
           "kind": "schema",
           "path": "schemas/task-event.schema.json",
-          "sha256": "sha256:e4d278a0fbb831218abe118d2f4ac93737f1668db898abeeb53fb67ef6ed37bf",
+          "sha256": "sha256:67ed15a3c406e9fb247f4688da268681336c4807ea0d6ba0315f5edad15c65e4",
           "effects": [],
           "permissions": [],
           "requires": {
@@ -1137,6 +1137,20 @@
           "kind": "fixture",
           "path": "fixtures/task-event/valid/closed.json",
           "sha256": "sha256:fafe347a684cdf1106c52a9dfab33be281aeba847ef79552b4c55cb2532ae72a",
+          "effects": [],
+          "permissions": [],
+          "requires": {
+            "capabilities": [],
+            "observers": []
+          },
+          "family": "development-contracts",
+          "schema": "schemas/task-event.schema.json"
+        },
+        {
+          "id": "fixture/task-event-valid-queued",
+          "kind": "fixture",
+          "path": "fixtures/task-event/valid/queued.json",
+          "sha256": "sha256:5a882a319346638219a32b9c0730938120ada46128a2c9f4adb414490b014633",
           "effects": [],
           "permissions": [],
           "requires": {

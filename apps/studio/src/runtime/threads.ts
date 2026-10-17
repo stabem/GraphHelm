@@ -17,15 +17,6 @@ export function namesOf(bots: Bot[]): Record<string, string> {
   return names;
 }
 
-export function parseMention(text: string, bots: Bot[]): { to: string | null; text: string } {
-  const lowered = text.toLowerCase();
-  for (const bot of [...bots].sort((a, b) => b.name.length - a.name.length)) {
-    const prefix = `@${bot.name.toLowerCase()} `;
-    if (lowered.startsWith(prefix)) return { to: bot.actorId ?? bot.key, text: text.slice(prefix.length).trim() };
-  }
-  return { to: null, text };
-}
-
 export interface ActivityItem { sequence: number; actorId: string | null; occurredAt: string | null; text: string | null }
 export interface ActivityLine { sequence: number; text: string; at: string | null }
 

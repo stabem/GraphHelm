@@ -23,6 +23,7 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   implementation plan until that review has a verdict (#1470).
 - When a review of record already exists for the head you were assigned, stop and tell the
   coordinator instead of adding a second one.
+- The coordinator picks each subagent's model and effort by task kind, never above the owner's roster; the rule is item 4 of the `graphhelm-team` skill.
 
 ## 2. Where a lane writes
 
@@ -270,6 +271,7 @@ records"). From a lane worktree the token path must be absolute:
 | As merger, only after your own `gh pr merge` exits 0 | `$T --issue N merged --pr P --merge-sha SHA --closes <issues the squash closed>` |
 | A PR closed without a merge (the Stop reconciler records this; by hand only to repair) | `$T --issue N closed --pr P --reason superseded\|abandoned --by <PR>` |
 | Grade a design round when the plan says `critic: design` | `$T --issue N critic_verdict --round R --score 0-10 --design-ref <path> --reason "<why>"` |
+| As coordinator, to refresh the Lanes Backlog (#1469): the open `current-wave` issues no open PR closes, read with `gh` | `$T queued` (no `--issue`) |
 
 `--closes` is recorded exactly as given: name every issue the squash closed, and pass none for a
 `Refs` PR. Every lane merges under one GitHub account, so `mergedBy` cannot tell whose merge it

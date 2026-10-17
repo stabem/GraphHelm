@@ -6,7 +6,7 @@ import type { ClaudeTaskReadModel, TaskState } from "./team-tasks";
 import type { RuntimeEvent } from "./types";
 import { digestOf } from "./customs";
 import { readTaskEventRecords } from "./team-tasks";
-import { botKeyOf, teamLinks, teamModel, type TeamInput } from "./team";
+import { teamLinks, teamModel, type TeamInput } from "./team";
 
 const NOW = Date.parse("2026-10-05T12:00:00Z");
 const minutesAgo = (m: number) => new Date(NOW - m * 60_000).toISOString();
@@ -169,9 +169,6 @@ describe("teamLinks", () => {
       { key: "shared", actorId: "duplicate" },
       { key: "third-key", actorId: "duplicate" },
     ] as ReturnType<typeof teamModel>["bots"];
-    expect(["shared", "duplicate", "missing", null].map((id) => botKeyOf(first, id))).toEqual([
-      "first-key", "shared", null, null,
-    ]);
     const events = [
       record(1, "shared", minutesAgo(2)),
       record(2, "duplicate", minutesAgo(1)),

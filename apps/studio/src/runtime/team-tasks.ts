@@ -156,7 +156,7 @@ const TASK_EVENT_SCHEMA = "graphhelm-task-event-v1";
 const VERDICTS = ["APPROVE", "APPROVE-WITH-RISK", "BLOCK"] as const;
 type Verdict = typeof VERDICTS[number];
 
-export type TaskEventKind = "task.claimed" | "task.planned" | "task.released" | "task.heartbeat" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.closed" | "task.critic_verdict";
+export type TaskEventKind = "task.claimed" | "task.planned" | "task.released" | "task.heartbeat" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.closed" | "task.critic_verdict" | "task.queued";
 
 /** #467: one round of the blind design critic, as its `task.critic_verdict` record states it. */
 export interface CriticRound { round: number; score: number; passScore: number; maxRounds: number; verdict: "pass" | "revise" | "exhausted" }

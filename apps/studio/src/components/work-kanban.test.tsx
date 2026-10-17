@@ -52,11 +52,23 @@ describe("WorkKanban (#668)", () => {
     expect(screen.queryByText(/· 0/)).toBeNull();
   });
 
+  it("#1469: a Backlog column comes first, listing the route's backlog in its order with number, title and wait", async () => {
+    const backlog = [
+      { issue: 7, title: "Oldest wave issue", openedAt: new Date(NOW - 26 * 3_600_000).toISOString() },
+      { issue: 9, title: "Newer wave issue", openedAt: new Date(NOW - 90 * 60_000).toISOString() },
+    ];
+    render(<MissionView journeys={[]} tasks={[]} lanes={[]} backlog={backlog} now={NOW} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Lanes" }));
+    const board = screen.getByRole("region", { name: "Work by stage" });
+    expect(board.querySelector(".wk-head")?.textContent).toBe("BACKLOG · 2");
+    expect(Array.from(col(/^BACKLOG/).querySelectorAll("li")).map((li) => li.textContent))
+      .toEqual(["#7Oldest wave issuewaiting 1d 2h", "#9Newer wave issuewaiting 1h 30m"]);
+  });
   it("shows every open PR in its column with counts, without clicks; merged work is absent", async () => {
     await renderLanes();
     const board = screen.getByRole("region", { name: "Work by stage" });
     expect(Array.from(board.querySelectorAll(".wk-head")).map((h) => h.textContent))
-      .toEqual(["IMPLEMENT · 1", "REVIEW · 1", "BLOCKED · 1", "BUILD QUEUE · 0", "SILENT · 1", "MERGE · 1"]);
+      .toEqual(["BACKLOG · 0", "IMPLEMENT · 1", "REVIEW · 1", "BLOCKED · 1", "BUILD QUEUE · 0", "SILENT · 1", "MERGE · 1"]);
     expect(within(col(/^IMPLEMENT/)).getByText(LONG)).toBeInTheDocument();
     expect(within(col(/^REVIEW/)).getByText("Review me")).toBeInTheDocument();
     expect(within(col(/^BLOCKED/)).getByText("Blocked one")).toBeInTheDocument();

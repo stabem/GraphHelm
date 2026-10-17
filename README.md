@@ -96,7 +96,7 @@ GraphHelm includes two complementary development methods:
 
 - [Journey-Proven Development](https://github.com/stabem/GraphHelm/blob/main/docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md) defines what an observer must verify about the user's actual journey. Missing proof remains `OBSERVER_MISSING`.
   Start with the [user journeys guide](https://github.com/stabem/GraphHelm/blob/main/docs/guides/journeys.md): author a flow, validate, approve, replay, and read capture freshness.
-- [Keel](https://github.com/stabem/GraphHelm/blob/main/KEEL.md) is the construction pattern every agent follows: one file of values, one file per step (plan, execute, review, merge), end-to-end proof first, and blocking checks for every rule a machine can measure.
+- [Keel](https://github.com/stabem/GraphHelm/blob/main/KEEL.md) is the construction pattern every agent follows: one file of values, one file per step (plan, execute, review, merge), the cheapest observer that proves the promise, and a merge block for every rule a machine can measure. Six rules block today through `graphhelm keel check` (write scope, names, bare flags, panics, missing deadlines, swallowed errors); the others are checked by the reviewer until their check lands.
 
 The specifications distinguish guidance from implemented checks. See the [delivery process](https://github.com/stabem/GraphHelm/blob/main/docs/process/DELIVERY.md).
 
@@ -143,6 +143,7 @@ Keel says how the code inside that change is written and proved.
                          ▼     └────────────────┬─────────────────┘
                  back to review                 ▼
                                     Delivered = merged into main
+                                    and main green on the main proof
                                     (Keel checks block; no presser)
 ```
 
@@ -170,10 +171,12 @@ Every comment, review and merge starts with `Session: <name> · Head: <sha8>`. L
                                cost (Big O), risks, measured gain
                                         ▼
    EXEC    keel/KEEL_EXEC.md   stay in the card, read the symbol not the file,
-                               end-to-end proof first, break it once,
+                               cheapest observer that proves the promise,
+                               unit test only for a found bug, break it once,
                                whole reached plan, receipt in GraphHelm
                                         ▼
-   REVIEW  keel/KEEL_REVIEW.md blind, reruns everything, checks every value,
+   REVIEW  keel/KEEL_REVIEW.md blind, reruns everything, lists every value
+                               that does not hold plus the card's risk row,
                                measures any promised gain before and after
                                         ▼
    MERGE   keel/KEEL_MERGE.md  pinned head, rerun if main moved,
@@ -183,6 +186,7 @@ Every comment, review and merge starts with `Session: <name> · Head: <sha8>`. L
            inward dependencies, searchable names, no hidden magic,
            reliability, idempotency, less complexity, Big O, quiet tools
            measured rule broken → merge blocked, exception written in code
+           (6 rules measured today; the rest read by the reviewer)
 ```
 
 Long form: [KEEL.md](https://github.com/stabem/GraphHelm/blob/main/KEEL.md), and the reasons in

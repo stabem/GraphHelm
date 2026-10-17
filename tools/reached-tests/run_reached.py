@@ -167,6 +167,24 @@ def _slot_telemetry(path: Path, command: list[str]) -> tuple[float | None, float
     return float(waited), float(held)
 
 
+def studio_install_problem(studio: Path) -> str | None:
+    """Return why apps/studio/node_modules is not whole, or None. Reads files only; never repairs."""
+    modules = studio / "node_modules"
+    if not (modules / ".bin").is_dir():
+        return "node_modules/.bin is missing"
+    try:
+        wanted = json.loads((studio / "package-lock.json").read_text(encoding="utf-8")).get("packages", {})
+        have = json.loads((modules / ".package-lock.json").read_text(encoding="utf-8")).get("packages", {})
+    except (OSError, ValueError):
+        return "node_modules/.package-lock.json or package-lock.json is missing or unreadable"
+    for key, meta in wanted.items():
+        if not key or meta.get("optional") or meta.get("peer"):
+            continue
+        if key not in have or have[key].get("version") != meta.get("version"):
+            return f"{key} is missing or differs from package-lock.json"
+    return None
+
+
 def _resolve_argv(repo: Path, cwd: Path, argv: list[str]) -> list[str]:
     """Resolve local Node package entrypoints without npx downloading anything."""
     if not argv or argv[0] != "npx":
@@ -174,6 +192,12 @@ def _resolve_argv(repo: Path, cwd: Path, argv: list[str]) -> list[str]:
     if len(argv) < 2 or cwd != repo / "apps/studio":
         raise RuntimeError("npx is allowed only for a local Studio tool")
     package = argv[1]
+    problem = studio_install_problem(repo / "apps/studio")
+    if problem:
+        raise RuntimeError(
+            f"apps/studio install is not whole ({problem}); run `npm ci` in apps/studio. "
+            "A running Studio may lock files in node_modules (EPERM): stop it first, or rename the locked .node file aside. "
+            "Not repaired automatically.")
     entries = {"vitest": repo / "apps/studio/node_modules/vitest/vitest.mjs",
                "tsc": repo / "apps/studio/node_modules/typescript/bin/tsc"}
     entry = entries.get(package)

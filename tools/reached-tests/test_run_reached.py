@@ -1044,5 +1044,35 @@ class HarnessFileAndOutputDefault(unittest.TestCase):
                 "settings.json", rr._git(work, "status", "--porcelain=v1", "-uall", "--", ".claude"))
 
 
+class StudioInstallCheck(unittest.TestCase):
+    def _repo(self, root, whole):
+        studio = Path(root) / "apps/studio"
+        (studio / "node_modules/vitest").mkdir(parents=True)
+        (studio / "node_modules/vitest/vitest.mjs").write_text("", encoding="utf-8")
+        lock = {"packages": {"": {}, "node_modules/a": {"version": "1.0.0"}}}
+        (studio / "package-lock.json").write_text(json.dumps(lock), encoding="utf-8")
+        if whole:
+            (studio / "node_modules/.bin").mkdir()
+            (studio / "node_modules/.package-lock.json").write_text(json.dumps(lock), encoding="utf-8")
+        return studio
+
+    def test_half_reinstalled_studio_fails_at_once_with_the_repair_command(self):
+        with tempfile.TemporaryDirectory() as root:
+            studio = self._repo(root, whole=False)
+            with self.assertRaises(RuntimeError) as caught:
+                rr._resolve_argv(Path(root), studio, ["npx", "vitest", "run"])
+            self.assertIn("npm ci", str(caught.exception))
+            self.assertIn("running Studio", str(caught.exception))
+            self.assertFalse((studio / "node_modules/.bin").exists())
+
+    def test_whole_studio_resolves_and_lock_drift_is_named(self):
+        with tempfile.TemporaryDirectory() as root:
+            studio = self._repo(root, whole=True)
+            self.assertEqual(rr._resolve_argv(Path(root), studio, ["npx", "vitest", "run"])[0], "node")
+            hidden = studio / "node_modules/.package-lock.json"
+            hidden.write_text(json.dumps({"packages": {}}), encoding="utf-8")
+            self.assertIn("node_modules/a", rr.studio_install_problem(studio))
+
+
 if __name__ == "__main__":
     unittest.main()

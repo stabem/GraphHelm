@@ -796,9 +796,38 @@ def send(args, doc, now):
     codes = {d.get("code") for d in reply.get("diagnostics", []) if d.get("severity") == "error"}
     if not ok and codes == {"GHE003_IDEMPOTENCY_CONFLICT"}:
         # The key is this record's content, so a conflict on it is this record already committed
-        # with an earlier timestamp.
+        # with an earlier timestamp. #1548: for a merged or closed record, prove it against the
+        # stored one; a different payload is never "already recorded".
+        if args.kind in ("merged", "closed"):
+            refuse_unless_stored_equal(args, doc)
         return 2, signal_id, reply
     return (0 if ok else 1), signal_id, reply
+
+
+def refuse_unless_stored_equal(args, doc):
+    """#1548: the Runtime answered GHE003 for this key; exit loudly unless the stored record is this one.
+
+    The store is append-only: a stored record with another payload (a bad --merge-sha) stays, and
+    the correction is a new event, so the operator must see the mismatch, not "already recorded".
+    """
+    wanted = {k: v for k, v in doc.items() if k != "at"}
+    stored = []
+    for _event, kind, evidence in read_execution_history(args):
+        if kind != f"task.{args.kind}":
+            continue
+        try:
+            record = json.loads(evidence.get("description", ""))
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(record, dict) and record.get("taskId") == doc["taskId"] and record.get("pr") == doc.get("pr"):
+            if {k: v for k, v in record.items() if k != "at"} == wanted:
+                return
+            stored.append(record)
+    shown = "; ".join(f"mergeSha={r.get('mergeSha')} closes={r.get('closes')}" if args.kind == "merged"
+                      else f"reason={r.get('reason')}" for r in stored) or "no matching record found"
+    sys.exit(f"task_record: the Runtime answered GHE003 but the stored {args.kind} record for {doc['taskId']} "
+             f"PR {doc.get('pr')} differs from this one (stored: {shown}). Nothing was changed; the store is "
+             "append-only. Not reported as already recorded.")
 
 
 def report(code, signal_id, reply):

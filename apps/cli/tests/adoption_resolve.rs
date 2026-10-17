@@ -509,15 +509,14 @@ fn setup_registers_the_user_mcp_and_upserts_the_user_block_idempotently() {
         "line endings follow the file"
     );
 
-    // Second run: the block is current (keep) and the registration is present (nothing), so the
-    // plan would change nothing and is refused rather than padded; no file moves.
+    // Second run: the block is current and the registration is present, so the run is a no-op:
+    // both items are reported as already applied, the keep as kept, no plan is written and no file moves.
     let again = s.path().join("again.json");
-    let (ok, refused) = resolve(&again);
-    assert!(!ok, "{refused}");
-    assert_eq!(
-        refused["diagnostics"][0]["path"],
-        "/adoption/invalid_configuration"
-    );
+    let (ok, noop) = resolve(&again);
+    assert!(ok, "{noop}");
+    assert_eq!(noop["data"]["alreadyApplied"].as_array().unwrap().len(), 2);
+    assert_eq!(noop["data"]["kept"][0], "project/AGENTS.md");
+    assert!(noop["data"]["plan"].is_null());
     assert!(!again.exists());
 
     let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
@@ -1214,11 +1213,8 @@ fn setup_applies_and_restores_the_init_project_registration() {
     assert_eq!(std::fs::read(&settings).unwrap(), original_settings);
     assert_eq!(std::fs::read(p.path().join("AGENTS.md")).unwrap(), ORIGINAL);
     let (ok, again) = resolve(&s.path().join("again.json"));
-    assert!(!ok, "{again}");
-    assert_eq!(
-        again["diagnostics"][0]["path"],
-        "/adoption/invalid_configuration"
-    );
+    assert!(ok, "{again}");
+    assert!(again["data"]["plan"].is_null());
     assert!(!s.path().join("again.json").exists());
 
     let mut restore = assert_cmd::Command::from_std(graphhelm_process::command(
@@ -1274,4 +1270,69 @@ fn setup_applies_and_restores_the_init_project_registration() {
             assert!(!public.contains(secret), "public response leaked a secret");
         }
     }
+}
+
+/// A current block beside a missing user registration: the rerun still answers the block `keep`
+/// and plans the registration, instead of refusing the instruction file as unanswered.
+#[test]
+fn a_current_block_beside_a_missing_registration_still_plans_the_registration() {
+    let user_json = br#"{"numStartups":3,"mcpServers":{"mine":{"command":"my-server","args":[]}}}"#;
+    let (p, h) = seeded();
+    std::fs::write(h.path().join(".claude/CLAUDE.md"), b"# Mine\r\n").unwrap();
+    std::fs::write(h.path().join(".claude.json"), user_json).unwrap();
+    let s = private_dir();
+    let resolve = |out: &Path| {
+        json(
+            setup(p.path(), h.path())
+                .arg("--resolve")
+                .arg("project/AGENTS.md=keep")
+                .arg("--resolve")
+                .arg("home/.claude/CLAUDE.md=graphhelm-block")
+                .arg("--resolve")
+                .arg("home/.claude.json=register-mcp")
+                .arg("--out")
+                .arg(out)
+                .output()
+                .unwrap(),
+        )
+    };
+    let first = s.path().join("first.json");
+    let (ok, value) = resolve(&first);
+    assert!(ok, "first resolve: {value}");
+    let digest = value["data"]["acceptance"]["digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (ok, applied) = json(
+        setup(p.path(), h.path())
+            .arg("--state-root")
+            .arg(s.path())
+            .arg("--apply")
+            .arg(&first)
+            .arg("--accept")
+            .arg(&digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "first apply: {applied}");
+    std::fs::write(h.path().join(".claude.json"), user_json).unwrap();
+
+    // The suggestions still name the current block while the registration is missing.
+    let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{preview}");
+    assert!(
+        preview["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .contains(&"home/.claude/CLAUDE.md=graphhelm-block".into()),
+        "{preview}"
+    );
+
+    let second = s.path().join("second.json");
+    let (ok, value) = resolve(&second);
+    assert!(ok, "mixed run refused: {value}");
+    assert!(
+        second.exists(),
+        "no plan written for the missing registration"
+    );
 }

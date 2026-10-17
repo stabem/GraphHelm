@@ -67,7 +67,7 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
                 "inventory": inventory,
                 "plan": plan,
                 "provisioning": provisioning,
-                "suggestedResolutions": suggestions(&inventory),
+                "suggestedResolutions": suggestions(&inventory, args),
                 "observers": super::observers::readiness(&args.project, &args.home),
             }));
         }
@@ -78,10 +78,41 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
             reason: AdoptionReason::InvalidConfiguration,
         })?;
         let mut resolutions = Vec::new();
+        let mut already_applied = Vec::new();
         for text in &args.resolve {
-            if let Some(resolution) = parse_resolution(text, args, &registration, &inventory)? {
-                resolutions.push(resolution);
+            match parse_resolution(text, args, &registration, &inventory)? {
+                // A current block still answers its item `keep`; it is also already applied.
+                Some(resolution) => {
+                    if resolution.decision == graphhelm_policy::adoption::Decision::Keep
+                        && text.ends_with("=graphhelm-block")
+                    {
+                        already_applied.push(text.clone());
+                    }
+                    resolutions.push(resolution);
+                }
+                None => already_applied.push(text.clone()),
             }
+        }
+        // Some item already holds what it asks for and the rest are kept: a second run is a
+        // no-op, not a refused empty plan. No plan file is written. A run of keeps alone is still
+        // refused by `resolve`, because it never asked for a change.
+        if !already_applied.is_empty()
+            && resolutions
+                .iter()
+                .all(|resolution| resolution.decision == graphhelm_policy::adoption::Decision::Keep)
+        {
+            let kept: Vec<_> = resolutions
+                .iter()
+                .filter(|r| !already_applied.contains(&format!("{}=graphhelm-block", r.item)))
+                .map(|r| r.item.clone())
+                .collect();
+            return Ok(serde_json::json!({
+                "inventory": inventory,
+                "plan": null,
+                "provisioning": provisioning,
+                "alreadyApplied": already_applied,
+                "kept": kept,
+            }));
         }
         let plan = graphhelm_host_adoption::resolve(&inventory, &resolutions)?;
         graphhelm_host_adoption::write_private(out, &pretty(&plan)?)?;
@@ -248,7 +279,7 @@ fn eligible_plugin_contribution<'a>(
     Some(selected)
 }
 
-fn suggestions(inventory: &serde_json::Value) -> Vec<String> {
+fn suggestions(inventory: &serde_json::Value, args: &AdoptionSetupArgs) -> Vec<String> {
     let present = |id: &str| {
         inventory["spec"]["hosts"].as_array().is_some_and(|hosts| {
             hosts.iter().any(|host| {
@@ -272,8 +303,22 @@ fn suggestions(inventory: &serde_json::Value) -> Vec<String> {
     if project_plugin && present("project/.mcp.json/mcp/graphhelm") {
         out.push("project/.mcp.json=use-plugin-mcp".to_owned());
     }
-    for id in ["home/.claude/CLAUDE.md", "home/AGENTS.md"] {
-        if present(id) {
+    let current = |id: &str| {
+        item_path(id, args)
+            .and_then(|path| read_bytes(&path).ok())
+            .is_some_and(|before| {
+                std::str::from_utf8(&before)
+                    .ok()
+                    .and_then(upsert_block)
+                    .is_some_and(|after| after.as_bytes() == before.as_slice())
+            })
+    };
+    let blocks = ["home/.claude/CLAUDE.md", "home/AGENTS.md"];
+    // A current block is suggested only while something else still needs work: its item must
+    // still be answered then, and alone it has nothing left to do.
+    let pending = !out.is_empty() || blocks.iter().any(|id| present(id) && !current(id));
+    for id in blocks {
+        if present(id) && (pending || !current(id)) {
             out.push(format!("{id}=graphhelm-block"));
         }
     }

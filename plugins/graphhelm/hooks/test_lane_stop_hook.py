@@ -96,13 +96,55 @@ class ReconciledDigestTests(unittest.TestCase):
             self.assertEqual(post.call_count, 1)
 
 
+def remove_busy_tmp(tmp, stop_writers, seconds=10.0):
+    """#1459: a waiter (or its scan child) that wrote its pid file after the first stop_waiters can
+    still be writing in the test's temp dir, and Windows refuses the delete (WinError 145/32). Stop
+    the writers again and retry for a bounded time; if the directory still will not go, fail and
+    name what is left instead of hiding it."""
+    deadline = time.monotonic() + seconds
+    while True:
+        stop_writers()
+        try:
+            tmp.cleanup()
+            return
+        except OSError as error:
+            if time.monotonic() >= deadline:
+                left = sorted(str(p.relative_to(tmp.name)) for p in Path(tmp.name).rglob("*"))[:20]
+                raise AssertionError(f"temp dir still busy after {seconds} s ({error}); left: {left}") from error
+            time.sleep(0.2)
+
+
+class BusyTempCleanupTests(unittest.TestCase):
+    def test_a_file_released_shortly_after_cleanup_starts_is_still_removed(self):
+        tmp = tempfile.TemporaryDirectory()
+        held = (Path(tmp.name) / "late-writer" / "waiter.log")
+        held.parent.mkdir()
+        handle = held.open("w")
+        threading.Timer(0.5, handle.close).start()
+        remove_busy_tmp(tmp, lambda: None, seconds=5)
+        self.assertFalse(Path(tmp.name).exists())
+
+    @unittest.skipUnless(os.name == "nt", "an open file blocks a delete only on Windows")
+    def test_a_writer_that_never_stops_fails_and_names_the_file(self):
+        tmp = tempfile.TemporaryDirectory()
+        held = Path(tmp.name) / "stuck.log"
+        handle = held.open("w")
+        try:
+            with self.assertRaises(AssertionError) as caught:
+                remove_busy_tmp(tmp, lambda: None, seconds=0.5)
+            self.assertIn("stuck.log", str(caught.exception))
+        finally:
+            handle.close()
+            tmp.cleanup()
+
+
 class LaneStopTests(unittest.TestCase):
     def setUp(self):
         self.real_state_root = session_hook._state_root()
         self.real_state_before = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
         self.addCleanup(self.assert_real_state_unchanged)
         self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(self.remove_tmp)
         root = Path(self.tmp.name)
         self.env = {**os.environ, "GRAPHHELM_EVENTS_KEY": "12" * 32,
                     "GRAPHHELM_EXECUTION_ID": "lane-test", "GRAPHHELM_ACTOR": "codex-4",
@@ -167,6 +209,9 @@ class LaneStopTests(unittest.TestCase):
                 pid_file.unlink(missing_ok=True)
             except (OSError, ValueError):
                 pass
+
+    def remove_tmp(self):
+        remove_busy_tmp(self.tmp, self.stop_waiters if hasattr(self, "hook_state_dir") else (lambda: None))
 
     def assert_real_state_unchanged(self):
         after = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()

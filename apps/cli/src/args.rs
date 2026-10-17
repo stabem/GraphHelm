@@ -281,6 +281,21 @@ pub enum JourneyCommand {
     Preview(JourneyPreviewArgs),
     /// Observe a local app through a selected model route and publish an unapproved draft flow.
     Explore(JourneyExploreArgs),
+    /// Write one self-contained HTML page of a journey's kept preview (#1448): each step's real
+    /// frame, the action into it, what the screen must show with what the run saw, and the
+    /// overall result. Reads the kept preview; starts no run.
+    Report(JourneyReportArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyReportArgs {
+    /// The flow id (`<id>.journey.yaml`).
+    pub id: String,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    /// Where to write the page (replaced atomically).
+    #[arg(long)]
+    pub html: PathBuf,
 }
 
 #[derive(Debug, Args)]

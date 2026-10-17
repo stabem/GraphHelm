@@ -322,6 +322,14 @@ pub(crate) fn status(args: &JourneyPreviewArgs) -> Outcome {
     }
 }
 
+/// The flow and the kept preview body for this flow and commit (`state: none` when there is
+/// none): what `journey report` renders, read in this process.
+pub(crate) fn kept(project: &Path, id: &str) -> Result<(Value, Value)> {
+    let (flow, digest, commit) = flow_and_key(project, id)?;
+    let stored = reap_lost(project, &dir_of(project, id));
+    Ok((flow.clone(), body(stored, &flow, &digest, &commit)))
+}
+
 /// `journey preview <id>` / `POST /v1/journey-flows/{id}/preview`: answer the stored preview when
 /// it is current, else start one in the background and answer `running`. `--force` runs anew.
 pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {

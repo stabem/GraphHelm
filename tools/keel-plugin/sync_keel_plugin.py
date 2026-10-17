@@ -92,18 +92,24 @@ def render(skill):
     return frontmatter + PREAMBLE + marker(source) + body
 
 
+def write_text(target, text):
+    # A file whose text already matches keeps its bytes, so a CRLF checkout (core.autocrlf) stays
+    # clean (#1459). Returns whether it wrote.
+    if target.exists() and target.read_bytes().decode("utf-8").replace("\r\n", "\n") == text:
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(text.encode("utf-8"))
+    return True
+
+
 def main():
     for skill in SKILLS:
-        target = SKILLS_DIR / skill / "SKILL.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(render(skill).encode("utf-8"))
+        write_text(SKILLS_DIR / skill / "SKILL.md", render(skill))
     for source in SKILLS.values():
         # The setup step ships the KEEL files as they are: inside a project their relative links hold.
-        target = SETUP_FILES / source
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(keel_text(source).encode("utf-8"))
+        write_text(SETUP_FILES / source, keel_text(source))
     current = GRAPHHELM_KEEL_SKILL.read_bytes().decode("utf-8").replace("\r\n", "\n")
-    GRAPHHELM_KEEL_SKILL.write_bytes(embed(current, GRAPHHELM_KEEL_SOURCE).encode("utf-8"))
+    write_text(GRAPHHELM_KEEL_SKILL, embed(current, GRAPHHELM_KEEL_SOURCE))
     print(f"wrote {len(SKILLS)} skills under {SKILLS_DIR.relative_to(ROOT).as_posix()}")
     return 0
 

@@ -2,7 +2,7 @@
 
 **Run AI-agent workflows with a clear view of the work and control over what happens next.**
 
-GraphHelm is a local-first runtime for AI-agent workflows. Define the work as a typed execution graph, follow its progress, and see when it needs your attention. Inspect the evidence, approve a blocked step, or pause and resume through the CLI, MCP, or local Studio.
+GraphHelm is a local-first runtime for AI-agent workflows. Define the work as a typed execution graph, follow its progress, and see when it needs your attention. Inspect the evidence, approve a blocked step, or pause and resume through the CLI, MCP, or local Studio. Claude Code and Codex plugins bring it into your coding sessions, with [Keel](https://github.com/stabem/GraphHelm/blob/main/KEEL.md) for how agents write code and user journeys that prove a change works.
 
 [Try a local run](#try-a-local-run) · [Install in your project](https://github.com/stabem/GraphHelm/blob/main/INSTALL.md) · [Explore the Studio](https://github.com/stabem/GraphHelm/blob/main/apps/studio/README.md) · [Documentation](https://github.com/stabem/GraphHelm/blob/main/docs/INDEX.md)
 
@@ -15,6 +15,8 @@ Delegating a multi-step task raises practical questions: what is running, what i
 - **Know when to step in.** An attention verdict names the blocked work or missing information. Uncertainty stays visible instead of becoming an all-clear.
 - **Keep decisions explicit.** Typed graphs describe dependencies, completion requirements, and budgets. Supported controls let you pause, approve, resume, or cancel an execution.
 - **Pick up with context.** Execution briefings and event history give a later session a recorded account of the work and pending decisions.
+- **Prove it works.** A [user journey](https://github.com/stabem/GraphHelm/blob/main/docs/guides/journeys.md) replays the real flow in a browser and records what it saw. With no observer, the result stays `OBSERVER_MISSING` instead of passing.
+- **Keep agent code in shape.** [Keel](https://github.com/stabem/GraphHelm/blob/main/KEEL.md) gives every agent the same steps (plan, execute, review, merge), and `graphhelm keel check` blocks the rules a machine can measure.
 - **Inspect the result.** Append-only event history, evidence, and replay make a run reviewable beyond a chat transcript.
 
 Use it for agent workflows with several steps, human review points, or work that continues across sessions. Start locally, learn the control model, then connect the model and tool routes your project needs.

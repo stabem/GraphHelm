@@ -310,7 +310,8 @@ fn draft(base: &GraphVersion) -> GraphDraft {
     GraphDraft {
         id: "draft-1".into(),
         expected_version: base.number(),
-        expected_hash: base.content_hash().clone(),
+        expected_hash: Some(base.content_hash().clone()),
+        expected_safe_hash: None,
         operations: vec![DraftOperation::AddNode {
             id: "archive".into(),
             node,
@@ -515,10 +516,13 @@ fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
                         EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
                             draft_id: OpaqueId::parse(&proposed.id).unwrap(),
                             expected_version: proposed.expected_version,
-                            expected_hash: graphhelm_protocols::WireHash::parse(
-                                proposed.expected_hash.as_str(),
-                            )
-                            .unwrap(),
+                            expected_hash: Some(
+                                graphhelm_protocols::WireHash::parse(
+                                    proposed.expected_hash.as_ref().unwrap().as_str(),
+                                )
+                                .unwrap(),
+                            ),
+                            expected_safe_hash: None,
                             operation_count: proposed.operations.len() as u16,
                             proposal_sha256: Some(digest.clone()),
                         }),
@@ -560,10 +564,13 @@ fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
                     EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
                         draft_id: OpaqueId::parse(&invalid.id).unwrap(),
                         expected_version: invalid.expected_version,
-                        expected_hash: graphhelm_protocols::WireHash::parse(
-                            invalid.expected_hash.as_str(),
-                        )
-                        .unwrap(),
+                        expected_hash: Some(
+                            graphhelm_protocols::WireHash::parse(
+                                invalid.expected_hash.as_ref().unwrap().as_str(),
+                            )
+                            .unwrap(),
+                        ),
+                        expected_safe_hash: None,
                         operation_count: invalid.operations.len() as u16,
                         proposal_sha256: Some(invalid_digest.clone()),
                     }),
@@ -607,10 +614,13 @@ fn accepted_draft_appends_assignment_approval_and_governance_atomically() {
                     EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
                         draft_id: OpaqueId::parse(&two_nodes.id).unwrap(),
                         expected_version: two_nodes.expected_version,
-                        expected_hash: graphhelm_protocols::WireHash::parse(
-                            two_nodes.expected_hash.as_str(),
-                        )
-                        .unwrap(),
+                        expected_hash: Some(
+                            graphhelm_protocols::WireHash::parse(
+                                two_nodes.expected_hash.as_ref().unwrap().as_str(),
+                            )
+                            .unwrap(),
+                        ),
+                        expected_safe_hash: None,
                         operation_count: two_nodes.operations.len() as u16,
                         proposal_sha256: Some(two_nodes_digest.clone()),
                     }),
@@ -1005,7 +1015,8 @@ fn apply_draft_rejects_the_post_apply_candidate_before_serde_or_repository_effec
     let oversized = GraphDraft {
         id: "draft-candidate-limit".into(),
         expected_version: base.number(),
-        expected_hash: base.content_hash().clone(),
+        expected_hash: Some(base.content_hash().clone()),
+        expected_safe_hash: None,
         operations,
         manual_override: None,
     };
@@ -1074,7 +1085,7 @@ fn maximum_wire_draft_id_uses_bounded_internal_event_keys() {
 fn stale_hash_records_only_safe_rejection_without_authoring_content() {
     let base = base();
     let mut proposed = draft(&base);
-    proposed.expected_hash = SemanticHash::new(format!("sha256:{}", "f".repeat(64)));
+    proposed.expected_hash = Some(SemanticHash::new(format!("sha256:{}", "f".repeat(64))));
     proposed.operations[0] = DraftOperation::PatchNode {
         id: "implement".into(),
         patch: serde_json::json!({"apiKey": "TOP-SECRET-CANARY"}),
@@ -1106,7 +1117,7 @@ fn stale_hash_records_only_safe_rejection_without_authoring_content() {
 fn exact_retry_of_committed_rejection_preserves_the_original_outcome() {
     let base = base();
     let mut rejected = draft(&base);
-    rejected.expected_hash = SemanticHash::new(format!("sha256:{}", "f".repeat(64)));
+    rejected.expected_hash = Some(SemanticHash::new(format!("sha256:{}", "f".repeat(64))));
     let directory = TestDirectory::new();
     let repository =
         LocalEventRepository::open(&directory.0, Arc::new(FixedClock), Arc::new(Ids::default()))
@@ -1318,7 +1329,7 @@ fn committed_success_rejects_unrelated_and_divergent_events() {
 fn committed_rejection_rejects_unrelated_and_duplicate_events() {
     let base = base();
     let mut rejected = draft(&base);
-    rejected.expected_hash = SemanticHash::new(format!("sha256:{}", "f".repeat(64)));
+    rejected.expected_hash = Some(SemanticHash::new(format!("sha256:{}", "f".repeat(64))));
     let directory = TestDirectory::new();
     let repository =
         LocalEventRepository::open(&directory.0, Arc::new(FixedClock), Arc::new(Ids::default()))
@@ -1471,4 +1482,84 @@ fn repository_bytes(root: &Path) -> String {
     let mut bytes = Vec::new();
     visit(root, &mut bytes);
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// #1045 (B1): a draft binds its predecessor by exactly one hash. The safe semantic hash the
+/// published version exposes binds as the content hash does; a different safe hash, both hashes,
+/// or neither is refused as stale and publishes nothing. Credible regression: a lane that can only
+/// read the published projection cannot reach a successor version, or a safe-hash binding that is
+/// not checked against the base. Cost: four temporary repositories; no network or model.
+#[test]
+fn a_draft_binds_its_predecessor_by_exactly_one_hash_and_the_safe_one_is_checked() {
+    let base = base();
+    let attempt =
+        |binding: fn(&GraphVersion, &str) -> (Option<SemanticHash>, Option<SemanticHash>)| {
+            let directory = TestDirectory::new();
+            let repository = LocalEventRepository::open(
+                &directory.0,
+                Arc::new(FixedClock),
+                Arc::new(Ids::default()),
+            )
+            .unwrap();
+            let externalizer =
+                SealingGraphExternalizer::new(EvidenceProtector::new(FixedKeyProvider));
+            seed_base(&repository, &base, &externalizer);
+            // The safe hash a lane reads: version 1's published projection, from the replay stream.
+            let published = repository
+                .read_replay_stream(&scope(&base), "execution-draft")
+                .unwrap()
+                .into_iter()
+                .find_map(|event| match event.kind {
+                    EventKind::GraphVersionPublished(value) => Some(value),
+                    _ => None,
+                })
+                .unwrap();
+            let (expected_hash, expected_safe_hash) =
+                binding(&base, published.version.semantic_hash().as_str());
+            let mut proposed = draft(&base);
+            proposed.expected_hash = expected_hash;
+            proposed.expected_safe_hash = expected_safe_hash;
+            let ids = Ids::default();
+            let services = ApplyServices {
+                event_repository: &repository,
+                scope: scope(&base),
+                stream_id: OpaqueId::parse("execution-draft").unwrap(),
+                actor: Actor::new(ActorType::Owner, "owner-local"),
+                clock: &FixedClock,
+                ids: &ids,
+                externalizer: &externalizer,
+            };
+            let result = block_on(apply_draft(&base, &proposed, &services))
+                .map(|applied| applied.version.number());
+            let active = repository
+                .active_version(&scope(&base), "execution-draft")
+                .unwrap()
+                .unwrap()
+                .number;
+            (result.map_err(|error| error.code()), active)
+        };
+
+    // The published safe hash binds, and the successor is published.
+    assert_eq!(
+        attempt(|_, safe| (None, Some(SemanticHash::new(safe)))),
+        (Ok(2), 2)
+    );
+    // A different safe hash is stale, and nothing is published.
+    assert_eq!(
+        attempt(|_, _| (
+            None,
+            Some(SemanticHash::new(format!("sha256:{}", "e".repeat(64))))
+        )),
+        (Err("GHD002_STALE_HASH"), 1)
+    );
+    // Both hashes, even both correct, bind nothing.
+    assert_eq!(
+        attempt(|base, safe| (
+            Some(base.content_hash().clone()),
+            Some(SemanticHash::new(safe))
+        )),
+        (Err("GHD002_STALE_HASH"), 1)
+    );
+    // Neither hash binds nothing.
+    assert_eq!(attempt(|_, _| (None, None)), (Err("GHD002_STALE_HASH"), 1));
 }

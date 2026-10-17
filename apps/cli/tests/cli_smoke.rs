@@ -328,7 +328,8 @@ fn draft_apply_fails_closed_without_external_key_provider_and_does_not_mutate() 
     let draft = graphhelm_protocols::GraphDraft {
         id: "draft-1".into(),
         expected_version: loaded.graph.metadata.version,
-        expected_hash: graphhelm_graph::semantic_hash(&loaded.graph).unwrap(),
+        expected_hash: Some(graphhelm_graph::semantic_hash(&loaded.graph).unwrap()),
+        expected_safe_hash: None,
         operations: vec![graphhelm_protocols::DraftOperation::RemoveNode { id: "docs".into() }],
         manual_override: None,
     };
@@ -377,7 +378,8 @@ fn draft_apply_rejects_legacy_event_file_before_key_provider_diagnostic() {
     let draft = graphhelm_protocols::GraphDraft {
         id: "draft-1".into(),
         expected_version: loaded.graph.metadata.version,
-        expected_hash: graphhelm_graph::semantic_hash(&loaded.graph).unwrap(),
+        expected_hash: Some(graphhelm_graph::semantic_hash(&loaded.graph).unwrap()),
+        expected_safe_hash: None,
         operations: vec![graphhelm_protocols::DraftOperation::RemoveNode { id: "docs".into() }],
         manual_override: None,
     };

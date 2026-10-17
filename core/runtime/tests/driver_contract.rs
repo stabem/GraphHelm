@@ -2732,8 +2732,10 @@ fn append_governed_proposal(directory: &std::path::Path, execution_id: &OpaqueId
                     EventKind::DraftProposed(DraftProposed {
                         draft_id: OpaqueId::parse("draft-mid-attempt").unwrap(),
                         expected_version: 1,
-                        expected_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64)))
-                            .unwrap(),
+                        expected_hash: Some(
+                            WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                        ),
+                        expected_safe_hash: None,
                         operation_count: 1,
                         proposal_sha256: Some(digest32(b"mid-attempt-proposal")),
                     }),

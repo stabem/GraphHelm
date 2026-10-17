@@ -54,7 +54,9 @@ pub fn prepare_draft_publication_observed<'a>(
     observer: Option<&'a dyn PublicationPreparationObserver>,
 ) -> RepositoryFuture<'a, Result<ProjectionPreparation, GovernorError>> {
     Box::pin(async move {
-        if draft.expected_version != base.number() || &draft.expected_hash != base.content_hash() {
+        if draft.expected_version != base.number()
+            || !crate::externalize::draft_binds(&services.scope, base, draft)?
+        {
             return Err(GovernorError::InvalidAuthoring);
         }
         preflight_publication_inputs(base, draft, &services.actor)?;

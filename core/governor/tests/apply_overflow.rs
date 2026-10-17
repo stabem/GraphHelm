@@ -218,7 +218,8 @@ fn maximum_graph_version_is_rejected_before_any_repository_or_sealing_effect() {
     let draft = GraphDraft {
         id: "draft-overflow".into(),
         expected_version: base.number(),
-        expected_hash: base.content_hash().clone(),
+        expected_hash: Some(base.content_hash().clone()),
+        expected_safe_hash: None,
         operations: vec![DraftOperation::RemoveNode {
             id: "does-not-matter".into(),
         }],
@@ -259,7 +260,8 @@ fn same_number_divergent_active_hash_fails_before_externalization_or_append() {
     let draft = GraphDraft {
         id: "draft-stale-hash".into(),
         expected_version: base.number(),
-        expected_hash: base.content_hash().clone(),
+        expected_hash: Some(base.content_hash().clone()),
+        expected_safe_hash: None,
         operations: vec![DraftOperation::RemoveNode {
             id: "does-not-matter".into(),
         }],

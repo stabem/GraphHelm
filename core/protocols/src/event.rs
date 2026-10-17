@@ -647,7 +647,11 @@ pub struct GraphAuthoringSnapshotStored {
 pub struct DraftProposed {
     pub draft_id: OpaqueId,
     pub expected_version: u64,
-    pub expected_hash: WireHash,
+    /// The binding the draft named: exactly one of the content hash and the safe hash (#1045).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_hash: Option<WireHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_safe_hash: Option<WireHash>,
     pub operation_count: u16,
     /// Digest of the sealed, recoverable proposal bytes referenced by the envelope. Optional only
     /// for pre-#36 journals; new proposal producers must populate it before append.

@@ -607,6 +607,42 @@ class TaskRecordTest(unittest.TestCase):
         self.assertIn("graphhelm tasks credential --lane lane-none --execution gh-team", err.getvalue())
 
 
+class TimeoutAndFullHead(unittest.TestCase):
+    """#1526: a read timeout after a committed write is a retry, and a full sha is the same head."""
+
+    def send(self, replies):
+        args = SimpleNamespace(lane="l", kind="claimed", repo="r", pr=None, issue=1, comment_url=None,
+                               url="http://127.0.0.1:1", execution="e", dry_run=False, token_file="t")
+        calls = []
+
+        def fake(request, timeout):
+            calls.append(request.get_header("Idempotency-key"))
+            reply = replies[len(calls) - 1]
+            if isinstance(reply, Exception):
+                raise reply
+            return io.BytesIO(json.dumps(reply).encode())
+
+        with patch.object(task_record, "read_credential", return_value="x"), \
+                patch.object(task_record.urllib.request, "urlopen", side_effect=fake):
+            return task_record.send(args, {"taskId": "issue-1"}, "now"), calls
+
+    def test_timeout_then_conflict_is_already_recorded(self):
+        conflict = {"ok": False, "diagnostics": [{"code": "GHE003_IDEMPOTENCY_CONFLICT", "severity": "error"}]}
+        (code, _, _), calls = self.send([TimeoutError("timed out"), conflict])
+        self.assertEqual(code, 2)
+        self.assertEqual(len(set(calls)), 1)
+
+    def test_three_timeouts_exit_with_a_message(self):
+        with self.assertRaises(SystemExit) as stop:
+            self.send([TimeoutError()] * 3)
+        self.assertIn("timed out three times", str(stop.exception))
+
+    def test_full_and_short_head_both_parse_as_given(self):
+        for head in ("abcdef0123456789abcdef0123456789abcdef01", "abcdef01"):
+            args = task_record.parse(["pr_opened", "--lane", "l", "--issue", "1", "--head", head])
+            self.assertEqual(args.head, head)
+
+
 class ClosesAsGiven(unittest.TestCase):
     """#464: `closes` is exactly the issues the merge closed. The default `[--issue]` recorded
     "closes #356" for PR #456, a `Refs #356` merge, and `--closes` with no numbers could not say none."""

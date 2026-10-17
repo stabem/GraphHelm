@@ -241,7 +241,7 @@ def parse(argv):
     p.add_argument("--lanes", help="lane_retired: comma-separated lane names, 1 to 64")
     p.add_argument("--retired", choices=("true", "false"), help="lane_retired: true retires the lanes, false restores them")
     p.add_argument("--pr", type=int)
-    p.add_argument("--head", help="the PR head sha the step is about")
+    p.add_argument("--head", help="the PR head sha the step is about (a sha8 or a full 40-char sha, recorded as given; #1526)")
     p.add_argument("--reviewer")
     p.add_argument("--ordinal", type=int, default=1, choices=(1, 2))
     p.add_argument("--verdict", choices=("APPROVE", "APPROVE-WITH-RISK", "BLOCK"))
@@ -775,10 +775,17 @@ def send(args, doc, now):
                                      headers={**headers, "Authorization": f"Bearer {token}"})
     # GHE001: another writer appended between the Runtime's read and this append; the same body
     # under the same key is safe to send again.
-    for _ in range(3):
+    # #1526: a read timeout can follow a committed append. The key is the record's content, so
+    # sending it again either lands it or answers GHE003 ("already recorded"); never a failure.
+    for attempt in range(3):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 reply = json.load(response)
+        except TimeoutError:
+            if attempt == 2:
+                sys.exit(f"task_record: {args.url} timed out three times; the record may or may not have landed, "
+                         "run the same command again to learn which")
+            continue
         except urllib.error.HTTPError as error:
             reply = json.loads(error.read() or b"{}")
         except urllib.error.URLError as error:

@@ -335,6 +335,33 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["merged"], [])
         github.assert_called_once_with(9001, "stabem/GraphHelm")
 
+    def test_reconcile_finishes_a_pr_opened_by_another_lane(self):
+        """#1520: a stopping lane records the merge or close of a PR some other lane opened."""
+        args = self.reconcile_args()
+        opened = ("task.pr_opened", {"taskId": "issue-766", "pr": 9001,
+                  "lane": "codex-9", "repo": "stabem/GraphHelm"}, {})
+        merged = {"state": "MERGED", "mergeCommit": {"oid": "a" * 40}, "closingIssuesReferences": []}
+        with mock.patch.object(tasks_reconcile, "records", return_value=[opened]),              mock.patch.object(tasks_reconcile, "github", return_value=merged),              mock.patch.object(tasks_reconcile, "post") as post:
+            self.assertEqual(tasks_reconcile.reconcile(args)["merged"], [9001])
+        post.assert_called_once()
+
+    def test_one_unreadable_pr_does_not_abort_the_reconcile_and_the_batch_is_capped(self):
+        """#1520: a failing `gh pr view` is skipped; only the oldest MAX_PRS_PER_STOP are read."""
+        args = self.reconcile_args()
+        events = [("task.pr_opened", {"taskId": f"issue-{n}", "pr": n, "lane": "codex-9",
+                   "repo": "stabem/GraphHelm"}, {}) for n in range(1, 31)]
+        merged = {"state": "MERGED", "mergeCommit": {"oid": "a" * 40}, "closingIssuesReferences": []}
+
+        def view(pr, repo):
+            if pr == 1:
+                raise subprocess.TimeoutExpired("gh", 3)
+            return merged
+        with mock.patch.object(tasks_reconcile, "records", return_value=events),              mock.patch.object(tasks_reconcile, "github", side_effect=view) as github,              mock.patch.object(tasks_reconcile, "post"):
+            result = tasks_reconcile.reconcile(args)
+        self.assertEqual(result["unreadable"], [1])
+        self.assertEqual(result["merged"], list(range(2, 21)))
+        self.assertEqual(github.call_count, 20)
+
     def test_reconcile_ignores_opened_pr_from_another_repository(self):
         args = type("Args", (), {"execution": "lane-test", "url": self.url,
                     "token_file": self.env["GRAPHHELM_TOKEN_FILE"],

@@ -434,6 +434,32 @@ pub(crate) fn validate_task_event(
                 ],
             )
         }
+        // #1469: the open wave issues the recorder read, at most 25 (8 KiB), each a number, a
+        // title (the schema's `$defs.title`) and when it was opened.
+        "task.queued" => (
+            repo()
+                && document["issues"].as_array().is_some_and(|items| {
+                    items.len() <= 25
+                        && items.iter().all(|item| {
+                            item.as_object().is_some_and(|object| {
+                                object.keys().all(|key| {
+                                    matches!(key.as_str(), "issue" | "title" | "openedAt")
+                                })
+                            }) && item["issue"].as_u64().is_some_and(|n| n > 0)
+                                && item["title"].as_str().is_some_and(|s| {
+                                    !s.is_empty()
+                                        && s.chars().count() <= 200
+                                        && !s.chars().any(char::is_control)
+                                })
+                                && item["openedAt"].as_str().is_some_and(|s| {
+                                    !s.is_empty()
+                                        && s.len() <= 64
+                                        && !s.chars().any(char::is_control)
+                                })
+                        })
+                }),
+            &["repo", "issues"],
+        ),
         _ => (false, &[]),
     };
     let known = document.as_object().is_some_and(|object| {

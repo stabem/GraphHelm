@@ -1,0 +1,10 @@
+{
+  "schema": "graphhelm-task-event-v1",
+  "taskId": "backlog",
+  "revision": 1,
+  "at": "2026-10-16T12:00:00Z",
+  "repo": "stabem/GraphHelm",
+  "issues": [
+    { "issue": 1469, "title": "Lanes: a Backlog column for work nobody has picked up", "openedAt": "2026-10-16T09:00:00Z" }
+  ]
+}

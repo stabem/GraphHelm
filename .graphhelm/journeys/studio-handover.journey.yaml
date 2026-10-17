@@ -1,7 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-handover
-title: Read While you were away and dismiss it
-purpose: "The owner returns, reads what happened while away, and dismisses the summary."
+title: "Read While you were away, follow its goal, evidence and duties, and dismiss it"
+purpose: "The owner returns, reads what happened while away, sees the task goal, follows one cited evidence record, sees the open duties, and dismisses the summary."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -15,7 +15,7 @@ screens:
     title: The handover details cite what happened while away
     url: /?session=studio-fixture
     state: stable
-    expect: [{role: region, name: While you were away}, {role: heading, name: Shipped}, {role: heading, name: Went quiet}, {role: heading, name: Nobody touched}, {role: button, name: Got it}]
+    expect: [{role: region, name: While you were away}, {role: heading, name: Shipped}, {role: heading, name: Went quiet}, {role: heading, name: Nobody touched}, {role: heading, name: Goal}, {role: link, name: Cited evidence}, {role: heading, name: Open duties}, {role: button, name: Got it}]
     scope: [apps/studio/src/components/handover-card.tsx, apps/studio/src/runtime/handover.ts]
   - id: entry
     title: Open the Team column to read the handover

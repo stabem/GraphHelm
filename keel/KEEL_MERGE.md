@@ -8,7 +8,9 @@ Step 4. Only the reviewer who approved merges. Read [`KEEL.md`](../KEEL.md) firs
 2. **Main gets one whole run after merges.** Two changes that each pass alone can break
    together, so after merges land the orchestrator owns one whole-package run on main, at most
    once an hour while main moves. A red main is fixed first, by a revert or a fix-forward PR,
-   before any new merge.
+   before any new merge. A hidden scheduled task runs it unattended:
+   `python tools/reached-tests/main_whole_run.py` (skips unless main moved and an hour passed;
+   records a `main.whole_run` signal, severity `high` with the red steps named when it failed).
 3. **Closing keywords** in the body and the commits must match what the change closes. Never
    write a closing keyword (`close`, `fix`, `resolve` and their forms) next to an issue you do not
    mean to close, not even inside a negation; write `Refs #N` instead.

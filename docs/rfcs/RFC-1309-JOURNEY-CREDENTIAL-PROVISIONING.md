@@ -15,6 +15,20 @@ It does **not** observe the deterministic fault points (failure before `sync_dat
 with lost acknowledgement). Those move to the credential-issue slice. No token is issued and no
 journey route changed.
 
+**Delivered slice 2 (credential issue):** PR #1490, merged as `7329d9b8`, issues one credential
+once, as "Protected delivery channel" specifies, including both deterministic fault points.
+
+**Delivered slice 3 (draft enforcement):** `POST /v1/journey-flows/{id}/draft` accepts a journey
+credential (`Authorization: Bearer <token>` plus `X-GraphHelm-Journey-Credential: <credentialId>`).
+The auth layer verifies it on every use against the replayed journal, before any write: the HMAC
+digest in constant time; the credential unrevoked, unexpired, purpose `author`, for exactly that
+flow; and its grant unrevoked and unexpired for the same lane and flow. The draft is then recorded
+under that lane, and every refusal is one stable `403` that names no part of the scope. Scope
+ruling (coordinator, 2026-10-16): `POST /v1/journey-flows/{id}/review` is approval and is NOT
+reachable with a journey credential. It stays on the scoped-credential path until "Journey author,
+reviewer and owner approval" is decided. The HMAC key file is now owner-only on Windows
+(`protect_owner_only` at creation; a key provisioned before this is protected when next loaded).
+
 ## Promise and scope
 
 Provision a journey author or reviewer credential to one authenticated lane without giving that

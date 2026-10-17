@@ -2214,7 +2214,15 @@ pub(super) async fn journey_flow_draft(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let Some(writer) = scoped_agent(&state, &headers) else {
+    // #1309: or the lane a journey credential authorized. The auth layer sets this header only
+    // after verifying that credential for exactly this flow, and strips any caller copy first.
+    let writer = scoped_agent(&state, &headers).or_else(|| {
+        headers
+            .get(super::journey_credentials::JOURNEY_WRITER_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+    });
+    let Some(writer) = writer else {
         return bad_request(
             "journey.draft",
             "writing a draft requires a registered scoped agent credential",

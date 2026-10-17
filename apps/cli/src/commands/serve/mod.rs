@@ -1179,6 +1179,9 @@ async fn require_token(
     request
         .headers_mut()
         .remove(journey_credentials::VERIFIED_LANE_HEADER);
+    request
+        .headers_mut()
+        .remove(journey_credentials::JOURNEY_WRITER_HEADER);
     if request.uri().path() == "/health" {
         return next.run(request).await;
     }
@@ -1191,6 +1194,45 @@ async fn require_token(
         return refused(request, unauthorized_response()).await;
     };
     if constant_time_eq(presented.as_bytes(), &state.token) {
+        return next.run(request).await;
+    }
+    // #1309: a journey credential writes a draft of its own flow, and nothing else. It is
+    // verified on every use (credential and grant: digest, revocation, expiry, flow, purpose
+    // `author`), and every refusal is one stable 403 that names no part of the scope. The review
+    // route is NOT reachable this way: approval authority is still undecided in RFC-1309.
+    if let Some(credential_id) =
+        header_value(request.headers(), JOURNEY_CREDENTIAL_HEADER).map(str::to_owned)
+    {
+        let verified = match journey_draft_flow(&request) {
+            Some(flow) => {
+                let state = state.clone();
+                let token = zeroize::Zeroizing::new(presented.clone());
+                tokio::task::spawn_blocking(move || {
+                    state
+                        .grants
+                        .draft_writer(&credential_id, &token, &flow, chrono::Utc::now())
+                })
+                .await
+                .ok()
+                .flatten()
+            }
+            None => None,
+        };
+        let Some(lane) = verified.and_then(|lane| HeaderValue::from_str(&lane).ok()) else {
+            return refused(request, journey_credential_refused()).await;
+        };
+        let mut request = request;
+        request
+            .headers_mut()
+            .insert("x-graphhelm-actor-type", HeaderValue::from_static("agent"));
+        request
+            .headers_mut()
+            .insert("x-graphhelm-actor", lane.clone());
+        request.headers_mut().remove("x-graphhelm-agent-credential");
+        request.headers_mut().remove(SHARED_SESSION_HEADER);
+        request
+            .headers_mut()
+            .insert(journey_credentials::JOURNEY_WRITER_HEADER, lane);
         return next.run(request).await;
     }
     // #380: the agent session token. The declared actor type is a claim, not a credential, so
@@ -1354,6 +1396,42 @@ fn agent_session_route_allowed(request: &Request) -> bool {
                     "contract" | "memory" | "present" | "context"
                 ]
         )
+}
+
+/// #1309: the header naming the journey credential whose token is the bearer.
+const JOURNEY_CREDENTIAL_HEADER: &str = "x-graphhelm-journey-credential";
+
+/// The flow of `POST /v1/journey-flows/{flow}/draft`, exactly; `None` for every other request.
+fn journey_draft_flow(request: &Request) -> Option<String> {
+    if request.method() != axum::http::Method::POST {
+        return None;
+    }
+    match request
+        .uri()
+        .path()
+        .split('/')
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["", "v1", "journey-flows", flow, "draft"] if !flow.is_empty() => Some((*flow).to_owned()),
+        _ => None,
+    }
+}
+
+fn journey_credential_refused() -> Response {
+    respond(
+        StatusCode::FORBIDDEN,
+        Outcome::domain(
+            UNAUTHORIZED_COMMAND,
+            vec![Diagnostic::error(
+                UNAUTHORIZED_CODE,
+                "this journey credential does not authorize this request",
+                "/authorization",
+                "serve-cli",
+            )],
+        )
+        .output,
+    )
 }
 
 fn owner_required_response() -> Response {

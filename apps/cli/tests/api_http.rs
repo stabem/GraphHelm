@@ -4253,6 +4253,35 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
     assert_eq!(open["view"], "open", "{open}");
     assert_eq!(open["tasks"], serde_json::json!([]), "{open}");
     assert_eq!(open["endedTasks"], 1, "{open}");
+    // #1516: both views carry the step durations. The merged slice is summarised, not listed, on
+    // the open board; the full view lists it; a `since` after the merge empties the summary; a
+    // `since` that is not an instant is refused.
+    assert_eq!(open["durations"]["slices"], serde_json::json!([]), "{open}");
+    assert_eq!(open["durations"]["summary"]["total"]["count"], 1, "{open}");
+    assert_eq!(
+        third["data"]["durations"]["slices"][0]["merged"], true,
+        "{third}"
+    );
+    assert_eq!(
+        third["data"]["durations"]["slices"][0]["key"],
+        "issue-1149#pr-1150"
+    );
+    let later = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks?since=2999-01-01T00:00:00Z"),
+        Some(&token),
+    );
+    assert_eq!(
+        later["data"]["durations"]["summary"],
+        serde_json::json!({}),
+        "{later}"
+    );
+    assert_eq!(
+        get_status(
+            &format!("{base}/v1/executions/{execution}/tasks?since=yesterday"),
+            Some(&token)
+        ),
+        400
+    );
     for history in ["records", "slices", "routes"] {
         assert!(
             open.get(history).is_none(),

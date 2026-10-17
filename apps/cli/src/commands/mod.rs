@@ -82,6 +82,17 @@ pub fn run(command: TopLevel) -> Outcome {
                 url.as_deref(),
                 token_file.as_deref(),
             ),
+            TasksCommand::Durations {
+                execution,
+                since,
+                url,
+                token_file,
+            } => tasks::durations(
+                execution,
+                since.as_deref(),
+                url.as_deref(),
+                token_file.as_deref(),
+            ),
             _ => tasks::run(&args),
         },
         TopLevel::Graph(graph) => match graph.command {

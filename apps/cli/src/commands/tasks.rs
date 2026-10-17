@@ -214,6 +214,99 @@ fn release_open_claims(
 use graphhelm_protocols::Diagnostic;
 use serde_json::Value;
 
+/// `graphhelm tasks durations` (#1516): the `durations` block of the Runtime's tasks route.
+pub(super) fn durations(
+    execution: &str,
+    since: Option<&str>,
+    url: Option<&str>,
+    token_file: Option<&Path>,
+) -> Outcome {
+    const COMMAND: &str = "tasks.durations";
+    let refuse = |message: &str, pointer: &str| {
+        Outcome::application(
+            COMMAND,
+            Diagnostic::error(
+                crate::error_codes::GHCLI001_ARGUMENT_INVALID,
+                message,
+                pointer,
+                "tasks-cli",
+            ),
+        )
+    };
+    let url = url
+        .map(str::to_owned)
+        .or_else(|| std::env::var("GRAPHHELM_RUNTIME_URL").ok())
+        .unwrap_or_else(|| "http://127.0.0.1:8793".to_owned());
+    if !is_loopback_url(&url) {
+        return refuse("--url must be a loopback Runtime address", "/url");
+    }
+    if execution.is_empty()
+        || execution.len() > 128
+        || !execution
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c))
+    {
+        return refuse(
+            "--execution must be 1 to 128 characters of [A-Za-z0-9._:-]",
+            "/execution",
+        );
+    }
+    let mut path = format!("/v1/executions/{execution}/tasks");
+    if let Some(since) = since {
+        // The Runtime parses the same RFC 3339 instant; refusing here keeps the query unencoded.
+        if graphhelm_protocols::PersistedTimestamp::parse(since).is_err()
+            || !since
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-:.".contains(&c))
+        {
+            return refuse(
+                "--since must be a UTC RFC 3339 instant such as 2026-10-15T00:00:00Z",
+                "/since",
+            );
+        }
+        path.push_str(&format!("?since={since}"));
+    }
+    let token_file = token_file
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::var_os("GRAPHHELM_TOKEN_FILE").map(Into::into));
+    let Some(token_file) = token_file else {
+        return refuse(
+            "--token-file or GRAPHHELM_TOKEN_FILE is required",
+            "/tokenFile",
+        );
+    };
+    let token = match super::secret_file::read_existing(&token_file, "bearer token") {
+        Ok(token) => token,
+        Err(error) => return refuse(error.message(), "/tokenFile"),
+    };
+    let client = ApiClient::new(
+        url,
+        TokenSource::Fixed(Zeroizing::new(token)),
+        "graphhelm-cli".to_owned(),
+        "tool".to_owned(),
+        None,
+        None,
+        "tasks-durations".to_owned(),
+    );
+    match client.request_waiting("GET", &path, None, None, None, Duration::from_secs(60)) {
+        Ok((200, reply)) if reply["ok"] == true => {
+            Outcome::success(COMMAND, reply["data"]["durations"].clone())
+        }
+        Ok((_, reply)) => Outcome::application(
+            COMMAND,
+            Diagnostic::error(
+                crate::error_codes::GHCLI001_ARGUMENT_INVALID,
+                reply["diagnostics"][0]["message"]
+                    .as_str()
+                    .unwrap_or("the Runtime refused the tasks read"),
+                "/",
+                "tasks-cli",
+            ),
+        ),
+        Err(_) => refuse("the Runtime is unavailable", "/url"),
+    }
+}
+
 use crate::args::{TasksArgs, TasksCommand};
 
 const COMMAND: &str = "tasks.reconcile";

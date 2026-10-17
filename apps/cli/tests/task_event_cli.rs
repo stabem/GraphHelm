@@ -124,6 +124,98 @@ fn run_ended_posts_once_per_logical_run_and_fails_open() {
     .success();
 }
 
+/// #1516: `tasks durations --since` asks the Runtime's tasks route for that window and prints the
+/// reply's `durations` block; a `--since` that is not an instant is refused before any request.
+/// Cost: one loopback request in a temporary server.
+#[test]
+fn durations_reads_the_since_window_and_prints_the_durations_block() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let scratch = tempfile::tempdir().unwrap();
+    let token = scratch.path().join("owner.token");
+    std::fs::write(&token, "a".repeat(64)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, request) = loop {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            while !bytes.windows(4).any(|w| {
+                w == b"
+
+"
+            }) {
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+                }
+            }
+            if !bytes.is_empty() {
+                break (stream, String::from_utf8_lossy(&bytes).into_owned());
+            }
+        };
+        let reply = b"{\"ok\":true,\"command\":\"execution.tasks\",\"data\":{\"durations\":{\"slices\":[],\"summary\":{\"total\":{\"count\":2,\"medianSeconds\":600,\"p90Seconds\":900}}}},\"diagnostics\":[]}";
+        write!(
+            stream,
+            "HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: {}
+Connection: close
+
+",
+            reply.len()
+        )
+        .unwrap();
+        stream.write_all(reply).unwrap();
+        request
+    });
+    let run = |since: &str| {
+        Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
+            "graphhelm"
+        )))
+        .args([
+            "tasks",
+            "durations",
+            "--since",
+            since,
+            "--url",
+            &url,
+            "--token-file",
+        ])
+        .arg(&token)
+        .output()
+        .unwrap()
+    };
+    let refused = run("yesterday");
+    assert!(!refused.status.success(), "a bad --since is refused");
+    let output = run("2026-10-15T00:00:00Z");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reply["command"], "tasks.durations");
+    assert_eq!(
+        reply["data"]["summary"]["total"]["medianSeconds"], 600,
+        "{reply}"
+    );
+    let request = server.join().unwrap();
+    assert!(
+        request.starts_with("GET /v1/executions/gh-team/tasks?since=2026-10-15T00:00:00Z "),
+        "{request}"
+    );
+}
+
 use assert_cmd::Command;
 use chrono::TimeZone;
 use graphhelm_protocols::{EventEnvelope, EventKind};

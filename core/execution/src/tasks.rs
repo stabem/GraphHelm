@@ -2047,3 +2047,169 @@ fn slice_key(state: &TaskState, index: usize) -> String {
         None => format!("{}#claim-{index}", state.task_id),
     }
 }
+
+/// #1516: the steps of a delivery, named for what the slice waits on, in the order it meets them.
+pub const DURATION_STEPS: [&str; 5] = ["implement", "review_wait", "fix", "merge_wait", "total"];
+
+/// #1516: how long one PR slice spent in each step, in seconds. A step is present only when both
+/// of its records exist, so an open slice shows the steps it has finished.
+///
+/// - `implement`: the lane's last claim before the PR, to the first `pr_opened`.
+/// - `review_wait`: the first `pr_opened`, to the first verdict.
+/// - `fix`: the first verdict, to the last `pr_opened` (a push); zero when nothing was pushed after.
+/// - `merge_wait`: the last verdict, to the merge.
+/// - `total`: the same claim, to the merge.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SliceDurations {
+    pub key: String,
+    pub pr: u64,
+    pub merged: bool,
+    /// When the slice merged, else `None`; the window `since` is judged against it.
+    pub merged_at: Option<PersistedTimestamp>,
+    pub steps: BTreeMap<String, i64>,
+}
+
+/// #1516: the median and the 90th percentile (nearest rank) of one step over the merged slices
+/// in the window.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepSummary {
+    pub count: usize,
+    pub median_seconds: i64,
+    pub p90_seconds: i64,
+}
+
+/// #1516: every step duration, derived from the `task.*` records already in the log.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDurations {
+    /// The window start the summary was judged against, when one was given.
+    pub since: Option<PersistedTimestamp>,
+    pub slices: Vec<SliceDurations>,
+    /// Per step, over the slices that merged at or after `since`.
+    pub summary: BTreeMap<String, StepSummary>,
+}
+
+fn seconds_between(from: &PersistedTimestamp, to: &PersistedTimestamp) -> i64 {
+    (to.as_datetime().timestamp() - from.as_datetime().timestamp()).max(0)
+}
+
+/// Median (the mean of the two middle values when even) and nearest-rank p90 of `values`.
+fn summarize(mut values: Vec<i64>) -> Option<StepSummary> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_unstable();
+    let n = values.len();
+    let median = if n % 2 == 1 {
+        values[n / 2]
+    } else {
+        (values[n / 2 - 1] + values[n / 2]) / 2
+    };
+    let rank = (n * 9).div_ceil(10);
+    Some(StepSummary {
+        count: n,
+        median_seconds: median,
+        p90_seconds: values[rank - 1],
+    })
+}
+
+/// Derives [`TaskDurations`] from the verified records and the fold's slices. Records without the
+/// Runtime's append time are skipped, so no step is ever invented. `since` keeps merged slices that
+/// merged at or after it (open slices are always listed); the summary counts merged slices only.
+#[must_use]
+pub fn task_durations(
+    records: &[TaskEventRecord],
+    slices: &[FoldSlice],
+    since: Option<&PersistedTimestamp>,
+) -> TaskDurations {
+    let mut rows: Vec<SliceDurations> = Vec::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for slice in slices.iter().filter(|s| !s.absorbed) {
+        let state = &slice.state;
+        let Some(pr) = state.pr else { continue };
+        if !seen.insert(state.key.as_str()) {
+            continue;
+        }
+        let mine = |r: &&TaskEventRecord| r.task_id == state.task_id && r.pr == Some(pr);
+        let timed = |kind: TaskEventKind| {
+            records
+                .iter()
+                .filter(move |r| r.kind == kind)
+                .filter_map(|r| r.occurred_at.as_ref().map(|at| (r, at)))
+        };
+        let opens: Vec<(u64, &PersistedTimestamp)> = timed(TaskEventKind::PrOpened)
+            .filter(|(r, _)| mine(r))
+            .map(|(r, at)| (r.sequence, at))
+            .collect();
+        let verdicts: Vec<&PersistedTimestamp> = timed(TaskEventKind::ReviewVerdict)
+            .filter(|(r, _)| mine(r))
+            .map(|(_, at)| at)
+            .collect();
+        let merge_at = timed(TaskEventKind::Merged)
+            .find(|(r, _)| mine(r))
+            .map(|(_, at)| at);
+        let first_open = opens.iter().min_by_key(|(seq, _)| *seq);
+        let claim_at = first_open.and_then(|(first_seq, _)| {
+            timed(TaskEventKind::Claimed)
+                .filter(|(r, _)| {
+                    r.task_id == state.task_id && r.lane == state.lane && r.sequence < *first_seq
+                })
+                .max_by_key(|(r, _)| r.sequence)
+                .map(|(_, at)| at)
+        });
+        let mut steps = BTreeMap::new();
+        if let (Some(claim), Some((_, open))) = (claim_at, first_open) {
+            steps.insert("implement".to_owned(), seconds_between(claim, open));
+        }
+        let first_verdict = verdicts.iter().min_by_key(|at| at.as_datetime());
+        let last_verdict = verdicts.iter().max_by_key(|at| at.as_datetime());
+        if let (Some((_, open)), Some(first)) = (first_open, first_verdict) {
+            steps.insert("review_wait".to_owned(), seconds_between(open, first));
+        }
+        if let Some(first) = first_verdict {
+            let last_push = opens
+                .iter()
+                .map(|(_, at)| *at)
+                .max_by_key(|at| at.as_datetime());
+            steps.insert(
+                "fix".to_owned(),
+                last_push.map_or(0, |push| seconds_between(first, push)),
+            );
+        }
+        if let (Some(last), Some(merge)) = (last_verdict, merge_at) {
+            steps.insert("merge_wait".to_owned(), seconds_between(last, merge));
+        }
+        if let (Some(claim), Some(merge)) = (claim_at, merge_at) {
+            steps.insert("total".to_owned(), seconds_between(claim, merge));
+        }
+        rows.push(SliceDurations {
+            key: state.key.clone(),
+            pr,
+            merged: merge_at.is_some(),
+            merged_at: merge_at.cloned(),
+            steps,
+        });
+    }
+    rows.retain(|row| match (&row.merged_at, since) {
+        (Some(at), Some(since)) => at.as_datetime() >= since.as_datetime(),
+        _ => true,
+    });
+    let mut summary = BTreeMap::new();
+    for step in DURATION_STEPS {
+        let values: Vec<i64> = rows
+            .iter()
+            .filter(|row| row.merged)
+            .filter_map(|row| row.steps.get(step).copied())
+            .collect();
+        if let Some(stat) = summarize(values) {
+            summary.insert(step.to_owned(), stat);
+        }
+    }
+    TaskDurations {
+        since: since.cloned(),
+        slices: rows,
+        summary,
+    }
+}

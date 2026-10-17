@@ -599,7 +599,7 @@ pub fn run(
     let value = match (value, tasks, execution) {
         (Ok(mut value), Some((keyring, depth)), Some(execution)) => {
             super::tasks::read(events, execution, keyring, &budget).map(|view| {
-                value["tasks"] = view.at_depth(depth);
+                value["tasks"] = view.at_depth(depth, None);
                 value
             })
         }

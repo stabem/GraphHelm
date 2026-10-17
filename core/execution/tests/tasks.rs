@@ -1990,3 +1990,128 @@ fn the_live_excerpt_fixture_matches_the_fold() {
         "tests/fixtures/tasks-live-route.json is stale; run with GRAPHHELM_WRITE_FIXTURES=1"
     );
 }
+
+/// #1516: every step duration is exact on a log whose times are known. Slice A: claim 12:00,
+/// PR 12:30, BLOCK 13:00, fix push 13:20, APPROVE 13:50, merge 14:00. Slice B: claim 09:00, PR
+/// 09:10, APPROVE 09:15, merge 09:45 (no BLOCK). Slice C is still open: it has a claim and a PR.
+#[test]
+fn step_durations_are_exact_per_slice_and_summarised_per_step_1516() {
+    use graphhelm_execution::tasks::{fold_task_events_with_routes, task_durations};
+    let day = "2026-10-16T00:00:00Z";
+    let hm = |h: i64, m: i64| at(day, h * 60 + m);
+    let url = |pr: u64, n: u64| format!("https://github.com/o/r/pull/{pr}#c{n}");
+    let records = vec![
+        with_time(
+            claimed(1, "lane-a", "issue-10", 10, "issue-10-x"),
+            hm(12, 0),
+        ),
+        with_time(opened(2, "lane-a", "issue-10", 100, "aaaaaaa1"), hm(12, 30)),
+        with_time(
+            verdict(3, "rev", "issue-10", 100, "aaaaaaa1", "BLOCK", &url(100, 1)),
+            hm(13, 0),
+        ),
+        with_time(opened(4, "lane-a", "issue-10", 100, "aaaaaaa2"), hm(13, 20)),
+        with_time(
+            verdict(
+                5,
+                "rev",
+                "issue-10",
+                100,
+                "aaaaaaa2",
+                "APPROVE",
+                &url(100, 2),
+            ),
+            hm(13, 50),
+        ),
+        with_time(
+            merged(6, "rev", "issue-10", 100, "bbbbbbb1", &[10]),
+            hm(14, 0),
+        ),
+        with_time(claimed(7, "lane-b", "issue-11", 11, "issue-11-x"), hm(9, 0)),
+        with_time(opened(8, "lane-b", "issue-11", 101, "ccccccc1"), hm(9, 10)),
+        with_time(
+            verdict(
+                9,
+                "rev",
+                "issue-11",
+                101,
+                "ccccccc1",
+                "APPROVE",
+                &url(101, 1),
+            ),
+            hm(9, 15),
+        ),
+        with_time(
+            merged(10, "rev", "issue-11", 101, "bbbbbbb2", &[11]),
+            hm(9, 45),
+        ),
+        with_time(
+            claimed(11, "lane-c", "issue-12", 12, "issue-12-x"),
+            hm(15, 0),
+        ),
+        with_time(opened(12, "lane-c", "issue-12", 102, "ddddddd1"), hm(15, 5)),
+    ];
+    let fold = fold_task_events_with_routes(&records);
+    let durations = task_durations(&records, &fold.slices, None);
+    let steps = |key: &str| {
+        durations
+            .slices
+            .iter()
+            .find(|row| row.key == key)
+            .unwrap_or_else(|| panic!("no row for {key}: {durations:?}"))
+            .steps
+            .clone()
+    };
+    let a = steps("issue-10#pr-100");
+    assert_eq!(
+        (
+            a["implement"],
+            a["review_wait"],
+            a["fix"],
+            a["merge_wait"],
+            a["total"]
+        ),
+        (30 * 60, 30 * 60, 20 * 60, 10 * 60, 120 * 60)
+    );
+    let b = steps("issue-11#pr-101");
+    assert_eq!(
+        (
+            b["implement"],
+            b["review_wait"],
+            b["fix"],
+            b["merge_wait"],
+            b["total"]
+        ),
+        (10 * 60, 5 * 60, 0, 30 * 60, 45 * 60)
+    );
+    let c = steps("issue-12#pr-102");
+    assert_eq!(
+        c.len(),
+        1,
+        "an open slice shows only the step it finished: {c:?}"
+    );
+    assert_eq!(c["implement"], 5 * 60);
+    // Two merged slices: the median is the mean of both; p90 is the larger (nearest rank 2).
+    let total = &durations.summary["total"];
+    assert_eq!(
+        (total.count, total.median_seconds, total.p90_seconds),
+        (2, (120 + 45) * 30, 120 * 60)
+    );
+    let fix = &durations.summary["fix"];
+    assert_eq!((fix.median_seconds, fix.p90_seconds), (10 * 60, 20 * 60));
+    assert_eq!(
+        durations.summary["implement"].count, 2,
+        "the open slice is not in the summary"
+    );
+
+    // The window judges the merge time: only slice A merged at or after 10:00.
+    let window = hm(10, 0);
+    let since = task_durations(&records, &fold.slices, Some(&window));
+    assert_eq!(since.summary["total"].count, 1);
+    assert_eq!(since.summary["total"].median_seconds, 120 * 60);
+    assert!(since.slices.iter().all(|row| row.key != "issue-11#pr-101"));
+    assert!(
+        since.slices.iter().any(|row| row.key == "issue-12#pr-102"),
+        "open slices stay listed"
+    );
+}

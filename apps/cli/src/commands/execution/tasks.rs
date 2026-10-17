@@ -15,8 +15,8 @@ use std::sync::{Mutex, OnceLock};
 
 use graphhelm_events::{EvidenceOpener, EvidenceRead};
 use graphhelm_execution::tasks::{
-    FoldSlice, QueuedIssue, Route, TaskEventRecord, TaskState, TaskStep, backlog,
-    fold_task_events_with_routes, parse_task_event,
+    FoldSlice, QueuedIssue, Route, TaskDurations, TaskEventRecord, TaskState, TaskStep, backlog,
+    fold_task_events_with_routes, parse_task_event, task_durations,
 };
 use graphhelm_protocols::{EventKind, EvidenceId, PersistedTimestamp};
 use serde::Serialize;
@@ -88,14 +88,36 @@ pub struct OpenTasksView {
     pub liveness: Liveness,
     /// #1469: small, and the one list a reader of the open board cannot rebuild from `tasks`.
     pub backlog: Vec<QueuedIssue>,
+    /// #1516: step durations; the open board lists the open slices and the merged ones' summary.
+    pub durations: TaskDurations,
+}
+
+/// #1516: the `?since=` window of a read: an RFC 3339 instant.
+pub fn parse_since(value: &str) -> Result<PersistedTimestamp, Failure> {
+    PersistedTimestamp::parse(value).map_err(|_| {
+        super::signal_invalid(
+            "since must be an RFC 3339 instant such as 2026-10-15T00:00:00Z",
+            "/since",
+        )
+    })
 }
 
 impl TasksView {
-    /// The reply a door serves at `depth`: the full view unchanged, or the open board.
-    pub fn at_depth(self, depth: TasksDepth) -> serde_json::Value {
+    /// The reply a door serves at `depth`: the full view, or the open board. Both carry
+    /// `durations` judged against `since` (#1516).
+    pub fn at_depth(
+        self,
+        depth: TasksDepth,
+        since: Option<&PersistedTimestamp>,
+    ) -> serde_json::Value {
+        let mut durations = task_durations(&self.records, &self.slices, since);
         let value = match depth {
-            TasksDepth::Full => serde_json::to_value(self),
+            TasksDepth::Full => serde_json::to_value(&self).map(|mut value| {
+                value["durations"] = serde_json::to_value(&durations).expect("durations serialize");
+                value
+            }),
             TasksDepth::Open => {
+                durations.slices.retain(|row| !row.merged);
                 let total = self.tasks.len();
                 let tasks: Vec<TaskState> = self
                     .tasks
@@ -115,6 +137,7 @@ impl TasksView {
                     stalls: self.stalls,
                     liveness: self.liveness,
                     backlog: self.backlog,
+                    durations,
                 })
             }
         };

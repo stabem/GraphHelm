@@ -2618,9 +2618,10 @@ fn the_owner_releases_a_slice_by_key_and_retires_a_lane() {
         }
         base
     };
+    // The full view: the one the Studio's Lanes reads, and the only one serving the backlog.
     let tasks = || {
         get_json(
-            &format!("{base}/v1/executions/{execution}/tasks"),
+            &format!("{base}/v1/executions/{execution}/tasks?full=1"),
             Some(&token),
         )["data"]
             .clone()

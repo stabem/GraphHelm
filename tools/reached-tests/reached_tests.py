@@ -498,6 +498,12 @@ def reach(changed, packages, embedded, repo=None):
             if root is not None and (root / observer).is_file():
                 tools.add(python_test_tool(root, observer))
                 hit = True
+        # #1476: the planted defects anchor on exact text in the event store append; an edit there
+        # runs the anchor check so a moved anchor is seen before a defect turns unobserved.
+        if path == "core/events/src/local.rs":
+            observer = "tools/keel-effect/test_plant_defects.py"
+            if root is not None and (root / observer).is_file():
+                tools.add(python_test_tool(root, observer))
         qualification_packet = "evals/graphhelm-development-contracts/judge-qualification.json"
         if path == qualification_packet:
             observer = "tools/evals/test_skill_twins.py"

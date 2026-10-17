@@ -58,6 +58,18 @@ def build_signal(sha, base, report, report_path, repo, now_iso):
         "description": json.dumps(words, separators=(",", ":"))}}
 
 
+def child_budget(timeout):
+    """Wall budget for run_reached: the hard timeout minus a margin, so it stops itself and writes its report first."""
+    return max(1.0, timeout - min(300.0, timeout * 0.1))
+
+
+def child_command(tree, base, sha, root, report_path, timeout):
+    return [sys.executable, str(Path(tree) / "tools" / "reached-tests" / "run_reached.py"), "--repo", str(tree),
+            "--base", base, "--head", sha, "--root", str(root), "--lane", "main-whole-run",
+            "--output", str(report_path), "--keep-going", "--no-resume",
+            "--budget-seconds", repr(child_budget(timeout))]
+
+
 def git(repo, *args):
     done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
                           timeout=300, creationflags=NO_WINDOW)
@@ -141,9 +153,7 @@ def main(argv=None):
     report_path = work / f"report-{sha[:8]}.json"
     # The runner of the tree under test; --keep-going reports every red in one pass.
     try:
-        subprocess.run([sys.executable, str(tree / "tools" / "reached-tests" / "run_reached.py"), "--repo", str(tree),
-                    "--base", base, "--head", sha, "--root", args.root, "--lane", "main-whole-run",
-                    "--output", str(report_path), "--keep-going", "--no-resume"],
+        subprocess.run(child_command(tree, base, sha, args.root, report_path, args.timeout),
                    capture_output=True, text=True, encoding="utf-8", creationflags=NO_WINDOW,
                    timeout=args.timeout)
     except subprocess.TimeoutExpired:

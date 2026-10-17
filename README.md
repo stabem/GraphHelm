@@ -68,8 +68,9 @@ Follow [INSTALL.md](https://github.com/stabem/GraphHelm/blob/main/INSTALL.md) fo
 1. Build and install the current CLI from source
 2. Initialize the project for the host you choose
 3. Start its authenticated local Runtime with the same project identity
-4. Install the plugin and register MCP in that host
-5. Open a fresh host session and verify an actual Runtime tool call
+4. Install the plugin in that host
+5. Register MCP in that host
+6. Restart the host and verify an actual Runtime tool call
 
 **Give an agent INSTALL.md when asking it to install GraphHelm.** Installing the plugin alone does not install the CLI, start the Runtime, or complete MCP registration.
 
@@ -77,11 +78,12 @@ Follow [INSTALL.md](https://github.com/stabem/GraphHelm/blob/main/INSTALL.md) fo
 | --- | --- |
 | Claude Code | Guide, setup, and resume skills; project-aware MCP registration |
 | Codex CLI | Guide, setup, and resume skills; hook compatibility companion and a reviewed MCP configuration snippet |
-| Local Studio | Browser-based execution and evidence inspection, attention views, and supported control actions; Node 22+ required |
+| Keel only | The standalone `keel` plugin (five skills, no MCP, no hooks) for any project, in Claude Code or Codex |
+| Local Studio | Browser-based execution and evidence inspection, attention views, user journeys (run, compare, approve), and supported control actions; Node 22+ required |
 
 See the [plugin guide](https://github.com/stabem/GraphHelm/blob/main/plugins/graphhelm/README.md) for commands, host trust, and optional hooks. Configuration and local tests do not establish native host activation: check each selected host in a fresh session.
 
-The [v0.1.1 CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.1) provides Windows x86-64 and Ubuntu x86-64 binaries with the current project adoption flow. macOS and other platforms use the source path, with less platform validation. Studio also runs from source.
+The [v0.1.1 CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.1) provides Windows x86-64 and Ubuntu x86-64 binaries with the current project adoption flow. macOS and other platforms use the source path, with less platform validation. Studio also runs from source. Once installed, `graphhelm update` reinstalls the CLI from `origin/main`.
 
 <a id="what-works-today"></a>
 <a id="repository-map"></a>

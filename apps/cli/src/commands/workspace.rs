@@ -538,6 +538,47 @@ fn reclaim_target(root: &Path, rule: &TargetRule, lane: &str, name: &str) -> Res
         .map_err(|_| "record_not_removed".to_owned())
 }
 
+/// A record written under another target root whose worktree is positively gone: the build
+/// directory it names can never be used again. The path comes from the record, so it is
+/// trusted only in the exact shape `<root>/<lane>/<name>/target`, absolute, with no link on the
+/// way; anything else is kept. A directory a live process holds fails to remove and is kept.
+fn reclaim_moved_target(root: &Path, lane: &str, name: &str) -> Result<(), String> {
+    let recorded = std::fs::read(target_record_file(root, lane, name))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|value| value["target"].as_str().map(PathBuf::from))
+        .filter(|path| path.is_absolute())
+        .ok_or_else(|| "target_root_changed".to_owned())?;
+    let part = |path: Option<&Path>| {
+        path.and_then(Path::file_name)
+            .and_then(|n| n.to_str())
+            .map(str::to_owned)
+    };
+    let holder = recorded.parent();
+    let lane_dir = holder.and_then(Path::parent);
+    let shaped = part(Some(&recorded)).as_deref() == Some("target")
+        && part(holder).as_deref() == Some(name)
+        && part(lane_dir).as_deref() == Some(lane)
+        && lane_dir.and_then(Path::parent).is_some();
+    if !shaped {
+        return Err("target_root_changed".to_owned());
+    }
+    for step in recorded.ancestors() {
+        match std::fs::symlink_metadata(step) {
+            Ok(metadata) if is_link(&metadata) => return Err("linked_path".to_owned()),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("target_unreadable".to_owned()),
+        }
+    }
+    remove_tree(&recorded).map_err(|_| "remove_failed".to_owned())?;
+    if let Some(holder) = holder {
+        let _ = std::fs::remove_dir(holder);
+    }
+    std::fs::remove_file(target_record_file(root, lane, name))
+        .map_err(|_| "record_not_removed".to_owned())
+}
+
 /// The slot's build directory for `worktree` under the owner's rule (#360), and the directories
 /// reclaimed on the way. `record: false` checks the cap and free-space floor before
 /// the caller queues; `record: true` is called while holding the slot, so it is serialized: it
@@ -954,6 +995,19 @@ fn sweep_targets(root: &Path, apply: bool, held_lane: Option<(&str, &Path)>) -> 
             }
         }
         if let Err(reason) = check_target(root, rule, &lane, &name) {
+            if reason == "target_root_changed" && !merged {
+                // Gone worktree, record from another root (#1532): the lane's work is over.
+                let item = json!({"lane": lane, "name": name, "reason": reason});
+                if !apply {
+                    removed.push(item);
+                } else {
+                    match reclaim_moved_target(root, &lane, &name) {
+                        Ok(()) => removed.push(item),
+                        Err(reason) => kept.push(entry(&reason)),
+                    }
+                }
+                continue;
+            }
             kept.push(entry(&reason));
             continue;
         }
@@ -1286,4 +1340,66 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
         json!({"root": root.to_string_lossy(), "applied": apply, "removed": removed, "kept": kept,
             "targets": sweep_targets(root, apply, None)}),
     )
+}
+
+#[cfg(test)]
+#[test]
+fn sweep_removes_a_moved_target_only_for_a_gone_worktree() {
+    // Defect: a record from an old target root leaked its directory forever (#1532), or the
+    // fix deleted a live lane's directory. Cost: local temp files only.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let (fast, old) = (dir.path().join("fast"), dir.path().join("old"));
+    let live = dir.path().join("wt-live");
+    let gone = dir.path().join("wt-gone");
+    for path in [
+        root.join(LEDGER),
+        fast.clone(),
+        old.clone(),
+        live.clone(),
+        gone.clone(),
+    ] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    let record = |name: &str, worktree: &Path, target: &Path| {
+        std::fs::create_dir_all(target).unwrap();
+        std::fs::write(target.join("obj"), b"x").unwrap();
+        write_record(
+            &target_record_file(&root, "lane-a", name),
+            &json!({"schema": TARGET_SCHEMA, "lane": "lane-a", "name": name,
+                "worktree": worktree.to_string_lossy(), "target": target.to_string_lossy(),
+                "firstUsedAt": 1, "lastUsedAt": 1}),
+        )
+        .unwrap();
+    };
+    std::fs::write(
+        root.join(LEDGER).join(SLOT_TARGETS),
+        json!({"targetRoot": fast}).to_string(),
+    )
+    .unwrap();
+    let moved = old.join("lane-a/wt-gone/target");
+    let kept_live = old.join("lane-a/wt-live/target");
+    let odd = old.join("lane-a/other/elsewhere");
+    record("wt-gone", &gone, &moved);
+    record("wt-live", &live, &kept_live);
+    record("wt-odd", &gone, &odd);
+    std::fs::remove_dir(&gone).unwrap();
+
+    let preview = sweep_targets(&root, false, None);
+    assert!(moved.is_dir(), "preview removed a directory");
+    assert_eq!(preview["removed"].as_array().unwrap().len(), 2);
+
+    let applied = sweep_targets(&root, true, None);
+    assert!(!moved.exists());
+    assert!(!target_record_file(&root, "lane-a", "wt-gone").exists());
+    assert!(
+        kept_live.is_dir(),
+        "a lane with a live worktree lost its target"
+    );
+    assert!(target_record_file(&root, "lane-a", "wt-live").is_file());
+    assert!(
+        odd.is_dir(),
+        "a record naming an odd path steered the delete"
+    );
+    assert_eq!(applied["removed"].as_array().unwrap().len(), 1);
 }

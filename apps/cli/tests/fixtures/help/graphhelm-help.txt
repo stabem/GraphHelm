@@ -2633,6 +2633,7 @@ Commands:
   sessions     List the project's open live sessions and their current state
   preview      Run a flow, draft or approved, headless along every path and keep, per screen, whether it passed and a masked frame of it (#519). Answers the kept result when it is for this flow and commit; otherwise starts a run in the background and answers `running`. Never proof
   explore      Observe a local app through a selected model route and publish an unapproved draft flow
+  report       Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
 
 ===== graphhelm help journey act --help
 Send one act to an open live session and report the screen it lands on
@@ -2693,6 +2694,11 @@ Usage: graphhelm help journey preview
 Replay every approved path with the explicitly installed browser observer, without a model
 
 Usage: graphhelm help journey replay
+
+===== graphhelm help journey report --help
+Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
+
+Usage: graphhelm help journey report
 
 ===== graphhelm help journey sessions --help
 List the project's open live sessions and their current state
@@ -3052,6 +3058,7 @@ Commands:
   sessions     List the project's open live sessions and their current state
   preview      Run a flow, draft or approved, headless along every path and keep, per screen, whether it passed and a masked frame of it (#519). Answers the kept result when it is for this flow and commit; otherwise starts a run in the background and answers `running`. Never proof
   explore      Observe a local app through a selected model route and publish an unapproved draft flow
+  report       Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
   help         Print this message or the help of the given subcommand(s)
 
 Options:
@@ -3340,6 +3347,7 @@ Commands:
   sessions     List the project's open live sessions and their current state
   preview      Run a flow, draft or approved, headless along every path and keep, per screen, whether it passed and a masked frame of it (#519). Answers the kept result when it is for this flow and commit; otherwise starts a run in the background and answers `running`. Never proof
   explore      Observe a local app through a selected model route and publish an unapproved draft flow
+  report       Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
   help         Print this message or the help of the given subcommand(s)
 
 ===== graphhelm journey help act --help
@@ -3406,6 +3414,11 @@ Usage: graphhelm journey help preview
 Replay every approved path with the explicitly installed browser observer, without a model
 
 Usage: graphhelm journey help replay
+
+===== graphhelm journey help report --help
+Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
+
+Usage: graphhelm journey help report
 
 ===== graphhelm journey help sessions --help
 List the project's open live sessions and their current state
@@ -3619,6 +3632,31 @@ Options:
 
       --allow-act <ALLOW_ACT>
           Anchored action-name patterns a healing act may use for risky names (as in explore)
+
+  -h, --help
+          Print help
+
+===== graphhelm journey report --help
+Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
+
+Usage: graphhelm journey report [OPTIONS] --html <HTML> <ID>
+
+Arguments:
+  <ID>
+          The flow id (`<id>.journey.yaml`)
+
+Options:
+      --pretty
+          
+
+      --project <PROJECT>
+          
+
+      --html <HTML>
+          Where to write the page (replaced atomically)
+
+      --json
+          Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
 
   -h, --help
           Print help

@@ -63,6 +63,22 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(rr.main(["--output", "feedback.json", "--batch-slot"]), 0)
             self.assertTrue(run.call_args.args[0].batch_slot)
 
+    def test_default_lane_follows_the_worktree_and_explicit_lane_wins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first, second = Path(tmp) / "agent-aaa", Path(tmp) / "agent-bbb"
+            first.mkdir()
+            second.mkdir()
+            with patch.object(rr, "run", return_value=0) as run:
+                rr.main(["--repo", str(first)])
+                lane_a = run.call_args.args[0].lane
+                rr.main(["--repo", str(second)])
+                lane_b = run.call_args.args[0].lane
+                rr.main(["--repo", str(first), "--lane", "mine"])
+                lane_x = run.call_args.args[0].lane
+        self.assertEqual(lane_a, "reached-agent-aaa")
+        self.assertNotEqual(lane_a, lane_b)
+        self.assertEqual(lane_x, "mine")
+
     def test_jobs_rejects_non_positive_before_runner(self):
         with patch.object(rr, "run", return_value=0) as run:
             self.assertEqual(rr.main(["--output", "feedback.json", "--jobs", "1"]), 0)

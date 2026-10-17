@@ -26,6 +26,14 @@ class WholeRun(unittest.TestCase):
         green = mw.build_signal("a" * 40, "b" * 40, {"status": "passed"}, Path("r.json"), "o/r", "t")["signal"]
         self.assertEqual(green["severity"], "low")
 
+    def test_child_budget_follows_the_timeout_and_an_incomplete_run_is_high(self):
+        cmd = mw.child_command("t", "b", "s", "r", "o.json", 3600)
+        self.assertEqual(float(cmd[cmd.index("--budget-seconds") + 1]), 3300.0)
+        self.assertLess(mw.child_budget(100), 100)
+        for status in ("budgetExceeded", "incomplete"):
+            signal = mw.build_signal("a" * 40, "b" * 40, {"status": status}, Path("r.json"), "o/r", "2026-01-01T00:00:00Z")["signal"]
+            self.assertEqual(signal["severity"], "high")
+
     def test_state_is_saved_before_the_post_so_a_failed_post_cannot_rerun_the_suite(self):
         def refusing_poster(args, body):
             self.assertEqual(json.loads(state.read_text())["sha"], "a" * 40)

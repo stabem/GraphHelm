@@ -341,6 +341,54 @@ class SessionHookTests(unittest.TestCase):
                       "".join(call.args[0] for call in stderr.write.call_args_list))
         self.assertEqual(armed_cursors, [19, 21, None])
 
+    def test_stale_burn_rearms_with_no_sleep_first(self):
+        # #1058: a stale burn already lost the lease, so every second before the re-arm is a
+        # second the lane is deaf. Only 31 of 137 stale burns re-armed within 5 s while the
+        # timeout branch slept 1 s first; a plain timeout keeps its pause.
+        spec = importlib.util.spec_from_file_location("session_hook_stale_no_sleep", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        order = []
+
+        def arm(_payload, _bound, matures_in=60, cursor=None):
+            order.append("arm")
+            return 21
+
+        stale_burn = json.dumps({"ok": True, "data": {
+            "timedOut": True,
+            "lastConsumed": {"reason": "stale_rendezvous", "atSequence": 20},
+            "misBurn": None,
+        }})
+        ordinary_timeout = json.dumps({"ok": True, "data": {
+            "timedOut": True, "lastConsumed": None, "misBurn": None,
+        }})
+        heartbeat = Path(self.temp.name) / "alive"
+        heartbeat.touch()
+        waits = iter((type("Result", (), {"returncode": 2, "stdout": stale_burn, "stderr": ""})(),
+                      type("Result", (), {"returncode": 2, "stdout": ordinary_timeout, "stderr": ""})(),
+                      type("Result", (), {"returncode": 0, "stdout": "{}", "stderr": ""})()))
+
+        def wait(*_args, **_kwargs):
+            result = next(waits)
+            order.append(f"wait:{result.returncode}")
+            if result.returncode == 0:
+                heartbeat.unlink()
+            return result
+
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(Path(self.temp.name) / "waiter-state")}), \
+             patch.object(hook, "binding", return_value=bound), \
+             patch.object(hook, "arm_lane_wake", side_effect=arm), \
+             patch.object(hook.subprocess, "run", side_effect=wait), \
+             patch.object(hook.sys, "stderr"), \
+             patch.object(hook.time, "sleep", side_effect=lambda seconds: order.append(f"sleep:{seconds}")):
+            hook.wait_for_lane("codex", "session-123", Path(self.temp.name), heartbeat, 19)
+
+        # The stale burn re-arms at once; the ordinary timeout still pauses before re-arming.
+        self.assertEqual(order[:5], ["wait:2", "arm", "wait:2", "sleep:1", "arm"])
+
     def test_wake_wait_abort_is_logged_and_the_waiter_rearms(self):
         """#1118: 0xC0000409 from wake-wait left two lanes deaf with no cause on record."""
         spec = importlib.util.spec_from_file_location("session_hook_abort", SCRIPT)
@@ -515,7 +563,7 @@ class SessionHookTests(unittest.TestCase):
         )
         self.assertEqual(companion_manifest["hooks"], "./hooks/codex-hooks.json")
         main_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
-        self.assertEqual(main_manifest["version"], "0.1.47")
+        self.assertEqual(main_manifest["version"], "0.1.48")
         self.assertEqual(companion_manifest["version"], main_manifest["version"])
         for host in (".claude-plugin", ".codex-plugin"):
             legacy = json.loads((repository / "plugins" / "graphhelm" / host / "plugin.json").read_text())

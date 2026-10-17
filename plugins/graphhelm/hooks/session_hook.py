@@ -433,7 +433,9 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
             return
         if stale:
             print(f"stale rendezvous consumed for {session}; re-arming waiter", file=sys.stderr)
-        if result.returncode == 2:
+        # #1058: a stale burn already lost the lease, so it re-arms at once; only a plain
+        # timeout pauses, to keep an idle lane from spinning on its own lease.
+        if result.returncode == 2 and not stale:
             time.sleep(1)
         try:
             cursor = arm_lane_wake(payload, bound, cursor=cursor)

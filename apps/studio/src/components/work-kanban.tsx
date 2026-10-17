@@ -2,7 +2,8 @@ import "./mission-graph.css";
 import "./work-kanban.css";
 import type { MissionTask } from "../runtime/mission";
 import { stageDuration, type StageHealth } from "../runtime/stage-health";
-import type { BacklogIssue } from "../runtime/tasks-route";
+import { slowestText, summaryCells } from "../runtime/step-durations";
+import type { BacklogIssue, TaskDurations } from "../runtime/tasks-route";
 import type { PrRow, WorkStage } from "../runtime/work-groups";
 import { bucketKanban, kanbanColumn, KANBAN_COLUMNS, type KanbanColumn } from "../runtime/work-kanban";
 import { CurrentCard, type Pace } from "./mission-graph";
@@ -15,10 +16,22 @@ const DOT: Record<KanbanColumn, string> = {
 };
 
 /** #668: all open work by stage, no clicks needed; a card opens its PR on the Graph. */
-export function WorkKanban({ items, onOpen, historyLoading = false, backlog = [], now }: { items: KanbanItem[]; onOpen(groupKey: string, taskKey: string): void; historyLoading?: boolean; backlog?: BacklogIssue[]; now: number }) {
+export function WorkKanban({ items, onOpen, historyLoading = false, backlog = [], durations, now }: { items: KanbanItem[]; onOpen(groupKey: string, taskKey: string): void; historyLoading?: boolean; backlog?: BacklogIssue[]; durations?: TaskDurations; now: number }) {
   if (historyLoading) return <section className="wk-loading" role="status">Loading the team's history…</section>;
   const cols = bucketKanban(items, (i) => kanbanColumn(i.stage, i.health));
+  const cells = summaryCells(durations);
   return (
+    <>
+    {cells.length > 0 ? (
+      <ul className="wk-durations" aria-label="Step durations, median and p90">
+        {cells.map((c) => (
+          <li key={c.id} className="wk-duration" data-step={c.id}>
+            <span className="wk-duration-label">{c.label}</span>
+            <span className="wk-duration-value">{`median ${stageDuration(c.stat.medianSeconds * 1000)} · p90 ${stageDuration(c.stat.p90Seconds * 1000)}`}</span>
+          </li>
+        ))}
+      </ul>
+    ) : null}
     <section className="wk" aria-label="Work by stage">
       {KANBAN_COLUMNS.map((c) => {
         const id = `wk-col-${c.id}`;
@@ -56,9 +69,13 @@ export function WorkKanban({ items, onOpen, historyLoading = false, backlog = []
             <div className="wk-cards">
               {list.length === 0 ? <p className="wk-none">none</p> : list.map((i) => {
                 const cell = i.row.cells.find((x) => x.state === "current");
+                const slowest = slowestText(durations, i.task.key);
                 return cell ? (
-                  <CurrentCard key={i.task.key} cell={cell} stage={i.stage} task={i.task} health={i.health} pace={i.pace} selected={false}
-                    onSelect={() => onOpen(i.groupKey, i.task.key)} />
+                  <div key={i.task.key} className="wk-card">
+                    <CurrentCard cell={cell} stage={i.stage} task={i.task} health={i.health} pace={i.pace} selected={false}
+                      onSelect={() => onOpen(i.groupKey, i.task.key)} />
+                    {slowest ? <p className="wk-slowest">{slowest}</p> : null}
+                  </div>
                 ) : null;
               })}
             </div>
@@ -66,5 +83,6 @@ export function WorkKanban({ items, onOpen, historyLoading = false, backlog = []
         );
       })}
     </section>
+    </>
   );
 }

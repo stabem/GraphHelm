@@ -5,6 +5,7 @@ import { MissionView } from "./mission-view";
 import { TEST_SILENT_MS as LIVENESS_MS, judgedLane } from "../test/task-fold";
 import type { Lane } from "../runtime/lane-bars";
 import type { TaskState } from "../runtime/team-tasks";
+import type { TaskDurations } from "../runtime/tasks-route";
 
 const wt = (key: string, over: Record<string, unknown>) => ({ key, taskId: key, pr: null, issue: null, lane: "gh-claude-1", title: null, prTitle: "",
   journeys: [], step: "implement", blockedBy: null, reviewers: [], mergeSha: null, headSha: null, repoUrl: null, rounds: [], lastSequence: 0, ...over });
@@ -103,5 +104,37 @@ describe("WorkKanban (#668)", () => {
     within(col(/^MERGE/)).getByRole("button", { name: /Merging now/ }).focus();
     await userEvent.keyboard("{Enter}");
     expect(screen.getByRole("complementary", { name: "Selected work" })).toHaveTextContent("Merging now");
+  });
+});
+
+describe("WorkKanban step durations (#1516)", () => {
+  const durations: TaskDurations = {
+    slices: [
+      { key: "a", pr: 11, merged: false, steps: { implement: 4320 } },
+      { key: "b", pr: 22, merged: false, steps: { implement: 600, review_wait: 5400, fix: 0 } },
+    ],
+    summary: {
+      implement: { count: 8, medianSeconds: 1800, p90Seconds: 14760 },
+      total: { count: 8, medianSeconds: 11520, p90Seconds: 68760 },
+    },
+  };
+
+  it("names the slowest step on each card and the median and p90 of each step", async () => {
+    const userEvent = fastUserEvent();
+    render(<MissionView journeys={[]} tasks={tasks} lanes={lanes} now={NOW} durations={durations} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await userEvent.click(screen.getByRole("tab", { name: "Lanes" }));
+    const implement = col(/^IMPLEMENT/);
+    expect(within(implement).getByText("Slowest: Implement 1h 12m")).toBeTruthy();
+    expect(within(col(/^REVIEW/)).getByText("Slowest: Review wait 1h 30m")).toBeTruthy();
+    const summary = screen.getByRole("list", { name: "Step durations, median and p90" });
+    expect(within(summary).getByText("median 30m · p90 4h 6m")).toBeTruthy();
+    expect(within(summary).getByText("median 3h 12m · p90 19h 6m")).toBeTruthy();
+    expect(within(summary).queryByText("Review wait")).toBeNull();
+  });
+
+  it("draws nothing extra when the Runtime sent no durations", async () => {
+    await renderLanes();
+    expect(screen.queryByRole("list", { name: "Step durations, median and p90" })).toBeNull();
+    expect(screen.queryByText(/^Slowest:/)).toBeNull();
   });
 });

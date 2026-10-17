@@ -198,6 +198,83 @@ fn workspace_merged_cleanup_removes_the_prs_worktrees_and_keeps_everything_else(
     );
 }
 
+/// #1459 item 17: a harness locks the worktree of a live agent session. The merge sweep found
+/// such a worktree on the merged branch and would have stopped about 20 of the session's live
+/// processes. A locked worktree is held: its processes keep running, it stays registered, the
+/// reply names it with the lock reason, and the run is not ok and exits non-zero.
+#[test]
+fn workspace_merged_cleanup_holds_a_locked_live_session_worktree() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let base = PathBuf::from(s(&base).trim_start_matches("//?/"));
+    let repo = base.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main", "--object-format=sha1"]);
+    std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "init"]);
+    let agent = base.join("agent-live");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "issue-9-x",
+            &s(&agent),
+            "main",
+        ],
+    );
+    let mut session = hold(&agent);
+    let reason = format!("claude agent test (pid {})", session.id());
+    git(
+        &repo,
+        &["worktree", "lock", "--reason", &reason, &s(&agent)],
+    );
+
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "workspace", "sweep", "--apply"])
+        .args([
+            "--merged-branch",
+            "issue-9-x",
+            "--repo",
+            &s(&repo),
+            "--pr",
+            "9",
+        ])
+        .args(["--base", "main", "--leftovers", &s(&base.join("leftovers"))])
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+    let alive = session.try_wait().unwrap().is_none();
+    let _ = session.kill();
+    let _ = session.wait();
+    git(&repo, &["worktree", "unlock", &s(&agent)]);
+
+    assert!(alive, "the live session's process was stopped: {reply}");
+    assert!(
+        agent.join("a.txt").is_file(),
+        "the locked worktree was removed: {reply}"
+    );
+    assert!(
+        worktree_paths(&repo).contains(&s(&agent)),
+        "the locked worktree was unregistered"
+    );
+    assert_eq!(reply["data"]["ok"], false, "{reply}");
+    assert_eq!(
+        reply["data"]["held"][0]["reason"],
+        reason.as_str(),
+        "{reply}"
+    );
+    assert_eq!(reply["data"]["removed"], serde_json::json!([]), "{reply}");
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "an incomplete cleanup must exit non-zero: {out:?}"
+    );
+}
+
 trait WaitBounded {
     fn wait_timeout_free(&mut self) -> Option<std::process::ExitStatus>;
 }

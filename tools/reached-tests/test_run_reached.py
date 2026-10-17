@@ -1001,5 +1001,32 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         self.assertNotIn('"schema"', text)
 
 
+class HarnessFileAndOutputDefault(unittest.TestCase):
+    """#1538: the harness's settings file must not make a lane worktree 'not clean'."""
+
+    def test_output_has_a_default_outside_the_repository(self):
+        repo = Path(__file__).resolve().parents[2]
+        out = rr.default_output(repo, "lane/x")
+        self.assertEqual(out.suffix, ".json")
+        with self.assertRaises(ValueError):
+            out.relative_to(repo)
+        self.assertNotIn("/", out.name)
+
+    def test_harness_settings_file_is_ignored_but_real_files_still_dirty_the_tree(self):
+        repo = Path(__file__).resolve().parents[2]
+        ignore = (repo / ".gitignore").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            (work / ".gitignore").write_text(ignore, encoding="utf-8")
+            rr._git(work, "init", "-q")
+            (work / ".claude").mkdir()
+            (work / ".claude" / "settings.local.json").write_text("{}", encoding="utf-8")
+            self.assertEqual(
+                rr._git(work, "status", "--porcelain=v1", "-uall", "--", ".claude"), "")
+            (work / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+            self.assertIn(
+                "settings.json", rr._git(work, "status", "--porcelain=v1", "-uall", "--", ".claude"))
+
+
 if __name__ == "__main__":
     unittest.main()

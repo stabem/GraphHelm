@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import re
 from pathlib import Path
@@ -766,6 +767,12 @@ def run(args: argparse.Namespace) -> int:
     return 0 if report["status"] in ("passed", "planned") else 1
 
 
+def default_output(repo: Path, lane: str) -> Path:
+    """Per-worktree, per-lane report path outside the repository, so `--output` is optional (#1538)."""
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", f"{repo.resolve().name}-{lane}")
+    return Path(tempfile.gettempdir()) / "graphhelm-reached" / f"{safe}.json"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--repo", default=".")
@@ -774,7 +781,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--root", default="D:/gh")
     ap.add_argument("--lane", default="reached-fast-feedback")
     ap.add_argument("--graphhelm", help="GraphHelm executable; overrides GRAPHHELM_CLI and PATH")
-    ap.add_argument("--output", required=True)
+    ap.add_argument("--output", help="report path, outside the repository "
+                    "(default: <system temp>/graphhelm-reached/<repo dir>-<lane>.json)")
     # #1459: 180 s ended almost every first run `budgetExceeded` after one step, because the budget
     # includes waiting for the shared slot; 900 s fits a warm plan plus an ordinary queue.
     ap.add_argument("--budget-seconds", type=float, default=900)
@@ -805,6 +813,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if not 1 <= args.jobs <= 32:
         ap.error("--jobs must be between 1 and 32")
+    if not args.output:
+        args.output = str(default_output(Path(args.repo), args.lane))
     return run(args)
 
 

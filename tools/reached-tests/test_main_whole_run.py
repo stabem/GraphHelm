@@ -1,5 +1,6 @@
 """Contracts for main_whole_run.py: when a run is due and what a red receipt says; no git, Runtime or cargo."""
 import json
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -24,6 +25,19 @@ class WholeRun(unittest.TestCase):
         self.assertEqual(json.loads(signal["description"])["red"], ["cargo test -p x"])
         green = mw.build_signal("a" * 40, "b" * 40, {"status": "passed"}, Path("r.json"), "o/r", "t")["signal"]
         self.assertEqual(green["severity"], "low")
+
+    def test_state_is_saved_before_the_post_so_a_failed_post_cannot_rerun_the_suite(self):
+        def refusing_poster(args, body):
+            self.assertEqual(json.loads(state.read_text())["sha"], "a" * 40)
+            raise SystemExit("no credential")
+
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp) / "state.json"
+            with self.assertRaises(SystemExit):
+                mw.save_then_post(None, state, "a" * 40, 5.0, {"status": "failed"}, {}, refusing_poster)
+            saved = json.loads(state.read_text())
+            self.assertEqual((saved["sha"], saved["recorded"]), ("a" * 40, False))
+            self.assertFalse(mw.due(saved, "a" * 40, 99999, 3600)[0])
 
 
 if __name__ == "__main__":

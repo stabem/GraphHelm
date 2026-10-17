@@ -87,6 +87,19 @@ def post(args, body):
         return False
 
 
+def save_then_post(args, state_file, sha, now, report, body, poster=None):
+    """State first, then the post: a missing credential (post exits) must not re-run the suite every tick."""
+    def save(recorded):
+        state_file.write_text(json.dumps({"sha": sha, "startedAt": now, "status": report.get("status"),
+                                          "recorded": recorded}) + "\n", encoding="utf-8")
+
+    save(False)
+    recorded = (poster or post)(args, body)
+    if recorded:
+        save(True)
+    return recorded
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", default=".", help="a checkout of the repository (fetched; its files are not changed)")
@@ -94,6 +107,7 @@ def main(argv=None):
     ap.add_argument("--root", default="D:/gh")
     ap.add_argument("--state", help="state file; default <root>/main-whole-run/state.json")
     ap.add_argument("--min-interval", type=float, default=3600)
+    ap.add_argument("--timeout", type=float, default=3600, help="hard limit in seconds for the run_reached child")
     ap.add_argument("--url", default="http://127.0.0.1:8793")
     ap.add_argument("--execution", default="gh-team")
     ap.add_argument("--token-file", default=".graphhelm/events.token")
@@ -126,18 +140,20 @@ def main(argv=None):
         git(tree, "checkout", "--detach", "--force", sha)
     report_path = work / f"report-{sha[:8]}.json"
     # The runner of the tree under test; --keep-going reports every red in one pass.
-    subprocess.run([sys.executable, str(tree / "tools" / "reached-tests" / "run_reached.py"), "--repo", str(tree),
+    try:
+        subprocess.run([sys.executable, str(tree / "tools" / "reached-tests" / "run_reached.py"), "--repo", str(tree),
                     "--base", base, "--head", sha, "--root", args.root, "--lane", "main-whole-run",
                     "--output", str(report_path), "--keep-going", "--no-resume"],
-                   capture_output=True, text=True, encoding="utf-8", creationflags=NO_WINDOW)
+                   capture_output=True, text=True, encoding="utf-8", creationflags=NO_WINDOW,
+                   timeout=args.timeout)
+    except subprocess.TimeoutExpired:
+        pass  # the report below says "incomplete"
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         report = {"status": "incomplete", "error": "no report was written"}
     body = build_signal(sha, base, report, report_path, args.github, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-    recorded = post(args, body)
-    state_file.write_text(json.dumps({"sha": sha, "startedAt": now, "status": report.get("status"),
-                                      "recorded": recorded}) + "\n", encoding="utf-8")
+    recorded = save_then_post(args, state_file, sha, now, report, body)
     print(f"main_whole_run: {report.get('status')} on {sha[:8]}; receipt {'recorded' if recorded else 'NOT recorded'}: {report_path}")
     return 0 if report.get("status") == "passed" else 1
 

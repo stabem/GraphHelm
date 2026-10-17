@@ -53,6 +53,75 @@ fn refuse(code: &'static str, message: &str) -> Outcome {
     )
 }
 
+/// The page is meant to be shared, so the launcher's stderr loses user-home paths (this
+/// machine's home and any drive `:\Users\x`, `/home/x`, `/Users/x`) and token-shaped words (#1543).
+fn mask_shared(text: &str) -> String {
+    let mut text = text.to_owned();
+    for key in ["USERPROFILE", "HOME"] {
+        if let Some(home) = std::env::var(key).ok().filter(|home| home.len() > 3) {
+            text = text
+                .replace(&home, "~")
+                .replace(&home.replace('\\', "/"), "~");
+        }
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let sep = |c: char| c == '/' || c == '\\';
+    let word =
+        |c: char| !(c.is_whitespace() || sep(c) || matches!(c, '"' | '\'' | ':' | ',' | ';'));
+    let starts = |at: usize, prefix: &str| {
+        prefix.chars().enumerate().all(|(k, p)| {
+            chars
+                .get(at + k)
+                .is_some_and(|c| c.eq_ignore_ascii_case(&p))
+        })
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let skip = if starts(i, "/home/") {
+            6
+        } else if starts(i, "/users/") {
+            7
+        } else if chars[i].is_ascii_alphabetic()
+            && chars.get(i + 1) == Some(&':')
+            && chars.get(i + 2).copied().is_some_and(sep)
+            && starts(i + 3, "users")
+            && chars.get(i + 8).copied().is_some_and(sep)
+        {
+            9
+        } else {
+            0
+        };
+        if skip > 0 && chars.get(i + skip).copied().is_some_and(word) {
+            out.push('~');
+            i += skip;
+            while i < chars.len() && word(chars[i]) {
+                i += 1;
+            }
+            continue;
+        }
+        if chars[i].is_ascii_alphanumeric() && (i == 0 || !chars[i - 1].is_ascii_alphanumeric()) {
+            let end = (i..chars.len())
+                .find(|&j| {
+                    !(chars[j].is_ascii_alphanumeric() || matches!(chars[j], '_' | '-' | '+' | '='))
+                })
+                .unwrap_or(chars.len());
+            let run = &chars[i..end];
+            if run.len() >= 32
+                && run.iter().any(char::is_ascii_digit)
+                && run.iter().any(char::is_ascii_alphabetic)
+            {
+                out.push_str("***");
+                i = end;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -226,7 +295,7 @@ fn render(flow: &Value, kept: &Value, frame: &dyn Fn(&str) -> Option<Vec<u8>>) -
     }
     let log = kept["launchLog"]["tail"]
         .as_str()
-        .map(|tail| format!("<pre>{}</pre>", escape(tail)))
+        .map(|tail| format!("<pre>{}</pre>", escape(&mask_shared(tail))))
         .unwrap_or_default();
     let title = flow["title"].as_str().unwrap_or_else(|| text(&flow["id"]));
     let page = format!(

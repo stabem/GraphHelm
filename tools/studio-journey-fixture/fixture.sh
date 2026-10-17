@@ -21,6 +21,7 @@ if [ "$cmd" = up ]; then
   [[ "$sport" =~ ^[0-9]+$ ]] && (( sport > 0 && sport < 65536 )) && [ "$sport" != "$rport" ] || { echo 'fixture: unsafe Studio port' >&2; exit 2; }
 fi
 mkdir -p "$dir"; dir=$(cd "$dir" && pwd)
+. "$(dirname "$0")/wait.sh"
 pids="$dir/.graphhelm/fixture.pids"
 rt="$dir/project/.graphhelm"
 
@@ -217,8 +218,8 @@ NODE
     GRAPHHELM_STUDIO_SESSION_NONCE=studio-fixture GRAPHHELM_PROJECT=demo
   nohup npm --prefix "$repo/apps/studio" run dev -- --port "$sport" --strictPort > "$dir/.graphhelm/studio.out" 2>&1 &
   echo "studio $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
-  for _ in $(seq 1 60); do curl -sf --max-time 10 -o /dev/null "http://127.0.0.1:$sport/__studio/session?nonce=studio-fixture" && break; sleep 1; done
-  curl -sf --max-time 10 -o /dev/null "http://127.0.0.1:$sport/__studio/session?nonce=studio-fixture" || { echo "studio did not answer on $sport"; tail -20 "$dir/.graphhelm/studio.out"; exit 1; }
+  wait_answers "http://127.0.0.1:$sport/__studio/session?nonce=studio-fixture" "$!" 60 \
+    || { echo "studio did not answer on $sport"; tail -20 "$dir/.graphhelm/studio.out"; exit 1; }
   for pid in $(fixture_listeners record "$sport"); do
     if [ -r /proc/$$/winpid ]; then echo "studio-listener 0 $pid"; else echo "studio-listener $pid"; fi >> "$pids"
   done

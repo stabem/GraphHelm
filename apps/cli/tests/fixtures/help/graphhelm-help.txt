@@ -2887,12 +2887,18 @@ Usage: graphhelm help tasks [COMMAND]
 Commands:
   run-ended   
   reconcile   
+  durations   How long each delivery step lasts (#1516): per-step median and p90 over the slices merged since `--since`, read from the Runtime's `GET /v1/executions/{id}/tasks` `durations`
   credential  Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token, derived from that token, the execution and the lane. Run by the owner or the orchestrator; the Runtime verifies it by recomputation, so no restart is needed
 
 ===== graphhelm help tasks credential --help
 Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token, derived from that token, the execution and the lane. Run by the owner or the orchestrator; the Runtime verifies it by recomputation, so no restart is needed
 
 Usage: graphhelm help tasks credential
+
+===== graphhelm help tasks durations --help
+How long each delivery step lasts (#1516): per-step median and p90 over the slices merged since `--since`, read from the Runtime's `GET /v1/executions/{id}/tasks` `durations`
+
+Usage: graphhelm help tasks durations
 
 ===== graphhelm help tasks reconcile --help
 Usage: graphhelm help tasks reconcile
@@ -4804,6 +4810,7 @@ Usage: graphhelm tasks [OPTIONS] <COMMAND>
 Commands:
   run-ended   
   reconcile   
+  durations   How long each delivery step lasts (#1516): per-step median and p90 over the slices merged since `--since`, read from the Runtime's `GET /v1/executions/{id}/tasks` `durations`
   credential  Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token, derived from that token, the execution and the lane. Run by the owner or the orchestrator; the Runtime verifies it by recomputation, so no restart is needed
   help        Print this message or the help of the given subcommand(s)
 
@@ -4844,6 +4851,33 @@ Options:
   -h, --help
           Print help
 
+===== graphhelm tasks durations --help
+How long each delivery step lasts (#1516): per-step median and p90 over the slices merged since `--since`, read from the Runtime's `GET /v1/executions/{id}/tasks` `durations`
+
+Usage: graphhelm tasks durations [OPTIONS]
+
+Options:
+      --execution <EXECUTION>
+          [default: gh-team]
+
+      --pretty
+          
+
+      --json
+          Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
+
+      --since <SINCE>
+          Only slices merged at or after this RFC 3339 instant, e.g. 2026-10-15T00:00:00Z
+
+      --url <URL>
+          
+
+      --token-file <TOKEN_FILE>
+          A Runtime bearer token file; default `GRAPHHELM_TOKEN_FILE`
+
+  -h, --help
+          Print help
+
 ===== graphhelm tasks help --help
 Print this message or the help of the given subcommand(s)
 
@@ -4852,6 +4886,7 @@ Usage: graphhelm tasks help [COMMAND]
 Commands:
   run-ended   
   reconcile   
+  durations   How long each delivery step lasts (#1516): per-step median and p90 over the slices merged since `--since`, read from the Runtime's `GET /v1/executions/{id}/tasks` `durations`
   credential  Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token, derived from that token, the execution and the lane. Run by the owner or the orchestrator; the Runtime verifies it by recomputation, so no restart is needed
   help        Print this message or the help of the given subcommand(s)
 
@@ -4859,6 +4894,11 @@ Commands:
 Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token, derived from that token, the execution and the lane. Run by the owner or the orchestrator; the Runtime verifies it by recomputation, so no restart is needed
 
 Usage: graphhelm tasks help credential
+
+===== graphhelm tasks help durations --help
+How long each delivery step lasts (#1516): per-step median and p90 over the slices merged since `--since`, read from the Runtime's `GET /v1/executions/{id}/tasks` `durations`
+
+Usage: graphhelm tasks help durations
 
 ===== graphhelm tasks help help --help
 Print this message or the help of the given subcommand(s)

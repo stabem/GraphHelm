@@ -1931,6 +1931,18 @@ pub(super) async fn tasks(
     } else {
         execution::tasks::TasksDepth::Open
     };
+    // #1516: `?since=<rfc3339>` bounds the step-duration summary to slices merged since then.
+    let since = match query
+        .as_deref()
+        .unwrap_or("")
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("since="))
+        .map(|raw| execution::tasks::parse_since(&raw.replace("%3A", ":").replace("%3a", ":")))
+        .transpose()
+    {
+        Ok(since) => since,
+        Err(failure) => return respond_failure(COMMAND, failure),
+    };
     let Some(keyring) = state.sealing.clone() else {
         return respond_failure(
             COMMAND,
@@ -1946,7 +1958,7 @@ pub(super) async fn tasks(
         execution::tasks::with_shared_cache(&key, |cache| {
             execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
         })
-        .map(|view| view.at_depth(depth))
+        .map(|view| view.at_depth(depth, since.as_ref()))
     })
     .await
     else {

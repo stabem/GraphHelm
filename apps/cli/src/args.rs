@@ -145,6 +145,20 @@ pub enum TasksCommand {
         #[arg(long, default_value = "stabem/GraphHelm")]
         repo: String,
     },
+    /// How long each delivery step lasts (#1516): per-step median and p90 over the slices merged
+    /// since `--since`, read from the Runtime's `GET /v1/executions/{id}/tasks` `durations`.
+    Durations {
+        #[arg(long, default_value = "gh-team")]
+        execution: String,
+        /// Only slices merged at or after this RFC 3339 instant, e.g. 2026-10-15T00:00:00Z.
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long)]
+        url: Option<String>,
+        /// A Runtime bearer token file; default `GRAPHHELM_TOKEN_FILE`.
+        #[arg(long)]
+        token_file: Option<PathBuf>,
+    },
     /// Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token,
     /// derived from that token, the execution and the lane. Run by the owner or the orchestrator;
     /// the Runtime verifies it by recomputation, so no restart is needed.

@@ -26,6 +26,34 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 MAX_PRS_PER_STOP = 20
 
 
+def cursor_path(token_file, lane):
+    path = Path(token_file)
+    return path.with_name(f"{path.stem}.reconcile.{lane or 'shared'}.cursor")
+
+
+def rotate(pending, cursor):
+    """#1544: the backlog in a stable order, starting after the last PR the previous Stop checked,
+    so a window of unreadable or still-open PRs cannot hide the newer ones behind it."""
+    pending = sorted(pending)
+    after = [pr for pr in pending if pr > cursor]
+    return after + [pr for pr in pending if pr <= cursor]
+
+
+def read_cursor(path):
+    try:
+        value = int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return 0
+    return value if value > 0 else 0
+
+
+def write_cursor(path, value):
+    try:
+        path.write_text(str(value), encoding="utf-8")
+    except OSError:
+        pass  # local state only: a lost cursor restarts the rotation, it never blocks a Stop
+
+
 def get(url, token, lane=None):
     headers = {"Authorization": "Bearer " + token}
     if lane is not None:
@@ -252,16 +280,17 @@ def reconcile(args):
                         break
     done = []
     closed = []
-    checked = 0
     unreadable = []
-    for pr, (task_id, repo) in opened.items():
-        if (repo, pr) in finished:
-            continue
-        # #1520: at most MAX_PRS_PER_STOP of the oldest unfinished PRs per Stop, so a long backlog
-        # drains over several Stops; one unreadable PR is reported, never fatal to the rest.
-        if checked >= MAX_PRS_PER_STOP:
-            break
-        checked += 1
+    cursor_file = cursor_path(args.token_file, args.lane)
+    pending = [pr for pr, (_, repo) in opened.items() if (repo, pr) not in finished]
+    # #1520/#1544: at most MAX_PRS_PER_STOP unfinished PRs per Stop, rotating through the backlog
+    # from a cursor kept beside the token, so every PR is reached; one unreadable PR is reported,
+    # never fatal to the rest.
+    batch = rotate(pending, read_cursor(cursor_file))[:MAX_PRS_PER_STOP]
+    if batch:
+        write_cursor(cursor_file, batch[-1])
+    for pr in batch:
+        task_id, repo = opened[pr]
         try:
             result = github(pr, repo)
         except (OSError, ValueError, subprocess.SubprocessError):

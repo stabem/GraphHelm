@@ -578,6 +578,7 @@ def run(args: argparse.Namespace) -> int:
             if problems and not getattr(args, "skip_preflight", False):
                 report["status"] = "blocked"
                 work = []
+            keep_going, red = bool(getattr(args, "keep_going", False)), False
             while work:
                 remaining_budget = args.budget_seconds - (time.monotonic() - started)
                 if remaining_budget <= 0:
@@ -657,6 +658,10 @@ def run(args: argparse.Namespace) -> int:
                                                          "stepSeconds": child["elapsedSeconds"], "proofKey": keys[index],
                                                          "late": elapsed > args.budget_seconds,
                                                          "log": str(logfile), "tail": _tail(logfile)})
+                        if parsed["stopReason"] == "childFailure" and keep_going:
+                            red = True  # #1459: record the red, then run the batch's remaining steps
+                            work[0:0] = group[completed_count:]
+                            continue
                         if parsed["stopReason"] in {"childFailure", "spawnFailure"}:
                             report["status"] = "failed"
                             break
@@ -704,11 +709,16 @@ def run(args: argparse.Namespace) -> int:
                     report["status"] = "incomplete"
                     report["error"] = f"step {index} unittest discovered zero tests"
                     break
-                if result["returncode"]:
+                vitest_red = bool(result.get("error") and result.get("vitest") and result["vitest"]["failed"])
+                if keep_going and (result["returncode"] or vitest_red):
+                    red = True  # #1459: a red is recorded and the next step still runs
+                    if vitest_red:
+                        report["error"] = f"step {index} {result['error']}"
+                elif result["returncode"]:
                     report["status"] = "failed"
                     break
-                if result.get("error"):
-                    report["status"] = "failed" if result.get("vitest") and result["vitest"]["failed"] else "incomplete"
+                elif result.get("error"):
+                    report["status"] = "failed" if vitest_red else "incomplete"
                     report["error"] = f"step {index} {result['error']}"
                     break
                 if elapsed > args.budget_seconds:
@@ -716,7 +726,9 @@ def run(args: argparse.Namespace) -> int:
                     break
             else:
                 if report["status"] != "blocked":
-                    report["status"] = "passed" if not report["pending"] else "incomplete"
+                    report["status"] = "failed" if red else "passed" if not report["pending"] else "incomplete"
+            if red:
+                report["status"] = "failed"  # a later stop never hides a red that already ran
             report["queueSeconds"] = queue
             report["heldSeconds"] = held
         after = _git(repo, "rev-parse", "HEAD")
@@ -781,6 +793,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip-preflight", action="store_true",
                     help="run even when preflight finds a problem; the problems stay in the report")
     ap.add_argument("--json", action="store_true", help="print the full report instead of the short summary")
+    ap.add_argument("--keep-going", action="store_true",
+                    help="run every step after a failed one and report every red in one pass (status stays failed)")
     args = ap.parse_args(argv)
     if not 1 <= args.jobs <= 32:
         ap.error("--jobs must be between 1 and 32")

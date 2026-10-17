@@ -170,8 +170,12 @@ pub(crate) fn validate_task_event(
     // refused for every other signer below, in the shape check.
     let graphhelm_release =
         kind == "task.released" && document["releasedBy"].as_str() == Some("graphhelm");
+    // An owner release names the slice by its key; the owner signs and names itself in
+    // `releasedBy`, and `lane` is the slice's lane.
+    let key_release = kind == "task.released" && document.get("sliceKey").is_some();
+    let owner = actor.actor_type() == graphhelm_protocols::PersistedActorType::Owner;
     let identity = match kind {
-        "task.released" if graphhelm_release => Some("releasedBy"),
+        "task.released" if graphhelm_release || key_release => Some("releasedBy"),
         "task.claimed"
         | "task.planned"
         | "task.released"
@@ -308,6 +312,42 @@ pub(crate) fn validate_task_event(
                 "assignedBy",
                 "leaseSeconds",
             ],
+        ),
+        "task.released" if key_release => (
+            owner
+                && !graphhelm_release
+                && short("sliceKey", 256)
+                && short("lane", 128)
+                && document.get("claimSequence").is_none()
+                && is_actor("releasedBy")
+                && document["reason"].as_str().is_some_and(|reason| {
+                    !reason.is_empty()
+                        && reason.chars().count() <= 500
+                        && !reason.chars().any(char::is_control)
+                }),
+            &["lane", "sliceKey", "reason", "releasedBy"],
+        ),
+        "task.lane_retired" => (
+            owner
+                && document["lanes"].as_array().is_some_and(|lanes| {
+                    (1..=64).contains(&lanes.len())
+                        // An owner retiring its own id could never sign the restore.
+                        && lanes.iter().all(|lane| lane.as_str() != Some(actor_id))
+                        && lanes.iter().all(|lane| {
+                            lane.as_str().is_some_and(|lane| {
+                                !lane.is_empty()
+                                    && lane.chars().count() <= 128
+                                    && !lane.chars().any(char::is_control)
+                            })
+                        })
+                })
+                && document["retired"].is_boolean()
+                && document["reason"].as_str().is_some_and(|reason| {
+                    !reason.is_empty()
+                        && reason.chars().count() <= 500
+                        && !reason.chars().any(char::is_control)
+                }),
+            &["lanes", "retired", "reason"],
         ),
         "task.released" => (
             count("claimSequence")
@@ -469,6 +509,10 @@ pub(crate) fn validate_task_event(
         })
     });
     if common && fields && known {
+        validate_not_retired(actor_id, history, evidence)?;
+        if key_release {
+            return validate_key_release(&document, history, evidence);
+        }
         if kind == "task.claimed" {
             validate_claim_holder(&document, actor_id, history, evidence)?;
         }
@@ -667,22 +711,7 @@ fn validate_claim_holder(
     if !any_task_record {
         return Ok(());
     }
-    let Some((store, scope, keyring)) = evidence else {
-        return Err(super::signal_invalid(
-            "claim admission requires the sealed task records",
-            pointer,
-        ));
-    };
-    let execution = history
-        .first()
-        .map(|event| event.stream_id.as_str().to_owned())
-        .unwrap_or_default();
-    let budget = crate::commands::tasks_read_budget();
-    let key = super::tasks::cache_key(store.root(), &execution);
-    let view = super::tasks::with_shared_cache(&key, |cache| {
-        super::tasks::read_history(store, scope, history, &execution, keyring, &budget, cache)
-    })
-    .map_err(|_| super::signal_invalid("task history cannot be read; claim refused", pointer))?;
+    let view = task_view(history, evidence, "claim", pointer)?;
     let task_id = document["taskId"].as_str().unwrap_or_default();
     if let Some(slice) = super::tasks::holder(&view.tasks, &view.leases, task_id, lane) {
         let holder = slice.lane.as_deref().unwrap_or_default();
@@ -697,6 +726,100 @@ fn validate_claim_holder(
                 pointer,
             ));
         }
+    }
+    Ok(())
+}
+
+/// The tasks route's fold over `history`, read through the process's shared record cache, so
+/// admission and the board agree. Fails closed: no keyring, or a read that fails, refuses `what`.
+fn task_view(
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+    what: &str,
+    pointer: &str,
+) -> Result<super::tasks::TasksView, Failure> {
+    let Some((store, scope, keyring)) = evidence else {
+        return Err(super::signal_invalid(
+            &format!("{what} admission requires the sealed task records"),
+            pointer,
+        ));
+    };
+    let execution = history
+        .first()
+        .map(|event| event.stream_id.as_str().to_owned())
+        .unwrap_or_default();
+    let budget = crate::commands::tasks_read_budget();
+    let key = super::tasks::cache_key(store.root(), &execution);
+    super::tasks::with_shared_cache(&key, |cache| {
+        super::tasks::read_history(store, scope, history, &execution, keyring, &budget, cache)
+    })
+    .map_err(|_| {
+        super::signal_invalid(
+            &format!("task history cannot be read; {what} refused"),
+            pointer,
+        )
+    })
+}
+
+/// A lane the owner retired records nothing until a later `task.lane_retired` restores it. Read
+/// only when the log holds a retirement, so a run without one pays nothing.
+fn validate_not_retired(
+    actor_id: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+) -> Result<(), Failure> {
+    let any_retirement = history.iter().any(|event| {
+        matches!(&event.kind, EventKind::SignalRecorded(recorded) if recorded.kind == "task.lane_retired")
+    });
+    if !any_retirement {
+        return Ok(());
+    }
+    let pointer = "/signal/source/id";
+    let view = task_view(history, evidence, "task record", pointer)?;
+    if view.retired_lanes.iter().any(|lane| lane == actor_id) {
+        return Err(super::signal_invalid(
+            &format!(
+                "lane {actor_id} is retired; the owner restores it with task.lane_retired retired: false"
+            ),
+            pointer,
+        ));
+    }
+    Ok(())
+}
+
+/// An owner release by slice key names a slice the tasks route serves as open: that key, task
+/// and lane, not released and not merged.
+fn validate_key_release(
+    document: &serde_json::Value,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+) -> Result<(), Failure> {
+    let pointer = "/signal/description/sliceKey";
+    let view = task_view(history, evidence, "release", pointer)?;
+    let open = view.tasks.iter().any(|slice| {
+        slice.key == document["sliceKey"]
+            && slice.task_id == document["taskId"]
+            && slice.lane.as_deref() == document["lane"].as_str()
+            && slice.released_by.is_none()
+            && slice.step != graphhelm_execution::tasks::TaskStep::Merged
+    });
+    if !open {
+        return Err(super::signal_invalid(
+            "no open slice of this task and lane has that key; read the keys from the tasks route",
+            pointer,
+        ));
     }
     Ok(())
 }

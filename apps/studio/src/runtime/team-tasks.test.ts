@@ -30,6 +30,23 @@ function event(seq: number, phase: "created" | "completed", evidence: EvidenceCo
   return { sequence: seq, kind: "signal_recorded", payload: { kind: `agent_task_${phase}`, sourceId: actor, sourceKind: "tool", signalId: `signal-${phase}`, envelopeSha256: evidence.contentSha256 }, occurredAt: null, actorId: actor, actorType: "agent", idempotencyKey: null, eventId: `event-${seq}`, evidenceRefs: [evidence.evidenceId] };
 }
 
+// #1424: the owner's retirement and key release parse like the Runtime's fold reads them.
+// Catches a parser that drops either record or keeps a malformed one. Cost: five parses.
+describe("parseTaskEvent owner records", () => {
+  const head = { schema: "graphhelm-task-event-v1", taskId: "lanes", revision: 1, at: "2026-10-16T00:00:00Z" };
+  it("reads task.lane_retired and task.released by key, and refuses malformed ones", () => {
+    const retire = { ...head, lanes: ["lane-r"], retired: true, reason: "subscription ended" };
+    expect(parseTaskEvent("task.lane_retired", "orchestrator", JSON.stringify(retire)))
+      .toEqual({ actorId: "orchestrator", taskId: "lanes", kind: "task.lane_retired", lanes: ["lane-r"], retired: true, reason: "subscription ended" });
+    expect(parseTaskEvent("task.lane_retired", "orchestrator", JSON.stringify({ ...retire, lanes: [] }))).toBeNull();
+    expect(parseTaskEvent("task.lane_retired", "orchestrator", JSON.stringify({ ...retire, retired: "yes" }))).toBeNull();
+    const key = { ...head, taskId: "issue-62", lane: "lane-g", sliceKey: "issue-62#claim-0", reason: "stopped", releasedBy: "orchestrator" };
+    expect(parseTaskEvent("task.released", "orchestrator", JSON.stringify(key)))
+      .toEqual({ actorId: "orchestrator", taskId: "issue-62", kind: "task.released", lane: "lane-g", sliceKey: "issue-62#claim-0", reason: "stopped", releasedBy: "orchestrator" });
+    expect(parseTaskEvent("task.released", "lane-x", JSON.stringify(key))).toBeNull();
+  });
+});
+
 describe("readClaudeTasks", () => {
   it("verifies sealed create and completion events but labels them as observations", async () => {
     const created = await sealed("created", "ev-created", "planner");

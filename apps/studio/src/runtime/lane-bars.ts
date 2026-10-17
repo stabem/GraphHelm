@@ -118,6 +118,15 @@ export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, 
   for (const e of [...events].sort((a, b) => a.sequence - b.sequence)) {
     const t = Date.parse(e.at);
     if (!Number.isFinite(t)) continue;
+    // #1424: a retirement routes to no slice; it ends every bar the retired lanes hold and every
+    // bar on a slice they authored (a live reviewer's review of a retired author's PR).
+    if (e.kind === "task.lane_retired") {
+      if (e.retired) for (const [k, v] of [...open]) {
+        if (!e.lanes?.includes(v.lane) && !e.lanes?.includes(authorOf.get(v.slice) ?? "")) continue;
+        finish(v.bar, t); v.bar.endedBy = { kind: "lane_retired", actor: e.actorId }; open.delete(k);
+      }
+      continue;
+    }
     const slice = routed.get(e.sequence);
     if (slice === undefined) continue;
     // Ending records describe the boundary, not continuous work in the gap before it.
@@ -188,7 +197,11 @@ export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, 
     switch (e.kind) {
       case "task.claimed": if (e.lane) start(e.lane, "implement", e.taskId, slice, t); break;
       case "task.pr_opened": if (author && pr !== undefined) laneOf(author).awaiting.add(pr); break;
-      case "task.released": close("implement", slice, t, e, e.lane); break;
+      case "task.released":
+        // An owner release by key ends the whole slice, whoever holds its bars.
+        if (e.sliceKey !== undefined) for (const k of ["implement", "review", "merge"] as const) close(k, slice, t, e);
+        else close("implement", slice, t, e, e.lane);
+        break;
       case "task.review_assigned":
         close("implement", slice, t, e);
         if (e.headSha !== undefined && sameHead(e.headSha, headOf.get(slice))) close("review", slice, t, e);

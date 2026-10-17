@@ -55,6 +55,8 @@ pub struct TasksView {
     /// #1469: the newest `task.queued` record's open wave issues no live slice holds, oldest
     /// first: the Lanes Backlog. Empty when no issue list was recorded.
     pub backlog: Vec<QueuedIssue>,
+    /// The lanes the owner retired (`task.lane_retired`); the signal door refuses their records.
+    pub retired_lanes: Vec<String>,
 }
 
 /// How much of the fold a read answers. `Open` is every door's default: a long-lived run's
@@ -567,6 +569,12 @@ pub(crate) fn read_history(
                 event.sequence,
                 Some(event.occurred_at.clone()),
             )
+            // A release by slice key and a lane retirement are the owner's records only.
+            .filter(|parsed| {
+                (parsed.slice_key.is_none()
+                    && parsed.kind != graphhelm_execution::tasks::TaskEventKind::LaneRetired)
+                    || event.actor.actor_type() == graphhelm_protocols::PersistedActorType::Owner
+            })
         })();
         cache.outcomes.insert(event.sequence, verified.clone());
         match verified {
@@ -587,7 +595,11 @@ pub(crate) fn read_history(
             event.occurred_at.clone(),
         );
     }
-    let liveness = liveness(&fold.tasks, &records, &last_by_actor, &now);
+    let mut liveness = liveness(&fold.tasks, &records, &last_by_actor, &now);
+    // A retired lane owes nothing and is judged neither silent nor free.
+    liveness
+        .lanes
+        .retain(|row| !fold.retired_lanes.contains(&row.lane));
     let stalls = stalled_tasks(&fold.tasks, &now);
     let backlog = backlog(&records, &fold.tasks);
     Ok(TasksView {
@@ -604,6 +616,7 @@ pub(crate) fn read_history(
         liveness,
         stalls,
         backlog,
+        retired_lanes: fold.retired_lanes,
     })
 }
 

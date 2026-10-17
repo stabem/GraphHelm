@@ -128,6 +128,10 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
       {"targetRoot": "C:/gh", "cap": 3, "minFreeGb": 20}
 
+  Put `targetRoot` on the volume with the most free space (the shared machine uses `D:/ghc`; the
+  system drive `C:` fell below the floor and refused a review, #1532). Changing `targetRoot`
+  does not move existing targets: each old record is kept as `target_root_changed`, so remove the
+  old root's directories of retired lanes by hand, and never one a live process still builds in.
   With it the slot runs the command with
   `CARGO_TARGET_DIR=<targetRoot>\<lane>\<worktree directory name>\target`, records that
   directory, and holds each lane to `cap` of them (default 3): a run that would start one more is

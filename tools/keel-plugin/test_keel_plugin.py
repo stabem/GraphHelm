@@ -53,6 +53,22 @@ class KeelPlugin(unittest.TestCase):
                 self.assertEqual(text(PLUGIN / "skills" / skill / "SKILL.md"), sync.render(skill),
                                  f"{skill} was edited by hand: run python tools/keel-plugin/sync_keel_plugin.py")
 
+    def test_the_sync_leaves_a_crlf_checkout_of_the_same_text_untouched(self):
+        # #1459 item 13: on a Windows checkout (core.autocrlf) every generated file is CRLF on disk.
+        # Rewriting it as LF changes no content but makes the worktree dirty, and the reached plan
+        # then refuses to run. A file whose text already matches keeps its bytes; a changed one is
+        # still written.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "SKILL.md"
+            path.write_bytes(b"line one\r\nline two\r\n")
+            self.assertFalse(sync.write_text(path, "line one\nline two\n"))
+            self.assertEqual(path.read_bytes(), b"line one\r\nline two\r\n")
+            self.assertTrue(sync.write_text(path, "line one\nline 2\n"))
+            self.assertEqual(path.read_bytes(), b"line one\nline 2\n")
+            fresh = Path(directory) / "new" / "KEEL.md"
+            self.assertTrue(sync.write_text(fresh, "a\n"))
+            self.assertEqual(fresh.read_bytes(), b"a\n")
+
     def test_the_graphhelm_keel_skill_carries_the_same_execute_rules(self):
         # The development-contracts `keel` skill must stay self-contained (no dependency on another
         # plugin), so it embeds the execute step's text: written by the same sync, from the same file.

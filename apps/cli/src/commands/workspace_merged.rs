@@ -6,6 +6,9 @@
 //! this order: stop the processes inside it, unlink links without following them, save
 //! uncommitted work to `<leftovers>/<PR>/`, then `git worktree remove --force`.
 //!
+//! A worktree git reports as locked is never touched: a harness locks a live session's own
+//! worktree. It is listed under `held` with the lock reason, and the run is not ok (exit 3).
+//!
 //! One exception: a `--keep-worktree` (a lane's single reused review worktree) is kept and only
 //! moved off the PR to `--base`; its shared target is never named, so it is kept too. Nothing
 //! the command did not select is touched, and `git worktree prune` is not run: it would drop
@@ -27,6 +30,9 @@ struct Worktree {
     path: PathBuf,
     head: String,
     branch: Option<String>,
+    /// `Some(reason)` when git reports the worktree locked; a harness locks its own live worktree
+    /// (`locked claude agent <id> (pid N)`, or `locked initializing`) and the sweep never takes it.
+    locked: Option<String>,
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
@@ -50,6 +56,7 @@ fn worktrees(repo: &Path) -> Result<Vec<Worktree>, String> {
         let mut path = None;
         let mut head = String::new();
         let mut branch = None;
+        let mut locked = None;
         for line in block.lines() {
             if let Some(p) = line.strip_prefix("worktree ") {
                 path = Some(PathBuf::from(p));
@@ -57,10 +64,19 @@ fn worktrees(repo: &Path) -> Result<Vec<Worktree>, String> {
                 h.clone_into(&mut head);
             } else if let Some(b) = line.strip_prefix("branch ") {
                 branch = Some(b.to_owned());
+            } else if line == "locked" {
+                locked = Some(String::new());
+            } else if let Some(reason) = line.strip_prefix("locked ") {
+                locked = Some(reason.to_owned());
             }
         }
         if let Some(path) = path {
-            found.push(Worktree { path, head, branch });
+            found.push(Worktree {
+                path,
+                head,
+                branch,
+                locked,
+            });
         }
     }
     Ok(found)
@@ -262,7 +278,15 @@ pub(crate) fn run(args: &WorkspaceSweepArgs) -> Outcome {
     };
     let mut removed = Vec::new();
     let mut kept = Vec::new();
+    let mut held = Vec::new();
     for worktree in all.iter().skip(1).filter(|w| selected(w)) {
+        if let Some(reason) = &worktree.locked {
+            // #1459 item 17: a locked worktree may be a live session's; its processes are never
+            // stopped and it is never removed. It is reported, and the cleanup is not ok.
+            held.push(json!({"path": show(&worktree.path), "reason": reason,
+                "processes": graphhelm_process_tree::processes_inside(&worktree.path).len()}));
+            continue;
+        }
         let name = worktree.path.file_name().map_or_else(
             || "worktree".to_owned(),
             |n| n.to_string_lossy().into_owned(),
@@ -303,14 +327,20 @@ pub(crate) fn run(args: &WorkspaceSweepArgs) -> Outcome {
             Err(message) => json!({"name": branch, "removed": false, "error": message}),
         }
     };
-    let ok = [&removed, &kept, &targets]
-        .iter()
-        .all(|rows| rows.iter().all(|r| r.get("error").is_none()))
+    let ok = held.is_empty()
+        && [&removed, &kept, &targets]
+            .iter()
+            .all(|rows| rows.iter().all(|r| r.get("error").is_none()))
         && branch_row.get("error").is_none();
-    Outcome::success(
+    let mut outcome = Outcome::success(
         COMMAND,
         json!({"mergedBranch": branch, "applied": args.apply, "ok": ok,
-            "leftovers": show(&leftovers), "removed": removed, "kept": kept,
+            "leftovers": show(&leftovers), "removed": removed, "kept": kept, "held": held,
             "targets": targets, "branch": branch_row}),
-    )
+    );
+    if !ok {
+        // #1459 item 17: an incomplete cleanup must not read as success to a script or merger.
+        outcome.exit_code = 3;
+    }
+    outcome
 }

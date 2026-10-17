@@ -5,6 +5,7 @@ nobody depends on, a cli test bundle, and one embedded schema. The repository-bu
 offline Cargo metadata. Each case is a real diff shape from this repository.
 """
 import json
+import subprocess
 import io
 import sys
 import tempfile
@@ -1322,6 +1323,19 @@ class CliModules(unittest.TestCase):
         for path in ("apps/cli/src/main.rs", "apps/cli/src/commands/mod.rs", "apps/cli/src/commands/hash.rs"):
             whole, _, *_ = rt.reach([path], packages, {}, root)
             self.assertEqual(whole, {"graphhelm-cli"}, path)
+
+
+class RootFiles(unittest.TestCase):
+
+    def test_every_tracked_root_file_maps_to_a_test_or_an_explicit_no_test_entry(self):
+        # #1459 item 19: a root Dockerfile landed with no rule and stopped the post-merge main run.
+        repo = Path(__file__).resolve().parents[2]
+        listed = subprocess.run(["git", "ls-files", "-z"], cwd=repo, capture_output=True, text=True,
+                                check=True, creationflags=rt.NO_WINDOW).stdout.split(chr(0))
+        roots = sorted(path for path in listed if path and "/" not in path)
+        self.assertIn("Dockerfile", roots)
+        unmapped = [path for path in roots if rt.reach([path], PACKAGES, EMBEDDED, repo)[5]]
+        self.assertEqual([], unmapped)
 
 
 if __name__ == "__main__":

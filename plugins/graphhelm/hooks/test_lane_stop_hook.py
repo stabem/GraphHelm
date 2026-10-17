@@ -387,6 +387,23 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["inspected"], 1)
         github.assert_called_once_with(9001, "stabem/GraphHelm")
 
+    def test_backlog_over_the_cap_is_rotated_so_every_pr_is_checked_within_two_stops(self):
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"],
+                    "repo": "stabem/GraphHelm", "lane": "codex-rot"})()
+        events = [("task.pr_opened", {"taskId": f"issue-{n}", "pr": n, "lane": "codex-4",
+                   "repo": "stabem/GraphHelm"}, {}) for n in range(9001, 9026)]
+        seen = []
+
+        def still_open(pr, repo):
+            seen.append(pr)
+            return {"state": "OPEN", "mergedAt": None, "body": ""}
+        for _ in range(2):
+            with mock.patch.object(tasks_reconcile, "records", return_value=events),                  mock.patch.object(tasks_reconcile, "github", side_effect=still_open):
+                tasks_reconcile.reconcile(args)
+        self.assertLessEqual(len(seen) - len(set(seen)), tasks_reconcile.MAX_PRS_PER_STOP)
+        self.assertEqual(set(seen), set(range(9001, 9026)))
+
     def test_closed_unmerged_pr_without_lane_does_not_post_or_crash(self):
         args = type("Args", (), {"execution": "lane-test", "url": self.url,
                     "token_file": self.env["GRAPHHELM_TOKEN_FILE"],

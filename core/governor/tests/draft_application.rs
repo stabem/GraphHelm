@@ -1484,6 +1484,10 @@ fn repository_bytes(root: &Path) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// The binding a #1045 cell puts on the draft: (`expectedHash`, `expectedSafeHash`), given the base
+/// and the safe hash its published projection exposes.
+type Binding = fn(&GraphVersion, &str) -> (Option<SemanticHash>, Option<SemanticHash>);
+
 /// #1045 (B1): a draft binds its predecessor by exactly one hash. The safe semantic hash the
 /// published version exposes binds as the content hash does; a different safe hash, both hashes,
 /// or neither is refused as stale and publishes nothing. Credible regression: a lane that can only
@@ -1492,52 +1496,50 @@ fn repository_bytes(root: &Path) -> String {
 #[test]
 fn a_draft_binds_its_predecessor_by_exactly_one_hash_and_the_safe_one_is_checked() {
     let base = base();
-    let attempt =
-        |binding: fn(&GraphVersion, &str) -> (Option<SemanticHash>, Option<SemanticHash>)| {
-            let directory = TestDirectory::new();
-            let repository = LocalEventRepository::open(
-                &directory.0,
-                Arc::new(FixedClock),
-                Arc::new(Ids::default()),
-            )
+    let attempt = |binding: Binding| {
+        let directory = TestDirectory::new();
+        let repository = LocalEventRepository::open(
+            &directory.0,
+            Arc::new(FixedClock),
+            Arc::new(Ids::default()),
+        )
+        .unwrap();
+        let externalizer = SealingGraphExternalizer::new(EvidenceProtector::new(FixedKeyProvider));
+        seed_base(&repository, &base, &externalizer);
+        // The safe hash a lane reads: version 1's published projection, from the replay stream.
+        let published = repository
+            .read_replay_stream(&scope(&base), "execution-draft")
+            .unwrap()
+            .into_iter()
+            .find_map(|event| match event.kind {
+                EventKind::GraphVersionPublished(value) => Some(value),
+                _ => None,
+            })
             .unwrap();
-            let externalizer =
-                SealingGraphExternalizer::new(EvidenceProtector::new(FixedKeyProvider));
-            seed_base(&repository, &base, &externalizer);
-            // The safe hash a lane reads: version 1's published projection, from the replay stream.
-            let published = repository
-                .read_replay_stream(&scope(&base), "execution-draft")
-                .unwrap()
-                .into_iter()
-                .find_map(|event| match event.kind {
-                    EventKind::GraphVersionPublished(value) => Some(value),
-                    _ => None,
-                })
-                .unwrap();
-            let (expected_hash, expected_safe_hash) =
-                binding(&base, published.version.semantic_hash().as_str());
-            let mut proposed = draft(&base);
-            proposed.expected_hash = expected_hash;
-            proposed.expected_safe_hash = expected_safe_hash;
-            let ids = Ids::default();
-            let services = ApplyServices {
-                event_repository: &repository,
-                scope: scope(&base),
-                stream_id: OpaqueId::parse("execution-draft").unwrap(),
-                actor: Actor::new(ActorType::Owner, "owner-local"),
-                clock: &FixedClock,
-                ids: &ids,
-                externalizer: &externalizer,
-            };
-            let result = block_on(apply_draft(&base, &proposed, &services))
-                .map(|applied| applied.version.number());
-            let active = repository
-                .active_version(&scope(&base), "execution-draft")
-                .unwrap()
-                .unwrap()
-                .number;
-            (result.map_err(|error| error.code()), active)
+        let (expected_hash, expected_safe_hash) =
+            binding(&base, published.version.semantic_hash().as_str());
+        let mut proposed = draft(&base);
+        proposed.expected_hash = expected_hash;
+        proposed.expected_safe_hash = expected_safe_hash;
+        let ids = Ids::default();
+        let services = ApplyServices {
+            event_repository: &repository,
+            scope: scope(&base),
+            stream_id: OpaqueId::parse("execution-draft").unwrap(),
+            actor: Actor::new(ActorType::Owner, "owner-local"),
+            clock: &FixedClock,
+            ids: &ids,
+            externalizer: &externalizer,
         };
+        let result = block_on(apply_draft(&base, &proposed, &services))
+            .map(|applied| applied.version.number());
+        let active = repository
+            .active_version(&scope(&base), "execution-draft")
+            .unwrap()
+            .unwrap()
+            .number;
+        (result.map_err(|error| error.code()), active)
+    };
 
     // The published safe hash binds, and the successor is published.
     assert_eq!(

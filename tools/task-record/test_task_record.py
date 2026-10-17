@@ -643,6 +643,33 @@ class TimeoutAndFullHead(unittest.TestCase):
             self.assertEqual(args.head, head)
 
 
+class DifferentPayloadIsNotAlreadyRecorded(unittest.TestCase):
+    """#1548: GHE003 on a merged record is 'already recorded' only when the stored record is this one."""
+
+    CONFLICT = {"ok": False, "diagnostics": [{"code": "GHE003_IDEMPOTENCY_CONFLICT", "severity": "error"}]}
+
+    def send(self, stored_sha, sent_sha="c" * 40):
+        args = SimpleNamespace(lane="l", kind="merged", repo="r", pr=7, issue=1, comment_url=None,
+                               url="http://127.0.0.1:1", execution="e", dry_run=False, token_file="t")
+        doc = {"taskId": "issue-1", "pr": 7, "mergeSha": sent_sha, "closes": [1], "merger": "l", "at": "now"}
+        stored = {"description": json.dumps({**doc, "mergeSha": stored_sha, "at": "earlier"})}
+        with patch.object(task_record, "read_credential", return_value="x"), \
+                patch.object(task_record, "read_execution_history", return_value=[({}, "task.merged", stored)]), \
+                patch.object(task_record.urllib.request, "urlopen",
+                             side_effect=lambda request, timeout: io.BytesIO(json.dumps(self.CONFLICT).encode())):
+            return task_record.send(args, doc, "now")
+
+    def test_same_payload_is_already_recorded(self):
+        self.assertEqual(self.send("c" * 40)[0], 2)
+
+    def test_a_different_merge_sha_exits_naming_the_stored_one(self):
+        with self.assertRaises(SystemExit) as stop:
+            self.send("d" * 40)
+        message = str(stop.exception)
+        self.assertIn("differs from this one", message)
+        self.assertIn("d" * 40, message)
+
+
 class ClosesAsGiven(unittest.TestCase):
     """#464: `closes` is exactly the issues the merge closed. The default `[--issue]` recorded
     "closes #356" for PR #456, a `Refs #356` merge, and `--closes` with no numbers could not say none."""

@@ -2618,7 +2618,7 @@ fn the_owner_releases_a_slice_by_key_and_retires_a_lane() {
         }
         base
     };
-    // The full view: the one the Studio's Lanes reads, and the only one serving the backlog.
+    // The full view: the one the Studio's Lanes reads, and the whole history.
     let tasks = || {
         get_json(
             &format!("{base}/v1/executions/{execution}/tasks?full=1"),
@@ -2780,6 +2780,14 @@ fn the_owner_releases_a_slice_by_key_and_retires_a_lane() {
             .collect()
     };
     assert_eq!(backlog(&tasks()), [99], "held issues stay out");
+    // The default open view serves the backlog too (#1469): MCP and CLI readers never ask for `full`.
+    let open_view = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    )["data"]
+        .clone();
+    assert_eq!(open_view["view"], "open", "{open_view}");
+    assert_eq!(backlog(&open_view), [99], "{open_view}");
 
     let retire = |retired: bool| {
         with(

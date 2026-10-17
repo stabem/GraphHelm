@@ -2114,8 +2114,14 @@ fn each_line_rule_blocks_its_break_and_passes_its_fix_in_each_language() {
         (
             "keel.rel.deadline",
             "src/lib.rs",
-            "let out = std::process::Command::new(\"git\").output();",
-            "let out = run_bounded(std::process::Command::new(\"git\"), LIMIT);",
+            concat!(
+                "let out = std::process::Command",
+                "::new(\"git\").output();"
+            ),
+            concat!(
+                "let out = run_bounded(std::process::Command",
+                "::new(\"git\"), LIMIT);"
+            ),
         ),
         (
             "keel.rel.deadline",

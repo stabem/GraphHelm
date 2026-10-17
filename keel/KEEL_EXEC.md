@@ -54,7 +54,11 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
 7. **Report what you saw, not what you hoped.** Passed, failed, skipped and unobserved are four
    different lines. A proxy (another OS, a mock, an emulator, a test compiled out on this host) is
    not an observation. Mock only the clock, randomness and I/O at a named boundary.
-8. **No observer, no claim.** When the promise cannot be observed on this host, change nothing
+8. **A step that should run itself and does not gets its own issue.** A manual workaround, a stale
+   record, a check no test caught or a tool that failed: search for an open issue or PR first, then
+   open one at once saying what should have happened automatically, what happened, the evidence and
+   the shape of the fix. Review findings stay comments on the PR.
+9. **No observer, no claim.** When the promise cannot be observed on this host, change nothing
    more, say what is missing and end with `OBSERVER_MISSING: <what is missing>`. Never write
    "verified" for what you did not observe.
 

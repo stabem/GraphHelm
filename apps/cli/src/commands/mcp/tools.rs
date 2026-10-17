@@ -60,7 +60,7 @@ const TOOLS: [ToolSpec; 47] = [
     },
     ToolSpec {
         name: "tasks",
-        description: "Read a run's open task board (GET /v1/executions/{executionId}/tasks): each open task's step, lane, issue, PR, head, BLOCK and heartbeat. Optional lane or issue narrows it to one lane's or issue's tasks (a few KB). Read-only.",
+        description: "Read a run's open task board (GET /v1/executions/{executionId}/tasks): each open task's step, lane, issue, PR, head, BLOCK, heartbeat. lane or issue narrows it (a few KB). Read-only.",
         schema: tasks_schema,
     },
     ToolSpec {

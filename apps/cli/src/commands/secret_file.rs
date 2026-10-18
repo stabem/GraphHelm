@@ -224,6 +224,42 @@ pub(crate) fn read_existing(path: &Path, what: &str) -> Result<String, SecretFil
     read_validated(path, what)
 }
 
+/// #1523: a secret file only its owner may read, checked on every platform. On top of
+/// [`read_existing`]'s rules it refuses any Windows reparse point and, on Windows, reads the
+/// handle's DACL back: only the owner, SYSTEM and Administrators, protected from inheritance, and
+/// owned by the calling user (`graphhelm_sealed_key_provider::verify_owner_only`, the keyring's
+/// own check). Unix keeps the no-group-or-world rule. Messages name the role and the rule, never
+/// the bytes.
+pub(crate) fn read_owner_only(path: &Path, what: &str) -> Result<String, SecretFileError> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|_| SecretFileError::new(what, "could not be read"))?;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(SecretFileError::new(
+                what,
+                "must not be a link or other reparse point",
+            ));
+        }
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|_| SecretFileError::new(what, "could not be read"))?;
+        if graphhelm_sealed_key_provider::verify_owner_only(&file).is_err() {
+            return Err(SecretFileError::new(
+                what,
+                "must be readable only by its owner, SYSTEM and Administrators, with inheritance \
+                 turned off",
+            ));
+        }
+    }
+    read_validated(path, what)
+}
+
 /// The read-side safety checks, narrowed from `events/config.rs`'s `read_bounded` to what a
 /// fixed 64-character hex secret needs.
 fn read_validated(path: &Path, what: &str) -> Result<String, SecretFileError> {

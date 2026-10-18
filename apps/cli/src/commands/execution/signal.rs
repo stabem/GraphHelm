@@ -138,8 +138,19 @@ fn run_from_file(
     )
 }
 
+/// #1523: the key `serve --events-key-file` read at start, held only in this process's memory.
+/// It is never put in the environment, so no child process inherits it.
+static KEY_FROM_FILE: std::sync::OnceLock<zeroize::Zeroizing<String>> = std::sync::OnceLock::new();
+
+/// Installs the key `serve` read from `--events-key-file`; used by every later seal in place of
+/// `GRAPHHELM_EVENTS_KEY`. Only the first call in a process takes effect.
+pub(crate) fn use_key_from_file(hex: String) {
+    let _ = KEY_FROM_FILE.set(zeroize::Zeroizing::new(hex));
+}
+
 /// Mirrors `commands::events::config`'s provider construction: the 32-byte key never rides a
-/// flag — it arrives out of band via `GRAPHHELM_EVENTS_KEY` as 64 lowercase hex characters.
+/// flag — it arrives out of band via `GRAPHHELM_EVENTS_KEY` as 64 lowercase hex characters, or
+/// (#1523) from the owner-only file `serve --events-key-file` named.
 ///
 /// `pub(crate)` so `serve` can pre-flight the same open at startup when `--keyring` is given
 /// (PR #1070 review): before that, a missing variable or a wrong `--key-id` produced a healthy
@@ -153,7 +164,12 @@ pub(crate) fn open_sealer(
             "/keyring",
         )
     };
-    let encoded = std::env::var("GRAPHHELM_EVENTS_KEY").map_err(|_| invalid())?;
+    let encoded = match KEY_FROM_FILE.get() {
+        Some(hex) => zeroize::Zeroizing::new(hex.as_str().to_owned()),
+        None => {
+            zeroize::Zeroizing::new(std::env::var("GRAPHHELM_EVENTS_KEY").map_err(|_| invalid())?)
+        }
+    };
     if encoded.len() != 64
         || !encoded
             .chars()

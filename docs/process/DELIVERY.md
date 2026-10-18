@@ -79,7 +79,16 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 - an unfiltered single selection of that same `cli` target uses the same metadata-backed partition;
   it cannot fall back to one broad command;
 - `tests/support/` or a fixture reaches its package's tests;
-- a crate's source reaches that crate and every crate that depends on it;
+- a crate's source reaches that crate and every crate that depends on it, except an
+  `apps/cli/src/commands/<module>` change (a directory's `mod.rs` counts as its module): it reaches
+  `--bin graphhelm commands::<module>::`, the `cli` modules that name its command (a submodule no
+  test names falls back to its command; `CLI_COMMAND_WORDS` in the selector lists the modules whose
+  command has another name) and the audited source readers (#1608). Shared files (`main.rs`,
+  `args.rs`, `commands/mod.rs`, the envelope and rendering files) and unmapped helpers still reach
+  the whole package, so a gap is never silently skipped;
+- the CLI help golden (`args_help_golden`) is reached by its fixture, by its source, and by any
+  file that derives clap argument types; the protocols `canonical_golden` is reached by every
+  `extensions/` and `schemas/` path and by any protocols source change;
 - a file a crate embeds (`include_str!`) reaches that crate, and an extension package reaches the
   tests that read it at run time plus `graphhelm extension validate`;
 - Studio files reach `npx vitest related` for those files plus `tsc`, and a `tools/<tool>/` change
@@ -92,6 +101,9 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
   path by hand. If the computed set misses an obligation, name the extra check and why it is
   needed in the card before running it. A full-package or whole-suite run is allowed only when
   the card names it and explains why, including when the script prints a whole-package command.
+  Lanes do not pass `--allow-whole-package` by default (#1608): the whole `graphhelm-cli` package
+  runs once per main change in the scheduled main whole run (#1540), which reports a red on the
+  board, so a lane runs only what its diff reaches.
 - Run Studio checks (`vitest`, `tsc`, npm scripts) only when `apps/studio` or something it imports
   is reached. Run `npm ci --prefer-offline --no-audit --no-fund` in that worktree's `apps/studio`
   only when `node_modules` is missing or `package-lock.json` changed; otherwise reuse it. Use

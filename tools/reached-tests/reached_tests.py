@@ -58,6 +58,30 @@ RUNTIME_READERS = {
     ".graphhelm/journeys/": [("graphhelm-cli", "journey_scope_guard")],
     # The MCP tool catalog: the stdio tests serve it, and the Studio's WebMCP adapter imports it.
     "schemas/mcp-tools.json": [("graphhelm-cli", "mcp_stdio")],
+    # #1608: a schema change can move the canonical form the golden pins (#1403 turned main red
+    # unseen); the golden is one cheap target, so every schema path reaches it.
+    "schemas/": [("graphhelm-protocols", "canonical_golden")],
+}
+# #1608: the CLI help golden (`args_help_golden`, a bin unit-test module) pins `--help` for the whole
+# command tree. Its fixture and its own source reach only it; a source file that derives clap
+# argument types reaches it too (#1468 changed help text and turned main red unseen).
+HELP_GOLDEN = (CLI, f"bin:{CLI_BIN}", "args_help_golden")
+HELP_GOLDEN_PATHS = ("apps/cli/tests/fixtures/help/", "apps/cli/src/args_help_golden.rs")
+CLAP_DERIVE = re.compile(r"derive\([^)]*\b(?:Parser|Args|Subcommand|ValueEnum)\b")
+# #1608: the CLI words of the `commands` modules whose file name is not the command they run, as
+# alternatives (any one word list, every word of it a quoted literal in the test). Everything else
+# is derived from the module path. Deliberately absent, so they keep the whole package:
+# - `atomic`, `hex_key`, `remediation`: helpers no command is named after; many modules build on
+#   them, so no word list would bound what they reach.
+# - `main.rs`, `args.rs`, `commands/mod.rs`, `output.rs`, `human.rs`, `palette.rs`, `progress.rs`,
+#   `error_codes.rs`: shared by every command (parsing, dispatch, envelope, rendering, codes), so
+#   they truly reach every test; `args.rs` also holds every command's help text.
+CLI_COMMAND_WORDS = {
+    "adoption": (("setup",), ("backup",), ("restore",)),
+    "architect": (("synthesize",),),
+    "development_index": (("code-index",),),
+    "wake_wait": (("wake-wait",),),
+    "workspace_merged": (("--merged-branch",),),
 }
 LAUNCHER_TESTS = f"cargo {TOOLCHAIN} test --locked -p graphhelm-cli --bin graphhelm {TEST_THREADS} commands::studio::tests::the_launcher_"
 MCP_CATALOG_STUDIO_TEST = "apps/studio/src/webmcp/mcp-tools.test.ts"
@@ -353,7 +377,7 @@ def cli_module(packages, p, rel, root):
     importers. None (the whole package) for a change to a shared file (`main.rs`, any `mod.rs`,
     anything outside `commands/`), for a module that shared code outside `commands/` uses, for a
     changed module no test names, and when the tree cannot be read."""
-    if p["name"] != CLI or root is None or not rel.startswith("src/commands/") or rel.endswith("/mod.rs"):
+    if p["name"] != CLI or root is None or not rel.startswith("src/commands/") or rel == "src/commands/mod.rs":
         return None
     crate = root / p["dir"]
     tests, src = crate / "tests", crate / "src"
@@ -363,12 +387,17 @@ def cli_module(packages, p, rel, root):
     sources = {f.relative_to(crate).as_posix(): f.read_text(encoding="utf-8", errors="replace")
                for f in sorted(src.rglob("*.rs"))} if src.is_dir() else {}
     start = rel[len("src/commands/"):-len(".rs")]
+    directory = rel.endswith("/mod.rs")
+    if directory:
+        start = start[:-len("/mod")]  # #1608: `serve/mod.rs` is the `serve` module
     parent = private_test_parent(sources, rel)
     audited_parent = "src/commands/workspace_slot" if start == "workspace_slot" else parent
     if parent is not None and parent.startswith("src/commands/"):
         start = parent[len("src/commands/"):]
-    changed_source = f"src/commands/{start}.rs"
+    changed_source = rel if directory else f"src/commands/{start}.rs"
     readers = source_reader_targets(texts, packages, p["name"], changed_source)
+    if CLAP_DERIVE.search(sources.get(rel, "")):
+        readers.add(HELP_GOLDEN)
 
     if audited_parent == "src/commands/workspace_slot":
         cli_bin = any(t.get("kind") == "bin" and t.get("name") == CLI_BIN for t in p.get("targets", []))
@@ -384,10 +413,19 @@ def cli_module(packages, p, rel, root):
         return {(p["name"], f"bin:{CLI_BIN}", "commands::" + start.replace("/", "::")),
                 workspace_target, *readers}
 
-    def named(module):
-        words = [w for part in module.split("/") for w in part.split("_") if w]
+    def named_by(words):
         return {t for f, text in texts.items() if words and all(f'"{w}"' in text for w in words)
                 for t in [target_of(packages, p["name"], f.stem)] if t is not None}
+
+    def named(module):
+        if module in CLI_COMMAND_WORDS:
+            return set().union(*(named_by(list(words)) for words in CLI_COMMAND_WORDS[module]))
+        found = named_by([w for part in module.split("/") for w in part.split("_") if w])
+        if not found and "/" in module:
+            # #1608: a submodule no test names by its own words is reached through its command
+            # (`serve/ports` -> the tests that name "serve").
+            found = named(module.split("/")[0])
+        return found
 
     if not named(start):
         return None
@@ -651,6 +689,9 @@ def reach(changed, packages, embedded, repo=None):
             if not readers:
                 whole |= embedded[path]
             hit = True
+        if path.startswith(HELP_GOLDEN_PATHS):
+            single.add(HELP_GOLDEN)
+            continue
         p = owner(packages, path)
         if p is not None:
             rel = path[len(p["dir"]) + 1:] if p["dir"] else path

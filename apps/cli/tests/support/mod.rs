@@ -214,3 +214,25 @@ pub fn owner_token(project: &std::path::Path) -> String {
         .to_string_lossy()
         .into_owned()
 }
+
+/// #1309 ruling A: the owner approves only a flow whose preview passed on the same digest and
+/// commit. Tests that approve store that passing run here, keyed by what `journey preview --read`
+/// reports, so they keep exercising approval without launching a browser.
+pub fn passing_preview(project: &std::path::Path, id: &str) {
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "journey", "preview", id, "--read", "--project"])
+        .arg(project)
+        .output()
+        .unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let data = &reply["data"];
+    assert!(
+        data["digest"].is_string() && data["commit"].is_string(),
+        "{reply}"
+    );
+    let dir = project.join(".graphhelm/journey-previews").join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let state = serde_json::json!({"preview":true,"digest":data["digest"],"commit":data["commit"],
+        "state":"ready","result":"pass","screens":{},"edges":{}});
+    std::fs::write(dir.join("state.json"), state.to_string()).unwrap();
+}

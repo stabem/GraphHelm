@@ -893,6 +893,18 @@ class Reach(unittest.TestCase):
                 self.assertIn("python -m unittest tools/keel-plugin/test_keel_plugin.py", tools, changed)
                 self.assertEqual(other, [], changed)
 
+    def test_an_event_store_append_change_reaches_the_planted_defect_anchors(self):
+        # #1476: the planted defects are exact-text anchors in local.rs. An edit there must run the
+        # anchor check, or a moved anchor silently turns a defect from caught into unobserved.
+        with tempfile.TemporaryDirectory() as repo:
+            guard = Path(repo, "tools", "keel-effect")
+            guard.mkdir(parents=True)
+            (guard / "test_plant_defects.py").write_text("", encoding="utf-8")
+            *_, tools, _, _ = reach("core/events/src/local.rs", repo=repo)
+            self.assertIn("python -m unittest tools/keel-effect/test_plant_defects.py", tools)
+            *_, tools, _, _ = reach("core/events/src/jsonl.rs", repo=repo)
+            self.assertNotIn("python -m unittest tools/keel-effect/test_plant_defects.py", tools)
+
     def test_shipped_keel_plugin_content_needs_a_release_bump(self):
         self.assertTrue(rt._plugin_release_content("plugins/keel/skills/keel/SKILL.md"))
         self.assertTrue(rt._plugin_release_content("plugins/keel/.claude-plugin/plugin.json"))

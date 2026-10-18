@@ -59,6 +59,8 @@ fn run(project: &Path, args: &[&str]) -> (Output, Value) {
 
 fn approve(project: &Path) -> (Output, Value) {
     let token = owner_token(project);
+    // #1309: approval needs a passing preview.
+    passing_preview(project, "checkout");
     run(project, &["approve", "checkout", "--token-file", &token])
 }
 
@@ -1136,6 +1138,7 @@ fn a_labelled_flow_approves_and_relabelling_keeps_the_approval() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+    passing_preview(dir.path(), "checkout");
     let (out, reply) = run(dir.path(), &["approve", "checkout", "--token-file", &token]);
     assert!(out.status.success(), "{reply}");
     let file = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");

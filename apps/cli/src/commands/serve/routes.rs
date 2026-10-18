@@ -801,7 +801,7 @@ fn parse_list_query(query: &str) -> Result<(Option<String>, usize), (&'static st
 /// this endpoint can be handed does either, and departing from the convention here would buy a
 /// behaviour nothing can exercise. Named rather than left implicit so the next reader meets the
 /// measurement instead of re-deriving the objection.
-fn percent_decode(value: &str) -> Option<String> {
+pub(crate) fn percent_decode(value: &str) -> Option<String> {
     let bytes = value.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;

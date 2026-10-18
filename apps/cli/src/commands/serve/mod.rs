@@ -7,6 +7,7 @@ mod native_chats;
 mod notices;
 pub(super) mod ports;
 mod routes;
+pub(super) use routes::percent_decode;
 mod wake;
 
 use std::collections::{BTreeMap, HashMap};

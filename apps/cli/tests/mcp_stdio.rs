@@ -3409,12 +3409,21 @@ fn tasks_tool_narrows_to_one_lane_or_one_issue() {
             serde_json::json!({"lane": "lane-alpha", "issue": 202}),
         ),
         read("bad", serde_json::json!({"lane": "bad lane!"})),
+        // #1566: the MCP door encodes `:` as `%3A`; the Runtime must decode it before judging.
+        read("colon", serde_json::json!({"lane": "lane:alpha"})),
     ]);
     let (_, all) = tool_envelope(&session.replies[3]);
     let (_, lane) = tool_envelope(&session.replies[4]);
     let (_, issue) = tool_envelope(&session.replies[5]);
     let (_, both) = tool_envelope(&session.replies[6]);
     let (bad_error, bad) = tool_envelope(&session.replies[7]);
+    let (colon_error, colon) = tool_envelope(&session.replies[8]);
+    assert!(!colon_error, "a lane with ':' must be accepted: {colon}");
+    assert_eq!(
+        colon["data"]["tasks"].as_array().map(Vec::len),
+        Some(0),
+        "{colon}"
+    );
     let issues = |reply: &serde_json::Value| -> Vec<u64> {
         reply["data"]["tasks"]
             .as_array()

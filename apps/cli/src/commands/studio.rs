@@ -1665,38 +1665,23 @@ mod tests {
         );
     }
 
-    /// #1568: a Runtime that already serves these events on another port (8793 while the start
-    /// says 8791) is used, not doubled. A fake Runtime answers on one port and this test process is
-    /// the pid in the lifecycle record; the launcher must say it uses that port and must not start
-    /// the stub that would exit. Cost: one PowerShell launch, killed once the line appears.
+    /// Windows launcher fixture (#1568, #1573): a launcher run against `root` whose lifecycle
+    /// record names `pid`. Returns the launcher's stdout up to the line that says what it did.
     #[cfg(windows)]
-    #[test]
-    fn the_launcher_uses_the_runtime_already_serving_these_events() {
-        use std::io::{BufRead, Read, Write};
+    fn run_launcher_with_recorded_pid(root: &Path, pid: u32) -> String {
+        use std::io::BufRead;
         use std::net::TcpListener;
-        let fake = TcpListener::bind("127.0.0.1:0").unwrap();
-        let fake_port = fake.local_addr().unwrap().port();
         let first = TcpListener::bind("127.0.0.1:0").unwrap();
         let second = TcpListener::bind("127.0.0.1:0").unwrap();
         let bind_port = first.local_addr().unwrap().port();
         let studio_port = second.local_addr().unwrap().port();
         drop((first, second));
-        std::thread::spawn(move || {
-            for mut stream in fake.incoming().flatten() {
-                let mut buffer = [0u8; 2048];
-                let _ = stream.read(&mut buffer);
-                let _ = stream.write_all(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
-                );
-            }
-        });
-        let root = std::env::temp_dir().join(format!("gh studio reuse {}", std::process::id()));
         let events = root.join("events");
         std::fs::create_dir_all(&events).unwrap();
         std::fs::write(root.join("events.token"), "t").unwrap();
         std::fs::write(
             root.join("events.runtime-lifecycle.json"),
-            format!(r#"{{"pid": {}, "state": "running"}}"#, std::process::id()),
+            format!(r#"{{"pid": {pid}, "state": "running"}}"#),
         )
         .unwrap();
         std::fs::write(root.join("dies.cmd"), "@exit /b 3\r\n").unwrap();
@@ -1727,6 +1712,52 @@ mod tests {
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
             .output();
         let _ = child.wait();
+        seen
+    }
+
+    /// #1568: a Runtime that already serves these events on another port (8793 while the start
+    /// says 8791) is used, not doubled. A process whose image is `graphhelm.exe` (a copy of
+    /// powershell.exe under that name) listens and answers 200 to anything; its pid is the one in
+    /// the lifecycle record. The launcher must say it uses that port and must not start the stub
+    /// that would exit. Cost: two PowerShell processes, both killed.
+    #[cfg(windows)]
+    #[test]
+    fn the_launcher_uses_the_runtime_already_serving_these_events() {
+        use std::io::BufRead;
+        let root = std::env::temp_dir().join(format!("gh studio reuse {}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let image = root.join("graphhelm.exe");
+        std::fs::copy(
+            Path::new(&std::env::var("SystemRoot").unwrap())
+                .join("System32/WindowsPowerShell/v1.0/powershell.exe"),
+            &image,
+        )
+        .unwrap();
+        let serve = concat!(
+            "$l=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,0);$l.Start();",
+            "[Console]::Out.WriteLine($l.LocalEndpoint.Port);[Console]::Out.Flush();",
+            "$r=[Text.Encoding]::ASCII.GetBytes(\"HTTP/1.1 200 OK`r`nContent-Type: application/json`r`n",
+            "Content-Length: 2`r`nConnection: close`r`n`r`n{}\");",
+            "while($true){$c=$l.AcceptTcpClient();$s=$c.GetStream();$b=New-Object byte[] 4096;",
+            "$null=$s.Read($b,0,4096);$s.Write($r,0,$r.Length);$c.Close()}"
+        );
+        let mut fake = graphhelm_process::command(&image)
+            .args(["-NoProfile", "-Command", serve])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut first_line = String::new();
+        std::io::BufReader::new(fake.stdout.take().unwrap())
+            .read_line(&mut first_line)
+            .unwrap();
+        let fake_port: u16 = first_line
+            .trim()
+            .parse()
+            .expect("the fake Runtime prints its port");
+        let seen = run_launcher_with_recorded_pid(&root, fake.id());
+        let _ = fake.kill();
+        let _ = fake.wait();
         let _ = std::fs::remove_dir_all(&root);
         assert!(
             seen.contains(&format!(
@@ -1735,5 +1766,43 @@ mod tests {
             "{seen}"
         );
         assert!(!seen.contains("[up] starting"), "{seen}");
+    }
+
+    /// #1573: a stale lifecycle record can name a pid the OS reused for an unrelated process that
+    /// listens on loopback. This test process is that pid (its image is not `graphhelm.exe`) and
+    /// it listens on a port that answers 200 and records every request it reads. The launcher
+    /// must send it no request at all, so no bearer token, and start its Runtime as usual.
+    /// Cost: one PowerShell launch, killed once the line appears.
+    #[cfg(windows)]
+    #[test]
+    fn the_launcher_sends_no_token_to_a_recorded_pid_that_is_not_graphhelm() {
+        use std::io::Read;
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        let fake = TcpListener::bind("127.0.0.1:0").unwrap();
+        let requests: Arc<Mutex<Vec<String>>> = Arc::default();
+        let heard = Arc::clone(&requests);
+        std::thread::spawn(move || {
+            for mut stream in fake.incoming().flatten() {
+                let mut buffer = [0u8; 2048];
+                let n = stream.read(&mut buffer).unwrap_or(0);
+                heard
+                    .lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&buffer[..n]).into_owned());
+                let _ = std::io::Write::write_all(
+                    &mut stream,
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                );
+            }
+        });
+        let root = std::env::temp_dir().join(format!("gh studio notgh {}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let seen = run_launcher_with_recorded_pid(&root, std::process::id());
+        let _ = std::fs::remove_dir_all(&root);
+        let requests = requests.lock().unwrap();
+        assert!(requests.is_empty(), "{requests:?}\n{seen}");
+        assert!(seen.contains("[up] starting"), "{seen}");
+        assert!(!seen.contains("already serves"), "{seen}");
     }
 }

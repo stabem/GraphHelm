@@ -213,7 +213,7 @@ def post_closed(base, token, execution, task_id, repo, lane, fields):
         post_end(base, token, execution, "closed", task_id, repo, lane, {**fields, "observed": True})
     except urllib.error.HTTPError as error:
         if error.code != 400:
-            raise
+            raise ValueError(f"Runtime refused task.closed: HTTP {error.code}") from error
         post_end(base, token, execution, "closed", task_id, repo, lane, fields)
 
 

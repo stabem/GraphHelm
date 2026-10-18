@@ -467,7 +467,7 @@ class LaneStopTests(unittest.TestCase):
         def fail(*_args, **_kwargs):
             raise urllib.error.HTTPError("http://127.0.0.1/x", 500, "Server Error", {}, None)
 
-        with mock.patch.object(tasks_reconcile, "post_end", side_effect=fail),              self.assertRaises(urllib.error.HTTPError):
+        with mock.patch.object(tasks_reconcile, "post_end", side_effect=fail),              self.assertRaisesRegex(ValueError, "HTTP 500"):
             tasks_reconcile.post_closed("http://127.0.0.1:1", "t", "run", "issue-7", "o/r", "lane-a",
                                         {"pr": 7, "reason": "abandoned", "by": 7})
 

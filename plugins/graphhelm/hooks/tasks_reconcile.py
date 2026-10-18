@@ -305,7 +305,9 @@ def reconcile(args):
             if args.lane is None:
                 continue
             post_end(args.url.rstrip("/"), credential(args.lane), args.execution, "closed", task_id, repo,
-                     args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
+                     args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by,
+                                 # #1544: this lane saw the close on GitHub; it did not close the PR.
+                                 "observed": True})
             closed.append(pr)
             continue
         if result.get("state") != "MERGED":

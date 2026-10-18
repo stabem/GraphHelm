@@ -441,8 +441,9 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["closed"], [])
         github.assert_not_called()
         found = tasks_reconcile.records(args.url, Path(args.token_file).read_text().strip(), args.execution)
-        self.assertEqual([(kind, doc["revision"], doc["reason"], doc["by"]) for kind, doc, _ in found if kind == "task.closed"],
-                         [("task.closed", 6, "superseded", 9002)])
+        self.assertEqual([(kind, doc["revision"], doc["reason"], doc["by"], doc.get("observed"))
+                          for kind, doc, _ in found if kind == "task.closed"],
+                         [("task.closed", 6, "superseded", 9002, True)])
 
     def reconcile_args(self):
         return type("Args", (), {"execution": "lane-test", "url": self.url,

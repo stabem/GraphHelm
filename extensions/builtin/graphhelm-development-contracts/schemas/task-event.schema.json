@@ -200,7 +200,8 @@
         "at": {"$ref": "#/$defs/at"},
         "pr": {"$ref": "#/$defs/positive"},
         "reason": {"enum": ["superseded", "abandoned"]},
-        "by": {"$ref": "#/$defs/positive"}
+        "by": {"$ref": "#/$defs/positive"},
+        "observed": {"const": true, "description": "#1544: the recording lane saw the PR closed on GitHub (the Stop reconciler); it did not close it. Absent means the recording lane closed it."}
       }
     },
     {

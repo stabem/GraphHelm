@@ -420,8 +420,10 @@ pub(crate) fn validate_task_event(
                     document["reason"].as_str(),
                     Some("superseded" | "abandoned")
                 )
-                && count("by"),
-            &["pr", "reason", "by"],
+                && count("by")
+                // #1544: the Stop reconciler records a close it observed, not one it made.
+                && document.get("observed").is_none_or(|value| value == &serde_json::Value::Bool(true)),
+            &["pr", "reason", "by", "observed"],
         ),
         // #467: one round of the blind design critic. Running out of rounds is never a pass: the
         // verdict must agree with the score and the round, so `pass` needs the pass score,

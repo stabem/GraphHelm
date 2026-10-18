@@ -96,6 +96,51 @@ class FixturePortTest(unittest.TestCase):
 
             self.assertEqual(missing(project), set(), "every studio flow's scope must resolve")
 
+    def test_the_fixture_project_can_run_the_browser_observer(self):
+        # #1448: a preview the fixture's Runtime starts (the Studio's Run again) runs in the fixture
+        # project, so the observer must be there: the driver and judge as `setup --install-observer`
+        # writes them, and @playwright/test resolvable from the project (the runner clears NODE_PATH).
+        # Without them every fixture preview ended replay.observer_missing / driver.observer_missing.
+        import shutil
+        import socket
+
+        root = pathlib.Path(__file__).resolve().parents[2]
+        cli = os.environ.get("GRAPHHELM_CLI") or shutil.which("graphhelm")
+        node, npm = shutil.which("node"), shutil.which("npm")
+        if not cli or not node or not npm or not (root / "apps/studio/node_modules").is_dir():
+            self.skipTest("OBSERVER_MISSING: needs GRAPHHELM_CLI, node, npm and apps/studio/node_modules")
+        shell = r"C:\Program Files\Git\bin\bash.exe" if os.name == "nt" else "bash"
+        script = str(root / "tools/studio-journey-fixture/fixture.sh")
+
+        def free_port():
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                return probe.getsockname()[1]
+
+        env = {**os.environ, "GRAPHHELM_BIN": cli}
+        with tempfile.TemporaryDirectory() as parent:
+            fixture = pathlib.Path(parent) / "fixture"
+            try:
+                up = subprocess.run([shell, script, "up", str(fixture), str(free_port()), str(free_port())],
+                                    cwd=root, env=env, capture_output=True, text=True, timeout=600,
+                                    check=False, creationflags=NO_WINDOW)
+                self.assertEqual(up.returncode, 0, up.stdout[-2000:] + up.stderr[-2000:])
+                project = fixture / "project"
+                observers = project / ".graphhelm" / "observers"
+                for installed, source in (("journey_driver.mjs", "driver.mjs"), ("judge.mjs", "judge.mjs")):
+                    self.assertEqual((observers / installed).read_bytes(),
+                                     (root / "tools/journey-driver" / source).read_bytes(), installed)
+                resolved = subprocess.run(
+                    [node, "-e", "console.log(require.resolve('@playwright/test', {paths: [process.argv[1]]}))",
+                     str(project)],
+                    capture_output=True, text=True, timeout=60, check=False, creationflags=NO_WINDOW)
+                self.assertEqual(resolved.returncode, 0, resolved.stderr)
+                self.assertIn(str(project.resolve()).lower(), resolved.stdout.strip().lower(),
+                              "@playwright/test must resolve inside the fixture project, not from a parent")
+            finally:
+                subprocess.run([shell, script, "down", str(fixture)], cwd=root, env=env, capture_output=True,
+                               text=True, timeout=120, check=False, creationflags=NO_WINDOW)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2501,7 +2501,7 @@ async fn run_idempotent_mutation_on<'a>(
             // `If-Match`-chained write. Read the head and fixture-only state from one fresh,
             // validated stream snapshot so those fields describe the same committed history.
             let (head_sequence, waiting_input) =
-                fresh_stream_snapshot_on(store, execution, wiring.any_fixture());
+                fresh_stream_snapshot_on(store, events, execution, wiring.any_fixture());
             if let serde_json::Value::Object(ref mut map) = value {
                 map.insert("headSequence".to_owned(), serde_json::json!(head_sequence));
             }
@@ -3390,13 +3390,14 @@ fn fresh_stream_snapshot(
     let Ok(store) = event_store(events) else {
         return (None, WaitingInputCheck::Undetermined);
     };
-    fresh_stream_snapshot_on(&store, execution, check_waiting)
+    fresh_stream_snapshot_on(&store, events, execution, check_waiting)
 }
 
 /// [`fresh_stream_snapshot`] on a handle the caller already opened (#478). Still fresh: the
 /// handle re-reads the journal tail before the read.
 fn fresh_stream_snapshot_on(
     store: &LocalEventRepository,
+    events: &Path,
     execution: &str,
     check_waiting: bool,
 ) -> (Option<u64>, WaitingInputCheck) {
@@ -3407,7 +3408,8 @@ fn fresh_stream_snapshot_on(
     if !check_waiting {
         return (head, WaitingInputCheck::Undetermined);
     }
-    let check = match graphhelm_events::replay(&scope, &stream, &history) {
+    // #1560: resume serve's cached fold instead of refolding the whole stream after every write.
+    let check = match execution::status::replay_cached(events, &scope, &stream, &history) {
         Ok(projection)
             if projection
                 .node_states

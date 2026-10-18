@@ -13,9 +13,24 @@ const HANDOVER: Handover = {
   shipped: [{ text: "Cart page succeeded", sequences: [11] }],
   needsYou: [{ text: "kit 3 asked: Merge now?", sequences: [13] }],
   quiet: [], untouched: [{ text: "Payment got no record", sequences: [2] }],
+  goal: { text: "Observe issue graph and work kanban", sequences: [12] },
 };
 
 describe("HandoverCard", () => {
+  // #1041 B2: the `studio-handover` flow's details screen expects the task's goal (heading "Goal"),
+  // one cited evidence record as a link ("Cited evidence") and the open duties (heading "Open duties").
+  it("names the goal, links one cited evidence record and lists the open duties", async () => {
+    const onOpen = vi.fn();
+    render(<HandoverCard handover={HANDOVER} onOpen={onOpen} onDismiss={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Show details" }));
+    expect(screen.getByRole("heading", { name: "Goal" })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Goal" })).getByText("Observe issue graph and work kanban")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Open duties" })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Open duties" })).getByRole("button", { name: "kit 3 asked: Merge now?" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: "Cited evidence" }));
+    expect(onOpen).toHaveBeenCalledWith([11]);
+  });
+
   it("summarises the gap in four groups and says Nothing for an empty one", async () => {
     render(<HandoverCard handover={HANDOVER} onOpen={vi.fn()} onDismiss={vi.fn()} />);
     const card = screen.getByRole("region", { name: "While you were away" });

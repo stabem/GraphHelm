@@ -93,20 +93,18 @@ pub(crate) fn execute(
 
     let mut rows = Vec::new();
     for stream in remaining.into_iter().take(limit) {
-        let history = store
-            .read_replay_stream(&stream.scope, &stream.stream_id)
-            .map_err(|error| repository_failure(&error))?;
+        let history = super::timing::phase("stream.read", || {
+            store.read_replay_stream(&stream.scope, &stream.stream_id)
+        })
+        .map_err(|error| repository_failure(&error))?;
         let head = super::at_sequence(&history);
         // A stream whose fold refuses is REPORTED, not skipped and not fatal: one corrupt stream
         // must not make the whole index unreadable, and a silently dropped row would read as
         // "that execution does not exist". `attention` is `unknown` there because that is the
         // honest verdict when the projection could not be built at all.
-        let row = match super::status::replay_cached(
-            events,
-            &stream.scope,
-            &stream.stream_id,
-            &history,
-        ) {
+        let row = match super::timing::phase("fold", || {
+            super::status::replay_cached(events, &stream.scope, &stream.stream_id, &history)
+        }) {
             Ok(projection) => {
                 // Budgets derived, not passed (#176).
                 let inputs = graphhelm_execution::AttentionInputs::for_surface(

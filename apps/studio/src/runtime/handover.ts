@@ -17,7 +17,9 @@ export const QUIET_IN_GAP_MS = 30 * 60 * 1000;
 const SETTLED = new Set(["succeeded", "waived", "skipped"]);
 
 export interface HandoverLine { text: string; sequences: number[] }
-export interface Handover { fromSeq: number; toSeq: number; eventCount: number; gapMinutes: number; shipped: HandoverLine[]; needsYou: HandoverLine[]; quiet: HandoverLine[]; untouched: HandoverLine[] }
+export interface Handover { fromSeq: number; toSeq: number; eventCount: number; gapMinutes: number; shipped: HandoverLine[]; needsYou: HandoverLine[]; quiet: HandoverLine[]; untouched: HandoverLine[];
+  /** #1041 B2: the goal of the work, the title of the newest task claimed up to the gap's end, citing its record. */
+  goal: HandoverLine | null }
 export interface HandoverInput { events: RuntimeEvent[]; bots: Bot[]; model: GraphModel | null; claudeTasks: ClaudeTaskReadModel | null; openItems: NeedsYouItem[]; envelopes?: EnvelopeRecord; fromSeq: number; toSeq: number; seenAt?: number;
   /** #1192: the run's verified `task.*` records from the Runtime's tasks route; a merge line reads its PR here. */
   taskRecords?: TaskEventRecord[] }
@@ -131,10 +133,18 @@ export function buildHandover(input: HandoverInput): Handover {
     untouched.push({ text: `${task.taskSubject} (${botName(task.sourceId)}) got no record`, sequences: [task.createdSequence] });
   }
 
+  // #1041 B2: the claimed task's title (#477) is the goal the owner reads first; only a verified
+  // record from the Runtime's tasks route counts, never a guessed subject.
+  const claimed = (input.taskRecords ?? [])
+    .filter((record) => record.kind === "task.claimed" && record.sequence <= input.toSeq && Boolean(record.title?.trim()))
+    .sort((a, b) => a.sequence - b.sequence)
+    .at(-1);
+  const goal: HandoverLine | null = claimed ? { text: claimed.title!.trim(), sequences: [claimed.sequence] } : null;
+
   return {
     fromSeq: input.fromSeq, toSeq: input.toSeq, eventCount: inGap.length,
     gapMinutes: fromTime === null || toTime === null ? 0 : Math.floor((toTime - fromTime) / 60_000),
-    shipped, needsYou, quiet, untouched,
+    shipped, needsYou, quiet, untouched, goal,
   };
 }
 

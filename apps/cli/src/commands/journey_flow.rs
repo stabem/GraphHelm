@@ -1434,7 +1434,7 @@ fn introduced_by(project: &Path, file: &Path, digest: &str) -> Option<Value> {
 
 /// The approval itself, for a caller that has already authenticated the owner (#534).
 pub(crate) fn approve_owned(id: &str, project: std::path::PathBuf) -> Outcome {
-    approve_as(id, project, &super::journey_owner::Approver::Owner)
+    approve_as(id, project)
 }
 
 /// The digest `flow` will carry once approved: what an approval and a `drafted` record bind.
@@ -1551,8 +1551,9 @@ pub(crate) fn write_draft(
 }
 
 /// `POST /v1/journey-flows/{id}/review` (#1130): `reviewer` (an authenticated scoped agent)
-/// approves the draft. Fails closed: no lane wrote this exact digest through the draft route, or
-/// the reviewer ever wrote any version of the flow, refuses and writes nothing.
+/// records its blind review of the draft. #1309 ruling A: the review never approves; the flow stays
+/// a draft until the owner approves it. Fails closed: no lane wrote this exact digest through the
+/// draft route, or the reviewer ever wrote any version of the flow, refuses and writes nothing.
 pub(crate) fn review_approve(
     id: &str,
     project: std::path::PathBuf,
@@ -1588,15 +1589,30 @@ pub(crate) fn review_approve(
         Ok(approver) => approver,
         Err(message) => return input_error(COMMAND, &message),
     };
-    approve_as(id, project, &approver)
+    let revision = match super::journey::head(&project) {
+        Ok(rev) if rev.len() == 40 => rev,
+        _ => {
+            return input_error(
+                COMMAND,
+                "project git revision is missing or unsupported; a review requires a committed SHA-1 repository",
+            );
+        }
+    };
+    if let Err(message) =
+        super::journey_owner::record_as(&project, id, &digest, &revision, &approver)
+    {
+        return input_error(COMMAND, &message);
+    }
+    Outcome::success(
+        COMMAND,
+        json!({"id": id, "digest": digest, "reviewer": reviewer, "author": author,
+            "reviewed": true, "status": "draft"}),
+    )
 }
 
-/// The approval by `approver`: the owner, or a reviewer agent that is not the author (#1130).
-pub(crate) fn approve_as(
-    id: &str,
-    project: std::path::PathBuf,
-    approver: &super::journey_owner::Approver,
-) -> Outcome {
+/// The owner's approval (#1309 ruling A: final approval is the owner's alone; a reviewer agent
+/// records a review through `review_approve` and never reaches here).
+pub(crate) fn approve_as(id: &str, project: std::path::PathBuf) -> Outcome {
     const COMMAND: &str = "journey.approve";
     let args = crate::args::JourneyApproveArgs {
         id: id.to_owned(),
@@ -1695,9 +1711,7 @@ pub(crate) fn approve_as(
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    if let Err(message) =
-        super::journey_owner::record_as(&project, &args.id, &digest, &revision, approver)
-    {
+    if let Err(message) = super::journey_owner::record(&project, &args.id, &digest, &revision) {
         return report(
             COMMAND,
             vec![],

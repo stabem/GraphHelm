@@ -96,10 +96,26 @@ up)
   "$bin" --json init --project "$dir/project" --bind "127.0.0.1:$rport" --harness codex > "$dir/.graphhelm/init.json"
   export GRAPHHELM_FIXTURE_RUNTIME_PORT="$rport" GRAPHHELM_EVENTS_KEY="$(cat "$rt/serve.key")"
   cp -R "$repo/.graphhelm/journeys" "$dir/project/.graphhelm/"
+  # #1041: the files the flows name in `scope`, so a fixture preview is not refused flow.scope_path_missing.
+  node "$(dirname "$0")/copy_scope.mjs" "$repo" "$dir/project" > /dev/null
+  # #1448: the browser observer the fixture's own previews (the Studio's Run again) need, set up as
+  # `setup --install-observer playwright` does: the driver and judge from this checkout, and the
+  # pinned @playwright/test resolvable from the project (the runner clears NODE_PATH). Offline cache
+  # first; when npm cannot install it, previews still end OBSERVER_MISSING rather than failing up.
+  mkdir -p "$dir/project/.graphhelm/observers"
+  cp "$repo/tools/journey-driver/driver.mjs" "$dir/project/.graphhelm/observers/journey_driver.mjs"
+  cp "$repo/tools/journey-driver/judge.mjs" "$dir/project/.graphhelm/observers/judge.mjs"
+  [ -f "$dir/project/package.json" ] || printf '{"private":true}\n' > "$dir/project/package.json"
+  npm --prefix "$dir/project" install --save-dev --prefer-offline --no-audit --no-fund \
+    @playwright/test@1.64.0 > "$dir/.graphhelm/observer-install.log" 2>&1 \
+    || echo "fixture: @playwright/test not installed (see $dir/.graphhelm/observer-install.log); previews end OBSERVER_MISSING" >&2
   printf '# Release notes: version 0.1\n' > "$dir/project/docs/RELEASE_NOTES.md"
   # #585: a route manifest of the fixture's own, listed and written by the Studio's Models panel
   # (Add model). Listing only: `--gateway-manifest` wires no executor, so nodes stay on fixtures.
   cp "$repo/examples/gateway/astra-routes.json" "$rt/routes.json"
+  # #1448: the studio-* flows sign in with this token; a preview the Runtime starts hands its
+  # runner every GRAPHHELM_SECRET_* it holds. Set for serve only, never printed.
+  GRAPHHELM_SECRET_STUDIO_TOKEN="$(head -1 "$rt/events.token")" \
   nohup "$bin" serve --events "$rt/events" --bind "127.0.0.1:$rport" --project "$dir/project" \
     --keyring "$rt/keyring" --key-id studio --gateway-manifest "$rt/routes.json" \
     > "$dir/.graphhelm/serve.out" 2> "$dir/.graphhelm/serve.err" &

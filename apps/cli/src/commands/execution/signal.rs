@@ -138,8 +138,31 @@ fn run_from_file(
     )
 }
 
+/// #1523: the key `serve --events-key-file` read at start, held only in this process's memory.
+/// It is never put in the environment, so no child process inherits it.
+static KEY_FROM_FILE: std::sync::OnceLock<zeroize::Zeroizing<String>> = std::sync::OnceLock::new();
+
+/// Installs the key `serve` read from `--events-key-file`; used by every later seal in place of
+/// `GRAPHHELM_EVENTS_KEY`. Only the first call in a process takes effect.
+pub(crate) fn use_key_from_file(hex: String) {
+    let _ = KEY_FROM_FILE.set(zeroize::Zeroizing::new(hex));
+}
+
+/// The one source of the events key for this process: the `--events-key-file` key when `serve`
+/// read one, else `GRAPHHELM_EVENTS_KEY`. Every seal and every evidence open reads it here
+/// (#1523 review: the evidence opener had kept its own read of the variable).
+pub(crate) fn events_key_hex() -> Option<zeroize::Zeroizing<String>> {
+    match KEY_FROM_FILE.get() {
+        Some(hex) => Some(zeroize::Zeroizing::new(hex.as_str().to_owned())),
+        None => std::env::var("GRAPHHELM_EVENTS_KEY")
+            .ok()
+            .map(zeroize::Zeroizing::new),
+    }
+}
+
 /// Mirrors `commands::events::config`'s provider construction: the 32-byte key never rides a
-/// flag — it arrives out of band via `GRAPHHELM_EVENTS_KEY` as 64 lowercase hex characters.
+/// flag — it arrives out of band via `GRAPHHELM_EVENTS_KEY` as 64 lowercase hex characters, or
+/// (#1523) from the owner-only file `serve --events-key-file` named.
 ///
 /// `pub(crate)` so `serve` can pre-flight the same open at startup when `--keyring` is given
 /// (PR #1070 review): before that, a missing variable or a wrong `--key-id` produced a healthy
@@ -147,13 +170,31 @@ fn run_from_file(
 pub(crate) fn open_sealer(
     keyring: &SignalKeyring,
 ) -> Result<EvidenceProtector<SealedKeyProvider>, Failure> {
+    Ok(EvidenceProtector::new(open_provider(keyring)?))
+}
+
+/// #1560: the keyring generation an opened envelope belongs to: the key id and the provider's
+/// current revocation epoch. A rotated key (another id) or a revocation (a later epoch) is
+/// another generation, so a plaintext opened before it is never served from memory after it.
+pub(crate) fn sealer_generation(keyring: &SignalKeyring) -> Result<String, Failure> {
+    generation_of(&open_provider(keyring)?, &keyring.key_id)
+}
+
+pub(crate) fn generation_of(provider: &SealedKeyProvider, key_id: &str) -> Result<String, Failure> {
+    let epoch = provider
+        .epoch()
+        .map_err(|_| argument("the sealed keyring could not be opened", "/keyring"))?;
+    Ok(format!("{key_id}#{epoch}"))
+}
+
+fn open_provider(keyring: &SignalKeyring) -> Result<SealedKeyProvider, Failure> {
     let invalid = || {
         argument(
             "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters",
             "/keyring",
         )
     };
-    let encoded = std::env::var("GRAPHHELM_EVENTS_KEY").map_err(|_| invalid())?;
+    let encoded = events_key_hex().ok_or_else(invalid)?;
     if encoded.len() != 64
         || !encoded
             .chars()
@@ -174,7 +215,7 @@ pub(crate) fn open_sealer(
         SecretBytes::new(material),
     )
     .map_err(|_| argument("the sealed keyring could not be opened", "/keyring"))?;
-    Ok(EvidenceProtector::new(provider))
+    Ok(provider)
 }
 
 /// The shared core: admits `signal` (already-read bytes — a file's contents from the CLI, or an
@@ -466,7 +507,8 @@ fn record_once(
     allow_native: bool,
     attachments: &[ImageAttachment],
 ) -> Result<serde_json::Value, Failure> {
-    let (scope, stream, projection) = load_projection(store, execution)?;
+    let (scope, stream, projection) =
+        super::timing::phase("projection.load", || load_projection(store, execution))?;
 
     let raw = signal;
     let envelope: serde_json::Value = serde_json::from_slice(raw)
@@ -504,7 +546,7 @@ fn record_once(
         // Every task record: a retired lane's record of any kind is refused against this history.
         .is_some_and(|kind| kind.starts_with("task."))
     {
-        Some(super::resolve_stream(store, execution)?.2)
+        Some(super::timing::phase("stream.read", || super::resolve_stream(store, execution))?.2)
     } else {
         None
     };
@@ -523,12 +565,14 @@ fn record_once(
     } else {
         None
     };
-    super::documents::validate_task_event(
-        &envelope,
-        &actor,
-        task_history.as_deref().unwrap_or_default(),
-        sealing.map(|keyring| (store, &scope, keyring)),
-    )?;
+    super::timing::phase("task.admission", || {
+        super::documents::validate_task_event(
+            &envelope,
+            &actor,
+            task_history.as_deref().unwrap_or_default(),
+            sealing.map(|keyring| (store, &scope, keyring)),
+        )
+    })?;
     if matches!(
         envelope.get("type").and_then(serde_json::Value::as_str),
         Some("actor_alias" | "owner_refusal")
@@ -868,8 +912,7 @@ fn record_once(
                 vec![],
             )
             .map_err(|error| repository_failure(&error))?;
-            store
-                .append_atomic(&request)
+            super::timing::phase("store.append", || store.append_atomic(&request))
                 .map_err(|error| repository_failure(&error))?;
         }
         None => {

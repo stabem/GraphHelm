@@ -191,6 +191,8 @@ mod resume_project_default;
 mod runtime_http;
 #[path = "schema_cli.rs"]
 mod schema_cli;
+#[path = "serve_handover.rs"]
+mod serve_handover;
 #[path = "shipped_package_coverage.rs"]
 mod shipped_package_coverage;
 #[path = "signal_image_evidence_cli.rs"]

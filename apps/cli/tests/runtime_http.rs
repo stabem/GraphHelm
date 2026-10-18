@@ -5382,3 +5382,205 @@ fn a_listing_after_an_append_folds_only_the_new_events_on_a_one_journal_store() 
          and {second:?}"
     );
 }
+
+/// A throwaway sealing keyring and its key, made by the test (never an operator's).
+fn throwaway_keyring(directory: &Path) -> ServeExtra {
+    let keyring = directory.join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let material: Vec<u8> = (0..32_u8)
+        .map(|i| i.wrapping_mul(37).wrapping_add(11))
+        .collect();
+    let hex: String = material.iter().map(|b| format!("{b:02x}")).collect();
+    graphhelm_sealed_key_provider::SealedKeyProvider::create(
+        &keyring,
+        "throwaway-key",
+        graphhelm_events::SecretBytes::new(material),
+    )
+    .unwrap();
+    ServeExtra {
+        args: vec![
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            "throwaway-key".into(),
+        ],
+        env: vec![("GRAPHHELM_EVENTS_KEY".to_owned(), hex)],
+    }
+}
+
+/// Records one `task.*` signal as `lane` and answers its status, reply and wall time.
+fn task_record(
+    base: &str,
+    token: &str,
+    execution: &str,
+    lane: &str,
+    kind: &str,
+    id: &str,
+    document: &Value,
+) -> (u16, Value, Duration) {
+    let started = Instant::now();
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        token,
+        &[
+            ("Idempotency-Key", id),
+            ("X-GraphHelm-Actor", lane),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": lane},
+            "type": kind, "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-13T12:00:00Z"}}),
+    );
+    (status, reply, started.elapsed())
+}
+
+fn claim_document(lane: &str, issue: u64) -> Value {
+    serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": format!("issue-{issue}"),
+        "revision": 1, "at": "2026-10-13T12:00:00Z", "issue": issue, "lane": lane,
+        "branch": format!("issue-{issue}-x"), "repo": "stabem/GraphHelm"})
+}
+
+fn heartbeat_document(lane: &str, issue: u64) -> Value {
+    serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": format!("issue-{issue}"),
+        "revision": 1, "at": "2026-10-13T12:00:00Z", "lane": lane})
+}
+
+/// #1560: a heartbeat (and a release) opened EVERY sealed `task.*` record of its lane on every
+/// request, uncached, so on the owner's run (thousands of sealed records) each one cost seconds
+/// and held a blocking thread the Studio's polls queued behind. Opened envelopes are now kept per
+/// process, keyed by store, scope, evidence id and the journal's envelope digest; only a
+/// successful, authenticated open is kept. Observer: the real `serve` binary over HTTP, with a
+/// keyring the test makes. Cost: a fresh process opens the lane's records once (the first
+/// heartbeat); a second heartbeat must cost a fraction of that, and the tasks read still opens
+/// every record. Integrity: a sealed record tampered on disk is refused, so no process ever
+/// opens, or remembers, it.
+#[test]
+fn a_fresh_runtime_opens_each_sealed_task_record_once_and_still_refuses_a_tampered_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let extra = throwaway_keyring(dir.path());
+    let run = "sealed-shape";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 500);
+    }
+    let blobs = events.join("blobs");
+    let listing = || -> std::collections::BTreeSet<PathBuf> {
+        std::fs::read_dir(&blobs)
+            .map(|entries| entries.map(|entry| entry.unwrap().path()).collect())
+            .unwrap_or_default()
+    };
+    let busy = "lane-busy";
+    let hurt = "lane-hurt";
+    let tampered_blob;
+    {
+        let (_server, base, token) = serve_with(&events, &extra);
+        for issue in 1..=400_u64 {
+            let (status, reply, _) = task_record(
+                &base,
+                &token,
+                run,
+                busy,
+                "task.claimed",
+                &format!("claim-{issue}"),
+                &claim_document(busy, issue),
+            );
+            assert_eq!(status, 200, "claim {issue}: {reply}");
+        }
+        let before = listing();
+        let (status, reply, _) = task_record(
+            &base,
+            &token,
+            run,
+            hurt,
+            "task.claimed",
+            "claim-hurt",
+            &claim_document(hurt, 9_000),
+        );
+        assert_eq!(status, 200, "{reply}");
+        let added: Vec<PathBuf> = listing().difference(&before).cloned().collect();
+        assert_eq!(added.len(), 1, "one sealed blob per record: {added:?}");
+        tampered_blob = added[0].clone();
+    }
+    {
+        let (_server, base, token) = serve_with(&events, &extra);
+        // Warm the journal and the fold, never the envelopes, so the heartbeats measure them.
+        list_rows(&base, &token);
+        let (status, reply, cold) = task_record(
+            &base,
+            &token,
+            run,
+            busy,
+            "task.heartbeat",
+            "beat-1",
+            &heartbeat_document(busy, 1),
+        );
+        assert_eq!(status, 200, "{reply}");
+        let (status, reply, warm) = task_record(
+            &base,
+            &token,
+            run,
+            busy,
+            "task.heartbeat",
+            "beat-2",
+            &heartbeat_document(busy, 2),
+        );
+        assert_eq!(status, 200, "{reply}");
+        eprintln!("sealed heartbeats: cold {cold:?}, warm {warm:?}");
+        assert!(
+            warm * 4 < cold,
+            "a second heartbeat must not reopen the lane's sealed records: cold {cold:?}, warm \
+             {warm:?}"
+        );
+        let tasks = get_json(&format!("{base}/v1/executions/{run}/tasks"), Some(&token));
+        assert_eq!(tasks["data"]["rejected"], 0, "every record opens: {tasks}");
+    }
+    // Tamper with the hurt lane's sealed claim while no process runs: one hex digit of the
+    // ciphertext, so the blob still parses. The journal binds each blob's digest, so a Runtime
+    // refuses the store rather than serve, or remember, a record that no longer authenticates.
+    let text = std::fs::read_to_string(&tampered_blob).unwrap();
+    let field = "\"ciphertextHex\":\"";
+    let at = text
+        .find(field)
+        .expect("a sealed blob carries its ciphertext")
+        + field.len()
+        + 8;
+    let mut bytes = text.into_bytes();
+    bytes[at] = if bytes[at] == b'0' { b'1' } else { b'0' };
+    std::fs::write(&tampered_blob, bytes).unwrap();
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command
+        .args([
+            "serve",
+            "--events",
+            events.to_str().unwrap(),
+            "--bind",
+            "127.0.0.1:0",
+        ])
+        .args(&extra.args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    for (key, value) in &extra.env {
+        command.env(key, value);
+    }
+    let output = command.output().unwrap();
+    let first_line = output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .next()
+        .unwrap_or_default();
+    let started: Value = serde_json::from_slice(first_line).unwrap();
+    assert_eq!(
+        started["ok"], false,
+        "a tampered record is refused: {started}"
+    );
+    assert_eq!(
+        started["diagnostics"][0]["message"], "the events repository could not be opened",
+        "{started}"
+    );
+}

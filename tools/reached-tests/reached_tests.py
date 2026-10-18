@@ -61,6 +61,8 @@ RUNTIME_READERS = {
 }
 LAUNCHER_TESTS = f"cargo {TOOLCHAIN} test --locked -p graphhelm-cli --bin graphhelm {TEST_THREADS} commands::studio::tests::the_launcher_"
 MCP_CATALOG_STUDIO_TEST = "apps/studio/src/webmcp/mcp-tools.test.ts"
+# #1521: starts the Studio dev server the way the journey launcher does (`fixture.sh up`).
+STUDIO_START_SMOKE = "tools/studio-journey-fixture/test_studio_starts.py"
 # The `#[ignore]` browser observers (docs/guides/journeys.md): the real proof of a change to the
 # journey driver, replay, explore or live play. Printed, never run for you: they need a browser.
 BROWSER_OBSERVERS = ("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT=<dir with node_modules/@playwright/test> "
@@ -437,6 +439,9 @@ def reach(changed, packages, embedded, repo=None):
             continue
         if path.startswith("apps/studio/"):
             studio.append(path)
+            # #1521: Vitest and tsc never start Vite; the journey launcher does.
+            if root is not None and (root / STUDIO_START_SMOKE).is_file():
+                tools.add(f"python -m unittest {STUDIO_START_SMOKE}")
             continue
         for prefix, runtime_readers in RUNTIME_READERS.items():
             if path.startswith(prefix):
@@ -479,9 +484,11 @@ def reach(changed, packages, embedded, repo=None):
             elif root is not None:
                 other.append({"path": proportional_test,
                               "reason": "proportional-rows fixture observer is missing"})
-        # Fixture behavior is observed by previews of the changed flows. It has no
-        # standalone offline test, so keep it mapped without claiming a proxy pass.
+        # Fixture behavior is observed by previews of the changed flows. #1521: the one part a
+        # plan can observe offline is that the Studio the launcher starts does start.
         if path.startswith("tools/studio-journey-fixture/"):
+            if root is not None and (root / STUDIO_START_SMOKE).is_file():
+                tools.add(f"python -m unittest {STUDIO_START_SMOKE}")
             hit = True
         # #1248: a Markdown change under docs/ or to an entry point can orphan a document or leave a
         # dead link; the reachability guard is the observer. Without this rule `.md` maps nothing.
@@ -498,6 +505,12 @@ def reach(changed, packages, embedded, repo=None):
             if root is not None and (root / observer).is_file():
                 tools.add(python_test_tool(root, observer))
                 hit = True
+        # #1476: the planted defects anchor on exact text in the event store append; an edit there
+        # runs the anchor check so a moved anchor is seen before a defect turns unobserved.
+        if path == "core/events/src/local.rs":
+            observer = "tools/keel-effect/test_plant_defects.py"
+            if root is not None and (root / observer).is_file():
+                tools.add(python_test_tool(root, observer))
         qualification_packet = "evals/graphhelm-development-contracts/judge-qualification.json"
         if path == qualification_packet:
             observer = "tools/evals/test_skill_twins.py"

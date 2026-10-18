@@ -69,8 +69,8 @@ def load_observations(path):
         skills = item.get("invoked_skills")
         if not isinstance(skills, list) or any(not isinstance(skill, str) or not skill for skill in skills):
             raise InputError(f"{label} ({case_id}) invoked_skills must be an array of names")
-        if status == "completed" and item.get("completion") not in ("pass", "fail"):
-            raise InputError(f"{label} ({case_id}) completed run needs completion pass or fail")
+        if status == "completed" and item.get("completion") not in ("pass", "fail", "unjudged"):
+            raise InputError(f"{label} ({case_id}) completed run needs completion pass, fail or unjudged")
         if not isinstance(item.get("rubric"), str) or not item["rubric"]:
             raise InputError(f"{label} ({case_id}) needs rubric")
         for field in ("judge", "human_label"):
@@ -122,7 +122,8 @@ def build_report(observations, catalog):
         else:
             bucket = "correct_trigger" if expected in invoked else "miss"
         selection[kind][bucket] += 1
-        completion[kind][item["completion"]] += 1
+        # #184: a selection-only run applied no rubric; its completion is not observed.
+        completion[kind]["incomplete" if item["completion"] == "unjudged" else item["completion"]] += 1
 
         rubric = item["rubric"]
         if "judge" in item:

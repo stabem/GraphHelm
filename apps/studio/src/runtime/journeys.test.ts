@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { CaptureView, JourneyView, RuntimeEvent } from "./types";
-import { beforeAfterPairs, captureDocuments, journeySummary } from "./journeys";
+import type { CaptureView, JourneyFlowView, JourneyRunView, JourneyView, RuntimeEvent } from "./types";
+import { approvalBlockReason, beforeAfterPairs, captureDocuments, journeySummary } from "./journeys";
 
 function capture(over: Partial<CaptureView>): CaptureView {
   return { signalId: "s", sequence: 1, imageEvidenceId: "img", revision: "abc", dirty: false, viewport: { width: 1, height: 1 },
@@ -75,5 +75,23 @@ describe("live sessions on the Journey tab", () => {
   it("keeps a capture recorded with phase live (phase C) instead of dropping it", () => {
     const docs = captureDocuments([cap(1)], envs({ 1: doc({ phase: "live" }) }));
     expect(docs.map((d) => d.phase)).toEqual(["live"]);
+  });
+});
+
+describe("approvalBlockReason (#1448)", () => {
+  const flow = (status: "draft" | "approved"): JourneyFlowView => ({ id: "j", title: "J", status,
+    approved: status === "approved" ? { revision: "r", digest: "d" } : null, drift: [], findings: [], approvable: true,
+    screens: [{ id: "a", url: "/", state: "stable" }, { id: "b", url: "/", state: "stable" }],
+    edges: [{ id: "a.b", from: "a", to: "b" }], paths: { main: ["a.b"] } } as JourneyFlowView);
+  const contract = { contractId: "j", title: "J", steps: [{ stepId: "a" }, { stepId: "b" }] };
+  const run = (kind: "preview" | "replay"): JourneyRunView => ({ state: "ready", kind, result: "pass",
+    screens: { a: { result: "pass", frame: true }, b: { result: "pass", frame: true } }, edges: { "a.b": { result: "pass" } } });
+
+  it("a passing preview unlocks a draft, since a draft cannot be replayed before approval", () => {
+    expect(approvalBlockReason(flow("draft"), contract, run("preview"))).toBeNull();
+  });
+  it("an approved flow still needs a replay; its preview is not proof", () => {
+    expect(approvalBlockReason(flow("approved"), contract, run("preview"))).toMatch(/Not run yet/);
+    expect(approvalBlockReason(flow("approved"), contract, run("replay"))).toBeNull();
   });
 });

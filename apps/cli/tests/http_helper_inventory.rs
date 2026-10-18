@@ -66,6 +66,8 @@ const EXEMPTIONS: &[(&str, &str)] = &[
     ("monitor_http.rs", "fn serve("),
     ("providerless_journey.rs", "fn serve("),
     ("runtime_http.rs", "fn serve("),
+    // serve_handover.rs: a fixed port and an inherited stdout the successor reuses (#1523).
+    ("serve_handover.rs", "fn serve("),
     ("signal_image_evidence_http.rs", "fn serve("),
     ("wake_http.rs", "fn serve("),
     ("workspace_cli.rs", "fn serve("),

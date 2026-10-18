@@ -500,9 +500,25 @@ fn reap_lost_from_with(
     liveness: impl Fn(&Value) -> Liveness,
 ) -> Option<Value> {
     // Settled first (#586): a run that finished between the read and the liveness check is read
-    // as it finished, and is never reaped.
-    let mut state = read_settled_with(read, &liveness)?;
-    if state["state"] != "running" || liveness(&state) != Liveness::Dead {
+    // as it finished, and is never reaped. One probe only (#1448): a second probe could see a
+    // runner that wrote its result after the read as dead, and store the stale `running` copy
+    // over that result. A dead runner writes nothing more, so the read after its probe is final;
+    // it is reaped only while it is still that runner's `running` run.
+    let dead = std::cell::RefCell::new(None);
+    let mut state = read_settled_with(read, &|state: &Value| {
+        let verdict = liveness(state);
+        if verdict == Liveness::Dead {
+            *dead.borrow_mut() = Some(state.clone());
+        }
+        verdict
+    })?;
+    let Some(probed) = dead.into_inner() else {
+        return Some(state);
+    };
+    if state["state"] != "running"
+        || state["pid"] != probed["pid"]
+        || state["startedAt"] != probed["startedAt"]
+    {
         return Some(state);
     }
     // #1298: a runner that died before it launched any app is lost all the same; storing it
@@ -2235,6 +2251,46 @@ fi
             !project.path().join("down.log").exists(),
             "a finished run's fixture is not stopped by a reader"
         );
+        assert_eq!(
+            read_state(previews.path()).unwrap(),
+            ready,
+            "the finished run is not overwritten"
+        );
+    }
+
+    /// #1448: the runner can write `ready` and exit between two liveness probes. A reaper that
+    /// read `running`, probed the runner alive, then probed again and saw it dead, stored its
+    /// stale `running` copy as `preview.runner_lost` over the finished run (seen on the fixture:
+    /// `ready` at 17:51:18.76, `runner_lost` at 17:51:19.38, same pid). One probe per read.
+    /// Cost: temp files and an injected probe; no subprocess.
+    #[test]
+    fn a_runner_that_finishes_between_two_probes_keeps_its_result() {
+        let project = tempfile::tempdir().unwrap();
+        let previews = tempfile::tempdir().unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        let running = json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"running",
+            "pid":123,"startedAt":now,"screens":{},"edges":{}});
+        let ready = json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"ready",
+            "result":"pass","pid":123,"startedAt":now,"ranAt":now,"screens":{},"edges":{}});
+        save_state(previews.path(), &running);
+        let probes = std::cell::Cell::new(0);
+        let answered = reap_lost_from_with(
+            project.path(),
+            previews.path(),
+            || read_state(previews.path()),
+            |_| {
+                probes.set(probes.get() + 1);
+                if probes.get() == 1 {
+                    // The runner finishes while the first probe still sees it.
+                    save_state(previews.path(), &ready);
+                    super::Liveness::Alive
+                } else {
+                    super::Liveness::Dead
+                }
+            },
+        )
+        .unwrap();
+        assert_ne!(answered["reason"], "preview.runner_lost", "{answered}");
         assert_eq!(
             read_state(previews.path()).unwrap(),
             ready,

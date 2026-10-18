@@ -1295,6 +1295,11 @@ pub struct ServeArgs {
     pub keyring: Option<PathBuf>,
     #[arg(long = "key-id")]
     pub key_id: Option<String>,
+    /// Read the sealing key once at start from this owner-only file (64 lowercase hex
+    /// characters) instead of `GRAPHHELM_EVENTS_KEY`. Needs `--keyring`; refused together with the
+    /// variable. The key stays in this process and is never passed to a child.
+    #[arg(long = "events-key-file", requires = "keyring")]
+    pub events_key_file: Option<PathBuf>,
     /// The manifest route cognitive nodes run on by default (a request may name another). See
     /// `--manifest`.
     #[arg(long)]
@@ -1336,6 +1341,13 @@ pub struct ServeArgs {
     /// example `D:/gh` and `D:/gh/b`). Read-only: the Runtime never queues, cancels or reorders.
     #[arg(long = "slot-root")]
     pub slot_roots: Vec<PathBuf>,
+    /// The install root `graphhelm update` writes (`<root>/bin/graphhelm` and its
+    /// `<root>/.graphhelm-installed-head` stamp; #1523, D-059). When the stamp changes, this
+    /// Runtime starts that binary with its own arguments and inherited environment, and hands it
+    /// the port and the events lock once it reports ready; a binary that fails to start leaves
+    /// this Runtime serving.
+    #[arg(long)]
+    pub handover_install: Option<PathBuf>,
     /// Run the customs sweep automatically every N seconds, journalling each one as
     /// `SweepCaller::Tick`.
     ///

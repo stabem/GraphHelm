@@ -8,7 +8,7 @@ timeout and a running cost cap. A failed run, a timeout or a missing transcript 
 
 usage: python tools/evals/run_selection.py --workdir <repo copy> --out <observations.json>
        [--repeats 3] [--case <id>]... [--model sonnet] [--max-turns 12] [--timeout 600]
-       [--budget-usd 20] [--unknown-cost-usd 1]
+       [--budget-usd 20] [--unknown-cost-usd 1] [--plugin-dir <dir>]...
 """
 import argparse
 import json
@@ -78,14 +78,22 @@ def find_transcript(session_id):
     return None
 
 
-def run_case(claude, case_id, run, workdir, model, max_turns, timeout):
-    prompt, turns, tools = split_case((CASES / case_id / "prompt.md").read_text(encoding="utf-8"))
-    session_id = str(uuid.uuid4())
-    # The prompt goes on stdin: a body starting with "-" must never be read as an option.
+def build_command(claude, session_id, model, max_turns, tools, plugin_dirs):
+    """The headless call. The prompt goes on stdin: a body starting with "-" must never be read as
+    an option. Each `plugin_dirs` entry loads one plugin copy for this run (a measurement arm)."""
     cmd = [claude, "-p", "--session-id", session_id, "--model", model,
-           "--max-turns", str(turns or max_turns), "--output-format", "json"]
+           "--max-turns", str(max_turns), "--output-format", "json"]
     if tools:
         cmd += ["--allowedTools", ",".join(tools)]
+    for directory in plugin_dirs:
+        cmd += ["--plugin-dir", str(directory)]
+    return cmd
+
+
+def run_case(claude, case_id, run, workdir, model, max_turns, timeout, plugin_dirs=()):
+    prompt, turns, tools = split_case((CASES / case_id / "prompt.md").read_text(encoding="utf-8"))
+    session_id = str(uuid.uuid4())
+    cmd = build_command(claude, session_id, model, turns or max_turns, tools, plugin_dirs)
     cost, ok = None, False
     try:
         done = subprocess.run(cmd, cwd=workdir, input=prompt, capture_output=True, text=True,
@@ -132,6 +140,7 @@ def main(argv=None):
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--budget-usd", type=float, default=20.0)
     parser.add_argument("--unknown-cost-usd", type=float, default=1.0)
+    parser.add_argument("--plugin-dir", action="append", default=[], type=Path)
     args = parser.parse_args(argv)
     claude = shutil.which("claude") or os.environ.get("CLAUDE_CLI")
     if not claude:
@@ -140,7 +149,7 @@ def main(argv=None):
     cases = args.case or sorted(p.parent.name for p in CASES.glob("*/prompt.md"))
 
     def one(case_id, run):
-        obs = run_case(claude, case_id, run, args.workdir, args.model, args.max_turns, args.timeout)
+        obs = run_case(claude, case_id, run, args.workdir, args.model, args.max_turns, args.timeout, args.plugin_dir)
         done.append(obs)
         args.out.write_text(json.dumps(done, indent=1), encoding="utf-8")
         print(f"{run}/{case_id}: {obs['status']} {obs['invoked_skills']} cost={obs.get('cost_usd')}", flush=True)

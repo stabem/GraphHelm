@@ -563,7 +563,7 @@ class SessionHookTests(unittest.TestCase):
         )
         self.assertEqual(companion_manifest["hooks"], "./hooks/codex-hooks.json")
         main_manifest = json.loads((repository / "plugins" / "graphhelm" / "plugin.json").read_text())
-        self.assertEqual(main_manifest["version"], "0.1.50")
+        self.assertEqual(main_manifest["version"], "0.1.51")
         self.assertEqual(companion_manifest["version"], main_manifest["version"])
         for host in (".claude-plugin", ".codex-plugin"):
             legacy = json.loads((repository / "plugins" / "graphhelm" / host / "plugin.json").read_text())
@@ -782,6 +782,25 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         arms = [item for item in RuntimeHandler.requests if item[1] == "/v1/executions/run-test/wake-lease"]
         self.assertEqual(len(arms), 0)
+
+    def test_a_failed_briefing_still_starts_the_lane_waiter(self):
+        # #919: with a slow Runtime the briefing read times out, and SessionStart used to raise
+        # before ever reaching start_lane_waiter, so no lane held a wake lease. The briefing
+        # stays UNOBSERVED; the lane must still become wakeable.
+        spec = importlib.util.spec_from_file_location("session_hook_briefing_timeout", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        payload = {"hook_event_name": "SessionStart", "session_id": "session-123", "source": "startup"}
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(Path(self.temp.name) / "briefing-timeout")}), \
+             patch.object(hook, "binding", return_value=bound), \
+             patch.object(hook, "request", side_effect=TimeoutError("timed out")), \
+             patch.object(hook, "start_lane_waiter") as waiter:
+            with self.assertRaises(TimeoutError):
+                hook._start_impl(payload, "claude")
+        waiter.assert_called_once_with(payload, bound, "claude")
 
     def test_start_accepts_slow_fresh_briefing_with_one_get(self):
         # The old 2.5-second socket budget discarded a valid Runtime briefing.

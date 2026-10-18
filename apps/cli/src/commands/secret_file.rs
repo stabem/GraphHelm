@@ -248,6 +248,18 @@ pub(crate) fn read_owner_only(path: &Path, what: &str) -> Result<String, SecretF
         }
     }
     let file = open_without_following(&absolute).map_err(|_| unreadable())?;
+    // #1523 slice 2b: the ancestor walk above ran by path before the open; the handle's real path
+    // proves no ancestor was swapped for a junction in between (and refuses mapped drives).
+    #[cfg(windows)]
+    {
+        let real = final_path(&file).map_err(|_| unreadable())?;
+        if !final_path_matches(&absolute, &real) {
+            return Err(SecretFileError::new(
+                what,
+                "must be reached by its real path, not through a link, junction or mapped drive",
+            ));
+        }
+    }
     let metadata = file.metadata().map_err(|_| unreadable())?;
     if is_link(&metadata) {
         return Err(SecretFileError::new(
@@ -285,6 +297,51 @@ pub(crate) fn read_owner_only(path: &Path, what: &str) -> Result<String, SecretF
         ));
     }
     Ok(raw.iter().map(|&byte| char::from(byte)).collect())
+}
+
+/// The real path Windows reports for an open handle (`GetFinalPathNameByHandleW`, DOS volume
+/// names), such as `\\?\D:\dir\file`.
+#[cfg(windows)]
+fn final_path(file: &std::fs::File) -> std::io::Result<String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{GetFinalPathNameByHandleW, VOLUME_NAME_DOS};
+    let mut buffer = vec![0_u16; 512];
+    for _ in 0..3 {
+        let capacity = u32::try_from(buffer.len()).map_err(std::io::Error::other)?;
+        // SAFETY: the handle is owned by `file` and stays open for the call; `buffer` holds
+        // `capacity` writable UTF-16 units.
+        let length = unsafe {
+            GetFinalPathNameByHandleW(
+                file.as_raw_handle(),
+                buffer.as_mut_ptr(),
+                capacity,
+                VOLUME_NAME_DOS,
+            )
+        } as usize;
+        if length == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if length < buffer.len() {
+            return Ok(String::from_utf16_lossy(&buffer[..length]));
+        }
+        buffer.resize(length + 1, 0);
+    }
+    Err(std::io::Error::other("final path did not settle"))
+}
+
+/// Whether the handle's real path names the requested file: equal after dropping the `\\?\`
+/// (or `\\?\UNC\` → `\\`) prefix, ignoring ASCII case as NTFS does.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn final_path_matches(requested: &Path, final_path: &str) -> bool {
+    fn plain(path: &str) -> std::borrow::Cow<'_, str> {
+        if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+            std::borrow::Cow::Owned(format!(r"\\{rest}"))
+        } else {
+            std::borrow::Cow::Borrowed(path.strip_prefix(r"\\?\").unwrap_or(path))
+        }
+    }
+    let requested = requested.to_string_lossy();
+    plain(final_path).eq_ignore_ascii_case(&plain(&requested))
 }
 
 fn is_link(metadata: &std::fs::Metadata) -> bool {

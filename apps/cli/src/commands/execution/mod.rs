@@ -384,7 +384,7 @@ pub(crate) fn load_projection(
     execution: Option<&str>,
 ) -> Result<(RepositoryScope, String, ExecutionProjection), Failure> {
     let (scope, stream, history) = resolve_stream(store, execution)?;
-    let projection = graphhelm_events::replay(&scope, &stream, &history)
+    let projection = status::replay_cached(store.root(), &scope, &stream, &history)
         .map_err(|error| replay_failure(&error))?;
     Ok((scope, stream, projection))
 }
@@ -400,7 +400,8 @@ pub(super) fn replay_projection(
     let history = store
         .read_replay_stream(scope, stream)
         .map_err(|error| repository_failure(&error))?;
-    graphhelm_events::replay(scope, stream, &history).map_err(|error| replay_failure(&error))
+    status::replay_cached(store.root(), scope, stream, &history)
+        .map_err(|error| replay_failure(&error))
 }
 
 /// The actor for owner-initiated commands: approve, pause, resume, cancel, signal.

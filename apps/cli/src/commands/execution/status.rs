@@ -454,6 +454,30 @@ fn fold_within(
     }
 }
 
+/// #1560: the unbudgeted fold every other serve reader used to pay from sequence 1: the listing
+/// (once per row) and the signal route (once per record, again per retried claim). On the
+/// owner's 32k-event `gh-team`, measured on a copy of the real journal, that was 2-3.5 s of CPU
+/// per call. In serve it resumes the same cached generation `status` keeps; in a one-shot
+/// command (no shared cache) it is exactly `replay`.
+pub(crate) fn replay_cached(
+    events: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+) -> Result<graphhelm_events::ExecutionProjection, graphhelm_events::ReplayError> {
+    match SHARED_FOLDS.get() {
+        Some(cache) => fold_cached(
+            cache,
+            events,
+            scope,
+            stream,
+            history,
+            &graphhelm_events::ReadBudget::unbounded(),
+        ),
+        None => graphhelm_events::replay(scope, stream, history),
+    }
+}
+
 /// The cached generation is reused only when the history still holds the event it stopped at, by
 /// sequence AND hash; anything else (a different journal, a rewrite) folds from genesis. The fold
 /// is `ProjectionGeneration::apply_page`, which runs the same per-event checks and the same

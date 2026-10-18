@@ -79,15 +79,15 @@ describe("stageHealth", () => {
     expect(stageHealth(plan(61 * M), active, [], NOW)?.flag).toBe("moving");
     expect(stageHealth(plan(60 * M + 1000), active, g, NOW)?.flag).toBe("slow");
   });
-  // #1556: an idle session's Stop hook kept "Planning 37h · author active 12s ago" live; a plan claim
-  // with no PR past STALE_PLAN_MS is stale whatever the lane's newest record says.
-  it("a plan claim with no PR past 6h is a stale claim even with a fresh record", () => {
-    const plan = (ms: number, pr: number | null = null) => ts("p", { step: "plan", pr, clock: { since: iso(NOW - ms), spent: {} } });
-    const fresh = [lane("gh-claude-1", NOW - 12_000)];
-    expect(stageHealth(plan(37 * H + 45 * M), fresh, [], NOW)).toMatchObject({ flag: "stale", text: "Stale claim · planning 1d 13h, no PR", tone: "red" });
-    expect(stageHealth(plan(6 * H), fresh, [], NOW)?.flag).toBe("stale");
-    expect(stageHealth(plan(6 * H - 1000), fresh, [], NOW)?.flag).toBe("moving");
-    expect(stageHealth(plan(37 * H, 9), fresh, [], NOW)?.flag).not.toBe("stale");
+  // #1556: an idle session's Stop hook kept "Planning 37h · author active 12s ago" live; the Runtime's
+  // overdue-lease verdict on a PR-less plan claim reads as a stale claim, whatever the newest record.
+  it("a plan claim whose lease the Runtime reads as overdue is a stale claim even with a fresh record", () => {
+    const plan = (pr: number | null = null) => ts("p", { step: "plan", pr, clock: { since: iso(NOW - 37 * H - 45 * M), spent: {} } });
+    const fresh = lane("gh-claude-1", NOW - 12_000);
+    const overdue: Lane = { ...fresh, overdueTasks: ["p"] };
+    expect(stageHealth(plan(), [overdue], [], NOW)).toMatchObject({ flag: "stalled", text: "Stale claim · planning 1d 13h, no PR", tone: "red" });
+    expect(stageHealth(plan(), [fresh], [], NOW)?.text).not.toMatch(/^Stale claim/);
+    expect(stageHealth(plan(9), [overdue], [], NOW)?.text).not.toMatch(/^Stale claim/);
   });
   it("Slow with a live owner names who is active", () => {
     const others = [done("o1", H), done("o2", H), done("o3", H)];

@@ -5,7 +5,12 @@
 import type { EnvelopeRecord } from "../graph/ledger";
 import type { JourneyFlowView, JourneyRunView, JourneyView, RuntimeEvent } from "./types";
 
-/** A flow approval must be backed by the current compiled contract and a complete replay. */
+/**
+ * A flow approval must be backed by the current compiled contract and a complete run. An approved
+ * flow needs a replay. A draft cannot be replayed before it is approved, so its proof is a passing
+ * preview (#1448 decision); the Runtime returns a run only for the current draft digest, so a draft
+ * change shows `none` until the preview runs again.
+ */
 export function approvalBlockReason(flow: JourneyFlowView, contract: { contractId: string; title: string; steps: readonly { stepId: string }[] }, run: JourneyRunView | null): string | null {
   const path = contract.contractId === flow.id ? "main" : contract.contractId.slice(flow.id.length + 1);
   const edgeIds = flow.paths[path];
@@ -17,9 +22,10 @@ export function approvalBlockReason(flow: JourneyFlowView, contract: { contractI
     || flow.findings.some((finding) => finding.code === "flow.contract_stale" && finding.pointer === `/journeys/${contract.contractId}.json`)) {
     return "Contract out of date, regenerate first";
   }
-  if (run?.state !== "ready" || run.kind !== "replay" || run.result !== "pass"
+  const proof = flow.status === "approved" ? "replay" : run?.kind === "replay" ? "replay" : "preview";
+  if (run?.state !== "ready" || run.kind !== proof || run.result !== "pass"
     || contract.steps.length === 0 || contract.steps.some((step) => run.screens?.[step.stepId]?.result !== "pass")
-    || edgeIds.some((id) => run.edges?.[id]?.result !== "pass")) return "Not run yet — complete every step in a replay first";
+    || edgeIds.some((id) => run.edges?.[id]?.result !== "pass")) return `Not run yet — complete every step in a ${proof} first`;
   return null;
 }
 

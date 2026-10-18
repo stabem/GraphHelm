@@ -18,6 +18,7 @@ pub(super) mod start;
 pub(super) mod status;
 pub(super) mod sweep;
 pub(crate) mod tasks;
+pub(crate) mod timing;
 pub(crate) mod wake;
 
 use std::collections::BTreeMap;

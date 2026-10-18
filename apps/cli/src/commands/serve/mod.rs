@@ -1,5 +1,6 @@
 pub(crate) mod alloc_guard;
 mod documents;
+mod handover;
 mod journey_credentials;
 mod lifecycle;
 pub(super) mod monitor;
@@ -440,7 +441,12 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
 
     let rt =
         runtime().map_err(|_| serve_invalid("the operator runtime could not be started", "/"))?;
-    rt.block_on(serve_forever(address, state, startup_warnings))
+    rt.block_on(serve_forever(
+        address,
+        state,
+        startup_warnings,
+        args.handover_install.clone(),
+    ))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -771,10 +777,42 @@ async fn serve_forever(
     address: SocketAddr,
     mut state: ServeState,
     startup_warnings: Vec<Diagnostic>,
+    handover_install: Option<PathBuf>,
 ) -> Result<(), Failure> {
-    let listener = tokio::net::TcpListener::bind(address)
-        .await
-        .map_err(|_| serve_invalid("the requested address could not be bound", "/bind"))?;
+    // #1523: a successor proves its startup (keyring opened above, journal verified here) before
+    // the old Runtime lets go of the port, then waits for the port and the lock to be released.
+    let successor = handover::is_successor();
+    if successor {
+        // The old Runtime treats a keyring it cannot open as a warning; a successor that cannot
+        // open it is not healthy, and the old one keeps serving.
+        if let Some(sealing) = state.sealing.as_deref() {
+            execution::signal::open_sealer(sealing).map_err(|_| {
+                serve_invalid(
+                    "the handover successor could not open the keyring",
+                    "/keyring",
+                )
+            })?;
+        }
+        event_store(&state.events)
+            .map_err(|_| serve_invalid("the events repository could not be opened", "/events"))?;
+        handover::announce_ready(&state.events)
+            .map_err(|_| serve_invalid("the handover could not be announced", "/events"))?;
+    }
+    let takeover = Instant::now();
+    let listener = loop {
+        match tokio::net::TcpListener::bind(address).await {
+            Ok(listener) => break listener,
+            Err(_) if successor && takeover.elapsed() < handover::TAKEOVER_DEADLINE => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(_) => {
+                return Err(serve_invalid(
+                    "the requested address could not be bound",
+                    "/bind",
+                ));
+            }
+        }
+    };
     let bound = listener
         .local_addr()
         .map_err(|_| serve_invalid("the bound address could not be read back", "/bind"))?;
@@ -787,8 +825,14 @@ async fn serve_forever(
     let journal_verify_ms =
         u64::try_from(journal_started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let lifecycle_started = std::time::Instant::now();
-    let (lifecycle, previous_exit, current_run) =
-        lifecycle::Lifecycle::start(&state.events, &state.instance)?;
+    let (lifecycle, previous_exit, current_run) = loop {
+        match lifecycle::Lifecycle::start(&state.events, &state.instance) {
+            Err(_) if successor && takeover.elapsed() < handover::TAKEOVER_DEADLINE => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            started => break started?,
+        }
+    };
     let lifecycle_start_ms =
         u64::try_from(lifecycle_started.elapsed().as_millis()).unwrap_or(u64::MAX);
     state.previous_exit = previous_exit;
@@ -847,23 +891,54 @@ async fn serve_forever(
         ));
     }
 
+    let (handed_over, handover_signal) = tokio::sync::watch::channel(false);
+    if let Some(root) = handover_install {
+        let events = state.events.to_path_buf();
+        tokio::spawn(async move {
+            handover::watch(root, events).await;
+            let _ = handed_over.send(true);
+        });
+    }
+    let drain_signal = handover_signal.clone();
     let app = build_router(state);
-    let result = axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            // Isolated integration harness only. Release builds have no shutdown seam.
-            #[cfg(debug_assertions)]
-            if let Some(path) = std::env::var_os("GRAPHHELM_TEST_SHUTDOWN_FILE") {
-                while !std::path::Path::new(&path).is_file() {
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                }
-                return;
-            }
-            std::future::pending::<()>().await;
-        })
-        .await
-        .map_err(|_| serve_invalid("the server loop ended unexpectedly", "/"));
+    let served = axum::serve(listener, app).with_graceful_shutdown(async move {
+        tokio::select! {
+            () = handover_ready(handover_signal) => {}
+            () = test_shutdown() => {}
+        }
+    });
+    // A handed-over Runtime gives open requests `DRAIN` to finish, then lets go regardless:
+    // a long-lived stream must not keep the lifecycle lock from the successor.
+    let drained = async move {
+        handover_ready(drain_signal).await;
+        tokio::time::sleep(handover::DRAIN).await;
+    };
+    let result = tokio::select! {
+        result = served => result,
+        () = drained => Ok(()),
+    }
+    .map_err(|_| serve_invalid("the server loop ended unexpectedly", "/"));
     lifecycle.finish(result.is_ok())?;
     result
+}
+
+/// Resolves once a successor reported ready (#1523); never, without `--handover-install`.
+async fn handover_ready(mut signal: tokio::sync::watch::Receiver<bool>) {
+    if signal.wait_for(|done| *done).await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+async fn test_shutdown() {
+    // Isolated integration harness only. Release builds have no shutdown seam.
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("GRAPHHELM_TEST_SHUTDOWN_FILE") {
+        while !std::path::Path::new(&path).is_file() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        return;
+    }
+    std::future::pending::<()>().await;
 }
 
 /// Sweep every stream in the repository, forever, every `seconds`.

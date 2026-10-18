@@ -170,6 +170,24 @@ pub(crate) fn events_key_hex() -> Option<zeroize::Zeroizing<String>> {
 pub(crate) fn open_sealer(
     keyring: &SignalKeyring,
 ) -> Result<EvidenceProtector<SealedKeyProvider>, Failure> {
+    Ok(EvidenceProtector::new(open_provider(keyring)?))
+}
+
+/// #1560: the keyring generation an opened envelope belongs to: the key id and the provider's
+/// current revocation epoch. A rotated key (another id) or a revocation (a later epoch) is
+/// another generation, so a plaintext opened before it is never served from memory after it.
+pub(crate) fn sealer_generation(keyring: &SignalKeyring) -> Result<String, Failure> {
+    generation_of(&open_provider(keyring)?, &keyring.key_id)
+}
+
+pub(crate) fn generation_of(provider: &SealedKeyProvider, key_id: &str) -> Result<String, Failure> {
+    let epoch = provider
+        .epoch()
+        .map_err(|_| argument("the sealed keyring could not be opened", "/keyring"))?;
+    Ok(format!("{key_id}#{epoch}"))
+}
+
+fn open_provider(keyring: &SignalKeyring) -> Result<SealedKeyProvider, Failure> {
     let invalid = || {
         argument(
             "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters",
@@ -197,7 +215,7 @@ pub(crate) fn open_sealer(
         SecretBytes::new(material),
     )
     .map_err(|_| argument("the sealed keyring could not be opened", "/keyring"))?;
-    Ok(EvidenceProtector::new(provider))
+    Ok(provider)
 }
 
 /// The shared core: admits `signal` (already-read bytes — a file's contents from the CLI, or an
@@ -489,7 +507,8 @@ fn record_once(
     allow_native: bool,
     attachments: &[ImageAttachment],
 ) -> Result<serde_json::Value, Failure> {
-    let (scope, stream, projection) = load_projection(store, execution)?;
+    let (scope, stream, projection) =
+        super::timing::phase("projection.load", || load_projection(store, execution))?;
 
     let raw = signal;
     let envelope: serde_json::Value = serde_json::from_slice(raw)
@@ -527,7 +546,7 @@ fn record_once(
         // Every task record: a retired lane's record of any kind is refused against this history.
         .is_some_and(|kind| kind.starts_with("task."))
     {
-        Some(super::resolve_stream(store, execution)?.2)
+        Some(super::timing::phase("stream.read", || super::resolve_stream(store, execution))?.2)
     } else {
         None
     };
@@ -546,12 +565,14 @@ fn record_once(
     } else {
         None
     };
-    super::documents::validate_task_event(
-        &envelope,
-        &actor,
-        task_history.as_deref().unwrap_or_default(),
-        sealing.map(|keyring| (store, &scope, keyring)),
-    )?;
+    super::timing::phase("task.admission", || {
+        super::documents::validate_task_event(
+            &envelope,
+            &actor,
+            task_history.as_deref().unwrap_or_default(),
+            sealing.map(|keyring| (store, &scope, keyring)),
+        )
+    })?;
     if matches!(
         envelope.get("type").and_then(serde_json::Value::as_str),
         Some("actor_alias" | "owner_refusal")
@@ -891,8 +912,7 @@ fn record_once(
                 vec![],
             )
             .map_err(|error| repository_failure(&error))?;
-            store
-                .append_atomic(&request)
+            super::timing::phase("store.append", || store.append_atomic(&request))
                 .map_err(|error| repository_failure(&error))?;
         }
         None => {

@@ -748,7 +748,11 @@ async fn list_executions_over(events: Arc<Path>, query: &str) -> Response {
     };
     // Up to `limit` streams replayed, each up to the store's event ceiling: replay work, off the
     // reactor (#559).
-    let listed = off_reactor(move || execution::list::execute(&events, after.as_deref(), limit));
+    let listed = off_reactor(move || {
+        execution::timing::request("executions.list", || {
+            execution::list::execute(&events, after.as_deref(), limit)
+        })
+    });
     match listed.await {
         Some(Ok(value)) => respond(StatusCode::OK, Outcome::success(LIST_COMMAND, value).output),
         Some(Err(failure)) => respond_failure(LIST_COMMAND, failure),
@@ -1960,10 +1964,12 @@ pub(super) async fn tasks(
         // admission shares), outside the lock; what was learned is folded back, refusal included.
         let budget = crate::commands::tasks_read_budget();
         let key = execution::tasks::cache_key(&events, &execution_id);
-        execution::tasks::with_shared_cache(&key, |cache| {
-            execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
+        execution::timing::request("executions.tasks", || {
+            execution::tasks::with_shared_cache(&key, |cache| {
+                execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
+            })
+            .map(|view| view.filtered(&filter).at_depth(depth, since.as_ref()))
         })
-        .map(|view| view.filtered(&filter).at_depth(depth, since.as_ref()))
     })
     .await
     else {
@@ -3966,17 +3972,19 @@ pub(super) async fn signal(
                 // one `sealing` is `None`, the seal never runs, and the panic never fires. That
                 // is why the defect outlived every earlier signal test: they all ran unsealed.
                 let recorded = tokio::task::spawn_blocking(move || {
-                    execution::signal::execute_authenticated_on(
-                        &store_for_run,
-                        Some(drive_execution_id.as_str()),
-                        &signal_bytes,
-                        evidence_out.as_deref(),
-                        actor,
-                        key,
-                        sealing.as_deref(),
-                        scoped_agent_authenticated,
-                        &attachments,
-                    )
+                    execution::timing::request("executions.signal", || {
+                        execution::signal::execute_authenticated_on(
+                            &store_for_run,
+                            Some(drive_execution_id.as_str()),
+                            &signal_bytes,
+                            evidence_out.as_deref(),
+                            actor,
+                            key,
+                            sealing.as_deref(),
+                            scoped_agent_authenticated,
+                            &attachments,
+                        )
+                    })
                 })
                 .await
                 .map_err(|_| {

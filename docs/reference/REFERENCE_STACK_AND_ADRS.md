@@ -1579,3 +1579,76 @@ directory alone; a junction at an ignored path inside `wt/` keeps the workspace 
 and its target survives; HTTP and MCP lists equal to the CLI's; agent-session sweep refused and owner-session
 sweep applied; a Runtime without `--workspace-root` refusing and naming it. Plus `mcp_stdio.rs`
 (tool list) and `development_surface_parity.rs`.
+
+## 51. ADR-046 — An unacknowledged torn journal tail is trimmed on open, with an audit record and a quarantined copy
+
+**Status:** Proposed (#41). Needs the owner's acceptance before any code lands; until then the
+store keeps failing closed.
+
+**Context:** The local Event Store refuses to open a journal that ends in a torn tail
+(`IntegrityAt("load_state:journal-tail-unterminated")`, or `Integrity` for a tear mid-record).
+`a_crash_mid_write_is_refused_on_resume_and_never_becomes_an_event` and #1582's
+`a_complete_record_missing_only_its_newline_is_refused_as_an_unterminated_tail` pin that. Nothing
+recovers it automatically: the only path is an operator running `graphhelm events backup`/`restore`
+or trimming the file by hand. The owner's PC hard-reset twice under load (2026-10-17/18), so a
+power loss during any lane's write keeps the Runtime down until a human repairs the journal.
+
+AGENTS.md: "Replay rejects corrupt committed records rather than guessing." The question is
+whether a torn tail is a COMMITTED record. The write path (`core/events/src/local.rs`, append
+under the exclusive lock, read on `d6763d37`) answers it:
+- the batch line is built with its newline appended (`line.push(b'\n')`, :1335);
+- it is written with ONE `write_all(&line)`, then `flush`, then `sync_data` and a directory sync
+  (:1390-1400);
+- only after that does the append return success to its caller.
+
+So every acknowledged batch is durable and newline-terminated. Bytes after the last newline can
+only belong to the one in-flight append, whose caller never got a success. They are not a
+committed record. They are an uncommitted write that a crash interrupted. Idempotent retry
+(`append_effect_contract.rs`, lost-ack and racing-writer cells) already lets that caller append
+the same operation again safely.
+
+**Decision:**
+
+1. **What is trimmed.** On open, under the exclusive lock, before any read is served: if the
+   journal is non-empty and does not end in `\n`, the bytes after the LAST `\n` are the torn
+   tail. Nothing before that newline is ever touched. A journal with no newline at all (the very
+   first append torn) trims to empty.
+2. **What must hold first.** Every line before the tail must verify exactly as today: parse, batch
+   checksum, canonical bytes and hash chain. If any of them fails, open refuses as it does now.
+   Only an unterminated suffix is recoverable; a corrupt terminated line is never trimmed,
+   repaired or skipped.
+3. **Quarantine, never delete.** The trimmed bytes are written first, and synced, to
+   `<events>/quarantine/torn-tail-<journal length>-<sha256 of the bytes>.bin`, creating no
+   links and following none. Only then is the journal truncated to the last newline, synced, and
+   the directory synced. A crash between the two steps leaves the quarantine file plus an
+   untrimmed journal, and the next open repeats the same idempotent step.
+4. **Audit record.** The first append after a trim carries a `journal_tail_recovered` event:
+   byte count, sha256 and quarantine file name, never the bytes. The open itself writes nothing to
+   the journal beyond the truncation, so the event store stays append-only for committed
+   history. The Runtime's `previousExit` (#1473's lifecycle record) also reports
+   `torn_tail_recovered`, so the Studio can say why the last write was lost.
+5. **Bound.** A tail longer than `MAX_BATCH_BYTES` cannot be one in-flight batch. It refuses as
+   today (`IntegrityAt("load_state:journal-tail-oversized")`), because something other than a torn
+   append wrote it.
+6. **Who may trim.** Only the store's own open under its exclusive lock. No CLI flag skips the
+   checks, and read-only opens (shared lock, verification-only paths) keep refusing.
+
+**Rejected alternatives:**
+- *Keep failing closed* (today). It is correct for integrity but leaves availability to a human
+  after every power loss, on a machine that has hard-reset twice under load.
+- *Skip the tail in memory without truncating.* Every later append would land after garbage, and
+  the next open would face a terminated corrupt line, which must refuse. That turns one recoverable
+  tear into a permanent outage.
+- *Repair or complete the torn record.* That is guessing an event into history, which AGENTS.md
+  forbids.
+
+**Proof the implementation owes** (Keel card on #41):
+- RED first on main: a complete record missing only its newline, and a half-written record, each
+  make `open` refuse.
+- GREEN: `open` succeeds. The journal equals the pre-tear bytes. The quarantine file holds exactly
+  the trimmed bytes. A retry of the same operation appends exactly one event.
+- A corrupt TERMINATED line, and a tail over the bound, still refuse.
+- `plant_defects.py` stays at 5/5 (kill-mid-write now asserts recovery instead of refusal).
+
+**Relationship:** refines AGENTS.md's replay rule for the one byte range the write path proves
+uncommitted; builds on #1582 (the tail check pinned) and #1473 (the lifecycle record). Refs #41.

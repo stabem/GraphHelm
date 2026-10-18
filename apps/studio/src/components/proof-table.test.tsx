@@ -51,20 +51,25 @@ describe("ProofTable", () => {
     expect(approve).toBeDisabled();
     expect(approve).toHaveAccessibleDescription(/Not run yet/);
   });
-  it("#947: a complete replay enables approval, while a preview does not", async () => {
+  it("#1448: a draft's passing preview enables approval, a failed one does not", async () => {
+    // Decision on #1448: a draft cannot be replayed until it is approved, so a replay-only gate
+    // left Approve disabled forever. A passing preview on the current draft digest (the Runtime
+    // only returns the run for that digest) unlocks Approve; anything short of pass does not.
     const flow = { id: "j", title: "J", status: "draft" as const, approved: null, drift: [], findings: [], approvable: true,
       screens: [{ id: "mark", url: "/", state: "stable" }, { id: "next", url: "/", state: "stable" }],
       edges: [{ id: "mark.next", from: "mark", to: "next" }], paths: { main: ["mark.next"] } };
     const result = { state: "ready" as const, result: "pass" as const,
       screens: { mark: { result: "pass" as const, frame: false }, next: { result: "pass" as const, frame: false } },
       edges: { "mark.next": { result: "pass" as const } } };
-    const run: JourneyRunSource = { start: vi.fn(), read: vi.fn(async () => ({ ...result, kind: "preview" as const })),
+    const run: JourneyRunSource = { start: vi.fn(), read: vi.fn(async () => ({ ...result, kind: "preview" as const,
+      result: "fail" as const, edges: { "mark.next": { result: "fail" as const } } })),
       screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null) };
     const onApprove = vi.fn().mockResolvedValue(undefined);
     const view = render(<ProofTable mission={mission} onOpenTest={vi.fn()} flow={flow} run={run} onApprove={onApprove} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled());
+    await waitFor(() => expect(run.read).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
     view.unmount();
-    run.read = vi.fn(async () => ({ ...result, kind: "replay" as const }));
+    run.read = vi.fn(async () => ({ ...result, kind: "preview" as const }));
     render(<ProofTable mission={mission} onOpenTest={vi.fn()} flow={flow} run={run} onApprove={onApprove} />);
     await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled());
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));

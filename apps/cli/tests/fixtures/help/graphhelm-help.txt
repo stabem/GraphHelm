@@ -4578,6 +4578,9 @@ Options:
       --slot-root <SLOT_ROOTS>
           A build-slot root (#612) whose queue `GET /v1/workspaces/slots` reports; repeatable (for example `D:/gh` and `D:/gh/b`). Read-only: the Runtime never queues, cancels or reorders
 
+      --handover-install <HANDOVER_INSTALL>
+          The install root `graphhelm update` writes (`<root>/bin/graphhelm` and its `<root>/.graphhelm-installed-head` stamp; #1523, D-059). When the stamp changes, this Runtime starts that binary with its own arguments and inherited environment, and hands it the port and the events lock once it reports ready; a binary that fails to start leaves this Runtime serving
+
       --sweep-interval <SWEEP_INTERVAL>
           Run the customs sweep automatically every N seconds, journalling each one as `SweepCaller::Tick`.
           

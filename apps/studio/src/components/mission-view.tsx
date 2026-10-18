@@ -15,7 +15,7 @@ import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-gr
 import { ProofTable } from "./proof-table";
 import { TestCanvas } from "./test-canvas";
 import { ProofRun } from "./proof-run";
-import { journeyVerdict, runJourneys, type JourneyRunSource, type JourneyVerdict } from "./journey-flows";
+import { approveJourneys, journeyVerdict, runJourneys, type JourneyRunSource, type JourneyVerdict } from "./journey-flows";
 import { LanesTimeline } from "./lanes-timeline";
 import { WorkKanban, type KanbanItem } from "./work-kanban";
 import type { Bot } from "../runtime/team";
@@ -461,6 +461,10 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   const [batch, setBatch] = useState<{ ids: string[]; done: number; current: string | null } | null>(null);
   const [batchNote, setBatchNote] = useState<string | null>(null);
   const [batchRevision, setBatchRevision] = useState(0);
+  // #1309 slice 2: the owner's batch approve, behind a confirm step that names every flow.
+  const [approveAsk, setApproveAsk] = useState<string[] | null>(null);
+  const [approving, setApproving] = useState<{ ids: string[]; current: string | null } | null>(null);
+  const [approveErrors, setApproveErrors] = useState<Record<string, string>>({});
   const readCached = useRef(new Set<string>());
   useEffect(() => {
     if (!run || !onRun) return;
@@ -511,10 +515,22 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
   const contractId = journey?.contractId ?? null;
   const flow: JourneyFlowView | undefined = contractId ? flowForContract(flows?.flows ?? [], contractId) : undefined;
   const pendingFlows = flows?.flows.filter((item) => item.status === "draft" || item.status === "approval_stale" || item.status === "weak") ?? [];
-  const approvableCount = pendingFlows.filter((item) => {
+  const approvableFlows = pendingFlows.filter((item) => {
     const contract = journeys.find((candidate) => candidate.contractId === item.id);
     return item.approvable && contract !== undefined && approvalBlockReason(item, contract, runFor(contract.contractId)) === null;
-  }).length;
+  });
+  const approvableCount = approvableFlows.length;
+  const flowName = (id: string) => flows?.flows.find((item) => item.id === id)?.name?.trim() || id;
+  const approveAll = (ids: string[]) => {
+    if (!onApprove || approving !== null) return;
+    setApproveAsk(null);
+    setApproveErrors({});
+    setApproving({ ids, current: null });
+    void approveJourneys(ids, onApprove, (id) => setApproving((before) => before && { ...before, current: id })).then((outcome) => {
+      setApproving(null);
+      setApproveErrors(outcome.errors);
+    });
+  };
   const mission = contractId ? missions.find((m) => m.contractId === contractId)! : null;
   const openTest = (id: string) => {
     if (!journey) return;
@@ -606,7 +622,22 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
         {proofMode && (
           <nav aria-label="Journeys" className="mv-journeys">
             <span className="mv-cap">Journeys</span>
-            {pendingFlows.length > 0 && <span className="mv-cap">{approvableCount > 0 ? `${approvableCount} to approve` : `${pendingFlows.length} awaiting proof`}</span>}
+            {pendingFlows.length > 0 && (approvableCount > 0 && onApprove
+              ? <button type="button" className="mv-runall-btn" disabled={approving !== null || approveAsk !== null}
+                onClick={() => setApproveAsk(approvableFlows.map((item) => item.id))}>
+                {approving !== null ? `Approving ${Math.max(1, approving.ids.indexOf(approving.current ?? "") + 1)}/${approving.ids.length}…` : `Approve ${approvableCount}`}
+              </button>
+              : <span className="mv-cap">{approvableCount > 0 ? `${approvableCount} to approve` : `${pendingFlows.length} awaiting proof`}</span>)}
+            {approveAsk !== null && <div role="dialog" aria-label="Approve journeys" className="mv-runall">
+              <p>{`Approve ${approveAsk.length} journey${approveAsk.length === 1 ? "" : "s"}? Each passed its preview on the current version.`}</p>
+              <ul>{approveAsk.map((id) => <li key={id}>{flowName(id)}</li>)}</ul>
+              <button type="button" onClick={() => approveAll(approveAsk)}>Approve all</button>
+              <button type="button" onClick={() => setApproveAsk(null)}>Cancel</button>
+            </div>}
+            {Object.keys(approveErrors).length > 0 && <div role="alert" className="mv-runall-note">
+              <p>{`${Object.keys(approveErrors).length} not approved:`}</p>
+              <ul>{Object.entries(approveErrors).map(([id, reason]) => <li key={id}>{`${flowName(id)}: ${reason}`}</li>)}</ul>
+            </div>}
             {runnable.length > 0 && <div className="mv-runall">
               <button type="button" className="mv-runall-btn" disabled={batch !== null} onClick={() => startBatch(runnable)}>
                 {batch !== null && batch.ids.length > 1 ? `Running ${batch.done + 1}/${batch.ids.length}…` : "▶ Run all"}

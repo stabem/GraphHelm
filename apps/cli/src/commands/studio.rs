@@ -1086,6 +1086,65 @@ mod tests {
         assert_eq!(compiled_crate("Compiling serde v1"), None);
     }
 
+    /// #1523: a Runtime started before the previous update still runs from the moved-aside
+    /// `graphhelm.old`, so that name cannot be removed or renamed onto, and the next update
+    /// refused with "could not replace". A non-empty directory under the fixed aside name fails
+    /// both the remove and the rename on every platform, as a running Windows executable does.
+    /// Cost: one temporary directory; no process is started.
+    #[test]
+    fn swap_moves_aside_to_a_free_name_when_the_old_aside_is_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(if cfg!(windows) {
+            "graphhelm.exe"
+        } else {
+            "graphhelm"
+        });
+        let staged = dir.path().join("staged");
+        std::fs::write(&exe, "old").unwrap();
+        std::fs::write(&staged, "new").unwrap();
+        let taken = exe.with_file_name(if cfg!(windows) {
+            "graphhelm.old.exe"
+        } else {
+            "graphhelm.old"
+        });
+        std::fs::create_dir(&taken).unwrap();
+        std::fs::write(taken.join("held"), "running").unwrap();
+        let progress = Progress::new("test", false, crate::palette::Palette::plain());
+        assert!(swap_in(&exe, Some(&staged), progress));
+        assert_eq!(std::fs::read_to_string(&exe).unwrap(), "new");
+        let asides: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().is_file())
+            .filter(|entry| std::fs::read_to_string(entry.path()).ok().as_deref() == Some("old"))
+            .collect();
+        assert_eq!(asides.len(), 1, "the previous binary is kept aside once");
+        assert!(taken.join("held").is_file(), "the taken name is left alone");
+    }
+
+    /// #1523: with the fixed aside name free, the swap keeps its old shape.
+    #[test]
+    fn swap_uses_the_fixed_aside_name_when_it_is_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(if cfg!(windows) {
+            "graphhelm.exe"
+        } else {
+            "graphhelm"
+        });
+        let staged = dir.path().join("staged");
+        std::fs::write(&exe, "old").unwrap();
+        std::fs::write(&staged, "new").unwrap();
+        let progress = Progress::new("test", false, crate::palette::Palette::plain());
+        assert!(swap_in(&exe, Some(&staged), progress));
+        assert_eq!(std::fs::read_to_string(&exe).unwrap(), "new");
+        let old = exe.with_file_name(if cfg!(windows) {
+            "graphhelm.old.exe"
+        } else {
+            "graphhelm.old"
+        });
+        assert_eq!(std::fs::read_to_string(old).unwrap(), "old");
+    }
+
     /// #1140: the managed clone never builds in a shared target directory another build locks.
     #[test]
     fn the_install_clone_builds_into_its_own_cache() {

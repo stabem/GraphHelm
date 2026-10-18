@@ -746,7 +746,7 @@ impl LocalEventRepository {
                     && repository.plan_reconcile(state)?.is_noop()
                     && repository.active_markers_clean(&published_in(state))?
                 {
-                    repository.sync_loaded_journal(&state)?;
+                    repository.sync_loaded_journal(state)?;
                     #[cfg(test)]
                     repository
                         .shared_fast_open_count

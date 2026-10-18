@@ -136,6 +136,11 @@ export function stageHealth(t: TaskState, lanes: Lane[], groupTasks: TaskState[]
   // #636: the owner lane building or waiting for a build slot is never Slow or Stalled.
   const slot = slotBelongsToTask(t, owner, lanes) ? slotStatus(owner, slots) : null;
   if (slot) return { ...base, flag: slot.kind === "building" ? "building" : "waiting_build", text: slotText(slot), tone: "blue" };
+  // #1556: an idle session's Stop hook keeps its lane "active", so liveness never flags a dead
+  // pre-PR claim; the Runtime's lease verdict does (`Lane.overdueTasks`, #1193/#1234).
+  if (t.step === "plan" && !t.pr && (lanes.find((l) => l.lane === owner)?.overdueTasks ?? []).includes(t.taskId)) {
+    return { ...base, flag: "stalled", text: `Stale claim · planning ${elapsedMs === null ? "" : stageDuration(elapsedMs) + ", "}no PR`, tone: "red" };
+  }
   const live = laneLiveness(owner, lanes, groupTasks, now, slots);
   if (!live.live && live.sinceMs !== null) {
     return { ...base, flag: "stalled", text: `${owner} silent ${stageDuration(live.sinceMs)}`, tone: "red" };

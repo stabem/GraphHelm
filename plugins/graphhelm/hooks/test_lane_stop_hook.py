@@ -441,9 +441,35 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["closed"], [])
         github.assert_not_called()
         found = tasks_reconcile.records(args.url, Path(args.token_file).read_text().strip(), args.execution)
-        self.assertEqual([(kind, doc["revision"], doc["reason"], doc["by"], doc.get("observed"))
-                          for kind, doc, _ in found if kind == "task.closed"],
-                         [("task.closed", 6, "superseded", 9002, True)])
+        closes = [(kind, doc["revision"], doc["reason"], doc["by"]) for kind, doc, _ in found if kind == "task.closed"]
+        self.assertEqual(closes, [("task.closed", 6, "superseded", 9002)])
+        # #1544: `observed` is kept when the Runtime under test admits it; an older Runtime gets the
+        # close without it (post_closed's fallback). Either way the close is recorded exactly once.
+        self.assertIn([doc.get("observed") for kind, doc, _ in found if kind == "task.closed"], ([True], [None]))
+
+    def test_an_observed_close_falls_back_without_the_field_on_an_older_runtime(self):
+        """#1544: a Runtime that predates `observed` answers 400; the close is re-sent without it.
+        Any other refusal still raises. Cost: no Runtime, two mocked posts."""
+        import urllib.error
+        calls = []
+
+        def refuse_observed(base, token, execution, kind, task_id, repo, lane, fields, revision=None):
+            calls.append(dict(fields))
+            if "observed" in fields:
+                raise urllib.error.HTTPError("http://127.0.0.1/x", 400, "Bad Request", {}, None)
+
+        with mock.patch.object(tasks_reconcile, "post_end", side_effect=refuse_observed):
+            tasks_reconcile.post_closed("http://127.0.0.1:1", "t", "run", "issue-7", "o/r", "lane-a",
+                                        {"pr": 7, "reason": "abandoned", "by": 7})
+        self.assertEqual(calls, [{"pr": 7, "reason": "abandoned", "by": 7, "observed": True},
+                                 {"pr": 7, "reason": "abandoned", "by": 7}])
+
+        def fail(*_args, **_kwargs):
+            raise urllib.error.HTTPError("http://127.0.0.1/x", 500, "Server Error", {}, None)
+
+        with mock.patch.object(tasks_reconcile, "post_end", side_effect=fail),              self.assertRaises(urllib.error.HTTPError):
+            tasks_reconcile.post_closed("http://127.0.0.1:1", "t", "run", "issue-7", "o/r", "lane-a",
+                                        {"pr": 7, "reason": "abandoned", "by": 7})
 
     def reconcile_args(self):
         return type("Args", (), {"execution": "lane-test", "url": self.url,

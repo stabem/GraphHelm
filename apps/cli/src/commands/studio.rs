@@ -1626,8 +1626,7 @@ mod tests {
         std::fs::create_dir_all(&events).unwrap();
         std::fs::write(
             root.join("dies.cmd"),
-            "@exit /b 3
-",
+            "@echo events lock held 1>&2\r\n@exit /b 3\r\n",
         )
         .unwrap();
         let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("../studio/tools/studio-up.ps1");
@@ -1653,11 +1652,88 @@ mod tests {
             said.contains("exited"),
             "the launcher must say the Runtime exited: {said}"
         );
+        // #1568: the Runtime's own stderr is shown, not a guess about PATH.
+        assert!(
+            said.contains("events lock held") && !said.contains("on PATH"),
+            "the launcher must show the Runtime's stderr: {said}"
+        );
         // #1459: not a stopwatch. A launcher that sat out its wait ends with "did not answer ...
         // within 120s", never "exited", so the message tells the two apart at any machine speed.
         assert!(
             !said.contains("did not answer"),
             "the launcher sat out its deadline instead of saying the Runtime exited: {said}"
         );
+    }
+
+    /// #1568: a Runtime that already serves these events on another port (8793 while the start
+    /// says 8791) is used, not doubled. A fake Runtime answers on one port and this test process is
+    /// the pid in the lifecycle record; the launcher must say it uses that port and must not start
+    /// the stub that would exit. Cost: one PowerShell launch, killed once the line appears.
+    #[cfg(windows)]
+    #[test]
+    fn the_launcher_uses_the_runtime_already_serving_these_events() {
+        use std::io::{BufRead, Read, Write};
+        use std::net::TcpListener;
+        let fake = TcpListener::bind("127.0.0.1:0").unwrap();
+        let fake_port = fake.local_addr().unwrap().port();
+        let first = TcpListener::bind("127.0.0.1:0").unwrap();
+        let second = TcpListener::bind("127.0.0.1:0").unwrap();
+        let bind_port = first.local_addr().unwrap().port();
+        let studio_port = second.local_addr().unwrap().port();
+        drop((first, second));
+        std::thread::spawn(move || {
+            for mut stream in fake.incoming().flatten() {
+                let mut buffer = [0u8; 2048];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                );
+            }
+        });
+        let root = std::env::temp_dir().join(format!("gh studio reuse {}", std::process::id()));
+        let events = root.join("events");
+        std::fs::create_dir_all(&events).unwrap();
+        std::fs::write(root.join("events.token"), "t").unwrap();
+        std::fs::write(
+            root.join("events.runtime-lifecycle.json"),
+            format!(r#"{{"pid": {}, "state": "running"}}"#, std::process::id()),
+        )
+        .unwrap();
+        std::fs::write(root.join("dies.cmd"), "@exit /b 3\r\n").unwrap();
+        let launcher = Path::new(env!("CARGO_MANIFEST_DIR")).join("../studio/tools/studio-up.ps1");
+        let mut child = graphhelm_process::command("powershell")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(&launcher)
+            .arg("-Events")
+            .arg(&events)
+            .args(["-Bind", &format!("127.0.0.1:{bind_port}")])
+            .args(["-StudioPort", &studio_port.to_string(), "-NoBrowser"])
+            .arg("-GraphHelm")
+            .arg(root.join("dies.cmd"))
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut seen = String::new();
+        let lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+        for line in lines.map_while(Result::ok) {
+            seen.push_str(&line);
+            seen.push('\n');
+            if line.contains("[up] Runtime already answering") || line.contains("[up] starting") {
+                break;
+            }
+        }
+        let _ = graphhelm_process::command("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .output();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            seen.contains(&format!(
+                "already serves these events at 127.0.0.1:{fake_port}"
+            )),
+            "{seen}"
+        );
+        assert!(!seen.contains("[up] starting"), "{seen}");
     }
 }

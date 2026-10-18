@@ -950,6 +950,18 @@ fn a_lane_that_reaches_its_cap_while_queued_is_refused_at_the_head() {
     assert_eq!(blocker.exit_code, 0, "{:?}", blocker.output);
 }
 
+/// Multiplier for the hang catchers in the update cell: `GRAPHHELM_TEST_TIME_SCALE` (#1565, the
+/// pattern of #1528). A ceiling says "this never happened"; scaling it delays a report, never hides one.
+fn update_cell_scale() -> u64 {
+    match std::env::var("GRAPHHELM_TEST_TIME_SCALE") {
+        Ok(raw) if !raw.trim().is_empty() => match raw.trim().parse::<u64>() {
+            Ok(factor) if (1..=20).contains(&factor) => factor,
+            _ => panic!("GRAPHHELM_TEST_TIME_SCALE={raw:?} is not a whole number from 1 to 20"),
+        },
+        _ => 1,
+    }
+}
+
 #[test]
 fn update_installer_waits_for_slot_admission_before_starting_child() {
     if let (Some(admission), Some(log), Some(exe), Some(script)) = (
@@ -991,6 +1003,9 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
     // 2 beside the slot's 3, so this cell still observes the update waiting.
     std::fs::create_dir_all(&admission).unwrap();
     std::fs::write(admission.join("jobs-budget"), b"5\n").unwrap();
+    let scale = update_cell_scale();
+    let slot_deadline_seconds = 10 * scale;
+    let slot_poll_steps = 1000 * scale;
     let log_text = log.to_string_lossy().replace('\'', "''");
     let release_text = release.to_string_lossy().replace('\'', "''");
     let slot_command = if cfg!(windows) {
@@ -999,7 +1014,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
             "-NoProfile".into(),
             "-Command".into(),
             format!(
-                "$deadline=(Get-Date).AddSeconds(10); Add-Content -LiteralPath '{log_text}' 'slot start'; while (!(Test-Path -LiteralPath '{release_text}') -and (Get-Date) -lt $deadline) {{ Start-Sleep -Milliseconds 10 }}; if (!(Test-Path -LiteralPath '{release_text}')) {{ exit 91 }}; Add-Content -LiteralPath '{log_text}' 'slot end'"
+                "$deadline=(Get-Date).AddSeconds({slot_deadline_seconds}); Add-Content -LiteralPath '{log_text}' 'slot start'; while (!(Test-Path -LiteralPath '{release_text}') -and (Get-Date) -lt $deadline) {{ Start-Sleep -Milliseconds 10 }}; if (!(Test-Path -LiteralPath '{release_text}')) {{ exit 91 }}; Add-Content -LiteralPath '{log_text}' 'slot end'"
             ),
         ]
     } else {
@@ -1007,7 +1022,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
             "sh".into(),
             "-c".into(),
             format!(
-                "echo 'slot start' >> '{log_text}'; i=0; while [ ! -f '{release_text}' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done; if [ ! -f '{release_text}' ]; then exit 91; fi; echo 'slot end' >> '{log_text}'"
+                "echo 'slot start' >> '{log_text}'; i=0; while [ ! -f '{release_text}' ] && [ $i -lt {slot_poll_steps} ]; do sleep 0.01; i=$((i+1)); done; if [ ! -f '{release_text}' ]; then exit 91; fi; echo 'slot end' >> '{log_text}'"
             ),
         ]
     };
@@ -1020,7 +1035,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
     });
 
     let started = std::time::Instant::now();
-    while started.elapsed() < Duration::from_secs(3) {
+    while started.elapsed() < Duration::from_secs(3 * scale) {
         if std::fs::read_to_string(&log)
             .unwrap_or_default()
             .contains("slot start")
@@ -1084,7 +1099,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         {
             break true;
         }
-        if waited.elapsed() >= Duration::from_secs(5) {
+        if waited.elapsed() >= Duration::from_secs(5 * scale) {
             break false;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -1107,7 +1122,7 @@ fn update_installer_waits_for_slot_admission_before_starting_child() {
         if let Some(status) = update.try_wait().unwrap() {
             break status;
         }
-        if waited.elapsed() >= Duration::from_secs(5) {
+        if waited.elapsed() >= Duration::from_secs(5 * scale) {
             forced_update_termination = true;
             let _ = update.kill();
             break update.wait().unwrap();

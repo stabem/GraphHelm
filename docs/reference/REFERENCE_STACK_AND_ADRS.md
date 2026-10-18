@@ -1625,7 +1625,12 @@ the same operation again safely.
    but `inspect_layout` allows only a closed list of root entries (`MAX_ROOT_ENTRIES` = 6), so a
    `quarantine/` there would make the store unrecognizable, a format change. The folder is a
    SIBLING of the root instead, as #1473's `<events>.runtime-lifecycle.oom` already is. A link or
-   reparse point at that path, or at a file in it, is refused. Only then is the journal truncated to the last newline, synced, and
+   reparse point at that path, or at a file in it, is refused. Each quarantine file is written
+   atomically: a unique temp file in the same folder is written and synced, then renamed over the
+   final name, then the folder is synced. A crash can therefore leave no final file or a complete
+   one, never a short one. A short leftover or stray temp file from an interrupted attempt is
+   replaced rather than refused: the content is fixed by the tail it records, whose hash is in
+   the name (#1626 review, gh-claude-8). Only then is the journal truncated to the last newline, synced, and
    the directory synced. A crash between the two steps leaves the quarantine file plus an
    untrimmed journal, and the next open repeats the same idempotent step.
 4. **Audit record.** Beside the quarantined bytes in `<events>.quarantine/`, the recovery writes and
@@ -1648,10 +1653,14 @@ the same operation again safely.
 5. **Bound.** A tail longer than `MAX_BATCH_BYTES` cannot be one in-flight batch. It refuses as
    today (`IntegrityAt("load_state:journal-tail-oversized")`), because something other than a torn
    append wrote it.
-6. **Who may trim.** Only the store's own open, under its exclusive lock. A shared open that finds
-   a torn tail skips its read-only fast path and takes the same upgrade to the exclusive lock it
-   already takes for any other recovery, then trims there. No reader that stays on the shared lock
-   ever trims, and no CLI flag skips the checks.
+6. **Who may trim.** Only the Runtime's start-up: `graphhelm serve` calls
+   `LocalEventRepository::open_recovering_torn_tail` once, before it serves anything. That open
+   trims under the exclusive lock; when it finds the store shared, it takes the same upgrade to
+   the exclusive lock it already takes for any other recovery. Every other open refuses a torn tail
+   with `IntegrityAt("open:journal-tail-awaits-runtime-recovery")`, so a CLI one-shot, an MCP read
+   or a lane waiter never changes the journal behind the Runtime. That covers each request
+   serve's own handlers make and every ordinary `LocalEventRepository::open`. No CLI flag skips the
+   checks. *Amended* as decided on #1626 (orchestrator, after gh-claude-8's review).
 
 **Rejected alternatives:**
 - *Keep failing closed* (today). It is correct for integrity but leaves availability to a human

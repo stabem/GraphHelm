@@ -370,6 +370,9 @@ pub struct LocalEventRepository {
     #[cfg(test)]
     full_walk_delay: Option<std::time::Duration>,
     failpoint: Option<LocalFailpoint>,
+    /// ADR-046: whether THIS handle may trim an unacknowledged torn journal tail. Only the
+    /// Runtime's start-up open sets it; every other open refuses the tail and names who recovers it.
+    recover_torn_tail: bool,
     schemas: &'static graphhelm_schema::RepositorySchemaSet,
     /// Unbounded unless this handle came from `open_within` (#750). Checked inside the journal
     /// verification walk, which is the half of a status read's cost that is not the fold.
@@ -552,6 +555,7 @@ impl LocalEventRepository {
             None,
             crate::ReadBudget::unbounded(),
             None,
+            false,
         )
     }
 
@@ -568,7 +572,7 @@ impl LocalEventRepository {
         budget: crate::ReadBudget,
         cache: &PrefixCache,
     ) -> Result<Self, EventRepositoryError> {
-        Self::open_inner(root.into(), clock, ids, None, budget, Some(cache))
+        Self::open_inner(root.into(), clock, ids, None, budget, Some(cache), false)
     }
 
     /// [`Self::open`], with a wall-clock budget on every journal walk this handle performs -
@@ -584,7 +588,27 @@ impl LocalEventRepository {
         ids: Arc<dyn IdGenerator>,
         budget: crate::ReadBudget,
     ) -> Result<Self, EventRepositoryError> {
-        Self::open_inner(root.into(), clock, ids, None, budget, None)
+        Self::open_inner(root.into(), clock, ids, None, budget, None, false)
+    }
+
+    /// [`Self::open`] for the Runtime's start-up only (ADR-046): a journal whose tail is torn by a
+    /// crash mid-append is recovered here, under the exclusive lock, instead of refused. Every
+    /// other open refuses that tail with `open:journal-tail-awaits-runtime-recovery`, so a CLI
+    /// one-shot, an MCP read or a lane waiter never changes the journal behind the Runtime.
+    pub fn open_recovering_torn_tail(
+        root: impl Into<PathBuf>,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
+    ) -> Result<Self, EventRepositoryError> {
+        Self::open_inner(
+            root.into(),
+            clock,
+            ids,
+            None,
+            crate::ReadBudget::unbounded(),
+            None,
+            true,
+        )
     }
 
     pub fn open_with_failpoint(
@@ -600,6 +624,7 @@ impl LocalEventRepository {
             Some(failpoint),
             crate::ReadBudget::unbounded(),
             None,
+            false,
         )
     }
 
@@ -610,6 +635,7 @@ impl LocalEventRepository {
         failpoint: Option<LocalFailpoint>,
         read_budget: crate::ReadBudget,
         prefix_cache: Option<&PrefixCache>,
+        recover_torn_tail: bool,
     ) -> Result<Self, EventRepositoryError> {
         let schemas = graphhelm_schema::repository_schema_set()
             .map_err(|_| EventRepositoryError::IntegrityAt("open:schema-set"))?;
@@ -713,6 +739,7 @@ impl LocalEventRepository {
             #[cfg(test)]
             full_walk_delay: prefix_cache.and_then(|cache| cache.walk_delay),
             failpoint,
+            recover_torn_tail,
             schemas,
             read_budget,
         };
@@ -721,7 +748,14 @@ impl LocalEventRepository {
             // ADR-046: a torn tail is trimmed only under the EXCLUSIVE lock. A shared open that
             // finds one skips the read-only fast path and takes the upgrade below.
             let state = match repository.load_state("open") {
-                Err(EventRepositoryError::IntegrityAt(TORN_TAIL_SITE)) => None,
+                Err(EventRepositoryError::IntegrityAt(TORN_TAIL_SITE))
+                    if repository.recover_torn_tail =>
+                {
+                    None
+                }
+                Err(EventRepositoryError::IntegrityAt(TORN_TAIL_SITE)) => {
+                    return Err(EventRepositoryError::IntegrityAt(TORN_TAIL_AWAITS_SITE));
+                }
                 other => Some(other?),
             };
             let published_in = |state: &LoadedState| {
@@ -1947,6 +1981,9 @@ impl LocalEventRepository {
         kind: &'static str,
     ) -> Result<Arc<LoadedState>, EventRepositoryError> {
         match self.load_state(kind) {
+            Err(EventRepositoryError::IntegrityAt(TORN_TAIL_SITE)) if !self.recover_torn_tail => {
+                Err(EventRepositoryError::IntegrityAt(TORN_TAIL_AWAITS_SITE))
+            }
             Err(EventRepositoryError::IntegrityAt(TORN_TAIL_SITE)) if self.trim_torn_tail()? => {
                 self.load_state(kind)
             }
@@ -6179,6 +6216,10 @@ fn validate_opened_directory(file: &File) -> Result<(), EventRepositoryError> {
 /// The refusal `load_state` gives a journal that does not end in a newline (ADR-046).
 const TORN_TAIL_SITE: &str = "load_state:journal-tail-unterminated";
 
+/// What every open but the Runtime's start-up answers for a torn tail (ADR-046): the Runtime
+/// recovers it when it next starts; nothing else may change the journal behind it.
+const TORN_TAIL_AWAITS_SITE: &str = "open:journal-tail-awaits-runtime-recovery";
+
 /// ADR-046's quarantine: a SIBLING of the store root, `<events>.quarantine`, like #1473's
 /// `<events>.runtime-lifecycle.oom`. Inside the root it would be an entry `inspect_layout`'s
 /// closed allowlist refuses, which is a store format change; beside it, the layout is untouched.
@@ -6228,51 +6269,42 @@ fn open_quarantine_directory(path: &Path) -> Result<File, EventRepositoryError> 
         })
 }
 
-/// Writes and syncs one quarantine file. A file left by an earlier, interrupted recovery is kept
-/// when it already holds exactly these bytes, so repeating the recovery is idempotent; any other
-/// content refuses rather than overwrite what an operator may need.
+/// Writes one quarantine file atomically (#1626 review): a unique temp file in the same folder is
+/// written and synced, then renamed over the final name. A crash at any point leaves either no
+/// final file or a complete one, never a short one. A short leftover from an older attempt, or a
+/// stray temp file, is simply replaced: the content is fixed by the tail it records, whose hash
+/// is in the name, so rewriting it is always right. The caller syncs the folder afterwards.
 fn write_quarantine_file(path: &Path, content: &[u8]) -> Result<(), EventRepositoryError> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
-                return Err(EventRepositoryError::IntegrityAt(
-                    "trim-tail:quarantine-link",
-                ));
-            }
-            let held = std::fs::read(path).map_err(|error| EventRepositoryError::StorageAt {
-                site: "trim-tail:quarantine-read",
-                os: error.raw_os_error(),
-            })?;
-            return if held == content {
-                Ok(())
-            } else {
-                Err(EventRepositoryError::IntegrityAt(
-                    "trim-tail:quarantine-differs",
-                ))
-            };
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(EventRepositoryError::StorageAt {
-                site: "trim-tail:quarantine-metadata",
-                os: error.raw_os_error(),
-            });
-        }
+    if let Ok(metadata) = std::fs::symlink_metadata(path)
+        && (metadata.file_type().is_symlink() || is_reparse_point(&metadata) || !metadata.is_file())
+    {
+        return Err(EventRepositoryError::IntegrityAt(
+            "trim-tail:quarantine-not-a-file",
+        ));
     }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| EventRepositoryError::StorageAt {
-            site: "trim-tail:quarantine-create-file",
-            os: error.raw_os_error(),
-        })?;
-    file.write_all(content)
-        .and_then(|()| file.sync_all())
-        .map_err(|error| EventRepositoryError::StorageAt {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(format!(".tmp-{}-{nonce}", std::process::id()));
+    let temp = std::path::PathBuf::from(temp);
+    let written = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        file.write_all(content)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    written.map_err(|error| {
+        let _ = std::fs::remove_file(&temp);
+        EventRepositoryError::StorageAt {
             site: "trim-tail:quarantine-write",
             os: error.raw_os_error(),
-        })
+        }
+    })
 }
 
 fn sync_directory_handle(directory: &File) -> Result<(), EventRepositoryError> {

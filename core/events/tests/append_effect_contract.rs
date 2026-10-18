@@ -25,6 +25,7 @@ use graphhelm_protocols::{
     IdGenerator, NewEvent, OpaqueId, PersistedActor, PersistedActorType, ProjectId, RawSha256,
     RepositoryScope, Sensitivity, WorkspaceId,
 };
+use sha2::Digest as _;
 
 struct FixedClock;
 impl Clock for FixedClock {
@@ -83,6 +84,16 @@ fn request_at(operation: &str, next: u64) -> PreparedAppend {
 
 fn open(root: &Path) -> LocalEventRepository {
     LocalEventRepository::open(root, Arc::new(FixedClock), Arc::new(Ids::default())).unwrap()
+}
+
+/// The Runtime's start-up open: the only one that may recover a torn tail (ADR-046).
+fn open_recovering(root: &Path) -> LocalEventRepository {
+    LocalEventRepository::open_recovering_torn_tail(
+        root,
+        Arc::new(FixedClock),
+        Arc::new(Ids::default()),
+    )
+    .unwrap()
 }
 
 fn stream(repository: &LocalEventRepository) -> Vec<EventEnvelope> {
@@ -176,7 +187,7 @@ fn a_crash_mid_write_is_trimmed_quarantined_and_retried_on_resume() {
     assert!(torn.len() > committed.len() && torn.starts_with(&committed));
     let tail = torn[committed.len()..].to_vec();
 
-    let resumed = open(directory.path());
+    let resumed = open_recovering(directory.path());
     assert_eq!(
         std::fs::read(&journal).unwrap(),
         committed,
@@ -240,7 +251,7 @@ fn a_torn_first_append_is_trimmed_to_an_empty_journal() {
     assert!(crashing.append_atomic(&request_for("operation-1")).is_err());
     drop(crashing);
 
-    let resumed = open(directory.path());
+    let resumed = open_recovering(directory.path());
     assert!(
         std::fs::read(directory.path().join("journal.jsonl"))
             .unwrap()
@@ -266,7 +277,7 @@ fn a_corrupt_terminated_line_is_still_refused_and_nothing_is_trimmed() {
     bytes.extend_from_slice(b"{\"torn\":");
     std::fs::write(&journal, &bytes).unwrap();
 
-    let error = LocalEventRepository::open(
+    let error = LocalEventRepository::open_recovering_torn_tail(
         directory.path(),
         Arc::new(FixedClock),
         Arc::new(Ids::default()),
@@ -304,7 +315,7 @@ fn a_tail_longer_than_one_batch_is_refused_and_nothing_is_trimmed() {
     bytes.extend(std::iter::repeat_n(b'x', 16 * 1024 * 1024 + 1));
     std::fs::write(&journal, &bytes).unwrap();
 
-    match LocalEventRepository::open(
+    match LocalEventRepository::open_recovering_torn_tail(
         directory.path(),
         Arc::new(FixedClock),
         Arc::new(Ids::default()),
@@ -340,7 +351,7 @@ fn a_complete_record_missing_only_its_newline_is_trimmed_as_an_unacknowledged_ta
     );
     std::fs::write(&journal, &bytes).unwrap();
 
-    let resumed = open(directory.path());
+    let resumed = open_recovering(directory.path());
     assert!(std::fs::read(&journal).unwrap().is_empty());
     assert!(stream(&resumed).is_empty());
     let files = quarantined(directory.path());
@@ -349,6 +360,78 @@ fn a_complete_record_missing_only_its_newline_is_trimmed_as_an_unacknowledged_ta
         files[0].1, bytes,
         "the quarantine holds exactly the unterminated record"
     );
+}
+
+/// ADR-046, as decided on #1626: only the Runtime's start-up open recovers. Every other open (a
+/// CLI one-shot, an MCP read, a lane waiter) refuses the torn tail, names who recovers it, and
+/// leaves the journal and the quarantine untouched.
+#[test]
+fn a_plain_open_refuses_a_torn_tail_for_the_runtime_to_recover() {
+    let directory = tempfile::tempdir().unwrap();
+    let crashing = LocalEventRepository::open_with_failpoint(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(Ids::default()),
+        LocalFailpoint::PhysicalBatchAppend,
+    )
+    .unwrap();
+    assert!(crashing.append_atomic(&request_for("operation-1")).is_err());
+    drop(crashing);
+    let journal = directory.path().join("journal.jsonl");
+    let torn = std::fs::read(&journal).unwrap();
+
+    match LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(Ids::default()),
+    ) {
+        Err(graphhelm_events::EventRepositoryError::IntegrityAt(site)) => {
+            assert_eq!(site, "open:journal-tail-awaits-runtime-recovery");
+        }
+        Err(other) => panic!("refused for another reason: {}", other.code()),
+        Ok(_) => panic!("only the Runtime's start-up open may recover a torn tail"),
+    }
+    assert_eq!(
+        std::fs::read(&journal).unwrap(),
+        torn,
+        "nothing was trimmed"
+    );
+    assert!(quarantined(directory.path()).is_empty());
+}
+
+/// #1626 review: a crash while quarantining can leave a SHORT final file (an older, non-atomic
+/// write) or a stray temp file. Neither may turn into a permanent refusal to boot: the content is
+/// fixed by the tail it records, so the recovery rewrites it completely and continues.
+#[test]
+fn a_short_leftover_quarantine_file_does_not_block_the_next_boot() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = open(directory.path());
+    first.append_atomic(&request_for("operation-1")).unwrap();
+    drop(first);
+    let journal = directory.path().join("journal.jsonl");
+    let mut bytes = std::fs::read(&journal).unwrap();
+    let committed = bytes.clone();
+    bytes.extend_from_slice(b"{\"torn\":true,\"half");
+    std::fs::write(&journal, &bytes).unwrap();
+    let tail = bytes[committed.len()..].to_vec();
+    let digest = hex::encode(sha2::Sha256::digest(&tail));
+    let mut quarantine = directory.path().as_os_str().to_owned();
+    quarantine.push(".quarantine");
+    let quarantine = std::path::PathBuf::from(quarantine);
+    std::fs::create_dir_all(&quarantine).unwrap();
+    let name = format!("torn-tail-{}-{digest}", bytes.len());
+    std::fs::write(quarantine.join(format!("{name}.bin")), &tail[..3]).unwrap();
+    std::fs::write(quarantine.join(format!("{name}.bin.tmp-1-1")), b"stray").unwrap();
+
+    let resumed = open_recovering(directory.path());
+    assert_eq!(std::fs::read(&journal).unwrap(), committed);
+    assert_eq!(stream(&resumed).len(), 1);
+    assert_eq!(
+        std::fs::read(quarantine.join(format!("{name}.bin"))).unwrap(),
+        tail,
+        "the short leftover was replaced by the complete tail"
+    );
+    assert!(quarantine.join(format!("{name}.json")).is_file());
 }
 
 #[test]

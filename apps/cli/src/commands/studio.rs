@@ -676,21 +676,31 @@ fn waiting_line(seconds: u64, in_use: u64, budget: u32, runs: usize) -> String {
 /// root so the old binary stayed callable the whole time; only these two renames leave a gap.
 /// Windows cannot overwrite a running executable but can rename it, so it is moved aside first
 /// and put back if the new one cannot be moved in.
+///
+/// #1523: a Runtime started before the previous update still runs from that moved-aside copy,
+/// so its name can be neither removed nor renamed onto. The current binary then goes to the
+/// first free numbered name instead; a copy no longer in use is removed when its name is tried.
 fn swap_in(exe: &Path, staged: Option<&Path>, progress: Progress) -> bool {
     let Some(staged) = staged else {
         return true;
     };
-    let old = exe.with_file_name(if cfg!(windows) {
-        "graphhelm.old.exe"
-    } else {
-        "graphhelm.old"
+    let suffix = if cfg!(windows) { ".exe" } else { "" };
+    let moved = exe.exists().then(|| {
+        (0..=16).find_map(|n| {
+            let name = if n == 0 {
+                format!("graphhelm.old{suffix}")
+            } else {
+                format!("graphhelm.old.{n}{suffix}")
+            };
+            let old = exe.with_file_name(name);
+            let _ = std::fs::remove_file(&old);
+            std::fs::rename(exe, &old).is_ok().then_some(old)
+        })
     });
-    let _ = std::fs::remove_file(&old);
-    let moved = exe.exists() && std::fs::rename(exe, &old).is_ok();
     if std::fs::rename(staged, exe).is_ok() {
         return true;
     }
-    if moved {
+    if let Some(Some(old)) = moved {
         let _ = std::fs::rename(&old, exe);
     }
     Progress::say(&progress.warn(&format!(

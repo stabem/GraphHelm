@@ -113,5 +113,16 @@ class Budget(unittest.TestCase):
         self.assertEqual((len(calls), stopped), (6, False))
 
 
+class Command(unittest.TestCase):
+    # #184 re-measure: a two-arm comparison loads one plugin copy per arm with --plugin-dir, the
+    # installed plugins equal in both arms; the prompt never rides on the command line.
+    def test_plugin_dirs_are_passed_and_the_prompt_is_not_an_argument(self):
+        cmd = runner.build_command("claude", "sid", "sonnet", 4, ["Skill"], ["D:/a", "D:/b"])
+        self.assertEqual(cmd[:2], ["claude", "-p"])
+        self.assertEqual([cmd[i + 1] for i, x in enumerate(cmd) if x == "--plugin-dir"], ["D:/a", "D:/b"])
+        self.assertIn("--allowedTools", cmd)
+        self.assertNotIn("--plugin-dir", runner.build_command("claude", "sid", "sonnet", 4, None, []))
+
+
 if __name__ == "__main__":
     unittest.main()

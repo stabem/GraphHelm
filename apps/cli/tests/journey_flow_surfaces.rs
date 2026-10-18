@@ -816,7 +816,7 @@ fn only_the_owner_sets_up_the_observer_and_nothing_reaches_npm() {
 /// the routes, and the generic signal route writing the reserved kinds. Cost: one Runtime, a few
 /// requests.
 #[test]
-fn a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draft() {
+fn a_reviewer_agent_reviews_only_with_its_own_credential_and_never_approves() {
     let harness = prepared();
     let owner = owner_token(&harness.project);
     let events = harness.project.join(".graphhelm/events");
@@ -906,16 +906,25 @@ fn a_reviewer_agent_approves_only_with_its_own_credential_and_never_its_own_draf
     .to_string();
     let (status, refused) = signal_as_agent(&base, shared.trim(), "forged-review", &body);
     assert_ne!(status, 200, "{refused}");
-    // A different lane approves, and the approval verifies.
-    let (status, approved) = review(REVIEWER_CREDENTIAL);
-    assert_eq!(status, 200, "{approved}");
+    // #1309 ruling A: a different lane records its review; the review never approves. The flow
+    // stays a draft until the owner approves it.
+    let (status, reviewed) = review(REVIEWER_CREDENTIAL);
+    assert_eq!(status, 200, "{reviewed}");
+    assert_eq!(reviewed["data"]["reviewed"], true, "{reviewed}");
+    assert_eq!(reviewed["data"]["status"], "draft", "{reviewed}");
+    assert_eq!(flow(&harness.flows(), "checkout")["status"], "draft");
+    // An agent's review record never signs an approval: a flow file edited to `approved` at the
+    // reviewed digest still reads unsigned.
+    let edited = squatted.replace("status: draft", "status: approved");
+    assert_ne!(edited, squatted, "the fixture flow carries `status: draft`");
+    std::fs::write(&path, &edited).unwrap();
     let (_, validated) = harness.cli(&["validate", "--all"]);
     assert!(
-        !validated.to_string().contains("flow.approval_unsigned")
-            && !validated.to_string().contains("flow.approval_unverifiable"),
-        "{validated}"
+        validated.to_string().contains("flow.approval_unsigned")
+            || validated.to_string().contains("flow.approval_unverifiable"),
+        "an agent review signed an approval: {validated}"
     );
-    assert_eq!(flow(&harness.flows(), "checkout")["status"], "approved");
+    std::fs::write(&path, &squatted).unwrap();
 }
 
 /// #1309 slice 1: one owner grant request, with the `Idempotency-Key` every mutation carries.

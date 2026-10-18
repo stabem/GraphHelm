@@ -72,6 +72,27 @@ class Reach(unittest.TestCase):
             self.assertNotIn(expected, missing_tools)
             self.assertIn({"path": observer, "reason": "proportional-rows fixture observer is missing"}, missing)
 
+    def test_studio_and_fixture_changes_start_the_launchers_studio_once(self):
+        """#1521: a Studio that cannot start (a broken native binding) broke every journey preview
+        and no reached plan saw it, because nothing in a plan starts Vite.
+
+        Cost: temporary files and direct plan construction; milliseconds.
+        """
+        smoke = "tools/studio-journey-fixture/test_studio_starts.py"
+        expected = f"python {smoke}"
+        with tempfile.TemporaryDirectory() as repo:
+            path = Path(repo, smoke)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("import unittest\n", encoding="utf-8")
+            for changed in ("apps/studio/src/App.tsx", "apps/studio/package.json",
+                            "tools/studio-journey-fixture/fixture.sh"):
+                *_, tools, _, _ = reach(changed, repo=repo)
+                self.assertEqual(list(tools).count(expected), 1, changed)
+            *_, both, _, _ = reach("apps/studio/src/App.tsx", "tools/studio-journey-fixture/wait.sh", repo=repo)
+            self.assertEqual(list(both).count(expected), 1)
+            *_, unrelated, _, _ = reach("docs/README.md", repo=repo)
+            self.assertNotIn(expected, unrelated)
+
     def test_any_changed_python_file_selects_no_console_window_guard(self):
         """Run the repository-wide Python guard for Python edits outside tools/.
 

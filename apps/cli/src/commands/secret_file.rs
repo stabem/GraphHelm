@@ -384,6 +384,41 @@ fn encode_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    /// #1599 review (TOCTOU): the key file's checks and its bytes must come from ONE handle. A
+    /// race between a path check and a path read cannot be staged without a production seam, so
+    /// this guards the structure instead: after its single no-follow open, `read_owner_only`
+    /// never touches the file by path again. Cost: one string scan of this file.
+    #[test]
+    fn the_key_file_is_opened_once_and_never_reread_by_path() {
+        let source = include_str!("secret_file.rs");
+        let start = source.find("pub(crate) fn read_owner_only").unwrap();
+        let end = start
+            + source[start..]
+                .find(
+                    "
+fn is_link",
+                )
+                .unwrap();
+        let body = &source[start..end];
+        let open = body.find("open_without_following(").unwrap();
+        assert_eq!(body.matches("open_without_following(").count(), 1, "{body}");
+        let after_open = &body[open..];
+        for path_access in [
+            "fs::read(",
+            "File::open(",
+            "metadata(&absolute",
+            "metadata(path",
+            "read_validated(",
+            "read_existing(",
+            "OpenOptions",
+        ] {
+            assert!(
+                !after_open.contains(path_access),
+                "read_owner_only reaches the file by path after its open: {path_access}"
+            );
+        }
+    }
+
     /// #1325: pinned BEFORE `encode_hex` becomes `hex::encode`: lowercase, two digits per byte,
     /// no separators, every byte value.
     #[test]

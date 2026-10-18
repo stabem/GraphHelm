@@ -2396,7 +2396,23 @@ fn serve_refuses_an_unsafe_events_key_file_without_printing_the_key() {
         if with_variable {
             command.env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX);
         }
-        let output = command.output().unwrap();
+        // A wrongly accepted key starts a server that never exits; the wait is bounded so that
+        // case fails as "started" instead of hanging the suite.
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + scaled(Duration::from_secs(30));
+        while child.try_wait().unwrap().is_none() {
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("{case}: serve started instead of refusing the key file");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let output = child.wait_with_output().unwrap();
         let printed = format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),

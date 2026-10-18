@@ -116,7 +116,9 @@ impl TasksFilter {
     pub fn from_query(query: &str) -> Result<Self, Failure> {
         let mut filter = Self::default();
         for pair in query.split('&') {
-            if let Some(lane) = pair.strip_prefix("lane=") {
+            if let Some(raw) = pair.strip_prefix("lane=") {
+                // The MCP door percent-encodes the value (`:` is `%3A`); decode before judging.
+                let lane = &super::super::serve::percent_decode(raw).unwrap_or_default();
                 let valid = !lane.is_empty()
                     && lane.len() <= 128
                     && lane
@@ -128,8 +130,9 @@ impl TasksFilter {
                         "/lane",
                     ));
                 }
-                filter.lane = Some(lane.to_owned());
+                filter.lane = Some(lane.clone());
             } else if let Some(issue) = pair.strip_prefix("issue=") {
+                let issue = super::super::serve::percent_decode(issue).unwrap_or_default();
                 filter.issue = Some(
                     issue
                         .parse::<u64>()

@@ -170,6 +170,24 @@ pub(crate) fn events_key_hex() -> Option<zeroize::Zeroizing<String>> {
 pub(crate) fn open_sealer(
     keyring: &SignalKeyring,
 ) -> Result<EvidenceProtector<SealedKeyProvider>, Failure> {
+    Ok(EvidenceProtector::new(open_provider(keyring)?))
+}
+
+/// #1560: the keyring generation an opened envelope belongs to: the key id and the provider's
+/// current revocation epoch. A rotated key (another id) or a revocation (a later epoch) is
+/// another generation, so a plaintext opened before it is never served from memory after it.
+pub(crate) fn sealer_generation(keyring: &SignalKeyring) -> Result<String, Failure> {
+    generation_of(&open_provider(keyring)?, &keyring.key_id)
+}
+
+pub(crate) fn generation_of(provider: &SealedKeyProvider, key_id: &str) -> Result<String, Failure> {
+    let epoch = provider
+        .epoch()
+        .map_err(|_| argument("the sealed keyring could not be opened", "/keyring"))?;
+    Ok(format!("{key_id}#{epoch}"))
+}
+
+fn open_provider(keyring: &SignalKeyring) -> Result<SealedKeyProvider, Failure> {
     let invalid = || {
         argument(
             "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters",
@@ -197,7 +215,7 @@ pub(crate) fn open_sealer(
         SecretBytes::new(material),
     )
     .map_err(|_| argument("the sealed keyring could not be opened", "/keyring"))?;
-    Ok(EvidenceProtector::new(provider))
+    Ok(provider)
 }
 
 /// The shared core: admits `signal` (already-read bytes — a file's contents from the CLI, or an

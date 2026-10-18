@@ -552,6 +552,7 @@ pub(crate) fn validate_task_event(
                 ));
             };
             let opener = signal::open_sealer(keyring)?;
+            let generation = signal::sealer_generation(keyring)?;
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -615,6 +616,7 @@ pub(crate) fn validate_task_event(
                     let envelope = super::tasks::opened_envelope(
                         store,
                         scope,
+                        &generation,
                         reference.evidence_id(),
                         recorded.envelope_sha256.as_str(),
                         |sealed| {
@@ -843,6 +845,7 @@ fn validate_heartbeat(
         return Err(invalid_history());
     };
     let opener = signal::open_sealer(keyring)?;
+    let generation = signal::sealer_generation(keyring)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -870,6 +873,7 @@ fn validate_heartbeat(
         let envelope = super::tasks::opened_envelope(
             store,
             scope,
+            &generation,
             reference.evidence_id(),
             recorded.envelope_sha256.as_str(),
             |sealed| {

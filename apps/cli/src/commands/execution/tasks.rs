@@ -455,31 +455,22 @@ pub(crate) fn cache_key(root: &Path, execution: &str) -> String {
 const OPENED_ENVELOPES_CAP: usize = 65_536;
 
 /// #1560: this process's memory of `task.*` envelopes it already opened AND authenticated, keyed
-/// by store root, scope, evidence id and the envelope digest the journal records. Only a
-/// successful open is remembered, so a record that fails to read, to match its digest or to
-/// authenticate is refused again on every read instead of being cached as a verdict.
+/// by keyring generation (key id and revocation epoch), store root, scope, evidence id and the
+/// envelope digest the journal records. Only a successful open is remembered, so a record that
+/// fails to read, to match its digest or to authenticate is refused again on every read instead
+/// of being cached as a verdict; after a key rotation or a revocation the generation differs, so
+/// nothing opened under the old key is served.
 fn opened_envelopes() -> &'static Mutex<HashMap<String, std::sync::Arc<serde_json::Value>>> {
     static OPENED: OnceLock<Mutex<HashMap<String, std::sync::Arc<serde_json::Value>>>> =
         OnceLock::new();
     OPENED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// #1560: the parsed envelope of the sealed record `evidence_id`, whose content digest must be
-/// `envelope_sha256` (the digest the journal's event names). A miss reads the sealed blob, checks
-/// the digest and runs `open` (decrypt and parse); a hit skips all three. The heartbeat and
-/// release admissions and the tasks read used to open every record they walk on every request.
-pub(crate) fn opened_envelope(
-    store: &graphhelm_events::LocalEventRepository,
-    scope: &graphhelm_protocols::RepositoryScope,
-    evidence_id: &EvidenceId,
-    envelope_sha256: &str,
-    open: impl FnOnce(&graphhelm_events::SealedEvidence) -> Option<serde_json::Value>,
+/// The memory itself: `key`'s remembered envelope, or `open`'s answer, kept only when it is one.
+fn remembered_or(
+    key: String,
+    open: impl FnOnce() -> Option<serde_json::Value>,
 ) -> Option<std::sync::Arc<serde_json::Value>> {
-    let key = format!(
-        "{}\u{0}{scope:?}\u{0}{}\u{0}{envelope_sha256}",
-        store.root().display(),
-        evidence_id.as_str()
-    );
     if let Some(hit) = opened_envelopes()
         .lock()
         .ok()
@@ -487,7 +478,50 @@ pub(crate) fn opened_envelope(
     {
         return Some(hit);
     }
-    let opened = super::timing::phase("envelope.open", || {
+    let opened = std::sync::Arc::new(super::timing::phase("envelope.open", open)?);
+    if let Ok(mut map) = opened_envelopes().lock() {
+        if map.len() >= OPENED_ENVELOPES_CAP {
+            map.clear();
+        }
+        map.insert(key, std::sync::Arc::clone(&opened));
+    }
+    Some(opened)
+}
+
+fn envelope_key(
+    generation: &str,
+    root: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    evidence_id: &str,
+    envelope_sha256: &str,
+) -> String {
+    format!(
+        "{generation}\u{0}{}\u{0}{scope:?}\u{0}{evidence_id}\u{0}{envelope_sha256}",
+        root.display()
+    )
+}
+
+/// #1560: the parsed envelope of the sealed record `evidence_id`, whose content digest must be
+/// `envelope_sha256` (the digest the journal's event names), opened under `generation`
+/// (`signal::sealer_generation`). A miss reads the sealed blob, checks the digest and runs `open`
+/// (decrypt and parse); a hit skips all three. The heartbeat and release admissions and the tasks
+/// read used to open every record they walk on every request.
+pub(crate) fn opened_envelope(
+    store: &graphhelm_events::LocalEventRepository,
+    scope: &graphhelm_protocols::RepositoryScope,
+    generation: &str,
+    evidence_id: &EvidenceId,
+    envelope_sha256: &str,
+    open: impl FnOnce(&graphhelm_events::SealedEvidence) -> Option<serde_json::Value>,
+) -> Option<std::sync::Arc<serde_json::Value>> {
+    let key = envelope_key(
+        generation,
+        store.root(),
+        scope,
+        evidence_id.as_str(),
+        envelope_sha256,
+    );
+    remembered_or(key, || {
         let EvidenceRead::Available(sealed) = store.sealed_evidence(scope, evidence_id).ok()?
         else {
             return None;
@@ -496,15 +530,7 @@ pub(crate) fn opened_envelope(
             return None;
         }
         open(&sealed)
-    })?;
-    let opened = std::sync::Arc::new(opened);
-    if let Ok(mut map) = opened_envelopes().lock() {
-        if map.len() >= OPENED_ENVELOPES_CAP {
-            map.clear();
-        }
-        map.insert(key, std::sync::Arc::clone(&opened));
-    }
-    Some(opened)
+    })
 }
 
 /// #1220: the slice that holds `task_id` against `lane`: a pre-PR claim of another lane, not
@@ -686,6 +712,7 @@ pub(crate) fn read_history(
         cache.head = Some((last.sequence, last.event_id.as_str().to_owned()));
     }
     let opener = super::signal::open_sealer(keyring)?;
+    let generation = super::signal::sealer_generation(keyring)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .map_err(|_| super::execution_state("the evidence reader could not start", "/keyring"))?;
@@ -718,6 +745,7 @@ pub(crate) fn read_history(
             let envelope = opened_envelope(
                 store,
                 scope,
+                &generation,
                 &id,
                 record.envelope_sha256.as_str(),
                 |sealed| {
@@ -865,6 +893,75 @@ pub fn stalled_tasks(tasks: &[TaskState], now: &PersistedTimestamp) -> Vec<TaskS
 #[cfg(test)]
 mod lease_tests {
     use super::*;
+
+    /// #1560: an envelope opened under one keyring generation is never served under another.
+    /// Credible regression: a cache key without the key id or revocation epoch, which would keep
+    /// serving a plaintext after its key was revoked or rotated. The generation is read from a
+    /// real sealed keyring before and after a real revocation.
+    #[test]
+    fn a_revoked_or_rotated_key_is_never_served_an_envelope_opened_under_the_old_one() {
+        use graphhelm_events::KeyProvider as _;
+        let directory = tempfile::tempdir().unwrap();
+        let provider = graphhelm_sealed_key_provider::SealedKeyProvider::create(
+            directory.path(),
+            "rotation-key",
+            graphhelm_events::SecretBytes::new(vec![7; 32]),
+        )
+        .unwrap();
+        let scope = graphhelm_protocols::RepositoryScope::new(
+            graphhelm_protocols::WorkspaceId::parse("workspace-rotation").unwrap(),
+            graphhelm_protocols::ProjectId::parse("project-rotation").unwrap(),
+            None,
+        );
+        let root = directory.path().join("events");
+        let key_for = |generation: &str| {
+            envelope_key(
+                generation,
+                &root,
+                &scope,
+                "signal-rotation",
+                &"c".repeat(64),
+            )
+        };
+        let before = super::super::signal::generation_of(&provider, "rotation-key")
+            .ok()
+            .expect("the keyring generation reads");
+        let opens = std::cell::Cell::new(0);
+        let open = || {
+            opens.set(opens.get() + 1);
+            Some(serde_json::json!({"type": "task.claimed"}))
+        };
+        assert!(remembered_or(key_for(&before), open).is_some());
+        assert!(remembered_or(key_for(&before), open).is_some());
+        assert_eq!(opens.get(), 1, "the same generation opens once");
+
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(
+                provider.revoke(
+                    graphhelm_events::RevokeKeyRequest::new(
+                        "handle-rotation",
+                        "operation-rotation",
+                    )
+                    .unwrap(),
+                ),
+            )
+            .unwrap();
+        let after = super::super::signal::generation_of(&provider, "rotation-key")
+            .ok()
+            .expect("the keyring generation reads");
+        assert_ne!(after, before, "a revocation is a new generation");
+        let refused = remembered_or(key_for(&after), || None);
+        assert!(
+            refused.is_none(),
+            "nothing opened before the revocation is served"
+        );
+        let rotated = super::super::signal::generation_of(&provider, "rotated-key")
+            .ok()
+            .expect("the keyring generation reads");
+        assert!(remembered_or(key_for(&rotated), || None).is_none());
+    }
 
     /// #1556: a lane that only heartbeats is idle, not active; a recent step keeps it live.
     #[test]

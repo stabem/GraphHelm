@@ -108,11 +108,10 @@ Runner = Callable[[Path], "tuple[int, str]"]
 
 def slot_runner(root: str, lane: str, jobs: int, graphhelm: str, timeout: float) -> Runner:
     """One slot-run cargo test per call; a run past `timeout` seconds answers not-run, never caught."""
-    def run(repo: Path) -> tuple[int, str]:
-        cargo = ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-events"]
-        for test in TESTS:
-            cargo += ["--test", test]
-        cargo += ["--", "--test-threads=2"]
+    def one(repo: Path, test: str) -> tuple[int, str]:
+        # `workspace slot test` accepts one cargo target per run, so each contract file is its own run.
+        cargo = ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-events", "--test", test,
+                 "--", "--test-threads=2"]
         command = [graphhelm, "workspace", "slot", "--root", root, "--lane", lane,
                    "--jobs", str(jobs), "--label", "keel-planted-defects", "--", *cargo]
         try:
@@ -121,6 +120,17 @@ def slot_runner(root: str, lane: str, jobs: int, graphhelm: str, timeout: float)
         except subprocess.TimeoutExpired:
             return 124, f"timed out after {timeout} s"
         return done.returncode, done.stdout + done.stderr
+
+    def run(repo: Path) -> tuple[int, str]:
+        code, text = 0, ""
+        for test in TESTS:
+            c, out = one(repo, test)
+            text += out
+            if c != 0:
+                code = c
+                if "test result: FAILED" in out:
+                    break
+        return code, text
     return run
 
 

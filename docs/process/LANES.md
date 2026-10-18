@@ -241,7 +241,9 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   run is not a pass. A running command retains the slot until it exits; exceeding the budget never
   kills only a parent and releases the lock over surviving children. No further check starts
   after the budget is exhausted. Unmapped paths and whole-package plans require explicit handling;
-  a whole-package exception needs its reason in the card and the runner argument.
+  a whole-package exception needs its reason in the card and the runner argument. Do not pass
+  `--allow-whole-package` by default (#1608): an `apps/cli/src/commands` change reaches only its
+  modules (DELIVERY.md §3), and the scheduled main whole run (#1540) is the whole-package backstop.
 
   Keep the same isolated worktree target warm across edits. Cold preparation and explicit broad
   audits may exceed 900 seconds and must be reported as such. Long experiments run as separate

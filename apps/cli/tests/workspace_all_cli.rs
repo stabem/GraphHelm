@@ -117,6 +117,7 @@ fn sweep_all_removes_finished_work_and_keeps_live_locked_and_unpushed_work() {
     let live = base.join("wt-live");
     let unpushed = base.join("wt-unpushed");
     let locked = base.join("wt-locked");
+    let reused = base.join("wt-reused");
     for (path, branch) in [
         (&merged, "issue-1-merged"),
         (&closed, "issue-2-closed"),
@@ -124,10 +125,18 @@ fn sweep_all_removes_finished_work_and_keeps_live_locked_and_unpushed_work() {
         (&live, "issue-4-live"),
         (&unpushed, "issue-5-wip"),
         (&locked, "issue-6-locked"),
+        (&reused, "issue-7-reused"),
     ] {
         add_worktree(&repo, path, branch);
         commit(path, &format!("{branch}.txt"), branch);
     }
+    // The finished PRs' branches were pushed; issue-7's PR is merged too, but its branch name was
+    // reused for a commit that is on no remote and not in main (#1620). issue-8 is the same with
+    // no worktree.
+    for branch in ["issue-2-closed", "issue-3-dirty"] {
+        git(&repo, &["push", "-q", "origin", branch]);
+    }
+    git(&repo, &["branch", "issue-8-orphan", "issue-7-reused"]);
     // issue-1 is squash-merged with no PR state recorded: only its content proves it.
     commit(&repo, "issue-1-merged.txt", "issue 1 (#1)");
     git(&repo, &["push", "-q", "origin", "main"]);
@@ -135,7 +144,7 @@ fn sweep_all_removes_finished_work_and_keeps_live_locked_and_unpushed_work() {
     let states = base.join("states.json");
     std::fs::write(
         &states,
-        r#"{"issue-2-closed":"CLOSED","issue-3-dirty":"MERGED","issue-4-live":"MERGED","issue-6-locked":"MERGED"}"#,
+        r#"{"issue-2-closed":"CLOSED","issue-3-dirty":"MERGED","issue-4-live":"MERGED","issue-6-locked":"MERGED","issue-7-reused":"MERGED","issue-8-orphan":"MERGED"}"#,
     )
     .unwrap();
 
@@ -206,7 +215,7 @@ fn sweep_all_removes_finished_work_and_keeps_live_locked_and_unpushed_work() {
     assert_eq!(std::fs::read_to_string(saved).unwrap(), "unsaved\n");
 
     assert!(alive, "the live worktree's process was stopped: {applied}");
-    for kept in [&live, &unpushed, &locked] {
+    for kept in [&live, &unpushed, &locked, &reused] {
         assert!(
             kept.join("a.txt").is_file(),
             "{} was removed: {applied}",
@@ -216,8 +225,13 @@ fn sweep_all_removes_finished_work_and_keeps_live_locked_and_unpushed_work() {
     }
     assert_eq!(applied["data"]["worktrees"]["kept"]["live"], 1, "{applied}");
     assert_eq!(
-        applied["data"]["worktrees"]["kept"]["unpushed"], 1,
+        applied["data"]["worktrees"]["kept"]["unpushed"], 2,
         "{applied}"
+    );
+    assert_eq!(applied["data"]["counts"]["branchesKept"], 1, "{applied}");
+    assert!(
+        branches.contains("issue-7-reused") && branches.contains("issue-8-orphan"),
+        "a branch with unpushed, unmerged commits was deleted: {applied}"
     );
     assert_eq!(applied["data"]["counts"]["worktreesLocked"], 1, "{applied}");
     assert!(

@@ -4,6 +4,8 @@
 //! unvisited edges. Replay/driver tests do not observe this production model boundary.
 //! Cost: opt-in local Node/Playwright, Git, ~60s; no account, provider or network install.
 //! The model fixture is real subprocess I/O, not a production executor seam.
+#[path = "support/mod.rs"]
+mod support;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -297,6 +299,7 @@ process.stdin.on('end',async()=>{await fixture.close();process.exit(0);});
     .unwrap();
     git(&["add", "."]);
     git(&["commit", "--quiet", "--no-verify", "-m", "explored draft"]);
+    support::passing_preview(project, "checkout");
     let (code, value) = reply(
         cli()
             .args(["journey", "approve", "checkout", "--project"])

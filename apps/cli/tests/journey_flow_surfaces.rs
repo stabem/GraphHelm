@@ -131,6 +131,10 @@ fn prepared() -> Harness {
     git(&project, &["add", "-A"]);
     git(&project, &["commit", "-q", "-m", "init"]);
     owner_token(&project);
+    // #1309 ruling A: the owner approves only what a preview showed passing.
+    for id in ["checkout", "basket"] {
+        support::passing_preview(&project, id);
+    }
     Harness {
         scratch,
         events,

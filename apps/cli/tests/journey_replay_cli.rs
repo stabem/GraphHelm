@@ -71,6 +71,7 @@ fn project(approved: bool) -> tempfile::TempDir {
             );
         }
         let token = owner_token(dir.path());
+        support::passing_preview(dir.path(), "checkout");
         let (code, reply) = cli(dir.path(), &["approve", "checkout", "--token-file", &token]);
         assert_eq!(code, 0, "{reply}");
     }

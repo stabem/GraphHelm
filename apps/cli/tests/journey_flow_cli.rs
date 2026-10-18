@@ -6,7 +6,7 @@
 mod support;
 use std::path::Path;
 use std::process::{Command, Output};
-use support::owner_token;
+use support::{owner_token, passing_preview};
 
 use serde_json::Value;
 
@@ -59,6 +59,8 @@ fn run(project: &Path, args: &[&str]) -> (Output, Value) {
 
 fn approve(project: &Path) -> (Output, Value) {
     let token = owner_token(project);
+    // #1309: approval needs a passing preview.
+    passing_preview(project, "checkout");
     run(project, &["approve", "checkout", "--token-file", &token])
 }
 
@@ -856,6 +858,23 @@ fn validate(project: &Path) -> Value {
     run(project, &["validate", "--all"]).1
 }
 
+/// #1309 ruling A: the owner approves only what a preview showed passing on this digest and
+/// commit; without one the approval is refused and the flow file is untouched.
+#[test]
+fn the_owner_approves_only_a_flow_whose_preview_passed() {
+    let dir = committed(EXAMPLE);
+    let token = owner_token(dir.path());
+    let path = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    let before = std::fs::read(&path).unwrap();
+    let (out, reply) = run(dir.path(), &["approve", "checkout", "--token-file", &token]);
+    assert_ne!(out.status.code(), Some(0), "{reply}");
+    assert!(finding(&reply, "flow.preview_not_passed"), "{reply}");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    passing_preview(dir.path(), "checkout");
+    let (out, reply) = run(dir.path(), &["approve", "checkout", "--token-file", &token]);
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+}
+
 #[test]
 fn approve_without_the_owner_token_is_refused_and_writes_nothing() {
     let dir = committed(EXAMPLE);
@@ -1119,6 +1138,7 @@ fn a_labelled_flow_approves_and_relabelling_keeps_the_approval() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+    passing_preview(dir.path(), "checkout");
     let (out, reply) = run(dir.path(), &["approve", "checkout", "--token-file", &token]);
     assert!(out.status.success(), "{reply}");
     let file = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");

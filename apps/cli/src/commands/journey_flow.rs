@@ -1630,7 +1630,18 @@ pub(crate) fn approve_as(id: &str, project: std::path::PathBuf) -> Outcome {
         Ok(value) => value,
         Err(findings) => return report(COMMAND, vec![], findings, json!({})),
     };
-    let findings = approval_findings(file, &text, &flow, &project);
+    let mut findings = approval_findings(file, &text, &flow, &project);
+    // #1309 ruling A: the owner approves what a preview showed passing on this flow's digest and
+    // this commit; the kept preview answers `none` for any other digest or commit.
+    let passed = super::journey_preview::kept(&project, &args.id)
+        .is_ok_and(|(_, preview)| preview["state"] == "ready" && preview["result"] == "pass");
+    if !passed {
+        findings.push(Finding::new(
+            "flow.preview_not_passed",
+            "",
+            "approve requires a passing preview of this flow at this commit",
+        ));
+    }
     if !findings.iter().all(Finding::is_warning) {
         return report(
             COMMAND,

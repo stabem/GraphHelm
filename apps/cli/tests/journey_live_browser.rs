@@ -227,6 +227,7 @@ fn open_live_at_a_step_replays_cached_edges_headed_and_stops_open_at_a_drifted_e
         &["commit", "--quiet", "--no-verify", "-m", "fixture"],
     );
     let token = owner_token(&project);
+    support::passing_preview(&project, "checkout");
     let (code, value) = journey(&project, &["approve", "checkout", "--token-file", &token]);
     assert_eq!(code, 0, "{value}");
 

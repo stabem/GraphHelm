@@ -1769,6 +1769,7 @@ fn a_fresh_clone_plans_and_checks_from_the_committed_flows() {
     fs::write(journeys.join("browse.journey.yaml"), draft).unwrap();
     git(root, &["add", "."]);
     git(root, &["commit", "-q", "-m", "flows"]);
+    support::passing_preview(root, "checkout");
     let approve = Command::cargo_bin("graphhelm")
         .unwrap()
         .current_dir(root)
@@ -1908,6 +1909,7 @@ fn the_plan_names_replayable_flows_and_a_card_naming_the_flow_covers_its_branche
     );
     git(root, &["add", "."]);
     git(root, &["commit", "-q", "-m", "flow"]);
+    support::passing_preview(root, "checkout");
     let approve = Command::cargo_bin("graphhelm")
         .unwrap()
         .current_dir(root)

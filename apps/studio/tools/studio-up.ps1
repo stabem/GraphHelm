@@ -102,6 +102,32 @@ function Get-EventsToken {
 # service would pass the bare probe, and proxying the requested directory's token to an
 # unrelated runtime opens the Studio disconnected or, worse, on the wrong project
 # (PR #467 review).
+# #1568: one events directory has one Runtime (its lifecycle lock). When the -Bind address is
+# silent but the lifecycle record names a live process that listens elsewhere (8793 while -Bind
+# says 8791), that Runtime already serves these events: starting a second one only dies on the
+# lock. It is adopted when THIS project's token opens it, and ignored otherwise.
+$eventsTrimmed = $Events.TrimEnd("\", "/")
+$lifecycleFile = Join-Path (Split-Path -Parent $eventsTrimmed) ("$(Split-Path -Leaf $eventsTrimmed).runtime-lifecycle.json")
+$bindSilent = $true
+try { $null = Invoke-WebRequest -Uri "$runtimeUrl/health" -TimeoutSec 2 -UseBasicParsing; $bindSilent = $false } catch {}
+if ($bindSilent -and (Test-Path $lifecycleFile)) {
+    try {
+        $recordedPid = [int]((Get-Content $lifecycleFile -Raw | ConvertFrom-Json).pid)
+        $listening = @(Get-NetTCPConnection -OwningProcess $recordedPid -State Listen -ErrorAction Stop |
+            Where-Object { $_.LocalAddress -eq "127.0.0.1" } | Select-Object -ExpandProperty LocalPort -Unique)
+        $adoptToken = Get-EventsToken
+        foreach ($port in $listening) {
+            if (-not $adoptToken) { break }
+            try {
+                $null = Invoke-RestMethod -Uri "http://127.0.0.1:$port/v1/executions?limit=1" -Headers @{ Authorization = "Bearer $adoptToken" } -TimeoutSec 5
+                Write-Host "[up] a Runtime (pid $recordedPid) already serves these events at 127.0.0.1:$port - using it instead of starting one at $Bind"
+                $Bind = "127.0.0.1:$port"
+                $runtimeUrl = "http://$Bind"
+                break
+            } catch {}
+        }
+    } catch {}
+}
 $alive = $false
 try {
     $null = Invoke-WebRequest -Uri "$runtimeUrl/health" -TimeoutSec 2 -UseBasicParsing
@@ -183,7 +209,10 @@ if (-not $alive) {
     if ($KeyId) { $serveArgs += @("--key-id", $KeyId) }
     if ($Manifest -and $Broker -and $Route -and $Keyring -and $KeyId) { $serveArgs += @("--manifest", $Manifest, "--broker", $Broker, "--route", $Route) }
     Write-Host "[up] starting: $GraphHelm $($serveArgs -join ' ')"
-    $runtime = Start-Process -FilePath $GraphHelm -ArgumentList $serveArgs -WindowStyle Hidden -PassThru
+    # #1568: the Runtime's own stderr is kept so an early exit says WHY (events lock, missing key)
+    # instead of guessing at PATH.
+    $runtimeErr = Join-Path ([System.IO.Path]::GetTempPath()) ("studio-up-runtime-$PID.err")
+    $runtime = Start-Process -FilePath $GraphHelm -ArgumentList $serveArgs -WindowStyle Hidden -PassThru -RedirectStandardError $runtimeErr
     # #549: a loaded machine took 7.5 s to answer, and once more than 60 s, so the wait is long
     # (120 s) but never unbounded, and it ends AT ONCE when the Runtime it started has exited:
     # a dead Runtime is said in seconds, not after the whole wait.
@@ -194,11 +223,18 @@ if (-not $alive) {
             $alive = $true
             break
         } catch {
-            if ($runtime.HasExited) { throw "The Runtime '$GraphHelm' exited (code $($runtime.ExitCode)) before it answered at $runtimeUrl. Is '$GraphHelm' on PATH (or pass -GraphHelm)?" }
+            if ($runtime.HasExited) {
+                $tail = ""
+                if (Test-Path $runtimeErr) { $tail = ((Get-Content $runtimeErr -Tail 15 -ErrorAction SilentlyContinue) -join "`n").Trim() }
+                Remove-Item $runtimeErr -Force -ErrorAction SilentlyContinue
+                if ($tail) { throw "The Runtime '$GraphHelm' exited (code $($runtime.ExitCode)) before it answered at $runtimeUrl. Its own stderr:`n$tail" }
+                throw "The Runtime '$GraphHelm' exited (code $($runtime.ExitCode)) before it answered at $runtimeUrl and printed nothing on stderr."
+            }
             Start-Sleep -Milliseconds 400
         }
     }
     if (-not $alive) { throw "The Runtime did not answer at $runtimeUrl within 120s. Is '$GraphHelm' on PATH (or pass -GraphHelm)?" }
+    Remove-Item $runtimeErr -Force -ErrorAction SilentlyContinue
     Write-Host "[up] Runtime up at $runtimeUrl"
     if (-not $Keyring) {
         # Said HERE, not discovered at the first refused send: without sealing there is no

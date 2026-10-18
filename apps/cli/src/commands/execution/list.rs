@@ -101,7 +101,12 @@ pub(crate) fn execute(
         // must not make the whole index unreadable, and a silently dropped row would read as
         // "that execution does not exist". `attention` is `unknown` there because that is the
         // honest verdict when the projection could not be built at all.
-        let row = match graphhelm_events::replay(&stream.scope, &stream.stream_id, &history) {
+        let row = match super::status::replay_cached(
+            events,
+            &stream.scope,
+            &stream.stream_id,
+            &history,
+        ) {
             Ok(projection) => {
                 // Budgets derived, not passed (#176).
                 let inputs = graphhelm_execution::AttentionInputs::for_surface(

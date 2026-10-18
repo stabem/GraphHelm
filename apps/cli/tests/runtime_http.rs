@@ -5211,3 +5211,174 @@ fn a_request_to_a_server_that_never_answers_ends_at_its_budget_as_a_timeout() {
         "on Windows a read timeout is WSAETIMEDOUT, the code that was taken for a failed connect"
     );
 }
+
+// -------------------------------------------------------------------------------------------
+// #1560: the real store's shape. One journal holds every execution; one of them is long.
+// -------------------------------------------------------------------------------------------
+
+struct SeedIds(std::sync::atomic::AtomicU64);
+impl graphhelm_protocols::IdGenerator for SeedIds {
+    fn next_id(&self, prefix: &'static str) -> String {
+        format!(
+            "{prefix}-seed-{}",
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+        )
+    }
+}
+
+struct SeedClock;
+impl graphhelm_protocols::Clock for SeedClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now()
+    }
+}
+
+/// Appends `count` events to `execution`'s stream (an `execution_started` at sequence 1, node
+/// signals after it), in batches of 50, starting at sequence `from`.
+fn seed_stream(
+    store: &graphhelm_events::LocalEventRepository,
+    execution: &str,
+    from: u64,
+    count: u64,
+) {
+    use graphhelm_protocols::{
+        ActorId, EventKind, ExecutionId, ExecutionMode, ExecutionStarted, NewEvent, OpaqueId,
+        PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope, Sensitivity,
+        SignalRecorded, SignalSeverity, SignalSourceKind, WireHash, WorkspaceId,
+    };
+    let scope = RepositoryScope::new(
+        WorkspaceId::parse("workspace-local").unwrap(),
+        ProjectId::parse("project-local").unwrap(),
+        Some(ExecutionId::parse(execution).unwrap()),
+    );
+    let actor = PersistedActor::new(
+        PersistedActorType::System,
+        ActorId::parse("system-test").unwrap(),
+    );
+    let end = from + count;
+    let mut next = from;
+    while next < end {
+        let size = 50.min(end - next);
+        let events = (next..next + size)
+            .map(|sequence| {
+                let kind = if sequence == 1 {
+                    EventKind::ExecutionStarted(ExecutionStarted {
+                        execution_id: OpaqueId::parse(execution).unwrap(),
+                        graph_version: 1,
+                        graph_hash: WireHash::parse(format!("sha256:{}", "b".repeat(64))).unwrap(),
+                        mode: ExecutionMode::Supervised,
+                    })
+                } else {
+                    EventKind::SignalRecorded(SignalRecorded {
+                        to: None,
+                        reply_to: None,
+                        scoped_agent_authenticated: None,
+                        execution_id: OpaqueId::parse(execution).unwrap(),
+                        signal_id: OpaqueId::parse(format!("signal-{execution}-{sequence}"))
+                            .unwrap(),
+                        source_kind: SignalSourceKind::Node,
+                        source_id: OpaqueId::parse("implementation").unwrap(),
+                        kind: "no_progress".to_owned(),
+                        severity: SignalSeverity::High,
+                        envelope_sha256: RawSha256::parse("a".repeat(64)).unwrap(),
+                    })
+                };
+                NewEvent::new(
+                    OpaqueId::parse(format!("key-{execution}-{sequence}")).unwrap(),
+                    actor.clone(),
+                    Sensitivity::Internal,
+                    kind,
+                    vec![],
+                    vec![],
+                )
+            })
+            .collect();
+        store
+            .append_atomic(
+                &graphhelm_events::PreparedAppend::new(
+                    scope.clone(),
+                    OpaqueId::parse(execution).unwrap(),
+                    next,
+                    events,
+                    vec![],
+                    vec![],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        next += size;
+    }
+}
+
+fn list_rows(base: &str, token: &str) -> (Duration, Value) {
+    let started = Instant::now();
+    let response = support::raw_request_within(
+        &format!("{base}/v1/executions"),
+        Some(token),
+        Duration::from_secs(600),
+    )
+    .unwrap();
+    let elapsed = started.elapsed();
+    let body: Value = serde_json::from_str(&response.body).unwrap();
+    assert_eq!(body["ok"], true, "the listing answers: {body}");
+    (elapsed, body)
+}
+
+fn head_of(listing: &Value, execution: &str) -> Value {
+    listing["data"]["executions"]
+        .as_array()
+        .expect("the listing carries rows")
+        .iter()
+        .find(|row| row["executionId"] == execution)
+        .unwrap_or_else(|| panic!("{execution} is listed: {listing}"))["headSequence"]
+        .clone()
+}
+
+/// #1560: on the owner's store (one journal holding every execution, one run of 32k events)
+/// every `GET /v1/executions` replayed the long run from sequence 1: about 2.5 s of CPU per
+/// request in release, measured on a copy of that journal. Serve now resumes the fold `status`
+/// keeps, so a listing after an append folds only the new events. Observer: the real `serve`
+/// binary over HTTP, on a store of that shape (a 12k-event run interleaved in one journal with
+/// eight short runs). Credible regression: a reader replaying the whole stream again, which makes
+/// the warm listing cost what the cold one did. Correctness: the long run's row reads the new
+/// head. Cost: seeding 12k events in a tempdir and one serve child.
+#[test]
+fn a_listing_after_an_append_folds_only_the_new_events_on_a_one_journal_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let long = "gh-team-shape";
+    let open = |first_id: u64| {
+        graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(first_id))),
+        )
+        .unwrap()
+    };
+    {
+        let store = open(0);
+        // Interleaved, as the real journal is: short runs land between the long run's batches.
+        for short in 0..8_u64 {
+            seed_stream(&store, long, 1 + short * 1_500, 1_500);
+            seed_stream(&store, &format!("short-run-{short}"), 1, 6);
+        }
+    }
+    let (_server, base, token) = serve(&events);
+    let (cold, listing) = list_rows(&base, &token);
+    assert_eq!(head_of(&listing, long), 12_000);
+
+    seed_stream(&open(1_000_000), long, 12_001, 1);
+    let (first, listing) = list_rows(&base, &token);
+    assert_eq!(
+        head_of(&listing, long),
+        12_001,
+        "the row reads the new head"
+    );
+    let (second, _) = list_rows(&base, &token);
+    let warm = first.max(second);
+    assert!(
+        warm * 4 < cold,
+        "a listing after an append must fold only the new event: cold {cold:?}, warm {first:?} \
+         and {second:?}"
+    );
+}

@@ -113,5 +113,43 @@ class Budget(unittest.TestCase):
         self.assertEqual((len(calls), stopped), (6, False))
 
 
+class Command(unittest.TestCase):
+    # #184 re-measure: a two-arm comparison loads one plugin copy per arm with --plugin-dir, the
+    # installed plugins equal in both arms; the prompt never rides on the command line.
+    def test_plugin_dirs_are_passed_and_the_prompt_is_not_an_argument(self):
+        cmd = runner.build_command("claude", "sid", "sonnet", 4, ["Skill"], ["D:/a", "D:/b"])
+        self.assertEqual(cmd[:2], ["claude", "-p"])
+        self.assertEqual([cmd[i + 1] for i, x in enumerate(cmd) if x == "--plugin-dir"], ["D:/a", "D:/b"])
+        self.assertIn("--allowedTools", cmd)
+        self.assertNotIn("--plugin-dir", runner.build_command("claude", "sid", "sonnet", 4, None, []))
+
+
+class PluginDirGuard(unittest.TestCase):
+    # #1595 review (gh-claude-8): a missing --plugin-dir ran a paid case and exited 0, so that arm
+    # silently measured the installed plugins. It is refused before any run.
+    def test_a_missing_or_non_plugin_dir_is_refused_before_any_run(self):
+        import tempfile
+        calls = []
+        saved = runner.run_case, runner.shutil.which
+        runner.run_case = lambda *a, **k: calls.append(a) or runner.observation("keel-scope", 1, "s", True, [], 0.1)
+        runner.shutil.which = lambda _: "claude"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp) / "o.json"
+                code = runner.main(["--workdir", tmp, "--out", str(out), "--repeats", "1", "--case", "keel-scope",
+                                    "--plugin-dir", str(Path(tmp) / "does-not-exist")])
+                self.assertEqual((code, calls), (2, []))
+                code = runner.main(["--workdir", tmp, "--out", str(out), "--repeats", "1", "--case", "keel-scope",
+                                    "--plugin-dir", tmp])
+                self.assertEqual((code, calls), (2, []))
+                (Path(tmp) / ".claude-plugin").mkdir()
+                (Path(tmp) / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+                code = runner.main(["--workdir", tmp, "--out", str(out), "--repeats", "1", "--case", "keel-scope",
+                                    "--plugin-dir", tmp])
+                self.assertEqual((code, len(calls)), (0, 1))
+        finally:
+            runner.run_case, runner.shutil.which = saved
+
+
 if __name__ == "__main__":
     unittest.main()

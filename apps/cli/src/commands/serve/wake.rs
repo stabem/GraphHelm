@@ -1109,7 +1109,7 @@ mod tests {
                 OpaqueId::parse("exec-fold").unwrap(),
                 next,
                 vec![NewEvent::new(
-                    OpaqueId::parse(&format!("arm-{next}")).unwrap(),
+                    OpaqueId::parse(format!("arm-{next}")).unwrap(),
                     PersistedActor::new(
                         PersistedActorType::System,
                         ActorId::parse("system-test").unwrap(),
@@ -1117,9 +1117,9 @@ mod tests {
                     Sensitivity::Internal,
                     EventKind::WakeLease(WakeLease {
                         execution_id: OpaqueId::parse("exec-fold").unwrap(),
-                        session_id: OpaqueId::parse(&format!("session-{next}")).unwrap(),
+                        session_id: OpaqueId::parse(format!("session-{next}")).unwrap(),
                         cursor: 0,
-                        rendezvous_id: OpaqueId::parse(&format!("rdv-{next}")).unwrap(),
+                        rendezvous_id: OpaqueId::parse(format!("rdv-{next}")).unwrap(),
                         matures_in_seconds: None,
                     }),
                     vec![],

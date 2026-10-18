@@ -1,7 +1,7 @@
 {
-  "extensions/builtin/graphhelm-development-contracts/.claude-plugin/plugin.json": "a41f84e16ce7cf00ca612e856a5cc40dca130e8a728f96a73fac6d832e1dd780",
-  "extensions/builtin/graphhelm-development-contracts/.codex-plugin/plugin.json": "5cbc1b2d825e9773263e970b406862b6f5e15465c75ade6c049f03da0ca79f8d",
-  "extensions/builtin/graphhelm-development-contracts/extension.json": "d2a55f0928153aec6957fadb16777e9940856a85fc5747e33a70e262e2cc29f9",
+  "extensions/builtin/graphhelm-development-contracts/.claude-plugin/plugin.json": "706d2000937783d7f2e03e8efb5e3c7f09d8df0898447dd69eaa518bfdefce07",
+  "extensions/builtin/graphhelm-development-contracts/.codex-plugin/plugin.json": "78a6ec7466ead2bfa98b7187bc4cbd805186a554bb36a5facd81917289439c15",
+  "extensions/builtin/graphhelm-development-contracts/extension.json": "3811466e422ab1a29c9f22c3d10f5bd32093c6697f0a1be2269376525ff26256",
   "extensions/builtin/graphhelm-development-contracts/fixtures/context/citation-belongs-to-another-capsule.json": "69876ac7ea400d83a2f8b694c428d0bace3770c8cecb8e9df22c41730d58fd88",
   "extensions/builtin/graphhelm-development-contracts/fixtures/context/citation-resolves-to-no-item.json": "2e74b7e3d365b9542cc2f9b9fe3a2cbe4976f3880f2d9b7fd4d0f40e3dd7fd27",
   "extensions/builtin/graphhelm-development-contracts/fixtures/context/required-citation-missing.json": "3d3cbf29c2dcd85df94c36e1c247346e0295b5325e3551efe2b9d4dc33860dfe",

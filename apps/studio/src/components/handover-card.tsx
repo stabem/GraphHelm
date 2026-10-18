@@ -25,6 +25,9 @@ function Group({ title, lines, onOpen }: { title: string; lines: HandoverLine[];
  * by the page) moves the last-seen position; Hide only puts the bar away for this session. */
 export function HandoverCard({ handover, onOpen, onDismiss, onHide }: { handover: Handover; onOpen: (sequences: number[]) => void; onDismiss: () => void; onHide?: () => void }) {
   const [open, setOpen] = useState(false);
+  // The first line that cites a record: what shipped first, else what needs the owner.
+  const evidence = [...handover.shipped, ...handover.needsYou, ...handover.quiet, ...handover.untouched]
+    .find((line) => line.sequences.length > 0);
   return (
     <section className="handover-bar" aria-label="While you were away">
       <div className="handover-bar-line">
@@ -39,8 +42,20 @@ export function HandoverCard({ handover, onOpen, onDismiss, onHide }: { handover
       </div>
       {open && (
         <div className="handover-details">
+          {/* #1041 B2: the goal first, then one cited evidence record, then the open duties. */}
+          <section className="handover-group" aria-label="Goal">
+            <h3>Goal</h3>
+            {handover.goal === null ? <p className="handover-empty">Nothing.</p> : (
+              <p><button type="button" onClick={() => onOpen(handover.goal!.sequences)}>{handover.goal.text}</button></p>
+            )}
+          </section>
+          {evidence && (
+            <p className="handover-evidence">
+              <a href={`#seq-${evidence.sequences[0]}`} onClick={(event) => { event.preventDefault(); onOpen(evidence.sequences); }}>Cited evidence</a>
+            </p>
+          )}
           <Group title="Shipped" lines={handover.shipped} onOpen={onOpen} />
-          <Group title="Needs you" lines={handover.needsYou} onOpen={onOpen} />
+          <Group title="Open duties" lines={handover.needsYou} onOpen={onOpen} />
           <Group title="Went quiet" lines={handover.quiet} onOpen={onOpen} />
           <Group title="Nobody touched" lines={handover.untouched} onOpen={onOpen} />
         </div>

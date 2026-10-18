@@ -1411,6 +1411,21 @@ class CliModules(unittest.TestCase):
                                   ("graphhelm-cli", "monitor_http", None),
                                   ("graphhelm-cli", "surface_completeness", None)})
 
+    def test_a_source_a_test_embeds_reaches_that_test_not_the_whole_package(self):
+        # #1576's diff: attention_tag_domain embeds commands/execution/mod.rs.
+        root, packages = self.narrow_tree()
+        (root / "apps/cli/src/commands/execution").mkdir()
+        (root / "apps/cli/src/commands/execution/mod.rs").write_text("pub fn run() {}", encoding="utf-8")
+        (root / "apps/cli/tests/execution_cli.rs").write_text('cmd.args(["execution", "list"]);', encoding="utf-8")
+        (root / "apps/cli/tests/attention_tag_domain.rs").write_text(
+            'const S: &str = include_str!("../src/commands/execution/mod.rs");', encoding="utf-8")
+        packages[0]["tests"] += [{"name": n, "src": f"apps/cli/tests/{n}.rs"} for n in ("execution_cli", "attention_tag_domain")]
+        path = "apps/cli/src/commands/execution/mod.rs"
+        whole, single, *_ = rt.reach([path], packages, {path: {"graphhelm-cli"}}, root)
+        self.assertEqual(whole, set())
+        self.assertTrue({("graphhelm-cli", "attention_tag_domain", None), ("graphhelm-cli", "execution_cli", None),
+                         ("graphhelm-cli", "bin:graphhelm", "commands::execution")} <= single, single)
+
     def test_a_submodule_no_test_names_reaches_through_its_command(self):
         root, packages = self.narrow_tree()
         whole, single, *_ = rt.reach(["apps/cli/src/commands/serve/ports.rs"], packages, {}, root)

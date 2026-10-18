@@ -89,7 +89,8 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 - the CLI help golden (`args_help_golden`) is reached by its fixture, by its source, and by any
   file that derives clap argument types; the protocols `canonical_golden` is reached by every
   `extensions/` and `schemas/` path and by any protocols source change;
-- a file a crate embeds (`include_str!`) reaches that crate, and an extension package reaches the
+- a file a crate embeds (`include_str!`) reaches that crate (a Rust source that tests embed
+  reaches those test targets when each one resolves), and an extension package reaches the
   tests that read it at run time plus `graphhelm extension validate`;
 - Studio files reach `npx vitest related` for those files plus `tsc`, and a `tools/<tool>/` change
   reaches that tool's own tests;

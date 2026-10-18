@@ -687,7 +687,15 @@ def reach(changed, packages, embedded, repo=None):
                 hit = hit or bool(tests)
         if path in embedded:
             if not readers:
-                whole |= embedded[path]
+                # #1608: a Rust source a test embeds (attention_tag_domain embeds
+                # commands/execution/mod.rs) reaches that embedding target, not its whole package,
+                # when every embedder resolves to a known target; the source's own rules follow below.
+                embedders = path_readers.get(path, set()) if path.endswith(".rs") else set()
+                targets = {rust_reader_target(packages, name, source) for name, source in embedders}
+                if embedders and None not in targets and {name for name, _ in embedders} >= embedded[path]:
+                    single |= targets
+                else:
+                    whole |= embedded[path]
             hit = True
         if path.startswith(HELP_GOLDEN_PATHS):
             single.add(HELP_GOLDEN)

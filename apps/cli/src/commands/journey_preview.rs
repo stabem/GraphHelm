@@ -338,6 +338,11 @@ pub(crate) fn kept(project: &Path, id: &str) -> Result<(Value, Value)> {
 /// `journey preview <id>` / `POST /v1/journey-flows/{id}/preview`: answer the stored preview when
 /// it is current, else start one in the background and answer `running`. `--force` runs anew.
 pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
+    start_with(args, runner_liveness)
+}
+
+/// [`start`] with the runner probe the reaper uses (a test supplies it).
+fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) -> Outcome {
     if args.run {
         return run(args);
     }
@@ -350,10 +355,13 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
         Err(failed) => return answer(json!({}), Some(failed)),
     };
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
-    let stored = reap_lost(&project, &dir);
-    let running_now = stored.as_ref().is_some_and(|state| {
-        state["state"] == "running" && runner_liveness(state) != Liveness::Dead
-    });
+    let stored = reap_lost_from_with(&project, &dir, || read_state(&dir), &liveness);
+    // The reaper probed the runner once and stored a dead one as failed, so a `running` it hands
+    // back is going. A second probe could see a runner that finished in between as dead, and a
+    // forced start would then overwrite its result and start another run (#1610).
+    let running_now = stored
+        .as_ref()
+        .is_some_and(|state| state["state"] == "running");
     let current = body(stored.clone(), &flow, &digest, &commit);
     if running_now {
         if current["state"] == "running" {
@@ -1708,6 +1716,82 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let answer = body(Some(stored), &flow, "sha256:aa", "c1");
         assert_eq!(answer["state"], "running", "{answer}");
         assert!(answer.get("reason").is_none(), "{answer}");
+    }
+
+    /// #1610 follow-up (gh-claude-21's review of #1616): start reaped with one probe (the runner
+    /// is alive, so it handed back the `running` copy), then probed again to decide whether a run
+    /// is going. A runner that wrote `ready` and exited in between read dead, so a forced start
+    /// wiped its frames, stored a new `running` over the finished result and spawned a second
+    /// run. Start trusts the reaper: it answers the run as still going and touches nothing.
+    /// Cost: temp files and an injected probe; no subprocess.
+    #[test]
+    fn a_forced_start_never_replaces_a_run_that_finishes_between_two_probes() {
+        let project = tempfile::tempdir().unwrap();
+        let journeys = project.path().join(".graphhelm/journeys");
+        std::fs::create_dir_all(&journeys).unwrap();
+        std::fs::write(
+            journeys.join("studio-add-project.journey.yaml"),
+            include_bytes!("testdata/studio-add-project.journey.yaml"),
+        )
+        .unwrap();
+        for path in [
+            "apps/studio/src/components/addproject.tsx",
+            "apps/studio/src/components/rail.tsx",
+        ] {
+            let target = project.path().join(path);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(target, "fixture").unwrap();
+        }
+        let id = "studio-add-project";
+        let dir = super::dir_of(project.path(), id);
+        let frames = dir.join("frames");
+        std::fs::create_dir_all(&frames).unwrap();
+        std::fs::write(frames.join("entry.png"), b"frame").unwrap();
+        let (_, digest, commit) = super::flow_and_key(project.path(), id).unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        let running = json!({"preview":true,"kind":"preview","digest":digest,"commit":commit,
+            "state":"running","pid":123,"startedAt":now,"current":null,"screens":{},"edges":{}});
+        let mut ready = running.clone();
+        ready["state"] = "ready".into();
+        ready["result"] = "pass".into();
+        ready["ranAt"] = now.clone().into();
+        save_state(&dir, &running);
+        let probes = std::cell::Cell::new(0);
+
+        let answer = super::start_with(
+            &JourneyPreviewArgs {
+                id: id.into(),
+                project: Some(project.path().to_path_buf()),
+                force: true,
+                read: false,
+                run: false,
+                confirm: false,
+                events: None,
+                execution: None,
+                keyring: None,
+                key_id: None,
+                validation_dir: None,
+            },
+            |_| {
+                probes.set(probes.get() + 1);
+                if probes.get() == 1 {
+                    // The runner finishes while the reaper's probe still sees it.
+                    save_state(&dir, &ready);
+                    super::Liveness::Alive
+                } else {
+                    super::Liveness::Dead
+                }
+            },
+        );
+
+        let answer = answer.output.data.unwrap();
+        assert_eq!(answer["state"], "running", "{answer}");
+        assert_eq!(
+            read_state(&dir).unwrap(),
+            ready,
+            "the finished run is not overwritten"
+        );
+        assert_eq!(std::fs::read(frames.join("entry.png")).unwrap(), b"frame");
     }
 
     /// #676: a failed process probe is not evidence that a running preview is dead, so its

@@ -215,6 +215,8 @@ mod tool_cli;
 mod update_check_cli;
 #[path = "wake_http.rs"]
 mod wake_http;
+#[path = "workspace_all_cli.rs"]
+mod workspace_all_cli;
 #[path = "workspace_cli.rs"]
 mod workspace_cli;
 #[path = "workspace_merged_cli.rs"]

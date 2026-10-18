@@ -5564,8 +5564,22 @@ Options:
       --merged-branch <MERGED_BRANCH>
           Merge cleanup (#1456): remove every worktree of this merged branch, the review checkouts detached at `--head`, the `--target` directories and the local branch, in one call
 
+      --all
+          Machine cleanup (#1578): every registered worktree of `--repo` and every build cache under the slot and target roots that is merged/closed (or clean, pushed and idle) and not held by a live process; then `git worktree prune`. Locked worktrees are skipped and reported
+
+      --sweep-root <SWEEP_ROOTS>
+          A root whose build caches `--all` sweeps (repeatable). Defaults to the machine's slot and target roots (D:/gh, D:/gh/b, D:/gh/c, D:/gh/sub, D:/ghb, D:/ghc, D:/ghopt, C:/ghc, C:/gh, C:/w/a, C:/w/b, C:/w/c, C:/w/d)
+
+      --pr-states <PR_STATES>
+          A JSON file `{"<branch>": "MERGED" | "CLOSED" | "OPEN"}` for `--all`. Without it the states are read once with `gh pr list --state all`; content already in origin/main counts as merged either way
+
+      --idle-hours <IDLE_HOURS>
+          `--all`: a pushed, unmerged worktree or a build cache untouched this many hours is idle
+          
+          [default: 24]
+
       --repo <REPO>
-          The repository whose worktrees are listed (any of its worktrees, or the main checkout)
+          The repository whose worktrees are listed (any of its worktrees, or the main checkout). With `--all` it defaults to the current directory
 
       --pr <PR>
           The merged PR number; names the leftovers folder. Defaults to the branch name

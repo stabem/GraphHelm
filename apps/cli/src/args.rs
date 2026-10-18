@@ -2393,8 +2393,8 @@ pub struct WorkspaceSweepArgs {
     /// The claim ledger root swept for released workspaces. Not used with `--merged-branch`.
     #[arg(
         long,
-        required_unless_present = "merged_branch",
-        conflicts_with = "merged_branch"
+        required_unless_present_any = ["merged_branch", "all"],
+        conflicts_with_all = ["merged_branch", "all"]
     )]
     pub root: Option<PathBuf>,
     /// Remove what the dry run lists. Without it nothing is changed.
@@ -2402,10 +2402,29 @@ pub struct WorkspaceSweepArgs {
     pub apply: bool,
     /// Merge cleanup (#1456): remove every worktree of this merged branch, the review checkouts
     /// detached at `--head`, the `--target` directories and the local branch, in one call.
-    #[arg(long, requires = "repo")]
+    #[arg(long, requires = "repo", conflicts_with = "all")]
     pub merged_branch: Option<String>,
+    /// Machine cleanup (#1578): every registered worktree of `--repo` and every build cache under
+    /// the slot and target roots that is merged/closed (or clean, pushed and idle) and not held
+    /// by a live process; then `git worktree prune`. Locked worktrees are skipped and reported.
+    #[arg(long)]
+    pub all: bool,
+    /// A root whose build caches `--all` sweeps (repeatable). Defaults to the machine's slot and
+    /// target roots (D:/gh, D:/gh/b, D:/gh/c, D:/gh/sub, D:/ghb, D:/ghc, D:/ghopt, C:/ghc, C:/gh,
+    /// C:/w/a, C:/w/b, C:/w/c, C:/w/d).
+    #[arg(long = "sweep-root", requires = "all")]
+    pub sweep_roots: Vec<PathBuf>,
+    /// A JSON file `{"<branch>": "MERGED" | "CLOSED" | "OPEN"}` for `--all`. Without it the
+    /// states are read once with `gh pr list --state all`; content already in origin/main counts
+    /// as merged either way.
+    #[arg(long, requires = "all")]
+    pub pr_states: Option<PathBuf>,
+    /// `--all`: a pushed, unmerged worktree or a build cache untouched this many hours is idle.
+    #[arg(long, default_value_t = 24, requires = "all")]
+    pub idle_hours: u64,
     /// The repository whose worktrees are listed (any of its worktrees, or the main checkout).
-    #[arg(long, requires = "merged_branch")]
+    /// With `--all` it defaults to the current directory.
+    #[arg(long)]
     pub repo: Option<PathBuf>,
     /// The merged PR number; names the leftovers folder. Defaults to the branch name.
     #[arg(long, requires = "merged_branch")]
@@ -2424,11 +2443,7 @@ pub struct WorkspaceSweepArgs {
     #[arg(long, default_value = "origin/main", requires = "merged_branch")]
     pub base: String,
     /// Uncommitted work found in a worktree is saved under `<leftovers>/<PR>/` before removal.
-    #[arg(
-        long,
-        default_value = "D:/_merge-leftovers",
-        requires = "merged_branch"
-    )]
+    #[arg(long, default_value = "D:/_merge-leftovers")]
     pub leftovers: PathBuf,
 }
 

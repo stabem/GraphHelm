@@ -378,7 +378,8 @@ how it removes a worktree, the single build slot and the per-worktree cargo targ
 
 - A session removes only what it created, by name: its worktree, its branch, its scratch
   directory. Never sweep other sessions' worktrees or branches, and never run `git worktree prune`
-  by hand.
+  by hand. The one exception is `graphhelm workspace sweep --all`, which the merger and the hourly
+  scheduled task run by rule ([LANES.md](LANES.md) §2, #1578).
 - Worktrees live under `<repo>/.worktrees/<branch>` (or the tool's own root, such as
   `.claude/worktrees/`). Put scratch and cargo targets in a task-specific directory outside the
   repository. Follow any stricter local disk policy supplied by the owner.

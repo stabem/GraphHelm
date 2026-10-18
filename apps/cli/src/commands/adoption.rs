@@ -158,6 +158,28 @@ const BLOCK_ITEMS: [&str; 6] = [
     "home/.claude/CLAUDE.md",
 ];
 const MCP_ITEMS: [&str; 2] = ["home/.claude.json", "project/.mcp.json"];
+/// The one settings file `enable-journey-review` may target: Claude Code's user settings.
+const SETTINGS_ITEM: &str = "home/.claude/settings.json";
+
+/// The reviewed after-bytes for `enable-journey-review`: the user settings with the journey-review
+/// plugin enabled and the `graphhelm` marketplace declared. `None`: the settings already say it.
+fn enable_journey_review(
+    before: &[u8],
+) -> Result<Option<Vec<u8>>, graphhelm_protocols::adoption::AdoptionError> {
+    use graphhelm_protocols::adoption::{AdoptionError, AdoptionReason};
+    let invalid = || AdoptionError {
+        reason: AdoptionReason::InvalidConfiguration,
+    };
+    let bytes = before.strip_prefix(b"\xef\xbb\xbf").unwrap_or(before);
+    let document: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    let Some(after) = graphhelm_host_adoption::hosts::claude::enable_journey_review(&document)?
+    else {
+        return Ok(None);
+    };
+    let mut after = serde_json::to_vec_pretty(&after).map_err(|_| invalid())?;
+    after.push(b'\n');
+    Ok(Some(after))
+}
 
 /// The marked block `graphhelm-block` keeps in an instruction file (#1323). The markers are what a
 /// second run finds; everything outside them is the owner's and is carried over byte for byte. The
@@ -313,6 +335,15 @@ fn suggestions(inventory: &serde_json::Value, args: &AdoptionSetupArgs) -> Vec<S
                     .is_some_and(|after| after.as_bytes() == before.as_slice())
             })
     };
+    // The journey-review plugin, until the user settings already enable it. Settings that are not
+    // JSON, or that say `false` for it, are not suggested.
+    if present(SETTINGS_ITEM)
+        && item_path(SETTINGS_ITEM, args)
+            .and_then(|path| read_bytes(&path).ok())
+            .is_some_and(|before| enable_journey_review(&before).ok().flatten().is_some())
+    {
+        out.push(format!("{SETTINGS_ITEM}=enable-journey-review"));
+    }
     let blocks = ["home/.claude/CLAUDE.md", "home/AGENTS.md"];
     // A current block is suggested only while something else still needs work: its item must
     // still be answered then, and alone it has nothing left to do.
@@ -422,6 +453,14 @@ fn parse_resolution(
             };
             let before = read_bytes(&item_path(item, args).ok_or_else(invalid)?)?;
             Ok(merge_registration(&before, registration)?
+                .map(|after| resolution(Decision::Replace, Some(after))))
+        }
+        "enable-journey-review" => {
+            if item != SETTINGS_ITEM {
+                return Err(invalid());
+            }
+            let before = read_bytes(&item_path(item, args).ok_or_else(invalid)?)?;
+            Ok(enable_journey_review(&before)?
                 .map(|after| resolution(Decision::Replace, Some(after))))
         }
         "use-plugin-mcp" => {

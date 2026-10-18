@@ -60,6 +60,7 @@ RUNTIME_READERS = {
     "schemas/mcp-tools.json": [("graphhelm-cli", "mcp_stdio")],
 }
 LAUNCHER_TESTS = f"cargo {TOOLCHAIN} test --locked -p graphhelm-cli --bin graphhelm {TEST_THREADS} commands::studio::tests::the_launcher_"
+JOURNEY_REVIEW_CHECK = "python tools/reached-tests/claude_plugin_check.py plugins/journey-review"
 MCP_CATALOG_STUDIO_TEST = "apps/studio/src/webmcp/mcp-tools.test.ts"
 # #1521: starts the Studio dev server the way the journey launcher does (`fixture.sh up`).
 STUDIO_START_SMOKE = "tools/studio-journey-fixture/test_studio_starts.py"
@@ -537,6 +538,12 @@ def reach(changed, packages, embedded, repo=None):
             if (root / observer).is_file():
                 tools.add(python_test_tool(root, observer))
                 hit = True
+        # The journey-review mod is not a skill plugin: `claude plugin validate` and `claude plugin test`
+        # are its observers (run through a wrapper that reports a missing CLI as UNOBSERVED).
+        if path.startswith("plugins/journey-review/") and root is not None:
+            if (root / "tools/reached-tests/claude_plugin_check.py").is_file():
+                tools.add(JOURNEY_REVIEW_CHECK)
+            hit = True
         plugin_parts = path.split("/")
         plugin_path = path.startswith("plugins/")
         hook_index = next((index for index, part in enumerate(plugin_parts)
@@ -689,7 +696,8 @@ def reach(changed, packages, embedded, repo=None):
 
 def _plugin_release_content(path):
     """Shipped files need a release bump; dedicated docs and test files do not."""
-    if not path.startswith(("plugins/graphhelm/", "plugins/graphhelm-codex-hooks/", "plugins/keel/")):
+    if not path.startswith(("plugins/graphhelm/", "plugins/graphhelm-codex-hooks/", "plugins/keel/",
+                            "plugins/journey-review/")):
         return False
     parts = path.split("/")
     name = parts[-1].lower()
@@ -962,6 +970,7 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
                 ".graphhelm/fixtures/keel-task-handoff/scenario.py": {(), ("--wrong-store",)},
                 ".graphhelm/fixtures/keel-task-handoff/test_scenario.py": {()},
                 ".graphhelm/fixtures/keel-proportional-rows/test_run.py": {()},
+                "tools/reached-tests/claude_plugin_check.py": {("plugins/journey-review",)},
             }
             if script not in allowed or tuple(args) not in allowed[script]:
                 raise ValueError(f"unrecognised python observer arguments: {tool}")

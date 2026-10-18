@@ -31,8 +31,12 @@ const OPERABLE: [&str; 6] = [
 /// `keep` (not instruction prose), so a replacement is an owner opt-in, never a required answer.
 const MCP_OPERABLE: [&str; 2] = ["project/.mcp.json", "home/.claude.json"];
 
+/// The user settings file, on which `apply` accepts exactly one change: enabling the
+/// journey-review plugin (`hosts::claude::enable_journey_review`, checked by `protect_settings`).
+const SETTINGS_OPERABLE: [&str; 1] = ["home/.claude/settings.json"];
+
 fn operable(id: &str) -> bool {
-    OPERABLE.contains(&id) || MCP_OPERABLE.contains(&id)
+    OPERABLE.contains(&id) || MCP_OPERABLE.contains(&id) || SETTINGS_OPERABLE.contains(&id)
 }
 
 fn invalid() -> AdoptionError {
@@ -200,7 +204,8 @@ pub fn resolve(inventory: &Value, resolutions: &[Resolution]) -> Result<Value, A
         // An MCP surface is `keep` by classification; the owner may still opt in to a replacement
         // of it. Any other `keep` item is not a question and cannot be answered.
         let opt_in = item.decision == Decision::Keep
-            && MCP_OPERABLE.contains(&item.id.as_str())
+            && (MCP_OPERABLE.contains(&item.id.as_str())
+                || SETTINGS_OPERABLE.contains(&item.id.as_str()))
             && resolution.decision == Decision::Replace;
         if (item.decision != Decision::Unresolved && !opt_in) || !answered.insert(item.id.clone()) {
             return Err(review_required());

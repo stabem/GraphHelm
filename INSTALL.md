@@ -166,6 +166,29 @@ It does **not** install the CLI, start the Runtime, or replace the main `graphhe
 registration. Steps 2, 4 and 6 do that. The hooks companion's task-handoff MCP is a separate
 surface; it does not replace the main Runtime tools.
 
+### Journey review in the Claude Code chat
+
+The `journey-review` plugin draws a journey run inline in the chat: step cards, the run's
+screenshots, the checks with their pass or fail marks, and Approve, Reject and Refresh buttons. It
+adds `/journey <id>`, `/journeys` and a `show_journey` tool. It is Claude Code only. `graphhelm setup`
+installs it: the dry run lists `home/.claude/settings.json=enable-journey-review` in
+`suggestedResolutions`, and that decision adds `enabledPlugins["journey-review@graphhelm"]` and the
+`graphhelm` marketplace to the user settings through the same reviewed plan, `--accept` digest and
+backup as the other decisions. Running it again finds the settings already saying so and plans
+nothing; a plugin the owner set to `false` is never turned back on. Without setup:
+
+```sh
+claude plugin marketplace add stabem/GraphHelm
+claude plugin install journey-review@graphhelm
+```
+
+**Verify** after restarting Claude Code: `claude plugin details journey-review@graphhelm` lists the
+plugin and its hooks module, and `claude plugin test` of the plugin folder passes (the reached plan
+runs it). In a project with `.graphhelm/journeys/`, `/journeys` lists the flows and `/journey <id>`
+draws one. The project is the session's working directory, `graphhelm` is found on `PATH`, and the
+Approve button runs `graphhelm journey approve` with the path of `.graphhelm/events.token`, never
+the token itself. The thumbnail helper needs Python with Pillow; without it the cards show no frames.
+
 ### Keel only, in any project
 
 A project that wants only Keel's rules, with no Runtime, MCP server, task records or journeys,

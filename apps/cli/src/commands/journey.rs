@@ -36,6 +36,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Validate(validate) => journey_validate::run(validate),
         JourneyCommand::Compile(compile) => super::journey_flow::run_compile(compile),
         JourneyCommand::Approve(approve) => super::journey_flow::run_approve(approve),
+        JourneyCommand::Reject(reject) => super::journey_flow::run_reject(reject),
         JourneyCommand::SignLegacy(sign) => super::journey_flow::run_sign_legacy(sign),
         JourneyCommand::MarkSafe(mark) => super::journey_flow::run_mark_safe(mark),
         JourneyCommand::Label(label) => super::journey_flow::run_label(label),

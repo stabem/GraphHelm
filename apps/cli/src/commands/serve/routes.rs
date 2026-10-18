@@ -2216,6 +2216,25 @@ pub(super) async fn approve_journey_flow(
     .await
 }
 
+/// `POST /v1/journey-flows/{id}/reject` (#1588): exactly `graphhelm journey reject <id> --note`,
+/// body `{"note": "..."}`. Owner only, like approve: the agent allow-lists do not reach it.
+pub(super) async fn reject_journey_flow(
+    State(state): State<ServeState>,
+    UrlPath(id): UrlPath<String>,
+    body: Bytes,
+) -> Response {
+    let Some(note) = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| value["note"].as_str().map(str::to_owned))
+    else {
+        return bad_request("journey.reject", "the body must carry \"note\"", "/note");
+    };
+    flow_command(state, "journey.reject", move |project| {
+        crate::commands::journey_flow::reject_owned(&id, &note, project.to_path_buf())
+    })
+    .await
+}
+
 /// #1130: the authenticated agent behind a journey-review request: the actor the scoped agent
 /// credential names (the middleware copies it into the headers) and that credential verified.
 /// `None` for the owner token, the shared agent session token, or anything else.

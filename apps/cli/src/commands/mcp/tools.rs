@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 47] = [
+const TOOLS: [ToolSpec; 48] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): a new executionId, mode, and file (a graph path on the Runtime host) or inline graph. held: true starts without driving. After a client timeout it may have started: read status, never retry. Mode governs proposals; pause holds dispatch.",
@@ -107,6 +107,11 @@ const TOOLS: [ToolSpec; 47] = [
         name: "journey_approve",
         description: "Approve one journey flow (POST /v1/journey-flows/{id}/approve; `graphhelm journey approve`): binds it to HEAD, clears drift and writes its contracts. Refused, writing nothing, while validate reports findings. Owner sessions only.",
         schema: journey_approve_schema,
+    },
+    ToolSpec {
+        name: "journey_reject",
+        description: "Reject one journey flow with the owner's reason (POST /v1/journey-flows/{id}/reject; `graphhelm journey reject --note`): appends a rejection bound to the flow's current content, keeps every earlier record, and journey_flows shows it until the flow changes. An empty note is refused. Owner sessions only.",
+        schema: journey_reject_schema,
     },
     ToolSpec {
         name: "journey_open",
@@ -347,6 +352,7 @@ const ROUTES: &[Route] = &[
     Route { tool: "workspace_sweep", method: "POST", path: &[Lit("v1"), Lit("workspaces"), Lit("sweep")], body: RouteBody::None },
     Route { tool: "journey_flows", method: "GET", path: &[Lit("v1"), Lit("journey-flows")], body: RouteBody::None },
     Route { tool: "journey_approve", method: "POST", path: &[Lit("v1"), Lit("journey-flows"), Arg("id"), Lit("approve")], body: RouteBody::None },
+    Route { tool: "journey_reject", method: "POST", path: &[Lit("v1"), Lit("journey-flows"), Arg("id"), Lit("reject")], body: RouteBody::Arguments },
     Route { tool: "journey_sessions", method: "GET", path: &[Lit("v1"), Lit("journeys"), Lit("sessions")], body: RouteBody::None },
     Route { tool: "journey_close", method: "DELETE", path: &[Lit("v1"), Lit("journeys"), Lit("sessions"), Arg("sessionId")], body: RouteBody::None },
     Route { tool: "evidence", method: "GET", path: &[Lit("v1"), Lit("executions"), Arg("executionId"), Lit("evidence"), Arg("evidenceId")], body: RouteBody::None },
@@ -548,6 +554,16 @@ fn optional_execution_schema() -> serde_json::Value {
 
 fn journey_approve_schema() -> serde_json::Value {
     object_schema(serde_json::json!({"id": {"type": "string"}}), &["id"])
+}
+
+fn journey_reject_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "id": {"type": "string", "minLength": 1},
+            "note": {"type": "string", "minLength": 1, "maxLength": 4096}
+        }),
+        &["id", "note"],
+    )
 }
 
 fn journey_draft_schema() -> serde_json::Value {
@@ -1823,6 +1839,15 @@ pub(crate) fn call(
                 .to_owned(),
             data: Some(serde_json::json!({
                 "code": crate::error_codes::GHCLI036_JOURNEY_APPROVE_OWNER_ONLY
+            })),
+        }),
+        // #1588: rejecting a journey is the owner's decision too, refused before any request.
+        "journey_reject" if api.actor_type != "owner" => Err(HandlerOutcome::Error {
+            code: INVALID_PARAMS,
+            message: "journey_reject is owner-only: only the owner rejects a journey flow (`graphhelm journey reject`)"
+                .to_owned(),
+            data: Some(serde_json::json!({
+                "code": crate::error_codes::GHCLI040_JOURNEY_REJECT_OWNER_ONLY
             })),
         }),
         "journey_open" => require(arguments, "contractId").and_then(|contract| {

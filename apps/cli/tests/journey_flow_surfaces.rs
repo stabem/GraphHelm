@@ -629,6 +629,57 @@ fn only_the_owner_credential_marks_an_edge_safe() {
     );
 }
 
+/// #1588: only the owner rejects a flow, over HTTP and MCP as on the CLI, and the review list
+/// carries the reason. Credible regressions: the agent session token or an agent-typed MCP session
+/// recording a rejection, a rejection with no note, and a reason the Runtime cannot show.
+#[test]
+fn only_the_owner_rejects_a_flow_and_the_review_list_shows_the_reason() {
+    let harness = prepared();
+    let (_server, base, owner) = harness.serve(true);
+    let agent_token = std::fs::read_to_string(harness.events.with_extension("agent.token"))
+        .expect("serve mints the agent session token beside the owner token");
+    const ROUTE: &str = "/v1/journey-flows/checkout/reject";
+    const NOTE: &str = r#"{"note": "the receipt never shows"}"#;
+
+    let (status, refused) = http_body(&base, "POST", ROUTE, Some(agent_token.trim()), NOTE);
+    assert_eq!(status, 403, "{refused}");
+    let (ok, refused) = harness.mcp(
+        &base,
+        &owner,
+        "journey_reject",
+        &json!({"id": "checkout", "note": "x"}),
+    );
+    assert!(!ok, "{refused}");
+    assert_eq!(
+        refused["error"]["data"]["code"], "GHCLI040_JOURNEY_REJECT_OWNER_ONLY",
+        "{refused}"
+    );
+    let (status, refused) = http_body(&base, "POST", ROUTE, Some(&owner), r#"{"note": " "}"#);
+    assert_eq!(status, 400, "an empty note: {refused}");
+    assert_eq!(flow(&harness.flows(), "checkout")["rejected"], Value::Null);
+
+    let (status, rejected) = http_body(&base, "POST", ROUTE, Some(&owner), NOTE);
+    assert_eq!(status, 200, "{rejected}");
+    assert_eq!(rejected["command"], "journey.reject");
+    assert_eq!(
+        flow(&harness.flows(), "checkout")["rejected"]["note"],
+        "the receipt never shows"
+    );
+
+    let (ok, over_mcp) = harness.mcp_as(
+        "owner",
+        &base,
+        &owner,
+        "journey_reject",
+        &json!({"id": "basket", "note": "the basket loses items"}),
+    );
+    assert!(ok, "{over_mcp}");
+    assert_eq!(
+        flow(&harness.flows(), "basket")["rejected"]["note"],
+        "the basket loses items"
+    );
+}
+
 #[test]
 fn the_flow_routes_without_a_project_refuse_naming_project() {
     let harness = prepared();

@@ -2,6 +2,7 @@
 import json
 import importlib.util
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -1088,6 +1089,53 @@ class StudioInstallCheck(unittest.TestCase):
             hidden = studio / "node_modules/.package-lock.json"
             hidden.write_text(json.dumps({"packages": {}}), encoding="utf-8")
             self.assertIn("node_modules/a", rr.studio_install_problem(studio))
+
+    def _absent(self, root, linked):
+        studio = Path(root) / "apps/studio"
+        studio.mkdir(parents=True)
+        (studio / "package-lock.json").write_text("{}", encoding="utf-8")
+        if linked:
+            (Path(root) / ".git").write_text("gitdir: elsewhere", encoding="utf-8")
+        else:
+            (Path(root) / ".git").mkdir()
+        return studio
+
+    def test_absent_install_in_a_lane_worktree_runs_one_hidden_npm_ci(self):
+        with tempfile.TemporaryDirectory() as root:
+            studio = self._absent(root, linked=True)
+            with patch.object(rr.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
+                with self.assertRaises(RuntimeError):  # npm is mocked, so the tree stays unwhole
+                    rr._resolve_argv(Path(root), studio, ["npx", "vitest", "run"])
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0][1:], ["ci"])
+            self.assertEqual(run.call_args.kwargs["cwd"], studio)
+            self.assertEqual(run.call_args.kwargs["creationflags"], rr.NO_WINDOW)
+            self.assertGreater(run.call_args.kwargs["timeout"], 0)
+
+    def test_failed_install_is_reported_not_swallowed(self):
+        with tempfile.TemporaryDirectory() as root:
+            studio = self._absent(root, linked=True)
+            with patch.object(rr.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "boom")):
+                with self.assertRaisesRegex(RuntimeError, "npm ci in apps/studio failed"):
+                    rr._resolve_argv(Path(root), studio, ["npx", "vitest", "run"])
+
+    def test_main_checkout_never_installs(self):
+        with tempfile.TemporaryDirectory() as root:
+            studio = self._absent(root, linked=False)
+            with patch.object(rr.subprocess, "run") as run:
+                with self.assertRaises(RuntimeError) as caught:
+                    rr._resolve_argv(Path(root), studio, ["npx", "vitest", "run"])
+            run.assert_not_called()
+            self.assertIn("npm ci", str(caught.exception))
+
+    def test_half_installed_lane_worktree_still_refuses_without_installing(self):
+        with tempfile.TemporaryDirectory() as root:
+            studio = self._repo(root, whole=False)
+            (Path(root) / ".git").write_text("gitdir: elsewhere", encoding="utf-8")
+            with patch.object(rr.subprocess, "run") as run:
+                with self.assertRaises(RuntimeError):
+                    rr._resolve_argv(Path(root), studio, ["npx", "vitest", "run"])
+            run.assert_not_called()
 
 
 if __name__ == "__main__":

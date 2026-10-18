@@ -185,6 +185,32 @@ def studio_install_problem(studio: Path) -> str | None:
     return None
 
 
+STUDIO_INSTALL_TIMEOUT = 900
+
+
+def _is_lane_worktree(repo: Path) -> bool:
+    """A linked worktree has a `.git` file; the main checkout has a `.git` directory."""
+    return (repo / ".git").is_file()
+
+
+def _install_absent_studio(repo: Path, studio: Path) -> None:
+    """Run a hidden `npm ci` when node_modules is wholly absent, in a lane worktree only.
+
+    A half-installed tree and the main checkout (a running Studio may hold locks) are never touched.
+    """
+    if (studio / "node_modules").exists() or not _is_lane_worktree(repo):
+        return
+    npm = shutil.which("npm") or "npm"
+    print(f"[reached-tests] apps/studio/node_modules is absent: npm ci in {studio}", file=sys.stderr, flush=True)
+    try:
+        proc = subprocess.run([npm, "ci"], cwd=studio, capture_output=True, text=True,
+                              timeout=STUDIO_INSTALL_TIMEOUT, creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"npm ci in apps/studio failed ({type(exc).__name__})") from exc
+    if proc.returncode != 0:
+        raise RuntimeError(f"npm ci in apps/studio failed (exit {proc.returncode}): {(proc.stderr or '')[-400:]}")
+
+
 def _resolve_argv(repo: Path, cwd: Path, argv: list[str]) -> list[str]:
     """Resolve local Node package entrypoints without npx downloading anything."""
     if not argv or argv[0] != "npx":
@@ -192,6 +218,7 @@ def _resolve_argv(repo: Path, cwd: Path, argv: list[str]) -> list[str]:
     if len(argv) < 2 or cwd != repo / "apps/studio":
         raise RuntimeError("npx is allowed only for a local Studio tool")
     package = argv[1]
+    _install_absent_studio(repo, repo / "apps/studio")
     problem = studio_install_problem(repo / "apps/studio")
     if problem:
         raise RuntimeError(

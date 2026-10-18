@@ -293,6 +293,7 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
         &project,
         &["commit", "--quiet", "--no-verify", "-m", "fixture"],
     );
+    support::passing_preview(&project, "checkout");
     let (code, value) = reply(
         cli()
             .args([
@@ -848,6 +849,7 @@ process.stdin.on('end',()=>{
     let (code, result) = replay(&project, &events, &keys, false);
     assert_ne!(code, 0, "{result}");
     assert_eq!(result["data"]["modelCalls"], 0);
+    support::passing_preview(&project, "checkout");
     let (code, value) = reply(
         cli()
             .args([

@@ -6,6 +6,8 @@
 //! and a confirm that does not play it.
 //! Cost: ~30s plus build, Node/Playwright/Chromium explicitly installed, local ports/Git; no
 //! provider/account or network installation. Ordinary offline runs ignore this target.
+#[path = "support/mod.rs"]
+mod support;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -357,6 +359,7 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
         .join(".graphhelm/events.token")
         .to_string_lossy()
         .into_owned();
+    support::passing_preview(&project, "account");
     let (code, value) = cli(
         &project,
         &["journey", "approve", "account", "--token-file", &token],

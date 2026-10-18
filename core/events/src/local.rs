@@ -633,6 +633,19 @@ impl LocalEventRepository {
                 prefix_cache.and_then(|cache| cache.walk_delay),
             )
         };
+        let walked = match walked {
+            Some(Err((error, partial))) => {
+                if let (Some(cache), Some(partial)) = (prefix_cache, partial)
+                    && let Ok(mut slot) = cache.slot.lock()
+                    && slot.is_none()
+                {
+                    *slot = Some(partial);
+                }
+                return Err(error);
+            }
+            Some(Ok(prefix)) => Some(prefix),
+            None => None,
+        };
         // The ROOT lock is taken in the same mode as the named lock it guards (Unix only; it is
         // a no-op on Windows). It used to be taken EXCLUSIVE here and in `with_lock` whatever
         // the named lock's mode was, so on Unix every open and every read serialised on the
@@ -745,6 +758,11 @@ impl LocalEventRepository {
             schemas,
             read_budget,
         };
+        // The walk before the lock is this open's load from genesis, counted as one.
+        #[cfg(test)]
+        if seeded {
+            repository.full_load_count.fetch_add(1, Ordering::SeqCst);
+        }
         let recovery = (|| {
             repository.validate_anchors()?;
             let state = match repository.load_state("open") {
@@ -2870,8 +2888,8 @@ impl std::fmt::Debug for PrefixCache {
 
 /// #1624: the journal's whole lines verified from genesis WITHOUT the store lock, as the prefix a
 /// locked load then extends. `None` when there is nothing to walk or anything fails: the locked
-/// load then walks from genesis, as every open did before. A walk cut by the read budget is kept
-/// as a pending walk, so the locked load resumes it and answers with the budget's refusal.
+/// load then walks from genesis, as every open did before. A walk cut by the read budget is the
+/// open's refusal, with the lines it did verify as a pending walk a later load resumes (#363).
 ///
 /// Why no lock is needed: the journal is append-only, and every writer that changes it holds the
 /// exclusive lock. Bytes read here are either still there when the lock is taken, and then the
@@ -2883,8 +2901,7 @@ fn walk_before_lock(
     schemas: &'static graphhelm_schema::RepositorySchemaSet,
     read_budget: &crate::ReadBudget,
     #[cfg(test)] walk_delay: Option<std::time::Duration>,
-) -> Option<VerifiedPrefix> {
-    let started = std::time::Instant::now();
+) -> Option<Result<VerifiedPrefix, (EventRepositoryError, Option<VerifiedPrefix>)>> {
     let blobs_handle = open_child_directory(root_handle, root, "blobs").ok()?;
     let mut journal = open_child_file(root_handle, root, "journal.jsonl", false, false).ok()?;
     let identity = file_identity(&journal).ok()?;
@@ -2903,9 +2920,17 @@ fn walk_before_lock(
     let mut ctx = VerifyCtx::fresh();
     let mut consumed = 0_u64;
     match verifier.verify_lines(&bytes[..whole], &mut ctx, &mut consumed) {
-        Ok(()) => Some(ctx.into_prefix(identity, whole as u64, started, false)),
-        Err(EventRepositoryError::ReadBudgetExceeded { .. }) if consumed > 0 => {
-            Some(ctx.into_prefix(identity, consumed, started, true))
+        Ok(()) => Some(Ok(ctx.into_prefix(
+            identity,
+            whole as u64,
+            // #506: a walk from genesis is stamped when it ends.
+            std::time::Instant::now(),
+            false,
+        ))),
+        Err(error @ EventRepositoryError::ReadBudgetExceeded { .. }) => {
+            let partial = (consumed > 0)
+                .then(|| ctx.into_prefix(identity, consumed, std::time::Instant::now(), true));
+            Some(Err((error, partial)))
         }
         Err(_) => None,
     }

@@ -417,6 +417,33 @@ fn is_link",
                 "read_owner_only reaches the file by path after its open: {path_access}"
             );
         }
+        // #1523 slice 2b: the ancestor walk runs before the open, so the handle's real path is
+        // what proves no ancestor was swapped for a junction in between.
+        assert!(
+            after_open.contains("final_path_matches("),
+            "read_owner_only must compare the opened handle's real path"
+        );
+    }
+
+    /// #1523 slice 2b: the opened handle's real path (`GetFinalPathNameByHandleW`) must be the
+    /// requested path. The prefix Windows adds and ASCII case are not a difference; another
+    /// directory, a UNC share named for a drive path, or a longer path is. Cost: pure strings.
+    #[test]
+    fn the_final_path_must_be_the_requested_path() {
+        let requested = Path::new(r"D:\gh\keys\serve.key");
+        assert!(final_path_matches(requested, r"\\?\D:\gh\keys\serve.key"));
+        assert!(final_path_matches(requested, r"\\?\d:\GH\Keys\Serve.KEY"));
+        assert!(final_path_matches(requested, r"D:\gh\keys\serve.key"));
+        assert!(!final_path_matches(requested, r"\\?\D:\gh\real\serve.key"));
+        assert!(!final_path_matches(
+            requested,
+            r"\\?\UNC\host\gh\keys\serve.key"
+        ));
+        assert!(!final_path_matches(
+            requested,
+            r"\\?\D:\gh\keys\serve.key\x"
+        ));
+        assert!(!final_path_matches(requested, r"\\?\E:\gh\keys\serve.key"));
     }
 
     /// #1325: pinned BEFORE `encode_hex` becomes `hex::encode`: lowercase, two digits per byte,

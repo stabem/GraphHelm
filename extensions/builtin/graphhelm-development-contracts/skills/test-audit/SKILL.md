@@ -1,6 +1,6 @@
 ---
 name: test-audit
-description: "Decide whether a test earns its cost under Keel: gate every new or changed test with four questions, audit an existing suite for tests that prove nothing, and prune one subsystem at a time with a deletion record per removed test. Use before adding a test, when a suite feels slow or noisy, or when asked to prune tests."
+description: "Use when someone asks whether a test proves anything, wants existing tests judged or audited, wants to delete a slow or flaky test, or is about to add or change a test: four questions gate each new test, an audit lists the tests that prove nothing (self-comparison, a mock confirming itself), and each removal gets a deletion record naming what still covers the behavior."
 ---
 
 # Test audit

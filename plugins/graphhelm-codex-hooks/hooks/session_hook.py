@@ -718,10 +718,20 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
         raise ValueError("compact briefing cache unavailable")
     freshness = "CACHED" if isinstance(digest, dict) else "FRESH"
     if not isinstance(digest, dict):
-        reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/briefing", token_from_file(token_file), "GET", timeout=BRIEFING_TIMEOUT)
-        data = reply.get("data")
-        if not isinstance(data, dict):
-            raise ValueError("invalid briefing")
+        try:
+            reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/briefing", token_from_file(token_file), "GET", timeout=BRIEFING_TIMEOUT)
+            data = reply.get("data")
+            if not isinstance(data, dict):
+                raise ValueError("invalid briefing")
+        except Exception:
+            # #919: a slow Runtime times the briefing out. The briefing stays UNOBSERVED (the
+            # caller reports it), but the lane still gets its waiter: the waiter never needed the
+            # briefing, and without it no lane held a wake lease.
+            try:
+                start_lane_waiter(payload, bound, host)
+            except Exception as error:
+                print(f"graphhelm-session-hook: waiter not started ({type(error).__name__})", file=sys.stderr)
+            raise
         digest = _briefing_digest(data)
         state = state or {"version": 2, "executionId": execution, "sessionId": session, "host": host, "origin": origin}
         state["briefing"] = digest

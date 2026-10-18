@@ -282,6 +282,15 @@ records"). From a lane worktree the token path must be absolute:
 `Refs` PR. Every lane merges under one GitHub account, so `mergedBy` cannot tell whose merge it
 was; the exit code of the `gh pr merge` you ran is the evidence.
 
+**One issue lock.** The single lock for an issue is the Runtime `task.claimed` record on `gh-team`.
+- An orchestrator reads `GET /v1/executions/gh-team/tasks?issue=<N>`, plus the issue's last
+  comments and open PRs, before assigning.
+- A lane records `claimed` before its first edit, then confirms it landed with the same GET.
+- A claim that timed out is not a claim until that GET shows it. No confirmation means no edit.
+- A refused claim (held by another lane) means stop. Take an issue over only through an
+  `assignedBy` handover.
+- `D:/gh/coordinator/codex/issue_locks.json` is read-only legacy. Do not write to it.
+
 Record only as yourself. `task_record.py` sends the lane's own credential
 (`<events>.agent.<lane>.token`, minted once per lane with `graphhelm tasks credential`) when it
 exists and the shared agent token otherwise; a Runtime started with `serve --require-lane-credential`

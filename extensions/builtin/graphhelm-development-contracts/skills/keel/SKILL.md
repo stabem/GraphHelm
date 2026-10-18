@@ -1,6 +1,6 @@
 ---
 name: keel
-description: "Work under the Keel construction pattern: load the project's KEEL.md and the file for your step, start from a contract card instead of the tree, stay inside its paths, prove the promise end to end first, and apply every Keel value. Use by default for code work and context retrieval in projects that adopted GraphHelm; no explicit user invocation is needed."
+description: "Use when deciding which files a change may touch (a bug found in a neighbouring file, an unrelated cleanup, anything outside the card's paths), when asked whether a promise can be reported as verified without a real observer on this host, or when deciding whether a new test proves a fix (for example, it also passes on the parent commit). It is the construction pattern for every code change in a project with a KEEL.md: start from the card, stay inside its paths, prove the promise end to end, apply every Keel value. No explicit user invocation is needed."
 ---
 
 # Keel, in brief

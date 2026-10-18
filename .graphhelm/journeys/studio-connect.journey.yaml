@@ -17,7 +17,7 @@ screens:
     scope: [apps/studio/src/components/Connect.tsx, apps/studio/src/runtime/session.ts]
   - id: run
     title: The connected Studio opens the run's Mission view
-    url: /
+    url: /?run=:run
     state: stable
     expect: [{role: navigation, name: Projects}, {role: tablist, name: Mission views}, {role: tab, name: Graph}, {role: button, name: Run actions}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/rail.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/runtime/client.ts]

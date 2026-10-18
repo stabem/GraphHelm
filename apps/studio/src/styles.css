@@ -2437,6 +2437,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .handover-group ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .handover-group button { width: 100%; text-align: left; background: none; border: 0; padding: 4px 0; color: inherit; text-decoration: underline dotted; }
 .handover-empty { margin: 0; color: var(--dim); font-size: 12px; }
+.handover-evidence { margin: 8px 0 0; font-size: 12px; }
 .handover-dismiss { font-weight: 600; }
 .right-panel { display: flex; flex-direction: column; gap: 16px; padding: 12px; overflow: auto; border-left: 1px solid var(--edge); }
 .right-section h2 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dim); }

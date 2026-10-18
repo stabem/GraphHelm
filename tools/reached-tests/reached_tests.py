@@ -545,7 +545,7 @@ def reach(changed, packages, embedded, repo=None):
                 tools.add(JOURNEY_REVIEW_CHECK)
             hit = True
         plugin_parts = path.split("/")
-        plugin_path = path.startswith("plugins/")
+        plugin_path = path.startswith("plugins/") and not path.startswith("plugins/journey-review/")
         hook_index = next((index for index, part in enumerate(plugin_parts)
                            if part == "hooks" and index >= 2), None) if plugin_path else None
         plugin_name = plugin_parts[1] if plugin_path and len(plugin_parts) > 1 else None

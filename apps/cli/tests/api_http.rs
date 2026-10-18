@@ -263,6 +263,8 @@ fn serve_with_env_observed(
             "127.0.0.1:0",
         ])
         .args(extra)
+        // #1523: a key in the runner's own environment must not leak into a test's server.
+        .env_remove("GRAPHHELM_EVENTS_KEY")
         .envs(envs.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2229,6 +2231,139 @@ fn a_signal_over_http_is_attributed_to_the_calling_agent() {
     assert!(!event["evidenceRefs"].as_array().unwrap().is_empty());
     assert_eq!(event["actor"]["type"], "agent");
     assert_eq!(event["actor"]["id"], "agent-planner");
+}
+
+/// #1523: writes `contents` to `path` readable only by its owner: mode 0600 on Unix; on Windows
+/// the keyring's own protected owner/SYSTEM/Administrators DACL, applied before any byte.
+fn write_owner_only(path: &Path, contents: &str) {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // GENERIC_WRITE | READ_CONTROL | WRITE_DAC
+        options.access_mode(0x4000_0000 | 0x0002_0000 | 0x0004_0000);
+    }
+    let mut file = options.open(path).unwrap();
+    #[cfg(windows)]
+    graphhelm_sealed_key_provider::protect_owner_only(&file).unwrap();
+    file.write_all(contents.as_bytes()).unwrap();
+}
+
+/// #1523: the restart path the coordinator needs. With `--events-key-file` and NO
+/// `GRAPHHELM_EVENTS_KEY`, `serve` starts without the keyring warning and a sealed signal over
+/// HTTP succeeds, and neither the startup reply nor anything the server prints carries the key.
+/// Before: the only source was the variable, so a restart without it sealed nothing. Cost: one
+/// served Runtime, one POST.
+#[test]
+fn serve_seals_with_the_key_from_an_owner_only_key_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-key-file";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let key_file = directory.path().join("serve.key");
+    write_owner_only(&key_file, SIGNAL_KEY_HEX);
+    let (guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+            "--events-key-file",
+            key_file.to_str().unwrap(),
+        ],
+        &[],
+    );
+    let body = serde_json::json!({
+        "signal": signal_envelope("signal-key-file-1", "no_progress"),
+    });
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "sig-key-file-1"),
+            ("X-GraphHelm-Actor", "agent-planner"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &body,
+    );
+    assert_eq!(status, 200, "{reply}");
+    let event = last_event_of_kind(&base, &token, execution, "signal_recorded");
+    assert!(!event["evidenceRefs"].as_array().unwrap().is_empty());
+    let printed = [&guard.stdout_lines, &guard.stderr_lines]
+        .iter()
+        .flat_map(|lines| lines.lock().unwrap().clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !printed.contains("keyring could not be opened"),
+        "{printed}"
+    );
+    assert!(!printed.contains(SIGNAL_KEY_HEX), "the key was printed");
+}
+
+/// #1523: each unsafe key source refuses the start with `/events-key-file`, and no refusal
+/// prints the key. Cases: the variable and the file together; a file other users can read (on
+/// Windows: an inherited, unprotected ACL); a file that is not 64 lowercase hex characters.
+/// Cost: three `serve` starts that stop before binding.
+#[test]
+fn serve_refuses_an_unsafe_events_key_file_without_printing_the_key() {
+    let directory = tempfile::tempdir().unwrap();
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let good = directory.path().join("good.key");
+    write_owner_only(&good, SIGNAL_KEY_HEX);
+    let open = directory.path().join("open.key");
+    std::fs::write(&open, SIGNAL_KEY_HEX).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    let short = directory.path().join("short.key");
+    write_owner_only(&short, &SIGNAL_KEY_HEX[..63]);
+    let cases: [(&str, &Path, bool); 3] = [
+        ("variable and file", &good, true),
+        ("readable by others", &open, false),
+        ("not 64 hex characters", &short, false),
+    ];
+    for (case, file, with_variable) in cases {
+        let events = directory.path().join(format!("events-{}", case.len()));
+        let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+        command
+            .args(["serve", "--events"])
+            .arg(&events)
+            .args(["--bind", "127.0.0.1:0", "--keyring"])
+            .arg(&keyring)
+            .args(["--key-id", "signal-key", "--events-key-file"])
+            .arg(file)
+            .env_remove("GRAPHHELM_EVENTS_KEY");
+        if with_variable {
+            command.env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX);
+        }
+        let output = command.output().unwrap();
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!output.status.success(), "{case}: {printed}");
+        assert!(printed.contains("/events-key-file"), "{case}: {printed}");
+        assert!(
+            !printed.contains(&SIGNAL_KEY_HEX[..63]),
+            "{case}: the key was printed"
+        );
+    }
 }
 
 /// #418, #419: a `task.*` record in another lane's name is refused as `GHCLI038_ACTOR_MISMATCH`

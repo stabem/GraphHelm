@@ -827,6 +827,16 @@ class Reach(unittest.TestCase):
         commands = rt.commands(whole, single, studio)
         self.assertEqual(commands, ["(cd apps/studio && npx vitest related --run --maxWorkers=1 src/runtime/team-tasks.ts && npx tsc -b)"])
 
+    def test_studio_launcher_scripts_reach_the_cli_launcher_tests_not_vitest(self):
+        """#1571: apps/studio/tools/* are exercised by `the_launcher_*` in graphhelm-cli."""
+        for script in ("apps/studio/tools/studio-up.ps1", "apps/studio/tools/studio-up.sh"):
+            whole, single, studio, tools, *_ = reach(script)
+            self.assertEqual((whole, single, studio), (set(), set(), []))
+            self.assertEqual(tools, [rt.LAUNCHER_TESTS])
+            step = rt.steps(whole, single, studio, tools)[0]
+            self.assertEqual(step["argv"][-1], "commands::studio::tests::the_launcher_")
+            self.assertIn("--bin", step["argv"])
+
     def test_studio_config_reaches_full_suite_in_both_plans(self):
         for paths in (("apps/studio/vite.config.ts",),
                       ("apps/studio/vite.config.ts", "apps/studio/src/runtime/team-tasks.ts")):

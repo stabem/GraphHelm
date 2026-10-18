@@ -676,21 +676,41 @@ fn waiting_line(seconds: u64, in_use: u64, budget: u32, runs: usize) -> String {
 /// root so the old binary stayed callable the whole time; only these two renames leave a gap.
 /// Windows cannot overwrite a running executable but can rename it, so it is moved aside first
 /// and put back if the new one cannot be moved in.
+///
+/// #1523: a Runtime started before the previous update still runs from that moved-aside copy,
+/// so its name can be neither removed nor renamed onto. The current binary then goes to the
+/// first free numbered name instead; a copy no longer in use is removed when its name is tried.
 fn swap_in(exe: &Path, staged: Option<&Path>, progress: Progress) -> bool {
     let Some(staged) = staged else {
         return true;
     };
-    let old = exe.with_file_name(if cfg!(windows) {
-        "graphhelm.old.exe"
-    } else {
-        "graphhelm.old"
+    let suffix = if cfg!(windows) { ".exe" } else { "" };
+    let moved = exe.exists().then(|| {
+        (0..=16).find_map(|n| {
+            let name = if n == 0 {
+                format!("graphhelm.old{suffix}")
+            } else {
+                format!("graphhelm.old.{n}{suffix}")
+            };
+            let old = exe.with_file_name(name);
+            let _ = std::fs::remove_file(&old);
+            std::fs::rename(exe, &old).is_ok().then_some(old)
+        })
     });
-    let _ = std::fs::remove_file(&old);
-    let moved = exe.exists() && std::fs::rename(exe, &old).is_ok();
+    if let Some(None) = moved {
+        // Replacing the exe now would drop the only copy of the running binary, or fail anyway.
+        Progress::say(&progress.warn(&format!(
+            "the new graphhelm is built at {} but {} stays: graphhelm.old and graphhelm.old.1 to .16 \
+             beside it are all in use; stop the processes that run them and update again",
+            staged.display(),
+            exe.display()
+        )));
+        return false;
+    }
     if std::fs::rename(staged, exe).is_ok() {
         return true;
     }
-    if moved {
+    if let Some(Some(old)) = moved {
         let _ = std::fs::rename(&old, exe);
     }
     Progress::say(&progress.warn(&format!(
@@ -1084,6 +1104,91 @@ mod tests {
             None
         );
         assert_eq!(compiled_crate("Compiling serde v1"), None);
+    }
+
+    /// #1523: a Runtime started before the previous update still runs from the moved-aside
+    /// `graphhelm.old`, so that name cannot be removed or renamed onto, and the next update
+    /// refused with "could not replace". A non-empty directory under the fixed aside name fails
+    /// both the remove and the rename on every platform, as a running Windows executable does.
+    /// Cost: one temporary directory; no process is started.
+    #[test]
+    fn swap_moves_aside_to_a_free_name_when_the_old_aside_is_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(if cfg!(windows) {
+            "graphhelm.exe"
+        } else {
+            "graphhelm"
+        });
+        let staged = dir.path().join("staged");
+        std::fs::write(&exe, "old").unwrap();
+        std::fs::write(&staged, "new").unwrap();
+        let taken = exe.with_file_name(if cfg!(windows) {
+            "graphhelm.old.exe"
+        } else {
+            "graphhelm.old"
+        });
+        std::fs::create_dir(&taken).unwrap();
+        std::fs::write(taken.join("held"), "running").unwrap();
+        let progress = Progress::new("test", false, crate::palette::Palette::plain());
+        assert!(swap_in(&exe, Some(&staged), progress));
+        assert_eq!(std::fs::read_to_string(&exe).unwrap(), "new");
+        let asides: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().is_file())
+            .filter(|entry| std::fs::read_to_string(entry.path()).ok().as_deref() == Some("old"))
+            .collect();
+        assert_eq!(asides.len(), 1, "the previous binary is kept aside once");
+        assert!(taken.join("held").is_file(), "the taken name is left alone");
+    }
+
+    /// #1523: when every aside name is taken, the swap refuses and leaves the running binary and
+    /// the staged build where they are, instead of dropping the only copy of the previous binary.
+    #[test]
+    fn swap_refuses_and_keeps_both_binaries_when_every_aside_name_is_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let suffix = if cfg!(windows) { ".exe" } else { "" };
+        let exe = dir.path().join(format!("graphhelm{suffix}"));
+        let staged = dir.path().join("staged");
+        std::fs::write(&exe, "old").unwrap();
+        std::fs::write(&staged, "new").unwrap();
+        for n in 0..=16 {
+            let name = if n == 0 {
+                format!("graphhelm.old{suffix}")
+            } else {
+                format!("graphhelm.old.{n}{suffix}")
+            };
+            let taken = dir.path().join(name);
+            std::fs::create_dir(&taken).unwrap();
+            std::fs::write(taken.join("held"), "running").unwrap();
+        }
+        let progress = Progress::new("test", false, crate::palette::Palette::plain());
+        assert!(!swap_in(&exe, Some(&staged), progress));
+        assert_eq!(std::fs::read_to_string(&exe).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(&staged).unwrap(), "new");
+    }
+
+    /// #1523: with the fixed aside name free, the swap keeps its old shape.
+    #[test]
+    fn swap_uses_the_fixed_aside_name_when_it_is_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join(if cfg!(windows) {
+            "graphhelm.exe"
+        } else {
+            "graphhelm"
+        });
+        let staged = dir.path().join("staged");
+        std::fs::write(&exe, "old").unwrap();
+        std::fs::write(&staged, "new").unwrap();
+        let progress = Progress::new("test", false, crate::palette::Palette::plain());
+        assert!(swap_in(&exe, Some(&staged), progress));
+        assert_eq!(std::fs::read_to_string(&exe).unwrap(), "new");
+        let old = exe.with_file_name(if cfg!(windows) {
+            "graphhelm.old.exe"
+        } else {
+            "graphhelm.old"
+        });
+        assert_eq!(std::fs::read_to_string(old).unwrap(), "old");
     }
 
     /// #1140: the managed clone never builds in a shared target directory another build locks.

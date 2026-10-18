@@ -497,7 +497,8 @@ pub(super) fn build_opener(
 fn open_key_provider(
     sealing: &crate::commands::execution::signal::SignalKeyring,
 ) -> Result<graphhelm_sealed_key_provider::SealedKeyProvider, String> {
-    let encoded = std::env::var("GRAPHHELM_EVENTS_KEY").map_err(|_| {
+    // #1523: the same source the sealer reads, so a `--events-key-file` Runtime opens what it seals.
+    let encoded = crate::commands::execution::signal::events_key_hex().ok_or_else(|| {
         "GRAPHHELM_EVENTS_KEY must supply 64 lowercase hexadecimal characters".to_owned()
     })?;
     if encoded.len() != 64

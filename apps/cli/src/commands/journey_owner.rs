@@ -217,12 +217,17 @@ impl Approver {
     }
 }
 
-/// Whether the project's owner store holds an approval of `flow` at exactly `digest`: the
-/// owner's, or a reviewer agent's (#1130). `Err` when the store is absent or unreadable: the
+/// Whether the project's owner store holds the owner's approval of `flow` at exactly `digest`.
+/// #1309 ruling A: final approval is the owner's alone; a reviewer agent's record is a review
+/// (`reviewed`) and never signs an approval. `Err` when the store is absent or unreadable: the
 /// approval cannot be verified.
 pub(crate) fn approved(project: &Path, flow: &str, digest: &str) -> Result<bool, String> {
-    Ok(has(project, &signal_id(flow, digest), APPROVED_KIND)?
-        || has_agent(project, &agent_signal_id(flow, digest))?)
+    has(project, &signal_id(flow, digest), APPROVED_KIND)
+}
+
+/// Whether a reviewer agent recorded its blind review of `flow` at exactly `digest` (#1130).
+pub(crate) fn reviewed(project: &Path, flow: &str, digest: &str) -> Result<bool, String> {
+    has_agent(project, &agent_signal_id(flow, digest))
 }
 
 fn has_agent(project: &Path, wanted: &str) -> Result<bool, String> {
@@ -279,9 +284,6 @@ pub(crate) fn record_as(
     revision: &str,
     approver: &Approver,
 ) -> Result<(), String> {
-    if store(project).exists() && approved(project, flow, digest)? {
-        return Ok(());
-    }
     if let Approver::Agent {
         reviewer,
         author,
@@ -292,6 +294,9 @@ pub(crate) fn record_as(
             "protocol": AGENT_APPROVED_PROTOCOL, "flowId": flow, "digest": digest,
             "revision": revision, "reviewer": reviewer, "author": author, "checked": checked,
         });
+        if store(project).exists() && reviewed(project, flow, digest)? {
+            return Ok(());
+        }
         let actor = graphhelm_protocols::PersistedActor::new(
             PersistedActorType::Agent,
             graphhelm_protocols::ActorId::parse(reviewer.as_str())
@@ -306,6 +311,9 @@ pub(crate) fn record_as(
             actor,
             reviewer,
         );
+    }
+    if store(project).exists() && approved(project, flow, digest)? {
+        return Ok(());
     }
     let description = serde_json::json!({
         "protocol": APPROVED_PROTOCOL, "flowId": flow, "digest": digest, "revision": revision,

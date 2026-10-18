@@ -224,6 +224,102 @@ pub(crate) fn read_existing(path: &Path, what: &str) -> Result<String, SecretFil
     read_validated(path, what)
 }
 
+/// #1523: a secret file only its owner may read, checked on every platform and read from the one
+/// handle the checks ran on, so a path swapped after the checks cannot supply the bytes.
+/// Refused: any link, junction or other reparse point as the file or as ANY ancestor directory;
+/// anything but a regular file; group or world bits on Unix; on Windows a DACL other than the
+/// keyring's own (owner, SYSTEM and Administrators, protected from inheritance, owned by the
+/// calling user: `graphhelm_sealed_key_provider::verify_owner_only`); anything but exactly 64
+/// lowercase hex characters. Messages name the role and the rule, never the bytes.
+pub(crate) fn read_owner_only(path: &Path, what: &str) -> Result<String, SecretFileError> {
+    use std::io::Read;
+    let unreadable = || SecretFileError::new(what, "could not be read");
+    let absolute = std::path::absolute(path).map_err(|_| unreadable())?;
+    for ancestor in absolute.ancestors().skip(1) {
+        if ancestor.parent().is_none() {
+            break;
+        }
+        let metadata = std::fs::symlink_metadata(ancestor).map_err(|_| unreadable())?;
+        if is_link(&metadata) {
+            return Err(SecretFileError::new(
+                what,
+                "must not sit below a link, junction or other reparse point",
+            ));
+        }
+    }
+    let file = open_without_following(&absolute).map_err(|_| unreadable())?;
+    let metadata = file.metadata().map_err(|_| unreadable())?;
+    if is_link(&metadata) {
+        return Err(SecretFileError::new(
+            what,
+            "must not be a link, junction or other reparse point",
+        ));
+    }
+    if !metadata.is_file() {
+        return Err(SecretFileError::new(what, "must be a regular file"));
+    }
+    reject_insecure_permissions(&metadata, what)?;
+    #[cfg(windows)]
+    if graphhelm_sealed_key_provider::verify_owner_only(&file).is_err() {
+        return Err(SecretFileError::new(
+            what,
+            "must be readable only by its owner, SYSTEM and Administrators, with inheritance turned off",
+        ));
+    }
+    if metadata.len() != SECRET_HEX_LEN as u64 {
+        return Err(SecretFileError::new(what, "is not the expected size"));
+    }
+    let mut raw = zeroize::Zeroizing::new(Vec::with_capacity(SECRET_HEX_LEN + 1));
+    (&file)
+        .take(SECRET_HEX_LEN as u64 + 1)
+        .read_to_end(&mut raw)
+        .map_err(|_| unreadable())?;
+    if raw.len() != SECRET_HEX_LEN
+        || !raw
+            .iter()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(SecretFileError::new(
+            what,
+            "is not 64 lowercase hexadecimal characters",
+        ));
+    }
+    Ok(raw.iter().map(|&byte| char::from(byte)).collect())
+}
+
+fn is_link(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_type().is_symlink()
+            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+/// Opens the last component itself, never what it points to: `FILE_FLAG_OPEN_REPARSE_POINT` on
+/// Windows, `O_NOFOLLOW` on Unix.
+fn open_without_following(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    options.open(path)
+}
+
 /// The read-side safety checks, narrowed from `events/config.rs`'s `read_bounded` to what a
 /// fixed 64-character hex secret needs.
 fn read_validated(path: &Path, what: &str) -> Result<String, SecretFileError> {
@@ -287,6 +383,41 @@ fn encode_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1599 review (TOCTOU): the key file's checks and its bytes must come from ONE handle. A
+    /// race between a path check and a path read cannot be staged without a production seam, so
+    /// this guards the structure instead: after its single no-follow open, `read_owner_only`
+    /// never touches the file by path again. Cost: one string scan of this file.
+    #[test]
+    fn the_key_file_is_opened_once_and_never_reread_by_path() {
+        let source = include_str!("secret_file.rs");
+        let start = source.find("pub(crate) fn read_owner_only").unwrap();
+        let end = start
+            + source[start..]
+                .find(
+                    "
+fn is_link",
+                )
+                .unwrap();
+        let body = &source[start..end];
+        let open = body.find("open_without_following(").unwrap();
+        assert_eq!(body.matches("open_without_following(").count(), 1, "{body}");
+        let after_open = &body[open..];
+        for path_access in [
+            "fs::read(",
+            "File::open(",
+            "metadata(&absolute",
+            "metadata(path",
+            "read_validated(",
+            "read_existing(",
+            "OpenOptions",
+        ] {
+            assert!(
+                !after_open.contains(path_access),
+                "read_owner_only reaches the file by path after its open: {path_access}"
+            );
+        }
+    }
 
     /// #1325: pinned BEFORE `encode_hex` becomes `hex::encode`: lowercase, two digits per byte,
     /// no separators, every byte value.

@@ -1140,4 +1140,82 @@ mod tests {
             );
         }
     }
+
+    /// #1560 (#1598 review, argued there and pinned here): a writer can append and fold the
+    /// shared cache past the history another reader already holds. That reader must fold its own
+    /// history, never answer from the cache's later state. Credible regression: `resumable`
+    /// accepting a generation whose watermark lies beyond the history it is given.
+    #[test]
+    fn a_reader_behind_the_cached_generation_folds_its_own_history() {
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 120);
+        let folds = super::FoldCache::default();
+        let (scope, stream, history) = read_seeded(directory.path());
+        assert_eq!(history.len(), 120);
+        let budget = ReadBudget::unbounded();
+        super::fold_cached(&folds, directory.path(), &scope, &stream, &history, &budget).unwrap();
+
+        let behind = &history[..60];
+        let folded =
+            super::fold_cached(&folds, directory.path(), &scope, &stream, behind, &budget).unwrap();
+        assert_eq!(
+            serde_json::to_value(&folded).unwrap(),
+            serde_json::to_value(graphhelm_events::replay(&scope, &stream, behind).unwrap())
+                .unwrap(),
+            "a reader behind the cache answers for the history it read"
+        );
+    }
+
+    /// #1560 (#1598 review): a cached generation must not survive a history that no longer holds
+    /// the event it stopped at unchanged (a rewritten or different journal under the same path).
+    /// The reader then answers exactly what a full replay of that history answers, here a refusal,
+    /// never the cached projection. Credible regression: `resumable` checking the sequence alone.
+    #[test]
+    fn a_cached_generation_is_not_resumed_over_a_rewritten_history() {
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 120);
+        let folds = super::FoldCache::default();
+        let (scope, stream, history) = read_seeded(directory.path());
+        let budget = ReadBudget::unbounded();
+        super::fold_cached(&folds, directory.path(), &scope, &stream, &history, &budget).unwrap();
+
+        let mut rewritten = history.clone();
+        rewritten[119].event_hash = rewritten[118].event_hash.clone();
+        let full = graphhelm_events::replay(&scope, &stream, &rewritten);
+        let cached = super::fold_cached(
+            &folds,
+            directory.path(),
+            &scope,
+            &stream,
+            &rewritten,
+            &budget,
+        );
+        assert!(full.is_err(), "the rewritten history fails its own chain");
+        assert_eq!(
+            cached
+                .map(|projection| serde_json::to_value(projection).unwrap())
+                .err(),
+            full.err(),
+            "the cache answers what a full replay of the rewritten history answers"
+        );
+    }
+
+    fn read_seeded(
+        directory: &std::path::Path,
+    ) -> (
+        RepositoryScope,
+        String,
+        Vec<graphhelm_protocols::EventEnvelope>,
+    ) {
+        let store = LocalEventRepository::open(
+            directory,
+            Arc::new(frozen_clock()),
+            Arc::new(Ids::default()),
+        )
+        .unwrap();
+        let Ok(read) = super::super::resolve_stream(&store, Some("execution-budget")) else {
+            panic!("the seeded stream resolves");
+        };
+        read
+    }
 }

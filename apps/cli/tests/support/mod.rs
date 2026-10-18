@@ -215,25 +215,135 @@ pub fn owner_token(project: &std::path::Path) -> String {
         .into_owned()
 }
 
-/// #1309 ruling A: the owner approves only a flow whose preview passed on the same digest and
-/// commit. Tests that approve store that passing run here, keyed by what `journey preview --read`
-/// reports, so they keep exercising approval without launching a browser.
+/// #1309 card 1c: the owner approves only a flow the preview runner recorded passing on the same
+/// digest and scope commit. Tests that approve cannot drive a browser, so this appends the
+/// runner's record straight into the project's owner store, as a process that writes the store
+/// could (the limit `journey_owner` states). The key is what `journey preview --read` reports. A
+/// flow the preview refuses has no key and gets no record; approve then refuses on its findings.
 pub fn passing_preview(project: &std::path::Path, id: &str) {
+    use graphhelm_protocols::{
+        ActorId, EventKind, ExecutionId, NewEvent, OpaqueId, PersistedActor, PersistedActorType,
+        ProjectId, RepositoryScope, Sensitivity, SignalRecorded, SignalSeverity, SignalSourceKind,
+        WorkspaceId,
+    };
     let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "journey", "preview", id, "--read", "--project"])
         .arg(project)
         .output()
         .unwrap();
     let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let data = &reply["data"];
-    // A flow the preview refuses (findings, no commit) can have no passing run; approve then
-    // refuses on its own findings, which is what such a test observes.
-    if !(data["digest"].is_string() && data["commit"].is_string()) {
+    let (Some(digest), Some(commit)) = (
+        reply["data"]["digest"].as_str(),
+        reply["data"]["commit"].as_str(),
+    ) else {
         return;
+    };
+    let events = project.join(".graphhelm/events");
+    let store = graphhelm_events::LocalEventRepository::open(
+        &events,
+        std::sync::Arc::new(PreviewClock),
+        std::sync::Arc::new(PreviewIds::default()),
+    )
+    .unwrap();
+    let scope = RepositoryScope::new(
+        WorkspaceId::parse("workspace-local").unwrap(),
+        ProjectId::parse("project-local").unwrap(),
+        Some(ExecutionId::parse("graphhelm-owner").unwrap()),
+    );
+    if store.next_sequence(&scope, "graphhelm-owner").unwrap() == 1 {
+        start_owner_execution(project, &events);
     }
-    let dir = project.join(".graphhelm/journey-previews").join(id);
-    std::fs::create_dir_all(&dir).unwrap();
-    let state = serde_json::json!({"preview":true,"digest":data["digest"],"commit":data["commit"],
-        "state":"ready","result":"pass","screens":{},"edges":{}});
-    std::fs::write(dir.join("state.json"), state.to_string()).unwrap();
+    let signal_id = {
+        use sha2::{Digest, Sha256};
+        let hash = Sha256::digest(
+            format!(
+                "previewed
+{id}
+{digest}
+{commit}"
+            )
+            .as_bytes(),
+        );
+        format!("journey-previewed-{}", &hex::encode(hash)[..32])
+    };
+    let next = store.next_sequence(&scope, "graphhelm-owner").unwrap();
+    let event = NewEvent::new(
+        // A test may record the same preview twice (approve, edit back, approve again).
+        OpaqueId::parse(format!("{signal_id}-{next}")).unwrap(),
+        PersistedActor::new(
+            PersistedActorType::System,
+            ActorId::parse("journey-preview-runner").unwrap(),
+        ),
+        Sensitivity::Internal,
+        EventKind::SignalRecorded(SignalRecorded {
+            to: None,
+            reply_to: None,
+            execution_id: OpaqueId::parse("graphhelm-owner").unwrap(),
+            signal_id: OpaqueId::parse(signal_id).unwrap(),
+            source_kind: SignalSourceKind::Node,
+            source_id: OpaqueId::parse("journey-preview-runner").unwrap(),
+            kind: "journey_flow_previewed".into(),
+            severity: SignalSeverity::Low,
+            envelope_sha256: graphhelm_protocols::RawSha256::parse("0".repeat(64)).unwrap(),
+            scoped_agent_authenticated: None,
+        }),
+        vec![],
+        vec![],
+    );
+    let request = graphhelm_events::PreparedAppend::new(
+        scope,
+        OpaqueId::parse("graphhelm-owner").unwrap(),
+        next,
+        vec![event],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    store.append_atomic(&request).unwrap();
+}
+
+/// The reserved owner execution, started as `journey_owner` starts it on first use.
+fn start_owner_execution(project: &std::path::Path, events: &std::path::Path) {
+    let graph = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../conformance/schemas/valid/graph.json");
+    let mut graph: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(graph).unwrap()).unwrap();
+    graph["metadata"]["executionId"] = "graphhelm-owner".into();
+    graph["metadata"]["id"] = "graphhelm-owner-records".into();
+    graph["metadata"]["name"] = "Owner records".into();
+    let records = project.join(".graphhelm/owner-records");
+    std::fs::create_dir_all(&records).unwrap();
+    let file = records.join("owner-graph.json");
+    std::fs::write(&file, graph.to_string()).unwrap();
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "execution", "start", "--events"])
+        .arg(events)
+        .args(["--execution", "graphhelm-owner", "--file"])
+        .arg(&file)
+        .args(["--mode", "supervised"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+struct PreviewClock;
+impl graphhelm_protocols::Clock for PreviewClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now()
+    }
+}
+
+#[derive(Default)]
+struct PreviewIds(std::sync::atomic::AtomicU64);
+impl graphhelm_protocols::IdGenerator for PreviewIds {
+    fn next_id(&self, prefix: &'static str) -> String {
+        format!(
+            "{prefix}-preview-{}",
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+        )
+    }
 }

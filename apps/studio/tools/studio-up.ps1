@@ -113,6 +113,11 @@ try { $null = Invoke-WebRequest -Uri "$runtimeUrl/health" -TimeoutSec 2 -UseBasi
 if ($bindSilent -and (Test-Path $lifecycleFile)) {
     try {
         $recordedPid = [int]((Get-Content $lifecycleFile -Raw | ConvertFrom-Json).pid)
+        # #1573: a stale record can name a pid the OS reused for an unrelated process that listens
+        # on loopback. The bearer token goes only to a process whose image is graphhelm.exe; an
+        # unreadable image (no access, process gone) is not one either.
+        $recordedImage = (Get-Process -Id $recordedPid -ErrorAction Stop).Path
+        if (-not $recordedImage -or (Split-Path -Leaf $recordedImage) -ine "graphhelm.exe") { throw "the recorded pid is not a graphhelm process" }
         $listening = @(Get-NetTCPConnection -OwningProcess $recordedPid -State Listen -ErrorAction Stop |
             Where-Object { $_.LocalAddress -eq "127.0.0.1" } | Select-Object -ExpandProperty LocalPort -Unique)
         $adoptToken = Get-EventsToken

@@ -74,5 +74,44 @@ class ObservationFromTranscript(unittest.TestCase):
         self.assertEqual(built["completion"]["no_skill"], {"pass": 0, "fail": 0, "incomplete": 1})
 
 
+class Budget(unittest.TestCase):
+    # #1587 review (gh-claude-8): a run with no reported cost (timeout, failure, unparsed JSON)
+    # counted as $0, so a batch of them never stopped at --budget-usd. Unknown cost is charged.
+    def run_batch(self, cost, budget, unknown=1.0):
+        calls = []
+
+        def one(case_id, run):
+            calls.append((case_id, run))
+            return {"case_id": case_id, "run": run, "status": "completed" if cost is not None else "infra_error",
+                    "invoked_skills": [], "completion": "unjudged", "rubric": "selection-only",
+                    **({"cost_usd": cost} if cost is not None else {})}
+        observations, spent, stopped = runner.run_batch(["a", "b"], 3, one, budget, unknown)
+        return calls, observations, spent, stopped
+
+    def test_known_cost_stops_once_the_budget_is_reached(self):
+        calls, observations, spent, stopped = self.run_batch(5.0, 12.0)
+        self.assertEqual((len(calls), spent, stopped), (3, 15.0, True))
+        self.assertEqual(len(observations), 3)
+
+    def test_unknown_cost_is_charged_and_stops_the_batch(self):
+        calls, _, spent, stopped = self.run_batch(None, 1.0, unknown=0.6)
+        self.assertEqual((len(calls), stopped), (2, True))
+        self.assertAlmostEqual(spent, 1.2)
+
+    def test_unknown_cost_is_charged_at_least_the_highest_seen(self):
+        costs = iter([2.0, None, None])
+
+        def one(case_id, run):
+            c = next(costs)
+            return {"case_id": case_id, "run": run, "status": "completed", "invoked_skills": [],
+                    "completion": "unjudged", "rubric": "selection-only", **({"cost_usd": c} if c is not None else {})}
+        _, spent, stopped = runner.run_batch(["a"], 3, one, 5.0, 0.1)
+        self.assertEqual((spent, stopped), (6.0, False))
+
+    def test_a_batch_under_budget_runs_every_case(self):
+        calls, _, spent, stopped = self.run_batch(0.25, 20.0)
+        self.assertEqual((len(calls), stopped), (6, False))
+
+
 if __name__ == "__main__":
     unittest.main()

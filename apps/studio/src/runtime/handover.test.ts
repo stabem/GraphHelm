@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GraphModel } from "../graph/model";
 import type { Bot } from "./team";
 import type { RuntimeEvent } from "./types";
+import type { TaskEventRecord } from "./team-tasks";
 import { buildHandover, hiddenThisSession, hideThisSession, lastSeenKey, readLastSeen, shouldShowHandover, writeLastSeen } from "./handover";
 import { parseTaskEvent } from "./team-tasks";
 
@@ -189,5 +190,21 @@ describe("handover hidden this session", () => {
   it("treats unavailable storage as not hidden", () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
     expect(hiddenThisSession("p", "run-1", 10)).toBe(false);
+  });
+});
+
+// #1041 B2: the goal is the title of the newest task claimed up to the end of the gap, citing its record.
+describe("buildHandover goal", () => {
+  const claimed = (sequence: number, title: string) =>
+    ({ kind: "task.claimed", actorId: "kit-2", sequence, taskId: `issue-${sequence}`, title }) as TaskEventRecord;
+  const goalOf = (taskRecords: TaskEventRecord[]) => buildHandover({
+    events, bots: [bot("kit-2")], model: null, claudeTasks: null, openItems: [], fromSeq: 10, toSeq: 50, taskRecords,
+  }).goal;
+  it("is the newest claimed task's title, citing its sequence", () => {
+    expect(goalOf([claimed(12, "Older goal"), claimed(30, "Observe issue graph")])).toEqual({ text: "Observe issue graph", sequences: [30] });
+  });
+  it("is absent with no claimed title up to the end of the gap", () => {
+    expect(goalOf([])).toBeNull();
+    expect(goalOf([claimed(60, "After the gap")])).toBeNull();
   });
 });

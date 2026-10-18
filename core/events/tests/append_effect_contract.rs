@@ -149,6 +149,39 @@ fn a_crash_mid_write_is_refused_on_resume_and_never_becomes_an_event() {
     );
 }
 
+/// #1582: a crash after the last record's bytes but before its newline leaves a COMPLETE, valid
+/// record with no terminator. Nothing else in the load can refuse it: the line parses and its hash
+/// chain holds. So this is the one torn tail only the unterminated-tail check catches, and the
+/// refusal must name that site. (`a_crash_mid_write_...` above tears mid-record, which the line
+/// parser refuses first, so it stayed green with the check removed: #1580's planted defect.)
+#[test]
+fn a_complete_record_missing_only_its_newline_is_refused_as_an_unterminated_tail() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = open(directory.path());
+    first.append_atomic(&request_for("operation-1")).unwrap();
+    drop(first);
+    let journal = directory.path().join("journal.jsonl");
+    let mut bytes = std::fs::read(&journal).unwrap();
+    assert_eq!(
+        bytes.pop(),
+        Some(b'\n'),
+        "a committed journal ends in a newline"
+    );
+    std::fs::write(&journal, &bytes).unwrap();
+
+    match LocalEventRepository::open(
+        directory.path(),
+        Arc::new(FixedClock),
+        Arc::new(Ids::default()),
+    ) {
+        Err(graphhelm_events::EventRepositoryError::IntegrityAt(site)) => {
+            assert_eq!(site, "load_state:journal-tail-unterminated");
+        }
+        Err(other) => panic!("refused for another reason: {}", other.code()),
+        Ok(_) => panic!("an unterminated journal tail must be refused, not read on"),
+    }
+}
+
 #[test]
 fn two_writers_racing_one_operation_commit_exactly_one_event() {
     for round in 0..16 {

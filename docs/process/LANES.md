@@ -69,8 +69,25 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   When git still refuses ("contains modified or untracked files"), find what is left and deal with
   it by name. Never answer that refusal with `--force` while a junction is inside.
 - After a merge the merger removes the PR's worktrees with `graphhelm workspace sweep --apply --merged-branch <branch> --repo <repo> --pr <N> --head <sha> [--target <dir>]... [--keep-worktree <dir>]` (DELIVERY.md §5): it stops the processes inside the PR's worktrees, unlinks links without following them, saves uncommitted work to `D:/_merge-leftovers/<N>/`, and removes every worktree and review checkout of the PR (any lane's), the named per-PR targets and the local branch. For the one kept worktree (`--keep-worktree`), see [KEEL_MERGE.md](../../keel/KEEL_MERGE.md) step 5.
-- Removal by name, and never `git worktree prune`, is DELIVERY.md §6; never touch another lane's
-  ticket either.
+- Removal by name is DELIVERY.md §6; never touch another lane's ticket either. The one sweep
+  allowed to remove by rule and to run `git worktree prune` is
+  `graphhelm workspace sweep --all [--apply] [--repo <repo>]` (#1578). Without `--apply` it only
+  reports. It covers every registered worktree of the repository (`.claude/worktrees` among them)
+  and every build cache (a directory holding `CACHEDIR.TAG`, up to three levels down) under the
+  slot and target roots `D:/gh`, `D:/gh/b`, `D:/gh/c`, `D:/gh/sub`, `D:/ghb`, `D:/ghc`, `D:/ghopt`,
+  `C:/ghc`, `C:/gh` and `C:/w/a`..`C:/w/d` (`--sweep-root` replaces the list). It removes a
+  worktree only when no live process holds it and its PR is merged or closed (`gh pr list`, or its
+  content already in `origin/main`), or it is clean, pushed and idle for `--idle-hours` (24). It
+  saves dirty work to `D:/_merge-leftovers/<worktree>/` first, skips and reports a locked
+  worktree without unlocking it, keeps unmerged unpushed work, and never follows a link. A cache
+  is removed when idle and held by no process; logs, notes and other files under a root are not
+  touched. Exit code 3 means something could not be removed.
+- The sweep also runs hidden, every hour, as a scheduled task the orchestrator registers once:
+
+      $a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument '-NoProfile -NonInteractive -WindowStyle Hidden -Command "& $env:USERPROFILE\.cargo\bin\graphhelm.exe --json workspace sweep --all --apply --repo F:/github/GraphHelm *>> D:/_merge-leftovers/sweep-all.log"'
+      $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1)
+      $s = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 50)
+      Register-ScheduledTask -TaskName "GraphHelm sweep all" -Action $a -Trigger $t -Settings $s
 
 ## 3. Builds: one slot for the whole machine
 
@@ -128,8 +145,9 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
       {"targetRoot": "C:/gh", "cap": 3, "minFreeGb": 20}
 
-  Put `targetRoot` on the volume with the most free space (the shared machine uses `D:/ghc`; the
-  system drive `C:` fell below the floor and refused a review, #1532). Changing `targetRoot`
+  Slot roots and targets live on the SSD NVMe `C:` drive (#1578): the slot roots are `C:/w/a`,
+  `C:/w/b`, `C:/w/c` and `C:/w/d`, and their `targetRoot` is `C:/ghc`. The older `D:` roots are
+  still swept by `workspace sweep --all` until they are empty. Changing `targetRoot`
   does not move existing targets: each old record is kept as `target_root_changed`, so remove the
   old root's directories of retired lanes by hand, and never one a live process still builds in.
   With it the slot runs the command with

@@ -28,6 +28,20 @@ OTHER_CALL = {"type": "tool_use", "name": "Read", "id": "t2", "input": {"file_pa
 TEXT = {"type": "text", "text": "Use the test-audit skill"}
 
 
+class CasePrompt(unittest.TestCase):
+    # The dry run fed a prompt starting with `---` to the CLI as an argument and it was read as an
+    # option (`unknown option '---`): the frontmatter is the case's config, the body is the prompt.
+    def test_frontmatter_sets_turns_and_tools_and_is_not_part_of_the_prompt(self):
+        body, turns, tools = runner.split_case("---\nmax_turns: 4\nallowed_tools: [Skill, Read]\n---\n\nWhat is 17 plus 25?\n")
+        self.assertEqual((body, turns, tools), ("What is 17 plus 25?", 4, ["Skill", "Read"]))
+        self.assertEqual(runner.split_case("Just a prompt.\n"), ("Just a prompt.", None, None))
+
+    def test_every_checked_in_case_parses(self):
+        for prompt in sorted(runner.CASES.glob("*/prompt.md")):
+            body, _, _ = runner.split_case(prompt.read_text(encoding="utf-8"))
+            self.assertTrue(body and not body.startswith("---"), prompt.parent.name)
+
+
 class ObservationFromTranscript(unittest.TestCase):
     def test_a_skill_call_is_the_invoked_skill_without_its_plugin_prefix(self):
         lines = [line({"type": "user"}), assistant(OTHER_CALL), assistant(TEXT, SKILL_CALL)]

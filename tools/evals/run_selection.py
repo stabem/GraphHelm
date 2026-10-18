@@ -25,6 +25,25 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 RUBRIC = "selection-only"
 
 
+def split_case(text):
+    """A case file is optional `---` frontmatter (`max_turns`, `allowed_tools: [A, B]`) then the
+    prompt body. Returns (body, max_turns or None, allowed_tools or None)."""
+    text = text.replace("\r\n", "\n")
+    turns = tools = None
+    if text.startswith("---\n"):
+        head, sep, rest = text[4:].partition("\n---\n")
+        if sep:
+            text = rest
+            for row in head.splitlines():
+                key, _, value = row.partition(":")
+                key, value = key.strip(), value.strip()
+                if key == "max_turns" and value.isdigit():
+                    turns = int(value)
+                elif key == "allowed_tools" and value.startswith("[") and value.endswith("]"):
+                    tools = [t.strip() for t in value[1:-1].split(",") if t.strip()]
+    return text.strip(), turns, tools
+
+
 def invoked_skills(lines):
     """Skill names from `Skill` tool calls in a transcript, plugin prefix dropped, in call order."""
     found = []
@@ -60,14 +79,17 @@ def find_transcript(session_id):
 
 
 def run_case(claude, case_id, run, workdir, model, max_turns, timeout):
-    prompt = (CASES / case_id / "prompt.md").read_text(encoding="utf-8")
+    prompt, turns, tools = split_case((CASES / case_id / "prompt.md").read_text(encoding="utf-8"))
     session_id = str(uuid.uuid4())
-    cmd = [claude, "-p", prompt, "--session-id", session_id, "--model", model,
-           "--max-turns", str(max_turns), "--output-format", "json"]
+    # The prompt goes on stdin: a body starting with "-" must never be read as an option.
+    cmd = [claude, "-p", "--session-id", session_id, "--model", model,
+           "--max-turns", str(turns or max_turns), "--output-format", "json"]
+    if tools:
+        cmd += ["--allowedTools", ",".join(tools)]
     cost, ok = None, False
     try:
-        done = subprocess.run(cmd, cwd=workdir, capture_output=True, text=True, timeout=timeout,
-                              creationflags=NO_WINDOW, stdin=subprocess.DEVNULL)
+        done = subprocess.run(cmd, cwd=workdir, input=prompt, capture_output=True, text=True,
+                              encoding="utf-8", timeout=timeout, creationflags=NO_WINDOW)
         ok = done.returncode == 0
         try:
             cost = float(json.loads(done.stdout).get("total_cost_usd"))

@@ -219,12 +219,19 @@ pub fn run_bounded(
     }
 }
 
+/// How much longer [`cleanup_bounded`] waits, past [`TERMINATE_CEILING`], for a member whose kill
+/// already landed (#1459 item 6). Under a busy CPU such a member read as running for 1.8-3 s and
+/// past the ceiling before finishing on its own (#454), and `run_bounded` then reported a kill that
+/// worked as an inconclusive cleanup. A member whose kill did not land still answers at the
+/// ceiling. A product budget, so `GRAPHHELM_TEST_TIME_SCALE` does not change it.
+const CLEANUP_FINISHING: std::time::Duration = std::time::Duration::from_secs(10);
+
 fn cleanup_bounded(
     child: &mut std::process::Child,
     group: &mut ProcessGroup,
     leader_already_exited: bool,
 ) -> Result<bool, String> {
-    let outcome = terminate(child.id(), *group);
+    let outcome = terminate_with_allowance(child.id(), *group, CLEANUP_FINISHING);
     close(group);
     let succeeded = reap_bounded(child, leader_already_exited)?;
     match outcome {

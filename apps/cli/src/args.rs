@@ -1295,6 +1295,11 @@ pub struct ServeArgs {
     pub keyring: Option<PathBuf>,
     #[arg(long = "key-id")]
     pub key_id: Option<String>,
+    /// Read the sealing key once at start from this owner-only file (64 lowercase hex
+    /// characters) instead of `GRAPHHELM_EVENTS_KEY`. Needs `--keyring`; refused together with the
+    /// variable. The key stays in this process and is never passed to a child.
+    #[arg(long = "events-key-file", requires = "keyring")]
+    pub events_key_file: Option<PathBuf>,
     /// The manifest route cognitive nodes run on by default (a request may name another). See
     /// `--manifest`.
     #[arg(long)]

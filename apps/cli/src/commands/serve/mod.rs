@@ -648,6 +648,24 @@ fn build_wiring(
             "/arguments",
         ));
     }
+    // #1523: the key from an owner-only file, read once, kept in this process only. Two sources
+    // would leave the operator unsure which key seals, so both together are refused.
+    if let Some(path) = &args.events_key_file {
+        if std::env::var_os("GRAPHHELM_EVENTS_KEY").is_some() {
+            return Err(serve_invalid(
+                "--events-key-file and GRAPHHELM_EVENTS_KEY were both given; use one key source",
+                "/events-key-file",
+            ));
+        }
+        let hex =
+            crate::commands::secret_file::read_owner_only(path, "events key").map_err(|error| {
+                serve_invalid(
+                    &format!("{} ({})", error.message(), path.display()),
+                    "/events-key-file",
+                )
+            })?;
+        execution::signal::use_key_from_file(hex);
+    }
 
     let sealing = if keyring_all {
         let keyring = args.keyring.clone().expect("keyring_all guarantees Some");

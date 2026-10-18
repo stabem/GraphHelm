@@ -531,6 +531,8 @@ fn record_once(
             .is_some_and(|kind| {
                 kind == crate::commands::journey_owner::AGENT_APPROVED_KIND
                     || kind == crate::commands::journey_owner::DRAFTED_KIND
+                    // #1309 card 1c: a passing preview is recorded only by the runner that played it.
+                    || kind == crate::commands::journey_owner::PREVIEWED_KIND
             })
     {
         return Err(signal_invalid(
@@ -1030,6 +1032,49 @@ mod tests {
         });
         assert!(heartbeat.is_err());
         assert_eq!(calls, 1, "only a claim retries");
+    }
+
+    /// #1309 card 1c: a passing preview is recorded only by the runner that played it. The public
+    /// signal transport refuses the kind whatever actor it carries, the runner's own included, so
+    /// no HTTP, CLI or MCP caller can ask for a preview record. Cost: one temp directory.
+    #[test]
+    fn the_public_signal_transport_refuses_a_preview_record() {
+        use crate::commands::journey_owner::{
+            OWNER_EXECUTION, PREVIEW_RUNNER, PREVIEWED_KIND, PREVIEWED_PROTOCOL,
+            previewed_signal_id,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let digest = format!("sha256:{}", "b".repeat(64));
+        let commit = "c".repeat(40);
+        let record = serde_json::json!({
+            "id": previewed_signal_id("checkout", &digest, &commit), "type": PREVIEWED_KIND,
+            "severity": "low", "source": {"type": "node", "id": PREVIEW_RUNNER},
+            "description": serde_json::json!({"protocol": PREVIEWED_PROTOCOL, "flowId": "checkout",
+                "digest": digest, "scopeCommit": commit, "result": "pass",
+                "evidenceSha256": "d".repeat(64), "runnerSha256": "e".repeat(64),
+                "version": "0.1.1"}).to_string(),
+            "evidence": ["journey-flow:checkout"], "emittedAt": "2026-10-18T00:00:00Z",
+        });
+        for actor in [
+            PersistedActor::new(
+                graphhelm_protocols::PersistedActorType::System,
+                graphhelm_protocols::ActorId::parse(PREVIEW_RUNNER).unwrap(),
+            ),
+            super::super::owner_actor(),
+        ] {
+            let refused = execute(
+                dir.path(),
+                Some(OWNER_EXECUTION),
+                record.to_string().as_bytes(),
+                Some(&dir.path().join("evidence.json")),
+                actor,
+                OpaqueId::parse("preview-record-key").unwrap(),
+                None,
+                &[],
+            )
+            .unwrap_err();
+            assert_eq!(refused.pointer, "/signal/type", "{}", refused.message);
+        }
     }
 
     #[test]

@@ -88,6 +88,30 @@ pub(crate) fn drafted_signal_id(flow: &str, digest: &str, writer: &str) -> Strin
     format!("{}{}", drafted_prefix(flow), &hex::encode(hash)[..16])
 }
 
+/// #1309 card 1c: the signal kind that records a passing preview of a flow, written by the preview
+/// runner itself (the process that drove the browser) and by no route a caller can ask.
+pub(crate) const PREVIEWED_KIND: &str = "journey_flow_previewed";
+/// The description protocol of that signal.
+pub(crate) const PREVIEWED_PROTOCOL: &str = "graphhelm-journey-preview-v1";
+/// The actor the runner appends as.
+pub(crate) const PREVIEW_RUNNER: &str = "journey-preview-runner";
+
+/// `journey-previewed-<32 hex>`: sha256 over the flow id, the draft digest and the scope commit,
+/// so the id names exactly the flow state and code the preview passed on.
+pub(crate) fn previewed_signal_id(flow: &str, digest: &str, scope_commit: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(
+        format!(
+            "previewed
+{flow}
+{digest}
+{scope_commit}"
+        )
+        .as_bytes(),
+    );
+    format!("journey-previewed-{}", &hex::encode(hash)[..32])
+}
+
 /// Every `drafted` record of `flow`: (signal id, writer).
 fn drafted_records(project: &Path, flow: &str) -> Result<Vec<(String, String)>, String> {
     let prefix = drafted_prefix(flow);
@@ -237,6 +261,64 @@ fn has_agent(project: &Path, wanted: &str) -> Result<bool, String> {
                 if signal.signal_id.as_str() == wanted
                     && signal.kind.as_str() == AGENT_APPROVED_KIND)
     }))
+}
+
+/// Whether the preview runner recorded a passing preview of `flow` at exactly `digest` on
+/// `scope_commit` (#1309 card 1c). `Err` as for `approved`.
+pub(crate) fn previewed(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+    scope_commit: &str,
+) -> Result<bool, String> {
+    let wanted = previewed_signal_id(flow, digest, scope_commit);
+    Ok(owner_history(project)?.iter().any(|event| {
+        event.actor.actor_type() == PersistedActorType::System
+            && event.actor.id().as_str() == PREVIEW_RUNNER
+            && matches!(&event.kind, EventKind::SignalRecorded(signal)
+                if signal.signal_id.as_str() == wanted && signal.kind.as_str() == PREVIEWED_KIND)
+    }))
+}
+
+/// What a passing preview record carries besides its key: the evidence the runner read and the
+/// runner that read it, so a forged or odd runner is visible in the history.
+pub(crate) struct PreviewEvidence<'a> {
+    pub(crate) evidence_sha256: &'a str,
+    pub(crate) runner_sha256: &'a str,
+    pub(crate) version: &'a str,
+}
+
+/// Appends the runner's record of a passing preview of `flow` at `digest` on `scope_commit`. Only
+/// the preview runner calls this, after it played the flow; the same record again adds nothing.
+pub(crate) fn record_previewed(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+    scope_commit: &str,
+    evidence: &PreviewEvidence<'_>,
+) -> Result<(), String> {
+    if store(project).exists() && previewed(project, flow, digest, scope_commit)? {
+        return Ok(());
+    }
+    let description = serde_json::json!({
+        "protocol": PREVIEWED_PROTOCOL, "flowId": flow, "digest": digest,
+        "scopeCommit": scope_commit, "result": "pass",
+        "evidenceSha256": evidence.evidence_sha256, "runnerSha256": evidence.runner_sha256,
+        "version": evidence.version,
+    });
+    let actor = graphhelm_protocols::PersistedActor::new(
+        PersistedActorType::System,
+        graphhelm_protocols::ActorId::parse(PREVIEW_RUNNER).expect("constant actor id is valid"),
+    );
+    append_as(
+        project,
+        &previewed_signal_id(flow, digest, scope_commit),
+        PREVIEWED_KIND,
+        &description,
+        flow,
+        actor,
+        PREVIEW_RUNNER,
+    )
 }
 
 /// Whether the owner marked `edge` of `flow` safe at exactly `digest`. `Err` as for `approved`.

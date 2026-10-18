@@ -266,8 +266,10 @@ pub fn passing_preview(project: &std::path::Path, id: &str) {
         );
         format!("journey-previewed-{}", &hex::encode(hash)[..32])
     };
+    let next = store.next_sequence(&scope, "graphhelm-owner").unwrap();
     let event = NewEvent::new(
-        OpaqueId::parse(format!("{signal_id}-test")).unwrap(),
+        // A test may record the same preview twice (approve, edit back, approve again).
+        OpaqueId::parse(format!("{signal_id}-{next}")).unwrap(),
         PersistedActor::new(
             PersistedActorType::System,
             ActorId::parse("journey-preview-runner").unwrap(),
@@ -288,7 +290,6 @@ pub fn passing_preview(project: &std::path::Path, id: &str) {
         vec![],
         vec![],
     );
-    let next = store.next_sequence(&scope, "graphhelm-owner").unwrap();
     let request = graphhelm_events::PreparedAppend::new(
         scope,
         OpaqueId::parse("graphhelm-owner").unwrap(),

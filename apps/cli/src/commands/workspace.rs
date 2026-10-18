@@ -35,6 +35,7 @@ pub fn run(args: &WorkspaceArgs) -> Outcome {
         }
         WorkspaceCommand::List(list) => run_list(&list.root, list.sizes),
         WorkspaceCommand::Sweep(sweep) => match (&sweep.merged_branch, &sweep.root) {
+            _ if sweep.all => super::workspace_all::run(sweep),
             (Some(_), _) => super::workspace_merged::run(sweep),
             (None, Some(root)) => run_sweep(root, sweep.apply),
             // clap requires --root without --merged-branch; this arm is unreachable.
@@ -305,9 +306,14 @@ fn records(root: &Path) -> Vec<Value> {
     files.iter().filter_map(|f| read_record(f)).collect()
 }
 
+/// `path` itself is a link (symlink, junction or other reparse point); an unreadable path is not.
+pub(crate) fn is_link_path(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| is_link(&m))
+}
+
 /// Whether `path` is a link of any kind: a symlink, or on Windows any reparse point (junctions
 /// are not reported by `is_symlink`).
-fn is_link(metadata: &std::fs::Metadata) -> bool {
+pub(crate) fn is_link(metadata: &std::fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;

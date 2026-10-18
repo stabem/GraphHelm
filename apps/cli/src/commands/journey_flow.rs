@@ -1630,7 +1630,20 @@ pub(crate) fn approve_as(id: &str, project: std::path::PathBuf) -> Outcome {
         Ok(value) => value,
         Err(findings) => return report(COMMAND, vec![], findings, json!({})),
     };
-    let findings = approval_findings(file, &text, &flow, &project);
+    let mut findings = approval_findings(file, &text, &flow, &project);
+    // #1309 ruling A, card 1c: the owner approves what the preview runner recorded passing on
+    // this flow's digest and scope commit. A kept `state.json` is a cache and proves nothing.
+    let scope_commit = super::journey_preview::scope_commit_of(&project, &args.id, &flow);
+    let passed =
+        super::journey_owner::previewed(&project, &args.id, &approval_digest(&flow), &scope_commit)
+            .unwrap_or(false);
+    if !passed {
+        findings.push(Finding::new(
+            "flow.preview_not_passed",
+            "",
+            "approve requires a recorded passing preview of this flow at its scope commit",
+        ));
+    }
     if !findings.iter().all(Finding::is_warning) {
         return report(
             COMMAND,

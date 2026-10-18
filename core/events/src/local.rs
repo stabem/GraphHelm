@@ -1832,12 +1832,21 @@ impl LocalEventRepository {
     /// a separate, default-OFF decision). The check-to-use window is closed by the
     /// LOCK, not by timing: this runs under the same per-operation file lock the full
     /// reload always ran under, and every writer needs the exclusive lock.
-    /// #1560: re-verifies the whole journal from genesis on a background thread, through a
-    /// fresh handle with no shared prefix, so no request waits on the walk. Success restamps the
-    /// shared prefix with the instant the audit STARTED (it proved the journal as it stood then;
-    /// later suffixes were verified by the loads that read them). Any failure, an integrity one
-    /// included, clears the slot: the next load walks from genesis on the request path and
-    /// returns the refusal a full load returns. One audit at a time per cache.
+    /// #1560: re-verifies the whole journal from genesis on a background thread, so no request
+    /// waits on the walk. Success restamps the shared prefix with the instant the audit STARTED
+    /// (it proved the journal as it stood then; later suffixes were verified by the loads that
+    /// read them). Any failure, an integrity one included, clears the slot: the next load walks
+    /// from genesis on the request path and returns the refusal a full load returns. One audit
+    /// at a time per cache.
+    ///
+    /// #1618: the audit walks the prefix's own bytes WITHOUT the store lock. It used to run a
+    /// full `open`, which held the shared lock for the whole walk (4.5 s on a 49 MB journal),
+    /// so every append in that window waited for it, and through the turnstile every read that
+    /// arrived after that waiting writer waited too: the multi-second `store.append`,
+    /// `projection.load` and `stream.read` phases. The bytes it walks are below the verified
+    /// offset of an append-only journal, so no writer that takes the lock changes them; the
+    /// writers the audit exists to catch never took the lock anyway. A replaced journal fails
+    /// the identity check and clears the slot.
     fn start_prefix_audit(&self) {
         struct Release(Arc<AtomicBool>);
         impl Drop for Release {
@@ -1855,11 +1864,12 @@ impl LocalEventRepository {
             return;
         }
         let release = Release(Arc::clone(flag));
-        let root = self.root.clone();
-        let clock = Arc::clone(&self.clock);
-        let ids = Arc::clone(&self.ids);
         let slot = Arc::clone(&self.verified);
         let identity = self.journal_identity;
+        let mut auditor = self.clone();
+        auditor.verified = Arc::new(Mutex::new(None));
+        auditor.prefix_audit = None;
+        auditor.read_budget = crate::ReadBudget::unbounded();
         // A thread that cannot be spawned drops its closure and the release with it: the prefix
         // stays expired and the next load tries again.
         let _ = std::thread::Builder::new()
@@ -1867,7 +1877,17 @@ impl LocalEventRepository {
             .spawn(move || {
                 let _release = release;
                 let started = std::time::Instant::now();
-                let audited = Self::open(root, clock, ids).map(drop);
+                let offset = match slot.lock() {
+                    Ok(slot) => slot
+                        .as_ref()
+                        .filter(|prefix| prefix.journal_identity == identity)
+                        .map(|prefix| prefix.verified_offset),
+                    Err(_) => return,
+                };
+                let Some(offset) = offset else {
+                    return;
+                };
+                let audited = auditor.audit_prefix(offset);
                 let Ok(mut slot) = slot.lock() else {
                     return;
                 };
@@ -1883,6 +1903,27 @@ impl LocalEventRepository {
                     Err(_) => *slot = None,
                 }
             });
+    }
+
+    /// #1618: verifies the journal's first `length` bytes from genesis through a fresh read
+    /// handle, without the store lock (see [`Self::start_prefix_audit`] for why that is sound).
+    fn audit_prefix(&self, length: u64) -> Result<(), EventRepositoryError> {
+        let mut journal =
+            open_child_file(&self.root_handle, &self.root, "journal.jsonl", false, false)?;
+        if file_identity(&journal)? != self.journal_identity {
+            return Err(EventRepositoryError::IntegrityAt(
+                "audit-prefix:journal-replaced",
+            ));
+        }
+        let bytes = read_bounded_range(&mut journal, 0, length)?;
+        if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
+            return Err(EventRepositoryError::IntegrityAt(
+                "audit-prefix:prefix-unterminated",
+            ));
+        }
+        let mut ctx = VerifyCtx::fresh();
+        let mut consumed = 0_u64;
+        self.verify_lines(&bytes, &mut ctx, &mut consumed)
     }
 
     /// ADR-046 (#41): trims the bytes after the journal's last newline, which no writer was ever
@@ -8671,6 +8712,54 @@ mod limit_tests {
         assert!(
             restamped.elapsed() < std::time::Duration::from_secs(3600),
             "the audit restamped the prefix it re-verified"
+        );
+    }
+
+    /// #1618: the background audit must not hold the store lock while it walks. It ran a full
+    /// `open`, so its shared lock stood for the whole walk (4.5 s on the owner's 49 MB journal)
+    /// and every append in that window waited for it. Here the walk is slowed to about a second;
+    /// an append made while it runs must land before it ends. Credible regression: the audit
+    /// taking the lock again (the append then returns only after the audit is done).
+    /// Cost: one temp store, six appends, a test-only pause of ~1.2 s.
+    #[test]
+    fn an_append_does_not_wait_for_the_background_prefix_audit() {
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build.append_atomic(&valid_graph_request()).unwrap();
+        for sequence in 2..=6 {
+            build
+                .append_atomic(&wake_append(sequence, &format!("wake-audit-{sequence}")))
+                .unwrap();
+        }
+        drop(build);
+        let cache = PrefixCache::new(std::time::Duration::from_secs(3600));
+        drop(shared_repository(directory.path(), &cache));
+        let mut slow = cache.clone();
+        slow.walk_delay = Some(std::time::Duration::from_millis(200));
+        expire(&cache);
+        drop(shared_repository(directory.path(), &slow));
+        assert!(cache.auditing.load(Ordering::SeqCst), "the audit started");
+        let writer = shared_repository(directory.path(), &cache);
+        writer
+            .append_atomic(&wake_append(7, "wake-audit-7"))
+            .unwrap();
+        assert!(
+            cache.auditing.load(Ordering::SeqCst),
+            "the append landed while the audit was still walking"
+        );
+        drop(writer);
+        wait_for_prefix_audit(&cache);
+        assert!(
+            cache
+                .slot
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .full_verified_at
+                .elapsed()
+                < std::time::Duration::from_secs(3600),
+            "the audit still restamped the prefix"
         );
     }
 

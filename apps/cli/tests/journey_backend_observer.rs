@@ -6,6 +6,8 @@
 //! mutating request sent without the owner's click. Real CLI, Git worktree, launcher and child
 //! processes; no browser, Node or provider. Cost: a few seconds after build; needs `sh` and
 //! `python3`.
+#[path = "support/mod.rs"]
+mod support;
 use std::path::Path;
 
 use serde_json::Value;
@@ -167,6 +169,7 @@ fn project(id: &str, flow: &str) -> tempfile::TempDir {
 fn approve(root: &Path, id: &str) {
     let token = root.join(".graphhelm/events.token");
     let token = token.to_str().unwrap();
+    support::passing_preview(root, id);
     let (code, reply) = graphhelm(
         &["journey", "approve", id, "--token-file", token, "--project"],
         root,

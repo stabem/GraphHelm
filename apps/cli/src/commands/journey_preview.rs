@@ -91,15 +91,29 @@ fn flow_and_key(project: &Path, id: &str) -> Result<(Value, String, String)> {
         failure(finding.code, finding.pointer, 2)
     })?;
     let digest = super::journey_flow::approval_digest(&flow);
-    Ok((flow, digest, commit_of(project)))
+    let commit = scope_commit_of(project, id, &flow);
+    Ok((flow, digest, commit))
 }
 
-/// The project's commit, part of the key: the same flow on new code is a new preview.
-fn commit_of(project: &Path) -> String {
+/// The flow's scope commit, part of the key (#1309 card 1c): the latest commit that touched the
+/// flow file or any path the flow's screens scope. The same flow on unrelated new code keeps its
+/// preview; a change to what the flow covers is a new preview. The paths are the draft's own, so a
+/// scope path since deleted or renamed still names the commit that last touched it.
+pub(crate) fn scope_commit_of(project: &Path, id: &str, flow: &Value) -> String {
+    let mut paths = vec![format!(".graphhelm/journeys/{id}.journey.yaml")];
+    for screen in flow["screens"].as_array().into_iter().flatten() {
+        for path in screen["scope"].as_array().into_iter().flatten() {
+            if let Some(path) = path.as_str() {
+                paths.push(path.to_owned());
+            }
+        }
+    }
     graphhelm_process::command("git")
+        .arg("--literal-pathspecs")
         .arg("-C")
         .arg(project)
-        .args(["rev-parse", "HEAD"])
+        .args(["log", "-1", "--format=%H", "--"])
+        .args(&paths)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
@@ -338,6 +352,11 @@ pub(crate) fn kept(project: &Path, id: &str) -> Result<(Value, Value)> {
 /// `journey preview <id>` / `POST /v1/journey-flows/{id}/preview`: answer the stored preview when
 /// it is current, else start one in the background and answer `running`. `--force` runs anew.
 pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
+    start_with(args, runner_liveness)
+}
+
+/// [`start`] with the runner probe the reaper uses (a test supplies it).
+fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) -> Outcome {
     if args.run {
         return run(args);
     }
@@ -350,10 +369,13 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
         Err(failed) => return answer(json!({}), Some(failed)),
     };
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
-    let stored = reap_lost(&project, &dir);
-    let running_now = stored.as_ref().is_some_and(|state| {
-        state["state"] == "running" && runner_liveness(state) != Liveness::Dead
-    });
+    let stored = reap_lost_from_with(&project, &dir, || read_state(&dir), &liveness);
+    // The reaper probed the runner once and stored a dead one as failed, so a `running` it hands
+    // back is going. A second probe could see a runner that finished in between as dead, and a
+    // forced start would then overwrite its result and start another run (#1610).
+    let running_now = stored
+        .as_ref()
+        .is_some_and(|state| state["state"] == "running");
     let current = body(stored.clone(), &flow, &digest, &commit);
     if running_now {
         if current["state"] == "running" {
@@ -893,6 +915,11 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             None
         }
     };
+    // #1309 card 1c: a passing preview is the owner's proof for approve; the runner that played
+    // it records it, over the evidence it read, before it publishes completion.
+    if run.state["state"] == "ready" && run.state["result"] == "pass" && !run.validation {
+        run.state["recorded"] = record_pass(&run, &project, &digest, &commit).is_ok().into();
+    }
     // Publish completion before down: teardown can block or end the runner (#676).
     run.save();
     if let Ok(mut slot) = launched.lock() {
@@ -902,6 +929,46 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     answer(
         json!({"state":run.state["state"],"result":run.state["result"],"paths":run.state["validationPaths"],"reason":run.state["reason"],"launchLog":run.state["launchLog"]}),
         None,
+    )
+}
+
+/// Appends the passing preview record: the flow, its digest and scope commit, a sha256 over the
+/// step results and frame bytes this runner captured, and this runner's own binary and version.
+fn record_pass(
+    run: &Run,
+    project: &Path,
+    digest: &str,
+    commit: &str,
+) -> std::result::Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let mut evidence = Sha256::new();
+    let results = json!({"screens":run.state["screens"],"edges":run.state["edges"]});
+    evidence.update(results.to_string().as_bytes());
+    let mut screens: Vec<&String> = run.state["screens"]
+        .as_object()
+        .map(|screens| screens.keys().collect())
+        .unwrap_or_default();
+    screens.sort();
+    for screen in screens {
+        if let Some(file) = run.state["screens"][screen.as_str()]["file"].as_str() {
+            let bytes = std::fs::read(run.dir.join("frames").join(file))
+                .map_err(|_| "a captured frame could not be read".to_string())?;
+            evidence.update(Sha256::digest(&bytes));
+        }
+    }
+    let runner = std::env::current_exe()
+        .and_then(std::fs::read)
+        .map_err(|_| "the runner binary could not be read".to_string())?;
+    super::journey_owner::record_previewed(
+        project,
+        &run.flow_id,
+        digest,
+        commit,
+        &super::journey_owner::PreviewEvidence {
+            evidence_sha256: &hex::encode(evidence.finalize()),
+            runner_sha256: &hex::encode(Sha256::digest(&runner)),
+            version: env!("CARGO_PKG_VERSION"),
+        },
     )
 }
 
@@ -1574,6 +1641,53 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         );
     }
 
+    /// #1309 card 1c: the key is the latest commit touching the flow file or a scope path, so an
+    /// unrelated commit keeps it, and a scope path since deleted still names the commit that
+    /// deleted it rather than reading as `unknown`. Cost: one temp git repository.
+    #[test]
+    fn the_scope_commit_ignores_unrelated_commits_and_survives_a_deleted_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let out = graphhelm_process::command("git")
+                .current_dir(dir.path())
+                .args(["-c", "user.name=T", "-c", "user.email=t@example.test"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let head = || git(&["rev-parse", "HEAD"]).trim().to_owned();
+        git(&["init", "-q", "--object-format=sha1"]);
+        std::fs::create_dir_all(dir.path().join("app")).unwrap();
+        std::fs::write(dir.path().join("app/page.tsx"), "a").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "scope"]);
+        let flow = json!({"screens":[{"id":"cart","scope":["app/page.tsx"]}]});
+        let scoped = head();
+        assert_eq!(
+            super::scope_commit_of(dir.path(), "checkout", &flow),
+            scoped
+        );
+        std::fs::write(dir.path().join("other.md"), "b").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "unrelated"]);
+        assert_eq!(
+            super::scope_commit_of(dir.path(), "checkout", &flow),
+            scoped
+        );
+        git(&["rm", "-q", "app/page.tsx"]);
+        git(&["commit", "-q", "-m", "deleted"]);
+        assert_eq!(
+            super::scope_commit_of(dir.path(), "checkout", &flow),
+            head()
+        );
+    }
+
     /// #519: a stored preview answers only for the flow and commit it ran on; a changed flow or a
     /// new commit reads as `none` (the Studio then starts a new run), and the runner's pid and the
     /// frame files never reach the caller. Cost: microseconds.
@@ -1708,6 +1822,82 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let answer = body(Some(stored), &flow, "sha256:aa", "c1");
         assert_eq!(answer["state"], "running", "{answer}");
         assert!(answer.get("reason").is_none(), "{answer}");
+    }
+
+    /// #1610 follow-up (gh-claude-21's review of #1616): start reaped with one probe (the runner
+    /// is alive, so it handed back the `running` copy), then probed again to decide whether a run
+    /// is going. A runner that wrote `ready` and exited in between read dead, so a forced start
+    /// wiped its frames, stored a new `running` over the finished result and spawned a second
+    /// run. Start trusts the reaper: it answers the run as still going and touches nothing.
+    /// Cost: temp files and an injected probe; no subprocess.
+    #[test]
+    fn a_forced_start_never_replaces_a_run_that_finishes_between_two_probes() {
+        let project = tempfile::tempdir().unwrap();
+        let journeys = project.path().join(".graphhelm/journeys");
+        std::fs::create_dir_all(&journeys).unwrap();
+        std::fs::write(
+            journeys.join("studio-add-project.journey.yaml"),
+            include_bytes!("testdata/studio-add-project.journey.yaml"),
+        )
+        .unwrap();
+        for path in [
+            "apps/studio/src/components/addproject.tsx",
+            "apps/studio/src/components/rail.tsx",
+        ] {
+            let target = project.path().join(path);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(target, "fixture").unwrap();
+        }
+        let id = "studio-add-project";
+        let dir = super::dir_of(project.path(), id);
+        let frames = dir.join("frames");
+        std::fs::create_dir_all(&frames).unwrap();
+        std::fs::write(frames.join("entry.png"), b"frame").unwrap();
+        let (_, digest, commit) = super::flow_and_key(project.path(), id).unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        let running = json!({"preview":true,"kind":"preview","digest":digest,"commit":commit,
+            "state":"running","pid":123,"startedAt":now,"current":null,"screens":{},"edges":{}});
+        let mut ready = running.clone();
+        ready["state"] = "ready".into();
+        ready["result"] = "pass".into();
+        ready["ranAt"] = now.clone().into();
+        save_state(&dir, &running);
+        let probes = std::cell::Cell::new(0);
+
+        let answer = super::start_with(
+            &JourneyPreviewArgs {
+                id: id.into(),
+                project: Some(project.path().to_path_buf()),
+                force: true,
+                read: false,
+                run: false,
+                confirm: false,
+                events: None,
+                execution: None,
+                keyring: None,
+                key_id: None,
+                validation_dir: None,
+            },
+            |_| {
+                probes.set(probes.get() + 1);
+                if probes.get() == 1 {
+                    // The runner finishes while the reaper's probe still sees it.
+                    save_state(&dir, &ready);
+                    super::Liveness::Alive
+                } else {
+                    super::Liveness::Dead
+                }
+            },
+        );
+
+        let answer = answer.output.data.unwrap();
+        assert_eq!(answer["state"], "running", "{answer}");
+        assert_eq!(
+            read_state(&dir).unwrap(),
+            ready,
+            "the finished run is not overwritten"
+        );
+        assert_eq!(std::fs::read(frames.join("entry.png")).unwrap(), b"frame");
     }
 
     /// #676: a failed process probe is not evidence that a running preview is dead, so its

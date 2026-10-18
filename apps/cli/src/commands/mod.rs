@@ -45,6 +45,7 @@ mod topology;
 mod validate;
 mod wake_wait;
 mod workspace;
+mod workspace_all;
 mod workspace_merged;
 mod workspace_slot;
 

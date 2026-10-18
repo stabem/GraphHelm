@@ -6,7 +6,7 @@
 mod support;
 use std::path::Path;
 use std::process::{Command, Output};
-use support::owner_token;
+use support::{owner_token, passing_preview};
 
 use serde_json::Value;
 
@@ -59,6 +59,8 @@ fn run(project: &Path, args: &[&str]) -> (Output, Value) {
 
 fn approve(project: &Path) -> (Output, Value) {
     let token = owner_token(project);
+    // #1309: approval needs a passing preview.
+    passing_preview(project, "checkout");
     run(project, &["approve", "checkout", "--token-file", &token])
 }
 
@@ -856,6 +858,93 @@ fn validate(project: &Path) -> Value {
     run(project, &["validate", "--all"]).1
 }
 
+fn commit_file(project: &Path, file: &str, text: &str) {
+    let path = project.join(file);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, text).unwrap();
+    for args in [
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.name=Flow Test",
+            "-c",
+            "user.email=flow@example.test",
+            "commit",
+            "-q",
+            "-m",
+            "change",
+        ],
+    ] {
+        let out = graphhelm_process::command("git")
+            .current_dir(project)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+/// #1309 card 1c (a): a kept `state.json` is a cache, not the proof. A hand-written passing one,
+/// keyed exactly as the preview reports, does not let the owner approve; the flow is untouched.
+#[test]
+fn a_hand_written_passing_preview_file_does_not_let_the_owner_approve() {
+    let dir = committed(EXAMPLE);
+    let token = owner_token(dir.path());
+    let (_, read) = run(dir.path(), &["preview", "checkout", "--read"]);
+    let previews = dir.path().join(".graphhelm/journey-previews/checkout");
+    std::fs::create_dir_all(&previews).unwrap();
+    let forged = serde_json::json!({"preview":true,"digest":read["data"]["digest"],
+        "commit":read["data"]["commit"],"state":"ready","result":"pass","screens":{},"edges":{}});
+    std::fs::write(previews.join("state.json"), forged.to_string()).unwrap();
+    let path = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    let before = std::fs::read(&path).unwrap();
+    let (out, reply) = run(dir.path(), &["approve", "checkout", "--token-file", &token]);
+    assert_ne!(out.status.code(), Some(0), "{reply}");
+    assert!(finding(&reply, "flow.preview_not_passed"), "{reply}");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+/// #1309 card 1c (b, c): a recorded preview binds the flow's scope commit, not HEAD. A commit
+/// that touches neither the flow nor its scope keeps it; a commit to a scope path voids it.
+#[test]
+fn a_recorded_preview_survives_unrelated_commits_and_dies_with_its_scope() {
+    let dir = committed(EXAMPLE);
+    let token = owner_token(dir.path());
+    passing_preview(dir.path(), "checkout");
+    commit_file(
+        dir.path(),
+        "docs/unrelated.md",
+        "elsewhere
+",
+    );
+    let (out, reply) = run(dir.path(), &["approve", "checkout", "--token-file", &token]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "an unrelated commit voided the preview: {reply}"
+    );
+
+    let other = committed(EXAMPLE);
+    let token = owner_token(other.path());
+    passing_preview(other.path(), "checkout");
+    commit_file(
+        other.path(),
+        "app/api/pay/route.ts",
+        "export const changed = 1;
+",
+    );
+    let (out, reply) = run(
+        other.path(),
+        &["approve", "checkout", "--token-file", &token],
+    );
+    assert_ne!(out.status.code(), Some(0), "{reply}");
+    assert!(finding(&reply, "flow.preview_not_passed"), "{reply}");
+}
+
 #[test]
 fn approve_without_the_owner_token_is_refused_and_writes_nothing() {
     let dir = committed(EXAMPLE);
@@ -1119,6 +1208,7 @@ fn a_labelled_flow_approves_and_relabelling_keeps_the_approval() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
+    passing_preview(dir.path(), "checkout");
     let (out, reply) = run(dir.path(), &["approve", "checkout", "--token-file", &token]);
     assert!(out.status.success(), "{reply}");
     let file = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");

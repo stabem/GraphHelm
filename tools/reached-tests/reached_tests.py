@@ -441,7 +441,7 @@ def reach(changed, packages, embedded, repo=None):
             studio.append(path)
             # #1521: Vitest and tsc never start Vite; the journey launcher does.
             if root is not None and (root / STUDIO_START_SMOKE).is_file():
-                tools.add(f"python {STUDIO_START_SMOKE}")
+                tools.add(f"python -m unittest {STUDIO_START_SMOKE}")
             continue
         for prefix, runtime_readers in RUNTIME_READERS.items():
             if path.startswith(prefix):
@@ -488,7 +488,7 @@ def reach(changed, packages, embedded, repo=None):
         # plan can observe offline is that the Studio the launcher starts does start.
         if path.startswith("tools/studio-journey-fixture/"):
             if root is not None and (root / STUDIO_START_SMOKE).is_file():
-                tools.add(f"python {STUDIO_START_SMOKE}")
+                tools.add(f"python -m unittest {STUDIO_START_SMOKE}")
             hit = True
         # #1248: a Markdown change under docs/ or to an entry point can orphan a document or leave a
         # dead link; the reachability guard is the observer. Without this rule `.md` maps nothing.

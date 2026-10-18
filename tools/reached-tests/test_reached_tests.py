@@ -79,7 +79,8 @@ class Reach(unittest.TestCase):
         Cost: temporary files and direct plan construction; milliseconds.
         """
         smoke = "tools/studio-journey-fixture/test_studio_starts.py"
-        expected = f"python {smoke}"
+        expected = f"python -m unittest {smoke}"
+        step = {"argv": ["python", "-m", "unittest", smoke], "cwd": ".", "slot": False}
         with tempfile.TemporaryDirectory() as repo:
             path = Path(repo, smoke)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -88,6 +89,9 @@ class Reach(unittest.TestCase):
                             "tools/studio-journey-fixture/fixture.sh"):
                 *_, tools, _, _ = reach(changed, repo=repo)
                 self.assertEqual(list(tools).count(expected), 1, changed)
+                # The runner admits only commands `steps` can build; a selected tool it refuses
+                # stops the whole plan before any step runs.
+                self.assertEqual(rt.steps(set(), set(), [], tools, repo=Path(repo)).count(step), 1, changed)
             *_, both, _, _ = reach("apps/studio/src/App.tsx", "tools/studio-journey-fixture/wait.sh", repo=repo)
             self.assertEqual(list(both).count(expected), 1)
             *_, unrelated, _, _ = reach("docs/README.md", repo=repo)

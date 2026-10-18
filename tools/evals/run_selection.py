@@ -142,6 +142,12 @@ def main(argv=None):
     parser.add_argument("--unknown-cost-usd", type=float, default=1.0)
     parser.add_argument("--plugin-dir", action="append", default=[], type=Path)
     args = parser.parse_args(argv)
+    # #1595 review: a mistyped arm would silently measure the installed plugins instead.
+    for directory in args.plugin_dir:
+        if not (directory / ".claude-plugin" / "plugin.json").is_file():
+            print(f"--plugin-dir {directory} is not a plugin (no .claude-plugin/plugin.json); nothing run",
+                  file=sys.stderr)
+            return 2
     claude = shutil.which("claude") or os.environ.get("CLAUDE_CLI")
     if not claude:
         print("claude CLI not found", file=sys.stderr)

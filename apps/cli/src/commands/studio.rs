@@ -697,6 +697,16 @@ fn swap_in(exe: &Path, staged: Option<&Path>, progress: Progress) -> bool {
             std::fs::rename(exe, &old).is_ok().then_some(old)
         })
     });
+    if let Some(None) = moved {
+        // Replacing the exe now would drop the only copy of the running binary, or fail anyway.
+        Progress::say(&progress.warn(&format!(
+            "the new graphhelm is built at {} but {} stays: graphhelm.old and graphhelm.old.1 to .16 \
+             beside it are all in use; stop the processes that run them and update again",
+            staged.display(),
+            exe.display()
+        )));
+        return false;
+    }
     if std::fs::rename(staged, exe).is_ok() {
         return true;
     }
@@ -1130,6 +1140,32 @@ mod tests {
             .collect();
         assert_eq!(asides.len(), 1, "the previous binary is kept aside once");
         assert!(taken.join("held").is_file(), "the taken name is left alone");
+    }
+
+    /// #1523: when every aside name is taken, the swap refuses and leaves the running binary and
+    /// the staged build where they are, instead of dropping the only copy of the previous binary.
+    #[test]
+    fn swap_refuses_and_keeps_both_binaries_when_every_aside_name_is_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let suffix = if cfg!(windows) { ".exe" } else { "" };
+        let exe = dir.path().join(format!("graphhelm{suffix}"));
+        let staged = dir.path().join("staged");
+        std::fs::write(&exe, "old").unwrap();
+        std::fs::write(&staged, "new").unwrap();
+        for n in 0..=16 {
+            let name = if n == 0 {
+                format!("graphhelm.old{suffix}")
+            } else {
+                format!("graphhelm.old.{n}{suffix}")
+            };
+            let taken = dir.path().join(name);
+            std::fs::create_dir(&taken).unwrap();
+            std::fs::write(taken.join("held"), "running").unwrap();
+        }
+        let progress = Progress::new("test", false, crate::palette::Palette::plain());
+        assert!(!swap_in(&exe, Some(&staged), progress));
+        assert_eq!(std::fs::read_to_string(&exe).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(&staged).unwrap(), "new");
     }
 
     /// #1523: with the fixed aside name free, the swap keeps its old shape.

@@ -319,6 +319,38 @@ fn a_tail_longer_than_one_batch_is_refused_and_nothing_is_trimmed() {
     assert!(quarantined(directory.path()).is_empty());
 }
 
+/// #1582, flipped by ADR-046 (#41): a crash after the last record's bytes but before its newline
+/// leaves a COMPLETE, valid record with no terminator. The append writes the newline in the same
+/// buffer and acknowledges only after the sync, so that record was never acknowledged. The
+/// unterminated-tail check is still the only thing that can tell it apart from a committed line
+/// (it parses and its hash chain holds), and it now routes the record to recovery: open trims it,
+/// quarantines exactly its bytes, and serves an empty stream.
+#[test]
+fn a_complete_record_missing_only_its_newline_is_trimmed_as_an_unacknowledged_tail() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = open(directory.path());
+    first.append_atomic(&request_for("operation-1")).unwrap();
+    drop(first);
+    let journal = directory.path().join("journal.jsonl");
+    let mut bytes = std::fs::read(&journal).unwrap();
+    assert_eq!(
+        bytes.pop(),
+        Some(b'\n'),
+        "a committed journal ends in a newline"
+    );
+    std::fs::write(&journal, &bytes).unwrap();
+
+    let resumed = open(directory.path());
+    assert!(std::fs::read(&journal).unwrap().is_empty());
+    assert!(stream(&resumed).is_empty());
+    let files = quarantined(directory.path());
+    assert_eq!(files.len(), 2);
+    assert_eq!(
+        files[0].1, bytes,
+        "the quarantine holds exactly the unterminated record"
+    );
+}
+
 #[test]
 fn two_writers_racing_one_operation_commit_exactly_one_event() {
     for round in 0..16 {

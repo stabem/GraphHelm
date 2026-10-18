@@ -1237,3 +1237,110 @@ fn a_labelled_flow_approves_and_relabelling_keeps_the_approval() {
     assert_eq!(flow["name"], "Pay");
     assert_eq!(flow["findings"], serde_json::json!([]), "{flow}");
 }
+
+/// #1588: the owner rejects a flow with a reason. Credible regressions: a rejection with no
+/// credential or no reason, a rejection that erases the earlier approval record, a rejection that
+/// survives an edit to the flow, and a reason `journey flows` cannot show.
+#[test]
+fn the_owner_rejects_a_flow_with_a_note_and_flows_shows_it_until_the_flow_changes() {
+    let dir = committed(EXAMPLE);
+    let token = owner_token(dir.path());
+    let flows = |dir: &Path| run(dir, &["flows"]).1["data"]["flows"][0]["rejected"].clone();
+    assert_eq!(flows(dir.path()), Value::Null, "nothing rejected yet");
+
+    let (out, reply) = run(dir.path(), &["reject", "checkout", "--note", "x"]);
+    assert_ne!(out.status.code(), Some(0), "no owner token: {reply}");
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "reject",
+            "checkout",
+            "--note",
+            "   ",
+            "--token-file",
+            &token,
+        ],
+    );
+    assert_ne!(out.status.code(), Some(0), "an empty note: {reply}");
+    assert_eq!(
+        flows(dir.path()),
+        Value::Null,
+        "a refused rejection writes nothing"
+    );
+
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "reject",
+            "checkout",
+            "--note",
+            "the pay step skips the receipt",
+            "--token-file",
+            &token,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let rejected = flows(dir.path());
+    assert_eq!(
+        rejected["note"], "the pay step skips the receipt",
+        "{rejected}"
+    );
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "reject",
+            "checkout",
+            "--note",
+            "still no receipt",
+            "--token-file",
+            &token,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let latest = flows(dir.path());
+    assert_eq!(
+        latest["note"], "still no receipt",
+        "the latest rejection wins: {latest}"
+    );
+    assert!(latest["sequence"].as_u64() > rejected["sequence"].as_u64());
+
+    // An edit to the flow changes what was rejected: the old reason no longer applies.
+    write_flow(
+        dir.path(),
+        &EXAMPLE.replacen("title: ", "title: Edited ", 1),
+    );
+    assert_eq!(
+        flows(dir.path()),
+        Value::Null,
+        "an edited flow is not the rejected one"
+    );
+}
+
+/// #1588: a rejection is appended next to the approval record; it never removes it.
+#[test]
+fn a_rejection_keeps_the_earlier_approval_record() {
+    let dir = committed(EXAMPLE);
+    let token = owner_token(dir.path());
+    let (out, reply) = approve(dir.path());
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let (out, reply) = run(
+        dir.path(),
+        &[
+            "reject",
+            "checkout",
+            "--note",
+            "approved too early",
+            "--token-file",
+            &token,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let signed = validate(dir.path());
+    assert!(
+        !finding(&signed, "flow.approval_unsigned")
+            && !finding(&signed, "flow.approval_unverifiable"),
+        "the owner's approval record is still there: {signed}"
+    );
+    let row = run(dir.path(), &["flows"]).1["data"]["flows"][0].clone();
+    assert_eq!(row["rejected"]["note"], "approved too early", "{row}");
+}

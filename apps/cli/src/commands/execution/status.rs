@@ -497,13 +497,7 @@ fn fold_cached(
     if history.len() > graphhelm_events::MAX_READ_ALL {
         return Err(graphhelm_events::ReplayError::LimitExceeded);
     }
-    let key: FoldKey = (
-        events.to_path_buf(),
-        format!(
-            "{}\u{0}{stream}",
-            serde_json::to_string(scope).map_err(|_| graphhelm_events::ReplayError::Corrupt)?
-        ),
-    );
+    let key = fold_key(events, scope, stream)?;
     let mut generation = match cache
         .get(&key)
         .filter(|generation| resumable(generation, history))
@@ -542,6 +536,35 @@ fn fold_cached(
     let projection = generation.projection().clone();
     cache.store(&key, generation);
     Ok(projection)
+}
+
+fn fold_key(
+    events: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+) -> Result<FoldKey, graphhelm_events::ReplayError> {
+    Ok((
+        events.to_path_buf(),
+        format!(
+            "{}\u{0}{stream}",
+            serde_json::to_string(scope).map_err(|_| graphhelm_events::ReplayError::Corrupt)?
+        ),
+    ))
+}
+
+/// The last sequence serve's shared fold holds for a stream (#1560): how a test sees that a
+/// reader resumed the cached generation instead of refolding from sequence 1.
+#[cfg(test)]
+pub(crate) fn shared_fold_last_sequence(
+    events: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+) -> Option<u64> {
+    let key = fold_key(events, scope, stream).ok()?;
+    SHARED_FOLDS
+        .get()?
+        .get(&key)
+        .map(|generation| generation.watermark().last_sequence())
 }
 
 /// Whether `generation` stopped at an event `history` still holds, unchanged.

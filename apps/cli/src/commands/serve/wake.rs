@@ -101,7 +101,14 @@ fn due_leases(
     let history = store
         .read_replay_stream(&stream.scope, &stream.stream_id)
         .ok()?;
-    let projection = graphhelm_events::replay(&stream.scope, &stream.stream_id, &history).ok()?;
+    // #1560: the cached fold, not a full refold of the stream after every write.
+    let projection = crate::commands::execution::status::replay_cached(
+        events,
+        &stream.scope,
+        &stream.stream_id,
+        &history,
+    )
+    .ok()?;
     // Only NON-wake appends ring: bookkeeping past the cursor is not content. A presence
     // declaration is bookkeeping too (#1054): it is appended right after the mutation that
     // armed the lease, by the same session, and counting it as content consumed the lease
@@ -344,8 +351,13 @@ fn record_consumptions_inner(
         .map(|event| event.sequence)
         .max()
         .map_or(1, |sequence| sequence + 1);
-    let Ok(projection) = graphhelm_events::replay(&stream.scope, &stream.stream_id, &history)
-    else {
+    // #1560: the cached fold over this same fresh history, so the decision is never stale.
+    let Ok(projection) = crate::commands::execution::status::replay_cached(
+        events,
+        &stream.scope,
+        &stream.stream_id,
+        &history,
+    ) else {
         return 0;
     };
     let still_live: Vec<&(DueLease, WakeConsumeReason)> = consumptions
@@ -1047,5 +1059,117 @@ mod tests {
              as a stale rendezvous would be the store asserting the sleeper died when it was \
              rung, which no count can tell apart"
         );
+    }
+
+    /// #1560: after every write, serve ran `fresh_stream_snapshot_on` and this sweep, and each
+    /// folded the whole stream from sequence 1. On the owner's 32k-event `gh-team` that was
+    /// 2.0-3.5 s of CPU per fold (#1576's measurement) behind every task record. They now resume
+    /// serve's shared fold. The cache must hold this stream at the head each reader saw, and what
+    /// each one folded must equal a full `replay` of the fresh history: a cached fold that
+    /// answered for an older head would hand a wake or consumption decision a stale stream.
+    #[test]
+    fn post_write_readers_resume_the_shared_fold_at_the_fresh_head() {
+        crate::commands::execution::status::enable_shared_fold_cache();
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path();
+        // The scope serve itself resolves an execution id to, so the write's reply reads this stream.
+        let scope = crate::commands::execution::addressable_scope("exec-fold")
+            .unwrap_or_else(|_| panic!("exec-fold is a valid execution id"));
+        let held = || {
+            crate::commands::execution::status::shared_fold_last_sequence(
+                events,
+                &scope,
+                "exec-fold",
+            )
+        };
+        let full = || {
+            let store = crate::commands::event_store(events).unwrap();
+            let history = store.read_replay_stream(&scope, "exec-fold").unwrap();
+            serde_json::to_value(graphhelm_events::replay(&scope, "exec-fold", &history).unwrap())
+                .unwrap()
+        };
+        let cached = || {
+            let store = crate::commands::event_store(events).unwrap();
+            let history = store.read_replay_stream(&scope, "exec-fold").unwrap();
+            serde_json::to_value(
+                crate::commands::execution::status::replay_cached(
+                    events,
+                    &scope,
+                    "exec-fold",
+                    &history,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let lease = |next: u64| {
+            let store = crate::commands::event_store(events).unwrap();
+            let request = graphhelm_events::PreparedAppend::new(
+                scope.clone(),
+                OpaqueId::parse("exec-fold").unwrap(),
+                next,
+                vec![NewEvent::new(
+                    OpaqueId::parse(&format!("arm-{next}")).unwrap(),
+                    PersistedActor::new(
+                        PersistedActorType::System,
+                        ActorId::parse("system-test").unwrap(),
+                    ),
+                    Sensitivity::Internal,
+                    EventKind::WakeLease(WakeLease {
+                        execution_id: OpaqueId::parse("exec-fold").unwrap(),
+                        session_id: OpaqueId::parse(&format!("session-{next}")).unwrap(),
+                        cursor: 0,
+                        rendezvous_id: OpaqueId::parse(&format!("rdv-{next}")).unwrap(),
+                        matures_in_seconds: None,
+                    }),
+                    vec![],
+                    vec![],
+                )],
+                vec![],
+                vec![],
+            )
+            .unwrap();
+            store.append_atomic(&request).unwrap();
+        };
+        lease(1);
+        append_content(events, &scope, "exec-fold", "content-2", 2);
+        lease(3);
+        assert_eq!(held(), None, "nothing has folded this stream yet");
+
+        due_leases(events, "exec-fold", None).expect("the sweep reads the stream");
+        assert_eq!(
+            held(),
+            Some(3),
+            "the sweep folded into serve's shared cache"
+        );
+        assert_eq!(
+            cached(),
+            full(),
+            "what the sweep left equals a full rebuild"
+        );
+
+        lease(4);
+        let store = crate::commands::event_store(events).unwrap();
+        let (head, _) = super::super::fresh_stream_snapshot_on(&store, events, "exec-fold", true);
+        assert_eq!(head, Some(4));
+        assert_eq!(
+            held(),
+            Some(4),
+            "the write's reply resumed the cache to the new head"
+        );
+        assert_eq!(
+            cached(),
+            full(),
+            "the resumed fold equals a full rebuild at the new head"
+        );
+
+        lease(5);
+        due_leases(events, "exec-fold", None).expect("the sweep reads the stream");
+        assert_eq!(
+            held(),
+            Some(5),
+            "the sweep after the next write saw that write"
+        );
+        assert_eq!(cached(), full());
     }
 }

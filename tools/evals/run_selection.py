@@ -8,7 +8,7 @@ timeout and a running cost cap. A failed run, a timeout or a missing transcript 
 
 usage: python tools/evals/run_selection.py --workdir <repo copy> --out <observations.json>
        [--repeats 3] [--case <id>]... [--model sonnet] [--max-turns 12] [--timeout 600]
-       [--budget-usd 20]
+       [--budget-usd 20] [--unknown-cost-usd 1]
 """
 import argparse
 import json
@@ -100,6 +100,27 @@ def run_case(claude, case_id, run, workdir, model, max_turns, timeout):
     return observation(case_id, run, session_id, ok, find_transcript(session_id), cost)
 
 
+def run_batch(cases, repeats, run_one, budget_usd, unknown_cost_usd):
+    """Run every case `repeats` times until the spend reaches `budget_usd`. A run that reports no
+    cost (timeout, failure, unparsed output) is charged the larger of `unknown_cost_usd` and the
+    highest cost seen so far, so a batch of failing runs still stops (#1587 review).
+    Returns (observations, spent, stopped_by_budget)."""
+    observations, spent, highest = [], 0.0, 0.0
+    for run in range(1, repeats + 1):
+        for case_id in cases:
+            if spent >= budget_usd:
+                return observations, spent, True
+            obs = run_one(case_id, run)
+            cost = obs.get("cost_usd")
+            if cost is None:
+                spent += max(unknown_cost_usd, highest)
+            else:
+                highest = max(highest, cost)
+                spent += cost
+            observations.append(obs)
+    return observations, spent, False
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--workdir", required=True, type=Path)
@@ -110,24 +131,27 @@ def main(argv=None):
     parser.add_argument("--max-turns", type=int, default=12)
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--budget-usd", type=float, default=20.0)
+    parser.add_argument("--unknown-cost-usd", type=float, default=1.0)
     args = parser.parse_args(argv)
     claude = shutil.which("claude") or os.environ.get("CLAUDE_CLI")
     if not claude:
         print("claude CLI not found", file=sys.stderr)
         return 2
     cases = args.case or sorted(p.parent.name for p in CASES.glob("*/prompt.md"))
-    observations, spent = [], 0.0
-    for run in range(1, args.repeats + 1):
-        for case_id in cases:
-            if spent >= args.budget_usd:
-                print(f"budget reached: ${spent:.2f} >= ${args.budget_usd:.2f}; stopping", file=sys.stderr)
-                args.out.write_text(json.dumps(observations, indent=1), encoding="utf-8")
-                return 3
-            obs = run_case(claude, case_id, run, args.workdir, args.model, args.max_turns, args.timeout)
-            spent += obs.get("cost_usd") or 0.0
-            observations.append(obs)
-            args.out.write_text(json.dumps(observations, indent=1), encoding="utf-8")
-            print(f"{run}/{case_id}: {obs['status']} {obs['invoked_skills']} spent=${spent:.2f}", flush=True)
+
+    def one(case_id, run):
+        obs = run_case(claude, case_id, run, args.workdir, args.model, args.max_turns, args.timeout)
+        done.append(obs)
+        args.out.write_text(json.dumps(done, indent=1), encoding="utf-8")
+        print(f"{run}/{case_id}: {obs['status']} {obs['invoked_skills']} cost={obs.get('cost_usd')}", flush=True)
+        return obs
+
+    done = []
+    _, spent, stopped = run_batch(cases, args.repeats, one, args.budget_usd, args.unknown_cost_usd)
+    print(f"spent (unknown costs charged): ${spent:.2f}", flush=True)
+    if stopped:
+        print(f"budget reached: ${spent:.2f} >= ${args.budget_usd:.2f}; stopped", file=sys.stderr)
+        return 3
     return 0
 
 

@@ -2300,6 +2300,14 @@ fn serve_seals_with_the_key_from_an_owner_only_key_file() {
     assert_eq!(status, 200, "{reply}");
     let event = last_event_of_kind(&base, &token, execution, "signal_recorded");
     assert!(!event["evidenceRefs"].as_array().unwrap().is_empty());
+    // #1599 review: the evidence opener read only the variable, so a file-key Runtime sealed
+    // records it could not open again. The sealed evidence must come back through the route.
+    let evidence_id = event["evidenceRefs"][0]["evidenceId"].as_str().unwrap();
+    let opened = get_json(
+        &format!("{base}/v1/executions/{execution}/evidence/{evidence_id}"),
+        Some(&token),
+    );
+    assert_eq!(opened["ok"], true, "{opened}");
     let printed = [&guard.stdout_lines, &guard.stderr_lines]
         .iter()
         .flat_map(|lines| lines.lock().unwrap().clone())
@@ -2315,7 +2323,7 @@ fn serve_seals_with_the_key_from_an_owner_only_key_file() {
 /// #1523: each unsafe key source refuses the start with `/events-key-file`, and no refusal
 /// prints the key. Cases: the variable and the file together; a file other users can read (on
 /// Windows: an inherited, unprotected ACL); a file that is not 64 lowercase hex characters.
-/// Cost: three `serve` starts that stop before binding.
+/// Cost: up to five `serve` starts that stop before binding, plus one junction or symlink.
 #[test]
 fn serve_refuses_an_unsafe_events_key_file_without_printing_the_key() {
     let directory = tempfile::tempdir().unwrap();
@@ -2332,13 +2340,50 @@ fn serve_refuses_an_unsafe_events_key_file_without_printing_the_key() {
     }
     let short = directory.path().join("short.key");
     write_owner_only(&short, &SIGNAL_KEY_HEX[..63]);
-    let cases: [(&str, &Path, bool); 3] = [
+    // #1599 review: a link in a PARENT directory was accepted; only the last component was
+    // checked. `linked/good.key` reaches the accepted file through a directory link.
+    let real = directory.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    write_owner_only(&real.join("good.key"), SIGNAL_KEY_HEX);
+    let linked = directory.path().join("linked");
+    #[cfg(windows)]
+    {
+        let made = graphhelm_process::command("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&linked)
+            .arg(&real)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real, &linked).unwrap();
+    let below_link = linked.join("good.key");
+    let mut cases: Vec<(&str, &Path, bool)> = vec![
         ("variable and file", &good, true),
         ("readable by others", &open, false),
         ("not 64 hex characters", &short, false),
+        ("below a directory link", &below_link, false),
     ];
+    // #1599 review: the inherited-ACL file above is refused for inheritance alone; this one has
+    // the protected owner-only DACL plus an explicit grant to Everyone.
+    #[cfg(windows)]
+    let granted = directory.path().join("granted.key");
+    #[cfg(windows)]
+    {
+        write_owner_only(&granted, SIGNAL_KEY_HEX);
+        let grant = graphhelm_process::command("icacls")
+            .arg(&granted)
+            .args(["/grant", "*S-1-1-0:(R)"])
+            .output()
+            .unwrap();
+        assert!(grant.status.success(), "{grant:?}");
+        cases.push(("granted to Everyone", &granted, false));
+    }
     for (case, file, with_variable) in cases {
-        let events = directory.path().join(format!("events-{}", case.len()));
+        let events = directory
+            .path()
+            .join(format!("events-{}", case.replace(' ', "-")));
         let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
         command
             .args(["serve", "--events"])

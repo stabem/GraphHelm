@@ -96,6 +96,8 @@ up)
   "$bin" --json init --project "$dir/project" --bind "127.0.0.1:$rport" --harness codex > "$dir/.graphhelm/init.json"
   export GRAPHHELM_FIXTURE_RUNTIME_PORT="$rport" GRAPHHELM_EVENTS_KEY="$(cat "$rt/serve.key")"
   cp -R "$repo/.graphhelm/journeys" "$dir/project/.graphhelm/"
+  # #1041: the files the flows name in `scope`, so a fixture preview is not refused flow.scope_path_missing.
+  node "$(dirname "$0")/copy_scope.mjs" "$repo" "$dir/project" > /dev/null
   printf '# Release notes: version 0.1\n' > "$dir/project/docs/RELEASE_NOTES.md"
   # #585: a route manifest of the fixture's own, listed and written by the Studio's Models panel
   # (Add model). Listing only: `--gateway-manifest` wires no executor, so nodes stay on fixtures.

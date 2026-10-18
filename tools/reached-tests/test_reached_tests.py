@@ -72,6 +72,31 @@ class Reach(unittest.TestCase):
             self.assertNotIn(expected, missing_tools)
             self.assertIn({"path": observer, "reason": "proportional-rows fixture observer is missing"}, missing)
 
+    def test_studio_and_fixture_changes_start_the_launchers_studio_once(self):
+        """#1521: a Studio that cannot start (a broken native binding) broke every journey preview
+        and no reached plan saw it, because nothing in a plan starts Vite.
+
+        Cost: temporary files and direct plan construction; milliseconds.
+        """
+        smoke = "tools/studio-journey-fixture/test_studio_starts.py"
+        expected = f"python -m unittest {smoke}"
+        step = {"argv": ["python", "-m", "unittest", smoke], "cwd": ".", "slot": False}
+        with tempfile.TemporaryDirectory() as repo:
+            path = Path(repo, smoke)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("import unittest\n", encoding="utf-8")
+            for changed in ("apps/studio/src/App.tsx", "apps/studio/package.json",
+                            "tools/studio-journey-fixture/fixture.sh"):
+                *_, tools, _, _ = reach(changed, repo=repo)
+                self.assertEqual(list(tools).count(expected), 1, changed)
+                # The runner admits only commands `steps` can build; a selected tool it refuses
+                # stops the whole plan before any step runs.
+                self.assertEqual(rt.steps(set(), set(), [], tools, repo=Path(repo)).count(step), 1, changed)
+            *_, both, _, _ = reach("apps/studio/src/App.tsx", "tools/studio-journey-fixture/wait.sh", repo=repo)
+            self.assertEqual(list(both).count(expected), 1)
+            *_, unrelated, _, _ = reach("docs/README.md", repo=repo)
+            self.assertNotIn(expected, unrelated)
+
     def test_any_changed_python_file_selects_no_console_window_guard(self):
         """Run the repository-wide Python guard for Python edits outside tools/.
 
@@ -867,6 +892,18 @@ class Reach(unittest.TestCase):
                 *_, tools, _, other = reach(changed, repo=repo)
                 self.assertIn("python -m unittest tools/keel-plugin/test_keel_plugin.py", tools, changed)
                 self.assertEqual(other, [], changed)
+
+    def test_an_event_store_append_change_reaches_the_planted_defect_anchors(self):
+        # #1476: the planted defects are exact-text anchors in local.rs. An edit there must run the
+        # anchor check, or a moved anchor silently turns a defect from caught into unobserved.
+        with tempfile.TemporaryDirectory() as repo:
+            guard = Path(repo, "tools", "keel-effect")
+            guard.mkdir(parents=True)
+            (guard / "test_plant_defects.py").write_text("", encoding="utf-8")
+            *_, tools, _, _ = reach("core/events/src/local.rs", repo=repo)
+            self.assertIn("python -m unittest tools/keel-effect/test_plant_defects.py", tools)
+            *_, tools, _, _ = reach("core/events/src/jsonl.rs", repo=repo)
+            self.assertNotIn("python -m unittest tools/keel-effect/test_plant_defects.py", tools)
 
     def test_shipped_keel_plugin_content_needs_a_release_bump(self):
         self.assertTrue(rt._plugin_release_content("plugins/keel/skills/keel/SKILL.md"))

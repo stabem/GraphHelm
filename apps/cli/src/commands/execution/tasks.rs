@@ -258,6 +258,29 @@ pub struct Liveness {
     pub lanes: Vec<LaneLiveness>,
 }
 
+/// #1556: the newest task STEP each actor recorded. A `task.heartbeat` renews a lease, and the Stop
+/// hook sends one for an idle session, so it is not activity: counting it kept a dead claim
+/// "active 12s ago" for 37 h and kept it out of Silent. Slot work (building, waiting) is read from
+/// the slot directory, not from events, and is added by the reader.
+pub fn last_step_by_actor(records: &[TaskEventRecord]) -> BTreeMap<String, PersistedTimestamp> {
+    let mut last: BTreeMap<String, PersistedTimestamp> = BTreeMap::new();
+    for record in records {
+        if record.kind == graphhelm_execution::tasks::TaskEventKind::Heartbeat {
+            continue;
+        }
+        let Some(at) = &record.occurred_at else {
+            continue;
+        };
+        let newer = last
+            .get(&record.actor_id)
+            .is_none_or(|current| at.as_datetime() > current.as_datetime());
+        if newer {
+            last.insert(record.actor_id.clone(), at.clone());
+        }
+    }
+    last
+}
+
 /// #1234: the verdict for one lane, pure (`now` injected), so the edges are a unit cell. Silence
 /// is measured from the later of the lane's last record and when its oldest open obligation began;
 /// with neither, a lane that owes is silent. Freedom reads the record alone.
@@ -680,13 +703,7 @@ pub(crate) fn read_history(
     let now = PersistedTimestamp::from_datetime(chrono::Utc::now())
         .map_err(|_| super::signal_invalid("the Runtime clock is not a persisted instant", "/"))?;
     let leases = claim_leases(&fold.tasks, &now);
-    let mut last_by_actor: BTreeMap<String, PersistedTimestamp> = BTreeMap::new();
-    for event in history {
-        last_by_actor.insert(
-            event.actor.id().as_str().to_owned(),
-            event.occurred_at.clone(),
-        );
-    }
+    let last_by_actor = last_step_by_actor(&records);
     let mut liveness = liveness(&fold.tasks, &records, &last_by_actor, &now);
     // A retired lane owes nothing and is judged neither silent nor free.
     liveness
@@ -789,6 +806,55 @@ pub fn stalled_tasks(tasks: &[TaskState], now: &PersistedTimestamp) -> Vec<TaskS
 #[cfg(test)]
 mod lease_tests {
     use super::*;
+
+    /// #1556: a lane that only heartbeats is idle, not active; a recent step keeps it live.
+    #[test]
+    fn a_heartbeat_is_not_activity_and_a_recent_step_is() {
+        let claim = record(
+            "task.claimed",
+            "lane-idle",
+            1,
+            "2026-10-13T00:00:00Z",
+            r#""revision":1,"lane":"lane-idle","branch":"issue-7-work""#,
+        );
+        let beat = graphhelm_execution::tasks::parse_task_event(
+            "task.heartbeat",
+            "lane-idle",
+            r#"{"schema":"graphhelm-task-event-v1","taskId":"issue-7","revision":1,"at":"2026-10-14T11:59:48Z","lane":"lane-idle"}"#,
+            2,
+            Some(at("2026-10-14T11:59:48Z")),
+        )
+        .expect("a valid heartbeat");
+        let step = record(
+            "task.claimed",
+            "lane-busy",
+            3,
+            "2026-10-14T11:55:00Z",
+            r#""revision":1,"lane":"lane-busy","branch":"issue-7-work""#,
+        );
+        let now = at("2026-10-14T12:00:00Z");
+        let last = last_step_by_actor(&[claim.clone(), beat.clone(), step]);
+        let idle = lane_liveness(
+            "lane-idle",
+            last.get("lane-idle"),
+            Some(&at("2026-10-13T00:00:00Z")),
+            true,
+            &now,
+        );
+        assert!(
+            idle.silent,
+            "heartbeats alone must not keep it live: {idle:?}"
+        );
+        let busy = lane_liveness(
+            "lane-busy",
+            last.get("lane-busy"),
+            Some(&at("2026-10-14T11:55:00Z")),
+            true,
+            &now,
+        );
+        assert!(!busy.silent, "{busy:?}");
+        assert_eq!(last.get("lane-idle"), claim.occurred_at.as_ref());
+    }
 
     /// #1234: the verdict at the budget edges. Silent needs an obligation; free needs a record;
     /// both edges are exact (silent AT the budget, free strictly inside it). Cost: pure calls.

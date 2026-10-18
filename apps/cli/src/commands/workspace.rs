@@ -313,7 +313,7 @@ pub(crate) fn is_link_path(path: &Path) -> bool {
 
 /// Whether `path` is a link of any kind: a symlink, or on Windows any reparse point (junctions
 /// are not reported by `is_symlink`).
-fn is_link(metadata: &std::fs::Metadata) -> bool {
+pub(crate) fn is_link(metadata: &std::fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;

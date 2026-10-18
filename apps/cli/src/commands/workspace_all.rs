@@ -22,7 +22,7 @@ use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
 
-use super::workspace::{is_link_path, refuse, remove_tree};
+use super::workspace::{is_link, is_link_path, refuse, remove_tree};
 use super::workspace_merged::{Worktree, git, remove_worktree, show, worktrees};
 use crate::args::WorkspaceSweepArgs;
 use crate::output::Outcome;
@@ -47,6 +47,7 @@ const DEFAULT_ROOTS: [&str; 13] = [
 /// A cache scan that has to look at more entries than this keeps the cache.
 const MAX_SCAN: usize = 2_000_000;
 const CACHE_DEPTH: usize = 3;
+const IDLE_DEPTH: usize = 2;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PrState {
@@ -178,14 +179,12 @@ fn has_linked_ancestor(path: &Path) -> bool {
 struct Decision {
     remove: bool,
     reason: &'static str,
-    dirty: bool,
 }
 
 fn keep(reason: &'static str) -> Decision {
     Decision {
         remove: false,
         reason,
-        dirty: false,
     }
 }
 
@@ -224,39 +223,24 @@ fn decide(
     if held(places, path) {
         return keep("live");
     }
-    // Read before `status`, and `status` never refreshes the index: the sweep's own reads must
-    // not make the worktree look recently used.
-    let idle = worktree_idle(path, cutoff);
-    let Ok(status) = git(
-        path,
-        &[
-            "--no-optional-locks",
-            "status",
-            "--porcelain",
-            "--untracked-files=all",
-        ],
-    ) else {
-        return keep("status_failed");
-    };
-    let dirty = !status.trim().is_empty();
-    let closed = |reason| Decision {
+    let remove = |reason| Decision {
         remove: true,
         reason,
-        dirty,
     };
+    // Cheapest question first: `git status` on a big worktree on a spinning disk takes seconds,
+    // so it runs only for the one case it decides. Merged or closed work needs no status here:
+    // removal saves whatever is uncommitted to the leftovers folder first.
+    let idle = worktree_idle(path, cutoff);
     match short.and_then(|b| states.get(b)).copied() {
-        Some(PrState::Merged) => return closed("merged"),
-        Some(PrState::Closed) => return closed("closed"),
+        Some(PrState::Merged) => return remove("merged"),
+        Some(PrState::Closed) => return remove("closed"),
         // An open PR is in flight; only being clean, pushed and idle frees its checkout.
         Some(PrState::Open) => {}
         // A fresh worktree cut from main is "content merged" too; idleness keeps a new claim.
         None if hash(&worktree.head) && idle && content_merged(path, &worktree.head) => {
-            return closed("merged");
+            return remove("merged");
         }
         None => {}
-    }
-    if dirty {
-        return keep("dirty_unmerged");
     }
     if !hash(&worktree.head) || !pushed(path, &worktree.head) {
         return keep("unpushed");
@@ -264,10 +248,20 @@ fn decide(
     if !idle {
         return keep("active");
     }
-    Decision {
-        remove: true,
-        reason: "pushed_idle",
-        dirty: false,
+    // `--no-optional-locks`: the sweep's own read never refreshes the index. `normal` stops at
+    // an untracked directory instead of walking a whole node_modules.
+    match git(
+        path,
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain",
+            "--untracked-files=normal",
+        ],
+    ) {
+        Ok(status) if status.trim().is_empty() => remove("pushed_idle"),
+        Ok(_) => keep("dirty_unmerged"),
+        Err(_) => keep("status_failed"),
     }
 }
 
@@ -275,26 +269,33 @@ fn bump(counts: &mut BTreeMap<String, u64>, key: &str) {
     *counts.entry(key.to_owned()).or_default() += 1;
 }
 
-fn overlaps(a: &Path, b: &Path) -> bool {
-    graphhelm_process_tree::path_is_inside(a, b) || graphhelm_process_tree::path_is_inside(b, a)
-}
-
-/// Directories holding `CACHEDIR.TAG` up to `depth` levels below `dir`, never through a link and
-/// never inside or around `skip` (registered worktrees and nested roots). Links met are counted.
+/// Directories named `target` holding `CACHEDIR.TAG` up to `depth` levels below `dir`, never
+/// through a link and never inside `skip` (registered worktrees and nested roots; an ancestor of
+/// one is still walked). Links met are counted. The type of each entry comes from the directory
+/// listing itself, so only a `target` directory costs a probe: a spinning disk answered about 30
+/// metadata calls a second on the real machine.
 fn find_caches(dir: &Path, skip: &[PathBuf], depth: usize, out: &mut Vec<PathBuf>) -> usize {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
     };
     let mut links = 0;
-    for path in entries.filter_map(Result::ok).map(|e| e.path()) {
-        if is_link_path(&path) {
+    for entry in entries.filter_map(Result::ok) {
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if is_link(&metadata) {
             links += 1;
             continue;
         }
-        if !path.is_dir() || skip.iter().any(|s| overlaps(&path, s)) {
+        let path = entry.path();
+        if !metadata.is_dir()
+            || skip
+                .iter()
+                .any(|s| graphhelm_process_tree::path_is_inside(&path, s))
+        {
             continue;
         }
-        if path.join("CACHEDIR.TAG").is_file() {
+        if entry.file_name() == "target" && path.join("CACHEDIR.TAG").is_file() {
             out.push(path);
         } else if depth > 1 {
             links += find_caches(&path, skip, depth - 1, out);
@@ -303,11 +304,15 @@ fn find_caches(dir: &Path, skip: &[PathBuf], depth: usize, out: &mut Vec<PathBuf
     links
 }
 
-/// Nothing under `dir` (links not followed) was modified at or after `cutoff`.
+/// No entry up to `IDLE_DEPTH` levels under `dir` (links not followed) was modified at or after
+/// `cutoff`. A build creates or replaces files in `target/<profile>/deps` and `.fingerprint`,
+/// which moves the mtime of those depth-2 directories, so the shallow walk sees every build
+/// without reading the tens of thousands of files each one holds (on a spinning disk the deep
+/// walk took more than half an hour across the machine's caches).
 fn cache_idle(dir: &Path, cutoff: SystemTime) -> bool {
-    let mut pending = vec![dir.to_path_buf()];
+    let mut pending = vec![(dir.to_path_buf(), 0usize)];
     let mut seen = 0usize;
-    while let Some(path) = pending.pop() {
+    while let Some((path, depth)) = pending.pop() {
         seen += 1;
         if seen > MAX_SCAN {
             return false;
@@ -318,11 +323,15 @@ fn cache_idle(dir: &Path, cutoff: SystemTime) -> bool {
         if !metadata.modified().is_ok_and(|t| t < cutoff) {
             return false;
         }
-        if metadata.is_dir() && !is_link_path(&path) {
+        if depth < IDLE_DEPTH && metadata.is_dir() && !is_link_path(&path) {
             let Ok(entries) = std::fs::read_dir(&path) else {
                 return false;
             };
-            pending.extend(entries.filter_map(Result::ok).map(|e| e.path()));
+            pending.extend(
+                entries
+                    .filter_map(Result::ok)
+                    .map(|e| (e.path(), depth + 1)),
+            );
         }
     }
     true
@@ -440,7 +449,9 @@ fn sweep_branches(
             let merged = match states.get(branch) {
                 Some(PrState::Merged | PrState::Closed) => true,
                 Some(PrState::Open) => false,
-                None => content_merged(repo, &format!("refs/heads/{branch}")),
+                // No PR on record: kept. A content check per branch costs two git runs, and the
+                // machine holds over a thousand local branches; a worktree's branch got one above.
+                None => false,
             };
             if merged {
                 chosen.push(branch.to_owned());
@@ -520,7 +531,6 @@ pub(crate) fn run(args: &WorkspaceSweepArgs) -> Outcome {
             json!({"path": show(&worktree.path)})
         };
         row["reason"] = json!(decision.reason);
-        row["dirty"] = json!(decision.dirty);
         if row.get("error").is_some() {
             worktree_report.errors.push(row);
             remaining_branches.extend(short_branch(worktree).map(str::to_owned));

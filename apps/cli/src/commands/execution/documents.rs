@@ -611,25 +611,21 @@ pub(crate) fn validate_task_event(
                 }
                 let event_doc = (|| {
                     let reference = event.evidence_refs.first()?;
-                    let Ok(EvidenceRead::Available(sealed)) =
-                        store.sealed_evidence(scope, reference.evidence_id())
-                    else {
-                        return None;
-                    };
-                    runtime
-                        .block_on(opener.open(scope.clone(), &sealed))
-                        .ok()
-                        .and_then(|plaintext| {
-                            plaintext
-                                .expose(|bytes| {
-                                    serde_json::from_slice::<serde_json::Value>(bytes).ok()
-                                })
-                                .and_then(|envelope| {
-                                    envelope["description"].as_str().and_then(|text| {
-                                        serde_json::from_str::<serde_json::Value>(text).ok()
-                                    })
-                                })
-                        })
+                    // #1560: opened once per process, not once per release.
+                    let envelope = super::tasks::opened_envelope(
+                        store,
+                        scope,
+                        reference.evidence_id(),
+                        recorded.envelope_sha256.as_str(),
+                        |sealed| {
+                            let plaintext =
+                                runtime.block_on(opener.open(scope.clone(), sealed)).ok()?;
+                            plaintext.expose(|bytes| serde_json::from_slice(bytes).ok())
+                        },
+                    )?;
+                    envelope["description"]
+                        .as_str()
+                        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
                 })()
                 .ok_or_else(|| {
                     super::signal_invalid(
@@ -870,18 +866,18 @@ fn validate_heartbeat(
             continue;
         }
         let reference = event.evidence_refs.first().ok_or_else(invalid_history)?;
-        let EvidenceRead::Available(sealed) = store
-            .sealed_evidence(scope, reference.evidence_id())
-            .map_err(|_| invalid_history())?
-        else {
-            return Err(invalid_history());
-        };
-        let plaintext = runtime
-            .block_on(opener.open(scope.clone(), &sealed))
-            .map_err(|_| invalid_history())?;
-        let envelope: serde_json::Value = plaintext
-            .expose(|bytes| serde_json::from_slice(bytes))
-            .map_err(|_| invalid_history())?;
+        // #1560: opened once per process, not once per heartbeat.
+        let envelope = super::tasks::opened_envelope(
+            store,
+            scope,
+            reference.evidence_id(),
+            recorded.envelope_sha256.as_str(),
+            |sealed| {
+                let plaintext = runtime.block_on(opener.open(scope.clone(), sealed)).ok()?;
+                plaintext.expose(|bytes| serde_json::from_slice(bytes)).ok()
+            },
+        )
+        .ok_or_else(invalid_history)?;
         if envelope["type"] != recorded.kind
             || envelope["source"]["id"] != event.actor.id().as_str()
         {

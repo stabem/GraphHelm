@@ -489,7 +489,8 @@ fn record_once(
     allow_native: bool,
     attachments: &[ImageAttachment],
 ) -> Result<serde_json::Value, Failure> {
-    let (scope, stream, projection) = load_projection(store, execution)?;
+    let (scope, stream, projection) =
+        super::timing::phase("projection.load", || load_projection(store, execution))?;
 
     let raw = signal;
     let envelope: serde_json::Value = serde_json::from_slice(raw)
@@ -527,7 +528,7 @@ fn record_once(
         // Every task record: a retired lane's record of any kind is refused against this history.
         .is_some_and(|kind| kind.starts_with("task."))
     {
-        Some(super::resolve_stream(store, execution)?.2)
+        Some(super::timing::phase("stream.read", || super::resolve_stream(store, execution))?.2)
     } else {
         None
     };
@@ -546,12 +547,14 @@ fn record_once(
     } else {
         None
     };
-    super::documents::validate_task_event(
-        &envelope,
-        &actor,
-        task_history.as_deref().unwrap_or_default(),
-        sealing.map(|keyring| (store, &scope, keyring)),
-    )?;
+    super::timing::phase("task.admission", || {
+        super::documents::validate_task_event(
+            &envelope,
+            &actor,
+            task_history.as_deref().unwrap_or_default(),
+            sealing.map(|keyring| (store, &scope, keyring)),
+        )
+    })?;
     if matches!(
         envelope.get("type").and_then(serde_json::Value::as_str),
         Some("actor_alias" | "owner_refusal")
@@ -891,8 +894,7 @@ fn record_once(
                 vec![],
             )
             .map_err(|error| repository_failure(&error))?;
-            store
-                .append_atomic(&request)
+            super::timing::phase("store.append", || store.append_atomic(&request))
                 .map_err(|error| repository_failure(&error))?;
         }
         None => {

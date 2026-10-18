@@ -450,6 +450,63 @@ pub(crate) fn cache_key(root: &Path, execution: &str) -> String {
     format!("{}\u{0}{execution}", root.display())
 }
 
+/// #1560: how many opened `task.*` envelopes one process keeps. Above it the memory starts over
+/// (the next reads open again); a run of the owner's size holds about 6k.
+const OPENED_ENVELOPES_CAP: usize = 65_536;
+
+/// #1560: this process's memory of `task.*` envelopes it already opened AND authenticated, keyed
+/// by store root, scope, evidence id and the envelope digest the journal records. Only a
+/// successful open is remembered, so a record that fails to read, to match its digest or to
+/// authenticate is refused again on every read instead of being cached as a verdict.
+fn opened_envelopes() -> &'static Mutex<HashMap<String, std::sync::Arc<serde_json::Value>>> {
+    static OPENED: OnceLock<Mutex<HashMap<String, std::sync::Arc<serde_json::Value>>>> =
+        OnceLock::new();
+    OPENED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// #1560: the parsed envelope of the sealed record `evidence_id`, whose content digest must be
+/// `envelope_sha256` (the digest the journal's event names). A miss reads the sealed blob, checks
+/// the digest and runs `open` (decrypt and parse); a hit skips all three. The heartbeat and
+/// release admissions and the tasks read used to open every record they walk on every request.
+pub(crate) fn opened_envelope(
+    store: &graphhelm_events::LocalEventRepository,
+    scope: &graphhelm_protocols::RepositoryScope,
+    evidence_id: &EvidenceId,
+    envelope_sha256: &str,
+    open: impl FnOnce(&graphhelm_events::SealedEvidence) -> Option<serde_json::Value>,
+) -> Option<std::sync::Arc<serde_json::Value>> {
+    let key = format!(
+        "{}\u{0}{scope:?}\u{0}{}\u{0}{envelope_sha256}",
+        store.root().display(),
+        evidence_id.as_str()
+    );
+    if let Some(hit) = opened_envelopes()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&key).cloned())
+    {
+        return Some(hit);
+    }
+    let opened = super::timing::phase("envelope.open", || {
+        let EvidenceRead::Available(sealed) = store.sealed_evidence(scope, evidence_id).ok()?
+        else {
+            return None;
+        };
+        if sealed.reference().content_sha256().as_str() != envelope_sha256 {
+            return None;
+        }
+        open(&sealed)
+    })?;
+    let opened = std::sync::Arc::new(opened);
+    if let Ok(mut map) = opened_envelopes().lock() {
+        if map.len() >= OPENED_ENVELOPES_CAP {
+            map.clear();
+        }
+        map.insert(key, std::sync::Arc::clone(&opened));
+    }
+    Some(opened)
+}
+
 /// #1220: the slice that holds `task_id` against `lane`: a pre-PR claim of another lane, not
 /// merged, not released, and whose lease (#1193) has not lapsed, so a dead lane's claim stops
 /// holding the issue the moment it is overdue, before the Stop reconciler releases it.
@@ -583,8 +640,10 @@ pub(crate) fn read_cached(
     // envelope opened and the fold are all inside it, so `status --tasks` cannot spend a second
     // unbounded history read after the budgeted status fold (codexrev-2 on PR #1190). The checks
     // read the clock (`check_now`), since envelope opens are not events the walk counts.
-    let store = event_store(events).map_err(|e| super::repository_failure(&e))?;
-    let (scope, _, history) = resolve_stream(&store, Some(execution))?;
+    let store = super::timing::phase("store.open", || event_store(events))
+        .map_err(|e| super::repository_failure(&e))?;
+    let (scope, _, history) =
+        super::timing::phase("stream.read", || resolve_stream(&store, Some(execution)))?;
     if history.is_empty() {
         return Err(super::not_found());
     }
@@ -656,16 +715,16 @@ pub(crate) fn read_history(
                 return None;
             }
             let id = EvidenceId::parse(&envelope_id).ok()?;
-            let EvidenceRead::Available(sealed) = store.sealed_evidence(scope, &id).ok()? else {
-                return None;
-            };
-            if sealed.reference().content_sha256().as_str() != record.envelope_sha256.as_str() {
-                return None;
-            }
-            let plaintext = runtime.block_on(opener.open(scope.clone(), &sealed)).ok()?;
-            let envelope: serde_json::Value = plaintext
-                .expose(|bytes| serde_json::from_slice(bytes))
-                .ok()?;
+            let envelope = opened_envelope(
+                store,
+                scope,
+                &id,
+                record.envelope_sha256.as_str(),
+                |sealed| {
+                    let plaintext = runtime.block_on(opener.open(scope.clone(), sealed)).ok()?;
+                    plaintext.expose(|bytes| serde_json::from_slice(bytes)).ok()
+                },
+            )?;
             let actor_id = event.actor.id().as_str();
             if envelope.get("type").and_then(serde_json::Value::as_str)
                 != Some(record.kind.as_str())
@@ -698,7 +757,7 @@ pub(crate) fn read_history(
         }
         budget.check_now(walked).map_err(exceeded)?;
     }
-    let fold = fold_task_events_with_routes(&records);
+    let fold = super::timing::phase("tasks.fold", || fold_task_events_with_routes(&records));
     budget.check_now(walked).map_err(exceeded)?;
     let now = PersistedTimestamp::from_datetime(chrono::Utc::now())
         .map_err(|_| super::signal_invalid("the Runtime clock is not a persisted instant", "/"))?;

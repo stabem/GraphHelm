@@ -919,9 +919,20 @@ fn a_reviewer_agent_reviews_only_with_its_own_credential_and_never_approves() {
     assert_ne!(edited, squatted, "the fixture flow carries `status: draft`");
     std::fs::write(&path, &edited).unwrap();
     let (_, validated) = harness.cli(&["validate", "--all"]);
+    let checkout = validated["data"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| {
+            file["file"]
+                .as_str()
+                .unwrap()
+                .ends_with("checkout.journey.yaml")
+        })
+        .unwrap()
+        .clone();
     assert!(
-        validated.to_string().contains("flow.approval_unsigned")
-            || validated.to_string().contains("flow.approval_unverifiable"),
+        checkout["ok"] == false && !checkout["findings"].as_array().unwrap().is_empty(),
         "an agent review signed an approval: {validated}"
     );
     std::fs::write(&path, &squatted).unwrap();

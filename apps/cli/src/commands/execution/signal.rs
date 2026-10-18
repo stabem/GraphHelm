@@ -148,6 +148,18 @@ pub(crate) fn use_key_from_file(hex: String) {
     let _ = KEY_FROM_FILE.set(zeroize::Zeroizing::new(hex));
 }
 
+/// The one source of the events key for this process: the `--events-key-file` key when `serve`
+/// read one, else `GRAPHHELM_EVENTS_KEY`. Every seal and every evidence open reads it here
+/// (#1523 review: the evidence opener had kept its own read of the variable).
+pub(crate) fn events_key_hex() -> Option<zeroize::Zeroizing<String>> {
+    match KEY_FROM_FILE.get() {
+        Some(hex) => Some(zeroize::Zeroizing::new(hex.as_str().to_owned())),
+        None => std::env::var("GRAPHHELM_EVENTS_KEY")
+            .ok()
+            .map(zeroize::Zeroizing::new),
+    }
+}
+
 /// Mirrors `commands::events::config`'s provider construction: the 32-byte key never rides a
 /// flag — it arrives out of band via `GRAPHHELM_EVENTS_KEY` as 64 lowercase hex characters, or
 /// (#1523) from the owner-only file `serve --events-key-file` named.
@@ -164,12 +176,7 @@ pub(crate) fn open_sealer(
             "/keyring",
         )
     };
-    let encoded = match KEY_FROM_FILE.get() {
-        Some(hex) => zeroize::Zeroizing::new(hex.as_str().to_owned()),
-        None => {
-            zeroize::Zeroizing::new(std::env::var("GRAPHHELM_EVENTS_KEY").map_err(|_| invalid())?)
-        }
-    };
+    let encoded = events_key_hex().ok_or_else(invalid)?;
     if encoded.len() != 64
         || !encoded
             .chars()

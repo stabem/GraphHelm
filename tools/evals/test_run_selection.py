@@ -124,5 +124,32 @@ class Command(unittest.TestCase):
         self.assertNotIn("--plugin-dir", runner.build_command("claude", "sid", "sonnet", 4, None, []))
 
 
+class PluginDirGuard(unittest.TestCase):
+    # #1595 review (gh-claude-8): a missing --plugin-dir ran a paid case and exited 0, so that arm
+    # silently measured the installed plugins. It is refused before any run.
+    def test_a_missing_or_non_plugin_dir_is_refused_before_any_run(self):
+        import tempfile
+        calls = []
+        saved = runner.run_case, runner.shutil.which
+        runner.run_case = lambda *a, **k: calls.append(a) or runner.observation("keel-scope", 1, "s", True, [], 0.1)
+        runner.shutil.which = lambda _: "claude"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp) / "o.json"
+                code = runner.main(["--workdir", tmp, "--out", str(out), "--repeats", "1", "--case", "keel-scope",
+                                    "--plugin-dir", str(Path(tmp) / "does-not-exist")])
+                self.assertEqual((code, calls), (2, []))
+                code = runner.main(["--workdir", tmp, "--out", str(out), "--repeats", "1", "--case", "keel-scope",
+                                    "--plugin-dir", tmp])
+                self.assertEqual((code, calls), (2, []))
+                (Path(tmp) / ".claude-plugin").mkdir()
+                (Path(tmp) / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+                code = runner.main(["--workdir", tmp, "--out", str(out), "--repeats", "1", "--case", "keel-scope",
+                                    "--plugin-dir", tmp])
+                self.assertEqual((code, len(calls)), (0, 1))
+        finally:
+            runner.run_case, runner.shutil.which = saved
+
+
 if __name__ == "__main__":
     unittest.main()

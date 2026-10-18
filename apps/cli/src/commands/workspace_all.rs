@@ -8,7 +8,8 @@
 //! A worktree is removed only when no live process sits in it, no ancestor of its path is a link,
 //! and either its PR is merged or closed (by `--pr-states`, by `gh`, or by its content already
 //! being in `origin/main`), or it is clean, every commit is on a remote and it has been idle for
-//! `--idle-hours`. Uncommitted work of a merged or closed worktree is saved to
+//! `--idle-hours`. Either way a commit that is on no remote and whose content is not in origin/main
+//! keeps the worktree and its branch (`unpushed`): a branch name can be reused. Uncommitted work of a merged or closed worktree is saved to
 //! `<leftovers>/<worktree name>/` first. A locked worktree (a harness locks a live session's own)
 //! is skipped and reported, never unlocked. Links inside are unlinked, never followed.
 //!
@@ -152,6 +153,12 @@ fn pushed(dir: &Path, rev: &str) -> bool {
         .is_ok_and(|count| count.trim() == "0")
 }
 
+/// No commit of `rev` can be lost by deleting its branch: each is on a remote-tracking ref, or
+/// the whole of it is already in origin/main (a squash merge leaves the commits on no remote).
+fn recoverable(dir: &Path, rev: &str) -> bool {
+    pushed(dir, rev) || content_merged(dir, rev)
+}
+
 /// The worktree's own git dir files (index, HEAD, its reflog) are all older than `cutoff`.
 fn worktree_idle(path: &Path, cutoff: SystemTime) -> bool {
     let Ok(gitdir) = git(path, &["rev-parse", "--absolute-git-dir"]) else {
@@ -232,6 +239,10 @@ fn decide(
     // removal saves whatever is uncommitted to the leftovers folder first.
     let idle = worktree_idle(path, cutoff);
     match short.and_then(|b| states.get(b)).copied() {
+        // A branch name can be reused after its PR ends: commits made since then count.
+        Some(PrState::Merged | PrState::Closed) if !recoverable(path, &worktree.head) => {
+            return keep("unpushed");
+        }
         Some(PrState::Merged) => return remove("merged"),
         Some(PrState::Closed) => return remove("closed"),
         // An open PR is in flight; only being clean, pushed and idle frees its checkout.
@@ -435,6 +446,7 @@ fn sweep_branches(
     mut chosen: Vec<String>,
     remaining: &[String],
 ) -> Report {
+    let mut report = Report::new();
     if let Ok(listed) = git(
         repo,
         &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
@@ -453,12 +465,16 @@ fn sweep_branches(
                 // machine holds over a thousand local branches; a worktree's branch got one above.
                 None => false,
             };
-            if merged {
+            if !merged {
+                continue;
+            }
+            if recoverable(repo, &format!("refs/heads/{branch}")) {
                 chosen.push(branch.to_owned());
+            } else {
+                bump(&mut report.kept, "unpushed");
             }
         }
     }
-    let mut report = Report::new();
     for branch in chosen {
         let mut row = json!({"name": branch});
         if args.apply
@@ -576,6 +592,7 @@ pub(crate) fn run(args: &WorkspaceSweepArgs) -> Outcome {
         "worktreesKept": worktree_report.kept.values().sum::<u64>(),
         "worktreesLocked": locked.len(),
         "branchesRemoved": branch_report.removed.len(),
+        "branchesKept": branch_report.kept.values().sum::<u64>(),
         "pruned": pruned,
         "cachesRemoved": cache_report.removed.len(),
         "cachesKept": cache_report.kept.values().sum::<u64>(),

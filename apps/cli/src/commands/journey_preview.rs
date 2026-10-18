@@ -223,8 +223,13 @@ fn tasklist_liveness(text: &str, pid: u64) -> Liveness {
 
 /// The body every preview answer carries: the stored run when it is for this flow and commit,
 /// else `state: none`. Private fields (the runner's pid, frame files) never leave this module.
+/// Every caller hands it a state `reap_lost` already settled, or the `running` state `start` just
+/// wrote; the reaper probed the runner once and stored a dead one as failed. So a `running` here is
+/// answered as running (#1610): a second probe could see a runner that finished in between as dead
+/// and answer the stale copy as `failed / internal` while the stored run is `ready`. The budget
+/// still ends a run that never finishes.
 fn body(state: Option<Value>, flow: &Value, digest: &str, commit: &str) -> Value {
-    body_with(state, flow, digest, commit, &runner_liveness)
+    body_with(state, flow, digest, commit, &|_| Liveness::Alive)
 }
 
 fn body_with(
@@ -1686,6 +1691,23 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         assert_eq!(answer["state"], "failed");
         // #560 review (gh-claude-3's real run): past its budget the run did not finish in time.
         assert_eq!(answer["reason"], "preview.budget_exceeded");
+    }
+
+    /// #1610: a status read reaps first (one probe: the runner is alive, so it hands back the
+    /// `running` copy), then builds the answer. If the answer probed again, a runner that wrote
+    /// `ready` and exited in between read dead, and the GET answered the stale copy as
+    /// `failed / internal` with no step run: the Studio showed "It stopped before step 1" and
+    /// stopped polling, while the stored run was `ready / pass` (seen on the fixture after
+    /// Run again). The answer trusts the reaper's verdict. Cost: no subprocess.
+    #[test]
+    fn an_answer_never_reprobes_a_runner_the_reaper_found_alive() {
+        let flow = json!({"status":"approved"});
+        // No process has this pid: the runner finished after the reaper's probe.
+        let stored = json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"running",
+            "pid":u32::MAX,"startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{}});
+        let answer = body(Some(stored), &flow, "sha256:aa", "c1");
+        assert_eq!(answer["state"], "running", "{answer}");
+        assert!(answer.get("reason").is_none(), "{answer}");
     }
 
     /// #676: a failed process probe is not evidence that a running preview is dead, so its

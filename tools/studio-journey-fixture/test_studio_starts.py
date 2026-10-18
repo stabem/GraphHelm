@@ -24,7 +24,9 @@ import urllib.request
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-STARTUP_SECONDS = 90
+# A Studio that dies at start (the #1521 breakage) ends the wait at once; this bound only has to
+# cover a slow, healthy first start on a loaded machine (97 s observed at 85% CPU).
+STARTUP_SECONDS = 240
 
 
 def free_port():

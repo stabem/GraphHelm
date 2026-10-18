@@ -59,6 +59,7 @@ RUNTIME_READERS = {
     # The MCP tool catalog: the stdio tests serve it, and the Studio's WebMCP adapter imports it.
     "schemas/mcp-tools.json": [("graphhelm-cli", "mcp_stdio")],
 }
+LAUNCHER_TESTS = f"cargo {TOOLCHAIN} test --locked -p graphhelm-cli --bin graphhelm {TEST_THREADS} commands::studio::tests::the_launcher_"
 MCP_CATALOG_STUDIO_TEST = "apps/studio/src/webmcp/mcp-tools.test.ts"
 # The `#[ignore]` browser observers (docs/guides/journeys.md): the real proof of a change to the
 # journey driver, replay, explore or live play. Printed, never run for you: they need a browser.
@@ -430,6 +431,10 @@ def reach(changed, packages, embedded, repo=None):
                 hit = False
         else:
             hit = False
+        if path.startswith("apps/studio/tools/"):
+            # #1571: the launcher scripts are run by the CLI's `the_launcher_*` tests, not by vitest.
+            tools.add(LAUNCHER_TESTS)
+            continue
         if path.startswith("apps/studio/"):
             studio.append(path)
             continue
@@ -915,6 +920,14 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
             out.append({"argv": BROWSER_ARGV[:], "cwd": ".", "slot": True, "observer": "browser"})
         elif tool == "graphhelm --json journey validate --all":
             out.append({"argv": ["graphhelm", "--json", "journey", "validate", "--all"], "cwd": ".", "slot": False})
+        elif tool == LAUNCHER_TESTS:
+            out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", CLI, "--bin", "graphhelm",
+                                  *TEST_THREADS.split(), "commands::studio::tests::the_launcher_"],
+                        "cwd": ".", "slot": True})
+        elif tool == LAUNCHER_TESTS:
+            out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", "graphhelm-cli", "--bin", "graphhelm",
+                                  *TEST_THREADS.split(), "commands::studio::tests::the_launcher_"],
+                        "cwd": ".", "slot": True})
         elif tool.startswith("python -m unittest "):
             test_path = tool[len("python -m unittest "):]
             out.append({"argv": ["python", "-m", "unittest", test_path], "cwd": ".", "slot": False})

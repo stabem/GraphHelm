@@ -2366,6 +2366,11 @@ pub enum WorkspaceCommand {
     /// included. A dry run unless `--apply`. Never touches a path the ledger did not create,
     /// never follows a link, and keeps any workspace whose worktree contains one.
     Sweep(WorkspaceSweepArgs),
+    /// Remove one worktree or directory without ever following a link (#1663). A linked git
+    /// worktree is stopped, unlinked, its uncommitted work saved, unregistered and deleted; any
+    /// other directory has its links unlinked and is deleted. Use it instead of `rm -rf` or
+    /// `git worktree remove --force`, which follow junctions. Exit 3 when it could not finish.
+    Remove(WorkspaceRemoveArgs),
     /// Run one command under the root's build slot: one at a time, in arrival order, with
     /// `CARGO_BUILD_JOBS` and the current worktree's own `CARGO_TARGET_DIR=<cwd>/target`. A waiter
     /// that dies loses its place by itself (its ticket's OS lock is released). The command's exit
@@ -2415,6 +2420,15 @@ pub struct WorkspaceListArgs {
 pub struct WorkspaceRootArgs {
     #[arg(long)]
     pub root: PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceRemoveArgs {
+    /// The worktree or directory to delete.
+    pub path: PathBuf,
+    /// A worktree's uncommitted work is saved under `<leftovers>/<directory name>/` first.
+    #[arg(long, default_value = "D:/_merge-leftovers")]
+    pub leftovers: PathBuf,
 }
 
 #[derive(Debug, Args)]

@@ -47,6 +47,7 @@ mod wake_wait;
 mod workspace;
 mod workspace_all;
 mod workspace_merged;
+mod workspace_remove;
 mod workspace_slot;
 
 use std::sync::Arc;

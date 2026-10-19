@@ -56,6 +56,10 @@ expected verdict, you are not blind: say so and do not review.
 5. **Measure any promised gain live**, before and after, under the same condition, enough runs to
    see the noise. A single count is not a measurement.
 6. **Try to break the promise** a user would see, not only the tests.
+7. **Remove your own review checkout** when you are done with `graphhelm workspace remove <dir>`
+   (#1663). It unlinks every junction without following it before anything is deleted. Never
+   `rm -rf`, `Remove-Item -Recurse` or `git worktree remove --force` a tree that may hold a
+   junction: they follow `apps/studio/node_modules` into the owner checkout and delete it.
 
 ## Verdict
 

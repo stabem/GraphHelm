@@ -328,10 +328,22 @@ struct Router {
 
 /// The longest one tool request may take before its child is stopped: the gateway probe's own
 /// wait, one request, the one retry after a refused token, and the project discovery budget.
+/// Not for `wake_wait`: see [`child_wait`].
 const CHILD_WAIT: std::time::Duration = tools::PROBE_CALLER_WAIT
     .saturating_add(client::REQUEST_TIMEOUT)
     .saturating_add(client::REQUEST_TIMEOUT)
     .saturating_add(std::time::Duration::from_secs(15));
+
+/// How long the router waits for the child answering `request`. `wake_wait` blocks in the child
+/// until its own lease rings or matures, and a lease may mature years out (`maturesInSeconds`), so
+/// any router bound would cut a legitimate wait short and answer it as an error. The child bounds
+/// that wait itself: it refuses a lease with no bound, and ends at the lease's deadline. Every
+/// other tool places at most one request and its retry, which [`CHILD_WAIT`] covers.
+fn child_wait(request: &serde_json::Value) -> Option<std::time::Duration> {
+    let waits_on_its_lease =
+        request["method"] == "tools/call" && request["params"]["name"] == "wake_wait";
+    (!waits_on_its_lease).then_some(CHILD_WAIT)
+}
 
 /// Where this process was started from, resolved once at start to an absolute path: `argv[0]`
 /// as the host gave it (a bare name is looked up on `PATH`, a relative path against the working
@@ -421,7 +433,7 @@ struct Answer {
 }
 
 /// Starts the installed binary hidden for one request line and reads its answer, bounded by
-/// [`CHILD_WAIT`]. The child's stderr is this server's, so its warnings reach the host as before.
+/// [`child_wait`]. The child's stderr is this server's, so its warnings reach the host as before.
 fn one_request(
     router: &Router,
     request: &serde_json::Value,
@@ -465,12 +477,17 @@ fn one_request(
         // A child that exits before reading is answered below by what it wrote, or by nothing.
         let _ = writeln!(stdin, "{request}");
     }
-    let Ok(bytes) = received.recv_timeout(CHILD_WAIT) else {
+    let bound = child_wait(request);
+    let read = match bound {
+        Some(bound) => received.recv_timeout(bound).ok(),
+        None => received.recv().ok(),
+    };
+    let Some(bytes) = read else {
         let _ = child.kill();
         let _ = child.wait();
         return Err(format!(
             "the tool request did not finish within {} s and was stopped",
-            CHILD_WAIT.as_secs()
+            bound.unwrap_or_default().as_secs()
         ));
     };
     let exit = child
@@ -569,4 +586,26 @@ fn answer_one_request(args: &McpArgs) -> Outcome {
         0
     };
     std::process::exit(code)
+}
+
+#[cfg(test)]
+mod tests {
+    /// #1677 review: `wake_wait` may legitimately block until a lease matures far past
+    /// [`super::CHILD_WAIT`]; the router must not cut it short and answer a rung or matured wait
+    /// with an error. Every other tool keeps the bound.
+    #[test]
+    fn only_a_lease_wait_is_left_to_bound_itself() {
+        let call = |name: &str| {
+            serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": {}}})
+        };
+        assert_eq!(super::child_wait(&call("wake_wait")), None);
+        assert_eq!(
+            super::child_wait(&call("wake_arm")),
+            Some(super::CHILD_WAIT)
+        );
+        assert_eq!(super::child_wait(&call("probe")), Some(super::CHILD_WAIT));
+        let list = serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
+        assert_eq!(super::child_wait(&list), Some(super::CHILD_WAIT));
+    }
 }

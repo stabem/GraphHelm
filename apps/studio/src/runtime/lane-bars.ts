@@ -159,11 +159,12 @@ export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, 
     for (const actor of new Set([e.lane, e.reviewer])) {
       if (!actor) continue;
       const l = laneOf(actor);
-      // #1556 (review): the Stop hook's reasonless heartbeat is not a step and never breaks or
-      // replaces a stated wait, so a forgotten wait still reaches the 6 h marker.
-      if (e.kind === "task.heartbeat" && e.reason === undefined) continue;
       if (t >= l.last) {
         l.last = t;
+        // #1556 (review): the Stop hook's reasonless heartbeat is still lane activity (`last`),
+        // but it never replaces the record, so it neither breaks nor restarts a stated wait and a
+        // forgotten wait still reaches the 6 h marker.
+        if (e.kind === "task.heartbeat" && e.reason === undefined) continue;
         const rec: LaneRecord = { kind: e.kind.replace(/^task\./, ""), at: t };
         const pr = e.pr ?? prOfKey.get(slice);
         if (pr !== undefined) rec.pr = pr;

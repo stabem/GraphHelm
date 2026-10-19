@@ -121,9 +121,11 @@ up)
   cp "$repo/examples/gateway/astra-routes.json" "$rt/routes.json"
   # #1448: the studio-* flows sign in with this token; a preview the Runtime starts hands its
   # runner every GRAPHHELM_SECRET_* it holds. Set for serve only, never printed.
+  # #1556: the fixture's own build-slot root, so the Lanes board can show a real slot holder.
+  mkdir -p "$dir/slots"
   GRAPHHELM_SECRET_STUDIO_TOKEN="$(head -1 "$rt/events.token")" \
   nohup "$bin" serve --events "$rt/events" --bind "127.0.0.1:$rport" --project "$dir/project" \
-    --keyring "$rt/keyring" --key-id studio --gateway-manifest "$rt/routes.json" \
+    --keyring "$rt/keyring" --key-id studio --gateway-manifest "$rt/routes.json" --slot-root "$dir/slots" \
     > "$dir/.graphhelm/serve.out" 2> "$dir/.graphhelm/serve.err" &
   echo "serve $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
   for _ in $(seq 1 30); do curl -sf --max-time 10 "http://127.0.0.1:$rport/health" > /dev/null && break; sleep 1; done
@@ -294,6 +296,63 @@ fetch(`http://127.0.0.1:${port}/v1/executions/routing-fixture/start`, {
 }).catch(() => { console.error('fixture: delegation seed failed'); process.exitCode = 1; });
 NODE
   fi
+  # #1556 studio-lanes-board: one lane at a working step, holding the build slot. The task records
+  # are signed by the existing planner actor, like studio-work-graph's. The slot holder is a real
+  # `workspace slot` running a real `cargo build` of a one-file crate whose build script waits
+  # while `slot.hold` exists; `down` removes it and ends the tree, so nothing is faked.
+  if [ "$flow" = studio-lanes-board ]; then
+    node - "$dir" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "http://127.0.0.1:$rport" "$rt/events.token" <<'NODE'
+const fs = require('fs');
+const [dir, at, runtimeUrl, tokenFile] = process.argv.slice(2);
+const runtime = new URL(runtimeUrl);
+if (runtime.protocol !== 'http:' || runtime.hostname !== '127.0.0.1' || !runtime.port || runtime.port === '8793' || runtime.pathname !== '/') {
+  throw new Error('fixture: unsafe Runtime URL');
+}
+const common = { schema: 'graphhelm-task-event-v1', revision: 1, at };
+const records = [
+  ['lanes-claimed', 'task.claimed', { taskId: 'issue-1556-lanes', issue: 1556, lane: 'planner', branch: 'issue-1556-lanes-fixture', journeys: ['studio-lanes-board'], title: 'Show what each lane is doing' }],
+  ['lanes-planned', 'task.planned', { taskId: 'issue-1556-lanes', lane: 'planner', classes: ['user_visible'], reviews: 1, proof: 'journey', critic: { mode: 'none', passScore: 7, maxRounds: 1 }, summary: 'Fixture plan' }],
+];
+const token = fs.readFileSync(tokenFile, 'utf8').trim();
+(async () => {
+  for (const [id, type, fields] of records) {
+    const signal = { id: `fixture-1556-${id}`, type, source: { type: 'user', id: 'planner' }, severity: 'low',
+      emittedAt: at, evidence: ['demo'], description: JSON.stringify({ ...common, ...fields }) };
+    const response = await fetch(new URL('/v1/executions/demo/signal', runtime), {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
+        'Idempotency-Key': `fixture-1556-${id}`, 'X-GraphHelm-Actor': 'planner', 'X-GraphHelm-Actor-Type': 'agent' },
+      body: JSON.stringify({ signal }), signal: AbortSignal.timeout(10000),
+    });
+    const result = await response.json();
+    fs.writeFileSync(`${dir}/.graphhelm/task-${id}.out`, JSON.stringify(result));
+    if (!response.ok || result.ok !== true) throw new Error(`task seed refused: ${id}`);
+  }
+})().catch(() => { console.error('fixture: task record refused; stop without widening permissions'); process.exit(1); });
+NODE
+    holder="$dir/slot-holder"
+    mkdir -p "$holder/src"
+    printf '[package]\nname = "lanes-fixture-holder"\nversion = "0.0.0"\nedition = "2021"\nbuild = "build.rs"\n\n[workspace]\n' > "$holder/Cargo.toml"
+    printf '' > "$holder/src/lib.rs"
+    # Waits while the hold file exists, at most 30 minutes, so a crashed fixture frees the slot.
+    printf '%s\n' 'fn main() {' \
+      '    let hold = std::env::var_os("LANES_FIXTURE_HOLD").map(std::path::PathBuf::from);' \
+      '    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1800);' \
+      '    while hold.as_ref().is_some_and(|path| path.exists()) && std::time::Instant::now() < deadline {' \
+      '        std::thread::sleep(std::time::Duration::from_millis(500));' \
+      '    }' \
+      '}' > "$holder/build.rs"
+    : > "$dir/.graphhelm/slot.hold"
+    (cd "$holder" && LANES_FIXTURE_HOLD="$dir/.graphhelm/slot.hold" nohup "$bin" workspace slot --root "$dir/slots" \
+      --lane planner --label lanes-fixture --jobs 1 -- cargo build -p lanes-fixture-holder \
+      > "$dir/.graphhelm/slot-holder.out" 2>&1 &
+      echo "slot-holder $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids")
+    for _ in $(seq 1 120); do
+      "$bin" --json workspace slot status --root "$dir/slots" 2> /dev/null | grep -q '"lane":"planner"' && break
+      sleep 1
+    done
+    "$bin" --json workspace slot status --root "$dir/slots" 2> /dev/null | grep -q '"lane":"planner"' \
+      || echo "fixture: the slot holder did not take the slot (see $dir/.graphhelm/slot-holder.out)" >&2
+  fi
   export GRAPHHELM_EVENTS="$rt/events" GRAPHHELM_RUNTIME_URL="http://127.0.0.1:$rport" \
     GRAPHHELM_STUDIO_SESSION_NONCE=studio-fixture GRAPHHELM_PROJECT=demo
   nohup npm --prefix "$repo/apps/studio" run dev -- --port "$sport" --strictPort > "$dir/.graphhelm/studio.out" 2>&1 &
@@ -311,6 +370,8 @@ NODE
 down)
   # Each record is `<name> <shell pid> [<OS pid>]`. On Windows (Git Bash) the shell pid is an MSYS
   # pid the OS does not know, so the OS pid taken from /proc/<pid>/winpid at start is used.
+  # #1556: the slot holder's build script ends when its hold file goes, freeing the slot.
+  rm -f "$dir/.graphhelm/slot.hold"
   [ -f "$pids" ] || { echo "nothing recorded in $pids"; exit 0; }
   ports=$(sed -n 's/^ports //p' "$pids")
   if [ "$(uname -s | cut -c1-5)" = "MINGW" ] || [ "$(uname -s | cut -c1-6)" = "CYGWIN" ]; then

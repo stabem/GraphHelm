@@ -273,6 +273,18 @@ def post_end(base, token, execution, kind, task_id, repo, lane, fields, revision
         raise ValueError("Runtime refused task." + kind)
 
 
+def post_closed(base, token, execution, task_id, repo, lane, fields):
+    """#1544: record a close this lane only observed on GitHub as `observed: true`. A Runtime older
+    than the field refuses it as an invalid signal (HTTP 400); the close is then recorded without
+    it, as before, so a plugin update never stops a lane from reconciling against an older Runtime."""
+    try:
+        post_end(base, token, execution, "closed", task_id, repo, lane, {**fields, "observed": True})
+    except urllib.error.HTTPError as error:
+        if error.code != 400:
+            raise ValueError(f"Runtime refused task.closed: HTTP {error.code}") from error
+        post_end(base, token, execution, "closed", task_id, repo, lane, fields)
+
+
 def heartbeat(base, token, credential, execution, task_id, repo, lane):
     """One `task.heartbeat` for an open claim. Returns None when it landed (or was already
     recorded), else the Runtime's refusal message: the cooldown lives there, not here.
@@ -382,8 +394,8 @@ def reconcile(args):
             by = int(match.group(1)) if match else pr
             if args.lane is None:
                 continue
-            post_end(args.url.rstrip("/"), credential(args.lane), args.execution, "closed", task_id, repo,
-                     args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
+            post_closed(args.url.rstrip("/"), credential(args.lane), args.execution, task_id, repo,
+                        args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
             closed.append(pr)
             continue
         if result.get("state") != "MERGED":

@@ -437,7 +437,12 @@ def reconcile(args):
         view = get(f"{base}/v1/executions/{urllib.parse.quote(args.execution, safe='')}/tasks", token)
     except (OSError, ValueError, KeyError):
         view = None
-    lapsed = release_overdue(view, base, credential, args.execution, args.repo)
+    # #1556: a closed issue ends every lease still open on it, whichever lane holds it and however
+    # old (a lane's own release reaches only its latest claim). Before the lapse sweep, so a lease
+    # that is both overdue and on a closed issue is released once, for the closed issue.
+    ended = release_closed_issues(view, base, credential, args.execution, args.repo)
+    lapsed = release_overdue(view, base, credential, args.execution, args.repo,
+                             skip={(item["lane"], item["claimSequence"]) for item in ended["released"]})
     reply = {}
     if getattr(args, "adopt_opened", False):
         unopened = {}
@@ -452,7 +457,7 @@ def reconcile(args):
             reply["adoptError"] = f"{type(error).__name__}: {error}"
         reply["adopted"] = adopt_opened(base, args.token_file, args.execution, args.repo, unopened, prs)
     return {**reply, "merged": done, "closed": closed, "released": released, "heartbeat": beats,
-            "lapsed": lapsed, "stalled": stalled(view), "inspected": len(opened),
+            "closedIssues": ended, "lapsed": lapsed, "stalled": stalled(view), "inspected": len(opened),
             "unreadable": unreadable}
 
 
@@ -468,7 +473,46 @@ def stalled(view):
     return [{key: item.get(key) for key in keep} for item in stalls if isinstance(item, dict)]
 
 
-def release_overdue(view, base, credential, execution, repo):
+def release_closed_issues(view, base, credential, execution, repo, lookup=None):
+    """#1556: releases, as graphhelm, every lease the tasks route reports on an issue GitHub says
+    is CLOSED, any lane, each naming its own claim sequence, with the reason recorded. The Runtime
+    admits a graphhelm release of any still-open claim it names; a lane's own release stays
+    latest-only. GitHub is read once per issue; an unreadable issue is reported, never guessed."""
+    lookup = lookup or github_issue
+    out = {"released": [], "refused": []}
+    leases = view.get("leases") if isinstance(view, dict) else None
+    if not isinstance(leases, list):
+        return out
+    states = {}
+    for lease in leases:
+        if not isinstance(lease, dict):
+            continue
+        lane, task_id, sequence = lease.get("lane"), lease.get("taskId"), lease.get("claimSequence")
+        if not (isinstance(lane, str) and lane != "graphhelm" and isinstance(task_id, str)
+                and re.fullmatch(r"issue-[1-9][0-9]*", task_id) and type(sequence) is int and sequence > 0):
+            continue
+        issue = int(task_id.removeprefix("issue-"))
+        entry = {"taskId": task_id, "lane": lane, "claimSequence": sequence}
+        if issue not in states:
+            try:
+                states[issue] = lookup(issue, repo).get("state")
+            except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+                states[issue] = None
+                out["refused"].append({**entry, "message": f"issue unreadable: {type(error).__name__}"})
+                continue
+        if states[issue] != "CLOSED":
+            continue
+        try:
+            post_end(base, credential("graphhelm"), execution, "released", task_id, repo, "graphhelm",
+                     {"lane": lane, "claimSequence": sequence, "releasedBy": "graphhelm",
+                      "reason": f"issue #{issue} closed on GitHub"})
+            out["released"].append(entry)
+        except (OSError, ValueError, KeyError) as error:
+            out["refused"].append({**entry, "message": f"{type(error).__name__}: {error}"})
+    return out
+
+
+def release_overdue(view, base, credential, execution, repo, skip=frozenset()):
     """Releases, as graphhelm, each lease the tasks route reports overdue (#1193). Returns
     {"released": [...], "refused": [...]}; a route that does not serve leases (older Runtime)
     or could not be read yields empty lists, never an error, so the rest of the reconcile stands."""
@@ -481,6 +525,8 @@ def release_overdue(view, base, credential, execution, repo):
             continue
         lane, task_id, sequence = lease.get("lane"), lease.get("taskId"), lease.get("claimSequence")
         if not (isinstance(lane, str) and isinstance(task_id, str) and type(sequence) is int and sequence > 0):
+            continue
+        if (lane, sequence) in skip:
             continue
         entry = {"taskId": task_id, "lane": lane, "claimSequence": sequence}
         try:

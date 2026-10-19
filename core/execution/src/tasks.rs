@@ -1520,13 +1520,22 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             continue;
         }
         if event.kind == TaskEventKind::Released {
-            let latest = slices.iter_mut().rev().find(|s| {
+            let open = |s: &&mut Slice| {
                 s.state.task_id == event.task_id
                     && s.state.lane == event.lane
                     && s.state.pr.is_none()
                     && s.state.released_by.is_none()
                     && s.state.claim_sequence.is_some_and(|c| c < event.sequence)
-            });
+            };
+            // #1556: `graphhelm` ends exactly the open claim it names; a lane, only its latest.
+            let latest = if event.released_by.as_deref() == Some("graphhelm") {
+                slices
+                    .iter_mut()
+                    .filter(open)
+                    .find(|s| s.state.claim_sequence == event.claim_sequence)
+            } else {
+                slices.iter_mut().rev().find(open)
+            };
             if let Some(latest) = latest
                 && latest.state.claim_sequence == event.claim_sequence
             {

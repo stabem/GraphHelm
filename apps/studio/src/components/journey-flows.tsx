@@ -141,6 +141,31 @@ export function journeyVerdict(statuses: readonly string[], run: JourneyRunView 
  * forced run - every step in one go - polled until it ends and handed to `onRun`, which is the same
  * cache the rail and Proof read. A journey that fails to start is reported and the batch goes on.
  */
+/**
+ * #1309 slice 2: the owner's batch approve. Each flow is approved on its own, one after another, so
+ * each gets its own owner record and the Runtime's gate decides each one. A refused flow keeps its
+ * reason and the rest still run.
+ */
+export async function approveJourneys(ids: readonly string[], approve: (id: string) => Promise<void>,
+  onCurrent: (id: string | null) => void = () => {}): Promise<{ approved: string[]; errors: Record<string, string> }> {
+  const approved: string[] = [];
+  const errors: Record<string, string> = {};
+  try {
+    for (const id of ids) {
+      onCurrent(id);
+      try {
+        await approve(id);
+        approved.push(id);
+      } catch (cause) {
+        errors[id] = refusalText(cause);
+      }
+    }
+  } finally {
+    onCurrent(null);
+  }
+  return { approved, errors };
+}
+
 export async function runJourneys(ids: readonly string[], source: JourneyRunSource, onRun: (id: string, run: JourneyRunView) => void,
   onCurrent: (id: string | null) => void = () => {}, wait: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms))): Promise<{ busy: boolean; errors: Record<string, string> }> {
   if (activePreview !== null) return { busy: true, errors: {} };

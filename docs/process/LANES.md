@@ -89,6 +89,21 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
       $s = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 50)
       Register-ScheduledTask -TaskName "GraphHelm sweep all" -Action $a -Trigger $t -Settings $s
 
+- The board follows GitHub by itself (#1628): the Stop reconciler
+  (`plugins/graphhelm/hooks/tasks_reconcile.py`) also runs every 5 minutes as a hidden scheduled
+  task with `--lane graphhelm --adopt-opened`, so a merge or close is recorded even when no lane
+  stops again, and an open PR whose `Closes #N` names an open claim gets the `task.pr_opened` its
+  lane forgot (signed with that lane's own credential file; a lane without one is reported under
+  `adopted.refused`). It is a scheduled job, not a serve-side poller, so the Runtime and the Policy
+  Engine stay network-free and the same reconciler code runs on Stop and on the timer. `pythonw`
+  has no console, so `--log` appends each reply. The orchestrator registers it once (and mints the
+  `graphhelm` credential first: `graphhelm tasks credential --lane graphhelm --execution gh-team --token-file F:/github/GraphHelm/.graphhelm/events.token`):
+
+      $a = New-ScheduledTaskAction -Execute "pythonw.exe" -Argument 'F:/github/GraphHelm/plugins/graphhelm/hooks/tasks_reconcile.py --execution gh-team --url http://127.0.0.1:8793 --token-file F:/github/GraphHelm/.graphhelm/events.agent.token --repo stabem/GraphHelm --lane graphhelm --adopt-opened --log D:/_merge-leftovers/board-sync.log'
+      $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+      $s = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 4)
+      Register-ScheduledTask -TaskName "GraphHelm board sync" -Action $a -Trigger $t -Settings $s
+
 ## 3. Builds: one slot for the whole machine
 
 - Every Cargo build, test or clippy invocation runs under the existing build slot, with a direct

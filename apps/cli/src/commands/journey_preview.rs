@@ -604,7 +604,10 @@ fn failed_reason(code: &str) -> &'static str {
         "watch.app_down" => "watch.app_down",
         "watch.launch_failed" => "watch.launch_failed",
         "watch.launcher_invalid" => "watch.launcher_invalid",
-        "driver.observer_missing" | "replay.observer_missing" => "driver.observer_missing",
+        // #1722: a stale copy keeps the closed reason list (#519); `detail.code` says which.
+        "driver.observer_missing" | "replay.observer_missing" | "replay.observer_stale" => {
+            "driver.observer_missing"
+        }
         "preview.budget_exceeded" => "preview.budget_exceeded",
         // #586: what `preflight` refuses before any browser starts keeps its own code, so the
         // owner reads which thing is missing or wrong in the flow.

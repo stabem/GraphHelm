@@ -380,9 +380,13 @@ A critic round's verdict is not an argument: the script derives it from the scor
   session that reads another lane's file from disk can still sign as that lane. Hand each lane
   only its own path.
 
-The MCP `signal` tool holds the shared session token, so it is no longer a door for `task.*`
-records; `graphhelm execution signal` writes to a store directly as `owner-cli` and is not a lane
-door either. Task records go through `task_record.py` with the lane's credential.
+The MCP `signal` tool signs as the lane when a call names `lane` and `credentialFile` (the
+lane's own `events.agent.<lane>.token`; #1415, observed end to end on #1407). That is the door
+for `task.*` records. A call without them signs with the shared session token and is refused for a
+lane's record; a wrong credential file is refused `GHCLI007` and appends nothing.
+`task_record.py … --dry-run` prints the exact signal to send (content-derived id and key; for
+`merged`, the merge SHA confirmed on GitHub, which the Runtime cannot check offline).
+`graphhelm execution signal` writes to a store directly as `owner-cli` and is not a lane door.
 
 ## 6. Housekeeping
 

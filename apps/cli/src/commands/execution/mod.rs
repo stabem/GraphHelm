@@ -245,19 +245,24 @@ pub(crate) fn addressable_scope(execution: &str) -> Result<RepositoryScope, Fail
 /// Resolves which stream a command addresses and reads its raw history: `--execution` when
 /// given, otherwise `status.rs`'s own fallback — a repository holding exactly one stream selects
 /// it. Every `execution` command past `start` shares this addressing rule.
+/// The scope and stream id one named execution lives in, without reading the stream (#1623).
+pub(crate) fn stream_of(execution: &str) -> Result<(RepositoryScope, String), Failure> {
+    let stream_id = OpaqueId::parse(execution)
+        .map_err(|_| argument("--execution is not a valid identifier", "/execution"))?;
+    Ok((addressable_scope(execution)?, stream_id.to_string()))
+}
+
 pub(crate) fn resolve_stream(
     store: &LocalEventRepository,
     execution: Option<&str>,
 ) -> Result<(RepositoryScope, String, Vec<EventEnvelope>), Failure> {
     match execution {
         Some(execution) => {
-            let stream_id = OpaqueId::parse(execution)
-                .map_err(|_| argument("--execution is not a valid identifier", "/execution"))?;
-            let scope = addressable_scope(execution)?;
+            let (scope, stream_id) = stream_of(execution)?;
             let history = store
-                .read_replay_stream(&scope, stream_id.as_str())
+                .read_replay_stream(&scope, &stream_id)
                 .map_err(|error| repository_failure(&error))?;
-            Ok((scope, stream_id.to_string(), history))
+            Ok((scope, stream_id, history))
         }
         None => {
             let (selection, history) = store

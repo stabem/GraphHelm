@@ -44,9 +44,14 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
     evidence = {}
     reads = []
     auth = []
+    deny_reads = False
 
     def do_GET(self):
         FakeRuntime.reads.append(self.path)
+        if FakeRuntime.deny_reads:
+            # #1556: the live Runtime answers 401 to a lane credential's history read.
+            self.send_error(401)
+            return
         parsed = urllib.parse.urlsplit(self.path)
         if parsed.path.endswith("/events"):
             reply = {"ok": True, "data": {"head": FakeRuntime.history_head if FakeRuntime.history_head is not None else len(FakeRuntime.history),
@@ -147,110 +152,57 @@ class TaskRecordTest(unittest.TestCase):
             self.run_heartbeat(*extra)
         self.assertEqual(len(FakeRuntime.seen), before)
 
+    def window(self, moment):
+        return int(moment.timestamp()) // 300
+
     def test_open_claim_heartbeat_posts_the_canonical_activity_record(self):
-        # #1024: an eligible heartbeat must be emitted by the real recorder. On the parent,
-        # the CLI rejects this valid kind before any request. Cost: one bounded local HTTP call.
-        FakeRuntime.history = [{
-            "sequence": 1,
-            "occurredAt": "2026-10-10T12:00:00Z",
-            "actor": {"id": "lane-a"},
-            "kind": {"type": "signal_recorded", "data": {"kind": "task.claimed"}},
-            "evidenceRefs": [{"evidenceId": "claim-evidence"}],
-        }]
-        FakeRuntime.evidence = {"claim-evidence": {
-            "type": "task.claimed", "source": {"id": "lane-a"},
-            "description": json.dumps({"schema": "graphhelm-task-event-v1", "taskId": "issue-1024",
-                                       "revision": 1, "at": "2026-10-13T12:00:00Z", "issue": 1024,
-                                       "lane": "lane-a", "branch": "issue-1024-heartbeat"}),
-        }}
+        # #1024: an eligible heartbeat must be emitted by the real recorder. #1556: it is sent
+        # without reading history (a lane credential cannot read it), the open-claim and cooldown
+        # rules are the Runtime's, and the revision is the 300-second window of `at`.
         with patch.object(task_record.subprocess, "run", side_effect=AssertionError("heartbeat called GitHub")):
-            code, out = self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024", "--no-github")
+            code, out = self.run_heartbeat()
         self.assertEqual(code, 0, out)
         self.assertTrue(out.startswith("recorded "), out)
         signal = FakeRuntime.seen[-1][1]["signal"]
         self.assertEqual(signal["type"], "task.heartbeat")
         document = json.loads(signal["description"])
-        self.assertEqual({key: document[key] for key in ("schema", "taskId", "revision", "lane")},
-                         {"schema": "graphhelm-task-event-v1", "taskId": "issue-1024", "revision": 2, "lane": "lane-a"})
-        self.assertEqual(set(document), {"schema", "taskId", "revision", "at", "lane"})
-        self.assertEqual(FakeRuntime.reads[0], "/v1/executions/gh-team/events?after=0&limit=1000")
+        self.assertEqual(document, {"schema": "graphhelm-task-event-v1", "taskId": "issue-1024",
+                                    "revision": self.window(self.FIXED_NOW), "at": "2026-10-13T12:00:00Z",
+                                    "lane": "lane-a"})
+        self.assertEqual(FakeRuntime.reads, [], "a heartbeat reads no history")
 
-    def test_heartbeat_refuses_absent_ended_and_incomplete_claim_history(self):
-        self.assert_refused_without_post()
-        FakeRuntime.history = [self.history_event("task.claimed", 1), self.history_event("task.pr_opened", 2)]
-        self.assert_refused_without_post()
-        FakeRuntime.history = [self.history_event("task.claimed", 1),
-                               self.history_event("task.released", 2, claim_sequence=1)]
-        self.assert_refused_without_post()
-        FakeRuntime.history = [self.history_event("task.claimed", 1)]
-        FakeRuntime.history_head = 2
-        self.assert_refused_without_post()
-        FakeRuntime.history_head = None
-        FakeRuntime.history = [{**self.history_event("task.claimed", 1), "sequence": 2}]
-        self.assert_refused_without_post()
+    def test_a_lane_credential_that_cannot_read_history_still_records_its_heartbeat(self):
+        # #1556 RED on main: the live Runtime answers 401 to a lane credential's history read, so
+        # the recorder exited "heartbeat history is unavailable" and every waiting lane read Silent.
+        FakeRuntime.deny_reads = True
+        code, out = self.run_heartbeat()
+        self.assertEqual((code, out.split()[0]), (0, "recorded"), out)
+        self.assertEqual(json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])["lane"], "lane-a")
 
-    def test_heartbeat_refuses_claim_ended_by_merge_or_closed_pr(self):
-        for terminal_kind in ("task.merged", "task.closed"):
-            with self.subTest(terminal_kind=terminal_kind):
-                FakeRuntime.history = [self.history_event("task.claimed", 1),
-                                       self.history_event(terminal_kind, 2)]
-                self.assert_refused_without_post()
-
-    def test_heartbeat_cooldown_is_the_runtimes_answer_not_a_local_clock(self):
-        # #1147: the 300 s rule has one owner. A heartbeat 299 s after the last one is still sent,
-        # and the Runtime's refusal is what the lane reads; the script never pre-empts it.
-        FakeRuntime.history = [self.history_event("task.claimed", 1),
-                               self.history_event("task.heartbeat", 2, occurred="2026-10-13T11:55:01Z",
-                                                  at="2099-01-01T00:00:00Z")]
+    def test_heartbeat_open_claim_and_cooldown_are_the_runtimes_answer(self):
+        # #1147/#1556: the Runtime refuses a heartbeat without an open pre-PR claim, or within 300 s
+        # of the last one, over trusted history; the recorder reports that refusal as REFUSED.
+        # The Runtime side is covered by task_event_cli::heartbeat_needs_an_open_claim_and_a_pr_ends_it.
         FakeRuntime.reject_heartbeat = True
         code, out = self.run_heartbeat()
         self.assertEqual((code, out.split()[0]), (1, "REFUSED"), out)
         self.assertEqual(len(FakeRuntime.seen), 1)
-        FakeRuntime.reject_heartbeat = False
-        FakeRuntime.seen.clear()
-        FakeRuntime.history = [self.history_event("task.claimed", 1)]
-        first_code, first_out = self.run_heartbeat()
-        self.assertEqual((first_code, first_out.split()[0]), (0, "recorded"), first_out)
-        FakeRuntime.history = [self.history_event("task.claimed", 1),
-                               self.history_event("task.heartbeat", 2, occurred="2026-10-13T11:55:00Z",
-                                                  at="2099-01-01T00:00:00Z")]
-        code, out = self.run_heartbeat()
-        self.assertEqual((code, out.split()[0]), (0, "recorded"), out)
-        self.assertEqual(json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])["revision"], 3)
-        self.assertNotEqual(FakeRuntime.seen[-1][0], FakeRuntime.seen[0][0])
 
-    def test_heartbeat_retry_reuses_identity_for_unchanged_history(self):
-        FakeRuntime.history = [self.history_event("task.claimed", 1)]
+    def test_heartbeat_retry_in_one_window_is_the_same_record_and_the_next_window_is_new(self):
         first = self.run_heartbeat()
         second = self.run_heartbeat()
-        self.assertEqual(first[0], 0, first[1])
-        self.assertEqual(second[0], 0, second[1])
-        self.assertEqual(FakeRuntime.seen[0][0], FakeRuntime.seen[1][0])
+        self.assertEqual((first[0], second[0]), (0, 0), (first, second))
+        self.assertEqual(FakeRuntime.seen[0][0], FakeRuntime.seen[1][0], "a retry reuses its key")
+        later = self.FIXED_NOW + datetime_module.timedelta(seconds=300)
+        with patch.object(type(self), "FIXED_NOW", later):
+            third = self.run_heartbeat()
+        self.assertEqual(third[0], 0, third)
+        self.assertNotEqual(FakeRuntime.seen[-1][0], FakeRuntime.seen[0][0])
+        self.assertEqual(json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])["revision"],
+                         self.window(later))
+        self.assertEqual(self.window(later), self.window(self.FIXED_NOW) + 1)
 
-    def test_unrelated_lane_or_task_heartbeats_do_not_block_this_one(self):
-        FakeRuntime.history = [self.history_event("task.claimed", 1),
-                               self.history_event("task.claimed", 2, lane="lane-b", task_id="issue-1024"),
-                               self.history_event("task.heartbeat", 3, lane="lane-b", task_id="issue-1024",
-                                                  occurred="2026-10-13T11:59:59Z"),
-                               self.history_event("task.heartbeat", 4, task_id="issue-999",
-                                                  occurred="2026-10-13T11:59:59Z")]
-        code, out = self.run_heartbeat()
-        self.assertEqual((code, out.split()[0]), (0, "recorded"), out)
-
-    def test_repeated_pr_open_does_not_consume_a_new_claim_and_release_is_exact(self):
-        FakeRuntime.history = [self.history_event("task.claimed", 1),
-                               self.history_event("task.pr_opened", 2, pr=44),
-                               self.history_event("task.pr_opened", 3, pr=44),
-                               self.history_event("task.claimed", 4),
-                               self.history_event("task.released", 5, claim_sequence=1)]
-        code, out = self.run_heartbeat()
-        self.assertEqual((code, out.split()[0]), (0, "recorded"), out)
-
-    def test_bad_evidence_and_forbidden_overrides_refuse_without_post_or_extra_reads(self):
-        FakeRuntime.history = [self.history_event("task.claimed", 1)]
-        evidence_id = FakeRuntime.history[0]["evidenceRefs"][0]["evidenceId"]
-        FakeRuntime.evidence[evidence_id] = "not-json"
-        self.assert_refused_without_post()
+    def test_forbidden_overrides_refuse_without_post_or_reads(self):
         for flags in (("--pr", "44"), ("--head", HEAD_A), ("--revision", "9"), ("--title", "forged")):
             with self.subTest(flags=flags):
                 FakeRuntime.reads.clear()
@@ -258,7 +210,6 @@ class TaskRecordTest(unittest.TestCase):
                 self.assertEqual(FakeRuntime.reads, [])
 
     def test_authoritative_refusal_and_dry_run_never_report_recorded(self):
-        FakeRuntime.history = [self.history_event("task.claimed", 1)]
         FakeRuntime.reject_heartbeat = True
         code, out = self.run_heartbeat()
         self.assertEqual(code, 1)
@@ -343,6 +294,7 @@ class TaskRecordTest(unittest.TestCase):
         FakeRuntime.reject_heartbeat = False
         FakeRuntime.history = []
         FakeRuntime.history_head = None
+        FakeRuntime.deny_reads = False
         FakeRuntime.evidence = {}
         FakeRuntime.reads = []
         # #477: opening records read their title from GitHub; these cells are about the wire.

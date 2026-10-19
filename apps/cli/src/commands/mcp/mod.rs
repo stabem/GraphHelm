@@ -14,6 +14,7 @@ use zeroize::Zeroizing;
 
 use crate::args::McpArgs;
 use crate::output::Outcome;
+use rpc::HandlerOutcome;
 
 const COMMAND: &str = "mcp";
 
@@ -34,7 +35,32 @@ fn refuse(message: &str, pointer: &str) -> Outcome {
 /// `GRAPHHELM_API_TOKEN` — never argv — with both-absent a refusal naming the two options,
 /// and the actor admitted by the same wire rules the serve layer applies.
 fn build_client(args: &McpArgs, session: String) -> Result<client::ApiClient, Outcome> {
-    let (base_url, token) = if args.discover && args.url.is_none() {
+    let (base_url, token) = if let Some(routed) = &args.routed_url {
+        // #1523: a child answering one request for a running router, which hands on the endpoint
+        // an earlier child of the session discovered (health-proven then), so no child repeats
+        // the probes. The token is read from its file here, never carried in argv.
+        if !client::is_loopback_url(routed) || url::validate_base(routed).is_err() {
+            return Err(refuse(
+                "--routed-url must name a loopback Runtime",
+                "/routedUrl",
+            ));
+        }
+        let path = args
+            .routed_token_file
+            .as_ref()
+            .ok_or_else(|| refuse("--routed-url needs --routed-token-file", "/routedTokenFile"))?;
+        let token = crate::commands::secret_file::read_existing(path, "routed agent session token")
+            .map_err(|_| {
+                refuse(
+                    "--routed-token-file does not name a readable token file",
+                    "/routedTokenFile",
+                )
+            })?;
+        (
+            routed.clone(),
+            client::TokenSource::Fixed(Zeroizing::new(token)),
+        )
+    } else if args.discover && args.url.is_none() {
         let mut project = match &args.project {
             Some(project) => project.clone(),
             None => std::env::current_dir().map_err(|_| {
@@ -232,27 +258,47 @@ fn read_capability_token(
 }
 
 pub fn run(args: &McpArgs) -> Outcome {
+    if args.one_request {
+        return answer_one_request(args);
+    }
     // Minted BEFORE the client, because #1057 makes it part of the client's own attribution: this
     // one nonce is the process's session identity everywhere -- the idempotency keys, the wake
     // leases, and now `X-GraphHelm-Actor-Session`. One value rather than three means a reader of
-    // the journal can join a declaration to the leases and keys the same session took out.
+    // the journal can join a declaration to the leases and keys the same session took out. #1523:
+    // every child this server starts is handed the same nonce, so that stays one identity.
     let mut nonce_bytes = [0_u8; 8];
     if getrandom::fill(&mut nonce_bytes).is_err() {
         return Outcome::internal(COMMAND, "the OS random source is unavailable");
     }
     let nonce = hex::encode(nonce_bytes);
 
-    let api = match build_client(args, nonce.clone()) {
-        Ok(api) => api,
+    // The whole config is still refused here, before any protocol byte, exactly as the child
+    // that answers each tool request will check it again.
+    let state = match session_state(args, nonce) {
+        Ok(state) => state,
         Err(outcome) => return outcome,
     };
+    let (launch, argv) = launch_path();
+    let mut router = Router {
+        state,
+        launch,
+        argv,
+        routed: None,
+    };
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    match rpc::run(stdin.lock(), &mut stdout, route, &mut router) {
+        Ok(()) => Outcome::success(COMMAND, serde_json::json!({})),
+        Err(error) => Outcome::internal(COMMAND, format!("the stdio transport failed: {error}")),
+    }
+}
 
+/// The session a process serves: the API client and, when presented, the #213 capability.
+fn session_state(args: &McpArgs, nonce: String) -> Result<session::SessionState, Outcome> {
+    let api = build_client(args, nonce.clone())?;
     let mut state = session::SessionState::new(nonce).with_client(api);
     if let Some(token_path) = &args.capability_token_file {
-        let token = match read_capability_token(token_path) {
-            Ok(token) => token,
-            Err(outcome) => return outcome,
-        };
+        let token = read_capability_token(token_path)?;
         // build_client already refused capability_token_file without package/audit_log.
         state = state.with_capability(session::CapabilityConfig {
             token,
@@ -263,10 +309,264 @@ pub fn run(args: &McpArgs) -> Outcome {
                 .expect("checked by build_client"),
         });
     }
+    Ok(state)
+}
+
+/// #1523: a running `graphhelm mcp` keeps the stdio session (`initialize`, `ping`, the lifecycle
+/// gate) and answers every `tools/list` and `tools/call` by starting the binary that is at its
+/// launch path NOW, so a session that outlives `graphhelm update` gets the new tools and the new
+/// wire on its next call, with no restart and no second `initialize`.
+struct Router {
+    state: session::SessionState,
+    launch: std::ffi::OsString,
+    argv: Vec<std::ffi::OsString>,
+    /// The endpoint (URL and agent token FILE) a child discovered, handed to the next child so
+    /// discovery and its health probes run once per session, again only after the endpoint
+    /// failed a child.
+    routed: Option<(String, std::path::PathBuf)>,
+}
+
+/// The longest one tool request may take before its child is stopped: the gateway probe's own
+/// wait, one request, the one retry after a refused token, and the project discovery budget.
+const CHILD_WAIT: std::time::Duration = tools::PROBE_CALLER_WAIT
+    .saturating_add(client::REQUEST_TIMEOUT)
+    .saturating_add(client::REQUEST_TIMEOUT)
+    .saturating_add(std::time::Duration::from_secs(15));
+
+/// Where this process was started from, resolved once at start to an absolute path: `argv[0]`
+/// as the host gave it (a bare name is looked up on `PATH`, a relative path against the working
+/// directory). Not `current_exe`, which names the build that is running even after an update has
+/// put a new one at the path the host launches. The rest of argv is what each child repeats.
+fn launch_path() -> (std::ffi::OsString, Vec<std::ffi::OsString>) {
+    let mut argv = std::env::args_os();
+    let first = argv.next().map(std::path::PathBuf::from);
+    let rest = argv.collect();
+    let resolved = first.and_then(|path| {
+        if path.is_absolute() {
+            return Some(path);
+        }
+        if path.components().count() > 1 {
+            return std::env::current_dir().ok().map(|dir| dir.join(path));
+        }
+        let names = if cfg!(windows) && path.extension().is_none() {
+            vec![path.with_extension("exe"), path.clone()]
+        } else {
+            vec![path.clone()]
+        };
+        std::env::split_paths(&std::env::var_os("PATH")?)
+            .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
+            .find(|candidate| candidate.is_file())
+    });
+    let launch = resolved
+        .or_else(|| std::env::current_exe().ok())
+        .map_or_else(|| std::ffi::OsString::from("graphhelm"), Into::into);
+    (launch, rest)
+}
+
+fn route(
+    method: &str,
+    params: &serde_json::Value,
+    rpc_id: &serde_json::Value,
+    router: &mut Router,
+) -> HandlerOutcome {
+    // Only a tool request that has an answer to give leaves this process: the lifecycle, `ping`,
+    // the not-initialized refusal and every notification are this server's own.
+    if !matches!(method, "tools/list" | "tools/call")
+        || !router.state.initialized
+        || rpc_id.is_null()
+    {
+        return session::handle(method, params, rpc_id, &mut router.state);
+    }
+    let mut request = serde_json::json!({"jsonrpc": "2.0", "id": rpc_id, "method": method});
+    if !params.is_null() {
+        request["params"] = params.clone();
+    }
+    let routed = router.routed.take();
+    let answer = match one_request(router, &request, routed.as_ref()) {
+        // A token the Runtime refused did nothing, so asking once more, discovering afresh, is
+        // safe: the Runtime may have been replaced since the endpoint was handed on.
+        Ok(answer)
+            if routed.is_some() && answer.exit == client::EndpointSeen::UNAUTHORIZED_EXIT =>
+        {
+            one_request(router, &request, None)
+        }
+        other => other,
+    };
+    match answer {
+        Ok(answer) => {
+            // An endpoint that failed is never handed on; one a child discovered replaces it.
+            router.routed = answer
+                .discovered
+                .or_else(|| routed.filter(|_| answer.exit == 0));
+            outcome_of(answer.reply)
+        }
+        Err(message) => {
+            router.routed = None;
+            HandlerOutcome::Error {
+                code: INTERNAL_ERROR,
+                message,
+                data: None,
+            }
+        }
+    }
+}
+
+/// JSON-RPC's internal error: the server could not produce the answer at all.
+const INTERNAL_ERROR: i64 = -32603;
+
+struct Answer {
+    reply: Option<serde_json::Value>,
+    exit: i32,
+    discovered: Option<(String, std::path::PathBuf)>,
+}
+
+/// Starts the installed binary hidden for one request line and reads its answer, bounded by
+/// [`CHILD_WAIT`]. The child's stderr is this server's, so its warnings reach the host as before.
+fn one_request(
+    router: &Router,
+    request: &serde_json::Value,
+    routed: Option<&(String, std::path::PathBuf)>,
+) -> Result<Answer, String> {
+    use std::io::{Read as _, Write as _};
+    let mut command = graphhelm_process::command(&router.launch);
+    command
+        .args(&router.argv)
+        .arg("--one-request")
+        .arg("--session-nonce")
+        .arg(&router.state.nonce);
+    if let Some((url, token_file)) = routed {
+        command
+            .arg("--routed-url")
+            .arg(url)
+            .arg("--routed-token-file")
+            .arg(token_file);
+    }
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .map_err(|_| {
+            "the graphhelm installed at this server's launch path could not be started; \
+             reinstall it (`graphhelm update`)"
+                .to_owned()
+        })?;
+    let stdout = child.stdout.take().expect("piped stdout");
+    let (sender, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let limit = u64::try_from(rpc::MAX_LINE_BYTES)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(2);
+        let _ = stdout.take(limit).read_to_end(&mut bytes);
+        let _ = sender.send(bytes);
+    });
+    if let Some(mut stdin) = child.stdin.take() {
+        // A child that exits before reading is answered below by what it wrote, or by nothing.
+        let _ = writeln!(stdin, "{request}");
+    }
+    let Ok(bytes) = received.recv_timeout(CHILD_WAIT) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!(
+            "the tool request did not finish within {} s and was stopped",
+            CHILD_WAIT.as_secs()
+        ));
+    };
+    let exit = child
+        .wait()
+        .ok()
+        .and_then(|status| status.code())
+        .unwrap_or(1);
+    let mut reply = None;
+    let mut discovered = None;
+    for line in String::from_utf8_lossy(&bytes).lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("jsonrpc").is_some() {
+            reply.get_or_insert(value);
+        } else if let (Some(url), Some(token_file)) = (
+            value["graphhelmRouted"]["url"].as_str(),
+            value["graphhelmRouted"]["tokenFile"].as_str(),
+        ) {
+            discovered = Some((url.to_owned(), std::path::PathBuf::from(token_file)));
+        }
+    }
+    Ok(Answer {
+        reply,
+        exit,
+        discovered,
+    })
+}
+
+fn outcome_of(reply: Option<serde_json::Value>) -> HandlerOutcome {
+    let Some(mut reply) = reply else {
+        return HandlerOutcome::Error {
+            code: INTERNAL_ERROR,
+            message: "the graphhelm installed at this server's launch path gave no answer"
+                .to_owned(),
+            data: None,
+        };
+    };
+    if let Some(result) = reply.get_mut("result") {
+        return HandlerOutcome::Result(result.take());
+    }
+    let error = &mut reply["error"];
+    HandlerOutcome::Error {
+        code: error["code"].as_i64().unwrap_or(INTERNAL_ERROR),
+        message: error["message"]
+            .as_str()
+            .unwrap_or("the tool request failed")
+            .to_owned(),
+        data: error.get_mut("data").map(serde_json::Value::take),
+    }
+}
+
+/// #1523: the child side. The router already answered `initialize` and forwards only once the
+/// session is initialized, so the one request line is served as an initialized session would.
+/// Writes the reply, then the endpoint it discovered (a line with no `jsonrpc` member, read only
+/// by the router), and exits: 0, or with a routed endpoint the worst it saw of that endpoint.
+fn answer_one_request(args: &McpArgs) -> Outcome {
+    use std::io::Write as _;
+    let Some(nonce) = args
+        .session_nonce
+        .clone()
+        .filter(|nonce| nonce.len() == 16 && nonce.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    else {
+        return refuse(
+            "--one-request needs the router's --session-nonce",
+            "/sessionNonce",
+        );
+    };
+    let mut state = match session_state(args, nonce) {
+        Ok(state) => state,
+        Err(outcome) => return outcome,
+    };
+    state.initialized = true;
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
-    match rpc::run(stdin.lock(), &mut stdout, session::handle, &mut state) {
-        Ok(()) => Outcome::success(COMMAND, serde_json::json!({})),
-        Err(error) => Outcome::internal(COMMAND, format!("the stdio transport failed: {error}")),
+    let served = rpc::run(stdin.lock(), &mut stdout, session::handle, &mut state);
+    let client = state
+        .client
+        .as_ref()
+        .expect("session_state attaches the client");
+    if let Some((url, token_file)) = client.discovered()
+        && let Some(token_file) = token_file.to_str()
+    {
+        let _ = writeln!(
+            stdout,
+            "{}",
+            serde_json::json!({"graphhelmRouted": {"url": url, "tokenFile": token_file}})
+        );
     }
+    let _ = stdout.flush();
+    let code = if served.is_err() {
+        1
+    } else if args.routed_url.is_some() {
+        client.endpoint_seen().exit_code()
+    } else {
+        0
+    };
+    std::process::exit(code)
 }

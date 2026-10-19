@@ -3592,7 +3592,8 @@ mod tests {
             EventHash::parse(GENESIS_HASH).unwrap(),
             EventHash::parse(format!("sha256:{}", "c".repeat(64))).unwrap(),
         );
-        let events = vec![event; 100_001];
+        // One past the public bound, whatever it is (#1721 raised it from 100,000).
+        let events = vec![event; crate::MAX_READ_ALL + 1];
 
         let scope = events[0].scope.clone();
         assert_eq!(

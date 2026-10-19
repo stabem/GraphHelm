@@ -946,8 +946,8 @@ fn a_recorded_preview_survives_unrelated_commits_and_dies_with_its_scope() {
 }
 
 /// #1633 follow-up: a flow that says part of its purpose is unobserved cannot be approved.
-/// `studio-new-task` marks a screen `OBSERVER_MISSING #1042` in its title; validate names it and
-/// approve refuses it.
+/// `studio-new-task` marks a screen `OBSERVER_MISSING #1042` in its title; validate flags it as a
+/// warning and approve refuses it.
 #[test]
 fn a_flow_marked_observer_missing_is_refused_by_validate_and_approve() {
     const NEW_TASK: &str =
@@ -960,8 +960,14 @@ fn a_flow_marked_observer_missing_is_refused_by_validate_and_approve() {
     )
     .unwrap();
     let token = owner_token(dir.path());
+    // validate flags it and stays usable (#1287: flagged, never broken); approve refuses it.
     let checked = validate(dir.path());
-    assert!(finding(&checked, "flow.observer_missing"), "{checked}");
+    assert!(!finding(&checked, "flow.observer_missing"), "{checked}");
+    assert!(
+        checked.to_string().contains("flow.weak_journey")
+            && checked.to_string().contains("flow.observer_missing: "),
+        "{checked}"
+    );
     passing_preview(dir.path(), "studio-new-task");
     let (out, reply) = run(
         dir.path(),

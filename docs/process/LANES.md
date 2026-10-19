@@ -82,11 +82,18 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   worktree without unlocking it, keeps unmerged unpushed work, and never follows a link. A cache
   is removed when idle and held by no process; logs, notes and other files under a root are not
   touched. Exit code 3 means something could not be removed.
-- The sweep also runs hidden, every hour, as a scheduled task the orchestrator registers once:
+- The sweep also runs hidden, every two hours, as a scheduled task the orchestrator registers
+  once (#1641). The action is `pythonw`, which has no console, and it starts the CLI with
+  `CREATE_NO_WINDOW` (`0x08000000`), so no window flashes (a `powershell.exe` action flashes one
+  even with `-WindowStyle Hidden`). The limit is two hours: the first real `--apply` run took
+  about 65 minutes (71 worktrees, 160 branches, 16 caches), longer than the 50 minutes this task
+  once had. `IgnoreNew` keeps a slow run from overlapping the next one:
 
-      $a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument '-NoProfile -NonInteractive -WindowStyle Hidden -Command "& $env:USERPROFILE\.cargo\bin\graphhelm.exe --json workspace sweep --all --apply --repo F:/github/GraphHelm *>> D:/_merge-leftovers/sweep-all.log"'
-      $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1)
-      $s = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 50)
+      $exe = "$env:USERPROFILE\.cargo\bin\graphhelm.exe"
+      $py = "import subprocess;f=open(r'D:/_merge-leftovers/sweep-all.log','ab');subprocess.run([r'$exe','--json','workspace','sweep','--all','--apply','--repo','F:/github/GraphHelm'],stdout=f,stderr=f,creationflags=0x08000000)"
+      $a = New-ScheduledTaskAction -Execute "pythonw.exe" -Argument "-c `"$py`""
+      $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 2)
+      $s = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
       Register-ScheduledTask -TaskName "GraphHelm sweep all" -Action $a -Trigger $t -Settings $s
 
 - The board follows GitHub by itself (#1628): the Stop reconciler

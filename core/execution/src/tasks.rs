@@ -2091,7 +2091,7 @@ pub struct StepSummary {
 
 /// Counts merged slices in the window with and without a computed duration for each step.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct DurationStepCoverage {
     pub eligible: usize,
     pub included: usize,
@@ -2100,19 +2100,42 @@ pub struct DurationStepCoverage {
 
 /// Structural slices that are outside the merged duration population.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct DurationExclusions {
     pub before_window: usize,
     pub absorbed: usize,
     pub no_pr: usize,
     pub open: usize,
+    pub closed: usize,
+    pub duplicate: usize,
     pub merged_without_timestamp: usize,
+    pub merged_without_matching_event: usize,
+}
+
+/// Population counts used to reconcile the duration projection without inferring provider cost.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DurationPopulation {
+    pub scanned_raw_slices: usize,
+    pub unique_pr_candidates: usize,
+    pub merged: usize,
+    pub open: usize,
+    pub eligible_merged: usize,
+}
+
+const DURATION_TIME_SOURCE: &str = "runtime_event_append_time";
+
+fn default_duration_time_source() -> String {
+    DURATION_TIME_SOURCE.to_owned()
 }
 
 /// #1516: every step duration, derived from the `task.*` records already in the log.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskDurations {
+    /// All duration timestamps come from the Runtime append time on `task.*` records.
+    #[serde(default = "default_duration_time_source")]
+    pub time_source: String,
     /// The window start the summary was judged against, when one was given.
     pub since: Option<PersistedTimestamp>,
     pub slices: Vec<SliceDurations>,
@@ -2125,6 +2148,23 @@ pub struct TaskDurations {
     /// Slices left out before a duration summary is formed.
     #[serde(default)]
     pub excluded: DurationExclusions,
+    /// Counts over the folded slices used by this projection.
+    #[serde(default)]
+    pub population: DurationPopulation,
+}
+
+impl Default for TaskDurations {
+    fn default() -> Self {
+        Self {
+            time_source: DURATION_TIME_SOURCE.to_owned(),
+            since: None,
+            slices: Vec::new(),
+            summary: BTreeMap::new(),
+            coverage: BTreeMap::new(),
+            excluded: DurationExclusions::default(),
+            population: DurationPopulation::default(),
+        }
+    }
 }
 
 fn seconds_between(from: &PersistedTimestamp, to: &PersistedTimestamp) -> i64 {
@@ -2152,8 +2192,9 @@ fn summarize(mut values: Vec<i64>) -> Option<StepSummary> {
 }
 
 /// Derives [`TaskDurations`] from the verified records and the fold's slices. Records without the
-/// Runtime's append time are skipped, so no step is ever invented. `since` keeps merged slices that
-/// merged at or after it (open slices are always listed); the summary counts merged slices only.
+/// Runtime's append time (`TaskEventRecord.occurred_at`) are skipped, so no step is ever invented.
+/// The payload's lane-provided time is not used. `since` keeps merged slices that merged at or
+/// after it (open slices are always listed); the summary counts merged slices only.
 #[must_use]
 pub fn task_durations(
     records: &[TaskEventRecord],
@@ -2162,6 +2203,10 @@ pub fn task_durations(
 ) -> TaskDurations {
     let mut eligible_rows: Vec<(SliceDurations, bool)> = Vec::new();
     let mut excluded = DurationExclusions::default();
+    let mut population = DurationPopulation {
+        scanned_raw_slices: slices.len(),
+        ..DurationPopulation::default()
+    };
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     for slice in slices {
         if slice.absorbed {
@@ -2170,12 +2215,14 @@ pub fn task_durations(
         }
         let state = &slice.state;
         if !seen.insert(state.key.as_str()) {
+            excluded.duplicate += 1;
             continue;
         }
         let Some(pr) = state.pr else {
             excluded.no_pr += 1;
             continue;
         };
+        population.unique_pr_candidates += 1;
         let mine = |r: &&TaskEventRecord| r.task_id == state.task_id && r.pr == Some(pr);
         let timed = |kind: TaskEventKind| {
             records
@@ -2191,9 +2238,14 @@ pub fn task_durations(
             .filter(|(r, _)| mine(r))
             .map(|(_, at)| at)
             .collect();
-        let merge_at = timed(TaskEventKind::Merged)
-            .find(|(r, _)| mine(r))
-            .map(|(_, at)| at);
+        let merge_events: Vec<&TaskEventRecord> = records
+            .iter()
+            .filter(|r| r.kind == TaskEventKind::Merged && mine(r))
+            .collect();
+        let merge_at = merge_events
+            .iter()
+            .filter_map(|r| r.occurred_at.as_ref())
+            .next();
         let first_open = opens.iter().min_by_key(|(seq, _)| *seq);
         let claim_at = first_open.and_then(|(first_seq, _)| {
             timed(TaskEventKind::Claimed)
@@ -2235,6 +2287,16 @@ pub fn task_durations(
             merged_at: merge_at.cloned(),
             steps,
         };
+        let fold_merged = state.step == TaskStep::Merged;
+        let merged_population = fold_merged || !merge_events.is_empty();
+        if merged_population {
+            population.merged += 1;
+        } else if slice.ended {
+            excluded.closed += 1;
+        } else {
+            population.open += 1;
+            excluded.open += 1;
+        }
         let eligible = row.merged
             && since.is_none_or(|window| {
                 row.merged_at
@@ -2245,10 +2307,12 @@ pub fn task_durations(
             if !eligible {
                 excluded.before_window += 1;
             }
-        } else if state.step == TaskStep::Merged {
-            excluded.merged_without_timestamp += 1;
-        } else {
-            excluded.open += 1;
+        } else if merged_population {
+            if merge_events.is_empty() {
+                excluded.merged_without_matching_event += 1;
+            } else {
+                excluded.merged_without_timestamp += 1;
+            }
         }
         eligible_rows.push((row, eligible));
     }
@@ -2288,10 +2352,18 @@ pub fn task_durations(
         );
     }
     TaskDurations {
+        time_source: DURATION_TIME_SOURCE.to_owned(),
         since: since.cloned(),
         slices: rows,
         summary,
         coverage,
         excluded,
+        population: DurationPopulation {
+            eligible_merged: eligible_rows
+                .iter()
+                .filter(|(_, is_eligible)| *is_eligible)
+                .count(),
+            ..population
+        },
     }
 }

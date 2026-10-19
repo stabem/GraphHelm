@@ -2150,6 +2150,16 @@ fn step_durations_are_exact_per_slice_and_summarised_per_step_1516() {
     // The window judges the merge time: only slice A merged at or after 10:00.
     let window = hm(10, 0);
     let since = task_durations(&records, &fold.slices, Some(&window));
+    let replay_fold = fold_task_events_with_routes(&records);
+    let replay = task_durations(&records, &replay_fold.slices, Some(&window));
+    assert_eq!(
+        serde_json::to_string(&since).unwrap(),
+        serde_json::to_string(&replay).unwrap(),
+        "the same fixed records produce the same duration JSON"
+    );
+    let serialized = serde_json::to_value(&since).unwrap();
+    assert_eq!(serialized["timeSource"], "runtime_event_append_time");
+    assert_eq!(serialized["since"], "2026-10-16T10:00:00Z");
     assert_eq!(since.summary["total"].count, 1);
     assert_eq!(since.summary["total"].median_seconds, 120 * 60);
     assert!(since.slices.iter().all(|row| row.key != "issue-11#pr-101"));
@@ -2166,4 +2176,114 @@ fn step_durations_are_exact_per_slice_and_summarised_per_step_1516() {
     assert_eq!(since.excluded.no_pr, 1);
     assert_eq!(since.excluded.open, 2);
     assert_eq!(since.excluded.merged_without_timestamp, 1);
+    assert_eq!(since.excluded.closed, 0);
+    assert_eq!(since.excluded.duplicate, 0);
+    assert_eq!(since.excluded.merged_without_matching_event, 0);
+    assert_eq!(since.time_source, "runtime_event_append_time");
+    assert_eq!(
+        (
+            since.population.scanned_raw_slices,
+            since.population.unique_pr_candidates,
+            since.population.merged,
+            since.population.open,
+            since.population.eligible_merged,
+        ),
+        (8, 6, 4, 2, 2)
+    );
+    assert_eq!(
+        since.population.scanned_raw_slices,
+        since.excluded.absorbed
+            + since.excluded.duplicate
+            + since.excluded.no_pr
+            + since.population.unique_pr_candidates
+    );
+    assert_eq!(
+        since.population.unique_pr_candidates,
+        since.population.merged + since.population.open + since.excluded.closed
+    );
+    assert_eq!(
+        since.population.merged,
+        since.population.eligible_merged
+            + since.excluded.before_window
+            + since.excluded.merged_without_timestamp
+            + since.excluded.merged_without_matching_event
+    );
+}
+
+#[test]
+fn duration_population_separates_mismatched_merges_and_closed_prs() {
+    use graphhelm_execution::tasks::{fold_task_events_with_routes, task_durations};
+
+    let mismatch = [
+        claimed(1, "codex-14", "issue-691", 691, "issue-691-fix"),
+        opened(2, "codex-14", "issue-691", 9, "aaaaaaaa"),
+        claimed(3, "codex-14", "issue-722", 722, "issue-722-followup"),
+        opened(4, "codex-14", "issue-722", 9, "aaaaaaaa"),
+        merged(5, "coordinator", "pr-9", 9, "bbbbbbbb", &[691]),
+    ]
+    .into_iter()
+    .map(|record| {
+        let sequence = record.sequence;
+        with_time(record, at("2026-10-16T00:00:00Z", sequence as i64))
+    })
+    .collect::<Vec<_>>();
+    let mismatch_fold = fold_task_events_with_routes(&mismatch);
+    let mismatch_durations = task_durations(&mismatch, &mismatch_fold.slices, None);
+    assert_eq!(
+        (
+            mismatch_durations.population.scanned_raw_slices,
+            mismatch_durations.population.unique_pr_candidates,
+            mismatch_durations.population.merged,
+            mismatch_durations.population.open,
+            mismatch_durations.population.eligible_merged,
+        ),
+        (2, 2, 2, 0, 0)
+    );
+    assert_eq!(mismatch_durations.excluded.merged_without_matching_event, 2);
+    assert_eq!(mismatch_durations.excluded.merged_without_timestamp, 0);
+    assert_eq!(
+        mismatch_durations.population.merged,
+        mismatch_durations.population.eligible_merged
+            + mismatch_durations.excluded.before_window
+            + mismatch_durations.excluded.merged_without_timestamp
+            + mismatch_durations.excluded.merged_without_matching_event
+    );
+
+    let closed = vec![
+        opened(1, "codex-6", "issue-685", 685, "aaaaaaaa"),
+        opened(2, "codex-6", "issue-685", 688, "bbbbbbbb"),
+        record(
+            3,
+            "task.closed",
+            "codex-6",
+            json!({"taskId": "issue-685", "pr": 685, "reason": "superseded", "by": 740}),
+        ),
+    ]
+    .into_iter()
+    .map(|record| {
+        let sequence = record.sequence;
+        with_time(record, at("2026-10-16T00:00:00Z", sequence as i64))
+    })
+    .collect::<Vec<_>>();
+    let closed_fold = fold_task_events_with_routes(&closed);
+    let closed_durations = task_durations(&closed, &closed_fold.slices, None);
+    assert_eq!(closed_durations.population.unique_pr_candidates, 2);
+    assert_eq!(closed_durations.population.merged, 0);
+    assert_eq!(closed_durations.population.open, 1);
+    assert_eq!(closed_durations.excluded.closed, 1);
+    assert_eq!(closed_durations.excluded.open, 1);
+    assert_eq!(closed_durations.population.scanned_raw_slices, 2);
+    assert_eq!(
+        closed_durations.population.scanned_raw_slices,
+        closed_durations.excluded.absorbed
+            + closed_durations.excluded.duplicate
+            + closed_durations.excluded.no_pr
+            + closed_durations.population.unique_pr_candidates
+    );
+    assert_eq!(
+        closed_durations.population.unique_pr_candidates,
+        closed_durations.population.merged
+            + closed_durations.population.open
+            + closed_durations.excluded.closed
+    );
 }

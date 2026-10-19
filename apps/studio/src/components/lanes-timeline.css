@@ -119,3 +119,6 @@
 .ab-act, .ab-name-form button { font: inherit; font-size: 12px; padding: 2px 8px; border-radius: 6px; border: 1px solid #2A2D35; background: transparent; color: inherit; cursor: pointer; }
 .ab-name-form { display: inline-flex; gap: 6px; }
 .ab-name-form input { font: inherit; font-size: 12px; padding: 2px 6px; width: 140px; }
+
+/* #1556: the same stated wait reason for more than 6 h: amber, so a forgotten wait cannot look healthy. */
+.ab-wait-stale { color: #FBBF24; }

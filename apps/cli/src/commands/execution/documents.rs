@@ -365,7 +365,18 @@ pub(crate) fn validate_task_event(
                 }),
             &["lane", "claimSequence", "reason", "releasedBy"],
         ),
-        "task.heartbeat" => (is_actor("lane"), &["lane"]),
+        // #1556: an optional reason says what the waiting lane is waiting on (same bounds as a
+        // release reason); absent, the heartbeat is exactly as before.
+        "task.heartbeat" => (
+            is_actor("lane")
+                && (document.get("reason").is_none()
+                    || document["reason"].as_str().is_some_and(|reason| {
+                        !reason.is_empty()
+                            && reason.chars().count() <= 500
+                            && !reason.chars().any(char::is_control)
+                    })),
+            &["lane", "reason"],
+        ),
         "task.planned" => (
             is_actor("lane")
                 && classes()
@@ -926,9 +937,49 @@ fn validate_heartbeat(
             _ => unreachable!(),
         }
     }
-    if open_claims.is_empty() {
+    // #1556: a task at the PR step is still this lane's work while its PR is open, so the PR's
+    // author may heartbeat it too. Ended PRs are named by `task.merged` / `task.closed`, signed by
+    // whoever merged or closed (another lane), so they are opened only in this case, only for this
+    // task, and only to learn which of this lane's opened PRs have ended.
+    let open_prs = if open_claims.is_empty() && !opened_prs.is_empty() {
+        let mut open = opened_prs.clone();
+        for event in history {
+            let EventKind::SignalRecorded(recorded) = &event.kind else {
+                continue;
+            };
+            if !matches!(recorded.kind.as_str(), "task.merged" | "task.closed") {
+                continue;
+            }
+            let reference = event.evidence_refs.first().ok_or_else(invalid_history)?;
+            let envelope = super::tasks::opened_envelope(
+                store,
+                scope,
+                &generation,
+                reference.evidence_id(),
+                recorded.envelope_sha256.as_str(),
+                |sealed| {
+                    let plaintext = runtime.block_on(opener.open(scope.clone(), sealed)).ok()?;
+                    plaintext.expose(|bytes| serde_json::from_slice(bytes)).ok()
+                },
+            )
+            .ok_or_else(invalid_history)?;
+            let record: serde_json::Value = envelope["description"]
+                .as_str()
+                .and_then(|text| serde_json::from_str(text).ok())
+                .ok_or_else(invalid_history)?;
+            if record["taskId"] == document["taskId"]
+                && let Some(pr) = record["pr"].as_u64()
+            {
+                open.retain(|opened| *opened != pr);
+            }
+        }
+        open
+    } else {
+        Vec::new()
+    };
+    if open_claims.is_empty() && open_prs.is_empty() {
         return Err(super::signal_invalid(
-            "heartbeat requires an open pre-PR claim",
+            "heartbeat requires an open pre-PR claim or an open PR this lane opened",
             pointer,
         ));
     }

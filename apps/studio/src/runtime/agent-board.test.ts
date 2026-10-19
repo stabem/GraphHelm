@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TEST_FREE_MS, TEST_SILENT_MS, laneBarsOf } from "../test/task-fold";
-import { agentBoard, span, stepOf } from "./agent-board";
+import { WAIT_AMBER_MS, agentBoard, span, stepOf } from "./agent-board";
 import type { Bot } from "./team";
 import { type Lane, type TimedTaskEvent } from "./lane-bars";
 import type { MissionTask } from "./mission";
@@ -42,6 +42,18 @@ describe("agentBoard", () => {
     const verified = agentBoard([], [idle], [], now, [], [], [], ["idle"], { idle: 3 * M }, TEST_FREE_MS, { idle: "verified" })[0]!;
     expect(claimed.latest).toBe("last seen 3m ago · claimed");
     expect(verified.latest).toBe("last seen 3m ago · verified");
+  });
+  it("#1556: a stated wait reads as a wait, since its first heartbeat with this reason", () => {
+    const waiting = { ...lane("w", []), lastRecord: { kind: "heartbeat", issue: 1556, at: now - M, reason: "waiting on #1670 to land", reasonSince: now - 40 * M } };
+    const row = agentBoard([], [waiting], [], now)[0]!;
+    expect(row.latest).toBe("waiting · waiting on #1670 to land · since 40m ago");
+    expect(row.waitStale).toBe(false);
+  });
+  it("#1556: the same reason for more than 6 h is marked waiting 6h+", () => {
+    const stuck = { ...lane("w", []), lastRecord: { kind: "heartbeat", issue: 1556, at: now - M, reason: "waiting on #1670 to land", reasonSince: now - WAIT_AMBER_MS - M } };
+    const row = agentBoard([], [stuck], [], now)[0]!;
+    expect(row.latest?.startsWith("waiting 6h+ · waiting on #1670 to land · since ")).toBe(true);
+    expect(row.waitStale).toBe(true);
   });
   it("uses the slot's PR label, never an older review assignment", () => {
     const old = { ...lane("rev", []), lastRecord: { kind: "review_assigned", pr: 720, at: now - M } };

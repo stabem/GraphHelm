@@ -692,11 +692,21 @@ pub fn parse_task_event(
                 || !document.keys().all(|key| {
                     matches!(
                         key.as_str(),
-                        "schema" | "taskId" | "revision" | "at" | "lane"
+                        "schema" | "taskId" | "revision" | "at" | "lane" | "reason"
                     )
                 })
             {
                 return None;
+            }
+            // #1556: an optional reason says what the waiting lane is waiting on, bounded as a
+            // release reason. A heartbeat that carries one is a step for liveness; without one
+            // (the Stop hook's) it renews the lease only.
+            if document.contains_key("reason") {
+                let reason = field("reason").as_str()?;
+                if reason.is_empty() || reason.chars().count() > 500 || has_control(reason) {
+                    return None;
+                }
+                record.reason = Some(reason.to_owned());
             }
             record.lane = Some(actor_id.to_owned());
         }

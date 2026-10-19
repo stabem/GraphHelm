@@ -15,7 +15,12 @@ export interface LaneBar {
   issue?: number; headSha?: string;
 }
 /** #591: the newest record a lane left: its kind without the `task.` prefix, and its PR or issue. */
-export interface LaneRecord { kind: string; pr?: number; issue?: number; at: number }
+export interface LaneRecord {
+  kind: string; pr?: number; issue?: number; at: number;
+  /** #1556: a heartbeat's stated reason, and when the lane first gave this same reason in an
+   * unbroken run of heartbeats (any other step ends the run). */
+  reason?: string; reasonSince?: number;
+}
 export interface Lane {
   /** #1234: `silent` is the Runtime's verdict (`liveness.lanes`), not a threshold kept here. */
   lane: string; bars: LaneBar[]; silent: boolean; lastEventAt: number;
@@ -156,10 +161,19 @@ export function laneBars(events: TimedTaskEvent[], fold: LaneFold, now: number, 
       const l = laneOf(actor);
       if (t >= l.last) {
         l.last = t;
+        // #1556 (review): the Stop hook's reasonless heartbeat is still lane activity (`last`),
+        // but it never replaces the record, so it neither breaks nor restarts a stated wait and a
+        // forgotten wait still reaches the 6 h marker.
+        if (e.kind === "task.heartbeat" && e.reason === undefined) continue;
         const rec: LaneRecord = { kind: e.kind.replace(/^task\./, ""), at: t };
         const pr = e.pr ?? prOfKey.get(slice);
         if (pr !== undefined) rec.pr = pr;
         if (e.issue !== undefined) rec.issue = e.issue;
+        if (e.kind === "task.heartbeat" && e.reason !== undefined) {
+          const same = l.record?.kind === "heartbeat" && l.record.reason === e.reason && l.record.reasonSince !== undefined;
+          rec.reason = e.reason;
+          rec.reasonSince = same ? l.record!.reasonSince : t;
+        }
         l.record = rec;
       }
     }

@@ -57,6 +57,9 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
       onRun?.(preview.run);
     }
   }, [preview.run, onRun]);
+  // #1635: a Run blocks until the run ends; say so at once, here and on the rail.
+  const running = preview.launching || preview.run?.state === "running";
+  useEffect(() => { if (preview.launching) onRun?.({ state: "running", kind: "preview" }); }, [preview.launching, onRun]);
   const act = (action: () => Promise<void>) => {
     onBusy?.(true);
     onActionError?.(null);
@@ -83,9 +86,9 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
           aria-describedby={approvalReason ? "proof-approval-reason" : undefined} onClick={() => onApprove && act(() => onApprove(flow.id))}>Approve</button>
           {approvalReason && <span id="proof-approval-reason">{approvalReason}</span>}</>}
         {onWatch && <button type="button" disabled={busy} onClick={() => act(() => onWatch(flow.id))}>Watch</button>}
-        {run && <button type="button" disabled={preview.launching || preview.run?.state === "running"} onClick={preview.again}>Run again</button>}
+        {run && <button type="button" disabled={running} onClick={preview.again}>Run again</button>}
         {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}
-        {preview.run?.state === "running" && <span role="status">Running…</span>}
+        {running && <span role="status">Running…</span>}
         {(error || preview.failure || preview.busyReason) && <p role="alert">{error ?? preview.failure ?? preview.busyReason}</p>}
         {!error && !preview.failure && !preview.busyReason && preview.run?.state === "failed" && <p role="alert">{runFailure(preview.run, mission.steps.map((s) => s.stepId))}</p>}
       </div>}

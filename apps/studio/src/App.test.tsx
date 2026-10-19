@@ -578,6 +578,25 @@ describe("live team layout", () => {
     expect(await screen.findByRole("button", { name: "1 decision needs you" })).toHaveClass("beacon-lit");
   });
 
+  // #1635: a draft whose only contract is the one the Studio synthesizes from its flow, and whose
+  // preview passed, is approvable from the Graph rail without first opening it in Proof.
+  it("#1635: a previewed draft with no compiled contract offers Approve on the Graph rail", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const flow = { id: "connect", title: "Connect", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "gate", url: "/", state: "stable" }, { id: "run", url: "/run", state: "stable" }],
+      edges: [{ id: "gate.connect", from: "gate", to: "run" }], paths: { main: ["gate.connect"] } };
+    const other = { ...flow, id: "share", title: "Share" };
+    const journeyRun = vi.fn(async () => ({ state: "ready", kind: "preview", result: "pass",
+      screens: { gate: { result: "pass", frame: false }, run: { result: "pass", frame: false } }, edges: { "gate.connect": { result: "pass" } } }));
+    await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [flow, other] })),
+      journeys: vi.fn(async () => ({ journeys: [] })), journeyRun }));
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    expect(await screen.findByRole("button", { name: "Approve 2" })).toBeEnabled();
+    expect(journeyRun).toHaveBeenCalledWith("share");
+    expect(screen.getAllByText("✓ passed")).toHaveLength(2);
+    expect(await screen.findByRole("button", { name: "2 decisions need you" })).toHaveClass("beacon-lit");
+  });
+
   it("shows the handover after a long gap and advances only on Got it", async () => {
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
     await open(longGapClient());

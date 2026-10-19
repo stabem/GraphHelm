@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-import { ProjectRail } from "./rail";
+import { RunHistory } from "./rail";
 import type { ExecutionSummary } from "../runtime/types";
 
 /**
@@ -23,19 +23,15 @@ const summary = (executionId: string, executor: ExecutionSummary["executor"]): E
 describe("the demonstration mark on the rail", () => {
   it("marks a fixture run and leaves a gateway run and an undeclared one alone", () => {
     render(
-      <ProjectRail
-        projects={[
-          { name: "store", runs: [summary("demo", "fixture"), summary("real", "gateway"), summary("old", null)] },
-        ]}
+      <RunHistory defaultOpen
+        project={{ name: "store", runs: [summary("demo", "fixture"), summary("real", "gateway"), summary("old", null)] }}
         selected=""
-        connected
+        
         hasMore={false}
         busy={false}
         onSelect={vi.fn()}
         onLoadMore={vi.fn()}
         onNewTask={vi.fn()}
-        onAddProject={vi.fn()}
-        onOpenModels={vi.fn()}
       />,
     );
     const marks = screen.getAllByText(/demonstration/);

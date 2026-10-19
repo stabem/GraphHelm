@@ -6,6 +6,10 @@
  * shape for many and filling it with one is honest - inventing a hierarchy nothing enforces would
  * not be.
  *
+ * ONE CARD PER PROJECT (#1654, D-060). The rail shows each project as one card and no run rows;
+ * the card opens the project's live run (`homeRun`), and every run stays reachable as history
+ * inside the project's screen (`RunHistory`).
+ *
  * ONE LONG THING PER LINE, and that rule is the whole layout. The folder name owns its line; the
  * task id owns its own. Everything beside them is fixed width, so when the rail narrows the
  * ellipsis lands on a name instead of the layout breaking. The version this replaces put icon,
@@ -192,15 +196,6 @@ export function ProjectRail({
 }) {
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(projectName ?? "");
-  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
-  const [historyMode, setHistoryMode] = useState<"auto" | "shown" | "hidden">("auto");
-  const [view, setView] = useState(loadView);
-  const [viewMenu, setViewMenu] = useState(false);
-  const chooseView = (next: Partial<{ group: RailGroup; sort: RailSort }>) => {
-    const merged = { ...view, ...next };
-    setView(merged);
-    saveView(merged);
-  };
   useEffect(() => setDraftName(projectName ?? ""), [projectName]);
   const saveName = () => {
     if (onRenameProject?.(draftName) !== false) setEditing(false);
@@ -297,16 +292,6 @@ export function ProjectRail({
                   and the tooltip, where it costs no width. */}
               <button
                 type="button"
-                className={`icon-action ${viewMenu ? "on" : ""}`}
-                onClick={() => setViewMenu((open) => !open)}
-                aria-label="Group and sort tasks"
-                aria-expanded={viewMenu}
-                title="Group and sort"
-              >
-                <ListFilter aria-hidden="true" />
-              </button>
-              <button
-                type="button"
                 className="icon-action"
                 onClick={onNewTask}
                 disabled={!connected}
@@ -316,6 +301,127 @@ export function ProjectRail({
                 <Plus aria-hidden="true" />
               </button>
             </div>
+            <div className="project-path" title={project.path ?? "Project folder path unavailable"}>
+              {project.path ?? "Project folder path unavailable"}
+            </div>
+            {(() => {
+              const home = homeRun(project.runs, teamRuns);
+              const on = project.runs.some((run) => run.executionId === selected);
+              const state = home ? (home.executionId === selected && selectedPresentation ? selectedPresentation.status : readable(home.attention)) : "nothing running";
+              return (
+                <button
+                  type="button"
+                  className={`project-card ${on ? "on" : ""}`}
+                  aria-current={on ? "true" : undefined}
+                  aria-label={`Open project ${project.name}; ${state}`}
+                  title={state}
+                  onClick={() => (home ? onSelect(home.executionId) : onNewTask())}
+                >
+                  <span className="run-lines">
+                    <span className="run-id">{state}</span>
+                    <span className="run-when">{home ? `${relativeActivity(home.lastEventAt)} · ${readable(home.status)}` : "start a task"}</span>
+                  </span>
+                </button>
+              );
+            })()}
+          </div>
+        ))}
+        {removedRuns.length > 0 && (
+          <div className="removed-runs" aria-label="Removed tasks">
+            <p className="lbl">Removed from this browser</p>
+            {removedRuns.map((id) => <button type="button" className="show-more" key={id} onClick={() => onRestoreRun?.(id)}><RotateCcw aria-hidden="true" /> restore {id}</button>)}
+          </div>
+        )}
+      </div>
+
+      <button type="button" className="add-project" onClick={onOpenModels}>
+        <SlidersHorizontal aria-hidden="true" />
+        models
+      </button>
+
+      {/* Closing the list rather than heading it: this acts on the LIST, not on any one folder. */}
+      <button type="button" className="add-project" onClick={onAddProject}>
+        <FolderPlus aria-hidden="true" />
+        add project folder
+      </button>
+    </nav>
+  );
+}
+
+/** The project's live run: the run its card opens (#1654). A run carrying task records is the
+ * project's work guided by issues, so it wins; otherwise the newest ongoing run; otherwise the
+ * newest run of any status. Every other run is history inside the project's screen. */
+export function homeRun(runs: ExecutionSummary[], teamRuns?: ReadonlySet<string>): ExecutionSummary | null {
+  const team = recentFirst(runs.filter((run) => teamRuns?.has(run.executionId)));
+  if (team.length > 0) return team[0];
+  const ongoing = recentFirst(runs.filter((run) => ["running", "paused", "blocked"].includes(run.status)));
+  return ongoing[0] ?? recentFirst(runs)[0] ?? null;
+}
+
+/**
+ * Every run of one project, as history inside the project's screen (#1654). The rail no longer
+ * lists runs: it shows one card per project. This is the grouped list the rail used to carry,
+ * moved, so no run stops being reachable and no event is touched - choosing a row only changes
+ * which run this page shows.
+ */
+export function RunHistory({
+  project,
+  selected,
+  hasMore,
+  busy,
+  onSelect,
+  onLoadMore,
+  onNewTask,
+  onRemoveRun,
+  briefings = {},
+  teamRuns,
+  selectedPresentation = null,
+  defaultOpen = false,
+}: {
+  project: Project;
+  selected: string;
+  hasMore: boolean;
+  busy: boolean;
+  onSelect: (id: string) => void;
+  onLoadMore: () => void;
+  onNewTask: () => void;
+  onRemoveRun?: (id: string) => void;
+  briefings?: Record<string, { objective: string | null; name?: string | null } | null>;
+  teamRuns?: ReadonlySet<string>;
+  selectedPresentation?: { key: string; status: string } | null;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [historyMode, setHistoryMode] = useState<"auto" | "shown" | "hidden">("auto");
+  const [view, setView] = useState(loadView);
+  const [viewMenu, setViewMenu] = useState(false);
+  const chooseView = (next: Partial<{ group: RailGroup; sort: RailSort }>) => {
+    const merged = { ...view, ...next };
+    setView(merged);
+    saveView(merged);
+  };
+  const runs = project.runs;
+  return (
+    <section className="run-history" aria-label={`History of ${project.name}`}>
+      <div className="run-history-head">
+        <button type="button" className="run-group-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          History ({runs.length})
+        </button>
+        {open && (
+              <button
+                type="button"
+                className={`icon-action ${viewMenu ? "on" : ""}`}
+                onClick={() => setViewMenu((open) => !open)}
+                aria-label="Group and sort tasks"
+                aria-expanded={viewMenu}
+                title="Group and sort"
+              >
+                <ListFilter aria-hidden="true" />
+              </button>
+        )}
+      </div>
+      {open && (<>
             {viewMenu && (
               <div className="rail-view-menu" role="group" aria-label="Group and sort tasks">
                 <p className="lbl">Group by</p>
@@ -332,14 +438,10 @@ export function ProjectRail({
                 ))}
               </div>
             )}
-            <div className="project-path" title={project.path ?? "Project folder path unavailable"}>
-              {project.path ?? "Project folder path unavailable"}
-            </div>
-
             <div className="project-runs">
               {(() => {
-                const dated = project.runs.filter(hasRecordedActivity);
-                const unknownTime = recentFirst(project.runs.filter((run) => !hasRecordedActivity(run)));
+                const dated = runs.filter(hasRecordedActivity);
+                const unknownTime = recentFirst(runs.filter((run) => !hasRecordedActivity(run)));
                 const ongoing = recentFirst(dated.filter((run) => ["running", "paused", "blocked"].includes(run.status)));
                 const history = recentFirst(dated.filter((run) => ["completed", "failed", "cancelled"].includes(run.status)));
                 const unknown = recentFirst(dated.filter((run) => !["running", "paused", "blocked", "completed", "failed", "cancelled"].includes(run.status)));
@@ -411,7 +513,7 @@ export function ProjectRail({
                 );
                 });
                 if (view.group !== "status") {
-                  const ordered = sortedBy(project.runs, view.sort);
+                  const ordered = sortedBy(runs, view.sort);
                   if (view.group === "none") return <div role="group" aria-label={`All runs (${ordered.length})`}>{renderRows(ordered)}</div>;
                   // DAY GROUPS follow the same clock as the sort, so a run sits under the day it
                   // was last touched (or started) and the newest day is always on top.
@@ -441,7 +543,7 @@ export function ProjectRail({
                 </>;
               })()}
 
-              {project.runs.length === 0 && (
+              {runs.length === 0 && (
                 <button type="button" className="rail-empty" onClick={onNewTask}>
                   No task yet — start one
                 </button>
@@ -453,26 +555,7 @@ export function ProjectRail({
                 </button></>
               )}
             </div>
-          </div>
-        ))}
-        {removedRuns.length > 0 && (
-          <div className="removed-runs" aria-label="Removed tasks">
-            <p className="lbl">Removed from this browser</p>
-            {removedRuns.map((id) => <button type="button" className="show-more" key={id} onClick={() => onRestoreRun?.(id)}><RotateCcw aria-hidden="true" /> restore {id}</button>)}
-          </div>
-        )}
-      </div>
-
-      <button type="button" className="add-project" onClick={onOpenModels}>
-        <SlidersHorizontal aria-hidden="true" />
-        models
-      </button>
-
-      {/* Closing the list rather than heading it: this acts on the LIST, not on any one folder. */}
-      <button type="button" className="add-project" onClick={onAddProject}>
-        <FolderPlus aria-hidden="true" />
-        add project folder
-      </button>
-    </nav>
+      </>)}
+    </section>
   );
 }

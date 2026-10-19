@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
-import { ProjectRail, dayOf } from "./rail";
+import { RunHistory, dayOf } from "./rail";
 import type { ExecutionSummary } from "../runtime/types";
 
 /**
@@ -19,10 +19,10 @@ const run = (executionId: string, lastEventAt: string, startedAt: string, status
 });
 
 const rail = (runs: ExecutionSummary[]) => render(
-  <ProjectRail
-    projects={[{ name: "store", runs }]}
-    selected="" connected hasMore={false} busy={false}
-    onSelect={vi.fn()} onLoadMore={vi.fn()} onNewTask={vi.fn()} onAddProject={vi.fn()} onOpenModels={vi.fn()}
+  <RunHistory defaultOpen
+    project={{ name: "store", runs }}
+    selected=""  hasMore={false} busy={false}
+    onSelect={vi.fn()} onLoadMore={vi.fn()} onNewTask={vi.fn()}
   />,
 );
 

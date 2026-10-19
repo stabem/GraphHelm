@@ -69,8 +69,40 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   When git still refuses ("contains modified or untracked files"), find what is left and deal with
   it by name. Never answer that refusal with `--force` while a junction is inside.
 - After a merge the merger removes the PR's worktrees with `graphhelm workspace sweep --apply --merged-branch <branch> --repo <repo> --pr <N> --head <sha> [--target <dir>]... [--keep-worktree <dir>]` (DELIVERY.md §5): it stops the processes inside the PR's worktrees, unlinks links without following them, saves uncommitted work to `D:/_merge-leftovers/<N>/`, and removes every worktree and review checkout of the PR (any lane's), the named per-PR targets and the local branch. For the one kept worktree (`--keep-worktree`), see [KEEL_MERGE.md](../../keel/KEEL_MERGE.md) step 5.
-- Removal by name, and never `git worktree prune`, is DELIVERY.md §6; never touch another lane's
-  ticket either.
+- Removal by name is DELIVERY.md §6; never touch another lane's ticket either. The one sweep
+  allowed to remove by rule and to run `git worktree prune` is
+  `graphhelm workspace sweep --all [--apply] [--repo <repo>]` (#1578). Without `--apply` it only
+  reports. It covers every registered worktree of the repository (`.claude/worktrees` among them)
+  and every build cache (a directory holding `CACHEDIR.TAG`, up to three levels down) under the
+  slot and target roots `D:/gh`, `D:/gh/b`, `D:/gh/c`, `D:/gh/sub`, `D:/ghb`, `D:/ghc`, `D:/ghopt`,
+  `C:/ghc`, `C:/gh` and `C:/w/a`..`C:/w/d` (`--sweep-root` replaces the list). It removes a
+  worktree only when no live process holds it and its PR is merged or closed (`gh pr list`, or its
+  content already in `origin/main`), or it is clean, pushed and idle for `--idle-hours` (24). It
+  saves dirty work to `D:/_merge-leftovers/<worktree>/` first, skips and reports a locked
+  worktree without unlocking it, keeps unmerged unpushed work, and never follows a link. A cache
+  is removed when idle and held by no process; logs, notes and other files under a root are not
+  touched. Exit code 3 means something could not be removed.
+- The sweep also runs hidden, every hour, as a scheduled task the orchestrator registers once:
+
+      $a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument '-NoProfile -NonInteractive -WindowStyle Hidden -Command "& $env:USERPROFILE\.cargo\bin\graphhelm.exe --json workspace sweep --all --apply --repo F:/github/GraphHelm *>> D:/_merge-leftovers/sweep-all.log"'
+      $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 1)
+      $s = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 50)
+      Register-ScheduledTask -TaskName "GraphHelm sweep all" -Action $a -Trigger $t -Settings $s
+
+- The board follows GitHub by itself (#1628): the Stop reconciler
+  (`plugins/graphhelm/hooks/tasks_reconcile.py`) also runs every 5 minutes as a hidden scheduled
+  task with `--lane graphhelm --adopt-opened`, so a merge or close is recorded even when no lane
+  stops again, and an open PR whose `Closes #N` names an open claim gets the `task.pr_opened` its
+  lane forgot (signed with that lane's own credential file; a lane without one is reported under
+  `adopted.refused`). It is a scheduled job, not a serve-side poller, so the Runtime and the Policy
+  Engine stay network-free and the same reconciler code runs on Stop and on the timer. `pythonw`
+  has no console, so `--log` appends each reply. The orchestrator registers it once (and mints the
+  `graphhelm` credential first: `graphhelm tasks credential --lane graphhelm --execution gh-team --token-file F:/github/GraphHelm/.graphhelm/events.token`):
+
+      $a = New-ScheduledTaskAction -Execute "pythonw.exe" -Argument 'F:/github/GraphHelm/plugins/graphhelm/hooks/tasks_reconcile.py --execution gh-team --url http://127.0.0.1:8793 --token-file F:/github/GraphHelm/.graphhelm/events.agent.token --repo stabem/GraphHelm --lane graphhelm --adopt-opened --log D:/_merge-leftovers/board-sync.log'
+      $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+      $s = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 4)
+      Register-ScheduledTask -TaskName "GraphHelm board sync" -Action $a -Trigger $t -Settings $s
 
 ## 3. Builds: one slot for the whole machine
 
@@ -128,8 +160,9 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 
       {"targetRoot": "C:/gh", "cap": 3, "minFreeGb": 20}
 
-  Put `targetRoot` on the volume with the most free space (the shared machine uses `D:/ghc`; the
-  system drive `C:` fell below the floor and refused a review, #1532). Changing `targetRoot`
+  Slot roots and targets live on the SSD NVMe `C:` drive (#1578): the slot roots are `C:/w/a`,
+  `C:/w/b`, `C:/w/c` and `C:/w/d`, and their `targetRoot` is `C:/ghc`. The older `D:` roots are
+  still swept by `workspace sweep --all` until they are empty. Changing `targetRoot`
   does not move existing targets: each old record is kept as `target_root_changed`, so remove the
   old root's directories of retired lanes by hand, and never one a live process still builds in.
   With it the slot runs the command with
@@ -241,7 +274,9 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   run is not a pass. A running command retains the slot until it exits; exceeding the budget never
   kills only a parent and releases the lock over surviving children. No further check starts
   after the budget is exhausted. Unmapped paths and whole-package plans require explicit handling;
-  a whole-package exception needs its reason in the card and the runner argument.
+  a whole-package exception needs its reason in the card and the runner argument. Do not pass
+  `--allow-whole-package` by default (#1608): an `apps/cli/src/commands` change reaches only its
+  modules (DELIVERY.md §3), and the scheduled main whole run (#1540) is the whole-package backstop.
 
   Keep the same isolated worktree target warm across edits. Cold preparation and explicit broad
   audits may exceed 900 seconds and must be reported as such. Long experiments run as separate

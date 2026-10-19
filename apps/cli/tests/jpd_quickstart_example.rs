@@ -5,6 +5,8 @@
 //! rule that drops the journey from the commit) and the guide's documented commands stop working.
 //! Real CLI, Git and child processes; no browser, Node or provider. Cost: a few seconds after
 //! build; needs `sh` and `python3`.
+#[path = "support/mod.rs"]
+mod support;
 use std::path::Path;
 
 use serde_json::Value;
@@ -115,6 +117,7 @@ fn the_quickstart_example_validates_green_and_its_sabotage_is_caught() {
         "{report}"
     );
 
+    support::passing_preview(root, "quickstart");
     let (code, reply) = graphhelm(
         root,
         &[

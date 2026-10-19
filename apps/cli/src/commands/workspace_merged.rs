@@ -26,16 +26,16 @@ const COMMAND: &str = "workspace.sweep";
 /// A link scan that keeps finding links past this many is refused rather than looped on.
 const MAX_LINKS: usize = 4096;
 
-struct Worktree {
-    path: PathBuf,
-    head: String,
-    branch: Option<String>,
+pub(crate) struct Worktree {
+    pub(crate) path: PathBuf,
+    pub(crate) head: String,
+    pub(crate) branch: Option<String>,
     /// `Some(reason)` when git reports the worktree locked; a harness locks its own live worktree
     /// (`locked claude agent <id> (pid N)`, or `locked initializing`) and the sweep never takes it.
-    locked: Option<String>,
+    pub(crate) locked: Option<String>,
 }
 
-fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(dir)
@@ -49,7 +49,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
-fn worktrees(repo: &Path) -> Result<Vec<Worktree>, String> {
+pub(crate) fn worktrees(repo: &Path) -> Result<Vec<Worktree>, String> {
     let listed = git(repo, &["worktree", "list", "--porcelain"])?;
     let mut found = Vec::new();
     for block in listed.split("\n\n") {
@@ -86,7 +86,7 @@ fn same(a: &Path, b: &Path) -> bool {
     graphhelm_process_tree::path_is_inside(a, b) && graphhelm_process_tree::path_is_inside(b, a)
 }
 
-fn show(path: &Path) -> String {
+pub(crate) fn show(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
@@ -133,7 +133,7 @@ fn unlink_links(dir: &Path) -> Result<Vec<String>, String> {
 
 /// Saves tracked changes as `changes.patch` and copies untracked files under `untracked/`.
 /// `Ok(None)`: the worktree was clean and nothing was written.
-fn save_leftovers(worktree: &Path, into: &Path) -> Result<Option<String>, String> {
+pub(crate) fn save_leftovers(worktree: &Path, into: &Path) -> Result<Option<String>, String> {
     let status = git(
         worktree,
         &["status", "--porcelain", "--untracked-files=all"],
@@ -161,7 +161,7 @@ fn save_leftovers(worktree: &Path, into: &Path) -> Result<Option<String>, String
     Ok(Some(show(into)))
 }
 
-fn remove_worktree(repo: &Path, worktree: &Worktree, leftovers: &Path) -> Value {
+pub(crate) fn remove_worktree(repo: &Path, worktree: &Worktree, leftovers: &Path) -> Value {
     let path = &worktree.path;
     let (stopped, survived) = stop_processes(path);
     let mut row = json!({"path": show(path), "stopped": stopped});

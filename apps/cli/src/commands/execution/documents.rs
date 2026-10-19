@@ -981,7 +981,12 @@ pub(crate) fn validate_owner_execution(
     let owner_kind = kind == APPROVED_KIND
         || kind == MARK_KIND
         || kind == AGENT_APPROVED_KIND
-        || kind == crate::commands::journey_owner::DRAFTED_KIND;
+        || kind == crate::commands::journey_owner::DRAFTED_KIND
+        || kind == crate::commands::journey_owner::PREVIEWED_KIND;
+    // #1309 card 1c: the preview runner records a passing preview as itself (System).
+    let runner_preview = kind == crate::commands::journey_owner::PREVIEWED_KIND
+        && actor.actor_type() == graphhelm_protocols::PersistedActorType::System
+        && actor.id().as_str() == crate::commands::journey_owner::PREVIEW_RUNNER;
     // #1130: the one record an agent may add here is a reviewer's journey approval, whose own
     // validator binds it to its reviewer and refuses the flow's author.
     let agent_review = (kind == AGENT_APPROVED_KIND
@@ -989,7 +994,8 @@ pub(crate) fn validate_owner_execution(
         && actor.actor_type() == graphhelm_protocols::PersistedActorType::Agent;
     if (reserved
         && actor.actor_type() != graphhelm_protocols::PersistedActorType::Owner
-        && !agent_review)
+        && !agent_review
+        && !runner_preview)
         || squats("journey-approved-", APPROVED_KIND)
         || squats("journey-agent-approved-", AGENT_APPROVED_KIND)
         || squats(
@@ -997,6 +1003,11 @@ pub(crate) fn validate_owner_execution(
             crate::commands::journey_owner::DRAFTED_KIND,
         )
         || squats("journey-safe-", MARK_KIND)
+        || squats(
+            "journey-previewed-",
+            crate::commands::journey_owner::PREVIEWED_KIND,
+        )
+        || (kind == crate::commands::journey_owner::PREVIEWED_KIND && !runner_preview)
         || (owner_kind && !reserved)
     {
         return Err(super::signal_invalid(
@@ -1047,6 +1058,64 @@ fn validate_journey_mark(value: &serde_json::Value, actor: &PersistedActor) -> R
             h.len() == 64 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
         })
         || value["id"].as_str() != Some(mark_signal_id(flow, edge, digest).as_str())
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// #1309 card 1c: a passing preview record names one flow, its digest and its scope commit, and
+/// its id must be the one those three give, so a reader trusts the id without the envelope. The
+/// actor is checked by `validate_owner_execution`.
+fn validate_journey_preview(value: &serde_json::Value) -> Result<(), Failure> {
+    use crate::commands::journey_owner::{PREVIEWED_PROTOCOL, previewed_signal_id};
+    let invalid = || {
+        super::signal_invalid(
+            "a preview record names one flow, its digest and its scope commit",
+            "/signal",
+        )
+    };
+    let description: serde_json::Value = value["description"]
+        .as_str()
+        .and_then(|text| serde_json::from_str(text).ok())
+        .ok_or_else(invalid)?;
+    let hex = |text: &str, len: usize| {
+        text.len() == len && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    };
+    let flow = description["flowId"].as_str().unwrap_or("");
+    let digest = description["digest"].as_str().unwrap_or("");
+    let commit = description["scopeCommit"].as_str().unwrap_or("");
+    let known = description.as_object().is_some_and(|object| {
+        object.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "protocol"
+                    | "flowId"
+                    | "digest"
+                    | "scopeCommit"
+                    | "result"
+                    | "evidenceSha256"
+                    | "runnerSha256"
+                    | "version"
+            )
+        })
+    });
+    if description["protocol"] != PREVIEWED_PROTOCOL
+        || !known
+        || description["result"] != "pass"
+        || OpaqueId::parse(flow).is_err()
+        || !digest.strip_prefix("sha256:").is_some_and(|h| hex(h, 64))
+        || !hex(commit, 40)
+        || !description["evidenceSha256"]
+            .as_str()
+            .is_some_and(|h| hex(h, 64))
+        || !description["runnerSha256"]
+            .as_str()
+            .is_some_and(|h| hex(h, 64))
+        || !description["version"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty() && v.len() <= 64)
+        || value["id"].as_str() != Some(previewed_signal_id(flow, digest, commit).as_str())
     {
         return Err(invalid());
     }
@@ -1174,6 +1243,9 @@ pub(crate) fn validate_owner_signal(
     }
     if kind == crate::commands::journey_owner::AGENT_APPROVED_KIND {
         return validate_journey_agent_approval(value, actor);
+    }
+    if kind == crate::commands::journey_owner::PREVIEWED_KIND {
+        return validate_journey_preview(value);
     }
     if !matches!(
         kind,
@@ -2099,6 +2171,55 @@ mod journey_approval_tests {
                 "{value} by {by:?}"
             );
         }
+    }
+
+    /// #1309 card 1c: in the reserved owner execution, a preview record is admitted only from the
+    /// preview runner (System, its own actor id), and only with the id its flow, digest and scope
+    /// commit give; no other kind may take its id prefix. Cost: in memory.
+    #[test]
+    fn only_the_preview_runner_records_a_preview_and_its_id_names_what_it_vouches_for() {
+        use crate::commands::journey_owner::{
+            OWNER_EXECUTION, PREVIEW_RUNNER, PREVIEWED_KIND, PREVIEWED_PROTOCOL,
+            previewed_signal_id,
+        };
+        let digest = format!("sha256:{}", "b".repeat(64));
+        let commit = "c".repeat(40);
+        let record = |id: String, commit: &str| {
+            serde_json::json!({
+                "id": id, "type": PREVIEWED_KIND, "severity": "low",
+                "source": {"type": "node", "id": PREVIEW_RUNNER},
+                "description": serde_json::json!({"protocol": PREVIEWED_PROTOCOL,
+                    "flowId": "checkout", "digest": digest, "scopeCommit": commit,
+                    "result": "pass", "evidenceSha256": "d".repeat(64),
+                    "runnerSha256": "e".repeat(64), "version": "0.1.1"}).to_string(),
+            })
+        };
+        let good = record(previewed_signal_id("checkout", &digest, &commit), &commit);
+        let runner = actor(PersistedActorType::System, PREVIEW_RUNNER);
+        let reserved = Some(OWNER_EXECUTION);
+        assert!(super::validate_owner_execution(reserved, &good, &runner).is_ok());
+        assert!(super::validate_owner_signal(&good, &runner, false).is_ok());
+        for by in [
+            actor(PersistedActorType::Owner, "owner-cli"),
+            actor(PersistedActorType::Agent, "gh-claude-2"),
+            actor(PersistedActorType::System, "system-cli"),
+        ] {
+            assert!(
+                super::validate_owner_execution(reserved, &good, &by).is_err(),
+                "{by:?}"
+            );
+        }
+        assert!(super::validate_owner_execution(None, &good, &runner).is_err());
+        // An id that names another scope commit than the description is refused.
+        let other = record(
+            previewed_signal_id("checkout", &digest, &"f".repeat(40)),
+            &commit,
+        );
+        assert!(super::validate_owner_signal(&other, &runner, false).is_err());
+        // Another kind may not take the prefix.
+        let mut squat = good.clone();
+        squat["type"] = "note".into();
+        assert!(super::validate_owner_execution(None, &squat, &runner).is_err());
     }
 
     #[test]

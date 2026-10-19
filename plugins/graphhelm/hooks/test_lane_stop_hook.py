@@ -471,6 +471,50 @@ class LaneStopTests(unittest.TestCase):
             tasks_reconcile.post_closed("http://127.0.0.1:1", "t", "run", "issue-7", "o/r", "lane-a",
                                         {"pr": 7, "reason": "abandoned", "by": 7})
 
+    def test_a_laneless_scheduled_run_makes_the_board_follow_github(self):
+        """#1628: the hidden scheduled run (`--lane graphhelm --adopt-opened`, no lane stopping)
+        records, on the disposable Runtime, a merged PR, a closed PR and the forgotten pr_opened
+        of an open PR whose `Closes #N` names an open claim. gh is the fixture; admission is real."""
+        now = "2026-10-10T00:00:00Z"
+        token = self.lane_credential("codex-4")
+
+        def opened(issue, pr):
+            doc = {"schema": "graphhelm-task-event-v1", "taskId": f"issue-{issue}", "revision": 2, "at": now,
+                   "pr": pr, "headSha": "b" * 40, "journeys": [], "lane": "codex-4", "repo": "stabem/GraphHelm"}
+            signal = {"id": f"pr-{pr}-opened", "source": {"type": "user", "id": "codex-4"},
+                      "type": "task.pr_opened", "severity": "low", "description": json.dumps(doc),
+                      "evidence": [f"https://github.com/stabem/GraphHelm/pull/{pr}"], "emittedAt": now}
+            req = urllib.request.Request(self.url + "/v1/executions/lane-test/signal",
+                  data=json.dumps({"signal": signal}).encode(), headers={"Authorization": "Bearer " + token,
+                  "Content-Type": "application/json", "Idempotency-Key": f"pr-{pr}-opened",
+                  "X-GraphHelm-Actor": "codex-4", "X-GraphHelm-Actor-Type": "agent"})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                self.assertTrue(json.load(response)["ok"])
+        self.claim(766)
+        opened(766, 9001)
+        self.claim(767)
+        opened(767, 9002)
+        self.claim(768)  # no pr_opened: the lane forgot it
+        states = {9001: {"state": "MERGED", "mergedAt": now, "mergeCommit": {"oid": "a" * 40},
+                         "closingIssuesReferences": [{"number": 766}]},
+                  9002: {"state": "CLOSED", "mergedAt": None, "body": ""}}
+        open_prs = [{"number": 9003, "headRefOid": "c" * 40, "closingIssuesReferences": [{"number": 768}]},
+                    {"number": 9004, "headRefOid": "d" * 40, "closingIssuesReferences": [{"number": 999}]}]
+        args = type("Args", (), {"execution": "lane-test", "url": self.url,
+                    "token_file": self.env["GRAPHHELM_TOKEN_FILE"], "repo": "stabem/GraphHelm",
+                    "lane": "graphhelm", "adopt_opened": True})()
+        with mock.patch.object(tasks_reconcile, "github", side_effect=lambda pr, repo: states[pr]),              mock.patch.object(tasks_reconcile, "github_issue", return_value={"state": "OPEN", "assignees": []}),              mock.patch.object(tasks_reconcile, "github_open_prs", return_value=open_prs):
+            result = tasks_reconcile.reconcile(args)
+        self.assertEqual((result["merged"], result["closed"], result["adopted"]),
+                         ([9001], [9002], {"opened": [9003], "refused": []}))
+        found = tasks_reconcile.records(args.url, Path(args.token_file).read_text().strip(), args.execution)
+        ends = sorted((kind, doc["pr"]) for kind, doc, _ in found if kind != "task.claimed")
+        self.assertEqual(ends, [("task.closed", 9002), ("task.merged", 9001), ("task.pr_opened", 9001),
+                                ("task.pr_opened", 9002), ("task.pr_opened", 9003)])
+        adopted = [(doc["lane"], doc["taskId"], event["actor"]["id"]) for kind, doc, event in found
+                   if kind == "task.pr_opened" and doc["pr"] == 9003]
+        self.assertEqual(adopted, [("codex-4", "issue-768", "codex-4")])
+
     def reconcile_args(self):
         return type("Args", (), {"execution": "lane-test", "url": self.url,
                     "token_file": self.env["GRAPHHELM_TOKEN_FILE"],

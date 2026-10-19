@@ -5,6 +5,13 @@ recording merges, closes and releases, it heartbeats the lane's open pre-PR clai
 lane needs no reminder to say it is alive, and the Runtime alone decides whether a heartbeat is due
 (`validate_heartbeat`: one per 300 s); its refusal is reported, never retried or pre-empted here.
 
+It also runs with no lane at all (#1628): a hidden scheduled task calls it every few minutes as
+`--lane graphhelm --adopt-opened`, so the board follows GitHub even when no lane ever stops again.
+As `graphhelm` it records merges and closes of every lane's PR, and `--adopt-opened` records the
+`task.pr_opened` a lane forgot for an open PR whose `Closes #N` names that lane's open claim (signed
+with that lane's own credential file; a lane without one is reported, never impersonated with the
+shared token). `--log` appends the reply to a file, for `pythonw` which has no console.
+
 The CLI embeds this file, so it also works from an installed GraphHelm binary.
 """
 import argparse
@@ -157,6 +164,60 @@ def post(base, token, execution, pr, task_id, repo, sha, closes):
         raise ValueError("Runtime refused task.merged")
 
 
+def github_open_prs(repo):
+    """#1628: the repository's open PRs with their head and the issues their body closes."""
+    result = subprocess.run(["gh", "pr", "list", "--repo", repo, "--state", "open", "--limit", "200",
+                             "--json", "number,headRefOid,closingIssuesReferences"],
+                            capture_output=True, text=True, encoding="utf-8", timeout=10, check=True, creationflags=NO_WINDOW)
+    return json.loads(result.stdout)
+
+
+def lane_credential(token_file, lane):
+    """The lane's own credential beside --token-file, or None. Never the shared token: a record in
+    a lane's name is written only with that lane's credential (#1148)."""
+    path = Path(token_file)
+    stem = path.name
+    for suffix in (".agent.token", ".token"):
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    try:
+        value = path.with_name(f"{stem}.agent.{lane}.token").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value if value and "\n" not in value else None
+
+
+def adopt_opened(base, token_file, execution, repo, unopened, prs):
+    """#1628: for each open claim with no `task.pr_opened` (`unopened`: taskId -> lane), the open PR
+    whose `Closes #N` names its issue is recorded as opened, as the claim's lane. Returns
+    {"opened": [pr...], "refused": [{"pr", "taskId", "message"}...]}."""
+    out = {"opened": [], "refused": []}
+    for pr in sorted(prs, key=lambda item: item.get("number", 0)):
+        number, sha = pr.get("number"), pr.get("headRefOid")
+        if type(number) is not int or number < 1 or not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+            continue
+        for issue in pr.get("closingIssuesReferences") or []:
+            if issue.get("repository", {}).get("nameWithOwner", repo) != repo:
+                continue
+            task_id = f"issue-{issue.get('number')}"
+            lane = unopened.pop(task_id, None)
+            if lane is None:
+                continue
+            credential = lane_credential(token_file, lane)
+            if credential is None:
+                out["refused"].append({"pr": number, "taskId": task_id,
+                                       "message": f"no credential for {lane}; the lane records it"})
+                continue
+            try:
+                post_end(base, credential, execution, "pr_opened", task_id, repo, lane,
+                         {"pr": number, "headSha": sha, "journeys": [], "lane": lane, "repo": repo})
+                out["opened"].append(number)
+            except (OSError, ValueError, KeyError) as error:
+                out["refused"].append({"pr": number, "taskId": task_id, "message": f"{type(error).__name__}: {error}"})
+    return out
+
+
 def head(base, token, execution):
     """The execution's event head: the state a heartbeat observed, and so its revision."""
     path = f"{base}/v1/executions/{urllib.parse.quote(execution, safe='')}"
@@ -269,9 +330,19 @@ def reconcile(args):
     finished = set()
     claims = {}
     releases = {}
+    # #1628: every lane's claims, for --adopt-opened: taskId -> [(sequence, lane)], released
+    # sequences, and the tasks that already have a PR.
+    all_claims, all_released, with_pr = {}, set(), set()
     for kind, doc, event in records(args.url.rstrip("/"), token, args.execution, args.lane):
         task_id = doc.get("taskId")
         lane = doc.get("lane")
+        if doc.get("repo", args.repo) == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):
+            if kind == "task.claimed" and doc.get("repo") == args.repo and isinstance(lane, str):
+                all_claims.setdefault(task_id, []).append((event.get("sequence"), lane))
+            elif kind == "task.released":
+                all_released.add(doc.get("claimSequence"))
+            elif kind == "task.pr_opened":
+                with_pr.add(task_id)
         if kind == "task.claimed" and lane == args.lane and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):
             claims.setdefault(task_id, []).append(event["sequence"])
         elif kind == "task.released" and lane == args.lane and doc.get("repo") == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):
@@ -360,7 +431,20 @@ def reconcile(args):
     except (OSError, ValueError, KeyError):
         view = None
     lapsed = release_overdue(view, base, credential, args.execution, args.repo)
-    return {"merged": done, "closed": closed, "released": released, "heartbeat": beats,
+    reply = {}
+    if getattr(args, "adopt_opened", False):
+        unopened = {}
+        for task_id, items in all_claims.items():
+            live = [(sequence, lane) for sequence, lane in items if sequence not in all_released]
+            if live and task_id not in with_pr:
+                unopened[task_id] = live[-1][1]
+        try:
+            prs = github_open_prs(args.repo) if unopened else []
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            prs = []
+            reply["adoptError"] = f"{type(error).__name__}: {error}"
+        reply["adopted"] = adopt_opened(base, args.token_file, args.execution, args.repo, unopened, prs)
+    return {**reply, "merged": done, "closed": closed, "released": released, "heartbeat": beats,
             "lapsed": lapsed, "stalled": stalled(view), "inspected": len(opened),
             "unreadable": unreadable}
 
@@ -409,11 +493,25 @@ def main():
     parser.add_argument("--token-file", required=True)
     parser.add_argument("--lane")
     parser.add_argument("--repo", required=True)
+    parser.add_argument("--adopt-opened", action="store_true",
+                        help="#1628: record pr_opened for an open claim whose issue an open PR closes")
+    parser.add_argument("--log", help="#1628: append the reply (or the error) to this file, for pythonw")
     args = parser.parse_args()
+
+    def emit(line, stream):
+        if args.log:
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            try:
+                with open(args.log, "a", encoding="utf-8") as log:
+                    log.write(f"{stamp} {line}\n")
+            except OSError:
+                pass
+        if stream is not None:
+            print(line, file=stream)
     try:
-        print(json.dumps(reconcile(args)))
+        emit(json.dumps(reconcile(args)), sys.stdout)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
-        print(f"tasks reconcile: {error}", file=sys.stderr)
+        emit(f"tasks reconcile: {error}", sys.stderr)
         return 1
     return 0
 

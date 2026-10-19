@@ -220,6 +220,37 @@ describe("MissionView", () => {
     expect(first.querySelector('[data-progress="work"]')).not.toHaveStyle({ background: "#4ADE9B" });
   });
 
+  it("#1309: Approve N confirms the named drafts whose preview passed, approves each, and lists a refusal", async () => {
+    const user = fastUserEvent();
+    const contract = (id: string, title: string): JourneyView => ({ contractId: id, title, arrows: [],
+      steps: [{ stepId: "mark", screen: { screenId: "mark", title: "Mark", scopePaths: [] }, promises: [] }] });
+    const flow = (id: string, title: string, name: string): JourneyFlowView => ({ id, title, name, status: "draft", approved: null,
+      drift: [], findings: [], approvable: true, screens: [{ id: "mark", url: "/", state: "stable" }], edges: [], paths: { main: [] } } as JourneyFlowView);
+    const passed = { state: "ready" as const, kind: "preview" as const, result: "pass" as const,
+      screens: { mark: { result: "pass" as const, frame: false } }, edges: {} };
+    // `basket` has no passing preview: it is not offered.
+    const runFor = (id: string) => (id === "basket" ? null : passed);
+    const onApprove = vi.fn(async (id: string) => {
+      if (id === "cart") throw new Error("approve requires a recorded passing preview");
+    });
+    render(<MissionView journeys={[contract("cart", "Cart"), contract("pay", "Pay"), contract("basket", "Basket")]}
+      tasks={[]} lanes={[]} now={0} runFor={runFor} frameUrl={() => null} onMarkSafe={vi.fn()} runName="r"
+      flows={{ flows: [flow("cart", "Cart", "Cart page"), flow("pay", "Pay", "Pay page"), flow("basket", "Basket", "Basket page")] }}
+      onApprove={onApprove} />);
+    await user.click(screen.getByRole("tab", { name: "Proof" }));
+    await user.click(screen.getByRole("button", { name: "Approve 2" }));
+    const ask = screen.getByRole("dialog", { name: "Approve journeys" });
+    expect(within(ask).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["Cart page", "Pay page"]);
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Approve 2" })).toBeDisabled();
+    await user.click(within(ask).getByRole("button", { name: "Approve all" }));
+    await waitFor(() => expect(onApprove).toHaveBeenCalledTimes(2));
+    expect(onApprove.mock.calls.map(([id]) => id)).toEqual(["cart", "pay"]);
+    const refused = await screen.findByRole("alert");
+    expect(refused).toHaveTextContent("1 not approved");
+    expect(refused).toHaveTextContent("Cart page: approve requires a recorded passing preview");
+  });
+
   it("keeps an unrun draft in Proof without offering an unsafe approval", async () => {
     const user = fastUserEvent();
     const onApprove = vi.fn().mockResolvedValue(undefined);

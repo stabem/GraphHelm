@@ -1,0 +1,32 @@
+schema: graphhelm.journey-flow/1
+id: keel-watchdog-routing
+title: A Keel verdict routes the task
+purpose: "A blocked Keel check routes the task back to implement with its finding, and a corrected head advances it to review."
+status: draft
+approved: null
+base: http://127.0.0.1:1
+actors: [owner]
+secrets: []
+risks: []
+screens:
+  - id: routing-report
+    title: "The blocked check routes back, the corrected check advances to review"
+    url: /report
+    state: stable
+    expect: [{role: exit, name: "0"}, {role: stdout, name: keel.scope.path_outside_card}, {role: stdout, name: blocked=routed-to-implement; corrected=advanced-to-review}]
+    scope: unknown
+  - id: task-started
+    title: A task starts with a scoped card
+    url: /task
+    state: stable
+    expect: [{role: stdout, name: blocked=routed-to-implement; corrected=advanced-to-review}]
+    scope: unknown
+edges:
+  - id: route-by-verdict
+    from: task-started
+    to: routing-report
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-watchdog-routing/scenario.py}
+paths:
+  main: [route-by-verdict]
+drift: []

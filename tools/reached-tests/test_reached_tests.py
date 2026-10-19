@@ -1384,6 +1384,116 @@ class CliModules(unittest.TestCase):
             whole, _, *_ = rt.reach([path], packages, {}, root)
             self.assertEqual(whole, {"graphhelm-cli"}, path)
 
+    def narrow_tree(self):
+        """#1608: the shapes behind the whole-package runs of #1574 and #1599."""
+        root, packages = self.tree()
+        tests = root / "apps/cli/tests"
+        bodies = {"monitor_http.rs": 'cmd.args(["serve", "--port"]);',
+                  "adoption_apply.rs": 'cmd.args(["setup", "--apply"]);',
+                  "event_store_cli.rs": 'cmd.args(["events", "backup"]);'}
+        for name, body in bodies.items():
+            (tests / name).write_text(body, encoding="utf-8")
+        packages[0]["tests"] += [{"name": n[:-3], "src": f"apps/cli/tests/{n}"} for n in bodies]
+        src = root / "apps/cli/src/commands"
+        (src / "serve").mkdir(parents=True)
+        (src / "mod.rs").write_text("mod adoption; mod serve;", encoding="utf-8")
+        (src / "serve/mod.rs").write_text("mod ports; pub fn run() {}", encoding="utf-8")
+        (src / "serve/ports.rs").write_text("pub fn bind() {}", encoding="utf-8")
+        (src / "adoption.rs").write_text("pub fn run() {}", encoding="utf-8")
+        return root, packages
+
+    def test_a_directory_mod_rs_reaches_its_module_not_the_whole_package(self):
+        # #1574's diff touched serve/mod.rs, which used to reach the whole package.
+        root, packages = self.narrow_tree()
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/serve/mod.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertEqual(single, {("graphhelm-cli", "bin:graphhelm", "commands::serve"),
+                                  ("graphhelm-cli", "monitor_http", None),
+                                  ("graphhelm-cli", "surface_completeness", None)})
+
+    def test_a_source_a_test_embeds_reaches_that_test_not_the_whole_package(self):
+        # #1576's diff: attention_tag_domain embeds commands/execution/mod.rs.
+        root, packages = self.narrow_tree()
+        (root / "apps/cli/src/commands/execution").mkdir()
+        (root / "apps/cli/src/commands/execution/mod.rs").write_text("pub fn run() {}", encoding="utf-8")
+        (root / "apps/cli/tests/execution_cli.rs").write_text('cmd.args(["execution", "list"]);', encoding="utf-8")
+        (root / "apps/cli/tests/attention_tag_domain.rs").write_text(
+            'const S: &str = include_str!("../src/commands/execution/mod.rs");', encoding="utf-8")
+        packages[0]["tests"] += [{"name": n, "src": f"apps/cli/tests/{n}.rs"} for n in ("execution_cli", "attention_tag_domain")]
+        path = "apps/cli/src/commands/execution/mod.rs"
+        whole, single, *_ = rt.reach([path], packages, {path: {"graphhelm-cli"}}, root)
+        self.assertEqual(whole, set())
+        self.assertTrue({("graphhelm-cli", "attention_tag_domain", None), ("graphhelm-cli", "execution_cli", None),
+                         ("graphhelm-cli", "bin:graphhelm", "commands::execution")} <= single, single)
+
+    def test_a_submodule_no_test_names_reaches_through_its_command(self):
+        root, packages = self.narrow_tree()
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/serve/ports.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertEqual(single, {("graphhelm-cli", "bin:graphhelm", "commands::serve::ports"),
+                                  ("graphhelm-cli", "monitor_http", None)})
+
+    def test_a_module_whose_command_has_another_name_uses_the_table(self):
+        # `adoption.rs` runs `setup`, `backup` and `restore`; no test says "adoption".
+        root, packages = self.narrow_tree()
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/adoption.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertEqual(single, {("graphhelm-cli", "bin:graphhelm", "commands::adoption"),
+                                  ("graphhelm-cli", "adoption_apply", None),
+                                  ("graphhelm-cli", "event_store_cli", None)})
+
+    def test_an_unmapped_helper_and_the_shared_files_fall_back_to_the_whole_package(self):
+        root, packages = self.narrow_tree()
+        (root / "apps/cli/src/commands/hex_key.rs").write_text("pub fn decode() {}", encoding="utf-8")
+        for path in ("apps/cli/src/commands/hex_key.rs", "apps/cli/src/args.rs", "apps/cli/src/commands/mod.rs"):
+            whole, _, *_ = rt.reach([path], packages, {}, root)
+            self.assertEqual(whole, {"graphhelm-cli"}, path)
+
+    def test_the_help_fixture_reaches_only_the_help_golden(self):
+        # #1599 re-pinned tests/fixtures/help; that used to reach the whole package.
+        root, packages = self.narrow_tree()
+        for path in ("apps/cli/tests/fixtures/help/graphhelm-help.txt", "apps/cli/src/args_help_golden.rs"):
+            whole, single, *_ = rt.reach([path], packages, {}, root)
+            self.assertEqual((whole, single), (set(), {rt.HELP_GOLDEN}), path)
+        self.assertIn("--bin graphhelm -- --test-threads=2 args_help_golden::",
+                      " ".join(rt.commands(set(), {rt.HELP_GOLDEN}, [])))
+
+    def test_a_command_module_that_derives_clap_arguments_reaches_the_help_golden(self):
+        # #1468: help text changed outside args.rs and main went red on the golden.
+        root, packages = self.narrow_tree()
+        (root / "apps/cli/src/commands/serve/ports.rs").write_text(
+            "#[derive(Debug, clap::Args)]\npub struct PortArgs {}", encoding="utf-8")
+        whole, single, *_ = rt.reach(["apps/cli/src/commands/serve/ports.rs"], packages, {}, root)
+        self.assertEqual(whole, set())
+        self.assertIn(rt.HELP_GOLDEN, single)
+
+
+class ProtocolGoldens(unittest.TestCase):
+    """#1608: #1403 and #1468 turned main red on the protocols canonical golden unseen."""
+
+    def test_schemas_extensions_and_protocol_types_reach_the_canonical_golden(self):
+        for path in ("schemas/graph.schema.json", "schemas/mcp-tools.json",
+                     "extensions/builtin/graphhelm-jpd/extension.json"):
+            _, single, *_ = reach(path)
+            self.assertIn(("graphhelm-protocols", "canonical_golden", None), single, path)
+        whole, *_ = reach("core/protocols/src/canonical.rs")
+        self.assertIn("graphhelm-protocols", whole)
+
+
+class RealWorkspace(unittest.TestCase):
+    """#1608: the real args.rs reaches the whole CLI package, whose plan runs the help golden."""
+
+    def test_args_rs_plans_the_help_golden_on_the_real_workspace(self):
+        repo = Path(__file__).resolve().parents[2]
+        packages = rt.workspace(repo)
+        whole, *_ = rt.reach(["apps/cli/src/args.rs"], packages, rt.embeds(repo, packages), repo)
+        self.assertIn("graphhelm-cli", whole)
+        plans, _ = rt.expand_whole_packages(whole, packages)
+        bins = [step["argv"] for step in plans["graphhelm-cli"] if "--bin" in step["argv"]]
+        # One unfiltered `--bin graphhelm` run: every unit-test module, the help golden among them.
+        self.assertEqual(bins, [["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli",
+                                 "--bin", "graphhelm", "--", "--test-threads=2"]])
+
 
 class RootFiles(unittest.TestCase):
 

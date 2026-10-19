@@ -98,7 +98,7 @@
 //! answer has its own asymmetry one layer down.
 
 mod inside;
-pub use inside::{path_is_inside, processes_inside};
+pub use inside::{path_is_inside, process_places, processes_inside};
 
 /// Why a process group could not be established.
 ///

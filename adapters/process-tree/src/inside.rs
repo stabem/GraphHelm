@@ -37,6 +37,19 @@ pub fn processes_inside(dir: &Path) -> Vec<u32> {
         .collect()
 }
 
+/// One snapshot of every other process's current directory and executable, for a caller that
+/// asks `processes_inside` about many directories: `path_is_inside` over these places gives the
+/// same answer at the moment of the snapshot, for one process listing instead of one per directory.
+#[must_use]
+pub fn process_places() -> Vec<(u32, Vec<PathBuf>)> {
+    let me = std::process::id();
+    list_processes()
+        .into_iter()
+        .filter(|&pid| pid != me && pid != 0)
+        .map(|pid| (pid, places_of(pid)))
+        .collect()
+}
+
 #[cfg(target_os = "linux")]
 fn list_processes() -> Vec<u32> {
     std::fs::read_dir("/proc")

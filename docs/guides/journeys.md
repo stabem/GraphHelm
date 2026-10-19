@@ -199,7 +199,36 @@ any version of the flow, when `checked` is empty, and for the owner token or the
 session token. The approval record is `journey_flow_agent_approved` (id
 `journey-agent-approved-<32 hex>`) in `graphhelm-owner`, appended as the reviewer, carrying
 `reviewer`, `author` and `checked`. The generic signal route refuses both reserved kinds.
-`validate` and `replay` accept an owner record or a reviewer record.
+Since #1309 ruling A a reviewer record is a review, not an approval: the flow stays `draft`, and
+`validate` and `replay` accept only the owner's record.
+
+**The preview record (#1309).** The owner approves only a flow whose preview passed. When a preview
+run ends with every step passing, the runner that played it appends `journey_flow_previewed` (id
+`journey-previewed-<first 32 hex of sha256(flow id, digest, scope commit)>`) to `graphhelm-owner`,
+as the System actor `journey-preview-runner`. The record carries the flow id, the draft digest, the
+scope commit, `result: pass`, a sha256 over the step results and frame bytes the runner captured,
+and the runner binary's sha256 and version. The scope commit is the latest commit that touched the
+flow file or any path its screens scope, so an unrelated commit keeps a preview valid and a change
+to a scope path voids it. `journey approve` refuses with `flow.preview_not_passed` until such a
+record exists for the current digest and scope commit. The kept
+`.graphhelm/journey-previews/<id>/state.json` is a cache for the Studio and proves nothing. No HTTP,
+CLI or MCP route records a preview: the generic signal route refuses the kind. A preview kept before
+this change was keyed on HEAD and reads as not run until it runs once more. Limit: as with the
+owner's record, a process running as the same OS user that writes `.graphhelm/events` directly can
+still forge the record; it needs a deliberate binary-level act, not a written file.
+
+**Approving several drafts at once (#1309).** On the Studio's Journeys rail, **Approve N** counts the
+drafts the single Approve button would accept: `approvable`, with a passing preview on the current
+version. It first opens a confirm step that names every flow; **Approve all** then approves them one
+after another, each through the owner-only approve route, so each gets its own owner record and
+the Runtime's preview gate decides each one. A flow the Runtime refuses is listed with its reason
+and the rest continue. The button is disabled while the batch runs.
+
+**What a scope commit does not see.** A preview stays valid until a commit touches the flow file or
+one of its scope paths. A change to shared code outside those paths (a common component, a
+library, configuration) does not void it, even when the journey depends on it. Name in a screen's
+`scope` every path the journey really depends on; the narrower the scope, the longer a preview
+outlives changes it should have seen.
 
 **The owner's record (#534).** Approving needs the owner's token: `--token-file` with the
 project's `.graphhelm/events.token` (made by `graphhelm init`). Without it, or with another

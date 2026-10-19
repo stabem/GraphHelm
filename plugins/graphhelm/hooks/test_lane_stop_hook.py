@@ -458,6 +458,23 @@ class LaneStopTests(unittest.TestCase):
         self.assertEqual(third[:len(first)], first)
         self.assertEqual([doc["taskId"] for kind, doc, _ in third[len(first):]], ["issue-767"])
 
+        # #1691 review: the cache keeps identifiers, never a task document, and is private.
+        stored = json.loads(cache.read_text(encoding="utf-8"))
+        for _, doc, _ in stored["records"]:
+            self.assertLessEqual(set(doc), set(tasks_reconcile.CACHED_FIELDS), doc)
+        self.assertNotIn("branch", cache.read_text(encoding="utf-8"))
+        if os.name != "nt":
+            self.assertEqual(cache.stat().st_mode & 0o777, 0o600)
+
+        # #1691 review: a cache whose anchor the journal no longer holds is not believed.
+        stored["anchor"] = "sha256:" + "0" * 64
+        cache.write_text(json.dumps(stored), encoding="utf-8")
+        before = len(opened)
+        with mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=capture):
+            fourth = shape(tasks_reconcile.records(self.url, token, "lane-test", cache=cache))
+        self.assertEqual(len(opened) - before, len(third), "a foreign anchor reads every record again")
+        self.assertEqual(fourth, third)
+
     def note(self, signal_id, to=None, reply=None, actor="owner"):
         signal = {"id": signal_id, "source": {"type": "user", "id": actor}, "type": "operator_note",
                   "severity": "low", "description": "Status please" if not reply else "Status recorded",

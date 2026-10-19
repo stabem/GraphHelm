@@ -93,60 +93,80 @@ def get(url, token, lane=None):
         return json.load(reply)["data"]
 
 
-RECORDS_SCHEMA = "graphhelm-reconcile-records/1"
+RECORDS_SCHEMA = "graphhelm-reconcile-records/2"
+# #1687 review: the cache keeps only the identifiers reconcile() reads, never a task document.
+CACHED_FIELDS = ("taskId", "lane", "pr", "repo", "claimSequence")
 
 
 def records_cache_path(token_file, base, execution):
-    """#1687: the verified task records of one execution on one Runtime, kept beside the token."""
+    """#1687: the task-record identifiers of one execution on one Runtime, kept beside the token."""
     path = Path(token_file)
     key = hashlib.sha256(f"{base.rstrip('/')}\n{execution}".encode()).hexdigest()[:16]
     return path.with_name(f"{path.stem}.reconcile.records.{key}.json")
 
 
+def cached_form(record):
+    """What the cache keeps of one verified record, and what records() returns when it caches."""
+    kind, document, event = record
+    return (kind, {field: document[field] for field in CACHED_FIELDS if field in document},
+            {"sequence": event.get("sequence"), "actor": {"id": event.get("actor", {}).get("id")}})
+
+
 def load_records(cache, base, execution):
-    """The records a previous run verified and the sequence it read up to. Nothing when absent,
-    unreadable, or written for another Runtime or execution: the read then starts from 0."""
+    """The records a previous run verified, the sequence it read up to and the `eventHash` of that
+    event. Nothing when absent, unreadable, or written for another Runtime or execution."""
     if cache is None:
-        return 0, []
+        return 0, [], None
     try:
         stored = json.loads(Path(cache).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return 0, []
+        return 0, [], None
     if (not isinstance(stored, dict) or stored.get("schema") != RECORDS_SCHEMA
             or stored.get("base") != base or stored.get("execution") != execution
-            or type(stored.get("after")) is not int or not isinstance(stored.get("records"), list)):
-        return 0, []
-    return stored["after"], [tuple(item) for item in stored["records"]]
+            or type(stored.get("after")) is not int or stored["after"] < 1
+            or not isinstance(stored.get("anchor"), str) or not isinstance(stored.get("records"), list)):
+        return 0, [], None
+    return stored["after"], [tuple(item) for item in stored["records"]], stored["anchor"]
 
 
-def save_records(cache, base, execution, after, found):
-    if cache is None:
+def save_records(cache, base, execution, after, anchor, found):
+    """Atomic, and created owner-only like the session hook's private files: the temporary is
+    opened O_EXCL with mode 0600 (on Windows it inherits the token directory's ACL)."""
+    if cache is None or not isinstance(anchor, str):
         return
     path = Path(cache)
     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    body = json.dumps({"schema": RECORDS_SCHEMA, "base": base, "execution": execution, "after": after,
+                       "anchor": anchor, "records": [list(item) for item in found]}).encode("utf-8")
     try:
-        temporary.write_text(json.dumps({"schema": RECORDS_SCHEMA, "base": base, "execution": execution,
-                                         "after": after, "records": [list(item) for item in found]}),
-                             encoding="utf-8")
+        temporary.unlink(missing_ok=True)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(body)
         os.replace(temporary, path)
     except OSError:
-        pass  # local state only: a lost cache makes the next run read from the start, never fail
+        temporary.unlink(missing_ok=True)  # local state only: a lost cache means a full read, never a failure
 
 
 def records(base, token, execution, lane=None, cache=None):
     """Every verified task record of the execution, oldest first. #1687: with `cache`, the journal
     is read only past the sequence the last run reached and each sealed record is opened once; the
-    cache advances page by page, so a run its budget stops still leaves progress for the next."""
+    cache advances page by page, so a run its budget stops still leaves progress for the next.
+
+    The cache is believed only while the journal still holds, at the cached sequence, the event
+    whose `eventHash` was cached. Events are hash-chained (`previousHash`), so that one match
+    vouches for every cached record before it, each of which had its sealed digest checked when it
+    was read. A replaced or rewritten store fails the match and is read again from 0. With a cache,
+    records carry only `CACHED_FIELDS`, fresh or cached alike."""
     path = f"{base}/v1/executions/{urllib.parse.quote(execution, safe='')}"
     open_record = record_opener(path, token, lane)
-    after, found = load_records(cache, base, execution)
-    restarted = after == 0
+    after, found, anchor = load_records(cache, base, execution)
+    if after:
+        probe = get(f"{path}/events?after={after - 1}&limit=1", token, lane)["events"]
+        if not probe or probe[0].get("sequence") != after or probe[0].get("eventHash") != anchor:
+            after, found, anchor = 0, [], None
     while True:
         page = get(f"{path}/events?after={after}&limit=512", token, lane)
-        if page["head"] < after and not restarted:
-            # A journal shorter than the cache is not the journal it was read from: read it again.
-            after, found, restarted = 0, [], True
-            continue
         batch = page["events"]
         if not batch:
             if after < page["head"]:
@@ -165,9 +185,10 @@ def records(base, token, execution, lane=None, cache=None):
         if last <= after:
             raise ValueError("event cursor did not advance")
         with ThreadPoolExecutor(max_workers=4) as pool:
-            found.extend(pool.map(open_record, events))
+            opened = list(pool.map(open_record, events))
+        found.extend(opened if cache is None else map(cached_form, opened))
         after = last
-        save_records(cache, base, execution, after, found)
+        save_records(cache, base, execution, after, batch[-1].get("eventHash"), found)
         if after >= page["head"]:
             break
     return found

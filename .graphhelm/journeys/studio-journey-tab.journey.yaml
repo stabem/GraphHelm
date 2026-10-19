@@ -1,7 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-journey-tab
-title: Review the promise beside the observer that recorded it
-purpose: "The owner opens a journey's Proof and sees its promise beside the Observer and evidence section, which names the runner that recorded the shown run (#1672)."
+title: "Review the promise beside its observer section (observer identity: OBSERVER_MISSING #1041)"
+purpose: "The owner opens a journey's Proof and sees its promise beside the Observer and evidence section. For a recorded run the section shows an observer note; this flow proves only that the note appears, not which runner it names (the record read-back is proven by journey_preview::a_later_runner_reports_the_runner_the_stored_record_names). The recorded run is the fixture-only runtime-health seed, not a real project's preview."
 status: draft
 approved: null
 base: http://127.0.0.1:5184

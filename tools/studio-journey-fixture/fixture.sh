@@ -131,7 +131,8 @@ up)
   [ -n "$(fixture_listeners record "$rport")" ] || { echo 'fixture: Runtime listener is not owned by this fixture' >&2; exit 1; }
   # #1672: one recorded passing preview, so the Proof view has a real observer to name. A draft
   # preview plays only read-only acts, so the seed flow reads this fixture's own Runtime health
-  # with GET; its runner records itself. It lives only in the fixture project.
+  # with GET; its runner records itself. FIXTURE-ONLY: it lives only in the fixture project, and
+  # it is not evidence that a real project's preview records an observer.
   cat > "$dir/project/.graphhelm/journeys/runtime-health.journey.yaml" <<FLOW
 schema: graphhelm.journey-flow/1
 id: runtime-health

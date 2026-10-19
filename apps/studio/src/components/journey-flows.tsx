@@ -126,14 +126,15 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
 /** What a journey's last run says, folded from its steps (#run-all): one word for the rail, like a
  * test explorer. `stale` = the cached run belongs to an older flow and needs a rerun. */
 export type JourneyVerdict = "passed" | "failed" | "stale" | "needs_you" | "not_run" | "running";
-export function journeyVerdict(statuses: readonly string[], run: JourneyRunView | null): JourneyVerdict {
+export function journeyVerdict(statuses: readonly string[], run: JourneyRunView | null, draft = false): JourneyVerdict {
   if (run?.state === "running") return "running";
   if (run?.state === "failed" || statuses.includes("failed")) return "failed";
   if (statuses.includes("stale")) return "stale";
   if (statuses.includes("needs_you")) return "needs_you";
   if (statuses.length > 0 && statuses.every((s) => s === "proven")) return "passed";
   // #1635: a draft has no captures until it is approved; its passing preview is what the rail shows.
-  if (run?.state === "ready" && run.result === "pass") return "passed";
+  // An approved journey passes only on proven steps, never on a preview.
+  if (draft && run?.state === "ready" && run.result === "pass") return "passed";
   return "not_run";
 }
 

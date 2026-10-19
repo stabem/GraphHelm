@@ -210,7 +210,9 @@ scope commit, `result: pass`, a sha256 over the step results and frame bytes the
 and the runner binary's sha256 and version. The scope commit is the latest commit that touched the
 flow file or any path its screens scope, so an unrelated commit keeps a preview valid and a change
 to a scope path voids it. `journey approve` refuses with `flow.preview_not_passed` until such a
-record exists for the current digest and scope commit. The kept
+record exists for the current digest and scope commit. A flow file or scope path that was never
+committed has no scope commit, so its preview records nothing and approve stays refused until those
+files are committed and the preview runs again (#1635). The kept
 `.graphhelm/journey-previews/<id>/state.json` is a cache for the Studio and proves nothing. No HTTP,
 CLI or MCP route records a preview: the generic signal route refuses the kind. A preview kept before
 this change was keyed on HEAD and reads as not run until it runs once more. Limit: as with the

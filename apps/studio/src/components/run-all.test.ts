@@ -28,4 +28,10 @@ describe("Run all", () => {
     expect(journeyVerdict(["not_run"], null)).toBe("not_run");
     expect(journeyVerdict([], { state: "running" })).toBe("running");
   });
+  // #1635: a passing preview is what a draft shows; an approved journey passes only on proven steps.
+  it("reads a passing preview as passed for a draft only", () => {
+    const preview = { state: "ready" as const, kind: "preview" as const, result: "pass" as const };
+    expect(journeyVerdict(["preview_only", "preview_only"], preview, true)).toBe("passed");
+    expect(journeyVerdict(["preview_only", "preview_only"], preview, false)).toBe("not_run");
+  });
 });

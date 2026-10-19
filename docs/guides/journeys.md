@@ -217,6 +217,19 @@ this change was keyed on HEAD and reads as not run until it runs once more. Limi
 owner's record, a process running as the same OS user that writes `.graphhelm/events` directly can
 still forge the record; it needs a deliberate binary-level act, not a written file.
 
+**Approving several drafts at once (#1309).** On the Studio's Journeys rail, **Approve N** counts the
+drafts the single Approve button would accept: `approvable`, with a passing preview on the current
+version. It first opens a confirm step that names every flow; **Approve all** then approves them one
+after another, each through the owner-only approve route, so each gets its own owner record and
+the Runtime's preview gate decides each one. A flow the Runtime refuses is listed with its reason
+and the rest continue. The button is disabled while the batch runs.
+
+**What a scope commit does not see.** A preview stays valid until a commit touches the flow file or
+one of its scope paths. A change to shared code outside those paths (a common component, a
+library, configuration) does not void it, even when the journey depends on it. Name in a screen's
+`scope` every path the journey really depends on; the narrower the scope, the longer a preview
+outlives changes it should have seen.
+
 **The owner's record (#534).** Approving needs the owner's token: `--token-file` with the
 project's `.graphhelm/events.token` (made by `graphhelm init`). Without it, or with another
 store's token, `journey approve` refuses and writes nothing. The Studio's Approve button uses the

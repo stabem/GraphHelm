@@ -30,6 +30,20 @@ describe("#1556 heartbeat reason", () => {
       ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", reason: "B", at: at(9) }),
     ], T0 + 10, 1000);
     expect(changed.find((lane) => lane.lane === "w")!.lastRecord).toMatchObject({ reason: "B", reasonSince: T0 + 9 });
+    // Review: the Stop hook's reasonless heartbeats in between neither break nor replace the wait.
+    const hour = 3_600_000;
+    const interleaved = laneBarsOf([
+      ev({ kind: "task.claimed", actorId: "w", lane: "w", taskId: "issue-1556", issue: 1556, at: at(0) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", reason: "A", at: at(1) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", at: at(3 * hour) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", reason: "A", at: at(7 * hour) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", at: at(7 * hour + 5) }),
+    ], T0 + 7 * hour + 10, 8 * hour);
+    const waited = interleaved.find((lane) => lane.lane === "w")!;
+    expect(waited.lastRecord).toMatchObject({ kind: "heartbeat", reason: "A", reasonSince: T0 + 1, at: T0 + 7 * hour });
+    const card = agentBoard([], [waited], [], T0 + 7 * hour + 10)[0]!;
+    expect(card.latest?.startsWith("waiting 6h+ · A · since ")).toBe(true);
+    expect(card.waitStale).toBe(true);
     const claimOnly = laneBarsOf([
       ev({ kind: "task.claimed", actorId: "w", lane: "w", taskId: "issue-1556", issue: 1556, at: at(0) }),
     ], T0 + 10, 1000);

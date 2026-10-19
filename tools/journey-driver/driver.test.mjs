@@ -16,6 +16,18 @@ test('judges ordered checks independently with closest role names and duplicate 
   assert.equal(judgeExpectations([{role:'button',name:'cat'}],[{role:'button',name:'car',count:1,visible:true},{role:'button',name:'cap',count:1,visible:true}])[0].closest.name,'cap');
 });
 
+// #1041: "the banner is gone" is met only when nothing visible carries that role and name; a
+// visible one (once or twice) fails it, and a present expectation keeps its old meaning.
+test('an absent expectation is met only when no visible element matches', () => {
+  const gone = {role:'region',name:'While you were away',absent:true};
+  assert.deepEqual(judgeExpectations([gone],[]), [{role:'region',name:'While you were away',absent:true,seen:true,closest:null}]);
+  assert.equal(judgeExpectations([gone],[{...gone,count:0,visible:false}])[0].seen, true);
+  assert.equal(judgeExpectations([gone],[{...gone,count:1,visible:false}])[0].seen, true);
+  assert.equal(judgeExpectations([gone],[{...gone,count:1,visible:true}])[0].seen, false);
+  assert.equal(judgeExpectations([gone],[{...gone,count:2,visible:true}])[0].seen, false);
+  assert.equal(judgeExpectations([{role:'region',name:'While you were away'}],[])[0].seen, false);
+});
+
 const driver = fileURLToPath(new URL('./driver.mjs', import.meta.url));
 const protocol = 'graphhelm-journey-driver/1';
 // Contract: closed bounded frames reject invalid input before loading a browser.

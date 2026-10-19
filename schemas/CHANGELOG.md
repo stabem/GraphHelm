@@ -1,5 +1,15 @@
 # Schema Changelog
 
+## journey-flow 1.8.0 - `absent` expectations (#1041)
+
+An expectation may carry `absent: true`: that role and name must NOT be visible once the screen
+has settled, so a flow can prove "this is gone" (a dismissed banner, a cleared error, a closed
+dialog). Only `true` is written; omitted means present, as before. A screen must keep at least one
+present expectation (`contains`), and the driver judges absences only after those present ones
+settled, so an absence never passes on a page that has not rendered. Backend screens judge it on
+the finished response. Additive: every 1.7.0 flow stays valid with the same bytes and digest. The
+catalog digest is updated from canonical JSON.
+
 ## journey-flow 1.4.0 - request headers on `http` acts
 
 An `http` act gains optional `headers`: at most 16 fixed, non-secret request headers (token

@@ -1,6 +1,15 @@
 pub const MAX_EVENT_BYTES: usize = 1024 * 1024;
 pub const MAX_BATCH_BYTES: usize = 16 * 1024 * 1024;
-pub const MAX_JOURNAL_BYTES: u64 = 64 * 1024 * 1024;
+/// Ceiling on `journal.jsonl`, checked before every append and when a store is opened (#1714).
+///
+/// It was 64 MiB until the live `gh-team` store reached it (67,108,545 bytes, 51,996 lines) and
+/// every append was refused. 256 MiB is a stopgap, not a capacity plan: the journal is still one
+/// file that `open` reads whole into memory, so this ceiling is also the peak read buffer an open
+/// pays. Segmentation, so a size cap never stops writes, is the follow-up to #1714.
+///
+/// The open-time checks and the replay aggregates use this same constant on purpose: a bound
+/// below it would refuse to reopen, or to replay, a journal the append path just accepted.
+pub const MAX_JOURNAL_BYTES: u64 = 256 * 1024 * 1024;
 /// A COUNT CEILING ONLY. It is not the number of events a batch can carry (#861).
 ///
 /// The operative bound is **count and size together**, and it is enforced on the write path by
@@ -64,9 +73,10 @@ pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 ///   journal verification `open` performs and 42% in the fold;
 /// - an unoptimised build costs ~1.3-2.1 ms/event, which is where the "186 s" figure this
 ///   issue was raised with comes from;
-/// - `MAX_READ_ALL` is not reachable for events of that size: `MAX_JOURNAL_BYTES` binds first,
-///   at ~82,300 events (measured: append refused at 82,301, journal at 67,107,150 bytes), so
-///   the largest store this format can present answers in ~8.6 s.
+/// - `MAX_READ_ALL` was not reachable for events of that size while `MAX_JOURNAL_BYTES` was
+///   64 MiB: the journal bound bound first, at ~82,300 events (measured: append refused at
+///   82,301, journal at 67,107,150 bytes). At 256 MiB (#1714) `MAX_READ_ALL` (100,000 events per
+///   read) binds first for one execution, and that read answers past this budget anyway.
 ///
 /// So 5 seconds refuses roughly the top half of the REACHABLE range (above ~47,000 events in
 /// the shipped profile) and answers everything below it. That is the trade being made: a

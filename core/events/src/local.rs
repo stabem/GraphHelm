@@ -1524,15 +1524,7 @@ impl LocalEventRepository {
                 site: "append-locked:journal-mutex-poisoned",
                 os: None,
             })?;
-        let current_len = journal.metadata()?.len();
-        let resulting_len = current_len
-            .checked_add(
-                u64::try_from(line.len()).map_err(|_| EventRepositoryError::LimitExceeded)?,
-            )
-            .ok_or(EventRepositoryError::LimitExceeded)?;
-        if resulting_len > MAX_JOURNAL_BYTES {
-            return Err(EventRepositoryError::LimitExceeded);
-        }
+        ensure_journal_room(journal.metadata()?.len(), line.len())?;
         journal.seek(SeekFrom::End(0))?;
         if self.failpoint == Some(LocalFailpoint::PhysicalBatchAppend) {
             journal.write_all(&line[..line.len() / 2])?;
@@ -3086,6 +3078,15 @@ impl std::fmt::Debug for PrefixCache {
             .field("max_age", &self.max_age)
             .finish_non_exhaustive()
     }
+}
+
+/// The append gate: refuses a line that would take the journal past `MAX_JOURNAL_BYTES` (#1714).
+fn ensure_journal_room(current_len: u64, line_len: usize) -> Result<(), EventRepositoryError> {
+    let line_len = u64::try_from(line_len).map_err(|_| EventRepositoryError::LimitExceeded)?;
+    let resulting_len = current_len
+        .checked_add(line_len)
+        .ok_or(EventRepositoryError::LimitExceeded)?;
+    ensure_inclusive_limit(resulting_len, MAX_JOURNAL_BYTES)
 }
 
 /// #1624: the journal's whole lines verified from genesis WITHOUT the store lock, as the prefix a
@@ -7462,6 +7463,21 @@ mod limit_tests {
         assert!(matches!(
             open_child_file(&handle, &path, "linked.json", false, false),
             Err(EventRepositoryError::UnsupportedFormat)
+        ));
+    }
+
+    #[test]
+    fn journal_room_admits_a_line_past_64_mib_and_refuses_one_past_the_ceiling() {
+        let old_ceiling = 64 * 1024 * 1024;
+        assert!(ensure_journal_room(old_ceiling, 1_205).is_ok());
+        assert!(ensure_journal_room(MAX_JOURNAL_BYTES - 1_205, 1_205).is_ok());
+        assert!(matches!(
+            ensure_journal_room(MAX_JOURNAL_BYTES - 1_204, 1_205),
+            Err(EventRepositoryError::LimitExceeded)
+        ));
+        assert!(matches!(
+            ensure_journal_room(u64::MAX, 1),
+            Err(EventRepositoryError::LimitExceeded)
         ));
     }
 

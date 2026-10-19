@@ -22,13 +22,13 @@ screens:
     url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: tablist, name: Mission views}, {role: region, name: While you were away}, {role: button, name: Show details}, {role: button, name: Got it}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx, apps/studio/src/runtime/handover.ts]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/runtime/handover.ts]
   - id: run
     title: Back on the Graph canvas after dismissing the handover
     url: /?session=studio-fixture&run=:run
     state: stable
     expect: [{role: tablist, name: Mission views}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx, apps/studio/src/components/mission-view.tsx]
 edges:
   - id: handover.details
     from: handover

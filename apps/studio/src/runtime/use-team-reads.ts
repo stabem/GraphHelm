@@ -1,5 +1,5 @@
 // The selected run's team reads: who is on the team, the Claude task board, and the Runtime's task graphs.
-import { useEffect, useState, type MutableRefObject } from "react";
+import { useEffect, useMemo, useState, type MutableRefObject } from "react";
 
 import { RuntimeError, type RuntimeClient } from "./client";
 import { readRunTeam, type RunTeamReadModel } from "./run-team";
@@ -52,7 +52,11 @@ export function useTeamReads({ clientRef, selected, events, eventList, openEvide
   // #1560: the Runtime's task projection changes when a `task.*` record lands, not on every new
   // event. Keyed on those records' sequences (plus a slow clock for liveness), a busy run no longer
   // re-downloads the whole projection on every poll that brought one unrelated event.
-  const taskKey = events === null ? null : eventList.filter(isTaskEventSignal).map((event) => event.sequence).join(",");
+  // Computed once per event list, not on every render: the list is ~55k events on gh-team (#1727 review).
+  const taskKey = useMemo(
+    () => (events === null ? null : eventList.filter(isTaskEventSignal).map((event) => event.sequence).join(",")),
+    [events, eventList],
+  );
   const [tasksTick, setTasksTick] = useState(0);
   useEffect(() => {
     if (!selected) return;

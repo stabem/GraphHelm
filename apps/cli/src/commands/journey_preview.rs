@@ -639,10 +639,15 @@ fn step_reason(code: &str) -> &'static str {
     }
 }
 
-/// How bad a result is; a screen reached on several paths keeps its worst.
-/// A run's result: its worst step result.
+/// A run's result (#1633): its worst step result, and `pass` only when every screen and edge
+/// passed. A step not reached or skipped proves nothing, so a run with one and no failure is
+/// `fail` with the reason `preview.incomplete`, and records no proof.
 fn run_result(screens: &Value, edges: &Value) -> String {
-    screens
+    run_verdict(screens, edges).0
+}
+
+fn run_verdict(screens: &Value, edges: &Value) -> (String, Option<&'static str>) {
+    let steps: Vec<&Value> = screens
         .as_object()
         .into_iter()
         .flat_map(|screens| screens.values())
@@ -652,13 +657,23 @@ fn run_result(screens: &Value, edges: &Value) -> String {
                 .into_iter()
                 .flat_map(|edges| edges.values()),
         )
+        .collect();
+    let worst = steps
+        .iter()
         .filter_map(|entry| entry["result"].as_str())
-        .filter(|result| severity(result) > 0)
-        .max_by_key(|result| severity(result))
-        .unwrap_or("pass")
-        .to_owned()
+        .filter(|result| severity(result) > 1)
+        .max_by_key(|result| severity(result));
+    if let Some(worst) = worst {
+        return (worst.to_owned(), None);
+    }
+    if steps.iter().all(|entry| entry["result"] == "pass") {
+        ("pass".to_owned(), None)
+    } else {
+        ("fail".to_owned(), Some("preview.incomplete"))
+    }
 }
 
+/// How bad a result is; a screen reached on several paths keeps its worst.
 fn severity(result: &str) -> u8 {
     match result {
         "fail" => 3,
@@ -877,7 +892,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             run.state["edges"][id] = json!({"result":null,"reason":"not_reached"});
         }
     }
-    let worst = run_result(&run.state["screens"], &run.state["edges"]);
+    let (worst, incomplete) = run_verdict(&run.state["screens"], &run.state["edges"]);
     run.state["current"] = Value::Null;
     run.state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
     if let Some(object) = run.state.as_object_mut() {
@@ -887,6 +902,9 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         Ok(app) => {
             run.state["state"] = "ready".into();
             run.state["result"] = worst.into();
+            if let Some(reason) = incomplete {
+                run.state["reason"] = reason.into();
+            }
             app
         }
         Err((code, pointer, _)) => {

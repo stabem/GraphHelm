@@ -415,7 +415,8 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     <h2>Keel cards</h2>
     {historyLoading && <p>Card history: still reading the history</p>}
     {cardRecords.length > 0 && !historyLoading && partial && <p>Showing partial history</p>}
-    {cardRecords.length === 0 && <p>No Keel card in the loaded history</p>}
+    {/* #1041: a status, so the empty state is a role a journey driver can assert. */}
+    {cardRecords.length === 0 && <p role="status" aria-label="No Keel card in the loaded history">No Keel card in the loaded history</p>}
     {cardRecords.map((event) => {
       const source = (event.payload as { sourceId?: unknown }).sourceId;
       const text = envelopes[event.sequence]?.text;

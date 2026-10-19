@@ -67,7 +67,7 @@ screens:
     title: Before any request
     url: /
     state: stable
-    expect: []
+    expect: [{role: status, name: "404"}]
     scope: unknown
   - id: healthy
     title: The health answer

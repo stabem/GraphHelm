@@ -89,12 +89,15 @@ describe("MissionView", () => {
     expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("Card from run A");
     rerender(<MissionView {...props} events={[]} envelopes={{}} historyLoading />);
     expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("still reading the history");
+    expect(screen.queryByRole("status", { name: "No Keel card in the loaded history" })).toBeNull();
     expect(screen.queryByText("Card from run A")).toBeNull();
     rerender(<MissionView {...props} events={[event]} envelopes={{ 7: { text: "Card from run B", to: null, replyTo: null } }} />);
     expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("Card from run B");
     expect(screen.queryByText("Card from run A")).toBeNull();
+    expect(screen.queryByRole("status", { name: "No Keel card in the loaded history" })).toBeNull();
     rerender(<MissionView {...props} events={[]} envelopes={{}} />);
-    expect(screen.getByRole("region", { name: "Keel cards" })).toHaveTextContent("No Keel card in the loaded history");
+    // #1041: the empty state is a named status, which the studio-new-task flow asserts.
+    expect(within(screen.getByRole("region", { name: "Keel cards" })).getByRole("status", { name: "No Keel card in the loaded history" })).toBeInTheDocument();
   });
 
   it("shows a card as reading while its envelope has not resolved", () => {

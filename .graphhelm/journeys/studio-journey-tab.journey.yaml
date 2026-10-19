@@ -1,7 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-journey-tab
-title: "Review the promise and observer evidence (OBSERVER_MISSING: https://github.com/stabem/GraphHelm/issues/1041#issuecomment-6144841351; #1042)"
-purpose: The owner reviews a journey promise next to the observer evidence that proves it.
+title: "Review the promise beside its observer section (observer: OBSERVER_MISSING #1041)"
+purpose: "The owner opens a journey's Proof and sees its promise beside an Observer and evidence section. The section names no observer yet (it says Observer identity unavailable), so the observer half is OBSERVER_MISSING."
 status: draft
 approved: null
 base: http://127.0.0.1:5184

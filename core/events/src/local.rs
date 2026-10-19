@@ -665,11 +665,22 @@ impl LocalEventRepository {
         // shared lock: 4.5 s on a 49 MB journal, during which every append waited, and through
         // the turnstile every read that arrived behind that writer waited too. A handle whose
         // cache already holds a prefix has nothing to walk.
-        let cached =
-            prefix_cache.is_some_and(|cache| cache.slot.lock().map_or(true, |slot| slot.is_some()));
+        let slot_filled =
+            |cache: &PrefixCache| cache.slot.lock().map_or(true, |slot| slot.is_some());
+        // #1721 single-flight: only ONE cold open per cache walks from genesis; the others wait
+        // for it (within their budget) and then find the slot filled. Held to the end of open.
+        let _cold_walk = match prefix_cache {
+            Some(cache) if !slot_filled(cache) => Some(cache.acquire_walker(&read_budget)?),
+            _ => None,
+        };
+        let cached = prefix_cache.is_some_and(slot_filled);
         let walked = if cached {
             None
         } else {
+            #[cfg(test)]
+            if let Some(cache) = prefix_cache {
+                cache.cold_walks.fetch_add(1, Ordering::SeqCst);
+            }
             walk_before_lock(
                 &root,
                 &root_handle,
@@ -3064,8 +3075,15 @@ pub struct PrefixCache {
     slot: Arc<Mutex<Option<VerifiedPrefix>>>,
     max_age: std::time::Duration,
     auditing: Arc<AtomicBool>,
+    /// #1721 (single-flight): held by the ONE open that walks from genesis while the slot is
+    /// empty, so concurrent cold opens on one cache never walk (and hold the whole history in
+    /// memory) in parallel. The others wait on it within their own read budget.
+    walker: Arc<Mutex<()>>,
     #[cfg(test)]
     walk_delay: Option<std::time::Duration>,
+    /// Test seam: how many opens on this cache walked from genesis before the lock.
+    #[cfg(test)]
+    cold_walks: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl PrefixCache {
@@ -3076,8 +3094,37 @@ impl PrefixCache {
             slot: Arc::new(Mutex::new(None)),
             max_age,
             auditing: Arc::new(AtomicBool::new(false)),
+            walker: Arc::new(Mutex::new(())),
             #[cfg(test)]
             walk_delay: None,
+            #[cfg(test)]
+            cold_walks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
+
+    /// #1721: the single-flight cold walk. Waits for this cache's walker within `budget`, polling
+    /// so the wait is bounded by the caller's own deadline: a request that cannot get the walk
+    /// in time is refused as a budget overrun ("still warming"), never queued forever.
+    fn acquire_walker(
+        &self,
+        budget: &crate::ReadBudget,
+    ) -> Result<std::sync::MutexGuard<'_, ()>, EventRepositoryError> {
+        loop {
+            match self.walker.try_lock() {
+                Ok(guard) => return Ok(guard),
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    return Ok(poisoned.into_inner());
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    budget.check_now(0).map_err(|exceeded| {
+                        EventRepositoryError::ReadBudgetExceeded {
+                            walked: exceeded.walked,
+                            limit_millis: exceeded.limit_millis,
+                        }
+                    })?;
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+            }
         }
     }
 }
@@ -9105,6 +9152,47 @@ mod limit_tests {
         assert!(
             slowest < walk / 2,
             "an append waited {slowest:?} for a reader's {walk:?} walk from genesis"
+        );
+    }
+
+    /// #1721 single-flight: N concurrent cold opens on ONE shared cache walk the journal from
+    /// genesis exactly once; the others wait for that walk and then open from the filled slot.
+    /// Credible regression (#1725 review): each concurrent cold request folding the whole
+    /// history in parallel (~225 MB and 66-90 s each on the live store). Cost: eight batches,
+    /// four threads, a ~0.8 s walk.
+    #[test]
+    fn concurrent_cold_opens_on_one_cache_walk_from_genesis_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build.append_atomic(&valid_graph_request()).unwrap();
+        for sequence in 2..=8 {
+            build
+                .append_atomic(&wake_append(sequence, &format!("single-flight-{sequence}")))
+                .unwrap();
+        }
+        drop(build);
+        let mut cache = PrefixCache::new(std::time::Duration::from_secs(3600));
+        cache.walk_delay = Some(std::time::Duration::from_millis(100));
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let opens: Vec<_> = (0..4)
+            .map(|_| {
+                let root = directory.path().to_path_buf();
+                let cache = cache.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    drop(shared_repository(&root, &cache));
+                    true
+                })
+            })
+            .collect();
+        for open in opens {
+            assert!(open.join().unwrap(), "every concurrent open answers");
+        }
+        assert_eq!(
+            cache.cold_walks.load(Ordering::SeqCst),
+            1,
+            "one walk from genesis for four concurrent cold opens"
         );
     }
 

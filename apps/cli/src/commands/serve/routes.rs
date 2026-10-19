@@ -915,7 +915,7 @@ pub(super) async fn reply_suggestions(
         let read = execution::status::read_known_within(
             &events_for_head,
             Some(&execution_for_head),
-            crate::commands::status_read_budget(),
+            crate::commands::serve_read_budget(),
         )?;
         let answer = graphhelm_execution::attention(&read.projection, &read.inputs);
         let attention = match answer.verdict {
@@ -1036,7 +1036,7 @@ pub(super) async fn reply_suggestions(
         let read = execution::status::read_known_within(
             &events,
             Some(&execution_for_read),
-            crate::commands::status_read_budget(),
+            crate::commands::serve_read_budget(),
         )
         .ok()?;
         let answer = graphhelm_execution::attention(&read.projection, &read.inputs);
@@ -1219,7 +1219,7 @@ pub(super) async fn reply_suggestions(
         let read = execution::status::read_known_within(
             &latest_events,
             Some(&latest_execution),
-            crate::commands::status_read_budget(),
+            crate::commands::serve_read_budget(),
         )
         .ok()?;
         let opener = latest_opener?;

@@ -22,7 +22,7 @@ pub(crate) fn budgeted(
     execute_within(
         events,
         execution,
-        crate::commands::status_read_budget(),
+        crate::commands::serve_read_budget(),
         keyring,
     )
 }

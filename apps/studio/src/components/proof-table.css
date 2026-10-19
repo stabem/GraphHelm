@@ -83,4 +83,7 @@
 .proof-flow-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid #2A2D34; border-radius: 10px; }
 .proof-flow-actions button { min-height: 36px; padding: 6px 12px; border: 1px solid #575D6B; border-radius: 7px; background: #22252D; color: inherit; cursor: pointer; }
 .proof-flow-actions button:disabled { opacity: .55; cursor: default; }
+.proof-rejected { flex-basis: 100%; margin: 0; color: #E8A3A3; }
+.proof-reject { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; }
+.proof-reject textarea { flex: 1 1 100%; min-height: 64px; padding: 8px; border: 1px solid #575D6B; border-radius: 7px; background: #15171C; color: inherit; font: inherit; }
 .proof-flow-actions p { flex-basis: 100%; margin: 0; color: #FF6B5E; }

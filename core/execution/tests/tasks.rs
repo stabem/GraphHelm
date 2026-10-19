@@ -2000,6 +2000,8 @@ fn step_durations_are_exact_per_slice_and_summarised_per_step_1516() {
     let day = "2026-10-16T00:00:00Z";
     let hm = |h: i64, m: i64| at(day, h * 60 + m);
     let url = |pr: u64, n: u64| format!("https://github.com/o/r/pull/{pr}#c{n}");
+    let mut missing_claim = claimed(19, "lane-f", "issue-15", 15, "issue-15-work");
+    missing_claim.occurred_at = None;
     let records = vec![
         with_time(
             claimed(1, "lane-a", "issue-10", 10, "issue-10-x"),
@@ -2050,6 +2052,47 @@ fn step_durations_are_exact_per_slice_and_summarised_per_step_1516() {
             hm(15, 0),
         ),
         with_time(opened(12, "lane-c", "issue-12", 102, "ddddddd1"), hm(15, 5)),
+        with_time(
+            claimed(13, "lane-d", "issue-13", 13, "issue-13-first"),
+            hm(16, 0),
+        ),
+        with_time(
+            claimed(14, "lane-d", "issue-13", 13, "issue-13-second"),
+            hm(16, 5),
+        ),
+        with_time(
+            opened(15, "lane-d", "issue-13", 103, "eeeeeee1"),
+            hm(16, 10),
+        ),
+        with_time(
+            verdict(
+                16,
+                "rev",
+                "issue-13",
+                103,
+                "eeeeeee1",
+                "APPROVE",
+                &url(103, 1),
+            ),
+            hm(16, 20),
+        ),
+        // The second claim owns an open PR; the first claim is absorbed by it.
+        with_time(
+            claimed(18, "lane-e", "issue-14", 14, "issue-14-work"),
+            hm(17, 0),
+        ),
+        missing_claim,
+        with_time(opened(20, "lane-f", "issue-15", 104, "11111111"), hm(18, 5)),
+        with_time(
+            merged(21, "rev", "issue-15", 104, "22222222", &[15]),
+            hm(18, 20),
+        ),
+        with_time(
+            claimed(22, "lane-g", "issue-16", 16, "issue-16-work"),
+            hm(19, 0),
+        ),
+        with_time(opened(23, "lane-g", "issue-16", 105, "33333333"), hm(19, 5)),
+        merged(24, "rev", "issue-16", 105, "44444444", &[16]),
     ];
     let fold = fold_task_events_with_routes(&records);
     let durations = task_durations(&records, &fold.slices, None);
@@ -2114,4 +2157,13 @@ fn step_durations_are_exact_per_slice_and_summarised_per_step_1516() {
         since.slices.iter().any(|row| row.key == "issue-12#pr-102"),
         "open slices stay listed"
     );
+
+    assert_eq!(since.coverage["total"].eligible, 2);
+    assert_eq!(since.coverage["total"].included, 1);
+    assert_eq!(since.coverage["total"].missing, 1);
+    assert_eq!(since.excluded.before_window, 1);
+    assert_eq!(since.excluded.absorbed, 1);
+    assert_eq!(since.excluded.no_pr, 1);
+    assert_eq!(since.excluded.open, 2);
+    assert_eq!(since.excluded.merged_without_timestamp, 1);
 }

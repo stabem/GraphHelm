@@ -2089,6 +2089,26 @@ pub struct StepSummary {
     pub p90_seconds: i64,
 }
 
+/// Counts merged slices in the window with and without a computed duration for each step.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DurationStepCoverage {
+    pub eligible: usize,
+    pub included: usize,
+    pub missing: usize,
+}
+
+/// Structural slices that are outside the merged duration population.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DurationExclusions {
+    pub before_window: usize,
+    pub absorbed: usize,
+    pub no_pr: usize,
+    pub open: usize,
+    pub merged_without_timestamp: usize,
+}
+
 /// #1516: every step duration, derived from the `task.*` records already in the log.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2098,6 +2118,13 @@ pub struct TaskDurations {
     pub slices: Vec<SliceDurations>,
     /// Per step, over the slices that merged at or after `since`.
     pub summary: BTreeMap<String, StepSummary>,
+    /// Per step, how many eligible merged slices supplied a duration. A missing step may lack
+    /// an event or an event timestamp; this projection does not infer which was intended.
+    #[serde(default)]
+    pub coverage: BTreeMap<String, DurationStepCoverage>,
+    /// Slices left out before a duration summary is formed.
+    #[serde(default)]
+    pub excluded: DurationExclusions,
 }
 
 fn seconds_between(from: &PersistedTimestamp, to: &PersistedTimestamp) -> i64 {
@@ -2133,14 +2160,22 @@ pub fn task_durations(
     slices: &[FoldSlice],
     since: Option<&PersistedTimestamp>,
 ) -> TaskDurations {
-    let mut rows: Vec<SliceDurations> = Vec::new();
+    let mut eligible_rows: Vec<(SliceDurations, bool)> = Vec::new();
+    let mut excluded = DurationExclusions::default();
     let mut seen: BTreeSet<&str> = BTreeSet::new();
-    for slice in slices.iter().filter(|s| !s.absorbed) {
+    for slice in slices {
+        if slice.absorbed {
+            excluded.absorbed += 1;
+            continue;
+        }
         let state = &slice.state;
-        let Some(pr) = state.pr else { continue };
         if !seen.insert(state.key.as_str()) {
             continue;
         }
+        let Some(pr) = state.pr else {
+            excluded.no_pr += 1;
+            continue;
+        };
         let mine = |r: &&TaskEventRecord| r.task_id == state.task_id && r.pr == Some(pr);
         let timed = |kind: TaskEventKind| {
             records
@@ -2193,18 +2228,35 @@ pub fn task_durations(
         if let (Some(claim), Some(merge)) = (claim_at, merge_at) {
             steps.insert("total".to_owned(), seconds_between(claim, merge));
         }
-        rows.push(SliceDurations {
+        let row = SliceDurations {
             key: state.key.clone(),
             pr,
             merged: merge_at.is_some(),
             merged_at: merge_at.cloned(),
             steps,
-        });
+        };
+        let eligible = row.merged
+            && since.is_none_or(|window| {
+                row.merged_at
+                    .as_ref()
+                    .is_some_and(|at| at.as_datetime() >= window.as_datetime())
+            });
+        if row.merged {
+            if !eligible {
+                excluded.before_window += 1;
+            }
+        } else if state.step == TaskStep::Merged {
+            excluded.merged_without_timestamp += 1;
+        } else {
+            excluded.open += 1;
+        }
+        eligible_rows.push((row, eligible));
     }
-    rows.retain(|row| match (&row.merged_at, since) {
-        (Some(at), Some(since)) => at.as_datetime() >= since.as_datetime(),
-        _ => true,
-    });
+    let rows: Vec<SliceDurations> = eligible_rows
+        .iter()
+        .filter(|(row, eligible)| *eligible || !row.merged)
+        .map(|(row, _)| row.clone())
+        .collect();
     let mut summary = BTreeMap::new();
     for step in DURATION_STEPS {
         let values: Vec<i64> = rows
@@ -2216,9 +2268,30 @@ pub fn task_durations(
             summary.insert(step.to_owned(), stat);
         }
     }
+    let mut coverage = BTreeMap::new();
+    for step in DURATION_STEPS {
+        let eligible = eligible_rows
+            .iter()
+            .filter(|(_, is_eligible)| *is_eligible)
+            .count();
+        let included = eligible_rows
+            .iter()
+            .filter(|(row, is_eligible)| *is_eligible && row.steps.contains_key(step))
+            .count();
+        coverage.insert(
+            step.to_owned(),
+            DurationStepCoverage {
+                eligible,
+                included,
+                missing: eligible.saturating_sub(included),
+            },
+        );
+    }
     TaskDurations {
         since: since.cloned(),
         slices: rows,
         summary,
+        coverage,
+        excluded,
     }
 }

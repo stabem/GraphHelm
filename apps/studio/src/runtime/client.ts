@@ -512,6 +512,8 @@ function normaliseEvidenceRefs(raw: unknown): string[] {
 /** How many opened evidence reads one connection keeps. A run's board and conversation open a
  * few hundred at most; past this the least recently used is read again on demand. */
 export const EVIDENCE_CACHE_LIMIT = 512;
+/** #1560: how many failed reads of one evidence id a connection makes before it keeps the refusal. */
+export const EVIDENCE_READ_ATTEMPTS = 3;
 
 export class RuntimeClient {
   #token: string | null;
@@ -522,6 +524,7 @@ export class RuntimeClient {
   #evidenceBatchSize = EVIDENCE_BATCH_SIZE;
   /** Opened evidence by execution and id, oldest use first. See `readEvidence`. */
   #evidence = new Map<string, Promise<EvidenceContent>>();
+  #evidenceFailures = new Map<string, number>();
   /** Set once this Runtime has refused the route listing as fixture-only. See `listRoutes`. */
   #fixtureOnly = false;
   #seenActorsUnsupported = false;
@@ -2208,6 +2211,12 @@ export class RuntimeClient {
     if (this.#evidence.size > EVIDENCE_CACHE_LIMIT) this.#evidence.delete(this.#evidence.keys().next().value as string);
     read.catch((reason: unknown) => {
       if (reason instanceof RuntimeError && reason.httpStatus === 400) return;
+      // #1560: a retry can recover, but not without bound. After EVIDENCE_READ_ATTEMPTS failures on
+      // this connection the refusal is kept, so every refresh tick stops re-asking for it.
+      const failures = (this.#evidenceFailures.get(key) ?? 0) + 1;
+      this.#evidenceFailures.set(key, failures);
+      if (this.#evidenceFailures.size > EVIDENCE_CACHE_LIMIT) this.#evidenceFailures.delete(this.#evidenceFailures.keys().next().value as string);
+      if (failures >= EVIDENCE_READ_ATTEMPTS) return;
       if (this.#evidence.get(key) === read) this.#evidence.delete(key);
     });
     return read;
@@ -2259,18 +2268,22 @@ export class RuntimeClient {
             && error.httpStatus === 404
             && error.code === "GHCLI008_SERVE_NOT_FOUND"
             && error.diagnostics[0]?.message === "no route matches this request";
-          // #1560: a Runtime from before the 64-id cap refuses a larger read at `/ids`. Read in
-          // batches of eight from then on; this batch goes back in the queue and inally sends it again.
+          // #1560: a Runtime from before the 64-id cap refuses a larger read, at `/ids` (400) or in
+          // its store (500 GHE006_LIMIT_EXCEEDED). Read in batches of eight from then on; this batch
+          // goes back in the queue and `finally` sends it again.
           const capped = error instanceof RuntimeError
-            && error.httpStatus === 400
             && ids.length > LEGACY_EVIDENCE_BATCH_SIZE
-            && error.diagnostics[0]?.path === "/ids";
+            && ((error.httpStatus === 400 && error.diagnostics[0]?.path === "/ids")
+              || (error.httpStatus >= 500 && error.code === "GHE006_LIMIT_EXCEEDED"));
           if (capped) {
             this.#evidenceBatchSize = LEGACY_EVIDENCE_BATCH_SIZE;
             for (const [id, waiters] of selected) queue.entries.set(id, [...(queue.entries.get(id) ?? []), ...waiters]);
             return;
           }
-          if (!unsupported) throw error;
+          // #1560: any other server failure of a collection read falls back to one read per id, once,
+          // so one bad batch costs its own ids and never fails every envelope in it.
+          const failed = error instanceof RuntimeError && error.httpStatus >= 500;
+          if (!unsupported && !failed) throw error;
           values = new Map();
           const legacy = await Promise.allSettled(ids.map((id) => this.#readEvidenceSingle(executionId, id)));
           legacy.forEach((result, index) => {

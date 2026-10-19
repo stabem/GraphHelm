@@ -26,6 +26,20 @@ export type JourneyView = {
   risks?: string[]
   empty?: boolean
 }
+export type LaneRow = {
+  key: string
+  issue: number
+  title: string
+  step: string
+  lane: string
+  pr: number | null
+  inStep: string
+  idle: string
+  isStale: boolean
+  idleMs: number
+  column: 'implement' | 'review' | 'blocked' | 'build' | 'silent' | 'merge'
+}
+export type LanesView = { rows: LaneRow[]; loading: boolean; error?: string; collapsed: Record<string, boolean> }
 export type FlowRow = { id: string; title: string; status: string }
 
 declare module 'claude-code' {
@@ -35,6 +49,7 @@ declare module 'claude-code' {
       flows: FlowRow[]
       flowsError: string | null
       selected: Record<string, string>
+      lanes: LanesView
     }
   }
 }

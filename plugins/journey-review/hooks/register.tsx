@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { FlowRow, JourneyView, StepView } from '../types'
+import type { FlowRow, JourneyView, LaneRow, LanesView, StepView } from '../types'
 
 // Nothing is hard-coded to a machine: the project is the session's cwd, the binary is found on PATH,
 // and the thumbnail helper sits beside this file in the plugin. `ready` fills these before first use.
@@ -400,10 +400,176 @@ const openFlow = async ($: any, id: string) => {
   await load($, id, false)
 }
 
+const PY = 'python'
+const LANES_PANE = 'lanes'
+const LANES_TOOL = 'mcp__journey-review__show_lanes'
+const SILENT_MS = 30 * 60 * 1000
+const EVERY_MS = 30000
+
+const COLUMNS = [
+  { id: 'implement', label: 'Implement' },
+  { id: 'review', label: 'Review' },
+  { id: 'blocked', label: 'Blocked' },
+  { id: 'build', label: 'Build queue' },
+  { id: 'silent', label: 'Silent' },
+  { id: 'merge', label: 'Merge' },
+] as const
+
+const lanesAtom = atom({ plugin: 'journey-review', key: 'lanes' } as const, {
+  rows: [], loading: false, collapsed: {},
+} as LanesView)
+
+const ms = (iso?: string | null): number => {
+  const t = iso ? Date.parse(iso) : NaN
+  return Number.isFinite(t) ? t : NaN
+}
+
+const span = (from: number, to: number): string => {
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return '?'
+  const m = Math.max(0, Math.round((to - from) / 60000))
+  if (m < 1) return '<1m'
+  if (m < 90) return `${m}m`
+  if (m < 2880) return `${Math.round(m / 60)}h`
+  return `${Math.round(m / 1440)}d`
+}
+
+// Same rules as the Studio board: a lane that holds or waits for a build slot is in Build queue;
+// a stalled task or a silent lane is Silent; a fix/blocked task is Blocked; then the step.
+const toRows = (data: any): LaneRow[] => {
+  const now = ms(data?.now) || Date.now()
+  const slotLanes = new Set<string>()
+  for (const s of data?.slots ?? []) {
+    if (s?.holder?.lane) slotLanes.add(String(s.holder.lane))
+    for (const w of s?.waiting ?? []) if (w?.lane) slotLanes.add(String(w.lane))
+  }
+  const stalls = new Set<string>(data?.stalls ?? [])
+  const silent = new Set<string>(data?.silent ?? [])
+  const rows: LaneRow[] = []
+  for (const t of data?.tasks ?? []) {
+    if (t.releasedBy || t.step === 'merged') continue
+    const lane = String(t.lane ?? '')
+    const last = Math.max(ms(t.clock?.lastAt) || 0, ms(t.lastHeartbeatAt) || 0, ms(t.claimedAt) || 0) || NaN
+    const since = ms(t.clock?.since) || ms(t.claimedAt)
+    const idle = Number.isFinite(last) ? now - last : NaN
+    let column: LaneRow['column']
+    if (slotLanes.has(lane)) column = 'build'
+    else if (stalls.has(t.key) || silent.has(lane)) column = 'silent'
+    else if (t.step === 'fix' || t.step === 'critic' || t.blockedBy) column = 'blocked'
+    else if (t.step === 'review') column = 'review'
+    else if (t.step === 'merge') column = 'merge'
+    else column = 'implement'
+    rows.push({
+      key: String(t.key), issue: Number(t.issue), title: String(t.title ?? t.prTitle ?? ''), step: String(t.step ?? ''),
+      lane, pr: t.pr ?? null, inStep: span(since, now), idle: span(last, now),
+      isStale: !Number.isFinite(idle) || idle > SILENT_MS, idleMs: Number.isFinite(idle) ? idle : -1, column,
+    })
+  }
+  return rows.sort((a, b) => b.idleMs - a.idleMs)
+}
+
+// The CLI has no command that lists the open board, so a small helper reads the token file and
+// asks the Runtime. The project gives the token path; the helper finds the Runtime URL and the
+// execution in the project's `.graphhelm/team.json`. The token is read inside that child process
+// and never printed or stored here.
+const fetchBoard = async ($: any): Promise<{ rows?: LaneRow[]; error?: string }> => {
+  await ready($)
+  const helper = THUMB.replace(/thumb\.py$/, 'lanes.py')
+  const r = await $.process.run([PY, '-I', helper, PROJECT, TOKEN], { timeoutMs: 60000 })
+  let data: any = null
+  try { data = JSON.parse(String(r.stdout).trim().split(/\r?\n/).pop() ?? '') } catch { /* below */ }
+  if (r.exitCode !== 0 || !data) return { error: `Lanes failed (exit ${r.exitCode}). Is the Runtime up?` }
+  return { rows: toRows(data) }
+}
+
+const refresh = async ($: any) => {
+  await update($, lanesAtom, (v: LanesView) => ({ ...v, loading: true }))
+  const out = await fetchBoard($)
+  await update($, lanesAtom, (v: LanesView) => ({
+    ...v, loading: false, error: out.error, rows: out.rows ?? v.rows,
+  }))
+}
+
+let timer: { cancel: () => void } | null = null
+
+const summary = (rows: LaneRow[]): string => {
+  const counts = COLUMNS.map(c => `${c.label} ${rows.filter(r => r.column === c.id).length}`).join(', ')
+  const red = rows.filter(r => r.isStale).length
+  return `${rows.length} open tasks. ${counts}. No activity over 30 min: ${red}.`
+}
+
+async function openLanes($: any) {
+  const opened = await $.ui.open({ id: LANES_PANE, title: 'Lanes', focus: true })
+  await refresh($)
+  if (!timer) timer = $.clock.every(EVERY_MS, () => refresh($))
+  return opened
+}
+
+
+const lanesStart = async ($: any) => {
+  await $.command.register({ name: 'lanes', description: 'Open the GraphHelm Lanes board in a side panel' })
+  await $.tool.register({
+    name: 'show_lanes',
+    description: 'Open the GraphHelm Lanes board (open tasks by column) in a side panel for the owner.',
+    inputSchema: { type: 'object', properties: {} },
+    isDeferred: false,
+  })
+}
+
+
+
 export const register: Register = on => {
+  on('command.run', { command: 'lanes' }, async $ => {
+    const opened = await openLanes($)
+    return { text: opened?.isPlaced === false ? `Lanes pane not placed: ${(opened as any).reason}` : 'Lanes panel opened.' }
+  })
+
+  on('tool.call', { tool: LANES_TOOL }, async $ => {
+    await openLanes($)
+    const v = await read($, lanesAtom)
+    return { result: v.error ? `Lanes panel opened, but: ${v.error}` : `Lanes panel opened. ${summary(v.rows)}` }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: LANES_PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e) as any
+    const v = await read($, lanesAtom)
+    const toggle = (id: string) => () =>
+      update($, lanesAtom, (s: LanesView) => ({ ...s, collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } }))
+    return (
+      <Box flexDirection="column" paddingX={1} gap={1}>
+        <Box flexDirection="row" flexWrap="wrap" gap={1} alignItems="center">
+          <Button key="refresh" onPress={() => refresh($)}>Refresh</Button>
+          {COLUMNS.map(c => (
+            <Text key={`n-${c.id}`} bold>{`${c.label} ${v.rows.filter(r => r.column === c.id).length}`}</Text>
+          ))}
+        </Box>
+        {v.loading && <Text dimColor>Loading…</Text>}
+        {v.error && <Text color="red">{v.error}</Text>}
+        {COLUMNS.map(c => {
+          const list = v.rows.filter(r => r.column === c.id)
+          const shut = v.collapsed[c.id] === true
+          return (
+            <Box key={`g-${c.id}`} flexDirection="column">
+              <Button key={`toggle-${c.id}`} onPress={toggle(c.id)}>{`${shut ? '▸' : '▾'} ${c.label} (${list.length})`}</Button>
+              {!shut && list.length === 0 && <Text dimColor>  none</Text>}
+              {!shut && list.map(r => (
+                <Box key={`t-${r.key}`} flexDirection="column" marginLeft={2}>
+                  <Text color={r.isStale ? 'red' : undefined} wrap="truncate-end">{`#${r.issue} ${r.title}`}</Text>
+                  <Text dimColor={!r.isStale} color={r.isStale ? 'red' : undefined}>
+                    {`${r.step} · ${r.lane} · ${r.pr ? `PR ${r.pr}` : 'no PR'} · in step ${r.inStep} · idle ${r.idle}`}
+                  </Text>
+                </Box>
+              ))}
+            </Box>
+          )
+        })}
+      </Box>
+    )
+  })
+
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'journey', description: 'Show a GraphHelm journey inline: /journey <flow-id>' })
     await $.command.register({ name: 'journeys', description: 'List GraphHelm journey flows' })
+    await lanesStart($)
     await $.tool.register({
       name: 'show_journey',
       description: 'Show a GraphHelm journey run (frames, checks, Approve/Reject/Run again) inline in the chat for the owner.',

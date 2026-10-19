@@ -1,4 +1,4 @@
-import { test, expect } from 'claude-code/testing'
+import { test, expect, mock } from 'claude-code/testing'
 
 const FLOWS: any = {
   ok: true,
@@ -170,4 +170,86 @@ test('show_journey inside a folded ToolGroup still draws the card', async ($, on
     expect(await ui.find({ type: 'Button', key: 'approve' })).toBeDefined()
     await ui.unmount()
   }
+})
+
+const NOW = '2026-10-18T12:00:00Z'
+const iso = (minAgo: number) => new Date(Date.parse(NOW) - minAgo * 60000).toISOString()
+const task = (issue: number, step: string, lane: string, idleMin: number, extra: any = {}) => ({
+  issue, title: `Task ${issue}`, step, lane, pr: step === 'plan' ? null : 100 + issue, key: `issue-${issue}#x`,
+  clock: { lastAt: iso(idleMin), since: iso(idleMin + 60) }, lastHeartbeatAt: null, claimedAt: iso(500),
+  blockedBy: null, releasedBy: null, ...extra,
+})
+const BOARD = {
+  now: NOW,
+  tasks: [
+    task(1, 'implement', 'l1', 5), task(2, 'review', 'l2', 45), task(3, 'fix', 'l3', 10),
+    task(4, 'implement', 'l4', 3), task(5, 'review', 'l5', 20, { key: 'stalled-5' }), task(6, 'merge', 'l6', 2),
+    task(7, 'review', 'l7', 1, { releasedBy: 'x' }),
+  ],
+  slots: [{ holder: { lane: 'l4' }, waiting: [] }],
+  stalls: ['stalled-5'], silent: [],
+}
+const wireLanes = (on: any, seen: string[][], fail = false) => {
+  const clock = mock.clock(on, { now: Date.parse(NOW) })
+  on('session.cwd', async (p: any) => ({ value: p.plugin.root }))
+  on('ui.open', async (_$: any, e: any) => { opened.push(e); return { value: { isPlaced: true } } })
+  on('process.run', async (_$: any, e: any) => {
+    seen.push(e.argv)
+    if (fail) return { value: { exitCode: 1, stdout: '', stderr: 'down' } }
+    return { value: { exitCode: 0, stdout: JSON.stringify(BOARD) + '\n', stderr: '' } }
+  })
+  return clock
+}
+
+test('/lanes opens the panel, groups by column, marks silent tasks red', async ($, on) => {
+  const seen: string[][] = []
+  wireLanes(on, seen)
+  opened.length = 0
+  const ran: any = await $.command.run({ command: 'lanes', args: '' } as any)
+  expect(JSON.stringify(ran)).toContain('Lanes panel opened')
+  expect(opened.some(o => o.id === 'lanes')).toBe(true)
+  // the token is passed as a file path only
+  expect(seen.some(a => a.some(x => x.endsWith('events.token')))).toBe(true)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'journey-review', surface, component: 'Pane', props: {} as any, requestId: 'lanes' } as any)
+    expect(await text(ui, /^Implement 1$/)).toBeDefined()
+    expect(await text(ui, /^Build queue 1$/)).toBeDefined()
+    expect(await text(ui, /^Silent 1$/)).toBeDefined()
+    expect(await text(ui, /^Blocked 1$/)).toBeDefined()
+    expect(await text(ui, /^Merge 1$/)).toBeDefined()
+    expect(await text(ui, /#1 Task 1/)).toBeDefined()
+    expect(await text(ui, /#7 Task 7/)).toBeUndefined() // released: not open
+    const stale: any = await ui.find({ type: 'Text', text: /#2 Task 2/ })
+    expect(stale.props.color).toBe('red')
+    const fresh: any = await ui.find({ type: 'Text', text: /#1 Task 1/ })
+    expect(fresh.props.color).toBeUndefined()
+    expect(await text(ui, /review · l2 · PR 102 · in step 2h · idle 45m/)).toBeDefined()
+    await ui.press({ key: 'toggle-implement' })
+    expect(await text(ui, /#1 Task 1/)).toBeUndefined()
+    await ui.press({ key: 'toggle-implement' })
+    expect(await text(ui, /#1 Task 1/)).toBeDefined()
+    await ui.press({ key: 'refresh' })
+    await ui.unmount()
+  }
+})
+
+test('lanes timer refreshes every 30 s and a failed read shows one red line', async ($, on) => {
+  const seen: string[][] = []
+  const clock = wireLanes(on, seen, true)
+  await $.command.run({ command: 'lanes', args: '' } as any)
+  const before = seen.length
+  await clock.advance(30000)
+  expect(seen.length).toBeGreaterThan(before)
+  const ui = await $.ui.mount({ plugin: 'journey-review', surface: 'desktop', component: 'Pane', props: {} as any, requestId: 'lanes' } as any)
+  expect(await text(ui, /Lanes failed/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('show_lanes returns a string and opens the panel', async ($, on) => {
+  wireLanes(on, [])
+  opened.length = 0
+  const ran: any = await ($.tool as any).call({ tool: 'mcp__journey-review__show_lanes' })
+  expect(typeof ran.result).toBe('string')
+  expect(ran.result).toContain('6 open tasks'.replace('6', '6'))
+  expect(opened.some(o => o.id === 'lanes')).toBe(true)
 })

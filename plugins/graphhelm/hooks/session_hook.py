@@ -373,6 +373,10 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
             child = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                      stderr=subprocess.DEVNULL, close_fds=True,
                                      creationflags=creationflags, start_new_session=os.name != "nt")
+            # #1118: a waiter killed with the hook's job leaves no exit line, so the spawn says
+            # whether it left the job; a lane with "spawned:in_job" and no "started" was killed.
+            _log_waiter_exit(_session(payload), f"spawned:{'in_job' if attempt else 'breakaway'}"
+                             if os.name == "nt" else "spawned")
             break
         except OSError:
             if attempt == len(attempts) - 1:
@@ -389,6 +393,7 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
     if bound is None:
         _log_waiter_exit(session, "unbound")
         return
+    _log_waiter_exit(session, f"started:{os.getpid()}")
     cli = os.environ.get("GRAPHHELM_CLI", "graphhelm")
     pid_path = _waiter_path(payload, bound, host)
     exit_reason = "heartbeat_stale"

@@ -259,8 +259,10 @@ class SessionHookTests(unittest.TestCase):
             hook.wait_for_lane("codex", "session-123", Path(self.temp.name), heartbeat, 19)
 
         self.assertEqual(arms, [(60, 19), (1, None)])
-        self.assertEqual((state_dir / "session-123.waiter.log").read_text(encoding="utf-8").splitlines(),
-                         ["heartbeat_stale"])
+        log = (state_dir / "session-123.waiter.log").read_text(encoding="utf-8").splitlines()
+        # #1118: the waiter logs its start, so a lane whose waiter never ran is told apart.
+        self.assertTrue(log[0].startswith("started:"), log)
+        self.assertEqual(log[1:], ["heartbeat_stale"])
 
     def test_stale_burn_rearms_before_an_ask_that_arrived_while_unparked(self):
         spec = importlib.util.spec_from_file_location("session_hook_stale_burn", SCRIPT)
@@ -425,9 +427,10 @@ class SessionHookTests(unittest.TestCase):
 
         self.assertEqual(armed, [29, None])
         log = (state / "session-123.waiter.log").read_text(encoding="utf-8").splitlines()
-        self.assertTrue(log[0].startswith("wake_wait_exit:3221226505:"), log)
-        self.assertTrue(log[0].endswith("thread 'main' panicked at wake.rs:9"), log)
-        self.assertLessEqual(len(log[0]), 600)
+        self.assertTrue(log[0].startswith("started:"), log)
+        self.assertTrue(log[1].startswith("wake_wait_exit:3221226505:"), log)
+        self.assertTrue(log[1].endswith("thread 'main' panicked at wake.rs:9"), log)
+        self.assertLessEqual(len(log[1]), 600)
 
     def test_repeated_wake_wait_failures_stop_the_waiter(self):
         """A CLI that fails every time must not spin: the waiter gives up after a bounded run."""

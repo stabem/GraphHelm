@@ -189,7 +189,7 @@ fn a_backend_journey_is_green_on_good_code_and_sabotage_catches_a_break() {
     let root = dir.path();
     let scratch = tempfile::tempdir().unwrap();
 
-    // A draft never runs a command: nobody has reviewed its argv.
+    // A draft never runs a command unconfirmed, and validation never confirms (#1662).
     let (code, report) = graphhelm(&["keel", "test", "validation", "--repo"], root, &[]);
     assert_eq!(code, 2, "{report}");
     assert_eq!(
@@ -203,7 +203,7 @@ fn a_backend_journey_is_green_on_good_code_and_sabotage_catches_a_break() {
         .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap());
     let state = state.expect("the validation run keeps its state");
     assert_eq!(
-        state["edges"]["greet"]["reason"], "cli_needs_approval",
+        state["edges"]["greet"]["reason"], "confirm_needed",
         "{state}"
     );
 
@@ -286,5 +286,130 @@ fn a_backend_delete_is_held_until_the_owner_confirms() {
         deletes(root),
         1,
         "the confirmed DELETE did not reach the app once"
+    );
+}
+
+/// #1662: a draft's command runs only on the owner's confirm of exactly what they saw. Defects
+/// named: a draft `cli` flow that can never pass (it waited for approval, which needs a pass); a
+/// lane (no owner token) confirming commands; a confirm that survives an edit to the flow; a
+/// confirm the history does not show; a command whose stderr is lost.
+#[test]
+fn a_draft_command_runs_only_on_the_owners_confirm_of_what_they_saw() {
+    let dir = project("backend", FLOW);
+    let root = dir.path();
+    let token = root.join(".graphhelm/events.token");
+    let token = token.to_str().unwrap();
+    let preview = |extra: &[&str]| -> (i32, Value) {
+        let mut args = vec!["journey", "preview", "backend"];
+        args.extend(extra);
+        args.push("--project");
+        let (code, reply) = graphhelm(&args, root, &[]);
+        if code != 0 {
+            return (code, reply);
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            let (_, read) = graphhelm(
+                &["journey", "preview", "backend", "--read", "--project"],
+                root,
+                &[],
+            );
+            if read["data"]["state"] != "running" && read["data"]["ranAt"].is_string() {
+                return (0, read["data"].clone());
+            }
+            assert!(std::time::Instant::now() < deadline, "never ended: {read}");
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    };
+
+    // A draft holds before its command and names the digest and argv a confirm would allow.
+    let (_, held) = preview(&[]);
+    assert_eq!(held["edges"]["greet"]["reason"], "confirm_needed", "{held}");
+    let shown = &held["held"]["cliConfirm"];
+    assert_eq!(shown["argv"], serde_json::json!(["sh greet.sh"]), "{held}");
+    let digest = shown["digest"]
+        .as_str()
+        .expect("the hold names the digest")
+        .to_owned();
+
+    // A lane has no owner token: its confirm is refused and nothing runs.
+    let (code, refused) = preview(&["--confirm", "--confirm-digest", &digest]);
+    assert_eq!(code, 2, "{refused}");
+    assert_eq!(
+        refused["diagnostics"][0]["code"], "preview.confirm_owner_only",
+        "{refused}"
+    );
+    // A confirm of content the owner did not see is refused.
+    let (code, stale) = preview(&[
+        "--confirm",
+        "--confirm-digest",
+        "sha256:0000",
+        "--token-file",
+        token,
+    ]);
+    assert_eq!(code, 2, "{stale}");
+    assert_eq!(
+        stale["diagnostics"][0]["code"], "preview.confirm_stale",
+        "{stale}"
+    );
+
+    // The owner's confirm of what they saw runs the command, keeps its output, and passes.
+    let (code, played) = preview(&[
+        "--confirm",
+        "--confirm-digest",
+        &digest,
+        "--token-file",
+        token,
+    ]);
+    assert_eq!(code, 0, "{played}");
+    assert_eq!(played["result"], "pass", "{played}");
+    assert_eq!(played["edges"]["greet"]["result"], "pass", "{played}");
+    let output = &played["outputs"]["greet"][0];
+    assert_eq!(output["argv"], "sh greet.sh", "{played}");
+    assert_eq!(output["exit"], 0, "{played}");
+    assert!(
+        output["stdout"].as_str().unwrap().contains("hello"),
+        "{played}"
+    );
+    assert!(
+        output["stderr"]
+            .as_str()
+            .unwrap()
+            .contains("greeted on stderr"),
+        "{played}"
+    );
+    // The history shows who allowed which argv.
+    let records: Vec<String> = std::fs::read_dir(root.join(".graphhelm/owner-records"))
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("journey-cli-confirmed-"))
+        .collect();
+    assert_eq!(records.len(), 1, "{records:?}");
+    let envelope: Value = serde_json::from_slice(
+        &std::fs::read(root.join(".graphhelm/owner-records").join(&records[0])).unwrap(),
+    )
+    .unwrap();
+    let description: Value =
+        serde_json::from_str(envelope["description"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        description["argv"],
+        serde_json::json!(["sh greet.sh"]),
+        "{description}"
+    );
+    assert_eq!(description["digest"], digest.as_str(), "{description}");
+
+    // An edit to the flow voids the confirm: the command holds again.
+    let flow = root.join(".graphhelm/journeys/backend.journey.yaml");
+    let text = std::fs::read_to_string(&flow).unwrap();
+    std::fs::write(
+        &flow,
+        text.replace("A client greets", "A client first greets"),
+    )
+    .unwrap();
+    let (_, again) = preview(&["--force"]);
+    assert_eq!(
+        again["edges"]["greet"]["reason"], "confirm_needed",
+        "{again}"
     );
 }

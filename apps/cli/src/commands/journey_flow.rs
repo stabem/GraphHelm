@@ -1353,7 +1353,7 @@ pub(crate) fn reject_owned(id: &str, note: &str, project: std::path::PathBuf) ->
 }
 
 /// Whether `token_file` holds the project's owner token (#534): the owner's doors ask for it.
-fn owner_token_matches(project: &Path, token_file: Option<&Path>) -> bool {
+pub(crate) fn owner_token_matches(project: &Path, token_file: Option<&Path>) -> bool {
     let owner = super::secret_file::token_path(&super::journey_owner::store(project));
     let given =
         token_file.and_then(|path| super::secret_file::read_existing(path, "bearer token").ok());

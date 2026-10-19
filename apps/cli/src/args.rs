@@ -333,6 +333,16 @@ pub struct JourneyPreviewArgs {
     /// Internal validation-owned result directory. Ordinary preview cache is never reused.
     #[arg(long, hide = true)]
     pub validation_dir: Option<PathBuf>,
+    /// #1662: with `--confirm` on a draft, the flow digest the owner saw beside its commands. A
+    /// flow edited since then is refused, so a confirm never allows argv the owner did not see.
+    #[arg(long, requires = "confirm")]
+    pub confirm_digest: Option<String>,
+    /// #1662: the owner's token, required to confirm a draft's commands from the CLI.
+    #[arg(long)]
+    pub token_file: Option<PathBuf>,
+    /// #1662: the request came through the Runtime's owner-only route. Never a CLI flag.
+    #[arg(skip)]
+    pub owner: bool,
 }
 
 #[derive(Debug, Args)]

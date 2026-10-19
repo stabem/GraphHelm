@@ -345,8 +345,14 @@ is `drift`. **Safety.** Backend acts go through the destructive-act guard. Any `
 `GET`, `HEAD` or `OPTIONS` (an unknown method included) is a mutation, whatever its path says:
 a draft never sends it (`guard_refused`, even on a launched app), and an approved flow holds it
 at `confirm_needed` until the owner's click (`--confirm`). Validation and sabotage never confirm.
-A `cli` act never runs in a draft (`cli_needs_approval`): the owner's approval of the exact argv
-is what lets it play. In an approved flow, an argv that holds a deny-list word, or `rm`, `push`
+A `cli` act in a draft holds at `confirm_needed` (#1662). The hold names the flow digest and
+every argv in the flow. Only the owner's confirm runs it: the Runtime's owner-only preview route
+or `journey preview --confirm --confirm-digest <digest> --token-file <owner token>`. The confirm
+binds that digest and argv list, so an edit to the flow voids it. It is recorded as its own owner
+event (`journey_flow_cli_confirmed`). Each command runs hidden, in the project root, under the
+per-act timeout, and its exit code, stdout and stderr are kept with the run's evidence. A lane's
+preview cannot confirm; validation and sabotage never confirm. A destructive argv stays refused
+in a draft. In an approved flow, an argv that holds a deny-list word, or `rm`, `push`
 or `drop` as a whole word, still holds at `confirm_needed`.
 `journey preview` plays these flows and records the same result shape as a browser
 run, so `keel test validation` and `keel test sabotage` work unchanged. Replay and live sessions

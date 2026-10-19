@@ -2526,10 +2526,9 @@ fn preview_body(body: &[u8]) -> Option<PreviewBody> {
     else {
         return None;
     };
-    if !map
-        .keys()
-        .all(|key| key == "force" || key == "confirm" || key == "executionId")
-    {
+    if !map.keys().all(|key| {
+        key == "force" || key == "confirm" || key == "executionId" || key == "confirmDigest"
+    }) {
         return None;
     }
     let flag = |key: &str| match map.get(key) {
@@ -2545,10 +2544,21 @@ fn preview_body(body: &[u8]) -> Option<PreviewBody> {
         }
         Some(_) => return None,
     };
+    // #1662: the digest the owner saw beside a draft's commands; only with `confirm`.
+    let confirm_digest = match map.get("confirmDigest") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(digest))
+            if confirm && !digest.is_empty() && digest.len() <= 128 =>
+        {
+            Some(digest.clone())
+        }
+        Some(_) => return None,
+    };
     Some(PreviewBody {
         force,
         confirm,
         execution,
+        confirm_digest,
     })
 }
 
@@ -2560,6 +2570,7 @@ struct PreviewBody {
     force: bool,
     confirm: bool,
     execution: Option<String>,
+    confirm_digest: Option<String>,
 }
 
 /// `POST /v1/journey-flows/{id}/preview` (#519): exactly `graphhelm journey preview <id>`; body
@@ -2576,11 +2587,12 @@ pub(super) async fn start_journey_preview(
         force,
         confirm,
         execution,
+        confirm_digest,
     }) = preview_body(&body)
     else {
         return bad_request(
             COMMAND,
-            "the body must be {force?, confirm?, executionId?}",
+            "the body must be {force?, confirm?, executionId?, confirmDigest?}",
             "/body",
         );
     };
@@ -2602,6 +2614,10 @@ pub(super) async fn start_journey_preview(
             key_id: sealing.as_ref().map(|keyring| keyring.key_id.clone()),
             execution,
             validation_dir: None,
+            confirm_digest,
+            token_file: None,
+            // #1662: this route takes the owner credential only, so it may confirm commands.
+            owner: true,
         })
     })
     .await;
@@ -2626,6 +2642,9 @@ pub(super) async fn journey_preview(
             keyring: None,
             key_id: None,
             validation_dir: None,
+            confirm_digest: None,
+            token_file: None,
+            owner: false,
         })
     })
     .await;

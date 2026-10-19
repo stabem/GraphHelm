@@ -1720,6 +1720,22 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         );
     }
 
+    /// #1633 follow-up (gh-claude-18): only a path's ENTRY screen is excused by a passing edge
+    /// leaving it. A screen in the middle of a path that was never observed is not, even when the
+    /// next edge passed. Cost: microseconds.
+    #[test]
+    fn only_a_paths_entry_screen_is_excused_by_the_edge_leaving_it() {
+        let flow = json!({"edges":[{"id":"a.b","from":"a","to":"b"},{"id":"b.c","from":"b","to":"c"}],
+            "paths":{"main":["a.b","b.c"]}});
+        let edges = json!({"a.b":{"result":"pass"},"b.c":{"result":"pass"}});
+        let middle = json!({"a":{"frame":true,"result":"pass"},"b":{"frame":false,"reason":"not_reached"},
+            "c":{"frame":true,"result":"pass"}});
+        assert_ne!(super::run_verdict(&flow, &middle, &edges).0, "pass");
+        let entry = json!({"a":{"frame":false,"reason":"not_reached"},"b":{"frame":true,"result":"pass"},
+            "c":{"frame":true,"result":"pass"}});
+        assert_eq!(super::run_verdict(&flow, &entry, &edges).0, "pass");
+    }
+
     /// #1633: a run passes only when every step passed. Seen on gh-team: six keel flows whose
     /// screens were all `not_reached` and one edge `skipped/cli_needs_approval` read `pass` and
     /// recorded the owner's approve proof. Cost: microseconds.

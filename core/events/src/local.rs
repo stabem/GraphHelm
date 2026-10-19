@@ -613,6 +613,39 @@ impl LocalEventRepository {
             .map_err(|_| EventRepositoryError::IntegrityAt("open:schema-set"))?;
         let root_handle = ensure_root_path(&root)?;
         let root_identity = file_identity(&root_handle)?;
+        // #1624: the walk from genesis runs HERE, before the store lock, and the locked load
+        // below verifies only the bytes appended since. Every one-shot reader (`wake-wait`,
+        // `execution status`, the slot and sweep commands) used to make that walk under the
+        // shared lock: 4.5 s on a 49 MB journal, during which every append waited, and through
+        // the turnstile every read that arrived behind that writer waited too. A handle whose
+        // cache already holds a prefix has nothing to walk.
+        let cached =
+            prefix_cache.is_some_and(|cache| cache.slot.lock().map_or(true, |slot| slot.is_some()));
+        let walked = if cached {
+            None
+        } else {
+            walk_before_lock(
+                &root,
+                &root_handle,
+                schemas,
+                &read_budget,
+                #[cfg(test)]
+                prefix_cache.and_then(|cache| cache.walk_delay),
+            )
+        };
+        let walked = match walked {
+            Some(Err((error, partial))) => {
+                if let (Some(cache), Some(partial)) = (prefix_cache, partial)
+                    && let Ok(mut slot) = cache.slot.lock()
+                    && slot.is_none()
+                {
+                    *slot = Some(partial);
+                }
+                return Err(error);
+            }
+            Some(Ok(prefix)) => Some(prefix),
+            None => None,
+        };
         // The ROOT lock is taken in the same mode as the named lock it guards (Unix only; it is
         // a no-op on Windows). It used to be taken EXCLUSIVE here and in `with_lock` whatever
         // the named lock's mode was, so on Unix every open and every read serialised on the
@@ -670,6 +703,20 @@ impl LocalEventRepository {
         }
         let lock_identity = file_identity(&lock)?;
         let journal_identity = file_identity(&journal)?;
+        let verified = prefix_cache.map_or_else(
+            || Arc::new(Mutex::new(None)),
+            |cache| Arc::clone(&cache.slot),
+        );
+        // The walked prefix is a candidate, never trusted as is: `load_state` reuses it only for
+        // this journal (identity) and no longer than the file, and verifies the rest against its
+        // chain head under the lock. Any failure there walks again from genesis under the lock.
+        let seeded = walked.is_some_and(|prefix| match verified.lock() {
+            Ok(mut slot) if slot.is_none() => {
+                *slot = Some(prefix);
+                true
+            }
+            _ => false,
+        });
         let repository = Self {
             root,
             root_handle: Arc::new(root_handle),
@@ -688,10 +735,7 @@ impl LocalEventRepository {
             clock,
             ids,
             temp_counter: Arc::new(AtomicU64::new(0)),
-            verified: prefix_cache.map_or_else(
-                || Arc::new(Mutex::new(None)),
-                |cache| Arc::clone(&cache.slot),
-            ),
+            verified: Arc::clone(&verified),
             prefix_max_age: prefix_cache.map(|cache| cache.max_age),
             prefix_audit: prefix_cache.map(|cache| Arc::clone(&cache.auditing)),
             #[cfg(test)]
@@ -714,9 +758,32 @@ impl LocalEventRepository {
             schemas,
             read_budget,
         };
+        // The walk before the lock is this open's load from genesis, counted as one.
+        #[cfg(test)]
+        if seeded {
+            repository.full_load_count.fetch_add(1, Ordering::SeqCst);
+        }
         let recovery = (|| {
             repository.validate_anchors()?;
-            let state = repository.load_state("open")?;
+            let state = match repository.load_state("open") {
+                // #1624: a prefix walked before the lock that the locked suffix does not extend
+                // (a writer rolled back, or the journal changed under the walk) is dropped, and
+                // the load is the full one every open made before.
+                Err(error)
+                    if seeded
+                        && !matches!(error, EventRepositoryError::ReadBudgetExceeded { .. }) =>
+                {
+                    *repository
+                        .verified
+                        .lock()
+                        .map_err(|_| EventRepositoryError::StorageAt {
+                            site: "open:verified-mutex-poisoned",
+                            os: None,
+                        })? = None;
+                    repository.load_state("open")?
+                }
+                loaded => loaded?,
+            };
             let published = state
                 .batches
                 .iter()
@@ -2041,365 +2108,26 @@ impl LocalEventRepository {
         }
     }
 
-    /// Verifies `bytes` (whole lines, ending on a newline) into `ctx`, exactly as the
-    /// monolithic load always did — this IS that loop, extracted so a verified prefix
-    /// can resume it mid-journal. Chain heads, sequence heads, budgets and uniqueness
-    /// sets all come from `ctx`, so a suffix is judged against the cached prefix with
-    /// the same blades a full load judges it against genesis.
-    /// `consumed` ends at the byte length of the lines fully verified into `ctx`, so a caller
-    /// stopped by the read budget knows where the proof ends (#363).
+    /// The journal line walk of [`LineVerifier::verify_lines`], with this handle's blobs,
+    /// schemas, read budget and test walk delay.
     fn verify_lines(
         &self,
         bytes: &[u8],
         ctx: &mut VerifyCtx,
         consumed: &mut u64,
     ) -> Result<(), EventRepositoryError> {
-        let VerifyCtx {
-            state: shared_state,
-            budget: load_budget,
-            counted_evidence,
-            counted_artifacts,
-            verified_evidence,
-            verified_evidence_metadata_bytes,
-        } = ctx;
-        // Callers drop their Arc at the end of their operation, so this is normally a
-        // refcount-1 in-place mutation; a retained reference costs one clone, never
-        // correctness.
-        //
-        // An auditor looking for the chain head and sequence head in VerifyCtx will not
-        // find them by name: `expected` and `previous_hash` are per-batch locals SEEDED
-        // from `state.next_sequence`/`state.last_hash` and written back at the end of
-        // each batch — they survive a splice through `state`, which is why they need no
-        // ctx field.
-        let state = Arc::make_mut(shared_state);
-        // #750: what this walk costs is linear in the journal, and until now nothing bounded
-        // how long it took. The count is in EVENTS rather than lines so the budget's interval
-        // means the same thing here as it does in the fold; the check is inside the loop, so a
-        // read that runs out of time says so instead of finishing minutes later.
-        let mut walked_events = 0_u64;
-        for line in bytes
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.is_empty())
-        {
-            ensure_inclusive_limit(line.len() as u64, MAX_BATCH_BYTES as u64)?;
-            // #506: a test-only pause per batch, after the walk's start stamp and under its lock,
-            // so a walk's length grows with the journal the way a real one does.
+        self.line_verifier().verify_lines(bytes, ctx, consumed)
+    }
+
+    fn line_verifier(&self) -> LineVerifier<'_> {
+        LineVerifier {
+            root: &self.root,
+            blobs_handle: &self.blobs_handle,
+            schemas: self.schemas,
+            read_budget: &self.read_budget,
             #[cfg(test)]
-            if let Some(delay) = self.full_walk_delay {
-                std::thread::sleep(delay);
-            }
-            let batch = parse_physical_batch(self.schemas, line)?;
-            let before = walked_events;
-            walked_events = walked_events.saturating_add(batch.events.len() as u64);
-            self.read_budget
-                .check_progress(before, walked_events)
-                .map_err(|exceeded| EventRepositoryError::ReadBudgetExceeded {
-                    walked: exceeded.walked,
-                    limit_millis: exceeded.limit_millis,
-                })?;
-            if batch.checksum != batch_checksum(&batch)? {
-                // The batch failed its own checksum. Reporting this as a generic integrity failure
-                // left an operator unable to distinguish a corrupt stored line from a broken event
-                // hash chain, which have different recovery paths.
-                return Err(EventRepositoryError::CorruptBatch);
-            }
-            if canonical_bytes(&batch)? != line || batch.format_version != FORMAT_VERSION {
-                return Err(EventRepositoryError::Integrity);
-            }
-            if batch.events.is_empty()
-                || batch.events.first().map(|event| event.sequence)
-                    != Some(batch.expected_next_sequence)
-            {
-                return Err(EventRepositoryError::Integrity);
-            }
-            load_budget.account_batch(1, batch.events.len())?;
-            load_budget.account_evidence_registrations(batch.evidence_ids.len())?;
-            let artifact_references = batch.events.iter().try_fold(0_usize, |total, event| {
-                total
-                    .checked_add(event.artifact_refs.len())
-                    .ok_or(EventRepositoryError::LimitExceeded)
-            })?;
-            load_budget.account_artifacts(artifact_references, batch.artifacts.len())?;
-            let evidence_references = batch.events.iter().try_fold(0_usize, |total, event| {
-                total
-                    .checked_add(event.evidence_refs.len())
-                    .ok_or(EventRepositoryError::LimitExceeded)
-            })?;
-            load_budget.account_evidence_refs(evidence_references)?;
-            for event in &batch.events {
-                if matches!(event.kind, EventKind::GraphVersionPublished(_)) {
-                    load_budget.account_graph_publication()?;
-                }
-            }
-            let key = stream_key(&batch.scope, &batch.stream_id)?;
-            let expected = state.next_sequence.get(&key).copied().unwrap_or(1);
-            if expected != batch.expected_next_sequence {
-                return Err(EventRepositoryError::Integrity);
-            }
-            let mut previous_hash = state
-                .last_hash
-                .get(&key)
-                .cloned()
-                .unwrap_or_else(|| GENESIS_HASH.into());
-            let batch_artifacts = batch
-                .artifacts
-                .iter()
-                .map(|item| (item.reference.artifact_id().as_str(), item))
-                .collect::<BTreeMap<_, _>>();
-            let producer_artifacts = batch
-                .events
-                .iter()
-                .flat_map(|event| {
-                    event.artifact_refs.iter().map(move |reference| {
-                        (
-                            (
-                                event.idempotency_key.as_str(),
-                                reference.artifact_id().as_str(),
-                            ),
-                            reference,
-                        )
-                    })
-                })
-                .collect::<BTreeMap<_, _>>();
-            let producer_artifact_count =
-                batch.events.iter().try_fold(0_usize, |total, event| {
-                    total
-                        .checked_add(event.artifact_refs.len())
-                        .ok_or(EventRepositoryError::LimitExceeded)
-                })?;
-            if batch_artifacts.len() != batch.artifacts.len()
-                || producer_artifacts.len() != producer_artifact_count
-                || batch.artifacts.iter().any(|item| {
-                    item.producer_stream_id != batch.stream_id
-                        || producer_artifacts.get(&(
-                            item.producer_idempotency_key.as_str(),
-                            item.reference.artifact_id().as_str(),
-                        )) != Some(&&item.reference)
-                })
-            {
-                return Err(EventRepositoryError::Integrity);
-            }
-            for item in &batch.artifacts {
-                let identity = artifact_key(&batch.scope, item.reference.artifact_id())?;
-                if state
-                    .artifacts
-                    .get(&identity)
-                    .is_some_and(|existing| existing != item)
-                {
-                    return Err(EventRepositoryError::Integrity);
-                }
-            }
-            let mut batch_evidence_refs = BTreeMap::new();
-            for reference in batch.events.iter().flat_map(|event| &event.evidence_refs) {
-                match batch_evidence_refs.insert(reference.evidence_id().as_str(), reference) {
-                    Some(existing) if existing != reference => {
-                        return Err(EventRepositoryError::Integrity);
-                    }
-                    _ => {}
-                }
-            }
-            let declared_evidence = batch.evidence_ids.iter().collect::<BTreeSet<_>>();
-            if declared_evidence.len() != batch.evidence_ids.len()
-                || batch
-                    .evidence_ids
-                    .iter()
-                    .any(|id| !batch_evidence_refs.contains_key(id.as_str()))
-            {
-                return Err(EventRepositoryError::Integrity);
-            }
-            let mut evidence_digests = Vec::with_capacity(batch.evidence_ids.len());
-            for id in &batch.evidence_ids {
-                let reference = batch_evidence_refs
-                    .get(id.as_str())
-                    .copied()
-                    .ok_or(EventRepositoryError::Integrity)?;
-                let identity = object_key(&batch.scope, reference.evidence_id().as_str())?;
-                if !counted_evidence.contains(&identity) {
-                    load_budget.account_unique_evidence()?;
-                    counted_evidence.insert(identity.clone());
-                }
-                let digest = if let Some(existing) = verified_evidence.get(&identity) {
-                    if existing.scope != batch.scope || &existing.reference != reference {
-                        return Err(EventRepositoryError::Integrity);
-                    }
-                    existing.clone()
-                } else {
-                    let path = self.blob_path(&batch.scope, reference.evidence_id())?;
-                    let sealed = self.read_verified_blob(&path, &batch.scope, reference)?;
-                    let digest = evidence_digest(&sealed);
-                    *verified_evidence_metadata_bytes = verified_evidence_metadata_bytes
-                        .checked_add(
-                            u64::try_from(serialized_len_bounded(&digest, MAX_EVENT_BYTES)?)
-                                .map_err(|_| EventRepositoryError::LimitExceeded)?,
-                        )
-                        .ok_or(EventRepositoryError::LimitExceeded)?;
-                    ensure_inclusive_limit(
-                        *verified_evidence_metadata_bytes,
-                        MAX_REPOSITORY_METADATA_BYTES,
-                    )?;
-                    verified_evidence.insert(identity, digest.clone());
-                    digest
-                };
-                evidence_digests.push(digest);
-            }
-            let new_events = batch
-                .events
-                .iter()
-                .map(|event| {
-                    NewEvent::new(
-                        event.idempotency_key.clone(),
-                        event.actor.clone(),
-                        event.sensitivity,
-                        event.kind.clone(),
-                        event.evidence_refs.clone(),
-                        event.artifact_refs.clone(),
-                    )
-                })
-                .collect::<Vec<_>>();
-            if request_digest_from_evidence_digests(
-                &batch.scope,
-                &OpaqueId::parse(batch.stream_id.clone())
-                    .map_err(|_| EventRepositoryError::Integrity)?,
-                batch.expected_next_sequence,
-                &new_events,
-                evidence_digests,
-                batch.artifacts.clone(),
-            )? != batch.request_digest
-            {
-                return Err(EventRepositoryError::Integrity);
-            }
-            for (offset, event) in batch.events.iter().enumerate() {
-                crate::validate_envelope(event).map_err(|_| EventRepositoryError::Integrity)?;
-                if let EventKind::GraphVersionPublished(payload) = &event.kind {
-                    graphhelm_graph::validate_persisted_projection(&payload.version)
-                        .map_err(|_| EventRepositoryError::Integrity)?;
-                    match state.active_versions.get(&key) {
-                        Some(active)
-                            if !crate::is_graph_successor(
-                                &payload.version,
-                                active.number,
-                                &active.semantic_hash,
-                            ) =>
-                        {
-                            return Err(EventRepositoryError::Integrity);
-                        }
-                        None if payload.version.number() != 1
-                            || payload.version.predecessor().is_some() =>
-                        {
-                            return Err(EventRepositoryError::Integrity);
-                        }
-                        _ => {}
-                    }
-                    state.active_versions.insert(
-                        key.clone(),
-                        ActiveVersion {
-                            number: payload.version.number(),
-                            semantic_hash: payload.version.semantic_hash().to_string(),
-                            sequence: event.sequence,
-                            event_hash: event.event_hash.to_string(),
-                        },
-                    );
-                    let marker = StoredActiveMarker {
-                        format_version: FORMAT_VERSION.into(),
-                        scope: event.scope.clone(),
-                        stream_id: event.stream_id.to_string(),
-                        number: payload.version.number(),
-                        semantic_hash: payload.version.semantic_hash().to_string(),
-                        sequence: event.sequence,
-                        event_hash: event.event_hash.to_string(),
-                    };
-                    state.expected_markers.insert(
-                        active_marker_key(&event.scope, event.stream_id.as_str(), event.sequence)?,
-                        marker,
-                    );
-                }
-                if event.scope != batch.scope
-                    || event.stream_id.as_str() != batch.stream_id
-                    || event.sequence
-                        != expected
-                            .checked_add(
-                                u64::try_from(offset)
-                                    .map_err(|_| EventRepositoryError::Integrity)?,
-                            )
-                            .ok_or(EventRepositoryError::Integrity)?
-                    || event.previous_hash.as_str() != previous_hash
-                    || crate::compute_event_hash(event, &previous_hash)?
-                        != event.event_hash.as_str()
-                {
-                    return Err(EventRepositoryError::Integrity);
-                }
-                let idempotency_identity = format!("{key}:{}", event.idempotency_key);
-                if !state.seen_idempotency.insert(idempotency_identity) {
-                    return Err(EventRepositoryError::Integrity);
-                }
-                if state.seen_idempotency.len() > MAX_READ_ALL {
-                    return Err(EventRepositoryError::LimitExceeded);
-                }
-                previous_hash = event.event_hash.to_string();
-                for reference in &event.evidence_refs {
-                    let identity = object_key(&event.scope, reference.evidence_id().as_str())?;
-                    if !counted_evidence.contains(&identity) {
-                        load_budget.account_unique_evidence()?;
-                        counted_evidence.insert(identity.clone());
-                    }
-                    let path = self.blob_path(&event.scope, reference.evidence_id())?;
-                    if verified_evidence.get(&identity).is_none_or(|digest| {
-                        digest.scope != event.scope || digest.reference != *reference
-                    }) {
-                        return Err(EventRepositoryError::Integrity);
-                    }
-                    state.reachable_evidence.insert(path);
-                }
-                for artifact in &event.artifact_refs {
-                    let identity = artifact_key(&event.scope, artifact.artifact_id())?;
-                    if !counted_artifacts.contains(&identity) {
-                        load_budget.account_unique_artifact()?;
-                        counted_artifacts.insert(identity.clone());
-                    }
-                    let existing = state.artifacts.get(&identity);
-                    let registered = batch_artifacts
-                        .get(artifact.artifact_id().as_str())
-                        .filter(|item| item.producer_stream_id == event.stream_id.as_str())
-                        .map(|item| &item.reference);
-                    if existing.is_none_or(|item| {
-                        item.producer_stream_id != event.stream_id.as_str()
-                            || &item.reference != artifact
-                    }) && registered != Some(artifact)
-                    {
-                        return Err(EventRepositoryError::Integrity);
-                    }
-                }
-            }
-            let batch_event_count =
-                u64::try_from(batch.events.len()).map_err(|_| EventRepositoryError::Integrity)?;
-            state.next_sequence.insert(
-                key.clone(),
-                expected
-                    .checked_add(batch_event_count)
-                    .ok_or(EventRepositoryError::Integrity)?,
-            );
-            state.last_hash.insert(key, previous_hash);
-            for artifact in &batch.artifacts {
-                let identity = artifact_key(&batch.scope, artifact.reference.artifact_id())?;
-                if !counted_artifacts.contains(&identity) {
-                    load_budget.account_unique_artifact()?;
-                    counted_artifacts.insert(identity.clone());
-                }
-                match state.artifacts.get(&identity) {
-                    Some(existing) if existing != artifact => {
-                        return Err(EventRepositoryError::Integrity);
-                    }
-                    Some(_) => {}
-                    None => {
-                        state.artifacts.insert(identity, artifact.clone());
-                    }
-                }
-            }
-            state.batches.push(batch);
-            // The line plus its newline: `bytes` holds whole lines, each ending on one.
-            *consumed = (line.as_ptr() as usize - bytes.as_ptr() as usize + line.len() + 1) as u64;
+            walk_delay: self.full_walk_delay,
         }
-        Ok(())
     }
 
     fn verify_blob(
@@ -2426,38 +2154,6 @@ impl LocalEventRepository {
             return Err(EventRepositoryError::Integrity);
         }
         stored.verify(scope, reference)
-    }
-
-    fn read_verified_blob(
-        &self,
-        path: &Path,
-        scope: &RepositoryScope,
-        reference: &graphhelm_protocols::EvidenceReference,
-    ) -> Result<SealedEvidence, EventRepositoryError> {
-        let name = path
-            .file_name()
-            .and_then(std::ffi::OsStr::to_str)
-            .ok_or(EventRepositoryError::UnsupportedFormat)?;
-        let mut file = open_child_file(
-            &self.blobs_handle,
-            &self.root.join("blobs"),
-            name,
-            false,
-            false,
-        )?;
-        let bytes = read_bounded_file(&mut file, MAX_STORED_EVIDENCE_BYTES)?;
-        let stored: StoredEvidence =
-            serde_json::from_slice(&bytes).map_err(|_| EventRepositoryError::Integrity)?;
-        if canonical_bytes(&stored)? != bytes {
-            return Err(EventRepositoryError::Integrity);
-        }
-        if stored.format_version != FORMAT_VERSION
-            || &stored.scope != scope
-            || &stored.reference != reference
-        {
-            return Err(EventRepositoryError::Integrity);
-        }
-        stored.to_sealed()
     }
 
     /// Recovery, unchanged in behavior (#143 split it in two so the shared fast path
@@ -3188,6 +2884,474 @@ impl std::fmt::Debug for PrefixCache {
             .field("max_age", &self.max_age)
             .finish_non_exhaustive()
     }
+}
+
+/// #1624: the journal's whole lines verified from genesis WITHOUT the store lock, as the prefix a
+/// locked load then extends. `None` when there is nothing to walk or anything fails: the locked
+/// load then walks from genesis, as every open did before. A walk cut by the read budget is the
+/// open's refusal, with the lines it did verify as a pending walk a later load resumes (#363).
+///
+/// Why no lock is needed: the journal is append-only, and every writer that changes it holds the
+/// exclusive lock. Bytes read here are either still there when the lock is taken, and then the
+/// locked load extends them against their chain head, or they are not (a rollback, a truncation,
+/// a replacement), and then identity, length or the chain refuse the candidate.
+fn walk_before_lock(
+    root: &Path,
+    root_handle: &File,
+    schemas: &'static graphhelm_schema::RepositorySchemaSet,
+    read_budget: &crate::ReadBudget,
+    #[cfg(test)] walk_delay: Option<std::time::Duration>,
+) -> Option<Result<VerifiedPrefix, (EventRepositoryError, Option<VerifiedPrefix>)>> {
+    let blobs_handle = open_child_directory(root_handle, root, "blobs").ok()?;
+    let mut journal = open_child_file(root_handle, root, "journal.jsonl", false, false).ok()?;
+    let identity = file_identity(&journal).ok()?;
+    let length = journal.metadata().ok()?.len();
+    ensure_inclusive_limit(length, MAX_JOURNAL_BYTES).ok()?;
+    let bytes = read_bounded_range(&mut journal, 0, length).ok()?;
+    let whole = bytes.iter().rposition(|byte| *byte == b'\n')? + 1;
+    let verifier = LineVerifier {
+        root,
+        blobs_handle: &blobs_handle,
+        schemas,
+        read_budget,
+        #[cfg(test)]
+        walk_delay,
+    };
+    let mut ctx = VerifyCtx::fresh();
+    let mut consumed = 0_u64;
+    match verifier.verify_lines(&bytes[..whole], &mut ctx, &mut consumed) {
+        Ok(()) => Some(Ok(ctx.into_prefix(
+            identity,
+            whole as u64,
+            // #506: a walk from genesis is stamped when it ends.
+            std::time::Instant::now(),
+            false,
+        ))),
+        Err(error @ EventRepositoryError::ReadBudgetExceeded { .. }) => {
+            let partial = (consumed > 0)
+                .then(|| ctx.into_prefix(identity, consumed, std::time::Instant::now(), true));
+            Some(Err((error, partial)))
+        }
+        Err(_) => None,
+    }
+}
+
+/// What the journal line walk reads besides the journal: the blobs directory, the schemas, the
+/// read budget. Borrowed from a handle, or (#1624) from the pieces `open` has before it takes the
+/// store lock, so the walk from genesis can run before the lock instead of under it.
+struct LineVerifier<'a> {
+    root: &'a Path,
+    blobs_handle: &'a File,
+    schemas: &'static graphhelm_schema::RepositorySchemaSet,
+    read_budget: &'a crate::ReadBudget,
+    #[cfg(test)]
+    walk_delay: Option<std::time::Duration>,
+}
+
+impl LineVerifier<'_> {
+    /// Verifies `bytes` (whole lines, ending on a newline) into `ctx`, exactly as the
+    /// monolithic load always did — this IS that loop, extracted so a verified prefix
+    /// can resume it mid-journal. Chain heads, sequence heads, budgets and uniqueness
+    /// sets all come from `ctx`, so a suffix is judged against the cached prefix with
+    /// the same blades a full load judges it against genesis.
+    /// `consumed` ends at the byte length of the lines fully verified into `ctx`, so a caller
+    /// stopped by the read budget knows where the proof ends (#363).
+    fn verify_lines(
+        &self,
+        bytes: &[u8],
+        ctx: &mut VerifyCtx,
+        consumed: &mut u64,
+    ) -> Result<(), EventRepositoryError> {
+        let VerifyCtx {
+            state: shared_state,
+            budget: load_budget,
+            counted_evidence,
+            counted_artifacts,
+            verified_evidence,
+            verified_evidence_metadata_bytes,
+        } = ctx;
+        // Callers drop their Arc at the end of their operation, so this is normally a
+        // refcount-1 in-place mutation; a retained reference costs one clone, never
+        // correctness.
+        //
+        // An auditor looking for the chain head and sequence head in VerifyCtx will not
+        // find them by name: `expected` and `previous_hash` are per-batch locals SEEDED
+        // from `state.next_sequence`/`state.last_hash` and written back at the end of
+        // each batch — they survive a splice through `state`, which is why they need no
+        // ctx field.
+        let state = Arc::make_mut(shared_state);
+        // #750: what this walk costs is linear in the journal, and until now nothing bounded
+        // how long it took. The count is in EVENTS rather than lines so the budget's interval
+        // means the same thing here as it does in the fold; the check is inside the loop, so a
+        // read that runs out of time says so instead of finishing minutes later.
+        let mut walked_events = 0_u64;
+        for line in bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            ensure_inclusive_limit(line.len() as u64, MAX_BATCH_BYTES as u64)?;
+            // #506: a test-only pause per batch, after the walk's start stamp and under its lock,
+            // so a walk's length grows with the journal the way a real one does.
+            #[cfg(test)]
+            if let Some(delay) = self.walk_delay {
+                std::thread::sleep(delay);
+            }
+            let batch = parse_physical_batch(self.schemas, line)?;
+            let before = walked_events;
+            walked_events = walked_events.saturating_add(batch.events.len() as u64);
+            self.read_budget
+                .check_progress(before, walked_events)
+                .map_err(|exceeded| EventRepositoryError::ReadBudgetExceeded {
+                    walked: exceeded.walked,
+                    limit_millis: exceeded.limit_millis,
+                })?;
+            if batch.checksum != batch_checksum(&batch)? {
+                // The batch failed its own checksum. Reporting this as a generic integrity failure
+                // left an operator unable to distinguish a corrupt stored line from a broken event
+                // hash chain, which have different recovery paths.
+                return Err(EventRepositoryError::CorruptBatch);
+            }
+            if canonical_bytes(&batch)? != line || batch.format_version != FORMAT_VERSION {
+                return Err(EventRepositoryError::Integrity);
+            }
+            if batch.events.is_empty()
+                || batch.events.first().map(|event| event.sequence)
+                    != Some(batch.expected_next_sequence)
+            {
+                return Err(EventRepositoryError::Integrity);
+            }
+            load_budget.account_batch(1, batch.events.len())?;
+            load_budget.account_evidence_registrations(batch.evidence_ids.len())?;
+            let artifact_references = batch.events.iter().try_fold(0_usize, |total, event| {
+                total
+                    .checked_add(event.artifact_refs.len())
+                    .ok_or(EventRepositoryError::LimitExceeded)
+            })?;
+            load_budget.account_artifacts(artifact_references, batch.artifacts.len())?;
+            let evidence_references = batch.events.iter().try_fold(0_usize, |total, event| {
+                total
+                    .checked_add(event.evidence_refs.len())
+                    .ok_or(EventRepositoryError::LimitExceeded)
+            })?;
+            load_budget.account_evidence_refs(evidence_references)?;
+            for event in &batch.events {
+                if matches!(event.kind, EventKind::GraphVersionPublished(_)) {
+                    load_budget.account_graph_publication()?;
+                }
+            }
+            let key = stream_key(&batch.scope, &batch.stream_id)?;
+            let expected = state.next_sequence.get(&key).copied().unwrap_or(1);
+            if expected != batch.expected_next_sequence {
+                return Err(EventRepositoryError::Integrity);
+            }
+            let mut previous_hash = state
+                .last_hash
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| GENESIS_HASH.into());
+            let batch_artifacts = batch
+                .artifacts
+                .iter()
+                .map(|item| (item.reference.artifact_id().as_str(), item))
+                .collect::<BTreeMap<_, _>>();
+            let producer_artifacts = batch
+                .events
+                .iter()
+                .flat_map(|event| {
+                    event.artifact_refs.iter().map(move |reference| {
+                        (
+                            (
+                                event.idempotency_key.as_str(),
+                                reference.artifact_id().as_str(),
+                            ),
+                            reference,
+                        )
+                    })
+                })
+                .collect::<BTreeMap<_, _>>();
+            let producer_artifact_count =
+                batch.events.iter().try_fold(0_usize, |total, event| {
+                    total
+                        .checked_add(event.artifact_refs.len())
+                        .ok_or(EventRepositoryError::LimitExceeded)
+                })?;
+            if batch_artifacts.len() != batch.artifacts.len()
+                || producer_artifacts.len() != producer_artifact_count
+                || batch.artifacts.iter().any(|item| {
+                    item.producer_stream_id != batch.stream_id
+                        || producer_artifacts.get(&(
+                            item.producer_idempotency_key.as_str(),
+                            item.reference.artifact_id().as_str(),
+                        )) != Some(&&item.reference)
+                })
+            {
+                return Err(EventRepositoryError::Integrity);
+            }
+            for item in &batch.artifacts {
+                let identity = artifact_key(&batch.scope, item.reference.artifact_id())?;
+                if state
+                    .artifacts
+                    .get(&identity)
+                    .is_some_and(|existing| existing != item)
+                {
+                    return Err(EventRepositoryError::Integrity);
+                }
+            }
+            let mut batch_evidence_refs = BTreeMap::new();
+            for reference in batch.events.iter().flat_map(|event| &event.evidence_refs) {
+                match batch_evidence_refs.insert(reference.evidence_id().as_str(), reference) {
+                    Some(existing) if existing != reference => {
+                        return Err(EventRepositoryError::Integrity);
+                    }
+                    _ => {}
+                }
+            }
+            let declared_evidence = batch.evidence_ids.iter().collect::<BTreeSet<_>>();
+            if declared_evidence.len() != batch.evidence_ids.len()
+                || batch
+                    .evidence_ids
+                    .iter()
+                    .any(|id| !batch_evidence_refs.contains_key(id.as_str()))
+            {
+                return Err(EventRepositoryError::Integrity);
+            }
+            let mut evidence_digests = Vec::with_capacity(batch.evidence_ids.len());
+            for id in &batch.evidence_ids {
+                let reference = batch_evidence_refs
+                    .get(id.as_str())
+                    .copied()
+                    .ok_or(EventRepositoryError::Integrity)?;
+                let identity = object_key(&batch.scope, reference.evidence_id().as_str())?;
+                if !counted_evidence.contains(&identity) {
+                    load_budget.account_unique_evidence()?;
+                    counted_evidence.insert(identity.clone());
+                }
+                let digest = if let Some(existing) = verified_evidence.get(&identity) {
+                    if existing.scope != batch.scope || &existing.reference != reference {
+                        return Err(EventRepositoryError::Integrity);
+                    }
+                    existing.clone()
+                } else {
+                    let path = blob_path_in(self.root, &batch.scope, reference.evidence_id())?;
+                    let sealed = read_verified_blob_in(
+                        self.blobs_handle,
+                        self.root,
+                        &path,
+                        &batch.scope,
+                        reference,
+                    )?;
+                    let digest = evidence_digest(&sealed);
+                    *verified_evidence_metadata_bytes = verified_evidence_metadata_bytes
+                        .checked_add(
+                            u64::try_from(serialized_len_bounded(&digest, MAX_EVENT_BYTES)?)
+                                .map_err(|_| EventRepositoryError::LimitExceeded)?,
+                        )
+                        .ok_or(EventRepositoryError::LimitExceeded)?;
+                    ensure_inclusive_limit(
+                        *verified_evidence_metadata_bytes,
+                        MAX_REPOSITORY_METADATA_BYTES,
+                    )?;
+                    verified_evidence.insert(identity, digest.clone());
+                    digest
+                };
+                evidence_digests.push(digest);
+            }
+            let new_events = batch
+                .events
+                .iter()
+                .map(|event| {
+                    NewEvent::new(
+                        event.idempotency_key.clone(),
+                        event.actor.clone(),
+                        event.sensitivity,
+                        event.kind.clone(),
+                        event.evidence_refs.clone(),
+                        event.artifact_refs.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            if request_digest_from_evidence_digests(
+                &batch.scope,
+                &OpaqueId::parse(batch.stream_id.clone())
+                    .map_err(|_| EventRepositoryError::Integrity)?,
+                batch.expected_next_sequence,
+                &new_events,
+                evidence_digests,
+                batch.artifacts.clone(),
+            )? != batch.request_digest
+            {
+                return Err(EventRepositoryError::Integrity);
+            }
+            for (offset, event) in batch.events.iter().enumerate() {
+                crate::validate_envelope(event).map_err(|_| EventRepositoryError::Integrity)?;
+                if let EventKind::GraphVersionPublished(payload) = &event.kind {
+                    graphhelm_graph::validate_persisted_projection(&payload.version)
+                        .map_err(|_| EventRepositoryError::Integrity)?;
+                    match state.active_versions.get(&key) {
+                        Some(active)
+                            if !crate::is_graph_successor(
+                                &payload.version,
+                                active.number,
+                                &active.semantic_hash,
+                            ) =>
+                        {
+                            return Err(EventRepositoryError::Integrity);
+                        }
+                        None if payload.version.number() != 1
+                            || payload.version.predecessor().is_some() =>
+                        {
+                            return Err(EventRepositoryError::Integrity);
+                        }
+                        _ => {}
+                    }
+                    state.active_versions.insert(
+                        key.clone(),
+                        ActiveVersion {
+                            number: payload.version.number(),
+                            semantic_hash: payload.version.semantic_hash().to_string(),
+                            sequence: event.sequence,
+                            event_hash: event.event_hash.to_string(),
+                        },
+                    );
+                    let marker = StoredActiveMarker {
+                        format_version: FORMAT_VERSION.into(),
+                        scope: event.scope.clone(),
+                        stream_id: event.stream_id.to_string(),
+                        number: payload.version.number(),
+                        semantic_hash: payload.version.semantic_hash().to_string(),
+                        sequence: event.sequence,
+                        event_hash: event.event_hash.to_string(),
+                    };
+                    state.expected_markers.insert(
+                        active_marker_key(&event.scope, event.stream_id.as_str(), event.sequence)?,
+                        marker,
+                    );
+                }
+                if event.scope != batch.scope
+                    || event.stream_id.as_str() != batch.stream_id
+                    || event.sequence
+                        != expected
+                            .checked_add(
+                                u64::try_from(offset)
+                                    .map_err(|_| EventRepositoryError::Integrity)?,
+                            )
+                            .ok_or(EventRepositoryError::Integrity)?
+                    || event.previous_hash.as_str() != previous_hash
+                    || crate::compute_event_hash(event, &previous_hash)?
+                        != event.event_hash.as_str()
+                {
+                    return Err(EventRepositoryError::Integrity);
+                }
+                let idempotency_identity = format!("{key}:{}", event.idempotency_key);
+                if !state.seen_idempotency.insert(idempotency_identity) {
+                    return Err(EventRepositoryError::Integrity);
+                }
+                if state.seen_idempotency.len() > MAX_READ_ALL {
+                    return Err(EventRepositoryError::LimitExceeded);
+                }
+                previous_hash = event.event_hash.to_string();
+                for reference in &event.evidence_refs {
+                    let identity = object_key(&event.scope, reference.evidence_id().as_str())?;
+                    if !counted_evidence.contains(&identity) {
+                        load_budget.account_unique_evidence()?;
+                        counted_evidence.insert(identity.clone());
+                    }
+                    let path = blob_path_in(self.root, &event.scope, reference.evidence_id())?;
+                    if verified_evidence.get(&identity).is_none_or(|digest| {
+                        digest.scope != event.scope || digest.reference != *reference
+                    }) {
+                        return Err(EventRepositoryError::Integrity);
+                    }
+                    state.reachable_evidence.insert(path);
+                }
+                for artifact in &event.artifact_refs {
+                    let identity = artifact_key(&event.scope, artifact.artifact_id())?;
+                    if !counted_artifacts.contains(&identity) {
+                        load_budget.account_unique_artifact()?;
+                        counted_artifacts.insert(identity.clone());
+                    }
+                    let existing = state.artifacts.get(&identity);
+                    let registered = batch_artifacts
+                        .get(artifact.artifact_id().as_str())
+                        .filter(|item| item.producer_stream_id == event.stream_id.as_str())
+                        .map(|item| &item.reference);
+                    if existing.is_none_or(|item| {
+                        item.producer_stream_id != event.stream_id.as_str()
+                            || &item.reference != artifact
+                    }) && registered != Some(artifact)
+                    {
+                        return Err(EventRepositoryError::Integrity);
+                    }
+                }
+            }
+            let batch_event_count =
+                u64::try_from(batch.events.len()).map_err(|_| EventRepositoryError::Integrity)?;
+            state.next_sequence.insert(
+                key.clone(),
+                expected
+                    .checked_add(batch_event_count)
+                    .ok_or(EventRepositoryError::Integrity)?,
+            );
+            state.last_hash.insert(key, previous_hash);
+            for artifact in &batch.artifacts {
+                let identity = artifact_key(&batch.scope, artifact.reference.artifact_id())?;
+                if !counted_artifacts.contains(&identity) {
+                    load_budget.account_unique_artifact()?;
+                    counted_artifacts.insert(identity.clone());
+                }
+                match state.artifacts.get(&identity) {
+                    Some(existing) if existing != artifact => {
+                        return Err(EventRepositoryError::Integrity);
+                    }
+                    Some(_) => {}
+                    None => {
+                        state.artifacts.insert(identity, artifact.clone());
+                    }
+                }
+            }
+            state.batches.push(batch);
+            // The line plus its newline: `bytes` holds whole lines, each ending on one.
+            *consumed = (line.as_ptr() as usize - bytes.as_ptr() as usize + line.len() + 1) as u64;
+        }
+        Ok(())
+    }
+}
+
+fn read_verified_blob_in(
+    blobs_handle: &File,
+    root: &Path,
+    path: &Path,
+    scope: &RepositoryScope,
+    reference: &graphhelm_protocols::EvidenceReference,
+) -> Result<SealedEvidence, EventRepositoryError> {
+    let name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or(EventRepositoryError::UnsupportedFormat)?;
+    let mut file = open_child_file(blobs_handle, &root.join("blobs"), name, false, false)?;
+    let bytes = read_bounded_file(&mut file, MAX_STORED_EVIDENCE_BYTES)?;
+    let stored: StoredEvidence =
+        serde_json::from_slice(&bytes).map_err(|_| EventRepositoryError::Integrity)?;
+    if canonical_bytes(&stored)? != bytes {
+        return Err(EventRepositoryError::Integrity);
+    }
+    if stored.format_version != FORMAT_VERSION
+        || &stored.scope != scope
+        || &stored.reference != reference
+    {
+        return Err(EventRepositoryError::Integrity);
+    }
+    stored.to_sealed()
+}
+
+fn blob_path_in(
+    root: &Path,
+    scope: &RepositoryScope,
+    evidence_id: &EvidenceId,
+) -> Result<PathBuf, EventRepositoryError> {
+    Ok(root
+        .join("blobs")
+        .join(format!("{}.json", object_key(scope, evidence_id.as_str())?)))
 }
 
 /// #87: the verified prefix, retained per handle between loads. Everything here was
@@ -8519,6 +8683,62 @@ mod limit_tests {
                 .elapsed()
                 < std::time::Duration::from_secs(3600),
             "the audit still restamped the prefix"
+        );
+    }
+
+    /// #1624: a one-shot reader (`wake-wait`, `execution status`) opens with no verified prefix
+    /// and walks the journal from genesis. That walk used to run under the shared store lock, so
+    /// readers polling back to back kept every append waiting for a whole walk (7 s appends on a
+    /// 49 MB journal with three wake-waits). The walk now runs before the lock. Credible
+    /// regression: the genesis walk moving back under the lock. Cost: one temp store, one reader
+    /// thread, about two seconds.
+    #[test]
+    fn an_append_does_not_wait_for_a_polling_reader_walking_from_genesis() {
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build.append_atomic(&valid_graph_request()).unwrap();
+        for sequence in 2..=8 {
+            build
+                .append_atomic(&wake_append(sequence, &format!("wake-poll-{sequence}")))
+                .unwrap();
+        }
+        drop(build);
+        // Eight batches at 250 ms each: a 2 s walk from genesis per poll.
+        let walk = std::time::Duration::from_millis(2000);
+        let stop = Arc::new(AtomicBool::new(false));
+        let walking = Arc::new(AtomicBool::new(false));
+        let reader = {
+            let root = directory.path().to_path_buf();
+            let stop = Arc::clone(&stop);
+            let walking = Arc::clone(&walking);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    // A fresh cache holds no prefix: this open is a one-shot reader's open.
+                    let mut cache = PrefixCache::new(std::time::Duration::from_secs(3600));
+                    cache.walk_delay = Some(std::time::Duration::from_millis(250));
+                    walking.store(true, Ordering::SeqCst);
+                    drop(shared_repository(&root, &cache));
+                }
+            })
+        };
+        while !walking.load(Ordering::SeqCst) {
+            std::thread::yield_now();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let writer = cache_repository(directory.path());
+        let mut slowest = std::time::Duration::ZERO;
+        for sequence in 9..=10 {
+            let started = std::time::Instant::now();
+            writer
+                .append_atomic(&wake_append(sequence, &format!("wake-poll-{sequence}")))
+                .unwrap();
+            slowest = slowest.max(started.elapsed());
+        }
+        stop.store(true, Ordering::SeqCst);
+        reader.join().unwrap();
+        assert!(
+            slowest < walk / 2,
+            "an append waited {slowest:?} for a reader's {walk:?} walk from genesis"
         );
     }
 

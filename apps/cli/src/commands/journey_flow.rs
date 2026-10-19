@@ -258,6 +258,7 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
         }
     }
     findings.extend(weak_journey(value, false));
+    findings.extend(observer_missing(value));
     let mut reached = BTreeSet::new();
     for (name, path) in value["paths"].as_object().unwrap() {
         let contract_id = if name == "main" {
@@ -392,6 +393,34 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
 /// another URL, or pointing the flow at another app voids the mark: "Send" marked safe on one
 /// page of one app is not "Send" on another. `base_not_local` keeps a flow on this machine, not
 /// on the app the owner was shown, so `base` is bound here.
+/// #1633 follow-up: a flow that admits part of its purpose is not observed (`OBSERVER_MISSING` in
+/// its title or purpose, or in a screen's or edge's title or notes) is not proof of that purpose,
+/// so it is a blocking finding: validate names it, and approve and `approvable` refuse it.
+fn observer_missing(value: &Value) -> Vec<Finding> {
+    const MARK: &str = "OBSERVER_MISSING";
+    let mut found = Vec::new();
+    let mut check = |text: &Value, pointer: String| {
+        if text.as_str().is_some_and(|text| text.contains(MARK)) {
+            found.push(Finding::new(
+                "flow.observer_missing",
+                pointer,
+                "this flow says part of its purpose is not observed (OBSERVER_MISSING); observe it before approving",
+            ));
+        }
+    };
+    for field in ["title", "purpose"] {
+        check(&value[field], format!("/{field}"));
+    }
+    for kind in ["screens", "edges"] {
+        for (i, step) in value[kind].as_array().into_iter().flatten().enumerate() {
+            for field in ["title", "notes"] {
+                check(&step[field], format!("/{kind}/{i}/{field}"));
+            }
+        }
+    }
+    found
+}
+
 /// #1287: a journey must say what it proves. `strict` (the agent's draft writer and approval) refuses
 /// each gap; everywhere else (validate, flows, watch, replay, keel) a flow that already exists keeps
 /// working and carries each gap as a `flow.weak_journey` warning, so it is flagged, never broken.

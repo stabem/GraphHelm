@@ -7390,9 +7390,17 @@ pub(super) mod tests {
                 force,
                 confirm,
                 execution: execution.map(str::to_owned),
+                confirm_digest: None,
             })
         };
         assert_eq!(preview_body(b""), asked(false, false, None));
+        // #1662: the digest the owner saw rides only with a confirm.
+        assert_eq!(
+            preview_body(br#"{"confirm":true,"confirmDigest":"sha256:abc"}"#)
+                .and_then(|body| body.confirm_digest),
+            Some("sha256:abc".to_owned())
+        );
+        assert_eq!(preview_body(br#"{"confirmDigest":"sha256:abc"}"#), None);
         assert_eq!(preview_body(br#"{}"#), asked(false, false, None));
         assert_eq!(preview_body(br#"{"force":true}"#), asked(true, false, None));
         assert_eq!(

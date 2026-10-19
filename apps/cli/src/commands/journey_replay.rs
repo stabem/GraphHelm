@@ -733,8 +733,13 @@ impl Driver {
                     result["checks"].as_array().is_some_and(|checks| {
                         checks.len() == expect.len()
                             && checks.iter().zip(expect).all(|(check, wanted)| {
-                                closed(check, &["role", "name", "seen", "closest"])
-                                    && check["role"] == wanted["role"]
+                                // #1041: a met `absent` check says so; a present one never does.
+                                (if wanted["absent"] == true {
+                                    closed(check, &["role", "name", "absent", "seen", "closest"])
+                                        && check["absent"] == true
+                                } else {
+                                    closed(check, &["role", "name", "seen", "closest"])
+                                }) && check["role"] == wanted["role"]
                                     && check["name"] == wanted["name"]
                                     && check["seen"] == true
                                     && check["closest"].is_null()
@@ -2483,6 +2488,54 @@ mod tests {
                 last_checks: None,
             };
             let reply = driver.call("snapshot", request.clone(), "/screens/entrar");
+            assert_eq!(reply.map(|_| ()).map_err(|e| e.0), expected, "{frame}");
+        }
+    }
+
+    /// #1041: a snapshot whose `absent` check is met (the banner is gone) is a success the driver
+    /// writes as `{…, absent: true, seen: true, closest: null}`. Regression found by the
+    /// studio-handover run: Rust refused that frame as `replay.driver_frame_invalid`, so every
+    /// dismissal that worked failed `internal`. A present check may not carry the flag.
+    /// Cost: milliseconds, fixed peer frames.
+    #[test]
+    fn a_met_absent_check_is_an_accepted_snapshot() {
+        let fingerprint = format!("sha256:{}", "a".repeat(64));
+        let request = json!({"expect":[{"role":"tablist","name":"Mission views"},
+            {"role":"region","name":"While you were away","absent":true}]});
+        let gone = json!([{"role":"tablist","name":"Mission views","seen":true,"closest":null},
+            {"role":"region","name":"While you were away","absent":true,"seen":true,"closest":null}]);
+        let mut unflagged = gone.clone();
+        unflagged[1].as_object_mut().unwrap().remove("absent");
+        let mut flagged_present = gone.clone();
+        flagged_present[0]["absent"] = true.into();
+        let success = |checks: &Value| json!({"protocol":PROTOCOL,"requestId":1,"ok":true,"result":{"url":"http://localhost/","ariaYaml":"- tablist \"Mission views\"","controls":[],"fingerprint":fingerprint,"checks":checks}});
+        for (frame, expected) in [
+            (success(&gone), Ok(())),
+            (success(&unflagged), Err("replay.driver_frame_invalid")),
+            (
+                success(&flagged_present),
+                Err("replay.driver_frame_invalid"),
+            ),
+        ] {
+            let (writer, requests) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
+            std::thread::spawn(move || {
+                let (_, ack) = requests.recv().unwrap();
+                ack.send(true).unwrap();
+            });
+            let (peer, replies) = mpsc::sync_channel(1);
+            peer.send(Ok(Some(serde_json::to_vec(&frame).unwrap())))
+                .unwrap();
+            let mut driver = Driver {
+                owned: None,
+                writer,
+                replies,
+                sequence: 0,
+                secrets: vec![],
+                stderr: None,
+                headed: false,
+                last_checks: None,
+            };
+            let reply = driver.call("snapshot", request.clone(), "/screens/run");
             assert_eq!(reply.map(|_| ()).map_err(|e| e.0), expected, "{frame}");
         }
     }

@@ -1,6 +1,6 @@
 {
   "name": "journey-review",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Review a GraphHelm journey run inline in the Claude Code chat and approve or reject it.",
   "author": {
     "name": "GraphHelm"

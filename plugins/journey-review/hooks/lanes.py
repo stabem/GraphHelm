@@ -3,11 +3,20 @@
 The Runtime URL and the execution come from the project, never from this file: the environment
 (GRAPHHELM_RUNTIME_URL, GRAPHHELM_EXECUTION), then `<project>/.graphhelm/team.json`
 (`runtimeUrl`, `executionId`), then the local defaults. Only a loopback URL is called, because the
-token goes with the request. The token file is read here only; the token is never printed."""
+token goes with the request. The token file is read here only; the token is never printed.
+
+The request goes through its own opener: no proxy (HTTP_PROXY and friends are ignored) and no
+redirect handler, so a 3xx is an error and the Bearer token never leaves the loopback listener."""
 import json, os, sys, urllib.parse, urllib.request
 from pathlib import Path
 
 DEFAULT_URL, DEFAULT_EXECUTION = 'http://127.0.0.1:8793', 'gh-team'
+
+# Not build_opener(): that adds the environment proxies and HTTPRedirectHandler.
+OPENER = urllib.request.OpenerDirector()
+for _h in (urllib.request.ProxyHandler({}), urllib.request.HTTPHandler(),
+           urllib.request.HTTPDefaultErrorHandler(), urllib.request.HTTPErrorProcessor()):
+    OPENER.add_handler(_h)
 
 
 def team(project):
@@ -36,7 +45,7 @@ def main(project_arg, tokfile):
 
     def get(path):
         r = urllib.request.Request(url + path, headers={'Authorization': 'Bearer ' + tok})
-        return json.load(urllib.request.urlopen(r, timeout=30))
+        return json.load(OPENER.open(r, timeout=30))
 
     d = get('/v1/executions/%s/tasks' % urllib.parse.quote(ex, safe='')).get('data', {})
     try:
@@ -53,4 +62,5 @@ def main(project_arg, tokfile):
     }))
 
 
-main(sys.argv[1], sys.argv[2])
+if __name__ == '__main__':
+    main(sys.argv[1], sys.argv[2])

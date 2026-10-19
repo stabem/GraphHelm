@@ -92,23 +92,16 @@ pub(crate) fn drafted_signal_id(flow: &str, digest: &str, writer: &str) -> Strin
 /// runner itself (the process that drove the browser) and by no route a caller can ask.
 pub(crate) const PREVIEWED_KIND: &str = "journey_flow_previewed";
 /// The description protocol of that signal.
-pub(crate) const PREVIEWED_PROTOCOL: &str = "graphhelm-journey-preview-v1";
+pub(crate) const PREVIEWED_PROTOCOL: &str = "graphhelm-journey-preview-v2";
 /// The actor the runner appends as.
 pub(crate) const PREVIEW_RUNNER: &str = "journey-preview-runner";
 
 /// `journey-previewed-<32 hex>`: sha256 over the flow id, the draft digest and the scope commit,
-/// so the id names exactly the flow state and code the preview passed on.
+/// so the id names exactly the flow state and code the preview passed on. #1633: salted `v2`,
+/// because v1 records were written for runs that skipped or missed steps; none of them counts.
 pub(crate) fn previewed_signal_id(flow: &str, digest: &str, scope_commit: &str) -> String {
     use sha2::{Digest, Sha256};
-    let hash = Sha256::digest(
-        format!(
-            "previewed
-{flow}
-{digest}
-{scope_commit}"
-        )
-        .as_bytes(),
-    );
+    let hash = Sha256::digest(format!("previewed-v2\n{flow}\n{digest}\n{scope_commit}").as_bytes());
     format!("journey-previewed-{}", &hex::encode(hash)[..32])
 }
 

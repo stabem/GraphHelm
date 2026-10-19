@@ -581,6 +581,10 @@ def reach(changed, packages, embedded, repo=None):
         if path.startswith("plugins/journey-review/") and root is not None:
             if (root / "tools/reached-tests/claude_plugin_check.py").is_file():
                 tools.add(JOURNEY_REVIEW_CHECK)
+            hooks_dir = "plugins/journey-review/hooks/"
+            if path.startswith(hooks_dir) and path.endswith(".py") and "/" not in path[len(hooks_dir):]:
+                for test in sorted((root / hooks_dir).glob("test_*.py")):
+                    tools.add(python_test_tool(root, hooks_dir + test.name))
             hit = True
         plugin_parts = path.split("/")
         plugin_path = path.startswith("plugins/") and not path.startswith("plugins/journey-review/")

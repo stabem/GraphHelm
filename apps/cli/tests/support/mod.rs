@@ -255,15 +255,7 @@ pub fn passing_preview(project: &std::path::Path, id: &str) {
     }
     let signal_id = {
         use sha2::{Digest, Sha256};
-        let hash = Sha256::digest(
-            format!(
-                "previewed
-{id}
-{digest}
-{commit}"
-            )
-            .as_bytes(),
-        );
+        let hash = Sha256::digest(format!("previewed-v2\n{id}\n{digest}\n{commit}").as_bytes());
         format!("journey-previewed-{}", &hex::encode(hash)[..32])
     };
     let next = store.next_sequence(&scope, "graphhelm-owner").unwrap();

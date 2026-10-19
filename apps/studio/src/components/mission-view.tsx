@@ -479,7 +479,8 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
       run.read(id).then((value) => onRun(id, value), () => {});
     }
   }, [run, onRun, journeys, runFor]);
-  const verdictOf = (m: Mission): JourneyVerdict => (batch?.current === m.contractId ? "running" : journeyVerdict(m.steps.map((step) => step.status), runFor(m.contractId)));
+  const verdictOf = (m: Mission): JourneyVerdict => (batch?.current === m.contractId ? "running" : journeyVerdict(m.steps.map((step) => step.status), runFor(m.contractId),
+    flowForContract(flows?.flows ?? [], m.contractId)?.status !== "approved"));
   const verdictCount = (v: JourneyVerdict) => missions.filter((m) => runnable.includes(m.contractId) && verdictOf(m) === v).length;
   const startBatch = (ids: string[]) => {
     if (!run || batch !== null) return;

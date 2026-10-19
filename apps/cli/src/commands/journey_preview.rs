@@ -880,9 +880,9 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         Ok(found) => found,
         Err(failed) => return answer(json!({}), Some(failed)),
     };
-    if let Err(failed) = confirm_commands(args, &project, &flow) {
-        return answer(json!({}), Some(failed));
-    }
+    // #1662 review: the runner does not re-confirm. The door recorded the owner's confirm before
+    // spawning it, and `play` lets a draft's command run only when the owner store holds that
+    // exact digest and argv, so a forged `--run --confirm` still holds.
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
     let mut state = read_state(&dir).unwrap_or_else(|| json!({}));
     if state["digest"] != digest.as_str() || state["state"] != "running" {
@@ -1347,6 +1347,36 @@ fn play_path(
 /// observed by a GET of its URL when the flow sends requests; a `cli`-only flow's start screen is
 /// its precondition and is not observed. Each act's observation is checked against the screen it
 /// reaches: an act that cannot run fails, an unmet expectation is drift. No coverage is collected.
+/// #1662 review: what a command printed, as kept in the run state and its evidence. stdout and
+/// stderr are masked like the driver's stderr (every `GRAPHHELM_SECRET_*` value and the user's
+/// home) and capped at the tail; the sha256 of the raw bytes stays so the evidence binds them.
+fn command_output(argv: &Value, seen: &super::journey_backend::Observation) -> Value {
+    let secrets: Vec<String> = std::env::vars_os()
+        .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))
+        .filter_map(|(_, value)| value.into_string().ok())
+        .collect();
+    masked_output(argv, seen, &secrets)
+}
+
+fn masked_output(
+    argv: &Value,
+    seen: &super::journey_backend::Observation,
+    secrets: &[String],
+) -> Value {
+    use sha2::{Digest, Sha256};
+    // The whole output is kept (no cut window), then its tail is bounded by `masked_tail`.
+    let cut = false;
+    let keep = |text: &str| super::journey_replay::masked_tail(text.as_bytes(), cut, 0, secrets);
+    json!({
+        "argv": argv,
+        "exit": seen.exit,
+        "stdout": keep(&seen.body),
+        "stderr": keep(&seen.stderr),
+        "stdoutSha256": hex::encode(Sha256::digest(seen.body.as_bytes())),
+        "stderrSha256": hex::encode(Sha256::digest(seen.stderr.as_bytes())),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn play_backend_path(
     project: &Path,
@@ -1403,8 +1433,7 @@ fn play_backend_path(
                                 .as_array()
                                 .cloned()
                                 .unwrap_or_default();
-                            outputs.push(json!({"argv": act["name"],
-                                "exit": seen.exit, "stdout": seen.body, "stderr": seen.stderr}));
+                            outputs.push(command_output(&act["name"], &seen));
                             run.state["outputs"][id] = Value::Array(outputs);
                         }
                         last = Some(seen);
@@ -2315,6 +2344,34 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             ..approved
         };
         assert_eq!(clicked.stops_before(&http("DELETE")), None);
+    }
+
+    /// #1662 review: a command's output never reaches the run state or its evidence with a secret
+    /// in it, and it is bounded; the digests still bind the raw bytes.
+    #[test]
+    fn a_commands_output_is_masked_bounded_and_digested() {
+        let secret = "s3cr3t-token-value".to_owned();
+        let seen = super::super::journey_backend::Observation {
+            status: None,
+            exit: Some(0),
+            body: format!(
+                "token={secret}
+{}",
+                "x".repeat(10_000)
+            ),
+            stderr: format!("warn: {secret}"),
+        };
+        let kept =
+            super::masked_output(&json!("sh greet.sh"), &seen, std::slice::from_ref(&secret));
+        let text = kept.to_string();
+        assert!(!text.contains(&secret), "{text}");
+        assert!(kept["stderr"].as_str().unwrap().contains("***"), "{kept}");
+        assert!(
+            kept["stdout"].as_str().unwrap().len() <= 4096,
+            "unbounded stdout"
+        );
+        assert_eq!(kept["stdoutSha256"].as_str().unwrap().len(), 64);
+        assert_eq!(kept["exit"], 0);
     }
 
     /// #519 slice 3: only an approved flow with all four recording arguments records proof; a

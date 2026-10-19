@@ -19,7 +19,7 @@ use graphhelm_runtime::ports::GateEvaluation;
 
 use crate::commands::event_store;
 use crate::commands::execution::{
-    append_event, finish, load_projection, owner_actor, repository_failure,
+    append_record_at_head, finish, load_projection, owner_actor, repository_failure,
 };
 use crate::output::Outcome;
 
@@ -310,7 +310,8 @@ fn stamp(
         OpaqueId::parse(gate).map_err(|_| refuse("the gate id is not wire-safe", "/gate"))?;
     let digest = WireHash::parse(&certification.suite_digest)
         .map_err(|_| refuse("the suite digest is not a wire hash", "/gate"))?;
-    append_event(
+    // A certification guards no transition (the execution can only stay started): a record.
+    append_record_at_head(
         &store,
         &scope,
         &stream_id,

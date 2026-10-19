@@ -6,7 +6,7 @@ use graphhelm_protocols::{
 };
 
 use super::{
-    Failure, append_event, execution_state, idempotency_key, load_projection, owner_actor,
+    Failure, append_event, execution_state, idempotency_key, load_projection_at, owner_actor,
     replay_projection, repository_failure,
 };
 use crate::commands::event_store;
@@ -48,7 +48,7 @@ pub(crate) fn execute(
     let assigned_id = ActorId::parse(actor_id)
         .map_err(|_| execution_state("the assigned actor identifier is not wire-safe", "/actor"))?;
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
-    let (scope, stream, projection) = load_projection(&store, execution)?;
+    let (scope, stream, projection, observed) = load_projection_at(&store, execution)?;
     let execution_id = projection
         .execution_id
         .clone()
@@ -88,6 +88,7 @@ pub(crate) fn execute(
         &store,
         &scope,
         &stream_id,
+        observed,
         NewEvent::new(
             key,
             owner,

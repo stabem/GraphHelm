@@ -139,10 +139,12 @@ pub(crate) fn execute(
     let execution_id = OpaqueId::parse(&execution_id)
         .map_err(|_| execution_state("the execution identifier is not wire-safe", "/execution"))?;
 
+    // #1670: at the head this decision read, so a concurrent pause loses with a conflict.
     append_event(
         &store,
         &scope,
         &stream_id,
+        super::at_sequence(&history).unwrap_or(0),
         NewEvent::new(
             key,
             actor.clone(),

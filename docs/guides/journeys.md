@@ -209,7 +209,8 @@ as the System actor `journey-preview-runner`. The record carries the flow id, th
 scope commit, `result: pass`, a sha256 over the step results and frame bytes the runner captured,
 and the runner binary's sha256 and version. The scope commit is the latest commit that touched the
 flow file or any path its screens scope, so an unrelated commit keeps a preview valid and a change
-to a scope path voids it. `journey approve` refuses with `flow.preview_not_passed` until such a
+to a scope path voids it. A run with any screen not reached or any edge skipped is not a pass
+(`result: fail`, `reason: preview.incomplete`) and records nothing (#1633). `journey approve` refuses with `flow.preview_not_passed` until such a
 record exists for the current digest and scope commit. The kept
 `.graphhelm/journey-previews/<id>/state.json` is a cache for the Studio and proves nothing. No HTTP,
 CLI or MCP route records a preview: the generic signal route refuses the kind. A preview kept before

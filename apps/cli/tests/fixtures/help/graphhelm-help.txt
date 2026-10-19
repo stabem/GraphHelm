@@ -2971,6 +2971,7 @@ Commands:
   release  Declare the task done: records the worktree's HEAD. Deletes nothing
   list     Every recorded workspace with its state, size and live git facts. Read-only
   sweep    Remove released workspaces that are clean and still at the released commit, ignored files included. A dry run unless `--apply`. Never touches a path the ledger did not create, never follows a link, and keeps any workspace whose worktree contains one
+  remove   Remove one worktree or directory without ever following a link (#1663). A linked git worktree is stopped, unlinked, its uncommitted work saved, unregistered and deleted; any other directory has its links unlinked and is deleted. Use it instead of `rm -rf` or `git worktree remove --force`, which follow junctions. Exit 3 when it could not finish
   slot     Run one command under the root's build slot: one at a time, in arrival order, with `CARGO_BUILD_JOBS` and the current worktree's own `CARGO_TARGET_DIR=<cwd>/target`. A waiter that dies loses its place by itself (its ticket's OS lock is released). The command's exit code is ours
 
 ===== graphhelm help workspace claim --help
@@ -2987,6 +2988,11 @@ Usage: graphhelm help workspace list
 Declare the task done: records the worktree's HEAD. Deletes nothing
 
 Usage: graphhelm help workspace release
+
+===== graphhelm help workspace remove --help
+Remove one worktree or directory without ever following a link (#1663). A linked git worktree is stopped, unlinked, its uncommitted work saved, unregistered and deleted; any other directory has its links unlinked and is deleted. Use it instead of `rm -rf` or `git worktree remove --force`, which follow junctions. Exit 3 when it could not finish
+
+Usage: graphhelm help workspace remove
 
 ===== graphhelm help workspace slot --help
 Run one command under the root's build slot: one at a time, in arrival order, with `CARGO_BUILD_JOBS` and the current worktree's own `CARGO_TARGET_DIR=<cwd>/target`. A waiter that dies loses its place by itself (its ticket's OS lock is released). The command's exit code is ours
@@ -5355,6 +5361,7 @@ Commands:
   release  Declare the task done: records the worktree's HEAD. Deletes nothing
   list     Every recorded workspace with its state, size and live git facts. Read-only
   sweep    Remove released workspaces that are clean and still at the released commit, ignored files included. A dry run unless `--apply`. Never touches a path the ledger did not create, never follows a link, and keeps any workspace whose worktree contains one
+  remove   Remove one worktree or directory without ever following a link (#1663). A linked git worktree is stopped, unlinked, its uncommitted work saved, unregistered and deleted; any other directory has its links unlinked and is deleted. Use it instead of `rm -rf` or `git worktree remove --force`, which follow junctions. Exit 3 when it could not finish
   slot     Run one command under the root's build slot: one at a time, in arrival order, with `CARGO_BUILD_JOBS` and the current worktree's own `CARGO_TARGET_DIR=<cwd>/target`. A waiter that dies loses its place by itself (its ticket's OS lock is released). The command's exit code is ours
   help     Print this message or the help of the given subcommand(s)
 
@@ -5411,6 +5418,7 @@ Commands:
   release  Declare the task done: records the worktree's HEAD. Deletes nothing
   list     Every recorded workspace with its state, size and live git facts. Read-only
   sweep    Remove released workspaces that are clean and still at the released commit, ignored files included. A dry run unless `--apply`. Never touches a path the ledger did not create, never follows a link, and keeps any workspace whose worktree contains one
+  remove   Remove one worktree or directory without ever following a link (#1663). A linked git worktree is stopped, unlinked, its uncommitted work saved, unregistered and deleted; any other directory has its links unlinked and is deleted. Use it instead of `rm -rf` or `git worktree remove --force`, which follow junctions. Exit 3 when it could not finish
   slot     Run one command under the root's build slot: one at a time, in arrival order, with `CARGO_BUILD_JOBS` and the current worktree's own `CARGO_TARGET_DIR=<cwd>/target`. A waiter that dies loses its place by itself (its ticket's OS lock is released). The command's exit code is ours
   help     Print this message or the help of the given subcommand(s)
 
@@ -5433,6 +5441,11 @@ Usage: graphhelm workspace help list
 Declare the task done: records the worktree's HEAD. Deletes nothing
 
 Usage: graphhelm workspace help release
+
+===== graphhelm workspace help remove --help
+Remove one worktree or directory without ever following a link (#1663). A linked git worktree is stopped, unlinked, its uncommitted work saved, unregistered and deleted; any other directory has its links unlinked and is deleted. Use it instead of `rm -rf` or `git worktree remove --force`, which follow junctions. Exit 3 when it could not finish
+
+Usage: graphhelm workspace help remove
 
 ===== graphhelm workspace help slot --help
 Run one command under the root's build slot: one at a time, in arrival order, with `CARGO_BUILD_JOBS` and the current worktree's own `CARGO_TARGET_DIR=<cwd>/target`. A waiter that dies loses its place by itself (its ticket's OS lock is released). The command's exit code is ours
@@ -5493,6 +5506,30 @@ Options:
 
       --task <TASK>
           
+
+  -h, --help
+          Print help
+
+===== graphhelm workspace remove --help
+Remove one worktree or directory without ever following a link (#1663). A linked git worktree is stopped, unlinked, its uncommitted work saved, unregistered and deleted; any other directory has its links unlinked and is deleted. Use it instead of `rm -rf` or `git worktree remove --force`, which follow junctions. Exit 3 when it could not finish
+
+Usage: graphhelm workspace remove [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>
+          The worktree or directory to delete
+
+Options:
+      --leftovers <LEFTOVERS>
+          A worktree's uncommitted work is saved under `<leftovers>/<directory name>/` first
+          
+          [default: D:/_merge-leftovers]
+
+      --pretty
+          
+
+      --json
+          Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
 
   -h, --help
           Print help

@@ -126,7 +126,7 @@ export function useJourneyRun(flowId: string, source: JourneyRunSource | undefin
 /** What a journey's last run says, folded from its steps (#run-all): one word for the rail, like a
  * test explorer. `stale` = the cached run belongs to an older flow and needs a rerun. */
 export type JourneyVerdict = "passed" | "failed" | "stale" | "needs_you" | "not_run" | "running";
-export function journeyVerdict(statuses: readonly string[], run: JourneyRunView | null, draft = false): JourneyVerdict {
+export function journeyVerdict(statuses: readonly string[], run: JourneyRunView | null, draft = false, steps: readonly { id: string; needsFrame: boolean }[] = []): JourneyVerdict {
   if (run?.state === "running") return "running";
   if (run?.state === "failed" || statuses.includes("failed")) return "failed";
   if (statuses.includes("stale")) return "stale";
@@ -134,7 +134,11 @@ export function journeyVerdict(statuses: readonly string[], run: JourneyRunView 
   if (statuses.length > 0 && statuses.every((s) => s === "proven")) return "passed";
   // #1635: a draft has no captures until it is approved; its passing preview is what the rail shows.
   // An approved journey passes only on proven steps, never on a preview.
-  if (draft && run?.state === "ready" && run.result === "pass") return "passed";
+  // #1653: the preview must hold a passing result for every step, and a frame for every browser
+  // step (a backend step has none); a record that says `pass` with no step results is not a pass,
+  // and the list agrees with the detail's "Not run".
+  if (draft && run?.state === "ready" && run.result === "pass" && steps.length > 0
+    && steps.every((step) => run.screens?.[step.id]?.result === "pass" && (!step.needsFrame || run.screens[step.id]?.frame === true))) return "passed";
   return "not_run";
 }
 
@@ -149,6 +153,13 @@ export function journeyVerdict(statuses: readonly string[], run: JourneyRunView 
  * each gets its own owner record and the Runtime's gate decides each one. A refused flow keeps its
  * reason and the rest still run.
  */
+/** #1653: a screen whose expectations are all process output (exit, stdout, stderr) is a backend
+ * step: its preview captures no frame. Every other screen is a browser screen and needs one. */
+const PROCESS_ROLES = new Set(["exit", "stdout", "stderr"]);
+export function stepNeedsFrame(screen: { expect?: ReadonlyArray<{ role: string }> } | undefined): boolean {
+  return !(screen?.expect?.length && screen.expect.every((item) => PROCESS_ROLES.has(item.role)));
+}
+
 export async function approveJourneys(ids: readonly string[], approve: (id: string) => Promise<void>,
   onCurrent: (id: string | null) => void = () => {}): Promise<{ approved: string[]; errors: Record<string, string> }> {
   const approved: string[] = [];

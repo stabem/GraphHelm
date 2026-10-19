@@ -2773,6 +2773,114 @@ fn graphhelm_releases_another_lanes_claim_only_with_released_by() {
     assert_eq!(reply["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
 }
 
+/// #1556 (closed #1309's stale leases 13082/13124): a lane that claimed an issue twice keeps its
+/// older claim as a lease, and only the lane's LATEST open claim could be released, so nothing
+/// ended the older one. The reconciler, signing as `graphhelm` with `releasedBy: graphhelm`, now
+/// ends exactly the claim it names, any still-open one, and only with a reason. The lane's own
+/// release stays latest-only. Catches: the latest-only refusal reaching graphhelm, a release
+/// without a reason, a release that ends the wrong slice, and a lane escaping latest-only. Cost:
+/// one served Runtime, six POSTs, two reads.
+#[test]
+fn graphhelm_ends_an_older_open_claim_it_names_and_a_lane_still_releases_only_its_latest() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-stale-lease";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let post = |id: &str, actor: &str, kind: &str, document: &Value| {
+        let body = serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": actor},
+            "type": kind, "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-19T02:00:00Z"}});
+        post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", actor),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &body,
+        )
+    };
+    let claim = |revision: u64| {
+        serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1309",
+            "revision": revision, "at": "2026-10-19T02:00:00Z", "issue": 1309, "lane": "lane-alpha",
+            "branch": "issue-1309-grant-journal", "repo": "stabem/GraphHelm", "leaseSeconds": 1800})
+    };
+    let (status, reply) = post("stale-claim-1", "lane-alpha", "task.claimed", &claim(1));
+    assert_eq!(status, 200, "{reply}");
+    let older = head_sequence(&base, &token, execution);
+    let (status, reply) = post("stale-claim-2", "lane-alpha", "task.claimed", &claim(2));
+    assert_eq!(status, 200, "{reply}");
+    let latest = head_sequence(&base, &token, execution);
+    let leases = || {
+        let view = get_json(
+            &format!("{base}/v1/executions/{execution}/tasks"),
+            Some(&token),
+        );
+        let mut sequences: Vec<u64> = view["data"]["leases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|lease| lease["lane"] == "lane-alpha")
+            .map(|lease| lease["claimSequence"].as_u64().unwrap())
+            .collect();
+        sequences.sort_unstable();
+        sequences
+    };
+    assert_eq!(leases(), vec![older, latest], "both claims are leases");
+    let release = |reason: Option<&str>, by: Option<&str>| {
+        let mut document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": "issue-1309", "revision": 3, "at": "2026-10-19T02:30:00Z",
+            "lane": "lane-alpha", "claimSequence": older});
+        if let Some(reason) = reason {
+            document["reason"] = reason.into();
+        }
+        if let Some(by) = by {
+            document["releasedBy"] = by.into();
+        }
+        document
+    };
+    // The lane itself still releases only its latest claim.
+    let (status, reply) = post(
+        "stale-release-lane",
+        "lane-alpha",
+        "task.released",
+        &release(Some("issue closed on GitHub"), None),
+    );
+    assert_eq!(status, 400, "a lane's older claim: {reply}");
+    // graphhelm must say why.
+    let (status, reply) = post(
+        "stale-release-silent",
+        "graphhelm",
+        "task.released",
+        &release(None, Some("graphhelm")),
+    );
+    assert_eq!(status, 400, "no reason: {reply}");
+    assert_eq!(leases(), vec![older, latest], "refusals end nothing");
+    // graphhelm, naming the older claim, with a reason: ends exactly that one.
+    let (status, reply) = post(
+        "stale-release",
+        "graphhelm",
+        "task.released",
+        &release(Some("issue closed on GitHub"), Some("graphhelm")),
+    );
+    assert_eq!(status, 200, "graphhelm ends the older claim: {reply}");
+    assert_eq!(leases(), vec![latest], "only the named claim ended");
+}
+
 /// #1424: the owner (or the orchestrator, which holds the owner token) clears a stopped fleet.
 /// A leaseless slice (a plan with no claim, so no claim sequence a lane release could name) is
 /// released by its slice key; a retired lane's pre-PR, review and merge slices all read orphaned

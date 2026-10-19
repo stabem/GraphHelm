@@ -1402,6 +1402,15 @@ impl LocalEventRepository {
         }
 
         validate_graph_successors(request, &state)?;
+        // #1714: an open refuses a journal past `DEFAULT_LOAD_LIMITS`, so an append that would
+        // carry it there is refused here, before any write. Without this the byte cap let the
+        // journal grow until the next open could not load it: reads died, not only writes.
+        ensure_load_room(
+            state.batches.len(),
+            state.batches.iter().map(|batch| batch.events.len()).sum(),
+            request.events().len(),
+            &DEFAULT_LOAD_LIMITS,
+        )?;
 
         let actual = state
             .next_sequence
@@ -3078,6 +3087,26 @@ impl std::fmt::Debug for PrefixCache {
             .field("max_age", &self.max_age)
             .finish_non_exhaustive()
     }
+}
+
+/// #1714: refuses an append that would take the journal past the batch or event count an open
+/// loads (`DEFAULT_LOAD_LIMITS`). The same limits as `open`, so whatever this admits still opens.
+fn ensure_load_room(
+    batches: usize,
+    events: usize,
+    new_events: usize,
+    limits: &LoadLimits,
+) -> Result<(), EventRepositoryError> {
+    let batches = batches
+        .checked_add(1)
+        .ok_or(EventRepositoryError::LimitExceeded)?;
+    let events = events
+        .checked_add(new_events)
+        .ok_or(EventRepositoryError::LimitExceeded)?;
+    if batches > limits.batches || events > limits.events {
+        return Err(EventRepositoryError::LimitExceeded);
+    }
+    Ok(())
 }
 
 /// The append gate: refuses a line that would take the journal past `MAX_JOURNAL_BYTES` (#1714).
@@ -7463,6 +7492,26 @@ mod limit_tests {
         assert!(matches!(
             open_child_file(&handle, &path, "linked.json", false, false),
             Err(EventRepositoryError::UnsupportedFormat)
+        ));
+    }
+
+    /// #1714: an append never takes the journal past what an open loads. Credible regression:
+    /// the gate removed or keyed to another bound, so the store grows until it cannot reopen.
+    #[test]
+    fn load_room_admits_up_to_the_open_limits_and_refuses_one_past_them() {
+        let limits = DEFAULT_LOAD_LIMITS;
+        assert!(ensure_load_room(limits.batches - 1, limits.events - 3, 3, &limits).is_ok());
+        assert!(matches!(
+            ensure_load_room(limits.batches, 0, 1, &limits),
+            Err(EventRepositoryError::LimitExceeded)
+        ));
+        assert!(matches!(
+            ensure_load_room(0, limits.events - 2, 3, &limits),
+            Err(EventRepositoryError::LimitExceeded)
+        ));
+        assert!(matches!(
+            ensure_load_room(usize::MAX, 0, 1, &limits),
+            Err(EventRepositoryError::LimitExceeded)
         ));
     }
 

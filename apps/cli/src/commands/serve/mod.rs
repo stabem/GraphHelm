@@ -2727,7 +2727,7 @@ impl ExpectedDecision<'_> {
 /// scope/stream, execution and decision kind. The digest is divergence *detection*, not a
 /// cryptographic boundary; see `request_digest16`'s doc comment.
 fn classify_one_key(
-    history: &[EventEnvelope],
+    history: &[&EventEnvelope],
     derived: &DerivedKey,
     expected: &ExpectedDecision<'_>,
 ) -> KeyPresence {
@@ -2774,11 +2774,28 @@ fn classify_existing_keys_on(
     // `resolve_stream`/`read_replay_stream` read from the exact same underlying committed batches,
     // so scanning `history` once here is strictly equivalent for Complete/Partial and additionally
     // enables Divergent detection for free).
-    let (scope, stream, history) = execution::resolve_stream(store, Some(execution))?;
+    // #1623: the scan borrows the stream under one shared lock instead of cloning every event;
+    // only the command body reads (and copies) the stream it folds.
+    let (scope, stream) = execution::stream_of(execution)?;
+    execution::timing::phase("idempotency.scan", || {
+        store.scan_replay_stream(&scope, &stream, |history| {
+            classify_keys_in(history, &scope, &stream, execution, identity)
+        })
+    })
+    .map_err(|error| execution::repository_failure(&error))
+}
+
+fn classify_keys_in(
+    history: &[&EventEnvelope],
+    scope: &RepositoryScope,
+    stream: &str,
+    execution: &str,
+    identity: &MutationIdentity,
+) -> KeyState {
     let expected = ExpectedDecision {
         actor: &identity.actor,
-        scope: &scope,
-        stream: &stream,
+        scope,
+        stream,
         execution,
         kind: identity.decision_kind,
         request_body: &identity.request_body,
@@ -2787,7 +2804,7 @@ fn classify_existing_keys_on(
     let mut original_decision_sequence = None;
     let mut first_missing = None;
     for derived in &identity.keys {
-        match classify_one_key(&history, derived, &expected) {
+        match classify_one_key(history, derived, &expected) {
             KeyPresence::Present(sequence) => {
                 present += 1;
                 if original_decision_sequence.is_none() {
@@ -2795,7 +2812,7 @@ fn classify_existing_keys_on(
                 }
             }
             KeyPresence::Divergent => {
-                return Ok(KeyState::Divergent(identity.idempotency_header.clone()));
+                return KeyState::Divergent(identity.idempotency_header.clone());
             }
             KeyPresence::Missing => {
                 if first_missing.is_none() {
@@ -2804,7 +2821,7 @@ fn classify_existing_keys_on(
             }
         }
     }
-    Ok(if present == 0 {
+    if present == 0 {
         KeyState::Absent
     } else if present == identity.keys.len() {
         KeyState::Complete(
@@ -2813,7 +2830,7 @@ fn classify_existing_keys_on(
         )
     } else {
         KeyState::Partial(first_missing.expect("some but not all present implies one missing"))
-    })
+    }
 }
 
 /// "Reply 200 with current state, because the caller's command has already happened" (the plan's
@@ -3344,9 +3361,13 @@ fn current_head(events: &Path, execution: &str) -> Option<u64> {
 }
 
 /// [`current_head`] on a handle the caller already opened (#478).
+/// The stream's head from the store's own sequence counter, without reading the stream (#1623):
+/// `0` for a stream with no events, as the last event's sequence otherwise.
 fn current_head_on(store: &LocalEventRepository, execution: &str) -> Option<u64> {
-    let (_, _, history) = execution::resolve_stream(store, Some(execution)).ok()?;
-    Some(history.last().map_or(0, |event| event.sequence))
+    let (scope, stream) = execution::stream_of(execution).ok()?;
+    execution::timing::phase("stream.head", || store.next_sequence(&scope, &stream))
+        .ok()
+        .map(|next| next.saturating_sub(1))
 }
 
 /// Whether ANY committed `ExecutionPaused` event in this stream's history carries exactly this
@@ -3476,13 +3497,17 @@ fn fresh_stream_snapshot_on(
     execution: &str,
     check_waiting: bool,
 ) -> (Option<u64>, WaitingInputCheck) {
+    // #1623: without the fixture check only the head is needed, and the store's counter has it.
+    if !check_waiting {
+        return (
+            current_head_on(store, execution),
+            WaitingInputCheck::Undetermined,
+        );
+    }
     let Ok((scope, stream, history)) = execution::resolve_stream(store, Some(execution)) else {
         return (None, WaitingInputCheck::Undetermined);
     };
     let head = Some(history.last().map_or(0, |event| event.sequence));
-    if !check_waiting {
-        return (head, WaitingInputCheck::Undetermined);
-    }
     // #1560: resume serve's cached fold instead of refolding the whole stream after every write.
     let check = match execution::status::replay_cached(events, &scope, &stream, &history) {
         Ok(projection)

@@ -983,6 +983,32 @@ impl LocalEventRepository {
         <Self as EventRepository>::next_sequence(self, scope, stream_id)
     }
 
+    /// [`Self::read_replay_stream`] without the copy (#1623): `visit` sees the stream's events in
+    /// order, borrowed from the verified state under ONE shared lock, with the same
+    /// `MAX_READ_ALL` bound. A caller that only scans the stream (an idempotency pre-flight looking
+    /// for its key) pays for the walk, not for cloning every event on every request.
+    pub fn scan_replay_stream<T>(
+        &self,
+        scope: &RepositoryScope,
+        stream_id: &str,
+        visit: impl FnOnce(&[&EventEnvelope]) -> T,
+    ) -> Result<T, EventRepositoryError> {
+        OpaqueId::parse(stream_id).map_err(|_| EventRepositoryError::Invalid)?;
+        self.with_shared_lock(|| {
+            let state = self.load_state("scan_replay_stream")?;
+            let events = state
+                .batches
+                .iter()
+                .filter(|batch| &batch.scope == scope && batch.stream_id == stream_id)
+                .flat_map(|batch| batch.events.iter())
+                .collect::<Vec<_>>();
+            if events.len() > MAX_READ_ALL {
+                return Err(EventRepositoryError::LimitExceeded);
+            }
+            Ok(visit(&events))
+        })
+    }
+
     /// Atomically selects and reads only when the validated repository has one stream.
     pub fn read_unique_replay_stream(
         &self,
@@ -9034,6 +9060,91 @@ mod limit_tests {
                 let loads = warm.load_count.load(Ordering::SeqCst) - before;
                 println!("ROW size={size} op=append_warm iter={i} wall_us={wall} loads={loads}");
             }
+        }
+    }
+
+    /// #1623: an idempotency pre-flight scans the stream by reference instead of cloning it. The
+    /// scan must see exactly the events the cloning read returns, in order, for that stream only:
+    /// a scan that skipped, repeated or leaked another stream's events would let a retried command
+    /// commit twice or refuse a fresh one. Cost: one temporary store, seven appends.
+    #[test]
+    fn scan_replay_stream_sees_exactly_the_streams_events_in_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = cache_repository(directory.path());
+        repository.append_atomic(&valid_graph_request()).unwrap();
+        let scope = wake_scope();
+        for sequence in 2..=7 {
+            repository
+                .append_atomic(&wake_append(sequence, &format!("wake-s-{sequence}")))
+                .unwrap();
+        }
+        let cloned = repository.read_replay_stream(&scope, "stream-1").unwrap();
+        let scanned = repository
+            .scan_replay_stream(&scope, "stream-1", |events| {
+                events
+                    .iter()
+                    .map(|event| (*event).clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
+        assert_eq!(scanned, cloned);
+        assert_eq!(
+            repository.next_sequence(&scope, "stream-1").unwrap() - 1,
+            cloned.last().unwrap().sequence
+        );
+        let other = repository
+            .scan_replay_stream(&scope, "stream-2", |events| events.len())
+            .unwrap();
+        assert_eq!(other, 0, "another stream's events are never visited");
+    }
+
+    /// #1623 measurement at the live store's scale (run explicitly: `cargo test -p
+    /// graphhelm-events --lib measure_1623 -- --ignored --nocapture`). Per warm read on one
+    /// ~40k-event stream: the clone the pre-flight and the post-write head used to pay
+    /// (`read_replay_stream`), against what they pay now (`scan_replay_stream` walking for a key
+    /// that is absent, the pre-flight's common case, and `next_sequence`). Prints wall micros and
+    /// the bytes the clone copies, measured as the events' serialized size.
+    #[test]
+    #[ignore]
+    fn measure_1623_clone_against_scan_and_head() {
+        let size = 40_000u64;
+        let iterations = 10usize;
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build.append_atomic(&valid_graph_request()).unwrap();
+        let scope = wake_scope();
+        for sequence in 2..=size {
+            build
+                .append_atomic(&wake_append(sequence, &format!("wake-m-{sequence}")))
+                .unwrap();
+        }
+        drop(build);
+        let warm = cache_repository(directory.path());
+        let events = warm.read_replay_stream(&scope, "stream-1").unwrap();
+        let bytes: usize = events
+            .iter()
+            .map(|event| serde_json::to_vec(event).unwrap().len())
+            .sum();
+        println!("ROW size={} cloned_bytes={bytes}", events.len());
+        for i in 0..iterations {
+            let t = std::time::Instant::now();
+            let cloned = warm.read_replay_stream(&scope, "stream-1").unwrap();
+            let clone_us = t.elapsed().as_micros();
+            let t = std::time::Instant::now();
+            let found = warm
+                .scan_replay_stream(&scope, "stream-1", |events| {
+                    events
+                        .iter()
+                        .any(|event| event.idempotency_key.as_str() == "absent-key")
+                })
+                .unwrap();
+            let scan_us = t.elapsed().as_micros();
+            let t = std::time::Instant::now();
+            let head = warm.next_sequence(&scope, "stream-1").unwrap() - 1;
+            let head_us = t.elapsed().as_micros();
+            assert!(!found);
+            assert_eq!(head, cloned.last().unwrap().sequence);
+            println!("ROW iter={i} clone_us={clone_us} scan_us={scan_us} head_us={head_us}");
         }
     }
 

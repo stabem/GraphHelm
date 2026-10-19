@@ -125,7 +125,7 @@ fn project(id: &str, flow: &str) -> tempfile::TempDir {
     for (path, text) in [
         ("site/status.json", r#"{"status":"ok"}"#),
         ("site/items.json", r#"{"items":[{"name":"apple"}]}"#),
-        ("greet.sh", "echo hello from the cli\n"),
+        ("greet.sh", "echo hello from the cli\necho greeted on stderr >&2\n"),
         ("README.txt", "not observed\n"),
         ("fixture.sh", LAUNCHER),
         ("server.py", SERVER),
@@ -193,7 +193,7 @@ fn a_backend_journey_is_green_on_good_code_and_sabotage_catches_a_break() {
     let (code, report) = graphhelm(&["keel", "test", "validation", "--repo"], root, &[]);
     assert_eq!(code, 2, "{report}");
     assert_eq!(
-        report["data"]["paths"][0]["execution"], "skipped",
+        report["data"]["paths"][0]["execution"], "held",
         "{report}"
     );
     let state = std::fs::read_dir(report["data"]["resultDir"].as_str().unwrap())

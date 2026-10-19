@@ -255,12 +255,13 @@ fn render(flow: &Value, kept: &Value, frame: &dyn Fn(&str) -> Option<Vec<u8>>) -
                 .iter()
                 .map(|c| {
                     format!(
-                        "<li>{} {} \"{}\"</li>",
+                        "<li>{} {}{} \"{}\"</li>",
                         if c["seen"] == true {
                             "&#10003;"
                         } else {
                             "&#10007;"
                         },
+                        if c["absent"] == true { "no " } else { "" },
                         escape(text(&c["role"])),
                         escape(text(&c["name"]))
                     )
@@ -272,7 +273,8 @@ fn render(flow: &Value, kept: &Value, frame: &dyn Fn(&str) -> Option<Vec<u8>>) -
                 .flatten()
                 .map(|c| {
                     format!(
-                        "<li>&middot; {} \"{}\"</li>",
+                        "<li>&middot; {}{} \"{}\"</li>",
+                        if c["absent"] == true { "no " } else { "" },
                         escape(text(&c["role"])),
                         escape(text(&c["name"]))
                     )

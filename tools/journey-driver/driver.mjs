@@ -61,6 +61,8 @@ function url(raw, local = false, originOnly = false) {
   return parsed;
 }
 function pair(v, empty = false) { return exactKeys(v,['role','name']) && string(v.role,64) && string(v.name,256,empty); }
+// #1041: an expectation is a pair, or a pair marked `absent: true` (never false: one spelling).
+function expectation(v) { return Object.hasOwn(v ?? {},'absent') ? exactKeys(v,['role','name','absent']) && v.absent === true && string(v.role,64) && string(v.name,256) : pair(v); }
 function validate(r) {
   if (!plain(r) || r.protocol !== PROTOCOL || !Number.isSafeInteger(r.requestId) || r.requestId !== requestId + 1 || !Object.hasOwn(fields,r.op)) fail('driver.protocol_invalid');
   if (!exactKeys(r,['protocol','requestId','op'],fields[r.op])) fail('driver.protocol_invalid');
@@ -78,7 +80,9 @@ function validate(r) {
     // #585: localStorage the flow declares for the base origin, seeded once when the browser opens.
     if (Object.hasOwn(r,'storage') && (!Array.isArray(r.storage) || r.storage.length > 16 || !r.storage.every(e => exactKeys(e,['key','value']) && string(e.key,256) && typeof e.value === 'string' && e.value.length <= 1024))) fail('driver.protocol_invalid');
   } else if (r.op === 'snapshot') {
-    if (!Array.isArray(r.expect) || r.expect.length > 8 || !r.expect.every(v => pair(v))) fail('driver.protocol_invalid');
+    if (!Array.isArray(r.expect) || r.expect.length > 8 || !r.expect.every(v => expectation(v))) fail('driver.protocol_invalid');
+    // #1041: absence is judged only on a settled page, so a screen needs one present expectation.
+    if (r.expect.some(v => v.absent === true) && !r.expect.some(v => v.absent !== true)) fail('driver.protocol_invalid');
     if (Object.hasOwn(r,'discover') && typeof r.discover !== 'boolean') fail('driver.protocol_invalid');
   } else if (r.op === 'act') {
     if (!string(r.kind,64) || !string(r.role,64) || !string(r.name,256)) fail('driver.protocol_invalid');
@@ -428,9 +432,16 @@ async function run(r) {
   if (r.op === 'snapshot') {
     // Wait concurrently against one shared budget; one absent control must not consume a wait
     // for every later assertion. Playwright calls may still exceed this nominal deadline.
-    await Promise.all(r.expect.map(async expected => {
+    await Promise.all(r.expect.filter(expected => expected.absent !== true).map(async expected => {
       const target=page.getByRole(expected.role,{name:expected.name,exact:true});
       try { await target.first().waitFor({state:'visible',timeout:SCREEN_WAIT}); }
+      catch (err) { if (err.code || err.name!=='TimeoutError') throw err; }
+    }));
+    // #1041: only once the present expectations settled, give each absent one the same budget
+    // to go away (a banner still closing), so absence is never judged before the page rendered.
+    await Promise.all(r.expect.filter(expected => expected.absent === true).map(async expected => {
+      const target=page.getByRole(expected.role,{name:expected.name,exact:true});
+      try { await target.first().waitFor({state:'hidden',timeout:SCREEN_WAIT}); }
       catch (err) { if (err.code || err.name!=='TimeoutError') throw err; }
     }));
     const rawAria=await page.locator('body').ariaSnapshot({timeout:TIMEOUT});

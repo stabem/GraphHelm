@@ -1165,8 +1165,15 @@ pub(super) fn failed_checks(details: &Value, expect: &Value) -> Option<Value> {
         && checks.len() == expect.len()
         && checks.iter().any(|check| check["seen"] == false)
         && checks.iter().zip(expect).all(|(check, wanted)| {
-            closed(check, &["role", "name", "seen", "closest"])
-                && check["role"] == wanted["role"]
+            // #1041: an `absent` check carries `absent: true` and never a closest match.
+            let absent = wanted["absent"] == true;
+            (if absent {
+                closed(check, &["role", "name", "absent", "seen", "closest"])
+                    && check["absent"] == true
+                    && check["closest"].is_null()
+            } else {
+                closed(check, &["role", "name", "seen", "closest"])
+            }) && check["role"] == wanted["role"]
                 && check["name"] == wanted["name"]
                 && check["seen"].is_boolean()
                 && (check["closest"].is_null()
@@ -2165,6 +2172,37 @@ mod tests {
         assert_eq!(refused.unwrap_err().0, "driver.expectation_failed");
         assert_eq!(driver.take_checks(), Some(checks));
         assert_eq!(driver.take_checks(), None);
+    }
+
+    /// #1041: a failed `absent` check (the banner is still there) keeps its reason: its own shape
+    /// (`absent: true`, no closest) survives, and a present check never takes that shape.
+    /// Cost: microseconds, in-memory JSON.
+    #[test]
+    fn a_failed_absent_check_keeps_its_own_shape() {
+        let expect = json!([
+            {"role":"tablist","name":"Mission views"},
+            {"role":"region","name":"While you were away","absent":true},
+        ]);
+        let failed = json!({"checks":[
+            {"role":"tablist","name":"Mission views","seen":true,"closest":null},
+            {"role":"region","name":"While you were away","absent":true,"seen":false,"closest":null},
+        ]});
+        assert_eq!(
+            failed_checks(&failed, &expect),
+            Some(failed["checks"].clone())
+        );
+        let mut closest = failed.clone();
+        closest["checks"][1]["closest"] = json!({"role":"region","name":"X"});
+        let mut dropped = failed.clone();
+        dropped["checks"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("absent");
+        let mut on_present = failed.clone();
+        on_present["checks"][0]["absent"] = true.into();
+        for bad in [closest, dropped, on_present] {
+            assert_eq!(failed_checks(&bad, &expect), None, "{bad}");
+        }
     }
 
     /// #1286: a failed snapshot's judgement survives only in the exact shape the driver promises,

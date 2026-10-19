@@ -498,13 +498,20 @@ fn weak_journey(value: &Value, strict: bool) -> Vec<Finding> {
         let Some(&&(i, last)) = path.last() else {
             continue;
         };
-        let expects = |id: &Value| -> BTreeSet<(String, String)> {
+        let expects = |id: &Value| -> BTreeSet<(String, String, bool)> {
             screens
                 .get(id.as_str().unwrap_or_default())
                 .and_then(|s| s["expect"].as_array())
                 .into_iter()
                 .flatten()
-                .map(|e| (e["role"].to_string(), e["name"].to_string()))
+                // #1041: "X is gone" and "X is shown" are different outcomes.
+                .map(|e| {
+                    (
+                        e["role"].to_string(),
+                        e["name"].to_string(),
+                        e["absent"] == true,
+                    )
+                })
                 .collect()
         };
         let before = expects(&last["from"]);
@@ -848,7 +855,8 @@ fn compile(flow: &Value) -> Result<Vec<(String, Value)>, Finding> {
                     .unwrap()
                     .iter()
                     .map(|e| format!(
-                        "{} {:?}",
+                        "{}{} {:?}",
+                        if e["absent"] == true { "no " } else { "" },
                         e["role"].as_str().unwrap(),
                         e["name"].as_str().unwrap()
                     ))
@@ -2105,7 +2113,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
                 } else {
                     out.push_str(&format!(
                         "{prefix}{field}: {}\n",
-                        inline(v, &["role", "name", "digest"])
+                        inline(v, &["role", "name", "absent", "digest"])
                     ));
                 }
             }
@@ -2260,6 +2268,67 @@ mod tests {
                 1
             ),
             canonical(&plain, false)
+        );
+    }
+
+    /// #1041: "this thing is gone" is an expectation. Defects named: the canonical writer drops
+    /// `absent` (so `journey compile --fmt` silently turns "gone" into "shown" and the approval
+    /// ignores it), the schema takes `absent: false` (two spellings of one meaning), or a screen
+    /// whose every expectation is an absence passes on a page that never rendered.
+    /// Cost: in memory only.
+    #[test]
+    fn an_absent_expectation_is_written_validated_and_approved() {
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let schemas = flow_schemas().unwrap();
+        let gone = json!({"role":"region","name":"Banner","absent":true});
+        let mut with = plain.clone();
+        with["screens"][0]["expect"]
+            .as_array_mut()
+            .unwrap()
+            .push(gone.clone());
+        let accepted = schemas.validate(FLOW_SCHEMA_ID, &with, "journey-flow");
+        assert!(accepted.is_empty(), "{accepted:?}");
+        let written = canonical(&with, false);
+        assert!(
+            written.contains("{role: region, name: Banner, absent: true}"),
+            "{written}"
+        );
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(
+            reread["screens"], with["screens"],
+            "absent survives the round trip"
+        );
+        assert_ne!(approval_digest(&with), approval_digest(&plain));
+        // The same pair shown instead of gone is a different approval.
+        let mut shown = with.clone();
+        let last = shown["screens"][0]["expect"].as_array().unwrap().len() - 1;
+        shown["screens"][0]["expect"][last]
+            .as_object_mut()
+            .unwrap()
+            .remove("absent");
+        assert_ne!(approval_digest(&shown), approval_digest(&with));
+        let mut spelled_false = with.clone();
+        spelled_false["screens"][0]["expect"][last]["absent"] = json!(false);
+        let mut only_absent = plain.clone();
+        only_absent["screens"][0]["expect"] = json!([gone]);
+        for refused in [spelled_false, only_absent] {
+            assert!(
+                !schemas
+                    .validate(FLOW_SCHEMA_ID, &refused, "journey-flow")
+                    .is_empty(),
+                "{refused}"
+            );
+        }
+        // A flow without `absent` keeps its exact bytes.
+        assert_eq!(
+            canonical(&plain, false),
+            canonical(
+                &serde_yaml_ng::from_str(&canonical(&plain, false)).unwrap(),
+                false
+            )
         );
     }
 

@@ -301,11 +301,14 @@ pub(super) fn unmet(screen: &Value, seen: &Observation) -> Option<String> {
                 }
                 _ => false,
             };
-            !met
+            // #1041: a backend observation is a whole, finished response, so absence is judged
+            // on it directly: an `absent` expectation is unmet exactly when it is present.
+            if expect["absent"] == true { met } else { !met }
         })
         .map(|expect| {
             format!(
-                "{} {}",
+                "{}{} {}",
+                if expect["absent"] == true { "no " } else { "" },
                 expect["role"].as_str().unwrap_or_default(),
                 expect["name"].as_str().unwrap_or_default()
             )
@@ -320,6 +323,24 @@ mod tests {
     /// The defect named (ml-saas trial): an http act's `headers` (a tenant id) never reached the
     /// app, and a reserved header could smuggle a second Host or a forged length. Cost: one
     /// loopback socket, no network.
+    /// #1041: a backend observation is a finished response, so `absent` inverts the match there:
+    /// a body that still carries the text fails it, and one without passes. Cost: in memory.
+    #[test]
+    fn an_absent_backend_expectation_fails_while_present() {
+        let screen = json!({"expect":[{"role":"status","name":"200"},
+            {"role":"text","name":"error","absent":true}]});
+        let seen = |body: &str| Observation {
+            status: Some(200),
+            exit: None,
+            body: body.to_owned(),
+        };
+        assert_eq!(unmet(&screen, &seen("all good")), None);
+        assert_eq!(
+            unmet(&screen, &seen("an error")),
+            Some("no text error".to_owned())
+        );
+    }
+
     #[test]
     fn http_act_sends_its_headers_but_never_reserved_ones() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

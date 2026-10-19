@@ -9,9 +9,15 @@ function distance(a, b) {
   return previous[b.length];
 }
 
+// #1041: an `absent` expectation is met when no visible element has that role and name. The
+// driver judges it only after the screen's present expectations settled, never on a blank page.
 export function judgeExpectations(expect, observed) {
-  return expect.map(({role,name}) => {
+  return expect.map(({role,name,absent}) => {
     const exact=observed.find(item=>item.role===role && item.name===name);
+    if (absent === true) {
+      const gone=!exact || exact.count===0 || exact.visible!==true;
+      return {role,name,absent:true,seen:gone,closest:null};
+    }
     const seen=exact?.count===1 && exact.visible===true;
     const choices=observed.filter(item=>item.role===role && item.visible);
     choices.sort((a,b)=>distance(name,a.name)-distance(name,b.name) || (a.name<b.name?-1:a.name>b.name?1:0));

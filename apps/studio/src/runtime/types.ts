@@ -429,7 +429,7 @@ export interface JourneyFlowScreen {
   /** #1286: what this screen is for, in the owner's words (journey-flow schema 1.7.0). */
   intent?: string;
   /** What the screen must show (role + accessible name), from the flow source. */
-  expect?: Array<{ role: string; name: string }>;
+  expect?: Array<{ role: string; name: string; absent?: true }>;
 }
 
 export interface JourneyFlowEdge {

@@ -78,6 +78,23 @@ describe("MissionView", () => {
     expect(cards).not.toHaveTextContent("wrong source");
   });
 
+  it("names a card's promise, each scope path and its proof from its evidence (#1041)", () => {
+    const event = (sequence: number) => ({
+      sequence, kind: "signal_recorded", payload: { kind: "keel.card", sourceKind: "node", sourceId: "deploy" },
+      occurredAt: null, actorId: "agent", actorType: "agent", idempotencyKey: null, eventId: null, evidenceRefs: [`e-${sequence}`],
+    });
+    render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()}
+      events={[event(7), event(8)]}
+      envelopes={{ 7: { text: "card", to: null, replyTo: null, evidence: ["Ships to staging", "a.yaml", "b.yaml", "cargo test"] },
+        8: { text: "one-line card", to: null, replyTo: null, evidence: ["only a promise"] } }} />);
+    const [full, short] = screen.getAllByRole("article", { name: "Keel card from deploy" });
+    const fields = within(full!).getByRole("list", { name: "Card fields" });
+    expect(within(fields).getAllByRole("listitem").map((item) => item.getAttribute("aria-label")))
+      .toEqual(["Promise: Ships to staging", "Scope: a.yaml", "Scope: b.yaml", "Proof: cargo test"]);
+    // One entry cannot say which is the promise and which the proof, so no fields are guessed.
+    expect(within(short!).queryByRole("list", { name: "Card fields" })).toBeNull();
+  });
+
   it("distinguishes absent, unavailable and partial card history, and clears a switched run", () => {
     const event = { sequence: 7, kind: "signal_recorded", payload: { kind: "keel.card", sourceKind: "node", sourceId: "planner" },
       occurredAt: null, actorId: "agent", actorType: "agent", idempotencyKey: null, eventId: null, evidenceRefs: ["e-7"] };

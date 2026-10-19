@@ -98,7 +98,7 @@ export function address_of(text: string, mediaType: string): { to: string | null
 /** The envelope a signal's sealed evidence carried, keyed by the signal event's sequence.
  * `recommendations` is the graph-signal envelope's own field (schemas/graph-signal.schema.json);
  * absent when the envelope carried none or was not JSON. */
-export type EnvelopeRecord = Record<number, { to: string | null; replyTo: string | null; task?: string | null; text: string; recommendations?: string[] }>;
+export type EnvelopeRecord = Record<number, { to: string | null; replyTo: string | null; task?: string | null; text: string; recommendations?: string[]; evidence?: string[] }>;
 
 const MAX_RECOMMENDATIONS = 4;
 const MAX_RECOMMENDATION_LENGTH = 120;
@@ -119,6 +119,33 @@ export function recommendations_of(text: string, mediaType: string): string[] {
       if (label.length === 0 || label.length > MAX_RECOMMENDATION_LENGTH || out.includes(label)) continue;
       out.push(label);
       if (out.length === MAX_RECOMMENDATIONS) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+const MAX_EVIDENCE = 32;
+const MAX_EVIDENCE_LENGTH = 512;
+
+/** #1041: the sealed envelope's `evidence`, one observation per entry. For a Keel card that is the
+ * promise, each scope path and the proof command, in that order (docs/keel/RECORDS.md). Anything
+ * that is not a non-empty string within bounds is dropped; order is kept. */
+export function evidence_of(text: string, mediaType: string): string[] {
+  if (!mediaType.includes("json")) return [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed === null || typeof parsed !== "object") return [];
+    const list = (parsed as { evidence?: unknown }).evidence;
+    if (!Array.isArray(list)) return [];
+    const out: string[] = [];
+    for (const entry of list) {
+      if (typeof entry !== "string") continue;
+      const item = entry.trim();
+      if (item.length === 0 || item.length > MAX_EVIDENCE_LENGTH) continue;
+      out.push(item);
+      if (out.length === MAX_EVIDENCE) break;
     }
     return out;
   } catch {

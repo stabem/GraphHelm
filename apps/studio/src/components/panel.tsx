@@ -28,7 +28,7 @@ import { isSubagentLifecycleSignal } from "../runtime/subagents";
 import { isClaudeTaskSignal } from "../runtime/team-tasks";
 import { workConversation, type WorkMessage } from "../runtime/work-conversation";
 import { moodOf, nodeResult, nodeStatusLabel, voiceOf, type GraphNode } from "../graph/model";
-import { address_of, readable_content, recommendations_of, type EnvelopeRecord } from "../graph/ledger";
+import { address_of, evidence_of, readable_content, recommendations_of, type EnvelopeRecord } from "../graph/ledger";
 import { keelChain } from "../runtime/keel-chain";
 import {
   LIFECYCLE_STATES,
@@ -883,10 +883,12 @@ export function useEnvelopes(
     }));
     const openedEnvelope = (content: EvidenceContent) => {
       const recommendations = recommendations_of(content.content, content.mediaType);
+      const evidence = evidence_of(content.content, content.mediaType);
       return {
         ...address_of(content.content, content.mediaType),
         text: readable_content(content.content, content.mediaType),
         ...(recommendations.length > 0 ? { recommendations } : {}),
+        ...(evidence.length > 0 ? { evidence } : {}),
       };
     };
     let live = true;

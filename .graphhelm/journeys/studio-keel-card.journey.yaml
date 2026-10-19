@@ -1,0 +1,32 @@
+schema: graphhelm.journey-flow/1
+id: studio-keel-card
+title: "Read a node's Keel card, its promise, scope and proof"
+purpose: "The owner opens a run and reads the Keel card a node recorded: its promise, each scope path and its proof command, as named fields."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+screens:
+  - id: card
+    title: The run's Keel cards section shows the deploy node's card with its fields
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: region, name: Keel cards}, {role: article, name: Keel card from deploy}, {role: list, name: Card fields}, {role: listitem, name: "Promise: The release reaches staging before production"}, {role: listitem, name: "Scope: deploy/staging.yaml"}, {role: listitem, name: "Scope: deploy/production.yaml"}, {role: listitem, name: "Proof: graphhelm journey preview studio-deploy"}]
+    scope: [apps/studio/src/components/mission-view.tsx, apps/studio/src/components/panel.tsx, apps/studio/src/graph/ledger.ts]
+  - id: proof
+    title: "The run's Proof view, one tab away from the card"
+    url: /?session=studio-fixture&run=:run
+    state: stable
+    expect: [{role: tablist, name: Mission views}, {role: tab, name: Graph}, {role: region, name: Proof}]
+    scope: [apps/studio/src/components/mission-view.tsx, apps/studio/src/components/proof-table.tsx]
+edges:
+  - id: card.proof
+    from: card
+    to: proof
+    acts:
+      - {kind: activate, role: tab, name: Proof}
+paths:
+  main: [card.proof]
+drift: []

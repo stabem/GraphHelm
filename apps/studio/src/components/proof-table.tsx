@@ -103,7 +103,7 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         {run && <button type="button" disabled={running} onClick={preview.again}>Run again</button>}
         {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}
         {running && <span role="status">Running…</span>}
-        {flow.rejected && <p className="proof-rejected" role="note" aria-label={`Rejected: ${flow.rejected.note}`}>{`Rejected: ${flow.rejected.note}`}</p>}
+        {flow.rejected && <p className="proof-rejected" id="proof-rejected" role="note" aria-labelledby="proof-rejected">{`Rejected: ${flow.rejected.note}`}</p>}
         {rejecting && onReject && <div className="proof-reject">
           <textarea aria-label="Why reject" value={note} maxLength={4096} onChange={(event) => setNote(event.target.value)} />
           <button type="button" disabled={busy || noteBytes === 0 || noteBytes > 4096}

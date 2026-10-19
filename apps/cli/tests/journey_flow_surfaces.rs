@@ -516,7 +516,12 @@ fn approve_over_http_and_mcp_does_what_the_cli_does_and_refuses_findings() {
     let stale = flow(&harness.flows(), "checkout").clone();
     assert_eq!(stale["status"], "approval_stale", "{stale}");
     assert!(codes(&stale).contains(&"flow.approval_stale".to_owned()));
-    assert_eq!(stale["approvable"], true, "{stale}");
+    // #1684: the edited flow is a new digest with no preview yet; approve would refuse it, so
+    // it is not approvable until its preview is recorded.
+    assert_eq!(stale["approvable"], false, "{stale}");
+    support::passing_preview(&harness.project, "checkout");
+    let previewed = flow(&harness.flows(), "checkout").clone();
+    assert_eq!(previewed["approvable"], true, "{previewed}");
 }
 
 /// #380: the declared actor type is not a credential. The Runtime's agent session token

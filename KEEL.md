@@ -72,9 +72,11 @@ and listed as `to build` until its check exists.
 - **State goes through the GraphHelm MCP tools.** Read the run with `status`, `briefing`, `tasks`,
   `events` and `evidence`, never by scripting the CLI or HTTP for the same answer. The reply is
   already structured, and the server already knows the Runtime and the actor.
-- **Task records** (`claimed`, `pr_opened`, `review_verdict`, `merged`) are written with
-  `tools/task-record/task_record.py --lane <you>` until the MCP can sign a record as the lane
-  (#1407). The Runtime refuses a record signed by anyone but the lane.
+- **Task records** (`claimed`, `pr_opened`, `review_verdict`, `merged`) go through the MCP
+  `signal` tool with `lane: <you>` and `credentialFile: <project>/.graphhelm/events.agent.<you>.token`
+  (#1407). `tools/task-record/task_record.py --lane <you> <step> … --dry-run` builds the exact
+  signal (its content-derived id and key, and for `merged` the GitHub-confirmed merge SHA the
+  Runtime cannot check offline). The Runtime refuses a record signed by anyone but the lane.
 - **The CLI is for work on the machine:** builds and the slot (`graphhelm workspace slot`,
   `tools/reached-tests/run_reached.py`), `graphhelm keel check`, setup and anything that runs for
   minutes or touches local files.

@@ -13,7 +13,7 @@ use super::driver::{Release, drive_to_quiescence};
 use super::{
     Failure, PreparedDrive, RecordedOutcome, append_event, execution_state, finish,
     idempotency_key, load_fixtures, owner_actor, record_outcome, render, replay_failure,
-    replay_projection, repository_failure, resolve_stream, system_actor,
+    replay_projection_at, repository_failure, resolve_stream, system_actor,
     verify_graph_matches_execution,
 };
 use crate::commands::{event_store, owner, publish_loaded};
@@ -400,7 +400,8 @@ fn execute_prepared_with_verification(
         }
     }
 
-    let projection = replay_projection(&store, &scope, &stream)?;
+    // #1670: the resume appends at the head its preconditions were checked on.
+    let (projection, observed) = replay_projection_at(&store, &scope, &stream)?;
     resume_preconditions(&projection, Some(version.number())).map_err(|error| {
         execution_state(
             &format!("resume refused: {}", resume_error_code(error)),
@@ -419,6 +420,7 @@ fn execute_prepared_with_verification(
         &store,
         &scope,
         &stream_id,
+        observed,
         NewEvent::new(
             key,
             actor.clone(),

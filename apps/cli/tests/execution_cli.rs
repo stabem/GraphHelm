@@ -4268,3 +4268,85 @@ fn a_held_start_records_the_hold_as_the_operators_decision_and_the_start_as_the_
         "the start itself is not an owner-initiated command: {actors:?}"
     );
 }
+
+/// #1670: an owner command checks the state it read and must append AT that state. `pause`
+/// replayed the history, saw `Running`, then appended at a FRESH head, so two concurrent pauses
+/// both passed the check and wrote paused -> paused; every later replay of that stream answered
+/// `GHE005_INTEGRITY_FAILURE`, for good. Eight `pause` processes race on each of several streams:
+/// the stream must still replay, and every loser must be told so (a sequence conflict or the
+/// state refusal), never a second recorded pause. Credible regression: an append taking its
+/// sequence from the store instead of from the history its decision was made on.
+#[test]
+fn concurrent_pauses_never_record_a_second_pause_on_one_stream() {
+    const STREAMS: usize = 4;
+    const RACERS: usize = 8;
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let fixtures = fixtures_file(directory.path(), serde_json::json!({}));
+    for stream in 0..STREAMS {
+        start(
+            &events,
+            &fixtures,
+            "supervised",
+            &format!("exec_race_{stream}"),
+        );
+    }
+    for stream in 0..STREAMS {
+        let execution = format!("exec_race_{stream}");
+        let racers: Vec<_> = (0..RACERS)
+            .map(|_| {
+                graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+                    .args([
+                        "execution",
+                        "pause",
+                        "--events",
+                        events.to_str().unwrap(),
+                        "--execution",
+                        &execution,
+                    ])
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap()
+            })
+            .collect();
+        let mut paused = 0;
+        for racer in racers {
+            let output = racer.wait_with_output().unwrap();
+            let reply = json(&output.stdout);
+            if reply["ok"] == true {
+                paused += 1;
+            } else {
+                let code = reply["diagnostics"][0]["code"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                assert_ne!(
+                    code, "GHE005_INTEGRITY_FAILURE",
+                    "{execution}: a racer saw a poisoned stream: {reply}"
+                );
+            }
+        }
+        assert_eq!(
+            paused, 1,
+            "{execution}: exactly one of {RACERS} concurrent pauses lands"
+        );
+        let status = command()
+            .args([
+                "execution",
+                "status",
+                "--events",
+                events.to_str().unwrap(),
+                "--execution",
+                &execution,
+            ])
+            .output()
+            .unwrap();
+        let status = json(&status.stdout);
+        assert_eq!(
+            status["ok"], true,
+            "{execution}: the stream still replays: {status}"
+        );
+        assert_eq!(status["data"]["status"], "paused", "{execution}: {status}");
+    }
+}

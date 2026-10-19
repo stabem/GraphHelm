@@ -258,14 +258,19 @@ pub struct Liveness {
     pub lanes: Vec<LaneLiveness>,
 }
 
-/// #1556: the newest task STEP each actor recorded. A `task.heartbeat` renews a lease, and the Stop
-/// hook sends one for an idle session, so it is not activity: counting it kept a dead claim
+/// #1556: the newest task STEP each actor recorded. A reasonless `task.heartbeat` renews a lease,
+/// and the Stop hook sends one for an idle session, so it is not activity (a heartbeat WITH a
+/// reason is: the lane said why it waits): counting it kept a dead claim
 /// "active 12s ago" for 37 h and kept it out of Silent. Slot work (building, waiting) is read from
 /// the slot directory, not from events, and is added by the reader.
 pub fn last_step_by_actor(records: &[TaskEventRecord]) -> BTreeMap<String, PersistedTimestamp> {
     let mut last: BTreeMap<String, PersistedTimestamp> = BTreeMap::new();
     for record in records {
-        if record.kind == graphhelm_execution::tasks::TaskEventKind::Heartbeat {
+        // #1556: a heartbeat that says why the lane waits is a deliberate statement and counts;
+        // the Stop hook's reasonless heartbeat does not.
+        if record.kind == graphhelm_execution::tasks::TaskEventKind::Heartbeat
+            && record.reason.is_none()
+        {
             continue;
         }
         let Some(at) = &record.occurred_at else {
@@ -1010,6 +1015,56 @@ mod lease_tests {
         );
         assert!(!busy.silent, "{busy:?}");
         assert_eq!(last.get("lane-idle"), claim.occurred_at.as_ref());
+    }
+
+    /// #1556 (orchestrator ruling): a heartbeat that says why the lane waits is a step, so the
+    /// lane is not Silent; the Stop hook's reasonless heartbeat still is not (the 37 h dead claim).
+    /// Credible regression: counting every heartbeat, or none. Cost: pure calls.
+    #[test]
+    fn a_heartbeat_with_a_reason_clears_silent_and_a_reasonless_one_does_not() {
+        let claim = record(
+            "task.claimed",
+            "lane-w",
+            1,
+            "2026-10-13T00:00:00Z",
+            r#""revision":1,"lane":"lane-w","branch":"issue-7-work""#,
+        );
+        let beat = |reason: &str| {
+            graphhelm_execution::tasks::parse_task_event(
+                "task.heartbeat",
+                "lane-w",
+                &format!(
+                    r#"{{"schema":"graphhelm-task-event-v1","taskId":"issue-7","revision":1,"at":"2026-10-14T11:59:48Z","lane":"lane-w"{reason}}}"#
+                ),
+                2,
+                Some(at("2026-10-14T11:59:48Z")),
+            )
+            .expect("a valid heartbeat")
+        };
+        let now = at("2026-10-14T12:00:00Z");
+        let verdict = |records: &[TaskEventRecord]| {
+            let last = last_step_by_actor(records);
+            lane_liveness(
+                "lane-w",
+                last.get("lane-w"),
+                Some(&at("2026-10-13T00:00:00Z")),
+                true,
+                &now,
+            )
+        };
+        let reasoned = verdict(&[
+            claim.clone(),
+            beat(r#","reason":"waiting on the reached plan""#),
+        ]);
+        assert!(
+            !reasoned.silent,
+            "a stated wait is not silence: {reasoned:?}"
+        );
+        let reasonless = verdict(&[claim, beat("")]);
+        assert!(
+            reasonless.silent,
+            "the hook's heartbeat stays silent: {reasonless:?}"
+        );
     }
 
     /// #1234: the verdict at the budget edges. Silent needs an obligation; free needs a record;

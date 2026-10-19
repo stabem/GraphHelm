@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use chrono::{TimeZone, Utc};
-use graphhelm_events::{LocalEventRepository, PreparedAppend};
+use graphhelm_events::{LocalEventRepository, MAX_JOURNAL_BYTES, PreparedAppend};
 use graphhelm_protocols::{
     ActorId, Clock, EventKind, ExecutionId, GraphImported, GraphSourceKind, IdGenerator, NewEvent,
     OpaqueId, PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope,
@@ -130,7 +130,6 @@ fn committed_journal_corruption_is_rejected_without_partial_success() {
 }
 
 const OLD_JOURNAL_CAP_BYTES: u64 = 64 * 1024 * 1024;
-const NEW_JOURNAL_CAP_BYTES: u64 = 256 * 1024 * 1024;
 
 #[test]
 fn valid_appends_cross_the_old_journal_cap_and_reopen() {
@@ -206,7 +205,8 @@ fn oversized_sparse_journal_is_rejected_from_metadata_before_read_allocation() {
         .write(true)
         .open(directory.path().join("journal.jsonl"))
         .unwrap()
-        .set_len(NEW_JOURNAL_CAP_BYTES + 1)
+        // #1714: one byte past the ceiling itself, not a literal that a raised cap leaves under it.
+        .set_len(MAX_JOURNAL_BYTES + 1)
         .unwrap();
     let error = match LocalEventRepository::open(
         directory.path(),

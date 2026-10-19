@@ -122,7 +122,7 @@ function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: 
                 {r.command && <span className="ab-cmd" title={r.command}>{r.command}</span>}
                 {what.length > 0 && <span className="ab-doing" title={what}>{r.href ? <a href={r.href} target="_blank" rel="noreferrer">{what}</a> : what}</span>}
               </span>
-              <span className="ab-for">{(r.latest ?? "—").split(" · ").map((part, i) => <span key={i}>{i > 0 ? ` · ${part}` : part}</span>)}</span>
+              <span className={r.waitStale ? "ab-for ab-wait-stale" : "ab-for"}>{(r.latest ?? "—").split(" · ").map((part, i) => <span key={i}>{i > 0 ? ` · ${part}` : part}</span>)}</span>
               <span className="ab-last" title={r.lastDelivered ? `last delivered ${r.lastDelivered}` : "nothing delivered yet"}>{r.lastDelivered ? `last delivered ${r.lastDelivered}` : "nothing delivered yet"}</span>
               {bot && (onOpenBotDetails || onNameBot) && (
                 <span className="ab-acts">

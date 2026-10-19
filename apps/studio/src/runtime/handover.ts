@@ -51,6 +51,12 @@ export function buildHandover(input: HandoverInput): Handover {
     return input.model?.nodes.find((node) => node.id === id)?.declaredName ?? id;
   };
 
+  // #1560: one pass each instead of a scan of the whole run per merge line and per bot. The live
+  // gh-team run (~9k events, hundreds of bots) spent ~45% of its load time in those scans.
+  const mergeBySequence = new Map<number, TaskEventRecord>();
+  for (const record of input.taskRecords ?? []) {
+    if (record.kind === "task.merged" && !mergeBySequence.has(record.sequence)) mergeBySequence.set(record.sequence, record);
+  }
   const shipped: HandoverLine[] = [];
   for (const event of inGap) {
     const payload = payloadOf(event);
@@ -63,7 +69,7 @@ export function buildHandover(input: HandoverInput): Handover {
       // #445: a merged task (#388) is shipped work. #1192: the record comes from the Runtime's tasks
       // route (verified there: kind, signer, shape); a merge the route has not served yet still
       // counts, without its PR.
-      const merge = input.taskRecords?.find((record) => record.sequence === event.sequence && record.kind === "task.merged");
+      const merge = mergeBySequence.get(event.sequence);
       if (merge === undefined) {
         shipped.push({ text: `${botName(event.actorId)} merged a task`, sequences: [event.sequence] });
         continue;
@@ -103,9 +109,13 @@ export function buildHandover(input: HandoverInput): Handover {
 
   const quiet: HandoverLine[] = [];
   if (toTime !== null) {
+    const lastByActor = new Map<string, RuntimeEvent>();
+    for (const event of input.events) {
+      if (event.actorId !== null && event.sequence <= input.toSeq) lastByActor.set(event.actorId, event);
+    }
     for (const bot of input.bots) {
       if (bot.actorId === null) continue;
-      const last = input.events.filter((event) => event.actorId === bot.actorId && event.sequence <= input.toSeq).at(-1);
+      const last = lastByActor.get(bot.actorId);
       const lastTime = timeOf(last?.occurredAt ?? null);
       if (last === undefined || lastTime === null || toTime - lastTime < QUIET_IN_GAP_MS) continue;
       quiet.push({ text: `${bot.name}: no new record for ${Math.floor((toTime - lastTime) / 60_000)} min`, sequences: [last.sequence] });

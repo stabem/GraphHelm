@@ -218,6 +218,12 @@ FLOW
         -H "Content-Type: application/json" -H "Idempotency-Key: $nid" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent" \
         --data-binary @"$dir/.graphhelm/note.json" > /dev/null
     done
+    # #1712: one shipped line in the same gap, so the details' "Cited evidence" link cites a record
+    # read from the event tail itself. Without it the only citation was the open question, which
+    # the Studio loads from a separate, slower source, and the link appeared or not by load.
+    sid=$(node -e 'console.log(require("crypto").randomUUID())')
+    printf '{"signal":{"id":"planner-shipped-%s","source":{"type":"tool","id":"planner"},"type":"agent_task_completed","severity":"low","description":"Fixture task finished while you were away.","evidence":["demo"],"emittedAt":"%s"}}' "$sid" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$dir/.graphhelm/shipped.json"
+    curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token"       -H "Content-Type: application/json" -H "Idempotency-Key: $sid" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent"       --data-binary @"$dir/.graphhelm/shipped.json" > /dev/null || echo "fixture: the shipped seed was refused" >&2
   fi
   flow=${GRAPHHELM_JOURNEY_FLOW:-}
   if [ "$flow" = studio-work-graph ]; then

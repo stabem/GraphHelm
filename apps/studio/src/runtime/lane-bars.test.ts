@@ -10,6 +10,47 @@ const at = (ms: number) => new Date(T0 + ms).toISOString();
 let seq = 0;
 const ev = (e: Partial<TimedTaskEvent>): TimedTaskEvent => ({ actorId: "a", sequence: seq++, taskId: "t1", ...e }) as TimedTaskEvent;
 
+describe("#1556 heartbeat reason", () => {
+  it("puts a heartbeat's reason on the lane's last record, and only a heartbeat's", () => {
+    const lanes = laneBarsOf([
+      ev({ kind: "task.claimed", actorId: "w", lane: "w", taskId: "issue-1556", issue: 1556, at: at(0) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", reason: "waiting on #1670 to land", at: at(5) }),
+    ], T0 + 10, 1000);
+    expect(lanes.find((lane) => lane.lane === "w")!.lastRecord).toMatchObject({ kind: "heartbeat", reason: "waiting on #1670 to land", reasonSince: T0 + 5 });
+    // The same reason again keeps when the wait began; another reason restarts it.
+    const repeated = laneBarsOf([
+      ev({ kind: "task.claimed", actorId: "w", lane: "w", taskId: "issue-1556", issue: 1556, at: at(0) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", reason: "A", at: at(5) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", reason: "A", at: at(9) }),
+    ], T0 + 10, 1000);
+    expect(repeated.find((lane) => lane.lane === "w")!.lastRecord).toMatchObject({ reason: "A", reasonSince: T0 + 5, at: T0 + 9 });
+    const changed = laneBarsOf([
+      ev({ kind: "task.claimed", actorId: "w", lane: "w", taskId: "issue-1556", issue: 1556, at: at(0) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", reason: "A", at: at(5) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", reason: "B", at: at(9) }),
+    ], T0 + 10, 1000);
+    expect(changed.find((lane) => lane.lane === "w")!.lastRecord).toMatchObject({ reason: "B", reasonSince: T0 + 9 });
+    // Review: the Stop hook's reasonless heartbeats in between neither break nor replace the wait.
+    const hour = 3_600_000;
+    const interleaved = laneBarsOf([
+      ev({ kind: "task.claimed", actorId: "w", lane: "w", taskId: "issue-1556", issue: 1556, at: at(0) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", reason: "A", at: at(1) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", at: at(3 * hour) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", reason: "A", at: at(7 * hour) }),
+      ev({ kind: "task.heartbeat", actorId: "w", lane: "w", taskId: "issue-1556", at: at(7 * hour + 5) }),
+    ], T0 + 7 * hour + 10, 8 * hour);
+    const waited = interleaved.find((lane) => lane.lane === "w")!;
+    expect(waited.lastRecord).toMatchObject({ kind: "heartbeat", reason: "A", reasonSince: T0 + 1, at: T0 + 7 * hour });
+    const card = agentBoard([], [waited], [], T0 + 7 * hour + 10)[0]!;
+    expect(card.latest?.startsWith("waiting 6h+ · A · since ")).toBe(true);
+    expect(card.waitStale).toBe(true);
+    const claimOnly = laneBarsOf([
+      ev({ kind: "task.claimed", actorId: "w", lane: "w", taskId: "issue-1556", issue: 1556, at: at(0) }),
+    ], T0 + 10, 1000);
+    expect(claimOnly.find((lane) => lane.lane === "w")!.lastRecord).not.toHaveProperty("reason");
+  });
+});
+
 describe("applySessionEnds", () => {
   const ended = (actorId: string, sequence: number, occurredAt: string): RuntimeEvent => ({
     sequence, kind: "signal_recorded", payload: { kind: "agent_session_ended", sourceKind: "tool", sourceId: actorId },

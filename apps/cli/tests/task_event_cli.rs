@@ -544,8 +544,65 @@ fn heartbeat_on_an_open_claim_is_recorded_without_changing_the_claim() {
     }
 }
 
+/// #1556: a waiting lane says why. A reason that is empty or carries a control character is
+/// refused BEFORE any heartbeat exists (so the 300 s cooldown cannot be what refuses it), and a
+/// bounded one is admitted. A heartbeat without a reason is covered by the cell above.
 #[test]
-fn heartbeat_needs_an_open_claim_and_a_pr_ends_it() {
+fn a_heartbeat_carries_the_waiting_lanes_reason_and_refuses_a_bad_one() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claim = signal(
+        scratch.path(),
+        &events,
+        "reason-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claim["ok"], json!(true), "{claim}");
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
+    });
+    for (id, reason) in [
+        ("reason-empty", json!("")),
+        ("reason-control", json!("waiting\u{7}")),
+        ("reason-too-long", json!("x".repeat(501))),
+    ] {
+        let mut candidate = heartbeat.clone();
+        candidate["reason"] = reason;
+        let head = history(&events).len();
+        let refused = signal(
+            scratch.path(),
+            &events,
+            id,
+            "task.heartbeat",
+            ACTOR,
+            &candidate,
+        );
+        assert_eq!(
+            refused["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID",
+            "{id}: {refused}"
+        );
+        assert_eq!(history(&events).len(), head, "{id} moved journal head");
+    }
+    heartbeat["reason"] = json!("waiting on #1670 to land");
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "reason-heartbeat",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+}
+
+#[test]
+fn heartbeat_needs_an_open_claim_or_pr_and_a_merge_ends_it() {
     let scratch = tempfile::tempdir().unwrap();
     let events = start(scratch.path());
     let mut heartbeat = as_actor(package_fixture("claimed"));
@@ -584,6 +641,17 @@ fn heartbeat_needs_an_open_claim_and_a_pr_ends_it() {
         &as_actor(package_fixture("pr-opened")),
     );
     assert_eq!(pr["ok"], true, "{pr}");
+    // #1556: an open PR keeps the task heartbeat-eligible; its merge ends that. No heartbeat was
+    // recorded before this one, so the refusal is the merge, not the 300 s cooldown.
+    let merged = signal(
+        scratch.path(),
+        &events,
+        "heartbeat-merged",
+        "task.merged",
+        ACTOR,
+        &as_actor(package_fixture("merged")),
+    );
+    assert_eq!(merged["ok"], true, "{merged}");
     let head = history(&events).len();
     let ended = signal(
         scratch.path(),
@@ -595,6 +663,49 @@ fn heartbeat_needs_an_open_claim_and_a_pr_ends_it() {
     );
     assert_eq!(ended["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID");
     assert_eq!(history(&events).len(), head);
+}
+
+/// #1556: a task at the PR step is still its author's work while the PR is open, so the PR
+/// author's heartbeat is admitted there (the owner's Silent cards included tasks waiting on a
+/// reached plan with no way to say they were alive). Before: refused as "requires an open pre-PR
+/// claim". Cost: one held fixture run and three CLI signals.
+#[test]
+fn the_pr_author_may_heartbeat_a_task_whose_pr_is_open() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let mut heartbeat = as_actor(package_fixture("claimed"));
+    heartbeat.as_object_mut().unwrap().retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "schema" | "taskId" | "revision" | "at" | "lane"
+        )
+    });
+    for (id, kind, fixture) in [
+        ("pr-step-claim", "task.claimed", "claimed"),
+        ("pr-step-pr", "task.pr_opened", "pr-opened"),
+    ] {
+        let reply = signal(
+            scratch.path(),
+            &events,
+            id,
+            kind,
+            ACTOR,
+            &as_actor(package_fixture(fixture)),
+        );
+        assert_eq!(reply["ok"], true, "{id}: {reply}");
+    }
+    heartbeat["reason"] = json!("waiting on the reached plan");
+    let head = history(&events).len();
+    let alive = signal(
+        scratch.path(),
+        &events,
+        "pr-step-heartbeat",
+        "task.heartbeat",
+        ACTOR,
+        &heartbeat,
+    );
+    assert_eq!(alive["ok"], true, "{alive}");
+    assert_eq!(history(&events).len(), head + 1);
 }
 
 /// #1193 (plan A2): a claim carries its lease. Before: `leaseSeconds` was an unknown key and the

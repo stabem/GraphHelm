@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import React from "react";
 
 import { awaitingReply, describe as describeEvent, groupTurns, pinnedToLatest, resetPanelCaches, Thread, useEnvelopes } from "./panel";
+import { EVIDENCE_READS_TO_QUEUE } from "../runtime/client";
 import type { EvidenceContent, RuntimeEvent } from "../runtime/types";
 
 const stateUpdateAudit = vi.hoisted(() => ({ active: false, submissions: 0 }));
@@ -323,7 +324,8 @@ it("settles 4,900 simultaneous envelopes without beacon flicker", async () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
 
     expect(vi.getTimerCount()).toBe(0);
-    expect(firstBatch.size).toBe(50);
+    // #1560: enough reads wait at once to fill the client's collection reads in flight.
+    expect(firstBatch.size).toBe(EVIDENCE_READS_TO_QUEUE);
     expect(beaconTransitions).toEqual([false, true, false]);
     expect(result.current.__pendingEnvelopeSequences).toEqual([]);
     expect(open).toHaveBeenCalledTimes(rows.length);

@@ -736,7 +736,7 @@ fn execution_exists(events: &Path, execution: &str) -> bool {
     crate::commands::execution::status::read_known_within(
         events,
         Some(execution),
-        crate::commands::status_read_budget(),
+        crate::commands::serve_read_budget(),
     )
     .is_ok()
 }

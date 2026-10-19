@@ -103,3 +103,6 @@ docs/acceptance/demos/** -text
 adapters/tool-host/tests/fixtures/context-quality/** text eol=lf
 # #1138: a UTF-16 gate transcript fixture; its BOM and NULs are the point of the file.
 apps/cli/tests/fixtures/classify-red/flake-utf16.log.txt binary
+# #1722: the CLI embeds these observer files byte for byte (include_bytes!) and requires the
+# project copy to equal them; a CRLF checkout embedded CRLF and every LF copy then failed.
+tools/journey-driver/*.mjs text eol=lf

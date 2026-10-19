@@ -5639,3 +5639,77 @@ fn a_fresh_runtime_opens_each_sealed_task_record_once_and_still_refuses_a_tamper
         "{started}"
     );
 }
+
+/// #1556 (review boundary): a task at the PR step may be heartbeated by the lane that opened the
+/// PR, and by no other lane. Observer: the real `serve` binary over HTTP, two lanes recording as
+/// themselves. A lane that holds no claim and opened no PR for the task is refused, naming the
+/// PR-author rule, with nothing appended; the author is admitted. Cost: one serve, five records.
+#[test]
+fn only_the_pr_author_may_heartbeat_a_task_at_the_pr_step() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let extra = throwaway_keyring(dir.path());
+    let run = "pr-step";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 1);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let (author, stranger) = ("lane-author", "lane-stranger");
+    let pr = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-7",
+        "revision": 2, "at": "2026-10-13T12:00:00Z", "pr": 70, "headSha": "0123abcd",
+        "journeys": [], "lane": author, "repo": "stabem/GraphHelm"});
+    for (kind, id, document) in [
+        ("task.claimed", "claim-7", claim_document(author, 7)),
+        ("task.pr_opened", "pr-7", pr),
+    ] {
+        let (status, reply, _) = task_record(&base, &token, run, author, kind, id, &document);
+        assert_eq!(status, 200, "{id}: {reply}");
+    }
+    let head = get_json(
+        &format!("{base}/v1/executions/{run}/events?after=0&limit=1000"),
+        Some(&token),
+    )["data"]["head"]
+        .clone();
+    let mut beat = heartbeat_document(stranger, 7);
+    beat["reason"] = serde_json::json!("not my PR");
+    let (status, refused, _) = task_record(
+        &base,
+        &token,
+        run,
+        stranger,
+        "task.heartbeat",
+        "beat-stranger",
+        &beat,
+    );
+    assert_ne!(status, 200, "a stranger's heartbeat is refused: {refused}");
+    assert!(
+        refused["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("open PR this lane opened")),
+        "refused for the PR-author rule, not another check: {refused}"
+    );
+    let after = get_json(
+        &format!("{base}/v1/executions/{run}/events?after=0&limit=1000"),
+        Some(&token),
+    )["data"]["head"]
+        .clone();
+    assert_eq!(after, head, "a refused heartbeat appends nothing");
+    let mut beat = heartbeat_document(author, 7);
+    beat["reason"] = serde_json::json!("waiting on the reached plan");
+    let (status, admitted, _) = task_record(
+        &base,
+        &token,
+        run,
+        author,
+        "task.heartbeat",
+        "beat-author",
+        &beat,
+    );
+    assert_eq!(status, 200, "the PR author is admitted: {admitted}");
+}

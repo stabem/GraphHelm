@@ -104,6 +104,9 @@ fn report(command: &'static str, data: Value, failed: Option<Failure>) -> Outcom
         "replay.observer_missing" | "driver.observer_missing" => {
             "OBSERVER_MISSING: run setup --install-observer playwright in this project, then retry with a runnable Node/Playwright/Chromium observer"
         }
+        "replay.observer_stale" => {
+            "OBSERVER_STALE: this project's observer copy differs from the one this graphhelm ships; run setup --install-observer playwright in this project to refresh it, then retry"
+        }
         "replay.cache_missing" => {
             "open needs the replay cache of this approved flow; run `graphhelm journey replay <id>` first"
         }

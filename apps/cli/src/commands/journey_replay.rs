@@ -74,6 +74,9 @@ fn report(mut data: Value, failed: Option<Failure>) -> Outcome {
         "replay.observer_missing" | "driver.observer_missing" => {
             "OBSERVER_MISSING: run setup --install-observer playwright in this project, then retry with a runnable Node/Playwright/Chromium observer"
         }
+        "replay.observer_stale" => {
+            "OBSERVER_STALE: this project's observer copy differs from the one this graphhelm ships; run setup --install-observer playwright in this project to refresh it, then retry"
+        }
         "replay.timeout" => {
             "the replay budget ended; committed records and masked temporary inputs may remain; reconcile before retrying a mutation"
         }
@@ -324,7 +327,7 @@ fn keep_tail(pipe: impl Read + Send + 'static, slack: usize) -> Receiver<(Vec<u8
 /// The kept stderr as text with every secret and the user's home masked, at most
 /// `DRIVER_LOG_TAIL` bytes. A cut window first drops `slack` bytes, the longest a secret's
 /// leftover suffix can be, so no fragment of a secret survives the edge.
-fn masked_tail(bytes: &[u8], cut: bool, slack: usize, secrets: &[String]) -> String {
+pub(super) fn masked_tail(bytes: &[u8], cut: bool, slack: usize, secrets: &[String]) -> String {
     let bytes = if cut {
         &bytes[slack.min(bytes.len())..]
     } else {
@@ -733,8 +736,13 @@ impl Driver {
                     result["checks"].as_array().is_some_and(|checks| {
                         checks.len() == expect.len()
                             && checks.iter().zip(expect).all(|(check, wanted)| {
-                                closed(check, &["role", "name", "seen", "closest"])
-                                    && check["role"] == wanted["role"]
+                                // #1041: a met `absent` check says so; a present one never does.
+                                (if wanted["absent"] == true {
+                                    closed(check, &["role", "name", "absent", "seen", "closest"])
+                                        && check["absent"] == true
+                                } else {
+                                    closed(check, &["role", "name", "seen", "closest"])
+                                }) && check["role"] == wanted["role"]
                                     && check["name"] == wanted["name"]
                                     && check["seen"] == true
                                     && check["closest"].is_null()
@@ -1130,6 +1138,9 @@ pub(super) fn observer_ready(project: &Path) -> Result<()> {
     if !safe_node(&project.join(".graphhelm/observers")) {
         return Err(failure("replay.observer_missing", "/observer", 3));
     }
+    // #1722: every file present first (any absent reads missing), then each one byte-equal to
+    // the copy this binary ships (a present one that differs is stale, named by file).
+    let mut read = Vec::new();
     for (relative, expected) in OBSERVER_FILES {
         let installed = project.join(relative);
         let mut installed_bytes = Vec::new();
@@ -1140,9 +1151,19 @@ pub(super) fn observer_ready(project: &Path) -> Result<()> {
                         .read_to_end(&mut installed_bytes)
                 })
                 .is_err()
-            || installed_bytes != expected
         {
             return Err(failure("replay.observer_missing", "/observer", 3));
+        }
+        read.push((relative, expected, installed_bytes));
+    }
+    for (relative, expected, installed_bytes) in read {
+        if installed_bytes != expected {
+            let file = relative.rsplit('/').next().unwrap_or(relative);
+            return Err(failure(
+                "replay.observer_stale",
+                format!("/observer/{file}"),
+                3,
+            ));
         }
     }
     Ok(())
@@ -2065,6 +2086,44 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
 
 #[cfg(test)]
 mod tests {
+
+    /// #1722: the binary ships its observer files byte for byte, so it must ship the same bytes
+    /// whatever the build checkout's line endings: on 2026-10-19 a binary built from an autocrlf
+    /// checkout embedded CRLF, and every LF project copy then failed the byte check. Cost: none.
+    #[test]
+    fn the_shipped_observer_files_are_lf_whatever_the_checkout() {
+        for (path, bytes) in OBSERVER_FILES {
+            assert!(!bytes.contains(&b'\r'), "{path} is embedded with CR");
+        }
+    }
+
+    /// #1722: an observer copy that exists but differs from the one this binary ships is stale,
+    /// not missing; the reason names the file, so the owner refreshes it instead of hunting for
+    /// an absent install. Absent still reads missing. Cost: one temp directory.
+    #[test]
+    fn a_differing_observer_copy_is_stale_and_an_absent_one_is_missing() {
+        let project = tempfile::tempdir().unwrap();
+        let observers = project.path().join(".graphhelm/observers");
+        assert_eq!(
+            observer_ready(project.path()).unwrap_err().0,
+            "replay.observer_missing"
+        );
+        std::fs::create_dir_all(&observers).unwrap();
+        for (path, bytes) in OBSERVER_FILES {
+            std::fs::write(project.path().join(path), bytes).unwrap();
+        }
+        assert!(observer_ready(project.path()).is_ok());
+        std::fs::write(observers.join("judge.mjs"), b"// an older judge\n").unwrap();
+        let stale = observer_ready(project.path()).unwrap_err();
+        assert_eq!(stale.0, "replay.observer_stale");
+        assert_eq!(stale.1, "/observer/judge.mjs");
+        std::fs::remove_file(observers.join("judge.mjs")).unwrap();
+        assert_eq!(
+            observer_ready(project.path()).unwrap_err().0,
+            "replay.observer_missing"
+        );
+    }
+
     use super::*;
 
     /// #1286: the real `call` path keeps a failed snapshot's per-assertion judgement for the
@@ -2087,9 +2146,10 @@ mod tests {
             "replay.observer_missing"
         );
         std::fs::write(project.path().join(judge), b"stale").unwrap();
+        // #1722: a judge that is present but not the shipped one is stale, not missing.
         assert_eq!(
             observer_ready(project.path()).unwrap_err().0,
-            "replay.observer_missing"
+            "replay.observer_stale"
         );
         std::fs::write(project.path().join(judge), judge_bytes).unwrap();
         assert!(observer_ready(project.path()).is_ok());
@@ -2483,6 +2543,54 @@ mod tests {
                 last_checks: None,
             };
             let reply = driver.call("snapshot", request.clone(), "/screens/entrar");
+            assert_eq!(reply.map(|_| ()).map_err(|e| e.0), expected, "{frame}");
+        }
+    }
+
+    /// #1041: a snapshot whose `absent` check is met (the banner is gone) is a success the driver
+    /// writes as `{…, absent: true, seen: true, closest: null}`. Regression found by the
+    /// studio-handover run: Rust refused that frame as `replay.driver_frame_invalid`, so every
+    /// dismissal that worked failed `internal`. A present check may not carry the flag.
+    /// Cost: milliseconds, fixed peer frames.
+    #[test]
+    fn a_met_absent_check_is_an_accepted_snapshot() {
+        let fingerprint = format!("sha256:{}", "a".repeat(64));
+        let request = json!({"expect":[{"role":"tablist","name":"Mission views"},
+            {"role":"region","name":"While you were away","absent":true}]});
+        let gone = json!([{"role":"tablist","name":"Mission views","seen":true,"closest":null},
+            {"role":"region","name":"While you were away","absent":true,"seen":true,"closest":null}]);
+        let mut unflagged = gone.clone();
+        unflagged[1].as_object_mut().unwrap().remove("absent");
+        let mut flagged_present = gone.clone();
+        flagged_present[0]["absent"] = true.into();
+        let success = |checks: &Value| json!({"protocol":PROTOCOL,"requestId":1,"ok":true,"result":{"url":"http://localhost/","ariaYaml":"- tablist \"Mission views\"","controls":[],"fingerprint":fingerprint,"checks":checks}});
+        for (frame, expected) in [
+            (success(&gone), Ok(())),
+            (success(&unflagged), Err("replay.driver_frame_invalid")),
+            (
+                success(&flagged_present),
+                Err("replay.driver_frame_invalid"),
+            ),
+        ] {
+            let (writer, requests) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
+            std::thread::spawn(move || {
+                let (_, ack) = requests.recv().unwrap();
+                ack.send(true).unwrap();
+            });
+            let (peer, replies) = mpsc::sync_channel(1);
+            peer.send(Ok(Some(serde_json::to_vec(&frame).unwrap())))
+                .unwrap();
+            let mut driver = Driver {
+                owned: None,
+                writer,
+                replies,
+                sequence: 0,
+                secrets: vec![],
+                stderr: None,
+                headed: false,
+                last_checks: None,
+            };
+            let reply = driver.call("snapshot", request.clone(), "/screens/run");
             assert_eq!(reply.map(|_| ()).map_err(|e| e.0), expected, "{frame}");
         }
     }

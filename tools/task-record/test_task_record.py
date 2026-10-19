@@ -202,6 +202,18 @@ class TaskRecordTest(unittest.TestCase):
                          self.window(later))
         self.assertEqual(self.window(later), self.window(self.FIXED_NOW) + 1)
 
+    def test_heartbeat_reason_is_carried_and_a_bad_one_is_refused_before_any_request(self):
+        # #1556: a waiting lane says why. The reason rides in the record unchanged; an empty,
+        # repeated, over-long or non-printable one is refused locally, with nothing sent.
+        code, out = self.run_heartbeat("--reason", "waiting on #1670 to land")
+        self.assertEqual(code, 0, out)
+        document = json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])
+        self.assertEqual(document["reason"], "waiting on #1670 to land")
+        for flags in (("--reason", " "), ("--reason", "a", "--reason", "b"), ("--reason", "x" * 501),
+                      ("--reason", "bell\a")):
+            with self.subTest(flags=flags):
+                self.assert_refused_without_post(*flags)
+
     def test_forbidden_overrides_refuse_without_post_or_reads(self):
         for flags in (("--pr", "44"), ("--head", HEAD_A), ("--revision", "9"), ("--title", "forged")):
             with self.subTest(flags=flags):
@@ -620,6 +632,29 @@ class DifferentPayloadIsNotAlreadyRecorded(unittest.TestCase):
         message = str(stop.exception)
         self.assertIn("differs from this one", message)
         self.assertIn("d" * 40, message)
+
+    def test_a_lane_credential_that_cannot_read_history_leaves_the_comparison_unverified(self):
+        # #1556: a lane credential gets 401 on the history read. The answer must say the
+        # comparison is UNVERIFIED and nothing changed, never "already recorded", and never
+        # blame a heartbeat (the old message said "heartbeat history is unavailable").
+        args = SimpleNamespace(lane="l", kind="merged", repo="r", pr=7, issue=1, comment_url=None,
+                               url="http://127.0.0.1:1", execution="e", dry_run=False, token_file="t")
+        doc = {"taskId": "issue-1", "pr": 7, "mergeSha": "c" * 40, "closes": [1], "merger": "l", "at": "now"}
+
+        def answer(request, timeout):
+            if request.get_method() == "GET":
+                raise task_record.urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+            return io.BytesIO(json.dumps(self.CONFLICT).encode())
+
+        with patch.object(task_record, "read_credential", return_value="x"), \
+                patch.object(task_record.urllib.request, "urlopen", side_effect=answer):
+            with self.assertRaises(SystemExit) as stop:
+                task_record.send(args, doc, "now")
+        message = str(stop.exception)
+        self.assertIn("UNVERIFIED", message)
+        self.assertIn("401", message)
+        self.assertNotIn("heartbeat", message)
+        self.assertNotIn("already recorded", message)
 
 
 class ClosesAsGiven(unittest.TestCase):

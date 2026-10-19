@@ -552,7 +552,7 @@ def reject_heartbeat_overrides(args):
         "pr": args.pr, "head": args.head, "reviewer": args.reviewer, "ordinal": args.ordinal if args.ordinal != 1 else None,
         "verdict": args.verdict, "comment-url": args.comment_url, "merge-sha": args.merge_sha,
         "by": args.by, "closes": args.closes, "journeys": args.journeys, "round": args.round,
-        "score": args.score, "design-ref": args.design_ref, "reason": args.reason,
+        "score": args.score, "design-ref": args.design_ref,
         "pass-score": args.pass_score if args.pass_score != 8 else None,
         "max-rounds": args.max_rounds if args.max_rounds != 3 else None,
         "classes": args.classes, "reviews": args.reviews, "proof": args.proof,
@@ -573,15 +573,16 @@ def _runtime_json(args, path, token, *, max_bytes=MAX_RESPONSE_BYTES):
         with urllib.request.urlopen(request, timeout=30) as response:
             raw = response.read(max_bytes + 1)
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as error:
-        sys.exit(f"task_record: heartbeat history is unavailable; no record sent ({error})")
+        sys.exit(f"task_record: {getattr(args, 'read_context', '')}the stored task history cannot be read "
+                 f"({error}); a lane credential may record but not read history")
     if len(raw) > max_bytes:
-        sys.exit("task_record: heartbeat history response exceeded its byte bound; no record sent")
+        sys.exit("task_record: task history response exceeded its byte bound; no record sent")
     try:
         reply = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError):
-        sys.exit("task_record: heartbeat history response is invalid; no record sent")
+        sys.exit("task_record: task history response is invalid; no record sent")
     if not isinstance(reply, dict) or reply.get("ok") is not True or not isinstance(reply.get("data"), dict):
-        sys.exit("task_record: heartbeat history response is incomplete; no record sent")
+        sys.exit("task_record: task history response is incomplete; no record sent")
     return reply["data"], len(raw)
 
 
@@ -593,41 +594,41 @@ def read_execution_history(args):
     head = events.get("head")
     first_page = events.get("events")
     if not isinstance(head, int) or isinstance(head, bool) or head < 0 or not isinstance(first_page, list):
-        sys.exit("task_record: heartbeat event history is malformed; no record sent")
+        sys.exit("task_record: task event history is malformed; no record sent")
     if head > MAX_HISTORY_EVENTS:
-        sys.exit("task_record: heartbeat event history exceeds its event bound; no record sent")
+        sys.exit("task_record: task event history exceeds its event bound; no record sent")
     history = list(first_page)
     after = history[-1].get("sequence") if history and isinstance(history[-1], dict) else 0
     if len(history) > 1000 or len(history) != min(head, 1000):
-        sys.exit("task_record: heartbeat event history is incomplete; no record sent")
+        sys.exit("task_record: task event history is incomplete; no record sent")
     if any(not isinstance(event, dict) or event.get("sequence") != expected
            for expected, event in enumerate(history, start=1)):
-        sys.exit("task_record: heartbeat event history has a sequence gap; no record sent")
+        sys.exit("task_record: task event history has a sequence gap; no record sent")
     for _ in range(MAX_HISTORY_PAGES - 1):
         if after == head:
             break
         if not isinstance(after, int) or after <= 0:
-            sys.exit("task_record: heartbeat event history is incomplete; no record sent")
+            sys.exit("task_record: task event history is incomplete; no record sent")
         page, _ = _runtime_json(args, f"/events?after={after}&limit=1000", token)
         if page.get("head") != head or not isinstance(page.get("events"), list) or not page["events"]:
-            sys.exit("task_record: heartbeat event history changed or is incomplete; no record sent")
+            sys.exit("task_record: task event history changed or is incomplete; no record sent")
         next_page = page["events"]
         if len(history) + len(next_page) > MAX_HISTORY_EVENTS:
-            sys.exit("task_record: heartbeat event history exceeds its event bound; no record sent")
+            sys.exit("task_record: task event history exceeds its event bound; no record sent")
         for expected, event in enumerate(next_page, start=after + 1):
             if not isinstance(event, dict) or event.get("sequence") != expected:
-                sys.exit("task_record: heartbeat event history has a sequence gap; no record sent")
+                sys.exit("task_record: task event history has a sequence gap; no record sent")
         history.extend(next_page)
         after = next_page[-1]["sequence"]
     if after != head or len(history) != head:
-        sys.exit("task_record: heartbeat event history is incomplete; no record sent")
+        sys.exit("task_record: task event history is incomplete; no record sent")
 
     relevant = []
     for event in history:
         if (not isinstance(event, dict) or not isinstance(event.get("kind"), dict)
                 or not isinstance(event.get("actor"), dict)
                 or not isinstance(event["actor"].get("id"), str)):
-            sys.exit("task_record: heartbeat event history is malformed; no record sent")
+            sys.exit("task_record: task event history is malformed; no record sent")
         if event.get("actor", {}).get("id") != args.lane:
             continue
         kind = event["kind"].get("data", {}).get("kind") if event["kind"].get("type") == "signal_recorded" else None
@@ -635,26 +636,26 @@ def read_execution_history(args):
                     "task.merged", "task.closed"):
             relevant.append((event, kind))
     if len(relevant) > MAX_HEARTBEAT_EVIDENCE_READS:
-        sys.exit("task_record: heartbeat history requires too many evidence reads; no record sent")
+        sys.exit("task_record: task history requires too many evidence reads; no record sent")
     evidence_docs = {}
     total_bytes = 0
     for event, kind in relevant:
         refs = event.get("evidenceRefs")
         if not isinstance(refs, list) or not refs or not isinstance(refs[0], dict) or not isinstance(refs[0].get("evidenceId"), str):
-            sys.exit("task_record: heartbeat task evidence reference is missing; no record sent")
+            sys.exit("task_record: stored task evidence reference is missing; no record sent")
         evidence_id = refs[0]["evidenceId"]
         if evidence_id not in evidence_docs:
             data, size = _runtime_json(args, f"/evidence/{urllib.parse.quote(evidence_id, safe='')}", token)
             total_bytes += size
             if total_bytes > MAX_TOTAL_EVIDENCE_BYTES:
-                sys.exit("task_record: heartbeat evidence exceeds its total byte bound; no record sent")
+                sys.exit("task_record: task evidence exceeds its total byte bound; no record sent")
             content = data.get("content")
             try:
                 evidence_docs[evidence_id] = json.loads(content) if isinstance(content, str) else None
             except json.JSONDecodeError:
                 evidence_docs[evidence_id] = None
             if not isinstance(evidence_docs[evidence_id], dict):
-                sys.exit("task_record: heartbeat task evidence is unreadable; no record sent")
+                sys.exit("task_record: stored task evidence is unreadable; no record sent")
     return [(event, kind, evidence_docs[event["evidenceRefs"][0]["evidenceId"]]) for event, kind in relevant]
 
 
@@ -668,8 +669,15 @@ def heartbeat_document(args, now):
     the 300-second window of `now`, so a retry inside the window is the same record (same key)
     and the next window is a new one."""
     stamp = datetime.datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
-    return {"schema": "graphhelm-task-event-v1", "taskId": f"issue-{args.issue}",
-            "revision": int(stamp.timestamp()) // 300, "at": now, "lane": args.lane}
+    doc = {"schema": "graphhelm-task-event-v1", "taskId": f"issue-{args.issue}",
+           "revision": int(stamp.timestamp()) // 300, "at": now, "lane": args.lane}
+    # #1556: an optional reason says what the waiting lane is waiting on; the card shows it.
+    if args.reason:
+        if (len(args.reason) != 1 or not args.reason[0].strip() or len(args.reason[0]) > 500
+                or not args.reason[0].isprintable()):
+            sys.exit("task_record: heartbeat takes at most one nonempty printable --reason of at most 500 characters")
+        doc["reason"] = args.reason[0]
+    return doc
 
 
 def send_opening(args, doc, now):
@@ -765,6 +773,11 @@ def refuse_unless_stored_equal(args, doc):
     """
     wanted = {k: v for k, v in doc.items() if k != "at"}
     stored = []
+    # #1556: a lane credential cannot read history (401). Say what that leaves unknown, never
+    # "heartbeat history", and never report the record as already recorded.
+    args.read_context = (f"the Runtime answered GHE003 for this {args.kind} record of {doc['taskId']} "
+                         f"PR {doc.get('pr')}, but whether the stored record equals this one is UNVERIFIED and "
+                         "nothing was changed: ")
     for _event, kind, evidence in read_execution_history(args):
         if kind != f"task.{args.kind}":
             continue

@@ -22,7 +22,7 @@ pub(crate) fn budgeted(
     execute_within(
         events,
         execution,
-        crate::commands::status_read_budget(),
+        crate::commands::serve_read_budget(),
         keyring,
     )
 }
@@ -52,5 +52,14 @@ pub fn run(
     keyring: Option<&super::signal::SignalKeyring>,
 ) -> Outcome {
     // The operator is waiting on this one, so it is the call that declares the budget (#750).
-    finish(COMMAND, budgeted(events, execution, keyring), |value| value)
+    finish(
+        COMMAND,
+        execute_within(
+            events,
+            execution,
+            crate::commands::status_read_budget(),
+            keyring,
+        ),
+        |value| value,
+    )
 }

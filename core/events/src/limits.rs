@@ -54,7 +54,10 @@ pub const MAX_EVIDENCE_ITEMS: usize = 10_000;
 pub const MAX_EVIDENCE_BATCH_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_ARTIFACTS: usize = 64;
 pub const MAX_READ_PAGE: usize = 1_000;
-pub const MAX_READ_ALL: usize = 100_000;
+/// #1721 stopgap: raised from 100,000 so the live store (54,830 events on 2026-10-19, ~5k a day)
+/// is not refused at open before journal segmentation (#1721) lands. Measured against boot time
+/// and RAM on a store copy; the numbers are in the PR that raised it.
+pub const MAX_READ_ALL: usize = 250_000;
 pub const MAX_CURSOR_BYTES: usize = 4 * 1024;
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
@@ -88,7 +91,24 @@ pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 /// **What would move this number:** nobody has measured how many events a real owner-journey
 /// execution produces. When someone does, this constant should be revisited against it rather
 /// than against the format's ceiling.
-pub const STATUS_READ_BUDGET_MILLIS: i64 = 5_000;
+///
+/// **#1721 stopgap (2026-10-19), measured:** the live `gh-team` run reached 54,830 events and a
+/// COLD status (one process, no cache) was refused at 5 s after ~20k events (~4k events/s under
+/// 58-62% CPU). With the budget lifted, the full cold fold of a copy of that store took 90.2 s
+/// (cold OS file cache, 325 MB peak) and 21.7-26 s warm-cache (~212 MB), at 77-100% CPU. The
+/// budget is 2x the worst measured cold read: 180 s. A cold status is therefore SLOW BUT
+/// ANSWERED up to roughly twice today's size; it does not scale to the 250k `MAX_READ_ALL`
+/// (~5-7 min by the same rate). The real fix is #1721's segment checkpoints, which fold from a
+/// sealed checkpoint plus the active tail; this number is time bought for that, not a target.
+pub const STATUS_READ_BUDGET_MILLIS: i64 = 180_000;
+
+/// #1721: the budget a `serve` REQUEST declares for the same read. Short, as before the stopgap:
+/// a long-lived Runtime warms its shared prefix across requests (a cut walk is kept and resumed,
+/// #363) and walks it in ONE place (the single-flight cold walk on `PrefixCache`), so a cold
+/// request after a restart is told "still warming" in seconds instead of each one folding the
+/// whole history in parallel (~225 MB and 66-90 s each, measured). The one-shot CLI keeps
+/// `STATUS_READ_BUDGET_MILLIS`, which it needs to answer at all.
+pub const SERVE_READ_BUDGET_MILLIS: i64 = 5_000;
 
 /// Wall-clock budget for the Runtime's task projection (`GET /v1/executions/{id}/tasks`, #1202).
 ///
@@ -99,4 +119,6 @@ pub const STATUS_READ_BUDGET_MILLIS: i64 = 5_000;
 /// first read after a start (or the envelopes recorded since the last read) costs; this budget
 /// bounds that cold read at 60 s, about ten times the largest run seen. `graphhelm execution
 /// status --tasks` (one process, no cache) keeps `STATUS_READ_BUDGET_MILLIS`.
-pub const TASKS_READ_BUDGET_MILLIS: i64 = 60_000;
+/// #1721 stopgap: raised with `STATUS_READ_BUDGET_MILLIS` to the same measured 180 s, since the
+/// cold fold of today's run (90 s worst) already outlasts the old 60 s.
+pub const TASKS_READ_BUDGET_MILLIS: i64 = 180_000;

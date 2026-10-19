@@ -104,7 +104,7 @@ pub(crate) fn budgeted(
     execute_within(
         events,
         execution,
-        crate::commands::status_read_budget(),
+        crate::commands::serve_read_budget(),
         graph,
     )
 }
@@ -324,6 +324,9 @@ struct FoldCacheInner {
     folds: std::sync::Mutex<std::collections::BTreeMap<FoldKey, Fold>>,
     /// Streams a background fold is already finishing, so a burst of refused reads starts one.
     warming: std::sync::Mutex<std::collections::BTreeSet<FoldKey>>,
+    /// #1721: single-flight claims taken, so a test counts the folds a burst of cold reads paid.
+    #[cfg(test)]
+    cold_folds: std::sync::atomic::AtomicU64,
 }
 
 /// #371: serve keeps one projection generation per stream, so a read folds only the events
@@ -408,6 +411,15 @@ impl FoldCache {
         }
     }
 
+    /// Whether a fold of any stream is running: a test waits it out, as a retry later would.
+    #[cfg(test)]
+    fn busy(&self) -> bool {
+        self.0
+            .warming
+            .lock()
+            .is_ok_and(|warming| !warming.is_empty())
+    }
+
     /// Marks `key` as warming, or `None` when a warmer already runs for it.
     fn claim_warming(&self, key: &FoldKey) -> Option<WarmingClaim> {
         let mut warming = self.0.warming.lock().ok()?;
@@ -417,16 +429,49 @@ impl FoldCache {
         })
     }
 
+    /// #1721: waits for the stream's one fold (a foreground read or a warmer) to end, then holds
+    /// the mark itself. A waiter is bounded by its own budget: past it, it refuses as the fold
+    /// would have, and the running fold keeps going.
+    fn claim_fold(
+        &self,
+        key: &FoldKey,
+        budget: &graphhelm_events::ReadBudget,
+    ) -> Result<WarmingClaim, graphhelm_events::ReplayError> {
+        loop {
+            if let Some(claim) = self.claim_warming(key) {
+                return Ok(claim);
+            }
+            if let Err(exceeded) = budget.check_now(0) {
+                return Err(graphhelm_events::ReplayError::BudgetExceeded {
+                    walked: exceeded.walked,
+                    limit_millis: exceeded.limit_millis,
+                });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+
     /// Finishes `generation` over `suffix` (only the events it has not folded) off the request.
     fn warm(
         &self,
         key: FoldKey,
-        mut generation: graphhelm_events::ProjectionGeneration,
+        generation: graphhelm_events::ProjectionGeneration,
         suffix: Vec<graphhelm_protocols::EventEnvelope>,
     ) {
         let Some(claim) = self.claim_warming(&key) else {
             return;
         };
+        self.warm_claimed(claim, key, generation, suffix);
+    }
+
+    /// [`Self::warm`] with the mark already held, handed over from a foreground fold.
+    fn warm_claimed(
+        &self,
+        claim: WarmingClaim,
+        key: FoldKey,
+        mut generation: graphhelm_events::ProjectionGeneration,
+        suffix: Vec<graphhelm_protocols::EventEnvelope>,
+    ) {
         let cache = self.clone();
         std::thread::spawn(move || {
             let _claim = claim;
@@ -498,21 +543,41 @@ fn fold_cached(
         return Err(graphhelm_events::ReplayError::LimitExceeded);
     }
     let key = fold_key(events, scope, stream)?;
-    let mut generation = match cache
-        .get(&key)
-        .filter(|generation| resumable(generation, history))
-    {
-        Some(generation) => generation,
-        None => graphhelm_events::ProjectionGeneration::new(
-            scope.clone(),
-            stream.to_owned(),
-            "serve-status".to_owned(),
-            1,
-            1,
-        )?,
+    let cached = |cache: &FoldCache| -> Result<_, graphhelm_events::ReplayError> {
+        let generation = match cache
+            .get(&key)
+            .filter(|generation| resumable(generation, history))
+        {
+            Some(generation) => generation,
+            None => graphhelm_events::ProjectionGeneration::new(
+                scope.clone(),
+                stream.to_owned(),
+                "serve-status".to_owned(),
+                1,
+                1,
+            )?,
+        };
+        let start = usize::try_from(generation.watermark().last_sequence())
+            .map_err(|_| graphhelm_events::ReplayError::Corrupt)?;
+        Ok((generation, start))
     };
-    let start = usize::try_from(generation.watermark().last_sequence())
-        .map_err(|_| graphhelm_events::ReplayError::Corrupt)?;
+    let (mut generation, mut start) = cached(cache)?;
+    // #1721: a fold longer than one page is single-flight per stream. Concurrent cold reads
+    // used to each fold from sequence 1 (about 90 s apiece on the live 55k-event store); now one
+    // folds while the rest wait inside their own budget and resume what it stored.
+    let mut claim = None;
+    if history.len().saturating_sub(start) > graphhelm_events::MAX_READ_PAGE {
+        claim = Some(cache.claim_fold(&key, budget)?);
+        (generation, start) = cached(cache)?;
+    }
+    // Counted outside the claim, so a fold that skipped it is counted too.
+    #[cfg(test)]
+    if history.len().saturating_sub(start) > graphhelm_events::MAX_READ_PAGE {
+        cache
+            .0
+            .cold_folds
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
     let mut walked = 0_usize;
     let remaining = history.get(start..).unwrap_or_default();
     for page in remaining.chunks(graphhelm_events::MAX_READ_PAGE) {
@@ -526,7 +591,12 @@ fn fold_cached(
         }
         if let Err(exceeded) = budget.check_progress(before as u64, walked as u64) {
             cache.store(&key, generation.clone());
-            cache.warm(key, generation, remaining[walked..].to_vec());
+            match claim {
+                Some(claim) => {
+                    cache.warm_claimed(claim, key, generation, remaining[walked..].to_vec());
+                }
+                None => cache.warm(key, generation, remaining[walked..].to_vec()),
+            }
             return Err(graphhelm_events::ReplayError::BudgetExceeded {
                 walked: exceeded.walked,
                 limit_millis: exceeded.limit_millis,
@@ -997,7 +1067,14 @@ mod tests {
                     answered = Some(projection);
                     break;
                 }
-                Err(graphhelm_events::ReplayError::BudgetExceeded { .. }) => {}
+                Err(graphhelm_events::ReplayError::BudgetExceeded { .. }) => {
+                    // #1721: the refused read handed its pages to the stream's one warmer; the
+                    // next read is the retry a caller makes after it, not one racing it.
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                    while cache.busy() && std::time::Instant::now() < deadline {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                }
                 Err(other) => panic!("only the budget may refuse: {other}"),
             }
         }
@@ -1139,6 +1216,51 @@ mod tests {
                 "the incremental read equals a full rebuild from the events"
             );
         }
+    }
+
+    /// #1721: a burst of concurrent cold reads on one stream pays ONE fold; the others wait and
+    /// resume the generation it stored, and every reader answers what a full replay answers.
+    /// Credible regression: each serve request folding from sequence 1 in parallel (about 90 s
+    /// apiece on the live 55k-event store), which this cell counts as four folds.
+    #[test]
+    fn concurrent_cold_reads_of_one_stream_fold_once() {
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 3 * graphhelm_events::MAX_READ_PAGE as u64);
+        let folds = super::FoldCache::default();
+        let (scope, stream, history) = read_seeded(directory.path());
+        let rebuilt =
+            serde_json::to_value(graphhelm_events::replay(&scope, &stream, &history).unwrap())
+                .unwrap();
+        let barrier = std::sync::Barrier::new(4);
+        let answers: Vec<serde_json::Value> = std::thread::scope(|threads| {
+            let readers: Vec<_> = (0..4)
+                .map(|_| {
+                    threads.spawn(|| {
+                        barrier.wait();
+                        let projection = super::fold_cached(
+                            &folds,
+                            directory.path(),
+                            &scope,
+                            &stream,
+                            &history,
+                            &ReadBudget::unbounded(),
+                        )
+                        .unwrap();
+                        serde_json::to_value(projection).unwrap()
+                    })
+                })
+                .collect();
+            readers
+                .into_iter()
+                .map(|reader| reader.join().unwrap())
+                .collect()
+        });
+        assert_eq!(
+            folds.0.cold_folds.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "four concurrent cold reads paid one fold"
+        );
+        assert!(answers.iter().all(|answer| *answer == rebuilt));
     }
 
     /// #1560 (#1598 review, argued there and pinned here): a writer can append and fold the

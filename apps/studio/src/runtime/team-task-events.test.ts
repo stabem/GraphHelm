@@ -19,6 +19,18 @@ function record(sequence: number, kind: string, actorId: string, document: Recor
   return { ...parsed, sequence };
 }
 
+describe("#1556 heartbeat reason", () => {
+  const heartbeat = (fields: Record<string, unknown>) => parseTaskEvent("task.heartbeat", "codex-1",
+    JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-1556", revision: 1, at: "2026-10-19T12:00:00Z", lane: "codex-1", ...fields }));
+  it("keeps a bounded reason and refuses an empty or control-character one", () => {
+    expect(heartbeat({ reason: "waiting on #1670 to land" })).toMatchObject({ kind: "task.heartbeat", lane: "codex-1", reason: "waiting on #1670 to land" });
+    expect(heartbeat({})).not.toHaveProperty("reason");
+    expect(heartbeat({ reason: "" })).toBeNull();
+    expect(heartbeat({ reason: "bell" })).toBeNull();
+    expect(heartbeat({ reason: "x".repeat(501) })).toBeNull();
+  });
+});
+
 describe("foldTaskEvents", () => {
   it("uses claim heartbeats for activity without changing the step or starting a blocked fix", () => {
     const taskId = "issue-1024";

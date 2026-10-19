@@ -21,6 +21,8 @@ export interface AgentRow {
   forMs: number | null;
   /** #591: that record and its age, e.g. "pr_opened #613 · 12m ago"; null when none. */
   latest?: string | null;
+  /** #1556: the lane has given the same wait reason for more than WAIT_AMBER_MS. */
+  waitStale?: boolean;
   /** ms in the open stage (sorts Working longest first); absent when no bar is open. */
   stageMs?: number;
   lastDelivered: string | null;
@@ -47,11 +49,21 @@ export function stepOf(r: Pick<AgentRow, "status" | "stage" | "pr">): NonNullabl
 
 const ORDER: Record<AgentStatus, number> = { silent: 0, stale: 1, building: 2, build_wait: 3, working: 4, waiting: 5, free: 7, offline: 8 };
 
-function latestOf(lane: Lane | undefined, now: number): { latest: string | null; forMs: number | null } {
+/** #1556: past this, the same stated wait reason is marked "waiting 6h+" (amber on the card). */
+export const WAIT_AMBER_MS = 6 * 3_600_000;
+
+function latestOf(lane: Lane | undefined, now: number): { latest: string | null; forMs: number | null; waitStale?: boolean } {
   const rec = lane?.lastRecord;
   if (!rec) return { latest: null, forMs: null };
   const ms = Math.max(0, now - rec.at);
   const n = rec.pr ?? rec.issue;
+  // #1556: a stated wait reads as a wait, with how long this same reason has been given; past
+  // WAIT_AMBER_MS it is marked so a forgotten wait loop cannot look healthy forever.
+  if (rec.reason !== undefined) {
+    const since = Math.max(0, now - (rec.reasonSince ?? rec.at));
+    const head = since > WAIT_AMBER_MS ? "waiting 6h+" : "waiting";
+    return { latest: `${head} · ${rec.reason} · since ${span(since)} ago`, forMs: ms, waitStale: since > WAIT_AMBER_MS };
+  }
   return { latest: `${rec.kind}${n !== undefined ? ` #${n}` : ""} · ${span(ms)} ago`, forMs: ms };
 }
 

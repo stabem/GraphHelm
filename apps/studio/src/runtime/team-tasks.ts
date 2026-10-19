@@ -333,10 +333,14 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       return document.lane === actorId && claimSequence !== null && reason !== null
         ? { ...base, kind, lane: actorId, claimSequence, reason } : null;
     }
-    case "task.heartbeat":
+    case "task.heartbeat": {
+      // #1556: an optional reason says what the waiting lane is waiting on (1..500, no control).
+      const reason = document.reason === undefined ? undefined : text(document.reason, 500);
+      if (reason === null) return null;
       return document.lane === actorId && Object.keys(document).every((key) =>
-        ["schema", "taskId", "revision", "at", "lane"].includes(key))
-        ? { ...base, kind, lane: actorId } : null;
+        ["schema", "taskId", "revision", "at", "lane", "reason"].includes(key))
+        ? { ...base, kind, lane: actorId, ...(reason === undefined ? {} : { reason }) } : null;
+    }
     case "task.pr_opened": {
       const repo = repository(document.repo);
       if (repo === false) return null;

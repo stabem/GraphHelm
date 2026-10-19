@@ -79,7 +79,7 @@
     },
     {
       "title": "task.heartbeat",
-      "description": "Activity from a claiming lane with an open pre-PR claim; admission enforces the 300-second cooldown using trusted event time.",
+      "description": "Activity from a claiming lane with an open pre-PR claim; admission enforces the 300-second cooldown using trusted event time. #1556: an optional reason says what the lane is waiting on, shown on its card.",
       "type": "object",
       "required": ["schema", "taskId", "revision", "at", "lane"],
       "additionalProperties": false,
@@ -88,7 +88,8 @@
         "taskId": {"$ref": "#/$defs/taskId"},
         "revision": {"$ref": "#/$defs/positive"},
         "at": {"$ref": "#/$defs/at"},
-        "lane": {"$ref": "#/$defs/actor"}
+        "lane": {"$ref": "#/$defs/actor"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"}
       }
     },
     {

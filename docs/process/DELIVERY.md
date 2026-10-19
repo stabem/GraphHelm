@@ -268,7 +268,7 @@ pass alone can break together (`mcp_discovery` × #1412), which is why main gets
    keyword rule is `keel/KEEL_MERGE.md`).
 2. Read what landed: `git log -1 --format=%B origin/main` and `gh issue view` for every closed
    issue. Corrections go in a follow-up comment on the same PR.
-5. Clean up the PR: run `graphhelm workspace sweep --apply --merged-branch <branch> --repo <repo> --pr <N> --head <sha> [--target <dir>]... [--keep-worktree <dir>]`; it stops the processes inside the PR's worktrees, unlinks links without following them, saves uncommitted work to `D:/_merge-leftovers/<N>/`, and removes every worktree and review checkout of the PR (any lane's), the named per-PR targets and the local branch. The `--keep-worktree` exception is in [KEEL_MERGE.md](../../keel/KEEL_MERGE.md) step 5.
+5. Clean up the PR: run `graphhelm workspace sweep --apply --merged-branch <branch> --repo <repo> --pr <N> --head <sha> [--target <dir>]... [--keep-worktree <dir>]`; it stops the processes inside the PR's worktrees, unlinks links without following them, saves uncommitted work to `D:/_merge-leftovers/<N>/`, and removes every worktree and review checkout of the PR (any lane's), the named per-PR targets and the local branch. The `--keep-worktree` exception is in [KEEL_MERGE.md](../../keel/KEEL_MERGE.md) step 5. Any other single worktree or directory, a reviewer's own checkout included, is deleted with `graphhelm workspace remove <dir>` (#1663), never with `rm -rf`, `Remove-Item -Recurse` or `git worktree remove --force`, which follow junctions.
 
 Delivered is defined once, in [`keel/KEEL_MERGE.md`](../../keel/KEEL_MERGE.md).
 
@@ -394,7 +394,8 @@ Lanes sharing one machine follow [LANES.md](LANES.md) on top of this section: wh
 how it removes a worktree, the single build slot and the per-worktree cargo target.
 
 - A session removes only what it created, by name: its worktree, its branch, its scratch
-  directory. Never sweep other sessions' worktrees or branches, and never run `git worktree prune`
+  directory. A worktree or directory is removed with `graphhelm workspace remove <dir>`, which
+  never follows a junction (#1663). Never sweep other sessions' worktrees or branches, and never run `git worktree prune`
   by hand. The one exception is `graphhelm workspace sweep --all`, which the merger and the hourly
   scheduled task run by rule ([LANES.md](LANES.md) §2, #1578).
 - Worktrees live under `<repo>/.worktrees/<branch>` (or the tool's own root, such as

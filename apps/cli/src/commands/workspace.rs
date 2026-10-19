@@ -41,6 +41,7 @@ pub fn run(args: &WorkspaceArgs) -> Outcome {
             // clap requires --root without --merged-branch; this arm is unreachable.
             (None, None) => input("workspace.sweep", "--root is required", "/root"),
         },
+        WorkspaceCommand::Remove(remove) => super::workspace_remove::run(remove),
         WorkspaceCommand::Slot(slot) => match (&slot.action, &slot.root, &slot.lane) {
             (Some(crate::args::WorkspaceSlotAction::Status(status)), _, _) => {
                 super::workspace_slot::run_status(&status.root)

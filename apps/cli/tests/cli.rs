@@ -223,3 +223,5 @@ mod workspace_all_cli;
 mod workspace_cli;
 #[path = "workspace_merged_cli.rs"]
 mod workspace_merged_cli;
+#[path = "workspace_remove_cli.rs"]
+mod workspace_remove_cli;

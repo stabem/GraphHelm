@@ -108,7 +108,7 @@ fn stop_processes(dir: &Path) -> (Vec<u32>, Vec<u32>) {
 }
 
 /// Removes every link (symlink or junction) under `dir` as a link; what it points at survives.
-fn unlink_links(dir: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn unlink_links(dir: &Path) -> Result<Vec<String>, String> {
     let mut unlinked = Vec::new();
     for _ in 0..MAX_LINKS {
         match first_link(dir, dir) {

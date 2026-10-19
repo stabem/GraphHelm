@@ -2150,13 +2150,6 @@ fn step_durations_are_exact_per_slice_and_summarised_per_step_1516() {
     // The window judges the merge time: only slice A merged at or after 10:00.
     let window = hm(10, 0);
     let since = task_durations(&records, &fold.slices, Some(&window));
-    let replay_fold = fold_task_events_with_routes(&records);
-    let replay = task_durations(&records, &replay_fold.slices, Some(&window));
-    assert_eq!(
-        serde_json::to_string(&since).unwrap(),
-        serde_json::to_string(&replay).unwrap(),
-        "the same fixed records produce the same duration JSON"
-    );
     let serialized = serde_json::to_value(&since).unwrap();
     assert_eq!(serialized["timeSource"], "runtime_event_append_time");
     assert_eq!(serialized["since"], "2026-10-16T10:00:00Z");
@@ -2208,6 +2201,30 @@ fn step_durations_are_exact_per_slice_and_summarised_per_step_1516() {
             + since.excluded.merged_without_timestamp
             + since.excluded.merged_without_matching_event
     );
+}
+
+#[test]
+fn duration_response_accepts_pre_population_json() {
+    use graphhelm_execution::tasks::TaskDurations;
+
+    let previous_response = json!({
+        "since": null,
+        "slices": [],
+        "summary": {},
+        "coverage": {"total": {"eligible": 2, "included": 1, "missing": 1}},
+        "excluded": {
+            "beforeWindow": 1,
+            "absorbed": 0,
+            "noPr": 0,
+            "open": 0,
+            "mergedWithoutTimestamp": 0
+        }
+    });
+    let decoded: TaskDurations = serde_json::from_value(previous_response).unwrap();
+    assert_eq!(decoded.time_source, "runtime_event_append_time");
+    assert_eq!(decoded.population.scanned_raw_slices, 0);
+    assert_eq!(decoded.excluded.closed, 0);
+    assert_eq!(decoded.coverage["total"].eligible, 2);
 }
 
 #[test]

@@ -2070,6 +2070,44 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
 
 #[cfg(test)]
 mod tests {
+
+    /// #1722: the binary ships its observer files byte for byte, so it must ship the same bytes
+    /// whatever the build checkout's line endings: on 2026-10-19 a binary built from an autocrlf
+    /// checkout embedded CRLF, and every LF project copy then failed the byte check. Cost: none.
+    #[test]
+    fn the_shipped_observer_files_are_lf_whatever_the_checkout() {
+        for (path, bytes) in OBSERVER_FILES {
+            assert!(!bytes.contains(&b'\r'), "{path} is embedded with CR");
+        }
+    }
+
+    /// #1722: an observer copy that exists but differs from the one this binary ships is stale,
+    /// not missing; the reason names the file, so the owner refreshes it instead of hunting for
+    /// an absent install. Absent still reads missing. Cost: one temp directory.
+    #[test]
+    fn a_differing_observer_copy_is_stale_and_an_absent_one_is_missing() {
+        let project = tempfile::tempdir().unwrap();
+        let observers = project.path().join(".graphhelm/observers");
+        assert_eq!(
+            observer_ready(project.path()).unwrap_err().0,
+            "replay.observer_missing"
+        );
+        std::fs::create_dir_all(&observers).unwrap();
+        for (path, bytes) in OBSERVER_FILES {
+            std::fs::write(project.path().join(path), bytes).unwrap();
+        }
+        assert!(observer_ready(project.path()).is_ok());
+        std::fs::write(observers.join("judge.mjs"), b"// an older judge\n").unwrap();
+        let stale = observer_ready(project.path()).unwrap_err();
+        assert_eq!(stale.0, "replay.observer_stale");
+        assert_eq!(stale.1, "/observer/judge.mjs");
+        std::fs::remove_file(observers.join("judge.mjs")).unwrap();
+        assert_eq!(
+            observer_ready(project.path()).unwrap_err().0,
+            "replay.observer_missing"
+        );
+    }
+
     use super::*;
 
     /// #1286: the real `call` path keeps a failed snapshot's per-assertion judgement for the

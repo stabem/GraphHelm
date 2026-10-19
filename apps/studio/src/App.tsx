@@ -1787,6 +1787,28 @@ export default function App({
     if (!selected || !runTasks || runTasks.length === 0) return;
     setTeamRuns((seen) => (seen.has(selected) ? seen : new Set(seen).add(selected)));
   }, [selected, runTasks]);
+  // #1696: the project card opens the team work, so the run carrying task records must be known
+  // BEFORE anything is selected: ask the public tasks route once for each of the newest runs.
+  const probedForTeam = useRef(new Set<string>());
+  const probedClient = useRef<RuntimeClient | null>(null);
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!connected || !client) return;
+    if (probedClient.current !== client) {
+      probedClient.current = client;
+      probedForTeam.current.clear();
+      setTeamRuns(new Set());
+    }
+    const newest = [...executions].sort((x, y) => (Date.parse(y.lastEventAt ?? "") || 0) - (Date.parse(x.lastEventAt ?? "") || 0)).slice(0, 12);
+    for (const run of newest) {
+      if (probedForTeam.current.has(run.executionId)) continue;
+      probedForTeam.current.add(run.executionId);
+      void client.getTasks(run.executionId).then((reply) => {
+        if (clientRef.current !== client || !reply || reply.tasks.length === 0) return;
+        setTeamRuns((seen) => (seen.has(run.executionId) ? seen : new Set(seen).add(run.executionId)));
+      }).catch(() => { probedForTeam.current.delete(run.executionId); });
+    }
+  }, [connected, executions, clientRef]);
   const teamRun = !!selected && teamRuns.has(selected);
   // #479: a message's issue/PR numbers link to the run's GitHub repository (read off its task
   // records) and a journey id it names opens the Journey tab on that journey.

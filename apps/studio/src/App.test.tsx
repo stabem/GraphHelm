@@ -4210,7 +4210,7 @@ describe("the exchange", () => {
       render(<App createClient={() => client as unknown as RuntimeClient}
         session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
       await screen.findByLabelText("Projects");
-      await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+      await userEvent.click(await screen.findByRole("button", { name: /^demo-deploy/ }));
       await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
       const mission = await screen.findByRole("region", { name: "Canvas" });
       await userEvent.click(within(mission).getByRole("tab", { name: "Lanes" }));
@@ -4867,6 +4867,23 @@ describe("a selection that lands while the rail is prefetching", () => {
     expect(await within(strip).findByRole("button", { name: "Investigate slow login on mobile" })).toHaveAttribute("title", GENERATED);
     // One read for that run, not one per caller.
     expect(client.getBriefing.mock.calls.filter((call) => (call as unknown[])[0] === GENERATED)).toHaveLength(1);
+  });
+});
+
+describe("the project card opens the team work (#1696)", () => {
+  it("opens gh-team even when another ongoing run is newer", async () => {
+    const run = (executionId: string, lastEventAt: string, attention: string) => ({ executionId, mode: "supervised", status: "running", attention, startedAt: null, lastEventAt, headSequence: 5 });
+    const client = stubClient({
+      listExecutions: vi.fn(async () => ({ executions: [
+        run("other-live", "2026-10-19T12:00:00Z", "needs_you"),
+        run("gh-team", "2026-10-10T12:00:00Z", "can_sleep"),
+      ], hasMore: false, nextCursor: null })),
+      getTasks: vi.fn(async (id: string) => tasksReply(id, id === "gh-team" ? [taskState({ taskId: "issue-1", issue: 1, lane: "l", claimSequence: 1 })] : [])),
+    });
+    await open(client);
+    await waitFor(() => expect(client.getTasks).toHaveBeenCalledWith("gh-team"));
+    await userEvent.click(await screen.findByRole("button", { name: /^Open project / }));
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("gh-team", true));
   });
 });
 

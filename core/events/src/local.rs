@@ -1,3 +1,12 @@
+//! Crash-consistent local event storage, immutable history and locked journal recovery.
+
+#[path = "sealed.rs"]
+mod sealed;
+use sealed::{
+    read_segment_chain, recover_rotation, rename_rotation_file, segment_keys, segmented_format,
+    stage_rotation_metadata, validate_segment_seal,
+};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -37,6 +46,7 @@ const MAX_REPOSITORY_ENTRIES: usize = 100_000;
 const MAX_REPOSITORY_NAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_REPOSITORY_METADATA_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_ROOT_ENTRIES: usize = 6;
+const MAX_SEGMENTED_ROOT_ENTRIES: usize = 7;
 /// Scaled with `MAX_READ_ALL` (#1721 stopgap: 100k → 250k events, 800k → 2M units), so the work
 /// budget never binds before the event count it was sized for.
 const MAX_LOAD_WORK_UNITS: usize = 2_000_000;
@@ -328,6 +338,11 @@ pub struct LocalEventRepository {
     active_identity: FileIdentity,
     journal: Arc<Mutex<File>>,
     journal_identity: FileIdentity,
+    segmented: bool,
+    #[cfg(test)]
+    rotation_failpoint: Option<u8>,
+    #[cfg(test)]
+    rotation_exit: bool,
     lock: Arc<Mutex<File>>,
     lock_identity: FileIdentity,
     operation_gate: Arc<Mutex<()>>,
@@ -545,7 +560,8 @@ impl LocalEventRepository {
         let root_handle = open_directory(root)?;
         let mut format = open_child_file(&root_handle, root, "format.json", false, false)
             .map_err(|_| EventRepositoryError::UnsupportedFormat)?;
-        if read_bounded_file(&mut format, 1024)? != FORMAT_BYTES {
+        let bytes = read_bounded_file(&mut format, 1024)?;
+        if bytes != FORMAT_BYTES && bytes != sealed::LAYOUT_FORMAT_BYTES {
             return Err(EventRepositoryError::UnsupportedFormat);
         }
         Ok(())
@@ -565,6 +581,96 @@ impl LocalEventRepository {
             None,
             false,
         )
+    }
+
+    /// Creates a segmented repository, or opens an existing segmented repository. A legacy
+    /// repository is refused without migration. Ordinary `open` retains legacy creation.
+    pub fn open_segmented(
+        root: impl Into<PathBuf>,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
+    ) -> Result<Self, EventRepositoryError> {
+        sealed::require_rotation_platform()?;
+        let root = root.into();
+        let directory = ensure_root_path(&root)?;
+        let turnstile = Turnstile::enter(&directory, &root)?;
+        lock_root_exclusive(&directory)?;
+        let result = (|| {
+            let initial =
+                collect_child_names_bounded(&directory, &root, MAX_SEGMENTED_ROOT_ENTRIES + 1)?;
+            if initial.contains("format.json") {
+                if !segmented_format(&directory, &root)? {
+                    return Err(EventRepositoryError::UnsupportedFormat);
+                }
+                if !initial.contains("repository.lock") {
+                    return Err(EventRepositoryError::Integrity);
+                }
+            } else if initial.iter().any(|name| {
+                !matches!(
+                    name.as_str(),
+                    "blobs" | ".tmp" | "active" | "segments" | "journal.jsonl" | "repository.lock"
+                )
+            }) {
+                return Err(EventRepositoryError::UnsupportedFormat);
+            }
+            let lock = open_or_create_repository_lock(&directory, &root)?;
+            lock.lock_exclusive()?;
+            drop(turnstile);
+            let names =
+                collect_child_names_bounded(&directory, &root, MAX_SEGMENTED_ROOT_ENTRIES + 1)?;
+            if names.contains("format.json") {
+                if !segmented_format(&directory, &root)? {
+                    return Err(EventRepositoryError::UnsupportedFormat);
+                }
+                return Ok(());
+            }
+            // Initialization can only resume an empty, recognized legacy partial layout,
+            // plus an empty segments directory created by a previous interrupted initializer.
+            for name in &names {
+                match name.as_str() {
+                    "blobs" | ".tmp" | "active" | "segments" => {
+                        let child = open_child_directory(&directory, &root, name)?;
+                        if !collect_child_names_bounded(&child, &root.join(name), 1)?.is_empty() {
+                            return Err(EventRepositoryError::UnsupportedFormat);
+                        }
+                    }
+                    "journal.jsonl" | "repository.lock" => {
+                        if open_child_file(&directory, &root, name, false, false)?
+                            .metadata()?
+                            .len()
+                            != 0
+                        {
+                            return Err(EventRepositoryError::UnsupportedFormat);
+                        }
+                    }
+                    _ => return Err(EventRepositoryError::UnsupportedFormat),
+                }
+            }
+            for name in ["blobs", ".tmp", "active", "segments"] {
+                ensure_child_directory(&directory, &root, name)?;
+            }
+            if !names.contains("journal.jsonl") {
+                open_child_file(&directory, &root, "journal.jsonl", true, true)?.sync_all()?;
+            }
+            sync_directory_handle(&directory)?;
+            let mut marker = open_child_file(&directory, &root, "format.json", true, true)?;
+            marker.write_all(sealed::LAYOUT_FORMAT_BYTES)?;
+            marker.sync_all()?;
+            sync_directory_handle(&directory)
+        })();
+        let unlocked = unlock_root(&directory);
+        result?;
+        unlocked?;
+        Self::open(root, clock, ids)
+    }
+
+    /// Backup remains legacy-only until segmented archives can include every immutable file.
+    pub fn inspect_backup_format(root: &Path) -> Result<(), EventRepositoryError> {
+        Self::inspect_format(root)?;
+        if root.exists() && segmented_format(&open_directory(root)?, root)? {
+            return Err(EventRepositoryError::SegmentedBackupUnsupported);
+        }
+        Ok(())
     }
 
     /// [`Self::open`], reusing the journal verification an earlier handle on the same
@@ -722,23 +828,34 @@ impl LocalEventRepository {
         // clean opens must not wait on each other (the readers-wait-for-readers guard).
         // Anything less than provably-clean falls back to the exclusive path below,
         // byte-for-byte today's recovery.
-        let (lock, shared_open) = match initialize_root_shared_fast(&root, &root_handle, failpoint)
-        {
-            Ok(Some(lock)) => (lock, true),
-            Ok(None) => match relock_root_exclusive(&root_handle)
-                .and_then(|()| initialize_root_locked(&root, &root_handle, failpoint))
-            {
-                Ok(lock) => (lock, false),
+        let (lock, shared_open) =
+            match initialize_root_shared_fast(&root, &root_handle, failpoint, &read_budget) {
+                Ok(Some(lock)) => (lock, true),
+                Ok(None) => match relock_root_exclusive(&root_handle).and_then(|()| {
+                    initialize_root_locked(&root, &root_handle, failpoint, &read_budget)
+                }) {
+                    Ok(lock) => (lock, false),
+                    Err(error) => {
+                        let _ = unlock_root(&root_handle);
+                        return Err(error);
+                    }
+                },
+                Err(EventRepositoryError::RecoveryRequired) if recover_torn_tail => {
+                    match relock_root_exclusive(&root_handle).and_then(|()| {
+                        initialize_root_locked(&root, &root_handle, failpoint, &read_budget)
+                    }) {
+                        Ok(lock) => (lock, false),
+                        Err(error) => {
+                            let _ = unlock_root(&root_handle);
+                            return Err(error);
+                        }
+                    }
+                }
                 Err(error) => {
                     let _ = unlock_root(&root_handle);
                     return Err(error);
                 }
-            },
-            Err(error) => {
-                let _ = unlock_root(&root_handle);
-                return Err(error);
-            }
-        };
+            };
         // Both levels are held in their final mode for this phase; later arrivals may queue.
         drop(turnstile);
         if file_identity(&open_directory(&root)?)? != root_identity {
@@ -760,6 +877,7 @@ impl LocalEventRepository {
         }
         let lock_identity = file_identity(&lock)?;
         let journal_identity = file_identity(&journal)?;
+        let segmented = segmented_format(&root_handle, &root)?;
         let verified = prefix_cache.map_or_else(
             || Arc::new(Mutex::new(None)),
             |cache| Arc::clone(&cache.slot),
@@ -786,6 +904,11 @@ impl LocalEventRepository {
             active_identity,
             journal: Arc::new(Mutex::new(journal)),
             journal_identity,
+            segmented,
+            #[cfg(test)]
+            rotation_failpoint: None,
+            #[cfg(test)]
+            rotation_exit: false,
             lock: Arc::new(Mutex::new(lock)),
             lock_identity,
             operation_gate: Arc::new(Mutex::new(())),
@@ -919,7 +1042,11 @@ impl LocalEventRepository {
                 }
                 // D's finding (a): the Complete verdict predates this lock — re-run
                 // the same post-lock repair a fresh exclusive open would.
-                repair_layout_locked(&repository.root, &repository.root_handle)?;
+                repair_layout_locked(
+                    &repository.root,
+                    &repository.root_handle,
+                    &repository.read_budget,
+                )?;
                 *repository
                     .verified
                     .lock()
@@ -1318,6 +1445,18 @@ impl LocalEventRepository {
     }
 
     fn validate_anchors(&self) -> Result<(), EventRepositoryError> {
+        if self.segmented {
+            read_segment_chain(&self.root_handle, &self.root, &self.read_budget)?;
+            if !collect_child_names_bounded(
+                &self.root_handle,
+                &self.root,
+                MAX_SEGMENTED_ROOT_ENTRIES + 1,
+            )?
+            .contains("journal.jsonl")
+            {
+                return Err(EventRepositoryError::RecoveryRequired);
+            }
+        }
         reject_link_or_non_directory(&self.root)?;
         let root_path = open_directory(&self.root)?;
         let lock_path = open_child_file(
@@ -1334,25 +1473,44 @@ impl LocalEventRepository {
             open_child_file(&self.root_handle, &self.root, "journal.jsonl", true, false)?;
         let root_path_identity = file_identity(&root_path)?;
         let lock_path_identity = file_identity(&lock_path)?;
-        let journal_guard = self
-            .journal
-            .lock()
-            .map_err(|_| EventRepositoryError::StorageAt {
-                site: "validate-anchors:journal-mutex-poisoned",
-                os: None,
-            })?;
+        let mut journal_guard =
+            self.journal
+                .lock()
+                .map_err(|_| EventRepositoryError::StorageAt {
+                    site: "validate-anchors:journal-mutex-poisoned",
+                    os: None,
+                })?;
         if root_path_identity != self.root_identity
             || file_identity(&self.root_handle)? != self.root_identity
             || lock_path_identity != self.lock_identity
             || file_identity(&blobs_path)? != self.blobs_identity
             || file_identity(&temp_path)? != self.temp_identity
             || file_identity(&active_path)? != self.active_identity
-            || file_identity(&journal_path)? != self.journal_identity
             || file_identity(&self.blobs_handle)? != self.blobs_identity
             || file_identity(&self.temp_handle)? != self.temp_identity
             || file_identity(&self.active_handle)? != self.active_identity
-            || file_identity(&journal_guard)? != self.journal_identity
         {
+            return Err(EventRepositoryError::Integrity);
+        }
+        let retained = file_identity(&journal_guard)?;
+        let named = file_identity(&journal_path)?;
+        if self.segmented {
+            let chain = read_segment_chain(&self.root_handle, &self.root, &self.read_budget)?;
+            if retained != named {
+                // Only a sealed generation that this handle actually retained authorizes
+                // following the new name. Arbitrary replacement remains an integrity failure.
+                if !chain.iter().any(|segment| segment.identity == retained) {
+                    return Err(EventRepositoryError::IntegrityAt(
+                        "journal:generation-unsealed",
+                    ));
+                }
+                *journal_guard = journal_path;
+                *self
+                    .verified
+                    .lock()
+                    .map_err(|_| EventRepositoryError::Storage)? = None;
+            }
+        } else if retained != self.journal_identity || named != self.journal_identity {
             return Err(EventRepositoryError::Integrity);
         }
         Ok(())
@@ -1424,6 +1582,7 @@ impl LocalEventRepository {
             request.events().len(),
             &DEFAULT_LOAD_LIMITS,
         )?;
+        let projected_budget = append_load_budget(&self.root, &state, request)?;
 
         let actual = state
             .next_sequence
@@ -1517,6 +1676,10 @@ impl LocalEventRepository {
             });
         }
 
+        if self.segmented {
+            self.rotate_if_needed(&state.load_budget, &projected_budget, line.len())?;
+        }
+
         let mut staged = self.stage_evidence(request.evidence())?;
         if self.failpoint == Some(LocalFailpoint::EvidenceStaging) {
             return Err(EventRepositoryError::StorageAt {
@@ -1546,7 +1709,15 @@ impl LocalEventRepository {
                 site: "append-locked:journal-mutex-poisoned",
                 os: None,
             })?;
-        ensure_journal_room(journal.metadata()?.len(), line.len())?;
+        let sealed_bytes = if self.segmented {
+            read_segment_chain(&self.root_handle, &self.root, &self.read_budget)?
+                .iter()
+                .map(|segment| segment.seal.bytes)
+                .sum()
+        } else {
+            0
+        };
+        ensure_journal_room(sealed_bytes + journal.metadata()?.len(), line.len())?;
         journal.seek(SeekFrom::End(0))?;
         if self.failpoint == Some(LocalFailpoint::PhysicalBatchAppend) {
             journal.write_all(&line[..line.len() / 2])?;
@@ -2092,7 +2263,11 @@ impl LocalEventRepository {
                 "load_state:journal-tail-oversized",
             ));
         }
-        let mut ctx = VerifyCtx::fresh();
+        let mut ctx = if self.segmented {
+            self.load_sealed_state()?.0
+        } else {
+            VerifyCtx::fresh()
+        };
         let mut consumed = 0_u64;
         self.verify_lines(&bytes[..cut], &mut ctx, &mut consumed)?;
 
@@ -2168,7 +2343,176 @@ impl LocalEventRepository {
         }
     }
 
+    fn load_sealed_state(&self) -> Result<(VerifyCtx, u64), EventRepositoryError> {
+        let segments = read_segment_chain(&self.root_handle, &self.root, &self.read_budget)?;
+        let mut ctx = VerifyCtx::fresh();
+        let mut total = 0_u64;
+        for segment in segments {
+            total += segment.seal.bytes;
+            self.verify_lines(&segment.bytes, &mut ctx, &mut 0)?;
+            if segment.seal.end_state != segment_end_state(&ctx) {
+                return Err(EventRepositoryError::IntegrityAt("segments:end-state"));
+            }
+            self.read_budget
+                .check_now(ctx.budget.events as u64)
+                .map_err(|exceeded| EventRepositoryError::ReadBudgetExceeded {
+                    walked: exceeded.walked,
+                    limit_millis: exceeded.limit_millis,
+                })?;
+        }
+        Ok((ctx, total))
+    }
+
+    fn load_segmented_state(&self) -> Result<VerifyCtx, EventRepositoryError> {
+        let (mut ctx, total) = self.load_sealed_state()?;
+        let mut journal = self
+            .journal
+            .lock()
+            .map_err(|_| EventRepositoryError::Storage)?;
+        let length = journal.metadata()?.len();
+        ensure_journal_room(
+            total,
+            usize::try_from(length).map_err(|_| EventRepositoryError::LimitExceeded)?,
+        )?;
+        let bytes = read_bounded_range(&mut journal, 0, length)?;
+        if !bytes.is_empty() && bytes.last() != Some(&b'\n') {
+            return Err(EventRepositoryError::IntegrityAt(TORN_TAIL_SITE));
+        }
+        self.verify_lines(&bytes, &mut ctx, &mut 0)?;
+        Ok(ctx)
+    }
+
+    fn rotate_if_needed(
+        &self,
+        current: &LoadBudget,
+        projected: &LoadBudget,
+        line_bytes: usize,
+    ) -> Result<(), EventRepositoryError> {
+        let segments = read_segment_chain(&self.root_handle, &self.root, &self.read_budget)?;
+        let previous = segments
+            .last()
+            .map(|segment| &segment.seal.end_state.counters);
+        let length = self
+            .journal
+            .lock()
+            .map_err(|_| EventRepositoryError::Storage)?
+            .metadata()?
+            .len();
+        let sealed_bytes = segments
+            .iter()
+            .map(|segment| segment.seal.bytes)
+            .sum::<u64>();
+        ensure_journal_room(sealed_bytes + length, line_bytes)?;
+        let rotate = segment_rotation_required(current, projected, previous, length, line_bytes)?;
+        if rotate && length > 0 {
+            self.rotate_journal()?;
+        }
+        Ok(())
+    }
+
+    fn rotation_checkpoint(&self, step: u8) -> Result<(), EventRepositoryError> {
+        let _ = step;
+        #[cfg(test)]
+        if self.rotation_failpoint == Some(step) {
+            if self.rotation_exit {
+                std::process::exit(89);
+            }
+            return Err(EventRepositoryError::StorageAt {
+                site: "rotation:injected-crash",
+                os: None,
+            });
+        }
+        Ok(())
+    }
+
+    fn rotate_journal(&self) -> Result<(), EventRepositoryError> {
+        sealed::require_rotation_platform()?;
+        let ctx = self.load_segmented_state()?;
+        let segments = read_segment_chain(&self.root_handle, &self.root, &self.read_budget)?;
+        let index = segments.len() as u64;
+        let previous = segments
+            .last()
+            .map(|segment| segment.seal_hash.as_str())
+            .unwrap_or(GENESIS_HASH);
+        let mut journal = self
+            .journal
+            .lock()
+            .map_err(|_| EventRepositoryError::Storage)?;
+        let length = journal.metadata()?.len();
+        if length == 0 {
+            return Ok(());
+        }
+        let bytes = read_bounded_range(&mut journal, 0, length)?;
+        journal.sync_all()?;
+        let keys = canonical_bytes(&segment_keys(&bytes, &self.read_budget)?)?;
+        let seal = sealed::SegmentSeal {
+            format_version: sealed::LAYOUT_FORMAT_VERSION.to_owned(),
+            index,
+            bytes: length,
+            sha256: wire_sha256(&bytes),
+            keys_sha256: wire_sha256(&keys),
+            previous_seal: previous.to_owned(),
+            end_state: segment_end_state(&ctx),
+        };
+        serialized_len_bounded(&seal, sealed::MAX_METADATA_BYTES as usize)?;
+        validate_segment_seal(
+            &serde_json::to_value(&seal).map_err(|_| EventRepositoryError::Integrity)?,
+        )?;
+        let seal = canonical_bytes(&seal)?;
+        // A seal is the committed rotation intent. Staging before it is disposable;
+        // afterwards only exclusive Runtime recovery may finish the transition.
+        let (seal_temp, seal_file) = stage_rotation_metadata(&self.root_handle, &self.root, &seal)?;
+        let (keys_temp, keys_file) = stage_rotation_metadata(&self.root_handle, &self.root, &keys)?;
+        self.rotation_checkpoint(0)?;
+        let directory = open_child_directory(&self.root_handle, &self.root, "segments")?;
+        let temp = open_child_directory(&self.root_handle, &self.root, ".tmp")?;
+        rename_rotation_file(
+            &temp,
+            &self.root.join(".tmp"),
+            &seal_temp,
+            &directory,
+            &self.root.join("segments"),
+            &format!("{index}.seal.json"),
+            &seal_file,
+        )?;
+        sync_directory_handle(&directory)?;
+        self.rotation_checkpoint(1)?;
+        rename_rotation_file(
+            &temp,
+            &self.root.join(".tmp"),
+            &keys_temp,
+            &directory,
+            &self.root.join("segments"),
+            &format!("{index}.keys"),
+            &keys_file,
+        )?;
+        sync_directory_handle(&directory)?;
+        self.rotation_checkpoint(2)?;
+        rename_rotation_file(
+            &self.root_handle,
+            &self.root,
+            "journal.jsonl",
+            &directory,
+            &self.root.join("segments"),
+            &format!("{index}.jsonl"),
+            &journal,
+        )?;
+        sync_directory_handle(&directory)?;
+        sync_directory_handle(&self.root_handle)?;
+        self.rotation_checkpoint(3)?;
+        let fresh = open_child_file(&self.root_handle, &self.root, "journal.jsonl", true, true)?;
+        fresh.sync_all()?;
+        *journal = fresh;
+        self.rotation_checkpoint(4)?;
+        sync_directory_handle(&self.root_handle)?;
+        self.rotation_checkpoint(5)?;
+        Ok(())
+    }
+
     fn load_state(&self, kind: &'static str) -> Result<Arc<LoadedState>, EventRepositoryError> {
+        if self.segmented {
+            return self.load_segmented_state().map(|ctx| ctx.state);
+        }
         // `kind` names WHICH operation is paying for this load (design section 2: never
         // one flat bucket). It feeds the cfg(test) per-kind accounting only; production
         // pays one &'static str argument.
@@ -2750,10 +3094,11 @@ fn inspect_layout_with_directory_opener(
     hook: &mut impl FnMut(InspectionMoment),
     directory_opener: &mut impl FnMut(&File, &Path, &str) -> Result<File, EventRepositoryError>,
 ) -> Result<LayoutState, EventRepositoryError> {
-    let entries = collect_child_identities_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?;
+    let entries =
+        collect_child_identities_bounded(root_handle, root, MAX_SEGMENTED_ROOT_ENTRIES + 1)?;
     hook(InspectionMoment::DirectorySnapshotted);
     let names = entries.keys().cloned().collect::<BTreeSet<_>>();
-    let allowed = BTreeSet::from([
+    let mut allowed = BTreeSet::from([
         "blobs".to_owned(),
         ".tmp".to_owned(),
         "active".to_owned(),
@@ -2769,7 +3114,10 @@ fn inspect_layout_with_directory_opener(
         if file_identity(&file)? != *expected_identity {
             return Err(EventRepositoryError::Integrity);
         }
-        if read_bounded_file(&mut file, 1024)? != FORMAT_BYTES {
+        let bytes = read_bounded_file(&mut file, 1024)?;
+        if bytes == sealed::LAYOUT_FORMAT_BYTES {
+            allowed.insert("segments".to_owned());
+        } else if bytes != FORMAT_BYTES {
             return Err(EventRepositoryError::UnsupportedFormat);
         }
         true
@@ -2784,7 +3132,7 @@ fn inspect_layout_with_directory_opener(
             return Err(EventRepositoryError::UnsupportedFormat);
         }
         match name.as_str() {
-            "blobs" | ".tmp" | "active" => {
+            "blobs" | ".tmp" | "active" | "segments" => {
                 let directory = map_inspection_slot_open(
                     directory_opener(root_handle, root, name),
                     format_declared,
@@ -3035,6 +3383,7 @@ impl EventRepository for LocalEventRepository {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 struct LoadedState {
+    load_budget: LoadBudget,
     batches: Vec<PhysicalBatch>,
     next_sequence: BTreeMap<String, u64>,
     last_hash: BTreeMap<String, String>,
@@ -3158,6 +3507,133 @@ fn ensure_load_room(
     Ok(())
 }
 
+fn append_load_budget(
+    root: &Path,
+    state: &LoadedState,
+    request: &PreparedAppend,
+) -> Result<LoadBudget, EventRepositoryError> {
+    let mut budget = state.load_budget.clone();
+    budget.account_batch(1, request.events().len())?;
+    budget.account_evidence_registrations(request.evidence().len())?;
+    let evidence_refs = request.events().iter().try_fold(0_usize, |count, event| {
+        count
+            .checked_add(event.evidence_refs.len())
+            .ok_or(EventRepositoryError::LimitExceeded)
+    })?;
+    let artifact_refs = request.events().iter().try_fold(0_usize, |count, event| {
+        count
+            .checked_add(event.artifact_refs.len())
+            .ok_or(EventRepositoryError::LimitExceeded)
+    })?;
+    budget.account_evidence_refs(evidence_refs)?;
+    budget.account_artifacts(artifact_refs, request.artifacts().len())?;
+    let mut evidence = BTreeSet::new();
+    let mut artifacts = BTreeSet::new();
+    for event in request.events() {
+        if matches!(event.kind, EventKind::GraphVersionPublished(_)) {
+            budget.account_graph_publication()?;
+        }
+        for reference in &event.evidence_refs {
+            let path = blob_path_in(root, request.scope(), reference.evidence_id())?;
+            if !state.reachable_evidence.contains(&path) && evidence.insert(path) {
+                budget.account_unique_evidence()?;
+            }
+        }
+        for reference in &event.artifact_refs {
+            let identity = artifact_key(request.scope(), reference.artifact_id())?;
+            if !state.artifacts.contains_key(&identity) && artifacts.insert(identity) {
+                budget.account_unique_artifact()?;
+            }
+        }
+    }
+    Ok(budget)
+}
+
+fn budget_counters(budget: &LoadBudget) -> BTreeMap<&'static str, u64> {
+    BTreeMap::from([
+        ("batches", budget.batches as u64),
+        ("events", budget.events as u64),
+        ("evidenceRefs", budget.evidence_refs as u64),
+        (
+            "evidenceRegistrations",
+            budget.evidence_registrations as u64,
+        ),
+        ("uniqueEvidence", budget.unique_evidence as u64),
+        ("artifactRefs", budget.artifact_refs as u64),
+        (
+            "artifactRegistrations",
+            budget.artifact_registrations as u64,
+        ),
+        ("uniqueArtifacts", budget.unique_artifacts as u64),
+        ("graphPublications", budget.graph_publications as u64),
+        ("workUnits", budget.work_units as u64),
+    ])
+}
+
+fn segment_rotation_required(
+    current: &LoadBudget,
+    projected: &LoadBudget,
+    previous: Option<&BTreeMap<String, u64>>,
+    length: u64,
+    line_bytes: usize,
+) -> Result<bool, EventRepositoryError> {
+    let current = budget_counters(current);
+    let mut rotate = length
+        .checked_add(line_bytes as u64)
+        .ok_or(EventRepositoryError::LimitExceeded)?
+        > sealed::ROTATE_BYTES;
+    for (name, value) in budget_counters(projected) {
+        let old = previous
+            .and_then(|counts| counts.get(name))
+            .copied()
+            .unwrap_or(0);
+        let active = value
+            .checked_sub(old)
+            .ok_or(EventRepositoryError::Integrity)?;
+        let limit = match name {
+            "events" => sealed::ROTATE_EVENTS as u64,
+            "workUnits" => (DEFAULT_LOAD_LIMITS.work_units / 2) as u64,
+            _ => (MAX_READ_ALL / 2) as u64,
+        };
+        if value
+            .checked_sub(current[name])
+            .ok_or(EventRepositoryError::Integrity)?
+            > limit
+        {
+            return Err(EventRepositoryError::LimitExceeded);
+        }
+        rotate |= active > limit;
+    }
+    Ok(rotate)
+}
+
+fn segment_end_state(ctx: &VerifyCtx) -> sealed::SegmentEndState {
+    sealed::SegmentEndState {
+        next_sequence: ctx.state.next_sequence.clone(),
+        last_hash: ctx.state.last_hash.clone(),
+        active_versions: ctx
+            .state
+            .active_versions
+            .iter()
+            .map(|(key, version)| {
+                (
+                    key.clone(),
+                    (
+                        version.number,
+                        version.semantic_hash.clone(),
+                        version.sequence,
+                        version.event_hash.clone(),
+                    ),
+                )
+            })
+            .collect(),
+        counters: budget_counters(&ctx.budget)
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect(),
+    }
+}
+
 /// The append gate: refuses a line that would take the journal past `MAX_JOURNAL_BYTES` (#1714).
 fn ensure_journal_room(current_len: u64, line_len: usize) -> Result<(), EventRepositoryError> {
     let line_len = u64::try_from(line_len).map_err(|_| EventRepositoryError::LimitExceeded)?;
@@ -3183,6 +3659,9 @@ fn walk_before_lock(
     read_budget: &crate::ReadBudget,
     #[cfg(test)] walk_delay: Option<std::time::Duration>,
 ) -> Option<Result<VerifiedPrefix, (EventRepositoryError, Option<VerifiedPrefix>)>> {
+    if segmented_format(root_handle, root).ok() == Some(true) {
+        return None;
+    }
     let blobs_handle = open_child_directory(root_handle, root, "blobs").ok()?;
     let mut journal = open_child_file(root_handle, root, "journal.jsonl", false, false).ok()?;
     let identity = file_identity(&journal).ok()?;
@@ -3591,6 +4070,7 @@ impl LineVerifier<'_> {
                 }
             }
             state.batches.push(batch);
+            state.load_budget = load_budget.clone();
             // The line plus its newline: `bytes` holds whole lines, each ending on one.
             *consumed = (line.as_ptr() as usize - bytes.as_ptr() as usize + line.len() + 1) as u64;
         }
@@ -4101,11 +4581,16 @@ fn collect_child_names_bounded(
     Ok(names)
 }
 
-fn classify_layout(root: &Path, root_handle: &File) -> Result<LayoutState, EventRepositoryError> {
+fn classify_layout(
+    root: &Path,
+    root_handle: &File,
+    read_budget: &crate::ReadBudget,
+) -> Result<LayoutState, EventRepositoryError> {
     reject_link_or_non_directory(root)?;
-    let names = collect_child_names_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?;
+    let names = collect_child_names_bounded(root_handle, root, MAX_SEGMENTED_ROOT_ENTRIES + 1)?;
     let has_format = names.contains("format.json");
-    let allowed = BTreeSet::from([
+    let segmented = has_format && segmented_format(root_handle, root)?;
+    let mut allowed = BTreeSet::from([
         "blobs".to_owned(),
         ".tmp".to_owned(),
         "active".to_owned(),
@@ -4113,12 +4598,19 @@ fn classify_layout(root: &Path, root_handle: &File) -> Result<LayoutState, Event
         "journal.jsonl".to_owned(),
         "repository.lock".to_owned(),
     ]);
+    if segmented {
+        allowed.insert("segments".to_owned());
+        read_segment_chain(root_handle, root, read_budget)?;
+        if !names.contains("journal.jsonl") {
+            return Err(EventRepositoryError::RecoveryRequired);
+        }
+    }
     for name in &names {
         if !allowed.contains(name) {
             return Err(EventRepositoryError::UnsupportedFormat);
         }
         match name.as_str() {
-            "blobs" | ".tmp" | "active" => {
+            "blobs" | ".tmp" | "active" | "segments" => {
                 let directory = open_child_directory(root_handle, root, name)?;
                 if !has_format {
                     let mut budget = DirectoryBudget::with_limits(1, MAX_REPOSITORY_NAME_BYTES);
@@ -4135,7 +4627,8 @@ fn classify_layout(root: &Path, root_handle: &File) -> Result<LayoutState, Event
             }
             "format.json" => {
                 let mut file = open_child_file(root_handle, root, name, false, false)?;
-                if read_bounded_file(&mut file, 1024)? != FORMAT_BYTES {
+                let bytes = read_bounded_file(&mut file, 1024)?;
+                if bytes != FORMAT_BYTES && !(segmented && bytes == sealed::LAYOUT_FORMAT_BYTES) {
                     return Err(EventRepositoryError::UnsupportedFormat);
                 }
             }
@@ -4168,8 +4661,9 @@ fn initialize_root_shared_fast(
     root: &Path,
     root_handle: &File,
     failpoint: Option<LocalFailpoint>,
+    read_budget: &crate::ReadBudget,
 ) -> Result<Option<File>, EventRepositoryError> {
-    if !collect_child_names_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?
+    if !collect_child_names_bounded(root_handle, root, MAX_SEGMENTED_ROOT_ENTRIES + 1)?
         .contains("repository.lock")
     {
         return Ok(None);
@@ -4191,7 +4685,7 @@ fn initialize_root_shared_fast(
             os: error.raw_os_error(),
         });
     }
-    if classify_layout(root, root_handle)? != LayoutState::Complete {
+    if classify_layout(root, root_handle, read_budget)? != LayoutState::Complete {
         let _ = FileExt::unlock(&lock);
         return Ok(None);
     }
@@ -4202,9 +4696,11 @@ fn initialize_root_locked(
     root: &Path,
     root_handle: &File,
     failpoint: Option<LocalFailpoint>,
+    read_budget: &crate::ReadBudget,
 ) -> Result<File, EventRepositoryError> {
-    let lock_present = collect_child_names_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?
-        .contains("repository.lock");
+    let lock_present =
+        collect_child_names_bounded(root_handle, root, MAX_SEGMENTED_ROOT_ENTRIES + 1)?
+            .contains("repository.lock");
     let lock = if lock_present {
         open_child_file(root_handle, root, "repository.lock", true, false)?
     } else {
@@ -4212,7 +4708,7 @@ fn initialize_root_locked(
         // appeared since the name snapshot, its children may be mid-write: wait on its
         // lock instead, then let repair_layout_locked classify authoritatively. A real
         // layout/storage error still fails under that lock, or immediately if none appeared.
-        match classify_layout(root, root_handle) {
+        match classify_layout(root, root_handle, read_budget) {
             Ok(_) => open_or_create_repository_lock(root_handle, root)?,
             Err(error) => {
                 if !collect_child_names_bounded(root_handle, root, MAX_ROOT_ENTRIES + 1)?
@@ -4237,7 +4733,7 @@ fn initialize_root_locked(
             os: error.raw_os_error(),
         })?;
 
-    repair_layout_locked(root, root_handle)?;
+    repair_layout_locked(root, root_handle, read_budget)?;
     Ok(lock)
 }
 
@@ -4247,8 +4743,16 @@ fn initialize_root_locked(
 /// longer holds — re-classifying under the NEW lock is what the other two acquisition
 /// paths already pay for, and "correctness equals a fresh exclusive open" is only true
 /// if the redo does too.
-fn repair_layout_locked(root: &Path, root_handle: &File) -> Result<(), EventRepositoryError> {
-    match classify_layout(root, root_handle)? {
+fn repair_layout_locked(
+    root: &Path,
+    root_handle: &File,
+    read_budget: &crate::ReadBudget,
+) -> Result<(), EventRepositoryError> {
+    let names = collect_child_names_bounded(root_handle, root, MAX_SEGMENTED_ROOT_ENTRIES + 1)?;
+    if names.contains("format.json") && segmented_format(root_handle, root)? {
+        recover_rotation(root_handle, root, read_budget)?;
+    }
+    match classify_layout(root, root_handle, read_budget)? {
         LayoutState::Complete => return Ok(()),
         // Create ONLY what is missing, and nothing else. The partial path below rewrites
         // `format.json` and may create `journal.jsonl`; doing that to a recognized repository
@@ -4261,7 +4765,7 @@ fn repair_layout_locked(root: &Path, root_handle: &File) -> Result<(), EventRepo
                 let _ = ensure_child_directory(root_handle, root, name)?;
             }
             sync_directory_handle(root_handle)?;
-            if classify_layout(root, root_handle)? != LayoutState::Complete {
+            if classify_layout(root, root_handle, read_budget)? != LayoutState::Complete {
                 return Err(EventRepositoryError::Integrity);
             }
             return Ok(());
@@ -4281,7 +4785,7 @@ fn repair_layout_locked(root: &Path, root_handle: &File) -> Result<(), EventRepo
     file.sync_all()?;
     drop(file);
     sync_directory_handle(root_handle)?;
-    if classify_layout(root, root_handle)? != LayoutState::Complete {
+    if classify_layout(root, root_handle, read_budget)? != LayoutState::Complete {
         return Err(EventRepositoryError::Integrity);
     }
     Ok(())
@@ -5585,7 +6089,8 @@ fn open_child_file(
 ) -> Result<File, EventRepositoryError> {
     use std::os::windows::fs::OpenOptionsExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE,
     };
     validate_child_name(name)?;
     use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
@@ -5597,8 +6102,27 @@ fn open_child_file(
         .write(write)
         .access_mode(desired)
         .create_new(create)
-        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .share_mode(
+            FILE_SHARE_READ
+                | FILE_SHARE_WRITE
+                | if name.ends_with(".jsonl")
+                    || name.ends_with(".seal.json")
+                    || name.ends_with(".keys")
+                    || name.starts_with("rotation-")
+                {
+                    FILE_SHARE_DELETE
+                } else {
+                    0
+                },
+        )
+        .custom_flags(
+            FILE_FLAG_OPEN_REPARSE_POINT
+                | if write && name.starts_with("rotation-") {
+                    FILE_FLAG_WRITE_THROUGH
+                } else {
+                    0
+                },
+        )
         .open(path.join(name))
         .map_err(|error| open_failure(create, &error))?;
     validate_opened_regular(&file)?;
@@ -6736,7 +7260,7 @@ fn derived_marker_index(
 }
 
 fn is_owned_temp_name(name: &str) -> bool {
-    ["blob-", "active-"].iter().any(|prefix| {
+    ["blob-", "active-", "rotation-"].iter().any(|prefix| {
         name.strip_prefix(prefix)
             .and_then(|value| value.strip_suffix(".tmp"))
             .is_some_and(|token| {
@@ -8951,6 +9475,775 @@ mod limit_tests {
 
     fn cache_repository(directory: &std::path::Path) -> LocalEventRepository {
         LocalEventRepository::open(directory, Arc::new(FixedClock), Arc::new(FixedIds)).unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn segmented_history_keeps_pages_retries_evidence_and_streams() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = LocalEventRepository::open_segmented(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+        )
+        .unwrap();
+        let rival = cache_repository(directory.path());
+        let graph = valid_graph_request();
+        let first = repository.append_atomic(&graph).unwrap();
+        let evidence = graph.evidence()[0].reference().evidence_id().clone();
+        let wake = wake_append(2, "wake-before-seal");
+        repository.append_atomic(&wake).unwrap();
+        let first_page = rival
+            .read_stream(&wake_scope(), "stream-1", 1, None)
+            .unwrap();
+        let original = std::fs::read(directory.path().join("journal.jsonl")).unwrap();
+        repository
+            .with_exclusive_lock(|| repository.rotate_journal())
+            .unwrap();
+        repository
+            .append_atomic(&wake_append(3, "wake-after-seal"))
+            .unwrap();
+        assert_eq!(rival.next_sequence(&wake_scope(), "stream-1").unwrap(), 4);
+        assert_eq!(rival.append_atomic(&graph).unwrap(), first);
+        assert!(
+            matches!(rival.append_atomic(&wake_append(2, "wake-before-seal")), Ok(events) if events[0].sequence == 2)
+        );
+        // Same key with a different payload must not become a fresh append after rotation.
+        let divergent = PreparedAppend::new(
+            wake_scope(),
+            OpaqueId::parse("stream-1").unwrap(),
+            2,
+            wake_append(9, "wake-before-seal").events().to_vec(),
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        assert!(matches!(
+            rival.append_atomic(&divergent),
+            Err(EventRepositoryError::IdempotencyConflict)
+        ));
+        let next_page = rival
+            .read_stream(
+                &wake_scope(),
+                "stream-1",
+                1,
+                first_page.next_cursor.as_deref(),
+            )
+            .unwrap();
+        assert_eq!(next_page.events[0].sequence, 2);
+        assert_eq!(
+            rival
+                .read_stream_after(&wake_scope(), "stream-1", 1)
+                .unwrap()
+                .0
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("segments/0.jsonl")).unwrap(),
+            original
+        );
+        repository
+            .with_exclusive_lock(|| repository.rotate_journal())
+            .unwrap();
+        repository
+            .append_atomic(&wake_append(4, "wake-after-second-seal"))
+            .unwrap();
+        assert_eq!(
+            rival
+                .read_unique_replay_stream()
+                .unwrap()
+                .1
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
+        let other = PreparedAppend::new(
+            wake_scope(),
+            OpaqueId::parse("stream-2").unwrap(),
+            1,
+            wake_append(1, "other-stream").events().to_vec(),
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        repository.append_atomic(&other).unwrap();
+        assert_eq!(rival.list_streams().unwrap().len(), 2);
+        drop(repository);
+        drop(rival);
+        // Reconciliation must retain evidence whose only event lives in sealed history.
+        let reopened = cache_repository(directory.path());
+        assert!(matches!(
+            reopened.sealed_evidence(&wake_scope(), &evidence).unwrap(),
+            EvidenceRead::Available(_)
+        ));
+        assert_eq!(
+            reopened
+                .active_version(&wake_scope(), "stream-1")
+                .unwrap()
+                .unwrap()
+                .number,
+            1
+        );
+        let segments = read_segment_chain(
+            &reopened.root_handle,
+            directory.path(),
+            &crate::ReadBudget::unbounded(),
+        )
+        .unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[1].seal.previous_seal, segments[0].seal_hash);
+        assert_eq!(reopened.append_atomic(&graph).unwrap(), first);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn segmented_rotation_reopens_after_every_sync_and_rename_boundary() {
+        for step in 0..=5 {
+            let directory = tempfile::tempdir().unwrap();
+            let mut repository = LocalEventRepository::open_segmented(
+                directory.path(),
+                Arc::new(FixedClock),
+                Arc::new(FixedIds),
+            )
+            .unwrap();
+            repository.append_atomic(&valid_graph_request()).unwrap();
+            repository
+                .append_atomic(&wake_append(2, "before-crash"))
+                .unwrap();
+            let before = repository
+                .read_replay_stream(&wake_scope(), "stream-1")
+                .unwrap();
+            repository.rotation_failpoint = Some(step);
+            assert!(
+                repository
+                    .with_exclusive_lock(|| repository.rotate_journal())
+                    .is_err(),
+                "step {step} did not interrupt rotation"
+            );
+            drop(repository);
+            let ordinary = LocalEventRepository::open(
+                directory.path(),
+                Arc::new(FixedClock),
+                Arc::new(FixedIds),
+            );
+            if (1..=3).contains(&step) {
+                assert!(
+                    matches!(ordinary, Err(EventRepositoryError::RecoveryRequired)),
+                    "reader at step {step} must require Runtime recovery"
+                );
+            } else {
+                assert!(ordinary.is_ok(), "step {step} is a complete generation");
+                drop(ordinary);
+            }
+            let recovered = LocalEventRepository::open_recovering_torn_tail(
+                directory.path(),
+                Arc::new(FixedClock),
+                Arc::new(FixedIds),
+            )
+            .unwrap();
+            assert_eq!(
+                recovered
+                    .read_replay_stream(&wake_scope(), "stream-1")
+                    .unwrap(),
+                before,
+                "step {step} lost or duplicated history"
+            );
+            recovered
+                .append_atomic(&wake_append(3, "after-crash"))
+                .unwrap();
+            drop(recovered);
+            let repeated = LocalEventRepository::open_recovering_torn_tail(
+                directory.path(),
+                Arc::new(FixedClock),
+                Arc::new(FixedIds),
+            )
+            .unwrap();
+            assert_eq!(
+                repeated.next_sequence(&wake_scope(), "stream-1").unwrap(),
+                4
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "child process fixture; invoked only by the rotation crash observer"]
+    fn segmented_process_crash_child() {
+        let root = std::env::var_os("GRAPHHELM_SEGMENT_CRASH_ROOT").expect("child root");
+        let step = std::env::var("GRAPHHELM_SEGMENT_CRASH_STEP")
+            .unwrap()
+            .parse::<u8>()
+            .unwrap();
+        let mut repository = cache_repository(Path::new(&root));
+        repository.rotation_failpoint = Some(step);
+        repository.rotation_exit = true;
+        repository
+            .with_exclusive_lock(|| repository.rotate_journal())
+            .unwrap();
+        panic!("rotation failed to terminate the child at step {step}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn segmented_process_exit_recovers_every_rotation_boundary() {
+        for step in 0..=5 {
+            let directory = tempfile::tempdir().unwrap();
+            let repository = LocalEventRepository::open_segmented(
+                directory.path(),
+                Arc::new(FixedClock),
+                Arc::new(FixedIds),
+            )
+            .unwrap();
+            repository.append_atomic(&valid_graph_request()).unwrap();
+            repository
+                .append_atomic(&wake_append(2, "before-process-exit"))
+                .unwrap();
+            let before = repository
+                .read_replay_stream(&wake_scope(), "stream-1")
+                .unwrap();
+            drop(repository);
+            let mut child = graphhelm_process::command(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "local::limit_tests::segmented_process_crash_child",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env("GRAPHHELM_SEGMENT_CRASH_ROOT", directory.path())
+                .env("GRAPHHELM_SEGMENT_CRASH_STEP", step.to_string())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("rotation child exceeded its deadline at step {step}");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            assert_eq!(
+                status.code(),
+                Some(89),
+                "step {step} did not exit at the injected boundary"
+            );
+            eprintln!("segmented process boundary {step}: child reached exit 89");
+            if (1..=3).contains(&step) {
+                assert!(matches!(
+                    LocalEventRepository::open(
+                        directory.path(),
+                        Arc::new(FixedClock),
+                        Arc::new(FixedIds)
+                    ),
+                    Err(EventRepositoryError::RecoveryRequired)
+                ));
+            }
+            let recovered = LocalEventRepository::open_recovering_torn_tail(
+                directory.path(),
+                Arc::new(FixedClock),
+                Arc::new(FixedIds),
+            )
+            .unwrap();
+            assert_eq!(
+                recovered
+                    .read_replay_stream(&wake_scope(), "stream-1")
+                    .unwrap(),
+                before,
+                "process exit at step {step} lost history"
+            );
+            recovered
+                .append_atomic(&wake_append(3, "after-process-exit"))
+                .unwrap();
+            assert_eq!(
+                recovered.next_sequence(&wake_scope(), "stream-1").unwrap(),
+                4
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn segmented_retained_rename_preserves_a_source_replacement_and_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("store");
+        let mut repository =
+            LocalEventRepository::open_segmented(&root, Arc::new(FixedClock), Arc::new(FixedIds))
+                .unwrap();
+        repository
+            .append_atomic(&wake_append(1, "source-swap-history"))
+            .unwrap();
+        let history = repository
+            .read_replay_stream(&wake_scope(), "stream-1")
+            .unwrap();
+        let bytes = std::fs::read(root.join("journal.jsonl")).unwrap();
+        repository.rotation_failpoint = Some(2);
+        assert!(
+            repository
+                .with_exclusive_lock(|| repository.rotate_journal())
+                .is_err()
+        );
+        // This is the state after validation and before the OS rename: the source name has
+        // become another file, while the writer still owns the verified source object.
+        std::fs::rename(
+            root.join("journal.jsonl"),
+            directory.path().join("displaced.jsonl"),
+        )
+        .unwrap();
+        std::fs::write(root.join("journal.jsonl"), b"unvalidated replacement\n").unwrap();
+        let segments = open_child_directory(&repository.root_handle, &root, "segments").unwrap();
+        sealed::rename_retained_file(&repository.journal.lock().unwrap(), &segments, "0.jsonl")
+            .unwrap();
+        assert_eq!(
+            std::fs::read(root.join("journal.jsonl")).unwrap(),
+            b"unvalidated replacement\n"
+        );
+        assert_eq!(std::fs::read(root.join("segments/0.jsonl")).unwrap(), bytes);
+        // A collision must preserve the existing destination too.
+        assert!(
+            sealed::rename_retained_file(
+                &repository.journal.lock().unwrap(),
+                &segments,
+                "0.seal.json"
+            )
+            .is_err()
+        );
+        drop(repository);
+        assert!(
+            LocalEventRepository::open_recovering_torn_tail(
+                &root,
+                Arc::new(FixedClock),
+                Arc::new(FixedIds)
+            )
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read(root.join("journal.jsonl")).unwrap(),
+            b"unvalidated replacement\n"
+        );
+        // The observer preserves the foreign replacement outside the store before restoring
+        // the missing active generation. Recovery must then read the unchanged committed bytes.
+        std::fs::rename(
+            root.join("journal.jsonl"),
+            directory.path().join("preserved-replacement"),
+        )
+        .unwrap();
+        let recovered = LocalEventRepository::open_recovering_torn_tail(
+            &root,
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+        )
+        .unwrap();
+        assert_eq!(
+            recovered
+                .read_replay_stream(&wake_scope(), "stream-1")
+                .unwrap(),
+            history
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("preserved-replacement")).unwrap(),
+            b"unvalidated replacement\n"
+        );
+    }
+
+    #[test]
+    fn segmented_key_batches_check_the_read_deadline_before_parsing_more() {
+        struct ExpiringClock(AtomicU64);
+        impl Clock for ExpiringClock {
+            fn now(&self) -> chrono::DateTime<Utc> {
+                let call = self.0.fetch_add(1, Ordering::SeqCst);
+                FixedClock.now() + chrono::Duration::seconds(if call >= 2 { 10 } else { 0 })
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let repository = cache_repository(directory.path());
+        repository
+            .append_atomic(&wake_append(1, "budget-key"))
+            .unwrap();
+        let mut bytes = std::fs::read(directory.path().join("journal.jsonl")).unwrap();
+        bytes.extend_from_slice(b"invalid-next-batch\n");
+        let budget = crate::ReadBudget::starting_now(
+            Arc::new(ExpiringClock(AtomicU64::new(0))),
+            chrono::Duration::seconds(1),
+        );
+        assert!(matches!(
+            segment_keys(&bytes, &budget),
+            Err(EventRepositoryError::ReadBudgetExceeded { .. })
+        ));
+        assert!(matches!(
+            segment_keys(&bytes, &crate::ReadBudget::unbounded()),
+            Err(EventRepositoryError::Integrity)
+        ));
+    }
+
+    #[test]
+    fn segmented_rotation_thresholds_count_the_active_tail_and_whole_budget() {
+        let mut current = LoadBudget::new(DEFAULT_LOAD_LIMITS);
+        current
+            .account_batch(50, sealed::ROTATE_EVENTS - 1)
+            .unwrap();
+        let mut at_boundary = current.clone();
+        at_boundary.account_batch(1, 1).unwrap();
+        assert!(!segment_rotation_required(&current, &at_boundary, None, 10, 10).unwrap());
+        let mut past_boundary = at_boundary.clone();
+        past_boundary.account_batch(1, 1).unwrap();
+        assert!(segment_rotation_required(&at_boundary, &past_boundary, None, 10, 10).unwrap());
+        let sealed = budget_counters(&at_boundary)
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect();
+        assert!(
+            !segment_rotation_required(&at_boundary, &past_boundary, Some(&sealed), 0, 10).unwrap()
+        );
+        let empty = LoadBudget::new(DEFAULT_LOAD_LIMITS);
+        assert!(
+            !segment_rotation_required(&empty, &empty, None, sealed::ROTATE_BYTES - 1, 1).unwrap()
+        );
+        assert!(segment_rotation_required(&empty, &empty, None, sealed::ROTATE_BYTES, 1).unwrap());
+        let mut heavy = empty.clone();
+        heavy.account_evidence_refs(MAX_READ_ALL / 2).unwrap();
+        let mut next = heavy.clone();
+        next.account_evidence_refs(1).unwrap();
+        assert!(segment_rotation_required(&heavy, &next, None, 10, 10).unwrap());
+        assert!(matches!(
+            segment_rotation_required(&empty, &next, None, 0, 10),
+            Err(EventRepositoryError::LimitExceeded)
+        ));
+    }
+
+    #[test]
+    fn segmented_append_budget_refuses_reference_and_work_exhaustion_before_writes() {
+        let request = valid_graph_request();
+        for counter in ["refs", "work", "registrations", "unique", "publications"] {
+            let mut state = LoadedState::default();
+            match counter {
+                "refs" => state.load_budget.evidence_refs = DEFAULT_LOAD_LIMITS.evidence_refs,
+                "work" => state.load_budget.work_units = DEFAULT_LOAD_LIMITS.work_units,
+                "registrations" => {
+                    state.load_budget.evidence_registrations =
+                        DEFAULT_LOAD_LIMITS.evidence_registrations
+                }
+                "unique" => state.load_budget.unique_evidence = DEFAULT_LOAD_LIMITS.unique_evidence,
+                _ => state.load_budget.graph_publications = DEFAULT_LOAD_LIMITS.graph_publications,
+            }
+            assert!(
+                matches!(
+                    append_load_budget(Path::new("test-root"), &state, &request),
+                    Err(EventRepositoryError::LimitExceeded)
+                ),
+                "{counter} was not charged"
+            );
+        }
+        assert!(
+            append_load_budget(Path::new("test-root"), &LoadedState::default(), &request).is_ok()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn segmented_chain_deadline_stops_before_later_corrupt_metadata() {
+        struct ExpiringClock(AtomicU64);
+        impl Clock for ExpiringClock {
+            fn now(&self) -> chrono::DateTime<Utc> {
+                let call = self.0.fetch_add(1, Ordering::SeqCst);
+                FixedClock.now() + chrono::Duration::seconds(if call >= 2 { 10 } else { 0 })
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let repository = LocalEventRepository::open_segmented(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+        )
+        .unwrap();
+        repository
+            .append_atomic(&wake_append(1, "budget-first-segment"))
+            .unwrap();
+        repository
+            .with_exclusive_lock(|| repository.rotate_journal())
+            .unwrap();
+        repository
+            .append_atomic(&wake_append(2, "budget-second-segment"))
+            .unwrap();
+        repository
+            .with_exclusive_lock(|| repository.rotate_journal())
+            .unwrap();
+        std::fs::write(directory.path().join("segments/1.seal.json"), b"{}").unwrap();
+        let budget = crate::ReadBudget::starting_now(
+            Arc::new(ExpiringClock(AtomicU64::new(0))),
+            chrono::Duration::seconds(1),
+        );
+        assert!(matches!(
+            read_segment_chain(&repository.root_handle, directory.path(), &budget),
+            Err(EventRepositoryError::ReadBudgetExceeded { .. })
+        ));
+        assert!(matches!(
+            read_segment_chain(
+                &repository.root_handle,
+                directory.path(),
+                &crate::ReadBudget::unbounded()
+            ),
+            Err(EventRepositoryError::IntegrityAt("segments:seal-schema"))
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn segmented_tampering_is_refused_by_warm_and_fresh_readers() {
+        for target in ["segment", "keys", "chain", "state"] {
+            let directory = tempfile::tempdir().unwrap();
+            let repository = LocalEventRepository::open_segmented(
+                directory.path(),
+                Arc::new(FixedClock),
+                Arc::new(FixedIds),
+            )
+            .unwrap();
+            repository
+                .append_atomic(&wake_append(1, "sealed-key"))
+                .unwrap();
+            repository
+                .with_exclusive_lock(|| repository.rotate_journal())
+                .unwrap();
+            let seal_path = directory.path().join("segments/0.seal.json");
+            match target {
+                "segment" => {
+                    let path = directory.path().join("segments/0.jsonl");
+                    let mut bytes = std::fs::read(&path).unwrap();
+                    let index = bytes.iter().position(|byte| *byte == b's').unwrap();
+                    bytes[index] = b't';
+                    std::fs::write(path, bytes).unwrap();
+                }
+                "keys" => {
+                    std::fs::write(directory.path().join("segments/0.keys"), b"[]").unwrap();
+                }
+                other => {
+                    let mut seal: serde_json::Value =
+                        serde_json::from_slice(&std::fs::read(&seal_path).unwrap()).unwrap();
+                    if other == "chain" {
+                        seal["previousSeal"] = serde_json::json!(wire_sha256(b"wrong predecessor"));
+                    } else {
+                        seal["endState"]["nextSequence"]
+                            [stream_key(&wake_scope(), "stream-1").unwrap()] =
+                            serde_json::json!(999);
+                    }
+                    std::fs::write(seal_path, canonical_bytes(&seal).unwrap()).unwrap();
+                }
+            }
+            assert!(
+                matches!(
+                    repository.next_sequence(&wake_scope(), "stream-1"),
+                    Err(EventRepositoryError::IntegrityAt(_))
+                ),
+                "warm {target} accepted tampering"
+            );
+            assert!(
+                matches!(
+                    LocalEventRepository::open(
+                        directory.path(),
+                        Arc::new(FixedClock),
+                        Arc::new(FixedIds)
+                    ),
+                    Err(EventRepositoryError::IntegrityAt(_))
+                ),
+                "fresh {target} accepted tampering"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn segmented_journal_replacement_requires_a_sealed_retained_generation() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = LocalEventRepository::open_segmented(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+        )
+        .unwrap();
+        repository
+            .append_atomic(&wake_append(1, "replace-key"))
+            .unwrap();
+        let path = directory.path().join("journal.jsonl");
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::rename(&path, directory.path().join("displaced.jsonl")).unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        assert!(matches!(
+            repository.next_sequence(&wake_scope(), "stream-1"),
+            Err(EventRepositoryError::IntegrityAt(
+                "journal:generation-unsealed"
+            ))
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn segmented_torn_tail_recovery_never_trims_sealed_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = LocalEventRepository::open_segmented(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+        )
+        .unwrap();
+        repository
+            .append_atomic(&wake_append(1, "sealed-before-tail"))
+            .unwrap();
+        repository
+            .with_exclusive_lock(|| repository.rotate_journal())
+            .unwrap();
+        repository
+            .append_atomic(&wake_append(2, "active-before-tail"))
+            .unwrap();
+        let sealed = std::fs::read(directory.path().join("segments/0.jsonl")).unwrap();
+        let mut active = std::fs::OpenOptions::new()
+            .append(true)
+            .open(directory.path().join("journal.jsonl"))
+            .unwrap();
+        active.write_all(b"{\"torn\":").unwrap();
+        active.sync_all().unwrap();
+        drop(active);
+        drop(repository);
+        assert!(matches!(
+            LocalEventRepository::open(directory.path(), Arc::new(FixedClock), Arc::new(FixedIds)),
+            Err(EventRepositoryError::IntegrityAt(TORN_TAIL_AWAITS_SITE))
+        ));
+        let recovered = LocalEventRepository::open_recovering_torn_tail(
+            directory.path(),
+            Arc::new(FixedClock),
+            Arc::new(FixedIds),
+        )
+        .unwrap();
+        assert_eq!(recovered.recovered_torn_tail().unwrap().trimmed_bytes, 8);
+        assert_eq!(
+            recovered.next_sequence(&wake_scope(), "stream-1").unwrap(),
+            3
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("segments/0.jsonl")).unwrap(),
+            sealed
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn segmented_creation_leaves_legacy_stores_and_backup_support_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let legacy = cache_repository(directory.path());
+        legacy.append_atomic(&wake_append(1, "legacy-key")).unwrap();
+        let before = std::fs::read(directory.path().join("journal.jsonl")).unwrap();
+        assert!(matches!(
+            LocalEventRepository::open_segmented(
+                directory.path(),
+                Arc::new(FixedClock),
+                Arc::new(FixedIds)
+            ),
+            Err(EventRepositoryError::UnsupportedFormat)
+        ));
+        assert_eq!(
+            std::fs::read(directory.path().join("format.json")).unwrap(),
+            FORMAT_BYTES
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("journal.jsonl")).unwrap(),
+            before
+        );
+        assert!(!directory.path().join("segments").exists());
+        LocalEventRepository::inspect_backup_format(directory.path()).unwrap();
+        let segmented = tempfile::tempdir().unwrap();
+        drop(
+            LocalEventRepository::open_segmented(
+                segmented.path(),
+                Arc::new(FixedClock),
+                Arc::new(FixedIds),
+            )
+            .unwrap(),
+        );
+        assert!(matches!(
+            LocalEventRepository::inspect_backup_format(segmented.path()),
+            Err(EventRepositoryError::SegmentedBackupUnsupported)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn segmented_unix_refusals_preserve_layout_and_committed_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let absent = directory.path().join("absent");
+        assert!(matches!(
+            LocalEventRepository::open_segmented(&absent, Arc::new(FixedClock), Arc::new(FixedIds)),
+            Err(EventRepositoryError::SegmentedPlatformUnsupported)
+        ));
+        assert!(!absent.exists());
+        let root = directory.path().join("store");
+        let legacy = cache_repository(&root);
+        legacy
+            .append_atomic(&wake_append(1, "unix-history"))
+            .unwrap();
+        let history = legacy
+            .read_replay_stream(&wake_scope(), "stream-1")
+            .unwrap();
+        let bytes = std::fs::read(root.join("journal.jsonl")).unwrap();
+        assert!(matches!(
+            legacy.rotate_journal(),
+            Err(EventRepositoryError::SegmentedPlatformUnsupported)
+        ));
+        assert_eq!(std::fs::read(root.join("journal.jsonl")).unwrap(), bytes);
+        assert_eq!(
+            std::fs::read(root.join("format.json")).unwrap(),
+            FORMAT_BYTES
+        );
+        assert!(!root.join("segments").exists());
+        // A portable existing-layout fixture models bytes received from a Windows store.
+        let mut ctx = VerifyCtx::fresh();
+        legacy.verify_lines(&bytes, &mut ctx, &mut 0).unwrap();
+        let keys = canonical_bytes(&segment_keys(&bytes, &crate::ReadBudget::unbounded()).unwrap())
+            .unwrap();
+        let seal = sealed::SegmentSeal {
+            format_version: sealed::LAYOUT_FORMAT_VERSION.to_owned(),
+            index: 0,
+            bytes: bytes.len() as u64,
+            sha256: wire_sha256(&bytes),
+            keys_sha256: wire_sha256(&keys),
+            previous_seal: GENESIS_HASH.to_owned(),
+            end_state: segment_end_state(&ctx),
+        };
+        drop(legacy);
+        std::fs::create_dir(root.join("segments")).unwrap();
+        std::fs::write(
+            root.join("segments/0.seal.json"),
+            canonical_bytes(&seal).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(root.join("segments/0.keys"), keys).unwrap();
+        std::fs::write(root.join("format.json"), sealed::LAYOUT_FORMAT_BYTES).unwrap();
+        assert!(matches!(
+            LocalEventRepository::open_recovering_torn_tail(
+                &root,
+                Arc::new(FixedClock),
+                Arc::new(FixedIds)
+            ),
+            Err(EventRepositoryError::SegmentedPlatformUnsupported)
+        ));
+        assert_eq!(std::fs::read(root.join("journal.jsonl")).unwrap(), bytes);
+        assert!(!root.join("segments/0.jsonl").exists());
+        // Complete immutable history can be verified/read without an unsafe rename primitive.
+        std::fs::write(root.join("segments/0.jsonl"), &bytes).unwrap();
+        std::fs::write(root.join("journal.jsonl"), b"").unwrap();
+        let reader = cache_repository(&root);
+        assert_eq!(
+            reader
+                .read_replay_stream(&wake_scope(), "stream-1")
+                .unwrap(),
+            history
+        );
     }
 
     fn shared_repository(directory: &std::path::Path, cache: &PrefixCache) -> LocalEventRepository {

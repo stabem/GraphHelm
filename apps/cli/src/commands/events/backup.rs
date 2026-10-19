@@ -168,7 +168,8 @@ fn execute_local_with(
     output: &Path,
     list: BlobLister<'_>,
 ) -> Result<serde_json::Value, Failure> {
-    super::require_supported_format(root)?;
+    graphhelm_events::LocalEventRepository::inspect_backup_format(root)
+        .map_err(|error| super::repository_failure(&error))?;
     require_absent_file(output, "/output", "--output")?;
 
     // THE WHOLE SNAPSHOT RUNS UNDER THE STORE'S OWN SHARED LOCK (#664).
@@ -368,6 +369,34 @@ mod entry_errors {
             "both blobs are archived: {envelope}"
         );
         assert!(output.is_file(), "the archive is written on success");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_segmented_repository_refuses_backup_without_writing_an_archive() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("segmented");
+        let clock = graphhelm_protocols::FixedClock::from(
+            graphhelm_protocols::PersistedTimestamp::parse("2026-10-19T12:00:00Z").unwrap(),
+        );
+        struct FixedIds;
+        impl graphhelm_protocols::IdGenerator for FixedIds {
+            fn next_id(&self, prefix: &'static str) -> String {
+                format!("{prefix}-1")
+            }
+        }
+        let repository = graphhelm_events::LocalEventRepository::open_segmented(
+            &root,
+            std::sync::Arc::new(clock),
+            std::sync::Arc::new(FixedIds),
+        )
+        .unwrap();
+        drop(repository);
+        let output = directory.path().join("archive.json");
+        let failure = execute_local_with(&root, &output, &mut read_dir_lister)
+            .expect_err("segmented backup is not supported");
+        assert_eq!(failure.code, "GHE015_SEGMENTED_BACKUP_UNSUPPORTED");
+        assert!(!output.exists());
     }
 
     /// THE CELL. Before #444 this root produced an archive holding ONE blob and an envelope

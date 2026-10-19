@@ -54,6 +54,8 @@ const SENSITIVITY_ID: &str = "https://p50.dev/schemas/sensitivity.schema.json";
 const ARTIFACT_ID: &str = "https://p50.dev/schemas/artifact-reference.schema.json";
 const PERSISTED_GRAPH_ID: &str = "https://p50.dev/schemas/persisted-graph-version.schema.json";
 const PHYSICAL_BATCH_ID: &str = "urn:graphhelm:repository-v1:physical-batch";
+const JOURNAL_SEAL_ID: &str = "https://p50.dev/schemas/local-journal-seal.schema.json";
+const JOURNAL_SEAL_SCHEMA: &str = include_str!("../../../schemas/local-journal-seal.schema.json");
 const MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RESOURCE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_SCHEMAS: usize = 256;
@@ -742,6 +744,15 @@ pub struct RepositorySchemaSet {
 }
 
 impl RepositorySchemaSet {
+    /// Validates bounded segment seal metadata before typed deserialization, without network IO.
+    #[must_use]
+    pub fn validate_journal_seal_attempted(
+        &self,
+        value: &serde_json::Value,
+    ) -> (ValidationAttempt, Vec<Diagnostic>) {
+        self.schemas
+            .validate_attempted(JOURNAL_SEAL_ID, value, "local-journal-seal")
+    }
     #[must_use]
     pub fn validate_event(&self, value: &serde_json::Value) -> Vec<Diagnostic> {
         self.schemas.validate(EVENT_ID, value, "event-envelope")
@@ -1188,6 +1199,7 @@ fn embedded_resources() -> BTreeMap<String, serde_json::Value> {
             parse_schema(JOURNAL_SCHEMA),
         ),
         (GRAPH_ID.into(), parse_schema(GRAPH_SCHEMA)),
+        (JOURNAL_SEAL_ID.into(), parse_schema(JOURNAL_SEAL_SCHEMA)),
         (NODE_ID.into(), parse_schema(NODE_SCHEMA)),
         (EDGE_ID.into(), parse_schema(EDGE_SCHEMA)),
         (AGENT_ID.into(), parse_schema(AGENT_SCHEMA)),

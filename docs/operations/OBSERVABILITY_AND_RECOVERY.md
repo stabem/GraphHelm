@@ -549,3 +549,52 @@ The reference implementation uses OpenTelemetry semantics and local export. An e
 - erased required content blocks execution instead of degrading it;
 - a projection can be rebuilt from events without touching canonical history;
 - restore verifies the whole database before the target is selectable.
+
+## 26. Local journal segments: preparatory format support
+
+Ordinary repository creation and existing stores retain layout `1.0.0`. The explicit
+`LocalEventRepository::open_segmented` API creates layout `1.1.0` on supported Windows hosts;
+it refuses to migrate an existing `1.0.0` store. Physical batches, evidence blobs and active
+graph markers retain their `1.0.0` encoding. No live store is migrated by this step.
+
+A segmented store adds `segments/<index>.jsonl`, `<index>.keys` and `<index>.seal.json`.
+Segments retain the original complete journal batch lines. The canonical seal binds the
+segment's byte count and SHA-256, its sorted scoped idempotency keys and batch offsets, its
+predecessor seal hash, and the verified cumulative heads and counters. Seal validation uses
+the embedded `schemas/local-journal-seal.schema.json` before typed decoding. A seal is
+rotation intent, not a reader projection checkpoint.
+
+This preparatory implementation verifies and combines every segment and the active journal
+under the existing global byte, event and work limits. It preserves history, evidence,
+pagination and retry behavior; it does not remove those limits or claim faster status reads.
+Reader checkpoints and the bounded tail path remain separate work.
+
+Rotation runs at a batch boundary while the exclusive repository lock is held. It flushes
+staged metadata, publishes the seal as intent, publishes the keys, moves the retained active
+file object into the segment directory, and creates and flushes the next active journal.
+The Windows source handle permits delete sharing so other live repository handles do not
+prevent the generation transition. Publication never overwrites an existing destination.
+The source and destination directory handles remain retained throughout publication.
+
+After intent is published, an incomplete transition returns `GHE014_RECOVERY_REQUIRED` to
+ordinary readers. Only the Runtime recovery open may finish it. Recovery checks the sealed
+bytes and keys before moving history or creating the missing active file. It refuses
+inconsistent bytes. Sealed segments are never trimmed; torn-tail recovery remains confined
+to the active journal, verified after the complete sealed history.
+
+Windows publication uses a retained source opened with write-through and rename rights,
+with file flushes before and after the rename. Directory sync remains best effort on
+Windows. This is not a claim of equivalence to `MOVEFILE_WRITE_THROUGH`, nor a guarantee
+that directory entries survive power loss on every storage device. Process termination
+and returned I/O errors are distinct observers; power-loss durability remains unobserved.
+
+Unix creation, rotation and incomplete-rotation recovery return
+`GHE016_SEGMENTED_PLATFORM_UNSUPPORTED` before mutation. Valid existing segmented history
+can be verified and read. A safe Unix writer requires a different publication protocol;
+pathname identity checks followed by `renameat` are insufficient to protect against a
+source name replacement.
+
+Segmented backup returns `GHE015_SEGMENTED_BACKUP_UNSUPPORTED` without creating an archive.
+Legacy backup and restore remain unchanged. Segmented archives, migration, a lossless
+downgrade procedure and the mixed-binary installation order must be delivered before
+switching ordinary creation or any live Runtime writer to layout `1.1.0`.

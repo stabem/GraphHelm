@@ -48,6 +48,16 @@ pub enum EventRepositoryError {
     LimitExceeded,
     #[error("repository format is unsupported")]
     UnsupportedFormat,
+    #[error(
+        "journal rotation requires Runtime recovery; retry after the Runtime has recovered the store"
+    )]
+    RecoveryRequired,
+    #[error("backup of repository format 1.1.0 is not supported by this build")]
+    SegmentedBackupUnsupported,
+    #[error(
+        "segmented journal creation, rotation and incomplete-rotation recovery are unsupported on this platform"
+    )]
+    SegmentedPlatformUnsupported,
     #[error("repository input is invalid")]
     Invalid,
     #[error("repository content is not safe for persistence")]
@@ -102,6 +112,9 @@ impl EventRepositoryError {
             Self::WatermarkMismatch => "GHPROJ001_WATERMARK_MISMATCH",
             Self::LimitExceeded => "GHE006_LIMIT_EXCEEDED",
             Self::UnsupportedFormat => "GHE007_UNSUPPORTED_FORMAT",
+            Self::RecoveryRequired => "GHE014_RECOVERY_REQUIRED",
+            Self::SegmentedBackupUnsupported => "GHE015_SEGMENTED_BACKUP_UNSUPPORTED",
+            Self::SegmentedPlatformUnsupported => "GHE016_SEGMENTED_PLATFORM_UNSUPPORTED",
             Self::Invalid => "GHE004_INVALID_EVENT",
             Self::UnsafePersistence => "GHE009_EXTERNALIZATION_FAILED",
             Self::StreamSelectionRequired => "GHE010_STREAM_SELECTION_REQUIRED",

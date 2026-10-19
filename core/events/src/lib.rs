@@ -38,7 +38,8 @@ pub use key::{
     WrapKeyRequest, WrappedKey,
 };
 pub use limits::{
-    MAX_READ_ALL, MAX_READ_PAGE, STATUS_READ_BUDGET_MILLIS, TASKS_READ_BUDGET_MILLIS,
+    MAX_JOURNAL_BYTES, MAX_READ_ALL, MAX_READ_PAGE, STATUS_READ_BUDGET_MILLIS,
+    TASKS_READ_BUDGET_MILLIS,
 };
 pub use local::{
     LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, MAX_SEALED_EVIDENCE_BATCH,

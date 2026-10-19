@@ -1,7 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-journey-tab
-title: "Review the promise beside its observer section (observer: OBSERVER_MISSING #1041)"
-purpose: "The owner opens a journey's Proof and sees its promise beside an Observer and evidence section. The section names no observer yet (it says Observer identity unavailable), so the observer half is OBSERVER_MISSING."
+title: "Review the promise beside its observer section (observer identity: OBSERVER_MISSING #1041)"
+purpose: "The owner opens a journey's Proof and sees its promise beside the Observer and evidence section. For a recorded run the section shows an observer note; this flow proves only that the note appears, not which runner it names (the record read-back is proven by journey_preview::a_later_runner_reports_the_runner_the_stored_record_names). The recorded run is the fixture-only runtime-health seed, not a real project's preview."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -9,6 +9,12 @@ actors: [owner]
 secrets: []
 risks: [critical_ux]
 screens:
+  - id: observed
+    title: The recorded journey names the runner that observed it
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: heading, name: Observer and evidence}, {role: note, name: Observed by journey-preview-runner}]
+    scope: [apps/studio/src/components/proof-table.tsx, apps/studio/src/runtime/types.ts, apps/cli/src/commands/journey_preview.rs]
   - id: proof
     title: Review the promise and named observer evidence before deciding
     url: /?session=studio-fixture&run=demo
@@ -22,11 +28,16 @@ screens:
     expect: [{role: region, name: Canvas}, {role: tablist, name: Mission views}, {role: tab, name: Proof}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx]
 edges:
+  - id: proof.observed
+    from: proof
+    to: observed
+    acts:
+      - {kind: activate, role: button, name: Read the Runtime health 0/2}
   - id: run.proof
     from: run
     to: proof
     acts:
       - {kind: activate, role: tab, name: Proof}
 paths:
-  main: [run.proof]
+  main: [run.proof, proof.observed]
 drift: []

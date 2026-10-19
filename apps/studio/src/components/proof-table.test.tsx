@@ -40,7 +40,7 @@ describe("ProofTable", () => {
     expect(screen.getByText("Rejected: the receipt never shows")).toBeInTheDocument();
   });
 
-  it("does not claim observer identity that the journey response does not carry", () => {
+  it("does not claim an observer before the Runtime records one", () => {
     render(<ProofTable mission={mission} onOpenTest={vi.fn()}
       flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true,
         screens: [], edges: [], paths: { main: [] } }} />);
@@ -48,8 +48,23 @@ describe("ProofTable", () => {
     expect(screen.getByRole("heading", { name: "Promise" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Observer and evidence" })).toBeInTheDocument();
     const evidence = screen.getByRole("region", { name: "Observer and evidence" });
-    expect(within(evidence).getByText("Observer identity unavailable from this journey response")).toBeInTheDocument();
+    expect(within(evidence).getByText("No recorded observer yet")).toBeInTheDocument();
     expect(within(evidence).getByText("No evidence yet")).toBeInTheDocument();
+  });
+
+  it("#1672: names the observer the Runtime recorded for the shown run, and only that one", async () => {
+    const flow = { id: "j", title: "J", status: "draft" as const, approved: null, drift: [], findings: [], approvable: true,
+      screens: [], edges: [], paths: { main: [] } };
+    const observer = { actor: "journey-preview-runner", runnerSha256: "ab12cd34ef56" + "0".repeat(52), version: "0.1.1" };
+    const run: JourneyRunSource = { start: vi.fn(), read: vi.fn(async () => ({ state: "ready" as const, result: "pass" as const,
+      kind: "preview" as const, ranAt: "2026-10-19T00:00:00Z", observer })),
+      screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null) };
+    render(<ProofTable mission={mission} onOpenTest={vi.fn()} flow={flow} run={run} />);
+    const evidence = screen.getByRole("region", { name: "Observer and evidence" });
+    await waitFor(() => expect(within(evidence)
+      .getByRole("note", { name: "Observed by journey-preview-runner" })).toBeInTheDocument());
+    expect(within(evidence).getByText("version 0.1.1 · runner sha256 ab12cd34ef56")).toBeInTheDocument();
+    expect(within(evidence).queryByText("No recorded observer yet")).toBeNull();
   });
   it("#947: a stale draft without a replay cannot be approved and explains both blockers", () => {
     const onApprove = vi.fn();

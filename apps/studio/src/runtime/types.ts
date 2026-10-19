@@ -540,6 +540,9 @@ export interface JourneyRunView {
   held?: { edge: string; act: string; base: string };
   /** A failed launch's output (#1296): the log file and its last bytes, which name the cause. */
   launchLog?: { path?: string; tail?: string };
+  /** Who observed a recorded passing run (#1672), as the Runtime's record names it: the runner
+   * actor, the sha256 of its binary and its version. Absent when nothing was recorded. */
+  observer?: { actor: string; runnerSha256: string; version: string };
   /** The browser driver died before it answered (#1448): its last stderr, secrets masked. */
   driverLog?: { tail?: string };
 }

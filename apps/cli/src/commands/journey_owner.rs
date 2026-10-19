@@ -347,6 +347,51 @@ pub(crate) fn previewed(
     }))
 }
 
+/// #1672: the observer the stored passing-preview record of `flow` at `digest` on `scope_commit`
+/// names: its actor and the `runnerSha256` and `version` in its description, read back from the
+/// record (never from the binary asking). `None` without such a record, or when its evidence file
+/// no longer hashes to the recorded envelope.
+pub(crate) fn previewed_by(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+    scope_commit: &str,
+) -> Option<serde_json::Value> {
+    use sha2::{Digest, Sha256};
+    let wanted = previewed_signal_id(flow, digest, scope_commit);
+    let records = project.join(".graphhelm/owner-records");
+    owner_history(project).ok()?.iter().find_map(|event| {
+        let EventKind::SignalRecorded(signal) = &event.kind else {
+            return None;
+        };
+        if event.actor.actor_type() != PersistedActorType::System
+            || event.actor.id().as_str() != PREVIEW_RUNNER
+            || signal.kind.as_str() != PREVIEWED_KIND
+            || signal.signal_id.as_str() != wanted
+        {
+            return None;
+        }
+        let bytes = std::fs::read(records.join(format!("{wanted}.json"))).ok()?;
+        if hex::encode(Sha256::digest(&bytes)) != signal.envelope_sha256.as_str() {
+            return None;
+        }
+        let envelope: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        let description: serde_json::Value =
+            serde_json::from_str(envelope["description"].as_str()?).ok()?;
+        (description["protocol"] == PREVIEWED_PROTOCOL
+            && description["flowId"] == flow
+            && description["digest"] == digest
+            && description["scopeCommit"] == scope_commit)
+            .then(|| {
+                serde_json::json!({
+                    "actor": event.actor.id().as_str(),
+                    "runnerSha256": description["runnerSha256"],
+                    "version": description["version"],
+                })
+            })
+    })
+}
+
 /// What a passing preview record carries besides its key: the evidence the runner read and the
 /// runner that read it, so a forged or odd runner is visible in the history.
 pub(crate) struct PreviewEvidence<'a> {

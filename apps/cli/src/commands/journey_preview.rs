@@ -970,7 +970,13 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     // #1309 card 1c: a passing preview is the owner's proof for approve; the runner that played
     // it records it, over the evidence it read, before it publishes completion.
     if run.state["state"] == "ready" && run.state["result"] == "pass" && !run.validation {
-        run.state["recorded"] = record_pass(&run, &project, &digest, &commit).is_ok().into();
+        let recorded = record_pass(&run, &project, &digest, &commit);
+        run.state["recorded"] = recorded.is_ok().into();
+        // #1672: who observed this run, as the record names it: the runner actor, the sha256 of
+        // its binary and its version. Absent when nothing was recorded.
+        if let Ok(observer) = recorded {
+            run.state["observer"] = observer;
+        }
     }
     // Publish completion before down: teardown can block or end the runner (#676).
     run.save();
@@ -991,7 +997,7 @@ fn record_pass(
     project: &Path,
     digest: &str,
     commit: &str,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<Value, String> {
     use sha2::{Digest, Sha256};
     let mut evidence = Sha256::new();
     let results = json!({"screens":run.state["screens"],"edges":run.state["edges"]});
@@ -1021,7 +1027,12 @@ fn record_pass(
             runner_sha256: &hex::encode(Sha256::digest(&runner)),
             version: env!("CARGO_PKG_VERSION"),
         },
-    )
+    )?;
+    // #1672 review: the record may predate this run (an existing record for the same flow,
+    // digest and commit is kept, not rewritten), so the observer is the one the STORED record
+    // names, read back, never this binary's own values.
+    super::journey_owner::previewed_by(project, &run.flow_id, digest, commit)
+        .ok_or_else(|| "the passing preview record could not be read back".to_string())
 }
 
 fn play(
@@ -2395,6 +2406,60 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             downs(),
             1,
             "a record naming another script or directory stops nothing"
+        );
+    }
+
+    /// #1672: the observer a passing preview reports is the one the STORED record names, read
+    /// back. A record for the same flow, digest and commit is kept, not rewritten, so a later run
+    /// by another binary must still report the first runner. Credible regression (#1689 review):
+    /// reporting this binary's own sha and version beside an older record. Cost: one temporary
+    /// project store; no browser.
+    #[test]
+    fn a_later_runner_reports_the_runner_the_stored_record_names() {
+        let project = tempfile::tempdir().unwrap();
+        // The owner record store a project gets from `graphhelm init`.
+        let store = super::super::journey_owner::store(project.path());
+        std::fs::create_dir_all(&store).unwrap();
+        drop(super::super::event_store(&store).unwrap());
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let commit = "c".repeat(40);
+        // Runner A recorded this flow first, with an older version.
+        let runner_a = "a1".repeat(32);
+        super::super::journey_owner::record_previewed(
+            project.path(),
+            "checkout",
+            &digest,
+            &commit,
+            &super::super::journey_owner::PreviewEvidence {
+                evidence_sha256: &"e".repeat(64),
+                runner_sha256: &runner_a,
+                version: "0.0.9",
+            },
+        )
+        .unwrap();
+        // This binary (runner B) passes the same flow at the same digest and commit.
+        let run = super::Run {
+            dir: project.path().join("preview"),
+            state: json!({"state":"ready","result":"pass","screens":{},"edges":{}}),
+            frames: 0,
+            proof: None,
+            contract: String::new(),
+            last: None,
+            confirmed: false,
+            viewport: Value::Null,
+            storage: None,
+            validation: false,
+            flow_id: "checkout".to_owned(),
+        };
+        let observer = super::record_pass(&run, project.path(), &digest, &commit).unwrap();
+        assert_eq!(
+            observer,
+            json!({
+                "actor": super::super::journey_owner::PREVIEW_RUNNER,
+                "runnerSha256": runner_a,
+                "version": "0.0.9",
+            }),
+            "the stored record's runner, not this binary's"
         );
     }
 

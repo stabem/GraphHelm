@@ -120,7 +120,11 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         </section>
         <section className="proof-observer" aria-labelledby="proof-observer-heading">
           <h3 id="proof-observer-heading">Observer and evidence</h3>
-          <p>Observer identity unavailable from this journey response</p>
+          {preview.run?.observer ? <>
+            {/* #1672: named from its rendered text, so a flow can address exactly what is shown. */}
+            <p id="proof-observer-identity" role="note" aria-labelledby="proof-observer-identity">{`Observed by ${preview.run.observer.actor}`}</p>
+            <p>{`version ${preview.run.observer.version} · runner sha256 ${preview.run.observer.runnerSha256.slice(0, 12)}`}</p>
+          </> : <p>No recorded observer yet</p>}
           {preview.run?.state === "ready" && preview.run.ranAt ? (
             <p>{`${preview.run.kind === "replay" ? "Replay" : "Preview"} recorded ${new Date(preview.run.ranAt).toLocaleString()} (${preview.run.result ?? "result unavailable"})`}</p>
           ) : <p>No evidence yet</p>}

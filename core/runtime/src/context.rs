@@ -673,10 +673,16 @@ pub fn compile_for_node_cancellable(
         &terms,
         &capsule_id,
         budget,
-        Some(cancel),
-        ports
-            .ledger
-            .cached_search(execution_id, &ports.search, &ports.reader, &terms, cancel),
+        SearchAttempt {
+            cancel: Some(cancel),
+            cached_result: ports.ledger.cached_search(
+                execution_id,
+                &ports.search,
+                &ports.reader,
+                &terms,
+                cancel,
+            ),
+        },
     ))
 }
 
@@ -752,7 +758,18 @@ pub fn retrieve_and_compile_in(
     capsule_id: &str,
     budget: usize,
 ) -> CompiledContext {
-    retrieve_and_compile_in_cached(root, search, reader, terms, capsule_id, budget, None, None)
+    retrieve_and_compile_in_cached(
+        root,
+        search,
+        reader,
+        terms,
+        capsule_id,
+        budget,
+        SearchAttempt {
+            cancel: None,
+            cached_result: None,
+        },
+    )
 }
 
 /// [`retrieve_and_compile_in`] with the driver's cooperative cancellation token.
@@ -773,9 +790,16 @@ fn retrieve_and_compile_in_cancellable(
         terms,
         capsule_id,
         budget,
-        Some(cancel),
-        None,
+        SearchAttempt {
+            cancel: Some(cancel),
+            cached_result: None,
+        },
     )
+}
+
+struct SearchAttempt<'a> {
+    cancel: Option<&'a ScanCancel>,
+    cached_result: Option<Result<crate::ports::SourceSearchResult, SourceSearchError>>,
 }
 
 fn retrieve_and_compile_in_cached(
@@ -785,9 +809,12 @@ fn retrieve_and_compile_in_cached(
     terms: &[String],
     capsule_id: &str,
     budget: usize,
-    cancel: Option<&ScanCancel>,
-    cached_search_result: Option<Result<crate::ports::SourceSearchResult, SourceSearchError>>,
+    search_attempt: SearchAttempt<'_>,
 ) -> CompiledContext {
+    let SearchAttempt {
+        cancel,
+        cached_result,
+    } = search_attempt;
     let mut summary = NodeContextSummary {
         tokenizer: TOKENIZER_ID.to_owned(),
         estimator: ESTIMATOR_ID.to_owned(),
@@ -822,7 +849,7 @@ fn retrieve_and_compile_in_cached(
         return fallback(summary, ContextFallback::NoTerms);
     }
     summary.retrieval_pages = 1;
-    let search_result = match cached_search_result.unwrap_or_else(|| {
+    let search_result = match cached_result.unwrap_or_else(|| {
         cancel.map_or_else(
             || search.search_with_provenance(terms, &SEARCH_BOUNDS),
             |cancel| search.search_with_provenance_cancellable(terms, &SEARCH_BOUNDS, cancel),

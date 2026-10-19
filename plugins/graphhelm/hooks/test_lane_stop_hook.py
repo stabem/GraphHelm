@@ -3,6 +3,7 @@
 Cost: a few seconds, installed graphhelm, one loopback port; no builds or real Runtime.
 """
 import hashlib
+import io
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
@@ -128,6 +129,44 @@ class ReconcileRuntimeTimeoutTests(unittest.TestCase):
     def test_runtime_timeout_sets_every_runtime_call_and_its_absence_keeps_the_stop_budget(self):
         self.assertEqual(self.timeouts("--runtime-timeout", "45"), [45.0])
         self.assertEqual(self.timeouts(), [2])
+
+
+class ReconcileRunBudgetTests(unittest.TestCase):
+    """#1687: the scheduled board sync hung for hours on a slow Runtime because only each request
+    was bounded. `--run-budget` bounds the whole run: every request gets at most what is left, and
+    the run ends with an error the log names once the budget is spent. Offline: `urlopen` answers
+    an endless journal slowly."""
+
+    def test_the_whole_run_stops_at_its_budget_and_says_so(self):
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        token = folder / "events.agent.graphhelm.token"
+        token.write_text("tok", encoding="utf-8")
+        log = folder / "sync.log"
+        seen = []
+        sequence = [0]
+
+        class Reply(io.BytesIO):
+            pass
+
+        def slow_endless(request, *args, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            time.sleep(0.1)
+            sequence[0] += 1
+            page = {"data": {"events": [{"sequence": sequence[0], "kind": {"type": "noise"}}],
+                             "head": 10 ** 9}}
+            return Reply(json.dumps(page).encode())
+
+        argv = ["tasks_reconcile.py", "--execution", "gh-team", "--url", "http://127.0.0.1:1",
+                "--token-file", str(token), "--repo", "stabem/GraphHelm", "--lane", "graphhelm",
+                "--runtime-timeout", "60", "--run-budget", "0.5", "--log", str(log)]
+        devnull = open(os.devnull, "w", encoding="utf-8")
+        self.addCleanup(devnull.close)
+        started = time.monotonic()
+        with mock.patch.object(sys, "argv", argv),                 mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=slow_endless),                 mock.patch.object(sys, "stderr", new=devnull):
+            self.assertEqual(tasks_reconcile.main(), 1)
+        self.assertLess(time.monotonic() - started, 5, "the run must end near its budget")
+        self.assertTrue(seen and all(timeout <= 0.5 for timeout in seen), seen)
+        self.assertIn("run budget", log.read_text(encoding="utf-8"))
 
 
 class ReconciledDigestTests(unittest.TestCase):
@@ -362,6 +401,37 @@ class LaneStopTests(unittest.TestCase):
         self.assertGreaterEqual(len(requests), 2, "reconcile should read events and their sealed evidence")
         self.assertTrue(all(request.get_header("X-graphhelm-actor") == "codex-4" for request in requests),
                         [request.headers for request in requests])
+
+    def test_reconcile_reads_each_sealed_record_once_across_runs(self):
+        """#1687: each run used to page the whole journal and open every sealed task record again,
+        so its cost grew with history until the scheduled sync never finished. With a record cache
+        the next run reads only what was appended since, and a new record is still read."""
+        self.claim(766)
+        token = Path(self.env["GRAPHHELM_TOKEN_FILE"]).read_text(encoding="utf-8").strip()
+        cache = Path(self.tmp.name) / "records.cache.json"
+        opened = []
+        urlopen = tasks_reconcile.urllib.request.urlopen
+
+        def capture(request, *args, **kwargs):
+            if "/evidence/" in request.full_url:
+                opened.append(request.full_url)
+            return urlopen(request, *args, **kwargs)
+
+        def shape(found):
+            return [(kind, doc, event["sequence"]) for kind, doc, event in found]
+
+        with mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=capture):
+            first = shape(tasks_reconcile.records(self.url, token, "lane-test", cache=cache))
+            read_first = len(opened)
+            second = shape(tasks_reconcile.records(self.url, token, "lane-test", cache=cache))
+            self.assertEqual(len(opened), read_first, "a sealed record already read is not fetched again")
+            self.claim(767)
+            third = shape(tasks_reconcile.records(self.url, token, "lane-test", cache=cache))
+        self.assertGreaterEqual(read_first, 1)
+        self.assertEqual(second, first)
+        self.assertEqual(len(opened), read_first + 1, "only the new record is fetched")
+        self.assertEqual(third[:len(first)], first)
+        self.assertEqual([doc["taskId"] for kind, doc, _ in third[len(first):]], ["issue-767"])
 
     def note(self, signal_id, to=None, reply=None, actor="owner"):
         signal = {"id": signal_id, "source": {"type": "user", "id": actor}, "type": "operator_note",

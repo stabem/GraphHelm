@@ -1622,6 +1622,11 @@ it("returns independently validated previous exit and startup records from one h
     // #41: an allocation-failure abort is named, with the request size, not dropped as unknown.
     [{ state: "out_of_memory", pid: 1, at: 2, size: 1099511627776 }, { state: "out_of_memory", pid: 1, at: 2, size: 1099511627776 }],
     [{ state: "out_of_memory", pid: 1, at: 2, size: -1 }, { state: "out_of_memory", pid: 1, at: 2 }],
+    // ADR-046 (#41): a start-up recovery is kept only in its exact shape.
+    [{ state: "vanished", pid: 1, at: 2, journalTailRecovered: { trimmedBytes: 19, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", quarantine: "torn-tail-1133-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bin" } }, { state: "vanished", pid: 1, at: 2, journalTailRecovered: { trimmedBytes: 19, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", quarantine: "torn-tail-1133-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bin" } }],
+    [{ state: "vanished", pid: 1, at: 2, journalTailRecovered: { trimmedBytes: 19, sha256: "XYZ", quarantine: "torn-tail-1133-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bin" } }, { state: "vanished", pid: 1, at: 2 }],
+    [{ state: "vanished", pid: 1, at: 2, journalTailRecovered: { trimmedBytes: 19, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", quarantine: "../secret.bin" } }, { state: "vanished", pid: 1, at: 2 }],
+    [{ state: "vanished", pid: 1, at: 2, journalTailRecovered: { trimmedBytes: 0, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", quarantine: "torn-tail-1133-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bin" } }, { state: "vanished", pid: 1, at: 2 }],
     [{ state: "vanished", pid: 1, at: 1e30 }, null],
     [{ state: "vanished", pid: 1, at: 2, location: "C:/Users/private/src/main.rs:1", lastPanic: { location: "crate/src/../secret.rs:1" } }, { state: "vanished", pid: 1, at: 2, location: "unknown", lastPanic: { location: "unknown" } }],
     [undefined, null],

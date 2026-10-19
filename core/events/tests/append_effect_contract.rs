@@ -189,6 +189,15 @@ fn a_crash_mid_write_is_trimmed_quarantined_and_retried_on_resume() {
 
     let resumed = open_recovering(directory.path());
     assert_eq!(
+        resumed.recovered_torn_tail(),
+        Some(graphhelm_events::RecoveredTail {
+            trimmed_bytes: u64::try_from(tail.len()).unwrap(),
+            sha256: hex::encode(sha2::Sha256::digest(&tail)),
+            quarantine: quarantined(directory.path())[0].0.clone(),
+        }),
+        "the handle reports exactly what it trimmed"
+    );
+    assert_eq!(
         std::fs::read(&journal).unwrap(),
         committed,
         "only the tail was cut"

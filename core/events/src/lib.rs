@@ -42,7 +42,7 @@ pub use limits::{
 };
 pub use local::{
     LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, PrefixCache, ReadLockHeld,
-    journal_line_roundtrips, with_repository_read_lock,
+    RecoveredTail, journal_line_roundtrips, with_repository_read_lock,
 };
 pub use memory::{
     MemoryAdmissionRefusalAppend, MemoryPublicationTransitionAppend, MemoryRecordSupersededAppend,

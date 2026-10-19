@@ -712,6 +712,16 @@ export class RuntimeClient {
     if (typeof value.instance === "string" && /^[0-9a-f]{32}$/.test(value.instance)) result.instance = value.instance;
     if (value.location !== undefined) result.location = location(value.location);
     if (state === "out_of_memory" && typeof value.size === "number" && Number.isSafeInteger(value.size) && value.size >= 0) result.size = value.size;
+    // ADR-046 (#41): shown only in its exact shape; the quarantine name is the store's own form.
+    const tail = value.journalTailRecovered;
+    if (tail !== null && typeof tail === "object" && !Array.isArray(tail)) {
+      const { trimmedBytes, sha256, quarantine } = tail as Record<string, unknown>;
+      if (typeof trimmedBytes === "number" && Number.isSafeInteger(trimmedBytes) && trimmedBytes > 0 &&
+        typeof sha256 === "string" && /^[0-9a-f]{64}$/.test(sha256) &&
+        typeof quarantine === "string" && /^torn-tail-[0-9]{1,20}-[0-9a-f]{64}\.bin$/.test(quarantine)) {
+        result.journalTailRecovered = { trimmedBytes, sha256, quarantine };
+      }
+    }
     if (value.lastPanic !== undefined) {
       const panic = value.lastPanic;
       result.lastPanic = { location: location(panic !== null && typeof panic === "object" ? (panic as Record<string, unknown>).location : undefined) };

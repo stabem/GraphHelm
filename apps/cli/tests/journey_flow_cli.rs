@@ -945,20 +945,18 @@ fn a_recorded_preview_survives_unrelated_commits_and_dies_with_its_scope() {
     assert!(finding(&reply, "flow.preview_not_passed"), "{reply}");
 }
 
-/// #1633 follow-up: a flow that says part of its purpose is unobserved cannot be approved.
-/// `studio-new-task` marks a screen `OBSERVER_MISSING #1042` in its title; validate flags it as a
-/// warning and approve refuses it.
+/// #1633 follow-up: a flow that says part of its purpose is unobserved cannot be approved. The
+/// cell builds its own marked flow from the checkout fixture: a live flow loses or gains the mark
+/// as its observer lands (#1667 removed it from `studio-new-task` and turned main red). Validate
+/// flags it as a warning; approve refuses it even with a recorded passing preview.
 #[test]
 fn a_flow_marked_observer_missing_is_refused_by_validate_and_approve() {
-    const NEW_TASK: &str =
-        include_str!("../../../.graphhelm/journeys/studio-new-task.journey.yaml");
-    let dir = committed(NEW_TASK);
-    std::fs::rename(
-        dir.path().join(".graphhelm/journeys/checkout.journey.yaml"),
-        dir.path()
-            .join(".graphhelm/journeys/studio-new-task.journey.yaml"),
-    )
-    .unwrap();
+    let marked = EXAMPLE.replace(
+        "title: The order confirmation",
+        "title: \"The order confirmation (its observer: OBSERVER_MISSING #1042)\"",
+    );
+    assert_ne!(marked, EXAMPLE, "the fixture screen title carries the mark");
+    let dir = committed(&marked);
     let token = owner_token(dir.path());
     // validate flags it and stays usable (#1287: flagged, never broken); approve refuses it.
     let checked = validate(dir.path());
@@ -968,11 +966,8 @@ fn a_flow_marked_observer_missing_is_refused_by_validate_and_approve() {
             && checked.to_string().contains("flow.observer_missing: "),
         "{checked}"
     );
-    passing_preview(dir.path(), "studio-new-task");
-    let (out, reply) = run(
-        dir.path(),
-        &["approve", "studio-new-task", "--token-file", &token],
-    );
+    passing_preview(dir.path(), "checkout");
+    let (out, reply) = run(dir.path(), &["approve", "checkout", "--token-file", &token]);
     assert_ne!(out.status.code(), Some(0), "{reply}");
     assert!(finding(&reply, "flow.observer_missing"), "{reply}");
 }

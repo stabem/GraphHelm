@@ -1,7 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-journey-tab
-title: "Review the promise beside its observer section (observer identity: OBSERVER_MISSING #1041)"
-purpose: "The owner opens a journey's Proof and sees its promise beside the Observer and evidence section. For a recorded run the section shows an observer note; this flow proves only that the note appears, not which runner it names (the record read-back is proven by journey_preview::a_later_runner_reports_the_runner_the_stored_record_names). The recorded run is the fixture-only runtime-health seed, not a real project's preview."
+title: Open the Proof tab and see the observer note of a recorded run
+purpose: "The owner opens the Proof tab of a run (Mission views), sees the Proof region with its Journeys list, the Promise and Observer and evidence headings and the Approve action, and, after choosing a journey with a recorded preview, an observer note reading Observed by journey-preview-runner. It does not claim which runner or version the note names. The recorded journey is the fixture-only runtime-health seed."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -10,13 +10,13 @@ secrets: []
 risks: [critical_ux]
 screens:
   - id: observed
-    title: The recorded journey names the runner that observed it
+    title: A journey with a recorded preview shows its observer note
     url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: heading, name: Observer and evidence}, {role: note, name: Observed by journey-preview-runner}]
     scope: [apps/studio/src/components/proof-table.tsx, apps/studio/src/runtime/types.ts, apps/cli/src/commands/journey_preview.rs]
   - id: proof
-    title: Review the promise and named observer evidence before deciding
+    title: "The Proof view shows the promise, the observer section and the Approve action"
     url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: region, name: Proof}, {role: navigation, name: Journeys}, {role: heading, name: Promise}, {role: heading, name: Observer and evidence}, {role: group, name: Journey actions}, {role: button, name: Approve}]

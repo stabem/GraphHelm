@@ -23,6 +23,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -34,10 +35,25 @@ MAX_PRS_PER_STOP = 20
 # #1632: `--runtime-timeout` for the scheduled board sync, which can wait on a slow Runtime; the
 # Stop hook keeps the short defaults (2 s reads, 3 s writes) when it is not given.
 RUNTIME_TIMEOUT = None
+# #1687: the whole run's deadline (`time.monotonic()`), set by `--run-budget`. Bounding only each
+# request let one scheduled run on a slow Runtime last for hours while every later trigger was
+# skipped; now every call gets at most what is left, and a spent budget ends the run.
+RUN_DEADLINE = None
+DEFAULT_RUN_BUDGET = 240.0
+
+
+def left(default):
+    """The wait one call may take: `default`, never past the run's deadline. A spent budget raises."""
+    if RUN_DEADLINE is None:
+        return default
+    remaining = RUN_DEADLINE - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("run budget exhausted; the records read so far are kept for the next run")
+    return min(default, remaining)
 
 
 def runtime_timeout(default):
-    return RUNTIME_TIMEOUT if RUNTIME_TIMEOUT is not None else default
+    return left(RUNTIME_TIMEOUT if RUNTIME_TIMEOUT is not None else default)
 
 
 def cursor_path(token_file, lane):
@@ -77,10 +93,78 @@ def get(url, token, lane=None):
         return json.load(reply)["data"]
 
 
-def records(base, token, execution, lane=None):
+RECORDS_SCHEMA = "graphhelm-reconcile-records/2"
+# #1687 review: the cache keeps only the identifiers reconcile() reads, never a task document.
+CACHED_FIELDS = ("taskId", "lane", "pr", "repo", "claimSequence")
+
+
+def records_cache_path(token_file, base, execution):
+    """#1687: the task-record identifiers of one execution on one Runtime, kept beside the token."""
+    path = Path(token_file)
+    key = hashlib.sha256(f"{base.rstrip('/')}\n{execution}".encode()).hexdigest()[:16]
+    return path.with_name(f"{path.stem}.reconcile.records.{key}.json")
+
+
+def cached_form(record):
+    """What the cache keeps of one verified record, and what records() returns when it caches."""
+    kind, document, event = record
+    return (kind, {field: document[field] for field in CACHED_FIELDS if field in document},
+            {"sequence": event.get("sequence"), "actor": {"id": event.get("actor", {}).get("id")}})
+
+
+def load_records(cache, base, execution):
+    """The records a previous run verified, the sequence it read up to and the `eventHash` of that
+    event. Nothing when absent, unreadable, or written for another Runtime or execution."""
+    if cache is None:
+        return 0, [], None
+    try:
+        stored = json.loads(Path(cache).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0, [], None
+    if (not isinstance(stored, dict) or stored.get("schema") != RECORDS_SCHEMA
+            or stored.get("base") != base or stored.get("execution") != execution
+            or type(stored.get("after")) is not int or stored["after"] < 1
+            or not isinstance(stored.get("anchor"), str) or not isinstance(stored.get("records"), list)):
+        return 0, [], None
+    return stored["after"], [tuple(item) for item in stored["records"]], stored["anchor"]
+
+
+def save_records(cache, base, execution, after, anchor, found):
+    """Atomic, and created owner-only like the session hook's private files: the temporary is
+    opened O_EXCL with mode 0600 (on Windows it inherits the token directory's ACL)."""
+    if cache is None or not isinstance(anchor, str):
+        return
+    path = Path(cache)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    body = json.dumps({"schema": RECORDS_SCHEMA, "base": base, "execution": execution, "after": after,
+                       "anchor": anchor, "records": [list(item) for item in found]}).encode("utf-8")
+    try:
+        temporary.unlink(missing_ok=True)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(body)
+        os.replace(temporary, path)
+    except OSError:
+        temporary.unlink(missing_ok=True)  # local state only: a lost cache means a full read, never a failure
+
+
+def records(base, token, execution, lane=None, cache=None):
+    """Every verified task record of the execution, oldest first. #1687: with `cache`, the journal
+    is read only past the sequence the last run reached and each sealed record is opened once; the
+    cache advances page by page, so a run its budget stops still leaves progress for the next.
+
+    The cache is believed only while the journal still holds, at the cached sequence, the event
+    whose `eventHash` was cached. Events are hash-chained (`previousHash`), so that one match
+    vouches for every cached record before it, each of which had its sealed digest checked when it
+    was read. A replaced or rewritten store fails the match and is read again from 0. With a cache,
+    records carry only `CACHED_FIELDS`, fresh or cached alike."""
     path = f"{base}/v1/executions/{urllib.parse.quote(execution, safe='')}"
-    after = 0
-    events = []
+    open_record = record_opener(path, token, lane)
+    after, found, anchor = load_records(cache, base, execution)
+    if after:
+        probe = get(f"{path}/events?after={after - 1}&limit=1", token, lane)["events"]
+        if not probe or probe[0].get("sequence") != after or probe[0].get("eventHash") != anchor:
+            after, found, anchor = 0, [], None
     while True:
         page = get(f"{path}/events?after={after}&limit=512", token, lane)
         batch = page["events"]
@@ -88,6 +172,7 @@ def records(base, token, execution, lane=None):
             if after < page["head"]:
                 raise ValueError("incomplete event page")
             break
+        events = []
         for event in batch:
             kind = event.get("kind", {})
             detail = kind.get("data", {})
@@ -99,10 +184,17 @@ def records(base, token, execution, lane=None):
         last = batch[-1]["sequence"]
         if last <= after:
             raise ValueError("event cursor did not advance")
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            opened = list(pool.map(open_record, events))
+        found.extend(opened if cache is None else map(cached_form, opened))
         after = last
+        save_records(cache, base, execution, after, batch[-1].get("eventHash"), found)
         if after >= page["head"]:
             break
+    return found
 
+
+def record_opener(path, token, lane):
     def open_record(item):
         event, detail, evidence_id = item
         evidence = get(f"{path}/evidence/{urllib.parse.quote(evidence_id, safe='')}", token, lane)
@@ -128,23 +220,23 @@ def records(base, token, execution, lane=None):
                 match = re.fullmatch(r"https://github\.com/([^/]+/[^/]+)/issues/([1-9][0-9]*)", refs[0])
                 if match and f"issue-{match.group(2)}" == document.get("taskId"):
                     document["repo"] = match.group(1)
-        return detail["kind"], document, event
-
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        return list(pool.map(open_record, events))
+        # Only what a reader of the records uses is kept, so a cached record equals a fresh one.
+        return detail["kind"], document, {"sequence": event.get("sequence"),
+                                          "actor": {"id": event.get("actor", {}).get("id")}}
+    return open_record
 
 
 def github(pr, repo):
     result = subprocess.run(["gh", "pr", "view", str(pr), "--repo", repo,
                              "--json", "state,mergeCommit,mergedAt,closingIssuesReferences,body"],
-                            capture_output=True, text=True, encoding="utf-8", timeout=3, check=True, creationflags=NO_WINDOW)
+                            capture_output=True, text=True, encoding="utf-8", timeout=left(3), check=True, creationflags=NO_WINDOW)
     return json.loads(result.stdout)
 
 
 def github_issue(issue, repo):
     result = subprocess.run(["gh", "issue", "view", str(issue), "--repo", repo,
                              "--json", "state,assignees"], capture_output=True, text=True,
-                            encoding="utf-8", timeout=3, check=True, creationflags=NO_WINDOW)
+                            encoding="utf-8", timeout=left(3), check=True, creationflags=NO_WINDOW)
     return json.loads(result.stdout)
 
 
@@ -340,7 +432,8 @@ def reconcile(args):
     # #1628: every lane's claims, for --adopt-opened: taskId -> [(sequence, lane)], released
     # sequences, and the tasks that already have a PR.
     all_claims, all_released, with_pr = {}, set(), set()
-    for kind, doc, event in records(args.url.rstrip("/"), token, args.execution, args.lane):
+    cache = records_cache_path(args.token_file, args.url.rstrip("/"), args.execution)
+    for kind, doc, event in records(args.url.rstrip("/"), token, args.execution, args.lane, cache=cache):
         task_id = doc.get("taskId")
         lane = doc.get("lane")
         if doc.get("repo", args.repo) == args.repo and re.fullmatch(r"issue-[1-9][0-9]*", str(task_id)):
@@ -551,9 +644,13 @@ def main():
     parser.add_argument("--log", help="#1628: append the reply (or the error) to this file, for pythonw")
     parser.add_argument("--runtime-timeout", type=float,
                         help="#1632: seconds each Runtime request may take (default 2 for reads, 3 for writes)")
+    parser.add_argument("--run-budget", type=float, default=DEFAULT_RUN_BUDGET,
+                        help="#1687: seconds the whole run may take; every call gets at most what is "
+                             "left and a spent budget ends the run (0: no bound)")
     args = parser.parse_args()
-    global RUNTIME_TIMEOUT
+    global RUNTIME_TIMEOUT, RUN_DEADLINE
     RUNTIME_TIMEOUT = args.runtime_timeout
+    RUN_DEADLINE = time.monotonic() + args.run_budget if args.run_budget > 0 else None
 
     def emit(line, stream):
         if args.log:
@@ -566,10 +663,15 @@ def main():
         if stream is not None:
             print(line, file=stream)
     try:
+        # #1687: first, so a run the scheduler kills still leaves a start line with no end line.
+        emit(f"tasks reconcile: start (runtime-timeout {args.runtime_timeout}, "
+             f"run-budget {args.run_budget:g})", None)
         emit(json.dumps(reconcile(args)), sys.stdout)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         emit(f"tasks reconcile: {error}", sys.stderr)
         return 1
+    finally:
+        RUN_DEADLINE = None  # the budget is this run's; an importer calling reconcile() is unbounded
     return 0
 
 

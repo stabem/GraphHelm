@@ -642,6 +642,9 @@ def main():
         if stream is not None:
             print(line, file=stream)
     try:
+        # #1687: first, so a run the scheduler kills still leaves a start line with no end line.
+        emit(f"tasks reconcile: start (runtime-timeout {args.runtime_timeout}, "
+             f"run-budget {args.run_budget:g})", None)
         emit(json.dumps(reconcile(args)), sys.stdout)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         emit(f"tasks reconcile: {error}", sys.stderr)

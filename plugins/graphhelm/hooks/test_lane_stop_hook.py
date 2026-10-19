@@ -162,11 +162,36 @@ class ReconcileRunBudgetTests(unittest.TestCase):
         devnull = open(os.devnull, "w", encoding="utf-8")
         self.addCleanup(devnull.close)
         started = time.monotonic()
-        with mock.patch.object(sys, "argv", argv),                 mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=slow_endless),                 mock.patch.object(sys, "stderr", new=devnull):
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=slow_endless), \
+                mock.patch.object(sys, "stderr", new=devnull):
             self.assertEqual(tasks_reconcile.main(), 1)
         self.assertLess(time.monotonic() - started, 5, "the run must end near its budget")
         self.assertTrue(seen and all(timeout <= 0.5 for timeout in seen), seen)
         self.assertIn("run budget", log.read_text(encoding="utf-8"))
+
+    def test_a_logged_run_writes_its_start_before_anything_can_kill_it(self):
+        """#1687: the task scheduler killed a hung run (0x41306) and the log kept no trace of it,
+        because main() wrote only once reconcile() returned. The start line comes first."""
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        token = folder / "events.agent.graphhelm.token"
+        token.write_text("tok", encoding="utf-8")
+        log = folder / "sync.log"
+        argv = ["tasks_reconcile.py", "--execution", "gh-team", "--url", "http://127.0.0.1:1",
+                "--token-file", str(token), "--repo", "stabem/GraphHelm", "--lane", "graphhelm",
+                "--runtime-timeout", "45", "--log", str(log)]
+        devnull = open(os.devnull, "w", encoding="utf-8")
+        self.addCleanup(devnull.close)
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(tasks_reconcile.urllib.request, "urlopen",
+                                  side_effect=urllib.error.URLError("offline")), \
+                mock.patch.object(sys, "stderr", new=devnull):
+            self.assertEqual(tasks_reconcile.main(), 1)
+        lines = log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 2, lines)
+        self.assertIn("tasks reconcile: start", lines[0])
+        self.assertIn("runtime-timeout 45", lines[0])
+        self.assertIn("offline", lines[1])
 
 
 class ReconciledDigestTests(unittest.TestCase):

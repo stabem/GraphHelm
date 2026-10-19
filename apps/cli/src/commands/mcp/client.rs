@@ -96,7 +96,7 @@ pub(crate) enum TokenSource {
     /// on the same port without a restart.
     Discover {
         port: u16,
-        cache: std::sync::Mutex<Option<Zeroizing<String>>>,
+        cache: std::sync::Mutex<Option<DiscoveredEndpoint>>,
     },
     /// `--discover` without `--url`: resolve the current project's verified Runtime, regardless
     /// of its port. The endpoint and token are refreshed after a refused request or transport
@@ -111,6 +111,32 @@ pub(crate) enum TokenSource {
 pub(crate) struct DiscoveredEndpoint {
     url: String,
     token: Zeroizing<String>,
+    /// #1523: the file the token was read from, so a running `graphhelm mcp` can hand the next
+    /// child the endpoint without the token ever entering argv. `None` for a lane credential.
+    token_file: Option<std::path::PathBuf>,
+}
+
+/// #1523: what a request saw of its endpoint, worst first. A child started with a routed endpoint
+/// exits with [`EndpointSeen::exit_code`] so the router forgets an endpoint that failed.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum EndpointSeen {
+    Answered = 0,
+    Unreachable = 1,
+    Unauthorized = 2,
+}
+
+impl EndpointSeen {
+    /// `EX_TEMPFAIL` for an endpoint that did not answer, one above it for a refused token.
+    pub(crate) const UNREACHABLE_EXIT: i32 = 75;
+    pub(crate) const UNAUTHORIZED_EXIT: i32 = 76;
+
+    pub(crate) fn exit_code(self) -> i32 {
+        match self {
+            Self::Answered => 0,
+            Self::Unreachable => Self::UNREACHABLE_EXIT,
+            Self::Unauthorized => Self::UNAUTHORIZED_EXIT,
+        }
+    }
 }
 
 impl TokenSource {
@@ -143,6 +169,8 @@ pub(crate) struct ApiClient {
     /// previous session that reused this actor id.
     session: String,
     transport: UreqTransport,
+    /// #1523: the worst [`EndpointSeen`] of any request this client placed.
+    seen: std::sync::atomic::AtomicU8,
 }
 
 impl ApiClient {
@@ -164,7 +192,32 @@ impl ApiClient {
             effort,
             session,
             transport: UreqTransport::new(),
+            seen: std::sync::atomic::AtomicU8::new(EndpointSeen::Answered as u8),
         }
+    }
+
+    /// #1523: the worst thing any request of this client saw of its endpoint.
+    pub(crate) fn endpoint_seen(&self) -> EndpointSeen {
+        match self.seen.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => EndpointSeen::Answered,
+            1 => EndpointSeen::Unreachable,
+            _ => EndpointSeen::Unauthorized,
+        }
+    }
+
+    /// #1523: the endpoint this client discovered and still trusts, as URL and token FILE, for the
+    /// router to hand the next child. Never discovers; `None` without discovery or before it.
+    pub(crate) fn discovered(&self) -> Option<(String, std::path::PathBuf)> {
+        let endpoint = match &self.token {
+            TokenSource::Fixed(_) => return None,
+            TokenSource::Discover { cache, .. } | TokenSource::DiscoverProject { cache, .. } => {
+                cache
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone()?
+            }
+        };
+        Some((endpoint.url, endpoint.token_file?))
     }
 
     /// The attribution headers a mutation carries: actor identity, actor type, this process's
@@ -230,6 +283,7 @@ impl ApiClient {
         .map_err(|_| "the lane credential file is unavailable or invalid".to_owned())?;
         let mut endpoint = self.current_endpoint()?;
         endpoint.token = Zeroizing::new(token);
+        endpoint.token_file = None;
         self.request_with(
             &endpoint,
             "POST",
@@ -311,12 +365,7 @@ impl ApiClient {
 
     fn clear_discovery_cache(&self) {
         match &self.token {
-            TokenSource::Discover { cache, .. } => {
-                *cache
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-            }
-            TokenSource::DiscoverProject { cache, .. } => {
+            TokenSource::Discover { cache, .. } | TokenSource::DiscoverProject { cache, .. } => {
                 *cache
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
@@ -331,23 +380,18 @@ impl ApiClient {
             TokenSource::Fixed(token) => Ok(DiscoveredEndpoint {
                 url: self.base_url.clone(),
                 token: token.clone(),
+                token_file: None,
             }),
             TokenSource::Discover { port, cache } => {
                 let mut cache = cache
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if let Some(token) = cache.as_ref() {
-                    return Ok(DiscoveredEndpoint {
-                        url: self.base_url.clone(),
-                        token: token.clone(),
-                    });
+                if let Some(endpoint) = cache.as_ref() {
+                    return Ok(endpoint.clone());
                 }
-                let token = self.discover(*port)?;
-                *cache = Some(token.clone());
-                Ok(DiscoveredEndpoint {
-                    url: self.base_url.clone(),
-                    token,
-                })
+                let endpoint = self.discover(*port)?;
+                *cache = Some(endpoint.clone());
+                Ok(endpoint)
             }
             TokenSource::DiscoverProject { project_id, cache } => {
                 let mut cache = cache
@@ -366,7 +410,7 @@ impl ApiClient {
     /// Reads the port's discovery record, confirms the live Runtime's `/health` instance matches
     /// it, and reads the token file it names. Every refusal says what to do; none carries the
     /// token.
-    fn discover(&self, port: u16) -> Result<Zeroizing<String>, String> {
+    fn discover(&self, port: u16) -> Result<DiscoveredEndpoint, String> {
         use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest};
         let fail = |reason: &str| format!("runtime discovery (--discover): {reason}");
         let dir = crate::commands::runtime_record::registry_dir()
@@ -392,12 +436,17 @@ impl ApiClient {
             )));
         }
         // #380: discovery hands out the agent session token, never the owner token.
+        let token_file = crate::commands::secret_file::agent_token_beside(&record.token_file);
         let token = crate::commands::secret_file::read_existing(
-            &crate::commands::secret_file::agent_token_beside(&record.token_file),
+            &token_file,
             "discovered agent session token",
         )
         .map_err(|e| fail(e.message()))?;
-        Ok(Zeroizing::new(token))
+        Ok(DiscoveredEndpoint {
+            url: self.base_url.clone(),
+            token: Zeroizing::new(token),
+            token_file: Some(token_file),
+        })
     }
 
     /// Selects the one live Runtime registered for a project identity, with no port supplied by
@@ -482,14 +531,16 @@ impl ApiClient {
         }
         let record = live.pop().expect("one live record was checked");
         // #380: discovery hands out the agent session token, never the owner token.
+        let token_file = crate::commands::secret_file::agent_token_beside(&record.token_file);
         let token = crate::commands::secret_file::read_existing(
-            &crate::commands::secret_file::agent_token_beside(&record.token_file),
+            &token_file,
             "discovered agent session token",
         )
         .map_err(|error| fail(error.message()))?;
         Ok(DiscoveredEndpoint {
             url: record.url,
             token: Zeroizing::new(token),
+            token_file: Some(token_file),
         })
     }
 
@@ -542,12 +593,20 @@ impl ApiClient {
             timeout,
         };
         // The transport error's Display never has access to a header value — safe to relay.
-        let response = self
-            .transport
-            .execute(&request)
-            .map_err(|error| error.to_string())?;
+        let response = self.transport.execute(&request).map_err(|error| {
+            self.saw(EndpointSeen::Unreachable);
+            error.to_string()
+        })?;
+        if response.status == 401 {
+            self.saw(EndpointSeen::Unauthorized);
+        }
         let value = serde_json::from_slice(&response.body).unwrap_or(serde_json::Value::Null);
         Ok((response.status, value))
+    }
+
+    fn saw(&self, seen: EndpointSeen) {
+        self.seen
+            .fetch_max(seen as u8, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

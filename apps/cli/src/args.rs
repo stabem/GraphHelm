@@ -1233,6 +1233,21 @@ pub struct McpArgs {
     /// dedicated reader/summarizer command is a named follow-up, not built by #213.
     #[arg(long = "capability-audit-log")]
     pub capability_audit_log: Option<PathBuf>,
+    /// #1523, internal: set only by a running `graphhelm mcp` on the child it starts for one
+    /// `tools/list` or `tools/call`. The child answers the one request line on its stdin and exits.
+    #[arg(long = "one-request", hide = true)]
+    pub one_request: bool,
+    /// #1523, internal: the router's session nonce, so every child keys its mutations, leases and
+    /// `X-GraphHelm-Actor-Session` with the one session identity.
+    #[arg(long = "session-nonce", hide = true, requires = "one_request")]
+    pub session_nonce: Option<String>,
+    /// #1523, internal: the Runtime an earlier child of this session discovered. The child uses it
+    /// instead of discovering again.
+    #[arg(long = "routed-url", hide = true, requires_all = ["one_request", "routed_token_file"])]
+    pub routed_url: Option<String>,
+    /// #1523, internal: the discovered agent token's FILE; the token itself never travels in argv.
+    #[arg(long = "routed-token-file", hide = true, requires = "routed_url")]
+    pub routed_token_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

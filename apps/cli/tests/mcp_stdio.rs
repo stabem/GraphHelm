@@ -3455,3 +3455,125 @@ fn tasks_tool_narrows_to_one_lane_or_one_issue() {
     assert!(bad_error, "{bad}");
     assert_eq!(bad["diagnostics"][0]["path"], "/lane", "{bad}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// #1523: every tool request runs the binary now at the launch path.
+// ---------------------------------------------------------------------------------------------
+
+/// A live session over piped stdio, read one reply at a time (the whole-session harness above
+/// closes stdin first, and this cell must change the disk between two requests).
+struct LiveMcp {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    replies: std::sync::mpsc::Receiver<serde_json::Value>,
+}
+
+impl LiveMcp {
+    fn start(program: &std::path::Path) -> Self {
+        let mut child = graphhelm_process::command(program)
+            .args([
+                "mcp",
+                "--url",
+                "http://127.0.0.1:9",
+                "--actor",
+                "agent-chat",
+            ])
+            .env("GRAPHHELM_API_TOKEN", "test-token")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("the copied graphhelm starts");
+        let stdin = child.stdin.take().expect("piped stdin");
+        let stdout = child.stdout.take().expect("piped stdout");
+        let (sender, replies) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::BufRead as _;
+            for line in std::io::BufReader::new(stdout).lines() {
+                let Ok(line) = line else { return };
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line)
+                    && value.get("jsonrpc").is_some()
+                    && sender.send(value).is_err()
+                {
+                    return;
+                }
+            }
+        });
+        Self {
+            child,
+            stdin,
+            replies,
+        }
+    }
+
+    fn send(&mut self, message: &serde_json::Value) {
+        use std::io::Write as _;
+        writeln!(self.stdin, "{message}").expect("the server reads stdin");
+        self.stdin.flush().expect("stdin flushes");
+    }
+
+    fn ask(&mut self, message: &serde_json::Value) -> serde_json::Value {
+        self.send(message);
+        self.replies
+            .recv_timeout(scaled(Duration::from_secs(30)))
+            .unwrap_or_else(|_| panic!("no reply to {message}"))
+    }
+}
+
+impl Drop for LiveMcp {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// `graphhelm update` swaps the file at the launch path while a host session keeps its MCP server
+/// running. The server must not keep answering tools with the build it started as: each
+/// `tools/list` and `tools/call` runs the binary that is at the launch path now. Staged with the
+/// swap itself: the running copy is moved aside (what an update does on Windows) and the path
+/// first holds a file that cannot run, then a runnable copy again. Lifecycle requests stay with
+/// the server, so a broken install never costs the session its `ping`.
+#[test]
+fn each_tool_request_runs_the_binary_now_at_the_launch_path() {
+    let built = std::path::PathBuf::from(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let install = tempfile::tempdir().expect("temp install dir");
+    let launch = install
+        .path()
+        .join(built.file_name().expect("the binary has a file name"));
+    std::fs::copy(&built, &launch).expect("copy the binary to the launch path");
+
+    let mut mcp = LiveMcp::start(&launch);
+    assert_eq!(
+        mcp.ask(&initialize_request(1, "2025-06-18"))["id"],
+        serde_json::json!(1)
+    );
+    mcp.send(&initialized_notification());
+    let list = serde_json::json!({"jsonrpc": "2.0", "id": "before", "method": "tools/list"});
+    let before = mcp.ask(&list);
+    assert!(before["result"]["tools"].is_array(), "{before}");
+
+    std::fs::rename(&launch, install.path().join("moved-aside")).expect("move the running copy");
+    std::fs::write(&launch, b"not a program").expect("the launch path now holds a broken file");
+    let broken =
+        mcp.ask(&serde_json::json!({"jsonrpc": "2.0", "id": "broken", "method": "tools/list"}));
+    assert_eq!(broken["id"], serde_json::json!("broken"), "{broken}");
+    assert!(
+        broken.get("error").is_some() && broken.get("result").is_none(),
+        "a tool request must run the binary now at the launch path, which cannot run: {broken}"
+    );
+    let pong = mcp.ask(&serde_json::json!({"jsonrpc": "2.0", "id": "p", "method": "ping"}));
+    assert!(
+        pong.get("result").is_some(),
+        "the server itself still answers: {pong}"
+    );
+
+    std::fs::remove_file(&launch).expect("remove the broken file");
+    std::fs::copy(&built, &launch).expect("install a runnable copy again");
+    let after =
+        mcp.ask(&serde_json::json!({"jsonrpc": "2.0", "id": "after", "method": "tools/list"}));
+    assert_eq!(after["id"], serde_json::json!("after"), "{after}");
+    assert_eq!(
+        after["result"], before["result"],
+        "the reinstalled binary answers without a restart or a second initialize"
+    );
+}

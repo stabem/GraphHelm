@@ -910,6 +910,23 @@ class Reach(unittest.TestCase):
         self.assertTrue(rt._plugin_release_content("plugins/keel/.claude-plugin/plugin.json"))
         self.assertFalse(rt._plugin_release_content("plugins/keel/docs/notes.md"))
 
+    def test_a_journey_review_change_reaches_claude_plugin_validate_and_test(self):
+        with tempfile.TemporaryDirectory() as repo:
+            check = Path(repo, "tools", "reached-tests")
+            check.mkdir(parents=True)
+            (check / "claude_plugin_check.py").write_text("", encoding="utf-8")
+            hook = Path(repo, "plugins", "journey-review", "hooks")
+            hook.mkdir(parents=True)
+            (hook / "register.tsx").write_text("", encoding="utf-8")
+            *_, tools, _, other = reach("plugins/journey-review/hooks/register.tsx", repo=repo)
+            self.assertIn(rt.JOURNEY_REVIEW_CHECK, tools)
+            self.assertEqual(other, [])
+            steps = rt.steps(set(), set(), [], tools=tools, repo=repo)
+            self.assertIn(["python", "tools/reached-tests/claude_plugin_check.py", "plugins/journey-review"],
+                          [step["argv"] for step in steps])
+        self.assertTrue(rt._plugin_release_content("plugins/journey-review/hooks/register.tsx"))
+        self.assertFalse(rt._plugin_release_content("plugins/journey-review/hooks/journey.test.ts"))
+
     def test_a_tool_change_reaches_that_tools_own_tests(self):
         with tempfile.TemporaryDirectory() as repo:
             tool = Path(repo, "tools", "task-record")

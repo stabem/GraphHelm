@@ -1410,3 +1410,121 @@ fn a_current_block_beside_a_missing_registration_still_plans_the_registration() 
         "no plan written for the missing registration"
     );
 }
+
+#[test]
+fn setup_enables_the_journey_review_plugin_idempotently_and_restores_it() {
+    let (p, h) = seeded();
+    let settings = h.path().join(".claude/settings.json");
+    let original = std::fs::read(&settings).unwrap();
+    let s = private_dir();
+    let out = s.path().join("plan.json");
+
+    let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{preview}");
+    assert!(
+        preview["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .contains(&"home/.claude/settings.json=enable-journey-review".into()),
+        "{preview}"
+    );
+
+    let resolve = |out: &Path| {
+        json(
+            setup(p.path(), h.path())
+                .arg("--resolve")
+                .arg("project/AGENTS.md=keep")
+                .arg("--resolve")
+                .arg("home/.claude/settings.json=enable-journey-review")
+                .arg("--out")
+                .arg(out)
+                .output()
+                .unwrap(),
+        )
+    };
+    let (ok, value) = resolve(&out);
+    assert!(ok, "{value}");
+    let digest = value["data"]["acceptance"]["digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (ok, applied) = json(
+        setup(p.path(), h.path())
+            .arg("--state-root")
+            .arg(s.path())
+            .arg("--apply")
+            .arg(&out)
+            .arg("--accept")
+            .arg(&digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{applied}");
+
+    let after: Value = serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(after["permissions"]["deny"][0], "Read(.env)");
+    assert_eq!(after["enabledPlugins"]["journey-review@graphhelm"], true);
+    assert_eq!(
+        after["extraKnownMarketplaces"]["graphhelm"]["source"]["repo"],
+        "stabem/GraphHelm"
+    );
+
+    // A second run finds the settings already saying it: nothing to plan, no file moves.
+    let again = s.path().join("again.json");
+    let (ok, noop) = resolve(&again);
+    assert!(ok, "{noop}");
+    assert_eq!(noop["data"]["alreadyApplied"].as_array().unwrap().len(), 1);
+    assert!(noop["data"]["plan"].is_null());
+    assert!(!again.exists());
+
+    let restore = |args: &[&std::ffi::OsStr]| {
+        let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+            assert_cmd::cargo::cargo_bin!("graphhelm"),
+        ));
+        command.arg("restore").arg("--state-root").arg(s.path());
+        command.args(args);
+        json(command.output().unwrap())
+    };
+    let (ok, restore_preview) = restore(&[]);
+    assert!(ok, "{restore_preview}");
+    let plan = &restore_preview["data"]["plan"];
+    let planfile = s.path().join("restore.json");
+    std::fs::write(&planfile, serde_json::to_vec(plan).unwrap()).unwrap();
+    let accept = plan["digest"].as_str().unwrap().to_owned();
+    let (ok, restored) = restore(&[
+        "--apply".as_ref(),
+        planfile.as_os_str(),
+        "--accept".as_ref(),
+        accept.as_ref(),
+    ]);
+    assert!(ok, "{restored}");
+    assert_eq!(std::fs::read(&settings).unwrap(), original);
+}
+
+#[test]
+fn an_owner_who_disabled_journey_review_is_not_asked_again() {
+    let (p, h) = seeded();
+    let settings = h.path().join(".claude/settings.json");
+    std::fs::write(
+        &settings,
+        br#"{"enabledPlugins":{"journey-review@graphhelm":false}}"#,
+    )
+    .unwrap();
+    let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{preview}");
+    assert!(
+        !preview["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .contains(&"home/.claude/settings.json=enable-journey-review".into()),
+        "{preview}"
+    );
+    let (ok, refused) = json(
+        setup(p.path(), h.path())
+            .arg("--resolve")
+            .arg("home/.claude/settings.json=enable-journey-review")
+            .output()
+            .unwrap(),
+    );
+    assert!(!ok, "{refused}");
+}

@@ -28,10 +28,12 @@ KEEL_MANIFESTS = (
     "plugins/keel/.claude-plugin/plugin.json",
     "plugins/keel/.codex-plugin/plugin.json",
 )
+JOURNEY_REVIEW_MANIFESTS = ("plugins/journey-review/.claude-plugin/plugin.json",)
 # Each release group versions its own roots: shipping one never forces a bump of another.
 GROUPS = (
     (PLUGIN_ROOTS, MANIFESTS),
     (("plugins/keel/",), KEEL_MANIFESTS),
+    (("plugins/journey-review/",), JOURNEY_REVIEW_MANIFESTS),
 )
 EXTENSIONS = "extensions/builtin/"
 GOLDENS = "core/protocols/tests/fixtures/canonical-goldens/"

@@ -1090,6 +1090,18 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         self.assertEqual(report["status"], "passed")
         self.assertEqual(self.runs(), ["ok", "ok"])
 
+    def test_a_step_that_could_not_observe_is_unobserved_incomplete_and_the_run_goes_on(self):
+        unobserved = ["python", "-c", "print('UNOBSERVED: the claude CLI is not on PATH')"]
+        self.steps = [unobserved, self.ok]
+        buffer = __import__("io").StringIO()
+        with patch("sys.stdout", buffer):
+            self.run_once(keep_going=True)
+        report = json.loads(self.output.read_text(encoding="utf-8"))
+        self.assertEqual(report["status"], "incomplete")
+        self.assertEqual(self.runs(), ["ok"])
+        self.assertIn("unobserved 1", buffer.getvalue())
+        self.assertIn("UNOBSERVED step 0: UNOBSERVED: the claude CLI", buffer.getvalue())
+
     def test_default_stdout_is_the_short_summary(self):
         self.steps = [self.ok, self.bad]
         buffer = __import__("io").StringIO()

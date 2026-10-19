@@ -167,6 +167,32 @@ class PluginVersionGuard(unittest.TestCase):
         self.assertIn(guard.MANIFESTS[-1], message)
 
 
+class JourneyReviewReleaseGroup(unittest.TestCase):
+    """The journey-review mod is its own release group, with one Claude manifest."""
+
+    setUp = PluginVersionGuard.setUp
+    git = PluginVersionGuard.git
+    write = PluginVersionGuard.write
+    write_manifests = PluginVersionGuard.write_manifests
+    commit = PluginVersionGuard.commit
+    check = PluginVersionGuard.check
+
+    def write_mod(self, version):
+        self.write(guard.JOURNEY_REVIEW_MANIFESTS[0],
+                   json.dumps({"name": "journey-review", "version": version}) + "\n")
+
+    def test_a_new_mod_passes_and_a_changed_one_needs_its_own_bump(self):
+        self.write_mod("0.1.0")
+        self.write("plugins/journey-review/hooks/register.tsx", "export {}\n")
+        passed, message = self.check(self.commit("add the mod"))
+        self.assertTrue(passed, message)
+        self.base = self.git("rev-parse", "HEAD")
+        self.write("plugins/journey-review/hooks/register.tsx", "export const a = 1\n")
+        passed, message = self.check(self.commit("change the mod without a bump"))
+        self.assertFalse(passed)
+        self.assertIn(guard.JOURNEY_REVIEW_MANIFESTS[0], message)
+
+
 class KeelPluginReleaseGroup(unittest.TestCase):
     """The standalone keel plugin is its own release: its version moves with its own content only."""
 

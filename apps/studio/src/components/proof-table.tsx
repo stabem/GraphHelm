@@ -59,7 +59,15 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
   }, [preview.run, onRun]);
   // #1635: a Run blocks until the run ends; say so at once, here and on the rail.
   const running = preview.launching || preview.run?.state === "running";
-  useEffect(() => { if (preview.launching) onRun?.({ state: "running", kind: "preview" }); }, [preview.launching, onRun]);
+  // The rail's running mark is cleared by the run's answer; an answer of "none" is reported too.
+  // `onRun` is a fresh closure each render, so it is read through a ref and never re-fires this.
+  const onRunRef = useRef(onRun);
+  onRunRef.current = onRun;
+  const announced = useRef(false);
+  useEffect(() => {
+    if (preview.launching) { announced.current = true; onRunRef.current?.({ state: "running", kind: "preview" }); return; }
+    if (announced.current && (preview.run === null || preview.run.state === "none")) { announced.current = false; onRunRef.current?.(preview.run ?? { state: "none" }); }
+  }, [preview.launching, preview.run]);
   const act = (action: () => Promise<void>) => {
     onBusy?.(true);
     onActionError?.(null);

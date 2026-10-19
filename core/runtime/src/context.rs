@@ -332,7 +332,11 @@ impl ContextLedger {
         search: &Arc<dyn BoundedSourceSearch>,
         reader: &Arc<dyn BoundedSourceReader>,
         terms: &[String],
+        cancel: &ScanCancel,
     ) -> Option<Result<crate::ports::SourceSearchResult, SourceSearchError>> {
+        if cancel.is_cancelled() {
+            return Some(Err(SourceSearchError::Unavailable));
+        }
         let search_digest = search.snapshot_digest();
         if search_digest.is_none() || search_digest != reader.snapshot_digest() {
             return None;
@@ -374,7 +378,10 @@ impl ContextLedger {
             return Some(Ok(result));
         }
 
-        let result = search.search_with_provenance(terms, &SEARCH_BOUNDS);
+        let result = search.search_with_provenance_cancellable(terms, &SEARCH_BOUNDS, cancel);
+        if cancel.is_cancelled() {
+            return Some(Err(SourceSearchError::Unavailable));
+        }
         let cacheable = result.as_ref().is_ok_and(|result| {
             result.paths.len() <= MAX_CANDIDATES
                 && result.paths.iter().all(|path| {
@@ -630,13 +637,14 @@ pub fn compile_for_node_cancellable(
     if let Some(tree) = &ports.execution_tree {
         let mut compiled = None;
         let access = tree.with_tree(cancel, &mut |search, reader| {
-            compiled = Some(retrieve_and_compile_in(
+            compiled = Some(retrieve_and_compile_in_cancellable(
                 ContextRoot::Execution,
                 search,
                 reader,
                 &terms,
                 &capsule_id,
                 budget,
+                cancel,
             ));
         });
         match (access, compiled) {
@@ -646,13 +654,14 @@ pub fn compile_for_node_cancellable(
             // pre-tool bytes this port exists to stop serving, so the node runs with a counted
             // `search_unavailable` fallback instead of a stale capsule.
             (ExecutionTreeAccess::Read | ExecutionTreeAccess::Unavailable, _) => {
-                return Ok(retrieve_and_compile_in(
+                return Ok(retrieve_and_compile_in_cancellable(
                     ContextRoot::Execution,
                     &UnreadableTree,
                     &UnreadableTree,
                     &terms,
                     &capsule_id,
                     budget,
+                    cancel,
                 ));
             }
         }
@@ -664,9 +673,10 @@ pub fn compile_for_node_cancellable(
         &terms,
         &capsule_id,
         budget,
+        Some(cancel),
         ports
             .ledger
-            .cached_search(execution_id, &ports.search, &ports.reader, &terms),
+            .cached_search(execution_id, &ports.search, &ports.reader, &terms, cancel),
     ))
 }
 
@@ -742,7 +752,30 @@ pub fn retrieve_and_compile_in(
     capsule_id: &str,
     budget: usize,
 ) -> CompiledContext {
-    retrieve_and_compile_in_cached(root, search, reader, terms, capsule_id, budget, None)
+    retrieve_and_compile_in_cached(root, search, reader, terms, capsule_id, budget, None, None)
+}
+
+/// [`retrieve_and_compile_in`] with the driver's cooperative cancellation token.
+#[must_use]
+fn retrieve_and_compile_in_cancellable(
+    root: ContextRoot,
+    search: &dyn BoundedSourceSearch,
+    reader: &dyn BoundedSourceReader,
+    terms: &[String],
+    capsule_id: &str,
+    budget: usize,
+    cancel: &ScanCancel,
+) -> CompiledContext {
+    retrieve_and_compile_in_cached(
+        root,
+        search,
+        reader,
+        terms,
+        capsule_id,
+        budget,
+        Some(cancel),
+        None,
+    )
 }
 
 fn retrieve_and_compile_in_cached(
@@ -752,6 +785,7 @@ fn retrieve_and_compile_in_cached(
     terms: &[String],
     capsule_id: &str,
     budget: usize,
+    cancel: Option<&ScanCancel>,
     cached_search_result: Option<Result<crate::ports::SourceSearchResult, SourceSearchError>>,
 ) -> CompiledContext {
     let mut summary = NodeContextSummary {
@@ -788,9 +822,12 @@ fn retrieve_and_compile_in_cached(
         return fallback(summary, ContextFallback::NoTerms);
     }
     summary.retrieval_pages = 1;
-    let search_result = match cached_search_result
-        .unwrap_or_else(|| search.search_with_provenance(terms, &SEARCH_BOUNDS))
-    {
+    let search_result = match cached_search_result.unwrap_or_else(|| {
+        cancel.map_or_else(
+            || search.search_with_provenance(terms, &SEARCH_BOUNDS),
+            |cancel| search.search_with_provenance_cancellable(terms, &SEARCH_BOUNDS, cancel),
+        )
+    }) {
         Ok(result) => result,
         Err(SourceSearchError::Unavailable) => {
             summary.search_origin = SourceSearchOrigin::Fallback;
@@ -803,6 +840,9 @@ fn retrieve_and_compile_in_cached(
             return fallback(summary, ContextFallback::SearchBoundExceeded);
         }
     };
+    if cancel.is_some_and(ScanCancel::is_cancelled) {
+        return cancelled_fallback(summary);
+    }
     summary.search_origin = search_result.provenance.origin;
     summary.search_reason = search_result.provenance.reason;
     let search_digest = search.snapshot_digest();
@@ -824,6 +864,9 @@ fn retrieve_and_compile_in_cached(
     let mut shipped_total: u64 = 0;
     let mut optional: Vec<(String, String, bool)> = Vec::new();
     for (index, path) in candidates.iter().enumerate() {
+        if cancel.is_some_and(ScanCancel::is_cancelled) {
+            return cancelled_fallback(summary);
+        }
         if index >= MAX_CANDIDATES {
             summary.candidates_dropped += 1;
             continue;
@@ -844,13 +887,22 @@ fn retrieve_and_compile_in_cached(
             summary.candidates_secret_shaped += 1;
             continue;
         }
-        let window = match reader.read_relevant(path, terms, MAX_BYTES_PER_CANDIDATE) {
+        let window = match cancel.map_or_else(
+            || reader.read_relevant(path, terms, MAX_BYTES_PER_CANDIDATE),
+            |cancel| reader.read_relevant_cancellable(path, terms, MAX_BYTES_PER_CANDIDATE, cancel),
+        ) {
             Ok(excerpt) => excerpt,
             Err(SourceReadError::Escape | SourceReadError::Unreadable) => {
+                if cancel.is_some_and(ScanCancel::is_cancelled) {
+                    return cancelled_fallback(summary);
+                }
                 summary.candidates_unreadable += 1;
                 continue;
             }
         };
+        if cancel.is_some_and(ScanCancel::is_cancelled) {
+            return cancelled_fallback(summary);
+        }
         let excerpt = window.excerpt;
         let read_len = excerpt.bytes.len() as u64;
         if read_len > MAX_BYTES_PER_CANDIDATE
@@ -911,6 +963,9 @@ fn retrieve_and_compile_in_cached(
     }
 
     let items: Vec<String> = optional.iter().map(|(_, item, _)| item.clone()).collect();
+    if cancel.is_some_and(ScanCancel::is_cancelled) {
+        return cancelled_fallback(summary);
+    }
     let fitted_by_sum = match fit_within_budget(&[], &items, budget) {
         BudgetOutcome::Fits {
             included,
@@ -930,6 +985,9 @@ fn retrieve_and_compile_in_cached(
     // large early one that was the real overflow, and shipped nothing the small item fit.
     let (included, bytes, framing_dropped) =
         refit_rendered(capsule_id, &[], &fitted_by_sum, budget);
+    if cancel.is_some_and(ScanCancel::is_cancelled) {
+        return cancelled_fallback(summary);
+    }
     summary.dropped_optional += framing_dropped;
     for (path, item, partial) in &optional {
         if included.contains(item) {
@@ -1075,6 +1133,12 @@ fn fallback(mut summary: NodeContextSummary, cause: ContextFallback) -> Compiled
         text: String::new(),
         summary,
     }
+}
+
+fn cancelled_fallback(mut summary: NodeContextSummary) -> CompiledContext {
+    summary.search_origin = SourceSearchOrigin::Fallback;
+    summary.search_reason = SourceSearchReason::SearchUnavailable;
+    fallback(summary, ContextFallback::SearchUnavailable)
 }
 
 /// The longest valid UTF-8 prefix of the bytes read, or `None` for a file that is not text at

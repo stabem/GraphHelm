@@ -2789,6 +2789,7 @@ impl graphhelm_runtime::ports::GateRegistryPort for NoGates {
 struct BlockingSearch {
     entered: std::sync::atomic::AtomicBool,
     release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    token: std::sync::Mutex<Option<graphhelm_runtime::ports::ScanCancel>>,
 }
 
 impl graphhelm_runtime::ports::BoundedSourceSearch for BlockingSearch {
@@ -2800,6 +2801,27 @@ impl graphhelm_runtime::ports::BoundedSourceSearch for BlockingSearch {
         self.entered.store(true, Ordering::SeqCst);
         let _ = self.release.lock().unwrap().recv();
         Ok(vec!["src/lib.rs".to_owned()])
+    }
+
+    fn search_with_provenance_cancellable(
+        &self,
+        _terms: &[String],
+        _bounds: &graphhelm_runtime::ports::SourceSearchBounds,
+        cancel: &graphhelm_runtime::ports::ScanCancel,
+    ) -> Result<
+        graphhelm_runtime::ports::SourceSearchResult,
+        graphhelm_runtime::ports::SourceSearchError,
+    > {
+        *self.token.lock().unwrap() = Some(cancel.clone());
+        self.entered.store(true, Ordering::SeqCst);
+        let _ = self.release.lock().unwrap().recv();
+        if cancel.is_cancelled() {
+            return Err(graphhelm_runtime::ports::SourceSearchError::Unavailable);
+        }
+        Ok(graphhelm_runtime::ports::SourceSearchResult {
+            paths: vec!["src/lib.rs".to_owned()],
+            provenance: Default::default(),
+        })
     }
 }
 
@@ -2938,6 +2960,7 @@ fn immediate_stop_during_context_compilation_dispatches_nothing() {
     let search = Arc::new(BlockingSearch {
         entered: std::sync::atomic::AtomicBool::new(false),
         release: std::sync::Mutex::new(release_rx),
+        token: std::sync::Mutex::new(None),
     });
     let ports = graphhelm_runtime::context::ContextPorts {
         search: search.clone(),
@@ -2974,6 +2997,11 @@ fn immediate_stop_during_context_compilation_dispatches_nothing() {
             }))
             .unwrap();
         let projection = driver.await.unwrap().unwrap();
+        let token = search.token.lock().unwrap().clone().unwrap();
+        assert!(
+            token.is_cancelled(),
+            "the abandoned project search was told to stop"
+        );
         // Released only AFTER the drive returned: the drive did not wait for the search.
         release_tx.send(()).unwrap();
         projection
@@ -3194,6 +3222,47 @@ fn a_portless_drive_runs_a_graph_whose_context_budget_it_never_reads() {
 // ---------------------------------------------------------------------------------------------
 
 struct StaticSearch(Vec<String>);
+
+#[test]
+fn pre_cancelled_project_context_does_not_start_search() {
+    struct CountingSearch(Arc<AtomicUsize>);
+
+    impl graphhelm_runtime::ports::BoundedSourceSearch for CountingSearch {
+        fn search(
+            &self,
+            _terms: &[String],
+            _bounds: &graphhelm_runtime::ports::SourceSearchBounds,
+        ) -> Result<Vec<String>, graphhelm_runtime::ports::SourceSearchError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(vec!["src/lib.rs".to_owned()])
+        }
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let ports = graphhelm_runtime::context::ContextPorts {
+        search: Arc::new(CountingSearch(calls.clone())),
+        reader: Arc::new(NeverReader),
+        ledger: graphhelm_runtime::context::ContextLedger::new(),
+        execution_tree: None,
+    };
+    let cancel = graphhelm_runtime::ports::ScanCancel::new();
+    cancel.cancel();
+    let compiled = graphhelm_runtime::context::compile_for_node_cancellable(
+        &ports,
+        "exec-1",
+        "node-1",
+        1,
+        &agent_graph_node("search the project"),
+        &cancel,
+    )
+    .expect("a cancelled compile still returns its refusal capsule");
+
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        compiled.summary.fallback,
+        Some(graphhelm_runtime::context::ContextFallback::SearchUnavailable)
+    );
+}
 
 impl graphhelm_runtime::ports::BoundedSourceSearch for StaticSearch {
     fn search(

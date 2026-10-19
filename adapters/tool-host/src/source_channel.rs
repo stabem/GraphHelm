@@ -563,7 +563,23 @@ impl BoundedSourceSearch for WorkspaceSourceChannel {
         // `max_results` caps a search that FINISHED. Unlike the scan bounds it is not a breached
         // ceiling — refusing here would make an ordinary successful answer look like one.
         scored.truncate(bounds.max_results as usize);
+        if self.cancelled() {
+            return Err(SourceSearchError::Unavailable);
+        }
         Ok(scored.into_iter().map(|(_, path)| path).collect())
+    }
+
+    fn search_with_provenance_cancellable(
+        &self,
+        terms: &[String],
+        bounds: &SourceSearchBounds,
+        cancel: &graphhelm_runtime::ports::ScanCancel,
+    ) -> Result<graphhelm_runtime::ports::SourceSearchResult, SourceSearchError> {
+        let channel = Self {
+            root: self.root.clone(),
+            cancel: Some(cancel.clone()),
+        };
+        channel.search_with_provenance(terms, bounds)
     }
 }
 

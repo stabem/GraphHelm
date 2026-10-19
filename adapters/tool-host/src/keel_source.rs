@@ -306,6 +306,20 @@ impl BoundedSourceSearch for LiveFallbackSourceSearch {
                 provenance: SourceSearchProvenance::fallback(self.reason),
             })
     }
+
+    fn search_with_provenance_cancellable(
+        &self,
+        terms: &[String],
+        bounds: &SourceSearchBounds,
+        cancel: &graphhelm_runtime::ports::ScanCancel,
+    ) -> Result<SourceSearchResult, SourceSearchError> {
+        self.inner
+            .search_with_provenance_cancellable(terms, bounds, cancel)
+            .map(|result| SourceSearchResult {
+                paths: result.paths,
+                provenance: SourceSearchProvenance::fallback(self.reason),
+            })
+    }
 }
 
 fn snapshot_bounds(bounds: &SourceSearchBounds) -> SnapshotSearchBounds {

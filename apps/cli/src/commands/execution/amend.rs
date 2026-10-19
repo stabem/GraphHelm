@@ -77,11 +77,10 @@ pub(crate) fn execute(
     // copied faithfully from the answer was rejected as stale. Two counters answering "where
     // were you looking" is the same defect as two functions answering "what is the budget",
     // measured one screen apart.
-    let head = store
+    let observed_history = store
         .read_replay_stream(&scope, &stream)
-        .map_err(|error| repository_failure(&error))?
-        .last()
-        .map_or(0, |event| event.sequence);
+        .map_err(|error| repository_failure(&error))?;
+    let head = observed_history.last().map_or(0, |event| event.sequence);
     if computed_at_sequence != head {
         return Err(execution_state(
             &format!(
@@ -129,25 +128,21 @@ pub(crate) fn execute(
 
     // What the operator was looking at, recorded beside their decision so a later reader sees
     // it in its own light rather than in hindsight's.
-    let observed = super::node_silence_seconds(
-        &store
-            .read_replay_stream(&scope, &stream)
-            .map_err(|error| repository_failure(&error))?,
-        chrono::Utc::now(),
-    );
+    let observed = super::node_silence_seconds(&observed_history, chrono::Utc::now());
     let observed_silence_seconds = observed
         .get(node)
         .map(|seconds| (node_id.clone(), *seconds))
         .into_iter()
         .collect();
 
-    let next = store
-        .next_sequence(&scope, &stream)
-        .map_err(|error| repository_failure(&error))?;
+    // #1670: the amendment lands AT the head its frontier check read, never at a fresh one. Taking
+    // the sequence from the store let concurrent amendments computed against one frontier all
+    // pass the check and all land; at `head + 1` the store refuses every one but the first with a
+    // sequence conflict.
     let request = graphhelm_events::PreparedAppend::new(
         scope.clone(),
         stream_id,
-        next,
+        head + 1,
         vec![NewEvent::new(
             key,
             actor,

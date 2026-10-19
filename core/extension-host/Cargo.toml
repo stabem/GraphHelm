@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+graphhelm-process = { path = "../process" }
 fs2.workspace = true
 graphhelm-schema = { path = "../schema" }
 hex.workspace = true
@@ -20,5 +21,4 @@ windows-sys = { workspace = true, features = ["Wdk_Foundation", "Wdk_Storage_Fil
 
 [dev-dependencies]
 graphhelm-test-shims = { path = "../../tools/test-shims" }
-graphhelm-process = { path = "../process" }
 tempfile.workspace = true

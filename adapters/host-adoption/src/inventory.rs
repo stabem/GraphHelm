@@ -591,16 +591,9 @@ fn scan_tree(
     Ok(())
 }
 
-#[cfg(windows)]
+/// The shared reparse test (#1338); callers add `is_symlink()`.
 fn is_reparse_point(meta: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
-    meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn is_reparse_point(_meta: &std::fs::Metadata) -> bool {
-    false
+    graphhelm_process::fs::is_reparse_point(meta)
 }
 
 fn logical_package_name(kind: &str, path: &Path, bytes: &[u8], file_name: &str) -> String {

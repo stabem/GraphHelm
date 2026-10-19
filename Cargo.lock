@@ -1274,6 +1274,7 @@ dependencies = [
 name = "graphhelm-schema"
 version = "0.1.1"
 dependencies = [
+ "graphhelm-process",
  "graphhelm-protocols",
  "hex",
  "jsonschema",
@@ -1312,6 +1313,7 @@ dependencies = [
  "fs2",
  "getrandom 0.4.3",
  "graphhelm-events",
+ "graphhelm-process",
  "graphhelm-protocols",
  "hex",
  "libc",

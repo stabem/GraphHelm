@@ -3344,7 +3344,7 @@ fn a_signal_needs_no_path_when_the_runtime_can_seal_it_and_reads_back() {
 }
 
 #[test]
-fn eight_sealed_evidence_items_share_one_authenticated_collection_read() {
+fn twelve_sealed_evidence_items_share_one_authenticated_collection_read() {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
     let keyring = directory.path().join("keyring");
@@ -3383,8 +3383,12 @@ fn eight_sealed_evidence_items_share_one_authenticated_collection_read() {
     );
     assert_eq!(started, 200, "{start_reply}");
 
+    // #1560: more than eight REAL sealed items. The store's own batch cap stayed at eight when the
+    // route's went to 64, and a read of unknown ids never reached the store, so every live batch
+    // over eight answered 500 GHE006_LIMIT_EXCEEDED while this test stayed green.
+    const SEALED: usize = 12;
     let mut expected = std::collections::BTreeMap::new();
-    for index in 0..8 {
+    for index in 0..SEALED {
         let marker = format!("collection-plaintext-marker-{index}");
         let (status, reply) = post_json(
             &format!("{base}/v1/executions/{execution}/signal"),
@@ -3427,7 +3431,7 @@ fn eight_sealed_evidence_items_share_one_authenticated_collection_read() {
     }
     assert_eq!(
         refs.len(),
-        8,
+        SEALED,
         "every sealed signal must be referenced exactly once"
     );
     let encode_ids = |ids: &[String]| {

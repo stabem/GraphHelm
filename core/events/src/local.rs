@@ -308,6 +308,10 @@ enum Exclusivity {
     Shared,
 }
 
+/// #1560: the most evidence ids one [`LocalEventRepository::sealed_evidence_batch`] call reads. The
+/// Runtime's collection read admits exactly this many, so the route and the store cannot disagree.
+pub const MAX_SEALED_EVIDENCE_BATCH: usize = 64;
+
 /// Crash-consistent repository-v1 directory for offline/local execution.
 #[derive(Clone)]
 pub struct LocalEventRepository {
@@ -1004,13 +1008,14 @@ impl LocalEventRepository {
         self.read_sealed_evidence(scope, evidence_id)
     }
 
-    /// Read a bounded set under one store lock and one verified journal state.
+    /// Read a bounded set (at most [`MAX_SEALED_EVIDENCE_BATCH`] ids) under one store lock and one
+    /// verified journal state.
     pub fn sealed_evidence_batch(
         &self,
         scope: &RepositoryScope,
         evidence_ids: &[EvidenceId],
     ) -> Result<Vec<Result<EvidenceRead, EventRepositoryError>>, EventRepositoryError> {
-        if evidence_ids.is_empty() || evidence_ids.len() > 8 {
+        if evidence_ids.is_empty() || evidence_ids.len() > MAX_SEALED_EVIDENCE_BATCH {
             return Err(EventRepositoryError::LimitExceeded);
         }
         self.with_shared_lock(|| {

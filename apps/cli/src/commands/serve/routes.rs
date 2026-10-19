@@ -6866,7 +6866,7 @@ pub(super) async fn evidence(
 
 /// #1560: 64 ids per read. At eight, gh-team's ~8.5k envelopes took 1,070 reads, each one
 /// resolving the whole stream before opening an item; the plaintext cap below still bounds a reply.
-const EVIDENCE_BATCH_MAX_ITEMS: usize = 64;
+const EVIDENCE_BATCH_MAX_ITEMS: usize = graphhelm_events::MAX_SEALED_EVIDENCE_BATCH;
 const EVIDENCE_BATCH_MAX_PLAINTEXT_BYTES: usize = 1024 * 1024;
 
 /// `GET /v1/executions/{id}/evidence?ids=<JSON array>` opens a bounded set of referenced items.

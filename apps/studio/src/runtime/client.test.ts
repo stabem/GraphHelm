@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DisconnectedError,
   EVIDENCE_CACHE_LIMIT,
+  EVIDENCE_READ_ATTEMPTS,
   OPERATOR_ACTOR,
   RuntimeClient,
   RuntimeError,
@@ -442,6 +443,55 @@ describe("RuntimeClient reads", () => {
     const refused = sizes.filter((size) => size > 8);
     expect(refused.length).toBeGreaterThan(0);
     expect(refused.length).toBeLessThanOrEqual(4);
+  });
+
+  // #1560 live: a Runtime whose STORE still reads eight at a time answers a larger collection read
+  // with 500 GHE006_LIMIT_EXCEEDED, not the route's 400.
+  const failure = (status: number, code: string) => new Response(JSON.stringify({ ok: false, command: "execution.evidence", data: null, diagnostics: [{ code, severity: "error", path: "/repository", message: "repository input exceeds a deterministic limit" }] }), { status });
+  const single = (id: string) => new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { evidenceId: id, mediaType: "text/plain", sensitivity: "internal", contentSha256: id, content: `content-${id}` }, diagnostics: [] }), { status: 200 });
+  const collection = (ids: string[]) => new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results: ids.map((id) => ({ status: "available", evidenceId: id, mediaType: "text/plain", sensitivity: "internal", contentSha256: id, content: `content-${id}` })) }, diagnostics: [] }), { status: 200 });
+
+  it("falls back to batches of eight when the Runtime's store refuses a larger read with 500", async () => {
+    const sizes: number[] = [];
+    const fetchImpl = (async (url: string) => {
+      const ids = JSON.parse(new URL(url, "http://runtime").searchParams.get("ids") ?? "[]") as string[];
+      sizes.push(ids.length);
+      return ids.length > 8 ? failure(500, "GHE006_LIMIT_EXCEEDED") : collection(ids);
+    }) as typeof fetch;
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    const ids = Array.from({ length: 100 }, (_, index) => `e-${index}`);
+    const values = await Promise.all(ids.map((id) => client.readEvidence("demo", id)));
+    expect(values.map((value) => value.content)).toEqual(ids.map((id) => `content-${id}`));
+    expect(sizes.filter((size) => size > 8).length).toBeLessThanOrEqual(4);
+    expect(sizes.filter((size) => size === 0)).toEqual([]);
+  });
+
+  it("reads a batch that failed on the server one id at a time, once", async () => {
+    let batches = 0;
+    const singles: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      const parsed = new URL(url, "http://runtime");
+      if (parsed.searchParams.has("ids")) { batches += 1; return failure(500, "GHE005_INTEGRITY_FAILURE"); }
+      const id = decodeURIComponent(parsed.pathname.split("/").pop() ?? "");
+      singles.push(id);
+      return single(id);
+    }) as typeof fetch;
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    const ids = Array.from({ length: 20 }, (_, index) => `e-${index}`);
+    const values = await Promise.all(ids.map((id) => client.readEvidence("demo", id)));
+    expect(values.map((value) => value.content)).toEqual(ids.map((id) => `content-${id}`));
+    expect(batches).toBe(1);
+    expect([...singles].sort()).toEqual([...ids].sort());
+  });
+
+  it("stops re-reading an id after EVIDENCE_READ_ATTEMPTS failures on one connection", async () => {
+    let requests = 0;
+    const fetchImpl = (async () => { requests += 1; return failure(500, "GHE005_INTEGRITY_FAILURE"); }) as typeof fetch;
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    for (let tick = 0; tick < EVIDENCE_READ_ATTEMPTS + 5; tick += 1) {
+      await expect(client.readEvidence("demo", "broken")).rejects.toMatchObject({ httpStatus: 500 });
+    }
+    expect(requests).toBe(EVIDENCE_READ_ATTEMPTS);
   });
 
   it("maps reordered collection results by ID and keeps an item refusal local", async () => {

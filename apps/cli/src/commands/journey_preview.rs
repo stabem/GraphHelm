@@ -641,32 +641,40 @@ fn step_reason(code: &str) -> &'static str {
 
 /// A run's result (#1633): its worst step result, and `pass` only when every screen and edge
 /// passed. A step not reached or skipped proves nothing, so a run with one and no failure is
-/// `fail` with the reason `preview.incomplete`, and records no proof.
-fn run_result(screens: &Value, edges: &Value) -> String {
-    run_verdict(screens, edges).0
+/// `fail` with the reason `preview.incomplete`, and records no proof. A screen the walk started
+/// from is reached when an edge leaving it passed: a backend flow observes no screen before its
+/// first act, so its start screen carries no result of its own.
+fn run_result(flow: &Value, screens: &Value, edges: &Value) -> String {
+    run_verdict(flow, screens, edges).0
 }
 
-fn run_verdict(screens: &Value, edges: &Value) -> (String, Option<&'static str>) {
-    let steps: Vec<&Value> = screens
-        .as_object()
-        .into_iter()
-        .flat_map(|screens| screens.values())
-        .chain(
-            edges
-                .as_object()
-                .into_iter()
-                .flat_map(|edges| edges.values()),
-        )
-        .collect();
-    let worst = steps
-        .iter()
-        .filter_map(|entry| entry["result"].as_str())
+fn run_verdict(flow: &Value, screens: &Value, edges: &Value) -> (String, Option<&'static str>) {
+    let left_by_a_pass = |screen: &str| {
+        flow["edges"].as_array().into_iter().flatten().any(|edge| {
+            edge["from"] == screen
+                && edge["id"]
+                    .as_str()
+                    .is_some_and(|id| edges[id]["result"] == "pass")
+        })
+    };
+    let screen_steps = screens.as_object().into_iter().flatten();
+    let edge_steps = edges.as_object().into_iter().flatten();
+    let worst = screen_steps
+        .clone()
+        .chain(edge_steps.clone())
+        .filter_map(|(_, entry)| entry["result"].as_str())
         .filter(|result| severity(result) > 1)
         .max_by_key(|result| severity(result));
     if let Some(worst) = worst {
         return (worst.to_owned(), None);
     }
-    if steps.iter().all(|entry| entry["result"] == "pass") {
+    let screens_pass = screen_steps
+        .clone()
+        .all(|(id, entry)| entry["result"] == "pass" || left_by_a_pass(id));
+    let edges_pass = edge_steps
+        .clone()
+        .all(|(_, entry)| entry["result"] == "pass");
+    if screens_pass && edges_pass {
         ("pass".to_owned(), None)
     } else {
         ("fail".to_owned(), Some("preview.incomplete"))
@@ -892,7 +900,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             run.state["edges"][id] = json!({"result":null,"reason":"not_reached"});
         }
     }
-    let (worst, incomplete) = run_verdict(&run.state["screens"], &run.state["edges"]);
+    let (worst, incomplete) = run_verdict(&flow, &run.state["screens"], &run.state["edges"]);
     run.state["current"] = Value::Null;
     run.state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
     if let Some(object) = run.state.as_object_mut() {
@@ -1721,21 +1729,37 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
     /// recorded the owner's approve proof. Cost: microseconds.
     #[test]
     fn a_run_that_did_not_reach_or_skipped_a_step_is_not_a_pass() {
-        // keel-red-first-proof, as the runner stored it.
+        // keel-red-first-proof, as the runner stored it on gh-team.
+        let flow = json!({"edges":[{"id":"prove-regression","from":"defective-parent","to":"proof-report"}]});
         let screens = json!({"defective-parent":{"frame":false,"reason":"not_reached"},
             "proof-report":{"frame":false,"reason":"not_reached"}});
         let edges = json!({"prove-regression":{"reason":"cli_needs_approval","result":"skipped"}});
-        assert_ne!(super::run_result(&screens, &edges), "pass");
-        let skipped_only = json!({"a.b":{"result":"skipped","reason":"confirm_needed"}});
+        assert_ne!(super::run_result(&flow, &screens, &edges), "pass");
+        let ab = json!({"edges":[{"id":"a.b","from":"a","to":"b"}]});
         let passed = json!({"a":{"frame":true,"result":"pass"},"b":{"frame":true,"result":"pass"}});
-        assert_ne!(super::run_result(&passed, &skipped_only), "pass");
+        let skipped = json!({"a.b":{"result":"skipped","reason":"confirm_needed"}});
+        assert_ne!(super::run_result(&ab, &passed, &skipped), "pass");
         assert_eq!(
-            super::run_result(&passed, &json!({"a.b":{"result":"pass"}})),
+            super::run_result(&ab, &passed, &json!({"a.b":{"result":"pass"}})),
+            "pass"
+        );
+        // A backend flow's start screen has no result of its own; the edge leaving it passed.
+        let started =
+            json!({"a":{"frame":false,"reason":"not_reached"},"b":{"frame":false,"result":"pass"}});
+        assert_eq!(
+            super::run_result(&ab, &started, &json!({"a.b":{"result":"pass"}})),
+            "pass"
+        );
+        // A destination never reached is not excused by the edge into it.
+        let unreached_end =
+            json!({"a":{"frame":true,"result":"pass"},"b":{"frame":false,"reason":"not_reached"}});
+        assert_ne!(
+            super::run_result(&ab, &unreached_end, &json!({"a.b":{"result":"pass"}})),
             "pass"
         );
         let drifted =
             json!({"a":{"frame":true,"result":"drift"},"b":{"frame":false,"reason":"not_reached"}});
-        assert_eq!(super::run_result(&drifted, &json!({})), "drift");
+        assert_eq!(super::run_result(&ab, &drifted, &json!({})), "drift");
     }
 
     /// #519: a stored preview answers only for the flow and commit it ran on; a changed flow or a

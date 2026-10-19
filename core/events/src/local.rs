@@ -37,7 +37,9 @@ const MAX_REPOSITORY_ENTRIES: usize = 100_000;
 const MAX_REPOSITORY_NAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_REPOSITORY_METADATA_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_ROOT_ENTRIES: usize = 6;
-const MAX_LOAD_WORK_UNITS: usize = 800_000;
+/// Scaled with `MAX_READ_ALL` (#1721 stopgap: 100k → 250k events, 800k → 2M units), so the work
+/// budget never binds before the event count it was sized for.
+const MAX_LOAD_WORK_UNITS: usize = 2_000_000;
 const GENESIS_HASH: &str =
     "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3";
 

@@ -640,6 +640,25 @@ fn step_reason(code: &str) -> &'static str {
 }
 
 /// How bad a result is; a screen reached on several paths keeps its worst.
+/// A run's result: its worst step result.
+fn run_result(screens: &Value, edges: &Value) -> String {
+    screens
+        .as_object()
+        .into_iter()
+        .flat_map(|screens| screens.values())
+        .chain(
+            edges
+                .as_object()
+                .into_iter()
+                .flat_map(|edges| edges.values()),
+        )
+        .filter_map(|entry| entry["result"].as_str())
+        .filter(|result| severity(result) > 0)
+        .max_by_key(|result| severity(result))
+        .unwrap_or("pass")
+        .to_owned()
+}
+
 fn severity(result: &str) -> u8 {
     match result {
         "fail" => 3,
@@ -858,16 +877,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             run.state["edges"][id] = json!({"result":null,"reason":"not_reached"});
         }
     }
-    let worst = run.state["screens"]
-        .as_object()
-        .unwrap()
-        .values()
-        .chain(run.state["edges"].as_object().unwrap().values())
-        .filter_map(|entry| entry["result"].as_str())
-        .filter(|result| severity(result) > 0)
-        .max_by_key(|result| severity(result))
-        .unwrap_or("pass")
-        .to_owned();
+    let worst = run_result(&run.state["screens"], &run.state["edges"]);
     run.state["current"] = Value::Null;
     run.state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
     if let Some(object) = run.state.as_object_mut() {

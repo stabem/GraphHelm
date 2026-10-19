@@ -142,6 +142,12 @@ up)
     "$bin" --json execution delivery --events "$rt/events" --execution demo --node deploy \
       --delivery "$dir/.graphhelm/delivery.json" --project-directory "$dir/project" \
       --keyring "$rt/keyring" --key-id studio > "$dir/.graphhelm/delivery.out"
+    # studio-approve-reject (#1041): one owner rejection of studio-handover whose note carries
+    # markup, so the Proof view must show it as text. The owner token never leaves this script.
+    curl -sf --max-time 60 -X POST "http://127.0.0.1:$rport/v1/journey-flows/studio-handover/reject" \
+      -H "Authorization: Bearer $(head -1 "$rt/events.token")" -H "Content-Type: application/json" \
+      -H "Idempotency-Key: fixture-reject-studio-handover" \
+      --data-binary '{"note":"<b>no</b> receipt & no total"}' > "$dir/.graphhelm/reject.out"
     # One unanswered question from the bot `planner` to the owner (studio-answer-question).
     token=$(head -1 "$rt/events.token"); id=$(node -e 'console.log(require("crypto").randomUUID())')
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)

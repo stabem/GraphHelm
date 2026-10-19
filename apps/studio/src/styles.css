@@ -488,22 +488,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .icon-action:disabled { opacity: 0.35; cursor: not-allowed; }
 .icon-action svg { width: 14px; height: 14px; }
 
-.project-runs {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr); /* #1155: rows never wider than the rail */
-  gap: 3px;
-  margin: 3px 0 10px 20px;
-}
 
-.run-group-title, .run-group-toggle {
-  display: block;
-  margin: 9px 10px 3px;
-  color: var(--dim);
-  font-size: 10px;
-  text-align: left;
-}
-.run-group-toggle { text-decoration: underline; }
-.run-page-note { margin: 8px 10px 2px; color: var(--faint); font-size: 10px; }
 
 .run {
   display: flex;
@@ -521,22 +506,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .run:hover { background: var(--raised); }
 .run.on { background: var(--high); }
 
-/* SIX PIXELS, and the word in the accessible name and the tooltip. The word used to be on the
-   line, where an id long enough to fill the rail cut "can sleep" to "can sl". A mark has no
-   length to lose. */
-.run-mark {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: var(--r-pill);
-  background: var(--faint);
-}
 
-.run.needs .run-mark { background: var(--signal); }
-.run.calm .run-mark { background: var(--live); }
-.run.review .run-mark { background: var(--signal); }
-.run.cancelled .run-mark { background: var(--faint); }
-.run-review { color: var(--signal); }
 
 /* Two stacked lines beside the room's avatar, like a conversation list entry: the name, and
    when it last moved. */
@@ -554,9 +524,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   white-space: nowrap;
 }
 .run-when { font-size: 10px; color: var(--faint); }
-/* #1083 F7: the id under a run named by its objective - the address, quieter than the name. */
-.run-address { display: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10px; color: var(--faint); }
-.run-row:hover .run-address, .run-row:focus-within .run-address { display: block; }
 
 .show-more {
   color: var(--dim);
@@ -598,15 +565,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 .grip:hover, .grip.dragging { background: var(--signal); }
 
-.rail-empty {
-  color: var(--dim);
-  font-size: 11px;
-  padding: 6px 8px 6px 14px;
-  background: none;
-  text-align: left;
-  width: 100%;
-}
-.rail-empty:hover:not(:disabled) { background: var(--raised); }
 
 /* ----------------------------------------------------------------- stage */
 
@@ -1120,9 +1078,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .panel-head.dead i { background: var(--danger); }
 .panel-head.moving i { background: var(--live); }
 .panel-head h2 { font-size: 16px; overflow-wrap: anywhere; }
-/* The demonstration label (#1064): prose, not a badge - it has to be READ, so it keeps
-   sentence case and the dim ink of a fact rather than the ink of an alarm. */
-.run-demo { color: var(--dim); }
 .panel-head .demonstration { font-size: 11px; color: var(--dim); line-height: 1.5; margin-top: 4px; }
 /* A persona's charter is prose: sentence case, reading rhythm, clamped before it swallows
    the head. The .lbl treatment turned it into tracking caps. */
@@ -1830,18 +1785,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .project-name { font-size: 14px; }
 .icon-action { min-width: 30px; min-height: 32px; border-radius: 8px; flex-shrink: 0; }
 .project-name-input { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--edge); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 14px; }
-.run-row { position: relative; border-radius: 10px; margin: 3px 0; }
-.run-row.on { background: var(--high); }
-.run-row .run { min-width: 0; border-radius: 10px; padding: 10px 7px; }
-.run-row .run-id { font-size: 12px; }
-.run-row .run-when { font-size: 11px; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.run-row .avatar { width: 28px; height: 28px; }
-.run-remove { position: absolute; top: 50%; right: 0; transform: translateY(-50%); background: transparent; color: var(--faint); opacity: 0; }
-.run-row:hover .run-remove, .run-row:focus-within .run-remove { opacity: 1; }
-.run-remove:hover { color: var(--danger); background: var(--raised); }
-.run-remove-confirm { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; padding: 12px; background: var(--raised); font-size: 13px; line-height: 1.5; border-radius: 8px; }
-.run-remove-confirm > span { flex-basis: 100%; }
-.run-remove-confirm button { padding: 8px 12px; }
 .removed-runs { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--edge); }
 .removed-runs .show-more { display: flex; gap: 8px; align-items: center; max-width: 100%; overflow-wrap: anywhere; text-align: left; font-size: 12px; padding: 10px 6px; }
 .removed-runs svg { flex-shrink: 0; }
@@ -2140,9 +2083,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* Canvas gestures belong to the board; editable notes keep native text editing. */
 .sheet { user-select: none; -webkit-user-select: none; touch-action: none; }
 .sheet input, .sheet textarea, .sheet [contenteditable="true"] { user-select: text; -webkit-user-select: text; }
-.icon-action, .run-remove { align-items: center; justify-content: center; padding: 0; }
-.run-remove { display: inline-flex; min-height: 32px; width: 30px; }
-.run-remove svg, .icon-action svg { display: block; flex: 0 0 auto; width: 14px; height: 14px; }
+.icon-action { align-items: center; justify-content: center; padding: 0; }
+.icon-action svg { display: block; flex: 0 0 auto; width: 14px; height: 14px; }
 
 /* #1077: what a run is about, where its id used to stand alone. */
 .run-objective { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--edge); }
@@ -2366,11 +2308,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 
 /* Group and sort menu of the projects rail (Day / Status / None, Last activity / Started). */
 .icon-action.on { color: var(--signal); }
-.rail-view-menu { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 8px; padding: 6px; border: 1px solid var(--edge); border-radius: var(--r); background: color-mix(in oklab, var(--text) 3%, transparent); }
-.rail-view-menu .lbl { margin: 6px 6px 2px; }
-.rail-view-menu button { display: flex; align-items: center; justify-content: space-between; min-height: 30px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.rail-view-menu button:hover, .rail-view-menu button[aria-pressed="true"] { background: color-mix(in oklab, var(--text) 7%, transparent); }
-.rail-view-menu button svg { width: 14px; height: 14px; }
 
 /* Team canvas (spec 4.2). */
 .team-canvas { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; }
@@ -2609,5 +2546,4 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 }
 .project-card.on { background: var(--high); }
 .project-card .run-id { font-size: 13px; }
-.run-history { padding: 4px 16px; max-height: 30vh; overflow-y: auto; }
-.run-history-head { display: flex; align-items: center; gap: 6px; }
+.project-card .run-when { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

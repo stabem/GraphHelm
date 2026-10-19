@@ -2504,7 +2504,13 @@ async fn run_idempotent_mutation_on<'a>(
     >,
     run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
 ) -> Response {
-    match classify_existing_keys_on(store, execution, &identity) {
+    // #1623: the whole mutation is timed here, not only the command body: the pre-flight and the
+    // post-write head run on this task, outside the body's thread-local `timing::request`.
+    let started = std::time::Instant::now();
+    let preflight = std::time::Instant::now();
+    let classified = classify_existing_keys_on(store, execution, &identity);
+    let preflight = preflight.elapsed();
+    match classified {
         Ok(KeyState::Complete(original_decision_sequence)) => {
             return reply_with_current_status(
                 events,
@@ -2583,8 +2589,17 @@ async fn run_idempotent_mutation_on<'a>(
             // did, both via `execution::status::execute`), forcing an extra GET per
             // `If-Match`-chained write. Read the head and fixture-only state from one fresh,
             // validated stream snapshot so those fields describe the same committed history.
+            let head = std::time::Instant::now();
             let (head_sequence, waiting_input) =
                 fresh_stream_snapshot_on(store, events, execution, wiring.any_fixture());
+            execution::timing::emit(
+                command,
+                started.elapsed(),
+                &[
+                    ("idempotency.scan", preflight),
+                    ("stream.head", head.elapsed()),
+                ],
+            );
             if let serde_json::Value::Object(ref mut map) = value {
                 map.insert("headSequence".to_owned(), serde_json::json!(head_sequence));
             }

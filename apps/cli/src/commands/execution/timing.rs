@@ -36,6 +36,20 @@ pub(crate) fn request<T>(route: &'static str, work: impl FnOnce() -> T) -> T {
     result
 }
 
+/// Logs one line for `route` whose total and phases the caller measured itself (#1623): a request
+/// that spans threads (serve's async mutation around a blocking command body) cannot use
+/// [`request`]'s thread-local phases. Same line shape; nothing is logged with timing off.
+pub(crate) fn emit(route: &'static str, total: Duration, phases: &[(&'static str, Duration)]) {
+    if !enabled() {
+        return;
+    }
+    let phases = phases
+        .iter()
+        .map(|(name, spent)| (*name, (1, *spent)))
+        .collect::<BTreeMap<_, _>>();
+    eprintln!("{}", line(route, total, &phases));
+}
+
 /// Adds the time `work` takes to `name` in the current request, when one is being timed.
 pub(crate) fn phase<T>(name: &'static str, work: impl FnOnce() -> T) -> T {
     let active = enabled() && PHASES.with(|cell| cell.borrow().is_some());

@@ -131,3 +131,99 @@ fn remove_deletes_a_worktree_and_a_directory_without_following_their_junctions()
     assert!(!out.status.success(), "{out:?}");
     assert!(repo.join(".git").exists());
 }
+
+fn refused(path: &Path, repo: Option<&Path>, why: &str) -> Value {
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command.args(["--json", "workspace", "remove", &s(path)]);
+    if let Some(repo) = repo {
+        command.args(["--repo", &s(repo)]);
+    }
+    let out = command.output().unwrap();
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+    assert!(!out.status.success(), "not refused: {reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["code"], "GHCLI037_WORKSPACE_REFUSED",
+        "{reply}"
+    );
+    assert!(
+        reply["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains(why),
+        "refused for another reason than {why:?}: {reply}"
+    );
+    reply
+}
+
+/// A long-lived hidden child whose current directory is `dir`.
+fn hold(dir: &Path) -> std::process::Child {
+    #[cfg(windows)]
+    let mut command = {
+        let mut c = graphhelm_process::command("ping");
+        c.args(["-n", "120", "127.0.0.1"]);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut c = graphhelm_process::command("sleep");
+        c.arg("120");
+        c
+    };
+    command
+        .current_dir(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+#[test]
+fn remove_refuses_a_checkouts_ancestor_or_inside_and_a_held_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let base = PathBuf::from(s(&base).trim_start_matches("//?/"));
+    let holder = base.join("lanes");
+    let repo = holder.join("repo");
+    std::fs::create_dir_all(repo.join("sub")).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    std::fs::write(repo.join("sub").join("f.txt"), "f\n").unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "init"]);
+    let wt_parent = base.join("wts");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "pr",
+            &s(&wt_parent.join("wt")),
+            "main",
+        ],
+    );
+
+    // An ancestor of the main checkout, a directory inside it, an ancestor of a worktree.
+    refused(&holder, None, "holds a git checkout");
+    refused(&repo.join("sub"), None, "inside a git checkout");
+    refused(&wt_parent, Some(&repo), "holds a git checkout");
+    assert!(
+        repo.join("sub").join("f.txt").is_file(),
+        "the checkout was touched"
+    );
+    assert!(
+        wt_parent.join("wt").join("sub").join("f.txt").is_file(),
+        "the worktree was touched"
+    );
+
+    // A plain directory a live process holds.
+    let held = base.join("held");
+    std::fs::create_dir_all(&held).unwrap();
+    let mut child = hold(&held);
+    let reply = refused(&held, None, "live processes");
+    let alive = child.try_wait().unwrap().is_none();
+    child.kill().ok();
+    child.wait().ok();
+    assert!(alive, "the holder was stopped: {reply}");
+    assert!(held.exists(), "the held directory was removed");
+}

@@ -5520,16 +5520,19 @@ Arguments:
           The worktree or directory to delete
 
 Options:
+      --pretty
+          
+
+      --repo <REPO>
+          A repository whose registered worktrees a plain directory must not contain
+
+      --json
+          Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
+
       --leftovers <LEFTOVERS>
           A worktree's uncommitted work is saved under `<leftovers>/<directory name>/` first
           
           [default: D:/_merge-leftovers]
-
-      --pretty
-          
-
-      --json
-          Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
 
   -h, --help
           Print help

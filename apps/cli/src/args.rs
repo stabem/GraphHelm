@@ -2426,6 +2426,9 @@ pub struct WorkspaceRootArgs {
 pub struct WorkspaceRemoveArgs {
     /// The worktree or directory to delete.
     pub path: PathBuf,
+    /// A repository whose registered worktrees a plain directory must not contain.
+    #[arg(long)]
+    pub repo: Option<PathBuf>,
     /// A worktree's uncommitted work is saved under `<leftovers>/<directory name>/` first.
     #[arg(long, default_value = "D:/_merge-leftovers")]
     pub leftovers: PathBuf,

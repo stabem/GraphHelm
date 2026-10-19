@@ -102,6 +102,14 @@ pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 /// sealed checkpoint plus the active tail; this number is time bought for that, not a target.
 pub const STATUS_READ_BUDGET_MILLIS: i64 = 180_000;
 
+/// #1721: the budget a `serve` REQUEST declares for the same read. Short, as before the stopgap:
+/// a long-lived Runtime warms its shared prefix across requests (a cut walk is kept and resumed,
+/// #363) and walks it in ONE place (the single-flight cold walk on `PrefixCache`), so a cold
+/// request after a restart is told "still warming" in seconds instead of each one folding the
+/// whole history in parallel (~225 MB and 66-90 s each, measured). The one-shot CLI keeps
+/// `STATUS_READ_BUDGET_MILLIS`, which it needs to answer at all.
+pub const SERVE_READ_BUDGET_MILLIS: i64 = 5_000;
+
 /// Wall-clock budget for the Runtime's task projection (`GET /v1/executions/{id}/tasks`, #1202).
 ///
 /// Unlike the status fold, this read opens one sealed envelope per `task.*` record, and the

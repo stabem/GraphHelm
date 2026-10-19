@@ -896,6 +896,15 @@ pub(super) fn status_read_budget() -> graphhelm_events::ReadBudget {
     )
 }
 
+/// #1721: the budget a `serve` request declares for a status-shaped read
+/// (`SERVE_READ_BUDGET_MILLIS`); the one-shot CLI keeps [`status_read_budget`].
+pub(super) fn serve_read_budget() -> graphhelm_events::ReadBudget {
+    graphhelm_events::ReadBudget::starting_now(
+        Arc::new(SystemClock),
+        chrono::Duration::milliseconds(graphhelm_events::SERVE_READ_BUDGET_MILLIS),
+    )
+}
+
 /// #1202: the task projection route's own budget (`TASKS_READ_BUDGET_MILLIS`); its cold read
 /// opens every envelope once, which the status budget was never sized for.
 pub(super) fn tasks_read_budget() -> graphhelm_events::ReadBudget {

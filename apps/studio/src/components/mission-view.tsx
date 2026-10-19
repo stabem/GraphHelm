@@ -15,7 +15,7 @@ import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-gr
 import { ProofTable } from "./proof-table";
 import { TestCanvas } from "./test-canvas";
 import { ProofRun } from "./proof-run";
-import { approveJourneys, journeyVerdict, runJourneys, type JourneyRunSource, type JourneyVerdict } from "./journey-flows";
+import { approveJourneys, journeyVerdict, stepNeedsFrame, runJourneys, type JourneyRunSource, type JourneyVerdict } from "./journey-flows";
 import { LanesTimeline } from "./lanes-timeline";
 import { WorkKanban, type KanbanItem } from "./work-kanban";
 import type { Bot } from "../runtime/team";
@@ -480,7 +480,8 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
     }
   }, [run, onRun, journeys, runFor]);
   const verdictOf = (m: Mission): JourneyVerdict => (batch?.current === m.contractId ? "running" : journeyVerdict(m.steps.map((step) => step.status), runFor(m.contractId),
-    flowForContract(flows?.flows ?? [], m.contractId)?.status !== "approved"));
+    flowForContract(flows?.flows ?? [], m.contractId)?.status !== "approved",
+    m.steps.map((step) => ({ id: step.stepId, needsFrame: stepNeedsFrame(flowForContract(flows?.flows ?? [], m.contractId)?.screens.find((screen) => screen.id === step.stepId)) }))));
   const verdictCount = (v: JourneyVerdict) => missions.filter((m) => runnable.includes(m.contractId) && verdictOf(m) === v).length;
   const startBatch = (ids: string[]) => {
     if (!run || batch !== null) return;

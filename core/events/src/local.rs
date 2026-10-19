@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
+
+use sha2::Digest as _;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
@@ -368,6 +370,9 @@ pub struct LocalEventRepository {
     #[cfg(test)]
     full_walk_delay: Option<std::time::Duration>,
     failpoint: Option<LocalFailpoint>,
+    /// ADR-046: whether THIS handle may trim an unacknowledged torn journal tail. Only the
+    /// Runtime's start-up open sets it; every other open refuses the tail and names who recovers it.
+    recover_torn_tail: bool,
     schemas: &'static graphhelm_schema::RepositorySchemaSet,
     /// Unbounded unless this handle came from `open_within` (#750). Checked inside the journal
     /// verification walk, which is the half of a status read's cost that is not the fold.
@@ -550,6 +555,7 @@ impl LocalEventRepository {
             None,
             crate::ReadBudget::unbounded(),
             None,
+            false,
         )
     }
 
@@ -566,7 +572,7 @@ impl LocalEventRepository {
         budget: crate::ReadBudget,
         cache: &PrefixCache,
     ) -> Result<Self, EventRepositoryError> {
-        Self::open_inner(root.into(), clock, ids, None, budget, Some(cache))
+        Self::open_inner(root.into(), clock, ids, None, budget, Some(cache), false)
     }
 
     /// [`Self::open`], with a wall-clock budget on every journal walk this handle performs -
@@ -582,7 +588,27 @@ impl LocalEventRepository {
         ids: Arc<dyn IdGenerator>,
         budget: crate::ReadBudget,
     ) -> Result<Self, EventRepositoryError> {
-        Self::open_inner(root.into(), clock, ids, None, budget, None)
+        Self::open_inner(root.into(), clock, ids, None, budget, None, false)
+    }
+
+    /// [`Self::open`] for the Runtime's start-up only (ADR-046): a journal whose tail is torn by a
+    /// crash mid-append is recovered here, under the exclusive lock, instead of refused. Every
+    /// other open refuses that tail with `open:journal-tail-awaits-runtime-recovery`, so a CLI
+    /// one-shot, an MCP read or a lane waiter never changes the journal behind the Runtime.
+    pub fn open_recovering_torn_tail(
+        root: impl Into<PathBuf>,
+        clock: Arc<dyn Clock>,
+        ids: Arc<dyn IdGenerator>,
+    ) -> Result<Self, EventRepositoryError> {
+        Self::open_inner(
+            root.into(),
+            clock,
+            ids,
+            None,
+            crate::ReadBudget::unbounded(),
+            None,
+            true,
+        )
     }
 
     pub fn open_with_failpoint(
@@ -598,6 +624,7 @@ impl LocalEventRepository {
             Some(failpoint),
             crate::ReadBudget::unbounded(),
             None,
+            false,
         )
     }
 
@@ -608,6 +635,7 @@ impl LocalEventRepository {
         failpoint: Option<LocalFailpoint>,
         read_budget: crate::ReadBudget,
         prefix_cache: Option<&PrefixCache>,
+        recover_torn_tail: bool,
     ) -> Result<Self, EventRepositoryError> {
         let schemas = graphhelm_schema::repository_schema_set()
             .map_err(|_| EventRepositoryError::IntegrityAt("open:schema-set"))?;
@@ -755,6 +783,7 @@ impl LocalEventRepository {
             #[cfg(test)]
             full_walk_delay: prefix_cache.and_then(|cache| cache.walk_delay),
             failpoint,
+            recover_torn_tail,
             schemas,
             read_budget,
         };
@@ -765,7 +794,7 @@ impl LocalEventRepository {
         }
         let recovery = (|| {
             repository.validate_anchors()?;
-            let state = match repository.load_state("open") {
+            let loaded = match repository.load_state("open") {
                 // #1624: a prefix walked before the lock that the locked suffix does not extend
                 // (a writer rolled back, or the journal changed under the walk) is dropped, and
                 // the load is the full one every open made before.
@@ -780,17 +809,33 @@ impl LocalEventRepository {
                             site: "open:verified-mutex-poisoned",
                             os: None,
                         })? = None;
-                    repository.load_state("open")?
+                    repository.load_state("open")
                 }
-                loaded => loaded?,
+                loaded => loaded,
             };
-            let published = state
-                .batches
-                .iter()
-                .flat_map(|batch| &batch.events)
-                .filter(|event| matches!(event.kind, EventKind::GraphVersionPublished(_)))
-                .cloned()
-                .collect::<Vec<_>>();
+            // ADR-046: a torn tail is trimmed only by the Runtime's start-up open, and only under
+            // the EXCLUSIVE lock. A shared open that finds one skips the read-only fast path and
+            // takes the upgrade below; every other open refuses it and names who recovers it.
+            let state = match loaded {
+                Err(EventRepositoryError::IntegrityAt(TORN_TAIL_SITE))
+                    if repository.recover_torn_tail =>
+                {
+                    None
+                }
+                Err(EventRepositoryError::IntegrityAt(TORN_TAIL_SITE)) => {
+                    return Err(EventRepositoryError::IntegrityAt(TORN_TAIL_AWAITS_SITE));
+                }
+                other => Some(other?),
+            };
+            let published_in = |state: &LoadedState| {
+                state
+                    .batches
+                    .iter()
+                    .flat_map(|batch| &batch.events)
+                    .filter(|event| matches!(event.kind, EventKind::GraphVersionPublished(_)))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
             // The journal sync happens exactly ONCE per open, on whichever branch runs
             // (the resync-once contract a recovery guard pins): after the read-only
             // clean checks on the fast path, or inside the redo on the upgrade path,
@@ -800,10 +845,11 @@ impl LocalEventRepository {
                 // The clean checks are READ-ONLY mirrors of what recovery would write:
                 // nothing to reconcile, nothing to republish -> nothing needs the
                 // exclusive lock, and concurrent clean opens proceed in parallel.
-                if repository.plan_reconcile(&state)?.is_noop()
-                    && repository.active_markers_clean(&published)?
+                if let Some(state) = &state
+                    && repository.plan_reconcile(state)?.is_noop()
+                    && repository.active_markers_clean(&published_in(state))?
                 {
-                    repository.sync_loaded_journal(&state)?;
+                    repository.sync_loaded_journal(state)?;
                     #[cfg(test)]
                     repository
                         .shared_fast_open_count
@@ -852,21 +898,18 @@ impl LocalEventRepository {
                         os: None,
                     })? = None;
                 repository.validate_anchors()?;
-                let state = repository.load_state("open")?;
+                let state = repository.load_state_trimming_torn_tail("open")?;
                 repository.sync_loaded_journal(&state)?;
-                let published = state
-                    .batches
-                    .iter()
-                    .flat_map(|batch| &batch.events)
-                    .filter(|event| matches!(event.kind, EventKind::GraphVersionPublished(_)))
-                    .cloned()
-                    .collect::<Vec<_>>();
                 repository.reconcile_orphans(&state)?;
-                return repository.publish_active_marker(&published);
+                return repository.publish_active_marker(&published_in(&state));
             }
+            let state = match state {
+                Some(state) => state,
+                None => repository.load_state_trimming_torn_tail("open")?,
+            };
             repository.sync_loaded_journal(&state)?;
             repository.reconcile_orphans(&state)?;
-            repository.publish_active_marker(&published)
+            repository.publish_active_marker(&published_in(&state))
         })();
         let named_unlock = {
             let lock = repository
@@ -1950,6 +1993,112 @@ impl LocalEventRepository {
         let mut ctx = VerifyCtx::fresh();
         let mut consumed = 0_u64;
         self.verify_lines(&bytes, &mut ctx, &mut consumed)
+    }
+
+    /// ADR-046 (#41): trims the bytes after the journal's last newline, which no writer was ever
+    /// acknowledged for. An append writes one newline-terminated line, syncs it and only then
+    /// returns, so a committed batch always ends in `\n`. Callers hold the store's EXCLUSIVE lock.
+    ///
+    /// Order, so a crash at any step is safe to repeat: every line before the cut is verified
+    /// exactly as `load_state` does (a corrupt committed line still refuses and nothing is
+    /// touched); a tail longer than one batch refuses (no single interrupted append wrote it);
+    /// the tail and a manifest are written and synced under `quarantine/`; only then is the
+    /// journal truncated and synced. Returns whether anything was trimmed.
+    fn trim_torn_tail(&self) -> Result<bool, EventRepositoryError> {
+        let mut journal = self
+            .journal
+            .lock()
+            .map_err(|_| EventRepositoryError::StorageAt {
+                site: "trim-tail:journal-mutex-poisoned",
+                os: None,
+            })?;
+        let length = journal
+            .metadata()
+            .map_err(|error| EventRepositoryError::StorageAt {
+                site: "trim-tail:journal-metadata",
+                os: error.raw_os_error(),
+            })?
+            .len();
+        ensure_inclusive_limit(length, MAX_JOURNAL_BYTES)?;
+        let bytes = read_bounded_range(&mut journal, 0, length)?;
+        if bytes.is_empty() || bytes.last() == Some(&b'\n') {
+            return Ok(false);
+        }
+        let cut = bytes
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |index| index + 1);
+        let tail = &bytes[cut..];
+        if tail.len() > MAX_BATCH_BYTES {
+            return Err(EventRepositoryError::IntegrityAt(
+                "load_state:journal-tail-oversized",
+            ));
+        }
+        let mut ctx = VerifyCtx::fresh();
+        let mut consumed = 0_u64;
+        self.verify_lines(&bytes[..cut], &mut ctx, &mut consumed)?;
+
+        let digest = hex::encode(sha2::Sha256::digest(tail));
+        let name = format!("torn-tail-{length}-{digest}");
+        let quarantine_path = quarantine_directory(&self.root);
+        let quarantine = open_quarantine_directory(&quarantine_path)?;
+        let manifest = serde_json::json!({
+            "schema": "graphhelm.journal-tail-recovered/1",
+            "quarantine": format!("{name}.bin"),
+            "trimmedBytes": tail.len(),
+            "sha256": digest,
+            "journalBytesBefore": length,
+            "journalBytesAfter": cut,
+        });
+        let manifest = serde_json::to_vec_pretty(&manifest)
+            .map_err(|_| EventRepositoryError::IntegrityAt("trim-tail:manifest-encode"))?;
+        for (file_name, content) in [
+            (format!("{name}.bin"), tail),
+            (format!("{name}.json"), manifest.as_slice()),
+        ] {
+            write_quarantine_file(&quarantine_path.join(&file_name), content)?;
+        }
+        sync_directory_handle(&quarantine)?;
+
+        let cut = u64::try_from(cut).map_err(|_| EventRepositoryError::LimitExceeded)?;
+        journal
+            .set_len(cut)
+            .map_err(|error| EventRepositoryError::StorageAt {
+                site: "trim-tail:truncate",
+                os: error.raw_os_error(),
+            })?;
+        journal
+            .sync_data()
+            .map_err(|error| EventRepositoryError::StorageAt {
+                site: "trim-tail:journal-sync",
+                os: error.raw_os_error(),
+            })?;
+        sync_directory_handle(&self.root_handle)?;
+        *self
+            .verified
+            .lock()
+            .map_err(|_| EventRepositoryError::StorageAt {
+                site: "trim-tail:verified-mutex-poisoned",
+                os: None,
+            })? = None;
+        Ok(true)
+    }
+
+    /// [`load_state`](Self::load_state) for an EXCLUSIVE open: a torn tail is trimmed (ADR-046)
+    /// and the journal loaded again; every other refusal is returned unchanged.
+    fn load_state_trimming_torn_tail(
+        &self,
+        kind: &'static str,
+    ) -> Result<Arc<LoadedState>, EventRepositoryError> {
+        match self.load_state(kind) {
+            Err(EventRepositoryError::IntegrityAt(TORN_TAIL_SITE)) if !self.recover_torn_tail => {
+                Err(EventRepositoryError::IntegrityAt(TORN_TAIL_AWAITS_SITE))
+            }
+            Err(EventRepositoryError::IntegrityAt(TORN_TAIL_SITE)) if self.trim_torn_tail()? => {
+                self.load_state(kind)
+            }
+            other => other,
+        }
     }
 
     fn load_state(&self, kind: &'static str) -> Result<Arc<LoadedState>, EventRepositoryError> {
@@ -6269,6 +6418,100 @@ fn validate_opened_directory(file: &File) -> Result<(), EventRepositoryError> {
         return Err(EventRepositoryError::UnsupportedFormat);
     }
     Ok(())
+}
+
+/// The refusal `load_state` gives a journal that does not end in a newline (ADR-046).
+const TORN_TAIL_SITE: &str = "load_state:journal-tail-unterminated";
+
+/// What every open but the Runtime's start-up answers for a torn tail (ADR-046): the Runtime
+/// recovers it when it next starts; nothing else may change the journal behind it.
+const TORN_TAIL_AWAITS_SITE: &str = "open:journal-tail-awaits-runtime-recovery";
+
+/// ADR-046's quarantine: a SIBLING of the store root, `<events>.quarantine`, like #1473's
+/// `<events>.runtime-lifecycle.oom`. Inside the root it would be an entry `inspect_layout`'s
+/// closed allowlist refuses, which is a store format change; beside it, the layout is untouched.
+fn quarantine_directory(root: &Path) -> std::path::PathBuf {
+    let mut path = root.as_os_str().to_owned();
+    path.push(".quarantine");
+    std::path::PathBuf::from(path)
+}
+
+/// Creates the quarantine directory when absent and opens it for a directory sync. A link or
+/// reparse point at that path is refused, never followed.
+fn open_quarantine_directory(path: &Path) -> Result<File, EventRepositoryError> {
+    match std::fs::create_dir(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(EventRepositoryError::StorageAt {
+                site: "trim-tail:quarantine-create",
+                os: error.raw_os_error(),
+            });
+        }
+    }
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|error| EventRepositoryError::StorageAt {
+            site: "trim-tail:quarantine-metadata",
+            os: error.raw_os_error(),
+        })?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        return Err(EventRepositoryError::IntegrityAt(
+            "trim-tail:quarantine-not-a-directory",
+        ));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_BACKUP_SEMANTICS opens a directory; FILE_FLAG_OPEN_REPARSE_POINT never
+        // follows one that appeared since the check above.
+        options.custom_flags(0x0200_0000 | 0x0020_0000);
+    }
+    options
+        .open(path)
+        .map_err(|error| EventRepositoryError::StorageAt {
+            site: "trim-tail:quarantine-open",
+            os: error.raw_os_error(),
+        })
+}
+
+/// Writes one quarantine file atomically (#1626 review): a unique temp file in the same folder is
+/// written and synced, then renamed over the final name. A crash at any point leaves either no
+/// final file or a complete one, never a short one. A short leftover from an older attempt, or a
+/// stray temp file, is simply replaced: the content is fixed by the tail it records, whose hash
+/// is in the name, so rewriting it is always right. The caller syncs the folder afterwards.
+fn write_quarantine_file(path: &Path, content: &[u8]) -> Result<(), EventRepositoryError> {
+    if let Ok(metadata) = std::fs::symlink_metadata(path)
+        && (metadata.file_type().is_symlink() || is_reparse_point(&metadata) || !metadata.is_file())
+    {
+        return Err(EventRepositoryError::IntegrityAt(
+            "trim-tail:quarantine-not-a-file",
+        ));
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(format!(".tmp-{}-{nonce}", std::process::id()));
+    let temp = std::path::PathBuf::from(temp);
+    let written = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        file.write_all(content)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    written.map_err(|error| {
+        let _ = std::fs::remove_file(&temp);
+        EventRepositoryError::StorageAt {
+            site: "trim-tail:quarantine-write",
+            os: error.raw_os_error(),
+        }
+    })
 }
 
 fn sync_directory_handle(directory: &File) -> Result<(), EventRepositoryError> {

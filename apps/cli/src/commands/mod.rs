@@ -794,6 +794,19 @@ pub(crate) static STORE_OPENS: std::sync::LazyLock<
     std::sync::Mutex<std::collections::BTreeMap<std::path::PathBuf, u64>>,
 > = std::sync::LazyLock::new(Default::default);
 
+/// ADR-046 (#41): opens the store once in the mode that may recover a torn journal tail, then
+/// drops the handle. Only `graphhelm serve` calls it, at start-up.
+pub(super) fn recover_torn_journal_tail(
+    path: &std::path::Path,
+) -> Result<(), EventRepositoryError> {
+    LocalEventRepository::open_recovering_torn_tail(
+        path.to_path_buf(),
+        Arc::new(SystemClock),
+        Arc::new(UuidIds),
+    )
+    .map(drop)
+}
+
 pub(super) fn event_store(
     path: &std::path::Path,
 ) -> Result<LocalEventRepository, EventRepositoryError> {

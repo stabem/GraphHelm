@@ -384,6 +384,10 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     }
     std::fs::create_dir_all(&args.events)
         .map_err(|_| serve_invalid("the events directory could not be created", "/events"))?;
+    // ADR-046 (#41): the Runtime's start-up is the one open allowed to recover a journal tail torn
+    // by a crash mid-append; every later open (each request, CLI one-shots, MCP) refuses it. Any
+    // other refusal is left for the first request to report, exactly as before.
+    let _ = super::recover_torn_journal_tail(&args.events);
     // One implementation with `init` (#1062): the token `init` minted is the one `serve` reads.
     let (_, token) = secret_file::ensure_token(&args.events)
         .map_err(|error| serve_invalid(error.message(), "/token"))?;

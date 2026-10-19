@@ -945,6 +945,32 @@ fn a_recorded_preview_survives_unrelated_commits_and_dies_with_its_scope() {
     assert!(finding(&reply, "flow.preview_not_passed"), "{reply}");
 }
 
+/// #1633 follow-up: a flow that says part of its purpose is unobserved cannot be approved.
+/// `studio-new-task` marks a screen `OBSERVER_MISSING #1042` in its title; validate names it and
+/// approve refuses it.
+#[test]
+fn a_flow_marked_observer_missing_is_refused_by_validate_and_approve() {
+    const NEW_TASK: &str =
+        include_str!("../../../.graphhelm/journeys/studio-new-task.journey.yaml");
+    let dir = committed(NEW_TASK);
+    std::fs::rename(
+        dir.path().join(".graphhelm/journeys/checkout.journey.yaml"),
+        dir.path()
+            .join(".graphhelm/journeys/studio-new-task.journey.yaml"),
+    )
+    .unwrap();
+    let token = owner_token(dir.path());
+    let checked = validate(dir.path());
+    assert!(finding(&checked, "flow.observer_missing"), "{checked}");
+    passing_preview(dir.path(), "studio-new-task");
+    let (out, reply) = run(
+        dir.path(),
+        &["approve", "studio-new-task", "--token-file", &token],
+    );
+    assert_ne!(out.status.code(), Some(0), "{reply}");
+    assert!(finding(&reply, "flow.observer_missing"), "{reply}");
+}
+
 #[test]
 fn approve_without_the_owner_token_is_refused_and_writes_nothing() {
     let dir = committed(EXAMPLE);

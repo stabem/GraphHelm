@@ -2364,6 +2364,31 @@ export default function App({
             >
               <RefreshCw className={busy ? "spin" : ""} aria-hidden="true" />
             </button>
+          {connected && (
+            <RunHistory
+              project={railProject}
+              selected={selected}
+              hasMore={nextCursor !== null}
+              busy={busy}
+              onSelect={(id) => {
+                setModelsOpen(false);
+                select(id);
+                if (typeof window.matchMedia === "function" && !window.matchMedia("(min-width: 901px)").matches) {
+                  setProjectsOpen(false);
+                  setTalkOpen(false);
+                }
+              }}
+              onLoadMore={() => void loadList({ append: true, cursor: nextCursor })}
+              onNewTask={() => {
+                setModelsOpen(false);
+                startDraft();
+              }}
+              onRemoveRun={removeRun}
+              briefings={briefings}
+              teamRuns={teamRuns}
+              selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded · graph step waiting" } : null}
+            />
+          )}
             {/* One slip away from Refresh, and it erases the token AND every stored board.
               * First click arms, second erases; the arm decays after 5s on its own. */}
             <button
@@ -2398,32 +2423,6 @@ export default function App({
               <LogOut aria-hidden="true" />
             </button>
         </header>
-        {connected && (
-          <RunHistory
-            defaultOpen
-            project={railProject}
-            selected={selected}
-            hasMore={nextCursor !== null}
-            busy={busy}
-            onSelect={(id) => {
-              setModelsOpen(false);
-              select(id);
-              if (typeof window.matchMedia === "function" && !window.matchMedia("(min-width: 901px)").matches) {
-                setProjectsOpen(false);
-                setTalkOpen(false);
-              }
-            }}
-            onLoadMore={() => void loadList({ append: true, cursor: nextCursor })}
-            onNewTask={() => {
-              setModelsOpen(false);
-              startDraft();
-            }}
-            onRemoveRun={removeRun}
-            briefings={briefings}
-            teamRuns={teamRuns}
-            selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded · graph step waiting" } : null}
-          />
-        )}
 
         {error && (
           <div className="banner" role="alert">

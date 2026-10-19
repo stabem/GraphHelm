@@ -24,7 +24,7 @@
  * and calling it a link would promise a URL that does not exist.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Activity, Check, Folder, FolderPlus, ListFilter, Pencil, Plus, RotateCcw, Trash2, X, SlidersHorizontal } from "lucide-react";
 
 import type { ExecutionSummary, RuntimePreviousExit } from "../runtime/types";
@@ -404,8 +404,18 @@ export function RunHistory({
     saveView(merged);
   };
   const runs = project.runs;
+  const root = useRef<HTMLElement>(null);
+  // A popover over the content: it closes on a click outside or Escape, never reflows the page.
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", escape); };
+  }, [open]);
   return (
-    <section className="run-history" aria-label={`History of ${project.name}`}>
+    <section className="run-history" ref={root} aria-label={`History of ${project.name}`}>
       <div className="run-history-head">
         <button type="button" className="run-group-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
           History ({runs.length})
@@ -423,7 +433,7 @@ export function RunHistory({
               </button>
         )}
       </div>
-      {open && (<>
+      {open && (<div className="run-history-pop">
             {viewMenu && (
               <div className="rail-view-menu" role="group" aria-label="Group and sort tasks">
                 <p className="lbl">Group by</p>
@@ -474,7 +484,7 @@ export function RunHistory({
                 const metaStatus = reviewCount > 0 ? `${reviewCount} result${reviewCount === 1 ? " needs" : "s need"} review` : readable(run.status);
                 return (
                   <div key={run.executionId} className={`run-row ${rowKey} ${on ? "on" : ""}`}>
-                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} aria-label={`${title}; ${relativeTime} · ${metaStatus}; ${rowStatus}`} onClick={() => onSelect(run.executionId)} title={rowStatus}>
+                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} aria-label={`${title}; ${relativeTime} · ${metaStatus}; ${rowStatus}`} onClick={() => { onSelect(run.executionId); setOpen(false); }} title={rowStatus}>
                     {/* Each room wears its own derived colour, like a contact in a messenger -
                         the same hue its actors' avatars key off nothing, but the ROOM's identity
                         comes from its id, stable across every view. */}
@@ -557,7 +567,7 @@ export function RunHistory({
                 </button></>
               )}
             </div>
-      </>)}
+      </div>)}
     </section>
   );
 }

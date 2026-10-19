@@ -54,8 +54,34 @@ describe("one card per project", () => {
     );
     const history = screen.getByRole("region", { name: "History of GraphHelm" });
     await userEvent.click(within(history).getByRole("button", { name: "History (4)" }));
+    expect(within(history).getByRole("button", { name: /^old-paused;/ })).toBeInTheDocument();
     await userEvent.click(within(history).getByRole("button", { name: /^old-cancelled;/ }));
     expect(onSelect).toHaveBeenCalledWith("old-cancelled");
-    expect(within(history).getByRole("button", { name: /^old-paused;/ })).toBeInTheDocument();
+  });
+
+  it("starts closed, opens on the button, and closes on a pick, Escape or a click outside (#1696)", async () => {
+    render(
+      <div>
+        <p>elsewhere</p>
+        <RunHistory
+          project={{ name: "GraphHelm", runs }}
+          selected="gh-team" hasMore={false} busy={false} teamRuns={teamRuns}
+          onSelect={vi.fn()} onLoadMore={vi.fn()} onNewTask={vi.fn()}
+        />
+      </div>,
+    );
+    const history = screen.getByRole("region", { name: "History of GraphHelm" });
+    const toggle = within(history).getByRole("button", { name: "History (4)" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(history).queryByRole("button", { name: /^old-cancelled;/ })).toBeNull();
+    await userEvent.click(toggle);
+    await userEvent.click(within(history).getByRole("button", { name: /^old-cancelled;/ }));
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    await userEvent.keyboard("{Escape}");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    await userEvent.click(screen.getByText("elsewhere"));
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
 });

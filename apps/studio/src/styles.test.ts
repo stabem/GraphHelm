@@ -39,6 +39,15 @@ it("keeps the top bar above the opening overlay", () => {
   expect(loading).toMatch(/position:\s*absolute/);
 });
 
+it("lays the History popover over the content instead of reflowing it (#1696)", () => {
+  const host = CODE.match(/\.run-history\s*\{([^}]*)\}/)?.[1] ?? "";
+  const pop = CODE.match(/\.run-history-pop\s*\{([^}]*)\}/)?.[1] ?? "";
+  expect(host).toMatch(/position:\s*relative/);
+  expect(pop).toMatch(/position:\s*absolute/);
+  expect(pop).toMatch(/z-index:\s*\d+/);
+  expect(pop).toMatch(/max-height:/);
+});
+
 it("keeps the open mobile projects drawer above the stage", () => {
   const mobile = (STYLESHEETS["./styles.css"] ?? "").split("@media (max-width: 900px)")[1]?.split("@media (max-width: 600px)")[0] ?? "";
   const stage = mobile.match(/\.app\.projects-open\s*>\s*\.stage\s*\{([^}]*)\}/)?.[1] ?? "";

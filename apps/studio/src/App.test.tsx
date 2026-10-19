@@ -58,6 +58,14 @@ const PAUSED_EVIDENCE: MutationEvidence = {
 
 /** #1192: one task slice as the Runtime's tasks route serves it (`core/execution/src/tasks.rs`,
  * camelCase). Every field a view reads is present; a cell overrides what it observes. */
+/** History is a compact top-bar popover that starts closed (#1696): open it if it is closed. */
+function historyRegion(): HTMLElement {
+  const region = screen.getByRole("region", { name: /^History of / });
+  const toggle = within(region).getByRole("button", { name: /^History \(/ });
+  if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
+  return region;
+}
+
 function taskState(overrides: Partial<TaskState> & Pick<TaskState, "taskId">): TaskState {
   return {
     key: `${overrides.taskId}#claim-0`, branch: null, issue: null, pr: null, lane: null, assignedBy: null,
@@ -241,7 +249,7 @@ describe("Studio organization and responsive navigation", () => {
     expect(identity).toHaveTextContent("Project: dale-api-base");
     expect(identity).toHaveTextContent("Run: demo-deploy");
     expect(identity).not.toHaveTextContent("Joined sessions");
-    await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByText("demo-calm", { exact: true }).closest("button")!);
+    await userEvent.click(within(historyRegion()).getByText("demo-calm", { exact: true }).closest("button")!);
     expect(identity).toHaveTextContent("Run: demo-calm");
     expect(identity).not.toHaveTextContent("Run: demo-deploy");
   });
@@ -279,7 +287,7 @@ describe("Studio organization and responsive navigation", () => {
       const toggle = screen.getByRole("button", { name: "Toggle projects" });
       await userEvent.click(toggle);
       hold = true;
-      await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByText("demo-calm", { exact: true }));
+      await userEvent.click(within(historyRegion()).getByText("demo-calm", { exact: true }));
       expect(await screen.findByText("Opening this run…")).toBeInTheDocument();
       expect(toggle).toHaveAttribute("aria-expanded", "false");
       await userEvent.click(toggle);
@@ -308,7 +316,7 @@ describe("Studio organization and responsive navigation", () => {
       const toggle = screen.getByRole("button", { name: "Toggle projects" });
       if (!wide) await userEvent.click(toggle);
       expect(toggle).toHaveAttribute("aria-expanded", "true");
-      await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByText(run, { exact: true }));
+      await userEvent.click(within(historyRegion()).getByText(run, { exact: true }));
       expect(toggle).toHaveAttribute("aria-expanded", wide ? "true" : "false");
       expect(screen.getByRole("button", { name: "Toggle conversation" })).toHaveAttribute("aria-expanded", "false");
     } finally {
@@ -366,6 +374,7 @@ describe("Studio organization and responsive navigation", () => {
     await open(client);
     await userEvent.click(screen.getByRole("button", { name: "pause · finish in-flight" }));
     await waitFor(() => expect(pause).toHaveBeenCalled());
+    historyRegion();
     await userEvent.click(screen.getByRole("button", { name: "Remove demo-deploy from this browser's list" }));
     await userEvent.click(screen.getByRole("button", { name: /^Remove$/ }));
     const newTask = screen.getByRole("button", { name: "New task in dale-api-base" });
@@ -395,7 +404,7 @@ describe("Studio organization and responsive navigation", () => {
     const view = render(<App {...props} pollIntervalMs={60_000} />);
     await screen.findByRole("navigation", { name: "Projects" });
     await userEvent.click(screen.getByRole("button", { name: "restore later-run" }));
-    const rail = screen.getByRole("region", { name: /^History of / });
+    const rail = historyRegion();
     expect(await within(rail).findByRole("button", { name: /^later-run/ })).toBeVisible();
     expect(screen.queryByRole("button", { name: "restore later-run" })).not.toBeInTheDocument();
     expect(listExecutions).toHaveBeenCalledWith(expect.objectContaining({ after: "last" }));
@@ -410,6 +419,7 @@ describe("Studio organization and responsive navigation", () => {
     // Refresh observes that the action finished; pause correctly stays illegal on a paused run.
     await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
     expect(pause).toBeDisabled();
+    historyRegion();
     expect(within(rail).getAllByRole("button", { name: /^later-run/ })).toHaveLength(1);
     listExecutions.mockClear();
     view.rerender(<App {...props} pollIntervalMs={10} />);
@@ -485,15 +495,16 @@ describe("Studio organization and responsive navigation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Rename dale-api-base" }));
     await userEvent.clear(screen.getByRole("textbox", { name: "Project name" }));
     await userEvent.type(screen.getByRole("textbox", { name: "Project name" }), "My workspace{Enter}");
+    historyRegion();
     await userEvent.click(screen.getByRole("button", { name: "Remove demo-deploy from this browser's list" }));
     await userEvent.click(screen.getByRole("button", { name: /^Remove$/ }));
-    expect(within(screen.getByRole("region", { name: /^History of / })).queryByRole("button", { name: /^demo-deploy/ })).not.toBeInTheDocument();
+    expect(within(historyRegion()).queryByRole("button", { name: /^demo-deploy/ })).not.toBeInTheDocument();
     expect(client.cancel).not.toHaveBeenCalled();
     cleanup();
     await open(stubClient());
     expect(screen.getByRole("button", { name: "Rename My workspace" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "restore demo-deploy" }));
-    expect(within(screen.getByRole("region", { name: /^History of / })).getByRole("button", { name: /^demo-deploy/ })).toBeInTheDocument();
+    expect(within(historyRegion()).getByRole("button", { name: /^demo-deploy/ })).toBeInTheDocument();
   });
 
   it("reports failed browser persistence instead of claiming a saved rename", async () => {
@@ -740,7 +751,7 @@ describe("live team layout", () => {
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-calm", "1");
     await open(longGapClient());
     expect(await screen.findByRole("region", { name: "While you were away" })).toBeInTheDocument();
-    await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByText("demo-calm", { exact: true }).closest("button")!);
+    await userEvent.click(within(historyRegion()).getByText("demo-calm", { exact: true }).closest("button")!);
     // Immediately, before run B's own reads land: run B has a last-seen of its own, and run A's
     // events and status are still the ones in memory. select() clears status and events, which hides
     // A's card; the status.executionId guard is defence-in-depth behind it.
@@ -1040,7 +1051,7 @@ describe("opening", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
     expect(document.querySelector(".topbar .tag")).toHaveTextContent("agent work recorded · graph step waiting");
-    const selected = screen.getByRole("region", { name: /^History of / }).querySelector('button[aria-current="true"]')!;
+    const selected = historyRegion().querySelector('button[aria-current="true"]')!;
     expect(selected).toHaveAttribute("title", "agent work recorded · graph step waiting");
     expect(selected).toHaveClass("calm");
   });
@@ -1160,6 +1171,20 @@ describe("the projects rail", () => {
     expect(within(rail).getByText("fixture-service")).toBeVisible();
     expect(within(rail).getByText("fixtures/service")).toBeVisible();
   });
+  /** #1696: History is one compact control in the top bar. It starts closed, so the project's
+   * screen has the whole height, and opening it layers over the content instead of pushing it. */
+  it("keeps History as a closed top-bar control, not a region above the project screen", async () => {
+    await open(stubClient());
+    const region = screen.getByRole("region", { name: /^History of / });
+    expect(region.closest("header.topbar")).not.toBeNull();
+    const toggle = within(region).getByRole("button", { name: /^History \(/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(region).queryByRole("group")).toBeNull();
+    expect(document.querySelector(".stage > .run-history")).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(region.querySelector(".run-history-pop")).not.toBeNull();
+  });
   /** A project is a FOLDER and the runs live inside it. The rail says how many projects there
    * really are rather than implying a hierarchy the Runtime cannot back. */
   it("lists the folder, its tasks, and the way to add another folder", async () => {
@@ -1169,7 +1194,7 @@ describe("the projects rail", () => {
     expect(within(rail).getByText("dale-api-base")).toBeInTheDocument();
     // #1654 (D-060): one card per project; its runs are history inside the project's screen.
     expect(within(rail).getAllByRole("button", { name: /^Open project / })).toHaveLength(1);
-    const history = screen.getByRole("region", { name: /^History of / });
+    const history = historyRegion();
     expect(within(history).getByText("demo-deploy")).toBeInTheDocument();
     expect(within(history).getByText("demo-calm")).toBeInTheDocument();
     await userEvent.click(within(rail).getByRole("button", { name: /add project folder/i }));
@@ -1186,7 +1211,7 @@ describe("the projects rail", () => {
    */
   it("names each task's state in full, where no width can cut it", async () => {
     await open(stubClient());
-    const rail = screen.getByRole("region", { name: /^History of / });
+    const rail = historyRegion();
     expect(
       within(rail).getByRole("button", { name: /demo-deploy.*needs you/i }),
     ).toBeInTheDocument();
@@ -3366,7 +3391,7 @@ describe("controls keep their own guards", () => {
 describe("the rail states each fact once", () => {
   it("a run's state reaches the accessible name exactly once", async () => {
     await open(stubClient());
-    const rail = screen.getByRole("region", { name: /^History of / });
+    const rail = historyRegion();
     const row = within(rail).getByRole("button", { name: /^demo-deploy/i });
     const matches = (row.textContent ?? "").match(/needs you/gi) ?? [];
     expect(matches.length).toBeLessThanOrEqual(1);
@@ -3480,7 +3505,7 @@ describe("the live rail and one run per screen", () => {
       render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
         session={async () => ({ token: "local-token", project: "dale-api-base" })} pollIntervalMs={4000} />);
       await settle();
-      const rail = screen.getByRole("region", { name: /^History of / });
+      const rail = historyRegion();
       expect(within(rail).getByRole("button", { name: /^run-00/i })).toBeInTheDocument();
       fireEvent.click(within(rail).getByRole("button", { name: /show more/i }));
       await settle();
@@ -3614,7 +3639,7 @@ describe("the live rail and one run per screen", () => {
       />,
     );
     await screen.findByLabelText("Projects");
-    const rail = screen.getByRole("region", { name: /^History of / });
+    const rail = historyRegion();
     await waitFor(() => {
       const row = within(rail).getByRole("button", { name: /^demo-calm/i });
       expect(row.textContent).toMatch(/needs you/i);
@@ -3778,6 +3803,7 @@ describe("isolation across surfaces, runs and sessions", () => {
     await userEvent.click(screen.getByRole("button", { name: /pause · finish in-flight/i }));
     await screen.findByText(/paused — done/i);
 
+    historyRegion();
     await userEvent.click(screen.getByRole("button", { name: /^demo-calm/ }));
     await screen.findByLabelText(/^Run demo-calm/);
     expect(screen.queryByText(/only demo-deploy's problem/)).not.toBeInTheDocument();
@@ -3852,6 +3878,7 @@ describe("isolation across surfaces, runs and sessions", () => {
     await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
     const idA = client.startTask.mock.calls[0][0] as string;
     const keyA = (client.startTask.mock.calls[0][2] as { idempotencyKey: string }).idempotencyKey;
+    historyRegion();
     await userEvent.click(screen.getByRole("button", { name: /^demo-deploy/ }));
     fireEvent.click(screen.getByRole("button", { name: /^disconnect$/i }), { detail: 1 });
     fireEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }), {
@@ -4109,6 +4136,7 @@ describe("health and read-state honesty", () => {
     await userEvent.type(await screen.findByLabelText(/bearer token/i), "local-token");
     await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
     await waitFor(() => expect(screen.queryByText(/stale/i)).not.toBeInTheDocument());
+    historyRegion();
     expect(await screen.findByText(/No task yet/i)).toBeInTheDocument();
   });
 
@@ -4452,6 +4480,7 @@ describe("the exchange", () => {
     await open(client);
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     const mission = await screen.findByRole("region", { name: "Canvas" });
+    historyRegion();
     await waitFor(() => expect(screen.getByRole("button", { name: /^demo-deploy · team work;/ })).toBeInTheDocument());
     expect(screen.getByText("demo-deploy · team work", { selector: "button[title='demo-deploy']" })).toBeInTheDocument();
     expect(screen.queryByText("Produce a deployable build.")).toBeNull();
@@ -4986,7 +5015,7 @@ describe("the run it just started", () => {
     await userEvent.type(await screen.findByLabelText(/what should this task do/i), OBJECTIVE);
     await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
     await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(within(screen.getByRole("region", { name: /^History of / })).getByRole("button", { current: true })).toHaveTextContent(committed!));
+    await waitFor(() => expect(within(historyRegion()).getByRole("button", { current: true })).toHaveTextContent(committed!));
     expect(screen.queryByRole("button", { name: /starting/i })).not.toBeInTheDocument();
     finish({ ...PAUSED_EVIDENCE, action: "start", executionId: committed! });
   });
@@ -4997,7 +5026,7 @@ describe("the run it just started", () => {
     expect(await screen.findByRole("region", { name: "Team" })).toBeInTheDocument();
     expect(screen.queryByText("This board is empty.")).not.toBeInTheDocument();
     expect(screen.queryByText("pick a run, or start one")).not.toBeInTheDocument();
-    const rail = screen.getByRole("region", { name: /^History of / });
+    const rail = historyRegion();
     await waitFor(() => expect(within(rail).getByRole("button", { current: true })).toHaveAttribute("title", expect.any(String)));
     expect(within(rail).getByRole("button", { current: true }).textContent).toContain(id.slice(0, 8));
   });
@@ -5032,7 +5061,7 @@ describe("the run it just started", () => {
     const client = withStarted({ getBriefing: vi.fn(async (id: string) => (id.startsWith("run-") ? BRIEFING : { ...BRIEFING, name: null, objective: null })) });
     const id = await startOne(client);
     // The rail row: objective as the name, id kept on the row as its address.
-    const rail = screen.getByRole("region", { name: /^History of / });
+    const rail = historyRegion();
     const row = await within(rail).findByRole("button", { name: new RegExp(OBJECTIVE) });
     expect(row).toHaveAttribute("aria-current", "true");
     expect(within(rail).getByTitle(id)).toBeInTheDocument();
@@ -5080,7 +5109,7 @@ describe("a selection that lands while the rail is prefetching", () => {
     await open(client);
     // The rail's prefetch is in flight for the generated row; the operator clicks it now.
     await waitFor(() => expect(client.getBriefing).toHaveBeenCalledWith(GENERATED));
-    await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByTitle(GENERATED).closest("button")!);
+    await userEvent.click(within(historyRegion()).getByTitle(GENERATED).closest("button")!);
     const strip = document.querySelector(".topbar") as HTMLElement;
     expect(await within(strip).findByRole("button", { name: GENERATED })).toBeInTheDocument();
     settle(undefined);
@@ -5111,7 +5140,7 @@ describe("selecting a run leaves the new-task draft", () => {
     const box = await screen.findByLabelText("What should this task do?");
     await userEvent.type(box, "Rotate the staging credentials");
 
-    const rail = screen.getByRole("region", { name: /^History of / });
+    const rail = historyRegion();
     await userEvent.click(within(rail).getByRole("button", { name: /^demo-calm/ }));
 
     // The body is the run's, not the draft's.
@@ -5179,7 +5208,7 @@ describe("a parked draft keeps its identity, not just its words", () => {
     const firstKey = (client.startTask.mock.calls[0][2] as { idempotencyKey: string }).idempotencyKey;
 
     // The operator goes to look at another run while the outcome is unknown, then comes back.
-    const rail = screen.getByRole("region", { name: /^History of / });
+    const rail = historyRegion();
     await userEvent.click(within(rail).getByRole("button", { name: /^demo-calm/ }));
     await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
     expect(await screen.findByLabelText("What should this task do?")).toHaveValue(
@@ -5245,7 +5274,7 @@ describe("a parked draft keeps its identity, not just its words", () => {
     await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
 
     // The selection lands while the start is still in flight; THEN the start succeeds.
-    const rail = screen.getByRole("region", { name: /^History of / });
+    const rail = historyRegion();
     await userEvent.click(within(rail).getByRole("button", { name: /^demo-calm/ }));
     release();
     await waitFor(() => expect(screen.queryByLabelText("What should this task do?")).not.toBeInTheDocument());
@@ -5288,14 +5317,14 @@ describe("a parked draft keeps its identity, not just its words", () => {
     await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
     expect(client.startTask).toHaveBeenCalledTimes(1);
 
-    await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByRole("button", { name: /^demo-calm/ }));
+    await userEvent.click(within(historyRegion()).getByRole("button", { name: /^demo-calm/ }));
     await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
     expect(await screen.findByLabelText("What should this task do?")).toBeDisabled();
     expect(screen.getByRole("button", { name: /starting/i })).toBeDisabled();
 
     // The old start is still pending, but the selected run starts its own read. Its busy state
     // must survive the old completion and its receipt must not be painted onto this run.
-    await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByRole("button", { name: /^demo-calm/ }));
+    await userEvent.click(within(historyRegion()).getByRole("button", { name: /^demo-calm/ }));
     holdRefresh = true;
     const refreshButton = screen.getByRole("button", { name: "Refresh" });
     const statusCallsBeforeRefresh = client.getStatus.mock.calls.length;

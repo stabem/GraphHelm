@@ -102,7 +102,9 @@ const MAX_EVENTS_LIMIT: usize = 1000;
 ///
 /// `None` means the blocking task itself failed (panicked or was cancelled); each caller says
 /// what that means for its own reply.
-async fn off_reactor<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+pub(super) async fn off_reactor<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
     #[cfg(test)]
     let work = off_reactor_witness::observed(work);
     tokio::task::spawn_blocking(work).await.ok()
@@ -117,18 +119,29 @@ mod off_reactor_witness {
     use std::sync::Mutex;
     use std::thread::ThreadId;
 
-    static RUNS: Mutex<Vec<ThreadId>> = Mutex::new(Vec::new());
+    /// (the thread that handed the work over, the thread that ran it). Keyed by the caller since
+    /// #1679: every mutation now goes through `off_reactor` too, and cells on other test threads
+    /// must not land in this cell's count.
+    static RUNS: Mutex<Vec<(ThreadId, ThreadId)>> = Mutex::new(Vec::new());
 
     pub(super) fn observed<T>(work: impl FnOnce() -> T) -> impl FnOnce() -> T {
+        let caller = std::thread::current().id();
         move || {
-            RUNS.lock().unwrap().push(std::thread::current().id());
+            RUNS.lock()
+                .unwrap()
+                .push((caller, std::thread::current().id()));
             work()
         }
     }
 
-    /// The threads every run so far happened on, in order.
-    pub(super) fn runs() -> Vec<ThreadId> {
-        RUNS.lock().unwrap().clone()
+    /// The threads every run handed over from `caller` happened on, in order.
+    pub(super) fn runs_from(caller: ThreadId) -> Vec<ThreadId> {
+        RUNS.lock()
+            .unwrap()
+            .iter()
+            .filter(|(from, _)| *from == caller)
+            .map(|(_, ran)| *ran)
+            .collect()
     }
 }
 
@@ -6608,18 +6621,32 @@ pub(super) async fn wake_lease(
         identity,
         |actor, key| {
             Box::pin(async move {
-                Ok(execution::wake::arm(
-                    &events,
-                    Some(target.as_str()),
-                    &execution::wake::Arming {
-                        session_id: &session_id,
-                        rendezvous_id: &rendezvous_id,
-                        cursor,
-                        matures_in_seconds,
-                    },
-                    actor,
-                    key,
-                )?)
+                // #1679: a store open, a stream read, an append and a read back; it ran inline on
+                // the reactor, so every arming stalled every other request for its whole length.
+                let armed = off_reactor(move || {
+                    execution::timing::request("executions.wake_arm", || {
+                        execution::wake::arm(
+                            &events,
+                            Some(target.as_str()),
+                            &execution::wake::Arming {
+                                session_id: &session_id,
+                                rendezvous_id: &rendezvous_id,
+                                cursor,
+                                matures_in_seconds,
+                            },
+                            actor,
+                            key,
+                        )
+                    })
+                })
+                .await
+                .ok_or_else(|| {
+                    MutationError::Prepared(respond(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Outcome::internal(WAKE_LEASE_COMMAND, "the wake arm task failed").output,
+                    ))
+                })?;
+                Ok(armed?)
             })
         },
     )
@@ -7124,9 +7151,10 @@ pub(super) mod tests {
     fn measured<T>(
         future: impl std::future::Future<Output = T>,
     ) -> (T, Vec<std::thread::ThreadId>) {
-        let before = off_reactor_witness::runs().len();
+        let caller = std::thread::current().id();
+        let before = off_reactor_witness::runs_from(caller).len();
         let output = runtime().block_on(future);
-        let runs = off_reactor_witness::runs();
+        let runs = off_reactor_witness::runs_from(caller);
         (output, runs[before..].to_vec())
     }
 
@@ -7530,6 +7558,98 @@ pub(super) mod tests {
             runs[0], reactor,
             "the wake status read ran on the reactor thread"
         );
+    }
+
+    /// #1679: the arming (`POST .../wake-lease`) ran its store open, read, append and read back
+    /// inline on the reactor; live, each one held every other request for ~3.6 s.
+    #[test]
+    fn the_wake_lease_arm_goes_through_off_reactor() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reactor = std::thread::current().id();
+        let (_directory, state) = known_execution_state();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "idempotency-key",
+            axum::http::HeaderValue::from_static("arm-off-reactor"),
+        );
+        headers.insert(
+            "x-graphhelm-actor",
+            axum::http::HeaderValue::from_static("lane-a"),
+        );
+        headers.insert(
+            "x-graphhelm-actor-type",
+            axum::http::HeaderValue::from_static("agent"),
+        );
+        let (text, runs) = measured(async {
+            let response = super::wake_lease(
+                axum::extract::State(state),
+                UrlPath("execution-known".to_owned()),
+                headers,
+                axum::body::Bytes::from_static(
+                    br#"{"sessionId":"session-a","rendezvousId":"rendezvous-a"}"#,
+                ),
+            )
+            .await;
+            let status = response.status();
+            let text = body_text(response).await;
+            assert_eq!(status, StatusCode::OK, "{text}");
+            text
+        });
+        assert!(text.contains("\"armedCursor\":1"), "{text}");
+        // The store open, the idempotency scan, the arming body and the post-write head: four
+        // steps of the one request, each its own `off_reactor` run.
+        assert!(
+            runs.len() >= 4,
+            "the wake arm's store steps did not all go through off_reactor: {} runs",
+            runs.len()
+        );
+        assert!(
+            runs.iter().all(|thread| *thread != reactor),
+            "the wake arm ran on the reactor thread"
+        );
+    }
+
+    /// #1679: off the reactor, lanes arming in the same instant race for the next sequence. Each
+    /// arming must still land: a lost race re-reads the head instead of answering 409.
+    #[test]
+    fn lanes_arming_at_once_all_land() {
+        let (_directory, state) = known_execution_state();
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let armings: Vec<_> = (0..8)
+            .map(|lane| {
+                let events = state.events.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let session = format!("session-{lane}");
+                    let rendezvous = format!("rendezvous-{lane}");
+                    barrier.wait();
+                    crate::commands::execution::wake::arm(
+                        &events,
+                        Some("execution-known"),
+                        &crate::commands::execution::wake::Arming {
+                            session_id: &session,
+                            rendezvous_id: &rendezvous,
+                            cursor: None,
+                            matures_in_seconds: None,
+                        },
+                        PersistedActor::new(
+                            PersistedActorType::Agent,
+                            ActorId::parse(format!("lane-{lane}")).unwrap(),
+                        ),
+                        OpaqueId::parse(format!("arm-{lane}")).unwrap(),
+                    )
+                    .map(|_| ())
+                    .map_err(|failure| failure.code)
+                })
+            })
+            .collect();
+        let refused: Vec<_> = armings
+            .into_iter()
+            .filter_map(|arming| arming.join().unwrap().err())
+            .collect();
+        assert!(refused.is_empty(), "armings refused: {refused:?}");
     }
 
     #[test]

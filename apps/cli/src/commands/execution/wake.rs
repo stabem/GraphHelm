@@ -51,6 +51,11 @@ pub(crate) struct Arming<'a> {
     pub matures_in_seconds: Option<u64>,
 }
 
+/// How many times an arming re-reads the head after losing the append race to another writer.
+/// A bound, not a tuned number: each round has one winner, so sixteen lanes arming in the same
+/// instant all land within it.
+const ARM_APPEND_ATTEMPTS: usize = 16;
+
 pub(crate) fn arm(
     events: &Path,
     execution: Option<&str>,
@@ -99,25 +104,41 @@ pub(crate) fn arm(
     let stream_opaque = OpaqueId::parse(&stream)
         .map_err(|_| execution_state("the stream identifier is not wire-safe", "/execution"))?;
 
-    append_event(
-        &store,
-        &scope,
-        &stream_opaque,
-        NewEvent::new(
-            key,
-            actor,
-            Sensitivity::Internal,
-            EventKind::WakeLease(WakeLease {
-                execution_id: execution_opaque,
-                session_id: session,
-                cursor: armed_cursor,
-                rendezvous_id: rendezvous,
-                matures_in_seconds,
-            }),
-            vec![],
-            vec![],
-        ),
-    )?;
+    // #1679: serve now runs this off the reactor, so two lanes arming at once really race for
+    // the next sequence (inline, the one runtime thread serialised them). The lease is the same
+    // whichever goes first -- its cursor was read above and a re-arm replaces -- so a lost race
+    // re-reads the head and appends again, bounded like the presence commit, and the last loss
+    // is reported, never swallowed.
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        let appended = append_event(
+            &store,
+            &scope,
+            &stream_opaque,
+            NewEvent::new(
+                key.clone(),
+                actor.clone(),
+                Sensitivity::Internal,
+                EventKind::WakeLease(WakeLease {
+                    execution_id: execution_opaque.clone(),
+                    session_id: session.clone(),
+                    cursor: armed_cursor,
+                    rendezvous_id: rendezvous.clone(),
+                    matures_in_seconds,
+                }),
+                vec![],
+                vec![],
+            ),
+        );
+        match appended {
+            Ok(()) => break,
+            Err(failure)
+                if failure.code == "GHE001_SEQUENCE_CONFLICT" && attempts < ARM_APPEND_ATTEMPTS => {
+            }
+            Err(failure) => return Err(failure),
+        }
+    }
 
     // The number the DOORBELL decides on, returned by the call that arms (M08, from the
     // judge's finding and A's measurement). `wake_arm` used to answer with `headSequence`
@@ -134,7 +155,7 @@ pub(crate) fn arm(
     // The price is one extra read, at ARMING — outside any loop and outside the wait, so the
     // store's exclusive lock is held for milliseconds by someone who is awake. The price of
     // the other design was measured: F2 cost nine paid judge runs and a day to find.
-    let (matures_at, horizon) = replayed_horizon(&store, &scope, &stream, session_id)?;
+    let (matures_at, horizon) = replayed_horizon(&store, &scope, &stream, history, session_id)?;
     // Shortening is ACCEPTED and SAID; it is not a mistake and refusing it would be the "always
     // refuse" rule wearing the clothes of "never invent". What it cannot do is reach a waiter
     // that already read this lease and blocked, so the caller is told, in a field rather than a
@@ -172,12 +193,28 @@ fn replayed_horizon(
     store: &graphhelm_events::LocalEventRepository,
     scope: &graphhelm_protocols::RepositoryScope,
     stream: &str,
+    mut history: Vec<graphhelm_protocols::EventEnvelope>,
     session_id: &str,
 ) -> Result<Horizon, Failure> {
-    let history = store
-        .read_replay_stream(scope, stream)
+    // #1679: only what landed after the history this arming already read (its own append and
+    // any racing writer's) is read back; a second clone of the whole stream cost 100-400 ms per
+    // arming on the owner's 44k-event `gh-team`. A tail that does not continue that history (a
+    // replaced store) falls back to the whole stream, so the fold still sees the journal.
+    let head = history.last().map_or(0, |event| event.sequence);
+    let (tail, _) = store
+        .read_stream_after(scope, stream, head)
         .map_err(|error| super::repository_failure(&error))?;
-    let projection = graphhelm_events::replay(scope, stream, &history)
+    if head > 0 && tail.first().is_some_and(|event| event.sequence == head + 1) {
+        history.extend(tail);
+    } else {
+        history = store
+            .read_replay_stream(scope, stream)
+            .map_err(|error| super::repository_failure(&error))?;
+    }
+    // #1679: the cached fold, like the read before the append. This uncached refold was the
+    // other 3.4 s of every arming on the owner's 44k-event `gh-team` (the live
+    // `execution.wake_lease` p50 3.6 s after #1669 moved only the first read to the cache).
+    let projection = super::status::replay_cached(store.root(), scope, stream, &history)
         .map_err(|error| super::replay_failure(&error))?;
     let horizon = projection
         .wake_leases

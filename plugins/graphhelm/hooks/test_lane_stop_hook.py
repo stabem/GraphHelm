@@ -67,6 +67,8 @@ class ReconcileRuntimeTimeoutTests(unittest.TestCase):
         token = Path(self.enterContext(tempfile.TemporaryDirectory())) / "events.agent.graphhelm.token"
         token.write_text("tok", encoding="utf-8")
         seen = []
+        devnull = open(os.devnull, "w", encoding="utf-8")
+        self.addCleanup(devnull.close)
 
         def refuse(request, *args, **kwargs):
             seen.append(kwargs.get("timeout"))
@@ -76,7 +78,7 @@ class ReconcileRuntimeTimeoutTests(unittest.TestCase):
                 "--token-file", str(token), "--repo", "stabem/GraphHelm", "--lane", "graphhelm", *extra]
         with mock.patch.object(sys, "argv", argv), \
                 mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=refuse), \
-                mock.patch.object(sys, "stderr", new=open(os.devnull, "w", encoding="utf-8")):
+                mock.patch.object(sys, "stderr", new=devnull):
             self.assertEqual(tasks_reconcile.main(), 1)
         return seen
 

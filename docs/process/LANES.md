@@ -97,9 +97,9 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
   `adopted.refused`). It is a scheduled job, not a serve-side poller, so the Runtime and the Policy
   Engine stay network-free and the same reconciler code runs on Stop and on the timer. `pythonw`
   has no console, so `--log` appends each reply. The orchestrator registers it once (and mints the
-  `graphhelm` credential first: `graphhelm tasks credential --lane graphhelm --execution gh-team --token-file F:/github/GraphHelm/.graphhelm/events.token`):
+  `graphhelm` credential first: `graphhelm tasks credential --lane graphhelm --execution gh-team --token-file F:/github/GraphHelm/.graphhelm/events.token`, which mints `.graphhelm/events.agent.graphhelm.token`). `--runtime-timeout 60` lets a run wait for a loaded Runtime (#1632); the Stop hook keeps its 2 s / 3 s defaults:
 
-      $a = New-ScheduledTaskAction -Execute "pythonw.exe" -Argument 'F:/github/GraphHelm/plugins/graphhelm/hooks/tasks_reconcile.py --execution gh-team --url http://127.0.0.1:8793 --token-file F:/github/GraphHelm/.graphhelm/events.agent.token --repo stabem/GraphHelm --lane graphhelm --adopt-opened --log D:/_merge-leftovers/board-sync.log'
+      $a = New-ScheduledTaskAction -Execute "pythonw.exe" -Argument 'F:/github/GraphHelm/plugins/graphhelm/hooks/tasks_reconcile.py --execution gh-team --url http://127.0.0.1:8793 --token-file F:/github/GraphHelm/.graphhelm/events.agent.graphhelm.token --repo stabem/GraphHelm --lane graphhelm --adopt-opened --runtime-timeout 60 --log D:/_merge-leftovers/board-sync.log'
       $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
       $s = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 4)
       Register-ScheduledTask -TaskName "GraphHelm board sync" -Action $a -Trigger $t -Settings $s

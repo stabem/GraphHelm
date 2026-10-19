@@ -189,6 +189,42 @@ fn lifecycle_legacy_record_has_no_instance() {
     assert_eq!(reply["data"]["previousExit"]["instance"], Value::Null);
 }
 
+/// ADR-046 (#41): a write torn by a crash leaves bytes after the journal's last newline. The next
+/// `serve` recovers them at start-up and says so in `/health` `previousExit`, so the owner sees
+/// why the last write is gone, and the quarantined file holds exactly those bytes. Cost: two
+/// isolated child starts and one journal edit; no new seam.
+#[test]
+fn lifecycle_reports_a_torn_journal_tail_recovered_at_start_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let (server, _, _) = serve(&events);
+    drop(server);
+    let journal = events.join("journal.jsonl");
+    let committed = std::fs::read(&journal).unwrap();
+    let torn: &[u8] = b"{\"torn\":\"half";
+    let mut bytes = committed.clone();
+    bytes.extend_from_slice(torn);
+    std::fs::write(&journal, &bytes).unwrap();
+
+    let (_next, base, _) = serve(&events);
+    let reply = json_body(&raw_request(&format!("{base}/health"), None).unwrap());
+    let recovered = &reply["data"]["previousExit"]["journalTailRecovered"];
+    assert_eq!(recovered["trimmedBytes"], torn.len(), "{reply}");
+    let sha = recovered["sha256"].as_str().unwrap();
+    assert_eq!(sha.len(), 64);
+    let quarantine = recovered["quarantine"].as_str().unwrap();
+    assert_eq!(quarantine, format!("torn-tail-{}-{sha}.bin", bytes.len()));
+    assert_eq!(
+        std::fs::read(dir.path().join("events.quarantine").join(quarantine)).unwrap(),
+        torn
+    );
+    assert_eq!(
+        std::fs::read(&journal).unwrap(),
+        committed,
+        "only the tail was cut"
+    );
+}
+
 #[test]
 fn lifecycle_task_panic_then_kill_is_vanished_with_last_panic() {
     // A caught task panic is not the later process ending. Existing clean/main-panic

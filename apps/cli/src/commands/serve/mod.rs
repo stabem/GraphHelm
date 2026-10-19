@@ -119,6 +119,9 @@ fn serve_invalid(message: &str, pointer: &str) -> Failure {
 #[derive(Clone)]
 struct ServeState {
     previous_exit: serde_json::Value,
+    /// ADR-046 (#41): what the start-up open trimmed from a torn journal tail, reported inside
+    /// `previousExit` as `journalTailRecovered`.
+    journal_tail_recovered: Option<serde_json::Value>,
     current_run: serde_json::Value,
     startup: serde_json::Value,
     token: Arc<[u8]>,
@@ -387,7 +390,16 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
     // ADR-046 (#41): the Runtime's start-up is the one open allowed to recover a journal tail torn
     // by a crash mid-append; every later open (each request, CLI one-shots, MCP) refuses it. Any
     // other refusal is left for the first request to report, exactly as before.
-    let _ = super::recover_torn_journal_tail(&args.events);
+    let journal_tail_recovered = super::recover_torn_journal_tail(&args.events)
+        .ok()
+        .flatten()
+        .map(|tail| {
+            serde_json::json!({
+                "trimmedBytes": tail.trimmed_bytes,
+                "sha256": tail.sha256,
+                "quarantine": tail.quarantine,
+            })
+        });
     // One implementation with `init` (#1062): the token `init` minted is the one `serve` reads.
     let (_, token) = secret_file::ensure_token(&args.events)
         .map_err(|error| serve_invalid(error.message(), "/token"))?;
@@ -410,6 +422,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         super::runtime_record::new_instance().map_err(|message| serve_invalid(&message, "/"))?;
     let state = ServeState {
         previous_exit: serde_json::Value::Null,
+        journal_tail_recovered,
         current_run: serde_json::Value::Null,
         startup: serde_json::Value::Null,
         token: Arc::from(token.into_bytes()),
@@ -840,6 +853,13 @@ async fn serve_forever(
     let lifecycle_start_ms =
         u64::try_from(lifecycle_started.elapsed().as_millis()).unwrap_or(u64::MAX);
     state.previous_exit = previous_exit;
+    // ADR-046 (#41): a torn tail is the mark of the previous run's interrupted write, so its
+    // recovery belongs to that run's exit. A first-ever run has no previous exit to attach it to.
+    if let (Some(recovered), serde_json::Value::Object(exit)) =
+        (&state.journal_tail_recovered, &mut state.previous_exit)
+    {
+        exit.insert("journalTailRecovered".to_owned(), recovered.clone());
+    }
     state.current_run = current_run;
     state.startup = serde_json::json!({
         "journalVerifyMs": journal_verify_ms,

@@ -373,6 +373,8 @@ pub struct LocalEventRepository {
     /// ADR-046: whether THIS handle may trim an unacknowledged torn journal tail. Only the
     /// Runtime's start-up open sets it; every other open refuses the tail and names who recovers it.
     recover_torn_tail: bool,
+    /// ADR-046 (#41): what this handle's recovery trimmed, so the Runtime can report it.
+    recovered_tail: Arc<Mutex<Option<RecoveredTail>>>,
     schemas: &'static graphhelm_schema::RepositorySchemaSet,
     /// Unbounded unless this handle came from `open_within` (#750). Checked inside the journal
     /// verification walk, which is the half of a status read's cost that is not the fold.
@@ -611,6 +613,16 @@ impl LocalEventRepository {
         )
     }
 
+    /// What [`Self::open_recovering_torn_tail`] trimmed on this handle, if it trimmed anything
+    /// (ADR-046). `None` for every other open and for a journal that ended cleanly.
+    #[must_use]
+    pub fn recovered_torn_tail(&self) -> Option<RecoveredTail> {
+        self.recovered_tail
+            .lock()
+            .ok()
+            .and_then(|tail| tail.clone())
+    }
+
     pub fn open_with_failpoint(
         root: impl Into<PathBuf>,
         clock: Arc<dyn Clock>,
@@ -784,6 +796,7 @@ impl LocalEventRepository {
             full_walk_delay: prefix_cache.and_then(|cache| cache.walk_delay),
             failpoint,
             recover_torn_tail,
+            recovered_tail: Arc::new(Mutex::new(None)),
             schemas,
             read_budget,
         };
@@ -2066,6 +2079,11 @@ impl LocalEventRepository {
 
         let digest = hex::encode(sha2::Sha256::digest(tail));
         let name = format!("torn-tail-{length}-{digest}");
+        let recovered = RecoveredTail {
+            trimmed_bytes: u64::try_from(tail.len()).unwrap_or(u64::MAX),
+            sha256: digest.clone(),
+            quarantine: format!("{name}.bin"),
+        };
         let quarantine_path = quarantine_directory(&self.root);
         let quarantine = open_quarantine_directory(&quarantine_path)?;
         let manifest = serde_json::json!({
@@ -2107,6 +2125,10 @@ impl LocalEventRepository {
                 site: "trim-tail:verified-mutex-poisoned",
                 os: None,
             })? = None;
+        // Recorded only once the journal is truncated and synced: a reported recovery happened.
+        if let Ok(mut slot) = self.recovered_tail.lock() {
+            *slot = Some(recovered);
+        }
         Ok(true)
     }
 
@@ -6438,6 +6460,15 @@ fn validate_opened_directory(file: &File) -> Result<(), EventRepositoryError> {
         return Err(EventRepositoryError::UnsupportedFormat);
     }
     Ok(())
+}
+
+/// What a start-up recovery trimmed (ADR-046): the size and SHA-256 of the unacknowledged tail,
+/// and the file under `<events>.quarantine/` that holds it. Never the bytes themselves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoveredTail {
+    pub trimmed_bytes: u64,
+    pub sha256: String,
+    pub quarantine: String,
 }
 
 /// The refusal `load_state` gives a journal that does not end in a newline (ADR-046).

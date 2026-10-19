@@ -1291,7 +1291,11 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
                 "purpose": flow.get("purpose").cloned().unwrap_or(Value::Null),
                 "name": flow.get("name").cloned().unwrap_or(Value::Null),
                 "feature": flow.get("feature").cloned().unwrap_or(Value::Null),
-                "status": status, "approved": approved, "drift": flow["drift"],
+                "status": status, "approved": approved,
+                // #1588: the owner's latest rejection of this exact content, with its reason.
+                "rejected": super::journey_owner::rejection(&project, id, &approval_digest_of(&flow))
+                    .unwrap_or(Value::Null),
+                "drift": flow["drift"],
                 "findings": listed, "approvable": accepted && !settled,
                 "screens": flow["screens"], "edges": flow["edges"], "paths": flow["paths"]})
         })
@@ -1312,6 +1316,40 @@ pub(crate) fn run_approve(args: &crate::args::JourneyApproveArgs) -> Outcome {
         );
     }
     approve_owned(&args.id, project)
+}
+
+/// `graphhelm journey reject <id> --note <text>` (#1588): the owner's door, like `approve`.
+pub(crate) fn run_reject(args: &crate::args::JourneyRejectArgs) -> Outcome {
+    const COMMAND: &str = "journey.reject";
+    let project = args.project.clone().unwrap_or_else(|| ".".into());
+    if !owner_token_matches(&project, args.token_file.as_deref()) {
+        return input_error(
+            COMMAND,
+            "rejecting is the owner's: give --token-file with the project's owner token (.graphhelm/events.token)",
+        );
+    }
+    reject_owned(&args.id, &args.note, project)
+}
+
+/// The rejection itself, for a caller that has already authenticated the owner (#1588). It binds
+/// the digest of the flow's current content, so an edit after it clears it.
+pub(crate) fn reject_owned(id: &str, note: &str, project: std::path::PathBuf) -> Outcome {
+    const COMMAND: &str = "journey.reject";
+    let Some(files) = files(&project, &[id.to_owned()]) else {
+        return input_error(COMMAND, "invalid flow id or unsafe journeys directory");
+    };
+    let flow = match read(&files[0]) {
+        Ok((_, flow)) => flow,
+        Err(findings) => return report(COMMAND, vec![], findings, json!({})),
+    };
+    let digest = approval_digest_of(&flow);
+    if let Err(message) = super::journey_owner::record_rejection(&project, id, &digest, note) {
+        return input_error(COMMAND, &message);
+    }
+    Outcome::success(
+        COMMAND,
+        json!({"id": id, "rejected": super::journey_owner::rejection(&project, id, &digest)}),
+    )
 }
 
 /// Whether `token_file` holds the project's owner token (#534): the owner's doors ask for it.

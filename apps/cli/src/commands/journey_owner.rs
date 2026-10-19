@@ -185,6 +185,80 @@ pub(crate) fn record_drafted(
     )
 }
 
+/// #1588: the signal kind of an owner's rejection of a flow, with the reason.
+pub(crate) const REJECTED_KIND: &str = "journey_flow_rejected";
+/// The description protocol of that signal.
+pub(crate) const REJECTED_PROTOCOL: &str = "graphhelm-journey-rejection-v1";
+
+/// `journey-rejected-<16 hex flow>-`: every rejection of a flow shares this prefix, so the latest
+/// one is found without knowing its note.
+fn rejected_prefix(flow: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(format!("rejected\n{flow}").as_bytes());
+    format!("journey-rejected-{}-", &hex::encode(hash)[..16])
+}
+
+/// The owner's latest rejection of `flow` at exactly `digest`: `{note, digest, sequence}`. Only a
+/// record in the reserved execution, by the owner, whose evidence file still hashes to the
+/// recorded envelope counts. An edit to the flow changes its digest, so it clears the rejection.
+pub(crate) fn rejection(project: &Path, flow: &str, digest: &str) -> Option<serde_json::Value> {
+    use sha2::{Digest, Sha256};
+    let prefix = rejected_prefix(flow);
+    let records = project.join(".graphhelm/owner-records");
+    owner_history(project).ok()?.iter().rev().find_map(|event| {
+        let EventKind::SignalRecorded(signal) = &event.kind else {
+            return None;
+        };
+        if event.actor.actor_type() != PersistedActorType::Owner
+            || signal.kind.as_str() != REJECTED_KIND
+            || !signal.signal_id.as_str().starts_with(&prefix)
+        {
+            return None;
+        }
+        let bytes =
+            std::fs::read(records.join(format!("{}.json", signal.signal_id.as_str()))).ok()?;
+        if hex::encode(Sha256::digest(&bytes)) != signal.envelope_sha256.as_str() {
+            return None;
+        }
+        let envelope: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        let description: serde_json::Value =
+            serde_json::from_str(envelope["description"].as_str()?).ok()?;
+        (description["protocol"] == REJECTED_PROTOCOL
+            && description["flowId"] == flow
+            && description["digest"] == digest)
+            .then(|| {
+                serde_json::json!({
+                    "note": description["note"], "digest": digest, "sequence": event.sequence,
+                })
+            })
+    })
+}
+
+/// Appends the owner's rejection of `flow` at `digest` with `note` (#1588). Every rejection is a
+/// new record: the earlier ones and any approval stay in the store.
+pub(crate) fn record_rejection(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+    note: &str,
+) -> Result<(), String> {
+    let note = note.trim();
+    if note.is_empty() || note.len() > CHECKED_MAX {
+        return Err(format!(
+            "--note must say why the flow is rejected (1 to {CHECKED_MAX} bytes)"
+        ));
+    }
+    let id = format!(
+        "{}{}",
+        rejected_prefix(flow),
+        &uuid::Uuid::new_v4().simple().to_string()[..16]
+    );
+    let description = serde_json::json!({
+        "protocol": REJECTED_PROTOCOL, "flowId": flow, "digest": digest, "note": note,
+    });
+    append(project, &id, REJECTED_KIND, &description, flow)
+}
+
 fn owner_history(project: &Path) -> Result<Vec<graphhelm_protocols::EventEnvelope>, String> {
     let events = store(project);
     if !events.exists() {

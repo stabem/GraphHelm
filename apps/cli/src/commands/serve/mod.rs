@@ -1052,6 +1052,10 @@ fn build_router(state: ServeState) -> Router {
             post(routes::approve_journey_flow),
         )
         .route(
+            "/v1/journey-flows/{id}/reject",
+            post(routes::reject_journey_flow),
+        )
+        .route(
             "/v1/journey-flows/{id}/draft",
             post(routes::journey_flow_draft),
         )

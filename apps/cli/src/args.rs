@@ -244,6 +244,9 @@ pub enum JourneyCommand {
     Compile(JourneyCompileArgs),
     /// Approve a canonical flow at the project's HEAD and write its generated contracts.
     Approve(JourneyApproveArgs),
+    /// Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's
+    /// current content: editing the flow clears it.
+    Reject(JourneyRejectArgs),
     /// Record the owner's signature for approvals made before #534 (lists them with the commit
     /// that introduced each; writes only for each `--id`).
     SignLegacy(JourneySignLegacyArgs),
@@ -540,6 +543,20 @@ pub struct JourneyApproveArgs {
     #[arg(long)]
     pub project: Option<PathBuf>,
     /// The project's owner token (`.graphhelm/events.token`): the owner's approval (#534).
+    #[arg(long = "token-file")]
+    pub token_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct JourneyRejectArgs {
+    /// The flow id.
+    pub id: String,
+    /// Why the flow is rejected: what the owner saw (1 to 4096 bytes).
+    #[arg(long)]
+    pub note: String,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
+    /// The project's owner token (`.graphhelm/events.token`): rejecting is the owner's.
     #[arg(long = "token-file")]
     pub token_file: Option<PathBuf>,
 }

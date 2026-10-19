@@ -850,7 +850,7 @@ fn journey_draft_and_review_forward_scoped_credentials_and_runtime_refusals() {
 ///
 /// #1277: `resolve_contract`, `present`, `compile_context` and `accounting` are callable but
 /// unlisted (`UNLISTED_STUBS` in tools.rs), so they are not here.
-const MCP_TOOL_NAMES: [&str; 43] = [
+const MCP_TOOL_NAMES: [&str; 44] = [
     "start",
     "list",
     "topology",
@@ -868,6 +868,7 @@ const MCP_TOOL_NAMES: [&str; 43] = [
     "journey_draft",
     "journey_review",
     "journey_approve",
+    "journey_reject",
     // #398: open a journey live at a step, act on it, close it (owner credential).
     "journey_open",
     "journey_act",

@@ -129,6 +129,52 @@ up)
   for _ in $(seq 1 30); do curl -sf --max-time 10 "http://127.0.0.1:$rport/health" > /dev/null && break; sleep 1; done
   curl -sf --max-time 10 "http://127.0.0.1:$rport/health" > /dev/null || { echo "runtime did not answer on $rport"; cat "$dir/.graphhelm/serve.err"; exit 1; }
   [ -n "$(fixture_listeners record "$rport")" ] || { echo 'fixture: Runtime listener is not owned by this fixture' >&2; exit 1; }
+  # #1672: one recorded passing preview, so the Proof view has a real observer to name. A draft
+  # preview plays only read-only acts, so the seed flow reads this fixture's own Runtime health
+  # with GET; its runner records itself. It lives only in the fixture project.
+  cat > "$dir/project/.graphhelm/journeys/runtime-health.journey.yaml" <<FLOW
+schema: graphhelm.journey-flow/1
+id: runtime-health
+title: Read the Runtime health
+purpose: The fixture's Runtime answers its health check.
+status: draft
+approved: null
+base: http://127.0.0.1:$rport
+actors: [owner]
+secrets: []
+risks: []
+screens:
+  - id: checked
+    title: The health answer read again
+    url: /health
+    state: success
+    expect: [{role: status, name: "200"}, {role: json, name: ok=true}]
+    scope: unknown
+  - id: start
+    title: The Runtime answers its health check
+    url: /health
+    state: stable
+    expect: [{role: status, name: "200"}, {role: json, name: ok=true}]
+    scope: unknown
+edges:
+  - id: read
+    from: start
+    to: checked
+    acts:
+      - {kind: http, role: GET, name: /health}
+paths:
+  main: [read]
+drift: []
+FLOW
+  git -C "$dir/project" add -f -- .graphhelm/journeys/runtime-health.journey.yaml
+  git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: observer seed flow'
+  "$bin" --json journey preview runtime-health --force --project "$dir/project"     > "$dir/.graphhelm/observer-preview.out" 2>&1 || true
+  for _ in $(seq 1 60); do
+    "$bin" --json journey preview runtime-health --read --project "$dir/project"       > "$dir/.graphhelm/observer-preview.out" 2>&1 || true
+    grep -q '"state":"running"' "$dir/.graphhelm/observer-preview.out" || break
+    sleep 1
+  done
+  grep -q '"recorded":true' "$dir/.graphhelm/observer-preview.out"     || echo "fixture: the observer preview did not record (see $dir/.graphhelm/observer-preview.out)" >&2
   for pid in $(fixture_listeners record "$rport"); do
     if [ -r /proc/$$/winpid ]; then echo "serve-listener 0 $pid"; else echo "serve-listener $pid"; fi >> "$pids"
   done

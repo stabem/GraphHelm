@@ -22,10 +22,10 @@ screens:
     expect: [{role: navigation, name: Projects}, {role: button, name: New task in demo}]
     scope: [apps/studio/src/components/rail.tsx]
   - id: started
-    title: "The new task shows its Keel card (OBSERVER_MISSING: #1042)"
+    title: "The new task starts and opens its run (its Keel card: OBSERVER_MISSING #1042)"
     url: /?session=studio-fixture&run=:run
     state: success
-    expect: [{role: button, name: Write the release notes for version 0.2.}, {role: region, name: Canvas}, {role: tabpanel, name: Graph}, {role: tablist, name: Mission views}, {role: tab, name: Graph}, {role: region, name: Keel cards}]
+    expect: [{role: button, name: Write the release notes for version 0.2.}, {role: region, name: Canvas}, {role: tabpanel, name: Graph}, {role: tablist, name: Mission views}, {role: tab, name: Graph}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/runtime/client.ts]
 edges:
   - id: compose.start

@@ -85,7 +85,7 @@ import { teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type StepItem } from "./runtime/needs-you";
 import { buildHandover, hiddenThisSession, hideThisSession, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
 import { EVERYONE, describeActivity, namesOf } from "./runtime/threads";
-import { ProjectRail } from "./components/rail";
+import { ProjectRail, RunHistory } from "./components/rail";
 import { Composer } from "./components/compose";
 import { Models } from "./components/models";
 import { AddProject } from "./components/addproject";
@@ -2122,6 +2122,8 @@ export default function App({
       : "Verify the graph to connect work nodes.",
   ].join(" · ");
   const visibleExecutions = executions.filter((run) => !removedRuns.includes(run.executionId));
+  // #1654: one card per project. The rail shows the project; its runs are history in the stage.
+  const railProject = { name: project ?? "this runtime", path: projectPath, runs: visibleExecutions.map((run) => run.executionId === selected && pendingOwnerReview ? { ...run, attention: "needs_you" as const } : run) };
   const removeRun = (id: string) => {
     removeRunFromView(id);
     if (selected === id) select("");
@@ -2200,7 +2202,7 @@ export default function App({
     <SaidLinks.Provider value={saidLinks}>
     <div className={`app ${projectsOpen ? "projects-open" : ""} ${conversationVisible ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
-        projects={[{ name: project ?? "this runtime", path: projectPath, runs: visibleExecutions.map((run) => run.executionId === selected && pendingOwnerReview ? { ...run, attention: "needs_you" as const } : run) }]}
+        projects={[railProject]}
         selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded · graph step waiting" } : null}
         onClose={() => setProjectsOpen(false)}
         selected={selected}
@@ -2396,6 +2398,32 @@ export default function App({
               <LogOut aria-hidden="true" />
             </button>
         </header>
+        {connected && (
+          <RunHistory
+            defaultOpen
+            project={railProject}
+            selected={selected}
+            hasMore={nextCursor !== null}
+            busy={busy}
+            onSelect={(id) => {
+              setModelsOpen(false);
+              select(id);
+              if (typeof window.matchMedia === "function" && !window.matchMedia("(min-width: 901px)").matches) {
+                setProjectsOpen(false);
+                setTalkOpen(false);
+              }
+            }}
+            onLoadMore={() => void loadList({ append: true, cursor: nextCursor })}
+            onNewTask={() => {
+              setModelsOpen(false);
+              startDraft();
+            }}
+            onRemoveRun={removeRun}
+            briefings={briefings}
+            teamRuns={teamRuns}
+            selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded · graph step waiting" } : null}
+          />
+        )}
 
         {error && (
           <div className="banner" role="alert">

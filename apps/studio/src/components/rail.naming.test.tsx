@@ -4,7 +4,7 @@ import { fastUserEvent } from "../test/user-event";
 // Its own instance: see the helper for why this is not a shared const.
 const userEvent = fastUserEvent();
 
-import { ProjectRail } from "./rail";
+import { ProjectRail, RunHistory } from "./rail";
 import type { ExecutionSummary } from "../runtime/types";
 
 /**
@@ -33,17 +33,15 @@ describe("naming rows on the rail", () => {
     vi.setSystemTime(new Date("2026-10-11T12:00:00.000Z"));
     const objective = "Produce a deployment report for the conservative core strategy before the October release review";
     render(
-      <ProjectRail
-        projects={[{ name: "store", runs: [{ ...row("core_conservative_2026_10_10"), executor: "gateway", objective, lastEventAt: "2026-10-11T10:00:00.000Z" }] }]}
+      <RunHistory defaultOpen
+        project={{ name: "store", runs: [{ ...row("core_conservative_2026_10_10"), executor: "gateway", objective, lastEventAt: "2026-10-11T10:00:00.000Z" }] }}
         selected=""
-        connected
+        
         hasMore={false}
         busy={false}
         onSelect={vi.fn()}
         onLoadMore={vi.fn()}
         onNewTask={vi.fn()}
-        onAddProject={vi.fn()}
-        onOpenModels={vi.fn()}
       />,
     );
 
@@ -62,17 +60,15 @@ describe("naming rows on the rail", () => {
 
   it("names a cancelled run as cancelled even when its stored attention is calm", () => {
     render(
-      <ProjectRail
-        projects={[{ name: "store", runs: [{ ...row("cancelled-run"), status: "cancelled" }] }]}
+      <RunHistory defaultOpen
+        project={{ name: "store", runs: [{ ...row("cancelled-run"), status: "cancelled" }] }}
         selected=""
-        connected
+        
         hasMore={false}
         busy={false}
         onSelect={vi.fn()}
         onLoadMore={vi.fn()}
         onNewTask={vi.fn()}
-        onAddProject={vi.fn()}
-        onOpenModels={vi.fn()}
       />,
     );
     const run = screen.getByRole("button", { name: /cancelled-run.*cancelled/i });
@@ -82,17 +78,15 @@ describe("naming rows on the rail", () => {
 
   it("shows completed results needing review instead of a green can-sleep mark", () => {
     render(
-      <ProjectRail
-        projects={[{ name: "store", runs: [{ ...row("review-me"), executor: "gateway", unverifiedResults: 1 }] }]}
+      <RunHistory defaultOpen
+        project={{ name: "store", runs: [{ ...row("review-me"), executor: "gateway", unverifiedResults: 1 }] }}
         selected=""
-        connected
+        
         hasMore={false}
         busy={false}
         onSelect={vi.fn()}
         onLoadMore={vi.fn()}
         onNewTask={vi.fn()}
-        onAddProject={vi.fn()}
-        onOpenModels={vi.fn()}
       />,
     );
     const run = screen.getByRole("button", { name: /review-me.*result needs review/i });
@@ -103,17 +97,15 @@ describe("naming rows on the rail", () => {
 
   it("reads the objective straight off the index row, with no briefing at all", () => {
     render(
-      <ProjectRail
-        projects={[{ name: "store", runs: [{ ...row("exec_feature"), objective: "Locate related components and tests" }, { ...row("demo"), objective: null }] }]}
+      <RunHistory defaultOpen
+        project={{ name: "store", runs: [{ ...row("exec_feature"), objective: "Locate related components and tests" }, { ...row("demo"), objective: null }] }}
         selected=""
-        connected
+        
         hasMore={false}
         busy={false}
         onSelect={vi.fn()}
         onLoadMore={vi.fn()}
         onNewTask={vi.fn()}
-        onAddProject={vi.fn()}
-        onOpenModels={vi.fn()}
       />,
     );
     const feature = screen.getByRole("button", { name: /Locate related components and tests/ });
@@ -125,17 +117,15 @@ describe("naming rows on the rail", () => {
   it("names a hand-named run and a generated run by their objectives, with the id beneath", () => {
     const generated = "run-9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d";
     render(
-      <ProjectRail
-        projects={[{ name: "store", runs: [row("exec_feature"), row(generated), row("bare")] }]}
+      <RunHistory defaultOpen
+        project={{ name: "store", runs: [row("exec_feature"), row(generated), row("bare")] }}
         selected=""
-        connected
+        
         hasMore={false}
         busy={false}
         onSelect={vi.fn()}
         onLoadMore={vi.fn()}
         onNewTask={vi.fn()}
-        onAddProject={vi.fn()}
-        onOpenModels={vi.fn()}
         briefings={{
           exec_feature: { objective: "Locate related components and tests", name: "Feature" },
           [generated]: { objective: "Investigate slow login on mobile", name: "New task" },
@@ -167,15 +157,15 @@ describe("activity-ordered run history", () => {
   };
 
   it("groups known activity by lifecycle and missing or invalid times in their own bucket", async () => {
-    render(<ProjectRail projects={[{ name: "store", runs: [
+    render(<RunHistory defaultOpen project={{ name: "store", runs: [
       { ...row("older-live"), status: "running", lastEventAt: "2026-09-01T08:00:00Z" },
       { ...row("newer-history"), lastEventAt: "2026-10-01T10:00:00Z" },
       { ...row("newer-live"), status: "paused", lastEventAt: "2026-09-02T08:00:00Z" },
       { ...row("unknown"), status: "none", lastEventAt: "2026-09-04T08:00:00Z" },
       { ...row("missing-time"), status: "blocked" },
       { ...row("invalid-time"), status: "completed", lastEventAt: "not-an-instant" },
-    ] }]}
-      selected="older-live" connected hasMore busy={false} {...actions} />);
+    ] }}
+      selected="older-live"  hasMore busy={false} {...actions} />);
     const ongoing = screen.getByRole("group", { name: /ongoing runs/i });
     const ongoingNames = within(ongoing).getAllByRole("button", { name: /live/ }).map((button) => button.textContent);
     expect(ongoingNames[0]).toContain("newer-live");
@@ -197,11 +187,11 @@ describe("activity-ordered run history", () => {
   });
 
   it("keeps a selected historical run visible when history is collapsed", async () => {
-    render(<ProjectRail projects={[{ name: "store", runs: [
+    render(<RunHistory defaultOpen project={{ name: "store", runs: [
       { ...row("live"), status: "running", lastEventAt: "2026-10-01T09:00:00Z" },
       { ...row("selected-history"), lastEventAt: "2026-10-01T10:00:00Z" },
-    ] }]}
-      selected="selected-history" connected hasMore={false} busy={false} {...actions} />);
+    ] }}
+      selected="selected-history"  hasMore={false} busy={false} {...actions} />);
     expect(screen.getByRole("button", { name: /selected-history/ })).toHaveAttribute("aria-current", "true");
     await userEvent.click(screen.getByRole("button", { name: /show history/i }));
     await userEvent.click(screen.getByRole("button", { name: /hide history/i }));
@@ -222,17 +212,15 @@ describe("a truncated row says its whole name on hover", () => {
 
   function railWithCollidingNames() {
     render(
-      <ProjectRail
-        projects={[{ name: "store", runs: [{ ...row("run-aaaa1111"), objective: long }, { ...row("run-bbbb2222"), objective: other }] }]}
+      <RunHistory defaultOpen
+        project={{ name: "store", runs: [{ ...row("run-aaaa1111"), objective: long }, { ...row("run-bbbb2222"), objective: other }] }}
         selected=""
-        connected
+        
         hasMore={false}
         busy={false}
         onSelect={vi.fn()}
         onLoadMore={vi.fn()}
         onNewTask={vi.fn()}
-        onAddProject={vi.fn()}
-        onOpenModels={vi.fn()}
       />,
     );
   }

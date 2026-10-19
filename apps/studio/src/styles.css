@@ -2432,7 +2432,7 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .handover-bar-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .handover-summary { margin: 0; flex: 1 1 260px; min-width: 0; font-size: 13px; }
 .handover-span { color: var(--dim); }
-.handover-details { max-height: 40vh; overflow: auto; margin-top: 6px; }
+.handover-details { max-height: 30vh; overflow: auto; margin-top: 6px; }
 .handover-group h3 { margin: 12px 0 4px; font-size: 13px; }
 .handover-group ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .handover-group button { width: 100%; text-align: left; background: none; border: 0; padding: 4px 0; color: inherit; text-decoration: underline dotted; }
@@ -2601,3 +2601,13 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 /* #447: a flow's branch path reads as a sub-row of the flow above it. */
 .right-journey-branch { margin-left: 14px; }
 
+
+/* #1654: one card per project on the rail; the project's runs are history in the stage. */
+.project-card {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; text-align: left;
+  margin: 6px 0; padding: 10px 8px; border-radius: 10px; background: transparent; border: 0; cursor: pointer;
+}
+.project-card.on { background: var(--high); }
+.project-card .run-id { font-size: 13px; }
+.run-history { padding: 4px 16px; max-height: 30vh; overflow-y: auto; }
+.run-history-head { display: flex; align-items: center; gap: 6px; }

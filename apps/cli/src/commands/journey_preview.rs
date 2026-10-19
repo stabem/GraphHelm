@@ -355,6 +355,32 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
     start_with(args, runner_liveness)
 }
 
+/// #1662: the owner's confirm that a draft's commands may run. A confirm of a draft that has
+/// `cli` acts comes only through the owner's door (the Runtime's owner-only route, or the CLI
+/// with the owner's token), names the flow digest the owner saw beside the argv, and is recorded
+/// as its own owner event before the run starts. A lane's preview cannot confirm, so it stays at
+/// `confirm_needed`. Anything else passes through unchanged.
+fn confirm_commands(args: &JourneyPreviewArgs, project: &Path, flow: &Value) -> Result<()> {
+    let argv = super::journey_backend::cli_argv(flow);
+    if !args.confirm
+        || flow["status"] == "approved"
+        || argv.is_empty()
+        || args.validation_dir.is_some()
+    {
+        return Ok(());
+    }
+    if !args.owner && !super::journey_flow::owner_token_matches(project, args.token_file.as_deref())
+    {
+        return Err(failure("preview.confirm_owner_only", "/confirm", 2));
+    }
+    let digest = super::journey_flow::approval_digest(flow);
+    if args.confirm_digest.as_deref() != Some(digest.as_str()) {
+        return Err(failure("preview.confirm_stale", "/confirmDigest", 2));
+    }
+    super::journey_owner::record_cli_confirmed(project, &args.id, &digest, &argv)
+        .map_err(|_| failure("preview.confirm_unrecorded", "/confirm", 1))
+}
+
 /// [`start`] with the runner probe the reaper uses (a test supplies it).
 fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) -> Outcome {
     if args.run {
@@ -368,6 +394,9 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
         Ok(found) => found,
         Err(failed) => return answer(json!({}), Some(failed)),
     };
+    if let Err(failed) = confirm_commands(args, &project, &flow) {
+        return answer(json!({}), Some(failed));
+    }
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
     let stored = reap_lost_from_with(&project, &dir, || read_state(&dir), &liveness);
     // The reaper probed the runner once and stored a dead one as failed, so a `running` it hands
@@ -854,6 +883,9 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         Ok(found) => found,
         Err(failed) => return answer(json!({}), Some(failed)),
     };
+    // #1662 review: the runner does not re-confirm. The door recorded the owner's confirm before
+    // spawning it, and `play` lets a draft's command run only when the owner store holds that
+    // exact digest and argv, so a forged `--run --confirm` still holds.
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
     let mut state = read_state(&dir).unwrap_or_else(|| json!({}));
     if state["digest"] != digest.as_str() || state["state"] != "running" {
@@ -1003,7 +1035,11 @@ fn record_pass(
 ) -> std::result::Result<Value, String> {
     use sha2::{Digest, Sha256};
     let mut evidence = Sha256::new();
-    let results = json!({"screens":run.state["screens"],"edges":run.state["edges"]});
+    let mut results = json!({"screens":run.state["screens"],"edges":run.state["edges"]});
+    // #1662: a backend run's command output is part of what the record vouches for.
+    if !run.state["outputs"].is_null() {
+        results["outputs"] = run.state["outputs"].clone();
+    }
     evidence.update(results.to_string().as_bytes());
     let mut screens: Vec<&String> = run.state["screens"]
         .as_object()
@@ -1098,10 +1134,24 @@ fn play(
                 .unwrap_or_default(),
         )?
     };
+    // #1662: a draft's commands run only when the owner's store confirms this exact content and
+    // argv list; the held state names both, so the owner sees what a confirm would allow.
+    let argv = super::journey_backend::cli_argv(flow);
+    let approved = flow["status"] == "approved";
+    let digest = super::journey_flow::approval_digest(flow);
+    let cli_confirmed = !approved
+        && !argv.is_empty()
+        && super::journey_owner::cli_confirmed(project, &run.flow_id, &digest, &argv)
+            .unwrap_or(false);
+    if !approved && !argv.is_empty() {
+        run.state["cliConfirm"] =
+            json!({"digest": digest, "argv": argv, "confirmed": cli_confirmed});
+    }
     let guard = Guard {
-        approved: flow["status"] == "approved",
+        approved,
         launched: launched.is_some(),
         confirmed: run.confirmed,
+        cli_confirmed,
     };
     let screens: std::collections::BTreeMap<&str, &Value> = flow["screens"]
         .as_array()
@@ -1160,19 +1210,23 @@ struct Guard {
     approved: bool,
     launched: bool,
     confirmed: bool,
+    /// #1662: the owner's store holds a confirm of this draft's exact digest and argv list.
+    cli_confirmed: bool,
 }
 
 impl Guard {
     /// The step reason an act is not sent with, or `None` when it is played.
     ///
-    /// #927 backend acts: a `cli` act in a draft is never run (`cli_needs_approval`): there is no
-    /// isolated target for a command, so only the owner's approval of the exact argv lets it
-    /// play. A mutating `http` act (any method but GET, HEAD, OPTIONS) in a draft is refused even
-    /// on a launched app, and an approved flow holds it for the owner's click.
+    /// #927 backend acts: there is no isolated target for a command, so a `cli` act runs only on
+    /// argv the owner has seen. #1662: in a draft it holds (`confirm_needed`) until the owner's
+    /// store confirms this exact digest and argv list (approval needs a passing preview, so
+    /// waiting for approval could never end). A mutating `http` act (any method but GET, HEAD,
+    /// OPTIONS) in a draft is refused even on a launched app, and an approved flow holds it for
+    /// the owner's click.
     fn stops_before(self, act: &Value) -> Option<&'static str> {
         let backend = matches!(act["kind"].as_str(), Some("http" | "cli"));
-        if act["kind"] == "cli" && !self.approved {
-            return Some("cli_needs_approval");
+        if act["kind"] == "cli" && !self.approved && !self.cli_confirmed {
+            return Some("confirm_needed");
         }
         would_destroy(act)?;
         if self.approved {
@@ -1256,6 +1310,9 @@ fn play_path(
                     run.edge(id, "skipped", Some(reason));
                     if reason == "confirm_needed" {
                         run.state["held"] = json!({"edge":id,"act":act["name"],"base":base});
+                        if act["kind"] == "cli" {
+                            run.state["held"]["cliConfirm"] = run.state["cliConfirm"].clone();
+                        }
                         run.save();
                         return Ok("held");
                     }
@@ -1304,6 +1361,36 @@ fn play_path(
 /// observed by a GET of its URL when the flow sends requests; a `cli`-only flow's start screen is
 /// its precondition and is not observed. Each act's observation is checked against the screen it
 /// reaches: an act that cannot run fails, an unmet expectation is drift. No coverage is collected.
+/// #1662 review: what a command printed, as kept in the run state and its evidence. stdout and
+/// stderr are masked like the driver's stderr (every `GRAPHHELM_SECRET_*` value and the user's
+/// home) and capped at the tail; the sha256 of the raw bytes stays so the evidence binds them.
+fn command_output(argv: &Value, seen: &super::journey_backend::Observation) -> Value {
+    let secrets: Vec<String> = std::env::vars_os()
+        .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))
+        .filter_map(|(_, value)| value.into_string().ok())
+        .collect();
+    masked_output(argv, seen, &secrets)
+}
+
+fn masked_output(
+    argv: &Value,
+    seen: &super::journey_backend::Observation,
+    secrets: &[String],
+) -> Value {
+    use sha2::{Digest, Sha256};
+    // The whole output is kept (no cut window), then its tail is bounded by `masked_tail`.
+    let cut = false;
+    let keep = |text: &str| super::journey_replay::masked_tail(text.as_bytes(), cut, 0, secrets);
+    json!({
+        "argv": argv,
+        "exit": seen.exit,
+        "stdout": keep(&seen.body),
+        "stderr": keep(&seen.stderr),
+        "stdoutSha256": hex::encode(Sha256::digest(seen.body.as_bytes())),
+        "stderrSha256": hex::encode(Sha256::digest(seen.stderr.as_bytes())),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn play_backend_path(
     project: &Path,
@@ -1344,13 +1431,27 @@ fn play_backend_path(
                     run.edge(id, "skipped", Some(reason));
                     if reason == "confirm_needed" {
                         run.state["held"] = json!({"edge":id,"act":act["name"],"base":base});
+                        if act["kind"] == "cli" {
+                            run.state["held"]["cliConfirm"] = run.state["cliConfirm"].clone();
+                        }
                         run.save();
                         return "held";
                     }
                     return "skipped";
                 }
                 match backend::play(project, base, act) {
-                    Ok(seen) => last = Some(seen),
+                    Ok(seen) => {
+                        // #1662: what each command printed is kept with the run's evidence.
+                        if act["kind"] == "cli" {
+                            let mut outputs = run.state["outputs"][id]
+                                .as_array()
+                                .cloned()
+                                .unwrap_or_default();
+                            outputs.push(command_output(&act["name"], &seen));
+                            run.state["outputs"][id] = Value::Array(outputs);
+                        }
+                        last = Some(seen);
+                    }
                     Err(_) => {
                         run.edge(id, "fail", Some("act_failed"));
                         run.screen(to, "fail", Some("act_failed"), None);
@@ -1683,6 +1784,9 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             keyring: None,
             key_id: None,
             validation_dir: None,
+            confirm_digest: None,
+            token_file: None,
+            owner: false,
         });
         assert_eq!(outcome.exit_code, 0);
         let during: Value = serde_json::from_slice(
@@ -1997,6 +2101,9 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 keyring: None,
                 key_id: None,
                 validation_dir: None,
+                confirm_digest: None,
+                token_file: None,
+                owner: false,
             },
             |_| {
                 probes.set(probes.get() + 1);
@@ -2105,6 +2212,9 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             keyring: None,
             key_id: None,
             validation_dir: None,
+            confirm_digest: None,
+            token_file: None,
+            owner: false,
         });
 
         let answer = answer.output.data.unwrap();
@@ -2178,6 +2288,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 approved: true,
                 launched,
                 confirmed: false,
+                cli_confirmed: false,
             };
             assert_eq!(held.stops_before(&pay), Some("confirm_needed"));
             assert_eq!(held.stops_before(&look), None);
@@ -2191,6 +2302,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             approved: false,
             launched,
             confirmed: false,
+            cli_confirmed: false,
         };
         assert_eq!(draft(false).stops_before(&pay), Some("guard_refused"));
         assert_eq!(draft(true).stops_before(&pay), None);
@@ -2208,6 +2320,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 approved: false,
                 launched,
                 confirmed: false,
+                cli_confirmed: false,
             };
             for method in ["DELETE", "POST", "put", "BREW"] {
                 assert_eq!(
@@ -2219,12 +2332,20 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             for method in ["GET", "HEAD", "options"] {
                 assert_eq!(draft.stops_before(&http(method)), None, "{method}");
             }
-            assert_eq!(draft.stops_before(&cli), Some("cli_needs_approval"));
+            assert_eq!(draft.stops_before(&cli), Some("confirm_needed"));
+            // #1662: the owner's confirm of this argv lets it play; a destructive one stays refused.
+            let confirmed = Guard {
+                cli_confirmed: true,
+                ..draft
+            };
+            assert_eq!(confirmed.stops_before(&cli), None);
+            assert_eq!(confirmed.stops_before(&wipe), Some("guard_refused"));
         }
         let approved = Guard {
             approved: true,
             launched: true,
             confirmed: false,
+            cli_confirmed: false,
         };
         for method in ["DELETE", "POST"] {
             assert_eq!(approved.stops_before(&http(method)), Some("confirm_needed"));
@@ -2237,6 +2358,34 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             ..approved
         };
         assert_eq!(clicked.stops_before(&http("DELETE")), None);
+    }
+
+    /// #1662 review: a command's output never reaches the run state or its evidence with a secret
+    /// in it, and it is bounded; the digests still bind the raw bytes.
+    #[test]
+    fn a_commands_output_is_masked_bounded_and_digested() {
+        let secret = "s3cr3t-token-value".to_owned();
+        let seen = super::super::journey_backend::Observation {
+            status: None,
+            exit: Some(0),
+            body: format!(
+                "token={secret}
+{}",
+                "x".repeat(10_000)
+            ),
+            stderr: format!("warn: {secret}"),
+        };
+        let kept =
+            super::masked_output(&json!("sh greet.sh"), &seen, std::slice::from_ref(&secret));
+        let text = kept.to_string();
+        assert!(!text.contains(&secret), "{text}");
+        assert!(kept["stderr"].as_str().unwrap().contains("***"), "{kept}");
+        assert!(
+            kept["stdout"].as_str().unwrap().len() <= 4096,
+            "unbounded stdout"
+        );
+        assert_eq!(kept["stdoutSha256"].as_str().unwrap().len(), 64);
+        assert_eq!(kept["exit"], 0);
     }
 
     /// #519 slice 3: only an approved flow with all four recording arguments records proof; a
@@ -2256,6 +2405,9 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             keyring: Some("k".into()),
             key_id: Some("id".into()),
             validation_dir: None,
+            confirm_digest: None,
+            token_file: None,
+            owner: false,
         };
         let approved = json!({"status":"approved"});
         let proof = proof_args(&full, &approved, project).expect("approved + execution records");

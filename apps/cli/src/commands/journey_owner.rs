@@ -252,6 +252,68 @@ pub(crate) fn record_rejection(
     append(project, &id, REJECTED_KIND, &description, flow)
 }
 
+/// The signal kind of the owner's confirm that a draft's commands may run (#1662).
+pub(crate) const CLI_CONFIRMED_KIND: &str = "journey_flow_cli_confirmed";
+/// The description protocol of that signal.
+pub(crate) const CLI_CONFIRMED_PROTOCOL: &str = "graphhelm-journey-cli-confirm-v1";
+
+/// `journey-cli-confirmed-<first 32 hex of sha256(flow, digest, argv...)>`: one id per exact
+/// flow content and argv list, so an edit to either needs a new confirm.
+pub(crate) fn cli_confirmed_signal_id(flow: &str, digest: &str, argv: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut text = format!(
+        "cli-confirmed
+{flow}
+{digest}"
+    );
+    for word in argv {
+        text.push('\n');
+        text.push_str(word);
+    }
+    format!(
+        "journey-cli-confirmed-{}",
+        &hex::encode(Sha256::digest(text.as_bytes()))[..32]
+    )
+}
+
+/// Whether the owner confirmed that `flow` at exactly `digest` may run exactly `argv` (#1662).
+/// `Err` when the store cannot be read: the confirm cannot be verified.
+pub(crate) fn cli_confirmed(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+    argv: &[String],
+) -> Result<bool, String> {
+    has(
+        project,
+        &cli_confirmed_signal_id(flow, digest, argv),
+        CLI_CONFIRMED_KIND,
+    )
+}
+
+/// Appends the owner's confirm that `flow` at `digest` may run `argv` (#1662), so the history
+/// shows who allowed which commands. The same confirm again adds nothing.
+pub(crate) fn record_cli_confirmed(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+    argv: &[String],
+) -> Result<(), String> {
+    if cli_confirmed(project, flow, digest, argv).unwrap_or(false) {
+        return Ok(());
+    }
+    let description = serde_json::json!({
+        "protocol": CLI_CONFIRMED_PROTOCOL, "flowId": flow, "digest": digest, "argv": argv,
+    });
+    append(
+        project,
+        &cli_confirmed_signal_id(flow, digest, argv),
+        CLI_CONFIRMED_KIND,
+        &description,
+        flow,
+    )
+}
+
 fn owner_history(project: &Path) -> Result<Vec<graphhelm_protocols::EventEnvelope>, String> {
     let events = store(project);
     if !events.exists() {

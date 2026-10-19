@@ -28,6 +28,8 @@ pub(super) struct Observation {
     pub(super) status: Option<u16>,
     pub(super) exit: Option<i32>,
     pub(super) body: String,
+    /// #1662: a command's stderr, kept with its stdout as the run's evidence.
+    pub(super) stderr: String,
 }
 
 fn acts(flow: &Value) -> impl Iterator<Item = &Value> {
@@ -43,6 +45,14 @@ fn backend_kind(act: &Value) -> bool {
 }
 
 /// A flow is a backend flow when any act is `http` or `cli`.
+/// #1662: every `cli` act's argv in the flow, in edge order: what the owner confirms.
+pub(super) fn cli_argv(flow: &Value) -> Vec<String> {
+    acts(flow)
+        .filter(|act| act["kind"] == "cli")
+        .filter_map(|act| act["name"].as_str().map(str::to_owned))
+        .collect()
+}
+
 pub(super) fn is_backend(flow: &Value) -> bool {
     acts(flow).any(backend_kind)
 }
@@ -190,6 +200,7 @@ pub(super) fn request(
         } else {
             content.to_owned()
         },
+        stderr: String::new(),
     })
 }
 
@@ -219,14 +230,23 @@ pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String>
         .current_dir(project)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| error.to_string())?;
     let mut stdout = child.stdout.take().ok_or("no stdout")?;
+    let mut stderr = child.stderr.take().ok_or("no stderr")?;
     let reader = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         let _ = (&mut stdout).take(MAX_BODY).read_to_end(&mut bytes);
         bytes
+    });
+    // #1662: stderr is evidence; a failed read says so in place of the bytes.
+    let errors = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        match (&mut stderr).take(MAX_BODY).read_to_end(&mut bytes) {
+            Ok(_) => bytes,
+            Err(error) => format!("stderr unreadable: {error}").into_bytes(),
+        }
     });
     let deadline = Instant::now() + ACT_LIMIT;
     let status = loop {
@@ -241,10 +261,14 @@ pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String>
         }
     };
     let bytes = reader.join().unwrap_or_default();
+    let error_bytes = errors
+        .join()
+        .unwrap_or_else(|_| b"stderr unreadable: reader panicked".to_vec());
     Ok(Observation {
         status: None,
         exit: status.code(),
         body: String::from_utf8_lossy(&bytes).into_owned(),
+        stderr: String::from_utf8_lossy(&error_bytes).into_owned(),
     })
 }
 
@@ -382,6 +406,7 @@ mod tests {
             status: Some(200),
             exit: None,
             body: r#"{"item":{"name":"apple","tags":["a","b"]},"count":2}"#.into(),
+            stderr: String::new(),
         };
         assert_eq!(unmet(&screen, &seen), None);
         let wrong = Observation {
@@ -393,6 +418,7 @@ mod tests {
             status: Some(200),
             exit: None,
             body: r#"{"item":{"tags":["a","c"]},"count":2}"#.into(),
+            stderr: String::new(),
         };
         assert_eq!(
             unmet(&screen, &missing).as_deref(),

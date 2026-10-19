@@ -327,7 +327,7 @@ fn keep_tail(pipe: impl Read + Send + 'static, slack: usize) -> Receiver<(Vec<u8
 /// The kept stderr as text with every secret and the user's home masked, at most
 /// `DRIVER_LOG_TAIL` bytes. A cut window first drops `slack` bytes, the longest a secret's
 /// leftover suffix can be, so no fragment of a secret survives the edge.
-fn masked_tail(bytes: &[u8], cut: bool, slack: usize, secrets: &[String]) -> String {
+pub(super) fn masked_tail(bytes: &[u8], cut: bool, slack: usize, secrets: &[String]) -> String {
     let bytes = if cut {
         &bytes[slack.min(bytes.len())..]
     } else {

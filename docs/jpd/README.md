@@ -125,8 +125,8 @@ a missing module, the report says `baselineCause: dependencies_missing`; `baseli
 
 ## Safety: drafts, approval and destructive acts
 
-- A **draft** never runs a `cli` act (`cli_needs_approval`) and never sends a mutating request
-  (`guard_refused`). Approval records the flow's digest at a commit, so the owner
+- A **draft** runs a `cli` act only after the owner confirms that exact digest and argv list
+  (`confirm_needed` until then, #1662), and never sends a mutating request (`guard_refused`). Approval records the flow's digest at a commit, so the owner
   approves the exact argv and requests the flow holds.
 - Any `http` method other than `GET`, `HEAD` or `OPTIONS` is a mutation, whatever its path says.
   In an approved flow it is held at `confirm_needed` until the owner runs

@@ -871,6 +871,25 @@ fn each_task_kind_is_accepted_from_its_recording_actor() {
     }
 }
 
+/// #1544: the Stop reconciler records a close it only observed. `observed: true` is admitted; any
+/// other value is refused, and a close without it is admitted as before. Cost: one temp store and
+/// three CLI calls.
+#[test]
+fn a_close_may_say_it_was_observed_and_only_with_true() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    for (id, observed, ok) in [
+        ("observed-true", json!(true), true),
+        ("observed-false", json!(false), false),
+        ("observed-text", json!("yes"), false),
+    ] {
+        let mut closed = as_actor(package_fixture("closed"));
+        closed["observed"] = observed;
+        let reply = signal(scratch.path(), &events, id, "task.closed", ACTOR, &closed);
+        assert_eq!(reply["ok"], json!(ok), "{id}: {reply}");
+    }
+}
+
 /// #729: only the lane may release its exact pre-PR claim. Cost: one temp store and five CLI calls.
 #[test]
 fn a_claim_release_is_bound_to_its_claim_sequence_and_lane() {

@@ -460,6 +460,8 @@ export interface JourneyFlowView {
   findings: JourneyFlowFinding[];
   /** `journey approve` would accept it and change something (not an already-settled approval). */
   approvable: boolean;
+  /** #1658: the owner's latest rejection of this exact content (#1588), or null. Absent from older Runtimes. */
+  rejected?: { note: string; digest: string; sequence: number } | null;
   screens: JourneyFlowScreen[];
   edges: JourneyFlowEdge[];
   paths: Record<string, string[]>;

@@ -59,6 +59,34 @@ class TimeScaleTests(unittest.TestCase):
                 self.assertIn("GRAPHHELM_TEST_TIME_SCALE", str(refused.exception))
 
 
+class ReconcileRuntimeTimeoutTests(unittest.TestCase):
+    """#1632: the scheduled board sync waits for a slow Runtime; the Stop path keeps its 2 s / 3 s.
+    Offline: `urlopen` is replaced and refuses, so only the timeout each call asked for is seen."""
+
+    def timeouts(self, *extra):
+        token = Path(self.enterContext(tempfile.TemporaryDirectory())) / "events.agent.graphhelm.token"
+        token.write_text("tok", encoding="utf-8")
+        seen = []
+        devnull = open(os.devnull, "w", encoding="utf-8")
+        self.addCleanup(devnull.close)
+
+        def refuse(request, *args, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            raise urllib.error.URLError("offline")
+
+        argv = ["tasks_reconcile.py", "--execution", "gh-team", "--url", "http://127.0.0.1:1",
+                "--token-file", str(token), "--repo", "stabem/GraphHelm", "--lane", "graphhelm", *extra]
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=refuse), \
+                mock.patch.object(sys, "stderr", new=devnull):
+            self.assertEqual(tasks_reconcile.main(), 1)
+        return seen
+
+    def test_runtime_timeout_sets_every_runtime_call_and_its_absence_keeps_the_stop_budget(self):
+        self.assertEqual(self.timeouts("--runtime-timeout", "45"), [45.0])
+        self.assertEqual(self.timeouts(), [2])
+
+
 class ReconciledDigestTests(unittest.TestCase):
     """#1195: an unchanged reconcile reply is not posted again. Offline: `request` is replaced."""
 
@@ -441,8 +469,35 @@ class LaneStopTests(unittest.TestCase):
             self.assertEqual(tasks_reconcile.reconcile(args)["closed"], [])
         github.assert_not_called()
         found = tasks_reconcile.records(args.url, Path(args.token_file).read_text().strip(), args.execution)
-        self.assertEqual([(kind, doc["revision"], doc["reason"], doc["by"]) for kind, doc, _ in found if kind == "task.closed"],
-                         [("task.closed", 6, "superseded", 9002)])
+        closes = [(kind, doc["revision"], doc["reason"], doc["by"]) for kind, doc, _ in found if kind == "task.closed"]
+        self.assertEqual(closes, [("task.closed", 6, "superseded", 9002)])
+        # #1544: `observed` is kept when the Runtime under test admits it; an older Runtime gets the
+        # close without it (post_closed's fallback). Either way the close is recorded exactly once.
+        self.assertIn([doc.get("observed") for kind, doc, _ in found if kind == "task.closed"], ([True], [None]))
+
+    def test_an_observed_close_falls_back_without_the_field_on_an_older_runtime(self):
+        """#1544: a Runtime that predates `observed` answers 400; the close is re-sent without it.
+        Any other refusal still raises. Cost: no Runtime, two mocked posts."""
+        import urllib.error
+        calls = []
+
+        def refuse_observed(base, token, execution, kind, task_id, repo, lane, fields, revision=None):
+            calls.append(dict(fields))
+            if "observed" in fields:
+                raise urllib.error.HTTPError("http://127.0.0.1/x", 400, "Bad Request", {}, None)
+
+        with mock.patch.object(tasks_reconcile, "post_end", side_effect=refuse_observed):
+            tasks_reconcile.post_closed("http://127.0.0.1:1", "t", "run", "issue-7", "o/r", "lane-a",
+                                        {"pr": 7, "reason": "abandoned", "by": 7})
+        self.assertEqual(calls, [{"pr": 7, "reason": "abandoned", "by": 7, "observed": True},
+                                 {"pr": 7, "reason": "abandoned", "by": 7}])
+
+        def fail(*_args, **_kwargs):
+            raise urllib.error.HTTPError("http://127.0.0.1/x", 500, "Server Error", {}, None)
+
+        with mock.patch.object(tasks_reconcile, "post_end", side_effect=fail),              self.assertRaisesRegex(ValueError, "HTTP 500"):
+            tasks_reconcile.post_closed("http://127.0.0.1:1", "t", "run", "issue-7", "o/r", "lane-a",
+                                        {"pr": 7, "reason": "abandoned", "by": 7})
 
     def test_a_laneless_scheduled_run_makes_the_board_follow_github(self):
         """#1628: the hidden scheduled run (`--lane graphhelm --adopt-opened`, no lane stopping)

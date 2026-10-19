@@ -228,6 +228,7 @@
 .mv-verdict { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border-radius: 6px; border: 1px solid #2A2D35; color: #8D929C; }
 .mv-verdict[data-verdict="passed"] { color: #6FD39A; border-color: #2D5A40; }
 .mv-verdict[data-verdict="failed"] { color: #E8A3A3; border-color: #6A2E2E; }
+.mv-rejected { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border-radius: 6px; border: 1px solid #6A2E2E; color: #E8A3A3; }
 .mv-verdict[data-verdict="stale"], .mv-verdict[data-verdict="needs_you"] { color: #E8C27A; border-color: #5E4A22; }
 .mv-verdict[data-verdict="running"] { color: #9DB4FF; border-color: #2E3C6A; }
 .mv-jrun-btn { padding: 3px 9px; border-radius: 6px; border: 1px solid #2A2D35; background: transparent; color: #C9C7C2; font-size: 12px; cursor: pointer; }

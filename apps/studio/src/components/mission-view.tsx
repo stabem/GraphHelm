@@ -15,7 +15,7 @@ import { IssueGraph, MissionGraph, STATUS_LABEL, stageState } from "./mission-gr
 import { ProofTable } from "./proof-table";
 import { TestCanvas } from "./test-canvas";
 import { ProofRun } from "./proof-run";
-import { approveJourneys, journeyVerdict, stepNeedsFrame, runJourneys, type JourneyRunSource, type JourneyVerdict } from "./journey-flows";
+import { approveJourneys, journeyVerdict, runJourneys, type JourneyRunSource, type JourneyVerdict } from "./journey-flows";
 import { LanesTimeline } from "./lanes-timeline";
 import { WorkKanban, type KanbanItem } from "./work-kanban";
 import type { Bot } from "../runtime/team";
@@ -32,7 +32,7 @@ import type { SlotView } from "../runtime/slots";
 import type { BacklogIssue, TaskDurations } from "../runtime/tasks-route";
 import type { GraphNode } from "../graph/model";
 import { readable } from "./format";
-import { approvalBlockReason } from "../runtime/journeys";
+import { approvalBlockReason, runProves } from "../runtime/journeys";
 
 type Sub = "graph" | "proof" | "test" | "lanes";
 const WINDOW_MS = 14 * 3_600_000;
@@ -74,6 +74,8 @@ interface Props {
   focusJourneyId?: string | null;
   flows?: JourneyFlowsView | null;
   onApprove?: (flowId: string) => Promise<void>;
+  /** #1658: the owner's Reject with a note. */
+  onReject?: (flowId: string, note: string) => Promise<void>;
   onWatch?: (flowId: string) => Promise<void>;
   /** #591: "Agents right now" in the rail, from the team model. */
   agents?: Bot[];
@@ -323,7 +325,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, seenActorSources, onDemandLanes = [], slots = [], backlog = [], durations, runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot, livenessBudgets }: Props) {
+export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onReject, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, seenActorSources, onDemandLanes = [], slots = [], backlog = [], durations, runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot, livenessBudgets }: Props) {
   const freeAfterMs = livenessBudgets ? livenessBudgets.freeAfterSeconds * 1000 : laneBudgets(lanes).freeAfterMs;
   const journeys = useMemo(() => withFlowContracts(compiledJourneys, flows?.flows ?? []), [compiledJourneys, flows]);
 
@@ -479,9 +481,11 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
       run.read(id).then((value) => onRun(id, value), () => {});
     }
   }, [run, onRun, journeys, runFor]);
-  const verdictOf = (m: Mission): JourneyVerdict => (batch?.current === m.contractId ? "running" : journeyVerdict(m.steps.map((step) => step.status), runFor(m.contractId),
-    flowForContract(flows?.flows ?? [], m.contractId)?.status !== "approved",
-    m.steps.map((step) => ({ id: step.stepId, needsFrame: stepNeedsFrame(flowForContract(flows?.flows ?? [], m.contractId)?.screens.find((screen) => screen.id === step.stepId)) }))));
+  const draftProven = (m: Mission) => {
+    const owner = flowForContract(flows?.flows ?? [], m.contractId);
+    return owner !== undefined && owner.status !== "approved" && runProves(owner, m, runFor(m.contractId));
+  };
+  const verdictOf = (m: Mission): JourneyVerdict => (batch?.current === m.contractId ? "running" : journeyVerdict(m.steps.map((step) => step.status), runFor(m.contractId), draftProven(m)));
   const verdictCount = (v: JourneyVerdict) => missions.filter((m) => runnable.includes(m.contractId) && verdictOf(m) === v).length;
   const startBatch = (ids: string[]) => {
     if (!run || batch !== null) return;
@@ -657,6 +661,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
                   <JourneyRailButton mission={m} flow={flowForContract(flows?.flows ?? [], m.contractId)} duplicateTitle={proofTitles.filter((title) => title === proofTitles[missions.indexOf(m)]).length > 1} selected={on} onSelect={() => pickProof(m.contractId)} />
+                  {flowForContract(flows?.flows ?? [], m.contractId)?.rejected && <span className="mv-rejected" title={flowForContract(flows?.flows ?? [], m.contractId)?.rejected?.note}>✕ rejected</span>}
                   {runnable.includes(m.contractId) && <span className="mv-jrun">
                     <span className="mv-verdict" data-verdict={verdictOf(m)} title={VERDICT_HINT[verdictOf(m)]}>{VERDICT_LABEL[verdictOf(m)]}</span>
                     <button type="button" className="mv-jrun-btn" aria-label={`Run journey ${m.title}`} disabled={batch !== null} onClick={() => startBatch([m.contractId])}>▶ Run</button>
@@ -816,7 +821,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
           {sub === "graph" && !group && mission && (!historyLoading || partial) && <MissionGraph mission={mission} selectedStepId={stepId} selectedTaskKey={taskKey ?? null}
             onSelectStep={(id) => { setStepId(id); setTaskKey(null); }} onSelectTask={pickTask} onOpenTest={openTest} />}
           {sub === "proof" && (mission && contractId ? <ProofTable key={`${contractId}:${batchRevision}`} mission={mission} flow={flow} onOpenTest={openTest} frameUrl={(id) => frameUrl(id, contractId)}
-            run={run} onApprove={onApprove} onWatch={onWatch} busy={flowBusy} onBusy={setFlowBusy} error={flowError} onActionError={setFlowError}
+            run={run} onApprove={onApprove} onReject={onReject} onWatch={onWatch} busy={flowBusy} onBusy={setFlowBusy} error={flowError} onActionError={setFlowError}
             {...(onRun ? { onRun: (value: JourneyRunView) => onRun(contractId, value) } : {})}
             />
             : <p className="mv-empty">No journeys in this project yet</p>)}

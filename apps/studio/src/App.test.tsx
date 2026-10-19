@@ -573,7 +573,7 @@ describe("live team layout", () => {
       steps: [{ stepId: "mark", screen: { screenId: "mark", title: "Mark", scopePaths: [] }, promises: [] }] }] };
     await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [flow] })),
       journeys: vi.fn(async () => journeys), journeyRun: vi.fn(async () => ({ state: "ready", kind: "replay", result: "pass",
-        screens: { mark: { result: "pass", frame: false } }, edges: {} })) }));
+        screens: { mark: { result: "pass", frame: true } }, edges: {} })), journeyScreenFrame: vi.fn(async () => null) }));
     await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
     expect(await screen.findByRole("button", { name: "1 decision needs you" })).toHaveClass("beacon-lit");
   });
@@ -597,6 +597,25 @@ describe("live team layout", () => {
     expect(await screen.findByRole("button", { name: "2 decisions need you" })).toHaveClass("beacon-lit");
   });
 
+  // #1658: the owner rejects from the Proof view through the Runtime client, and the list shows it.
+  it("#1658: Reject sends the owner's note and the list marks the flow rejected", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const flow = { id: "connect", title: "Connect", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "gate", url: "/", state: "stable" }], edges: [], paths: { main: [] } };
+    let rejected: { note: string; digest: string; sequence: number } | null = null;
+    const rejectJourneyFlow = vi.fn(async (_id: string, note: string) => { rejected = { note, digest: "sha256:x", sequence: 7 }; return { id: "connect" }; });
+    await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [{ ...flow, rejected }] })),
+      journeys: vi.fn(async () => ({ journeys: [] })), rejectJourneyFlow,
+      journeyRun: vi.fn(async () => ({ state: "none", screens: {} })) }));
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Reject" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Why reject" }), "no receipt");
+    await userEvent.click(screen.getByRole("button", { name: "Send reject" }));
+    await waitFor(() => expect(rejectJourneyFlow).toHaveBeenCalledWith("connect", "no receipt"));
+    expect(await screen.findByText("✕ rejected")).toBeInTheDocument();
+    expect(screen.getByText("Rejected: no receipt")).toBeInTheDocument();
+  });
+
   // #1653: the owner saw every flow "passed" 0/N in the Proof list while the detail said Not run:
   // the preview record said pass but held no step results. The list must agree with the detail.
   it("#1653: a pass record with no step results reads not run in the Proof list", async () => {
@@ -611,6 +630,22 @@ describe("live team layout", () => {
     expect(await screen.findByText("○ not run")).toBeInTheDocument();
     expect(screen.queryByText("✓ passed")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Approve \d/ })).toBeNull();
+  });
+
+  // #1653: a preview whose steps passed but whose edge failed is not a pass on the list either.
+  it("#1653: a failed edge reads not run in the Proof list, as Approve stays blocked", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const flow = { id: "connect", title: "Connect", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "gate", url: "/", state: "stable" }, { id: "run", url: "/run", state: "stable" }],
+      edges: [{ id: "gate.connect", from: "gate", to: "run" }], paths: { main: ["gate.connect"] } };
+    await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [flow] })),
+      journeys: vi.fn(async () => ({ journeys: [] })), journeyScreenFrame: vi.fn(async () => null),
+      journeyRun: vi.fn(async () => ({ state: "ready", kind: "preview", result: "pass",
+        screens: { gate: { result: "pass", frame: true }, run: { result: "pass", frame: true } }, edges: { "gate.connect": { result: "fail" } } })) }));
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    expect(await screen.findByText("○ not run")).toBeInTheDocument();
+    expect(screen.queryByText("✓ passed")).toBeNull();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
   });
 
   it("shows the handover after a long gap and advances only on Got it", async () => {

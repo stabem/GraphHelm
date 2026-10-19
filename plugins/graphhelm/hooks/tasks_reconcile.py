@@ -31,6 +31,13 @@ import os
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 MAX_PRS_PER_STOP = 20
+# #1632: `--runtime-timeout` for the scheduled board sync, which can wait on a slow Runtime; the
+# Stop hook keeps the short defaults (2 s reads, 3 s writes) when it is not given.
+RUNTIME_TIMEOUT = None
+
+
+def runtime_timeout(default):
+    return RUNTIME_TIMEOUT if RUNTIME_TIMEOUT is not None else default
 
 
 def cursor_path(token_file, lane):
@@ -66,7 +73,7 @@ def get(url, token, lane=None):
     if lane is not None:
         headers["X-GraphHelm-Actor"] = lane
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=2) as reply:
+    with urllib.request.urlopen(request, timeout=runtime_timeout(2)) as reply:
         return json.load(reply)["data"]
 
 
@@ -158,7 +165,7 @@ def post(base, token, execution, pr, task_id, repo, sha, closes):
                "Idempotency-Key": signal_id, "X-GraphHelm-Actor": "graphhelm",
                "X-GraphHelm-Actor-Type": "agent"}
     request = urllib.request.Request(url, data=json.dumps({"signal": signal}).encode(), headers=headers, method="POST")
-    with urllib.request.urlopen(request, timeout=3) as reply:
+    with urllib.request.urlopen(request, timeout=runtime_timeout(3)) as reply:
         answer = json.load(reply)
     if answer.get("ok") is not True:
         raise ValueError("Runtime refused task.merged")
@@ -254,7 +261,7 @@ def post_end(base, token, execution, kind, task_id, repo, lane, fields, revision
     request = urllib.request.Request(url, data=json.dumps({"signal": signal}).encode(),
                                      headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=3) as reply:
+        with urllib.request.urlopen(request, timeout=runtime_timeout(3)) as reply:
             answer = json.load(reply)
     except urllib.error.HTTPError as error:
         if kind != "heartbeat":
@@ -264,6 +271,18 @@ def post_end(base, token, execution, kind, task_id, repo, lane, fields, revision
         return answer
     if answer.get("ok") is not True:
         raise ValueError("Runtime refused task." + kind)
+
+
+def post_closed(base, token, execution, task_id, repo, lane, fields):
+    """#1544: record a close this lane only observed on GitHub as `observed: true`. A Runtime older
+    than the field refuses it as an invalid signal (HTTP 400); the close is then recorded without
+    it, as before, so a plugin update never stops a lane from reconciling against an older Runtime."""
+    try:
+        post_end(base, token, execution, "closed", task_id, repo, lane, {**fields, "observed": True})
+    except urllib.error.HTTPError as error:
+        if error.code != 400:
+            raise ValueError(f"Runtime refused task.closed: HTTP {error.code}") from error
+        post_end(base, token, execution, "closed", task_id, repo, lane, fields)
 
 
 def heartbeat(base, token, credential, execution, task_id, repo, lane):
@@ -375,8 +394,8 @@ def reconcile(args):
             by = int(match.group(1)) if match else pr
             if args.lane is None:
                 continue
-            post_end(args.url.rstrip("/"), credential(args.lane), args.execution, "closed", task_id, repo,
-                     args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
+            post_closed(args.url.rstrip("/"), credential(args.lane), args.execution, task_id, repo,
+                        args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
             closed.append(pr)
             continue
         if result.get("state") != "MERGED":
@@ -484,7 +503,11 @@ def main():
     parser.add_argument("--adopt-opened", action="store_true",
                         help="#1628: record pr_opened for an open claim whose issue an open PR closes")
     parser.add_argument("--log", help="#1628: append the reply (or the error) to this file, for pythonw")
+    parser.add_argument("--runtime-timeout", type=float,
+                        help="#1632: seconds each Runtime request may take (default 2 for reads, 3 for writes)")
     args = parser.parse_args()
+    global RUNTIME_TIMEOUT
+    RUNTIME_TIMEOUT = args.runtime_timeout
 
     def emit(line, stream):
         if args.log:

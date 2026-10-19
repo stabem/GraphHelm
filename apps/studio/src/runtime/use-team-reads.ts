@@ -4,7 +4,7 @@ import { useEffect, useState, type MutableRefObject } from "react";
 import { RuntimeError, type RuntimeClient } from "./client";
 import { readRunTeam, type RunTeamReadModel } from "./run-team";
 import type { LaneFold } from "./tasks-route";
-import { readClaudeTasks, type ClaudeTaskReadModel, type TaskEventRecord, type TaskState } from "./team-tasks";
+import { isTaskEventSignal, readClaudeTasks, type ClaudeTaskReadModel, type TaskEventRecord, type TaskState } from "./team-tasks";
 import type { EventPage, EvidenceContent, RuntimeEvent } from "./types";
 
 export interface TeamReadsInputs {
@@ -14,6 +14,10 @@ export interface TeamReadsInputs {
   eventList: RuntimeEvent[];
   openEvidence: (executionId: string, evidenceId: string) => Promise<EvidenceContent>;
 }
+
+/** #1560: how often the task projection is re-read when no `task.*` record has landed, so the lanes'
+ * liveness, leases and durations (which age with the clock) stay current. */
+export const TASKS_REFRESH_MS = 60_000;
 
 export function useTeamReads({ clientRef, selected, events, eventList, openEvidence }: TeamReadsInputs) {
   const [runTeamRead, setRunTeamRead] = useState<RunTeamReadModel | null>(null);
@@ -37,15 +41,31 @@ export function useTeamReads({ clientRef, selected, events, eventList, openEvide
     }
     let cancelled = false;
     const run = selected;
-    const client = clientRef.current;
-    setHistoryFailure(null);
-    setTasksRouteFailure((current) => (current?.executionId === run ? null : current));
     void readRunTeam(run, eventList, openEvidence)
       .then((result) => { if (!cancelled) setRunTeamRead(result); })
       .catch(() => { if (!cancelled) setRunTeamRead({ executionId: run, members: [], messages: [], rejected: 0, unavailable: true }); });
     void readClaudeTasks({ executionId: run, events: eventList, readEvidence: openEvidence })
       .then((result) => { if (!cancelled) setClaudeTaskRead(result); })
       .catch(() => { if (!cancelled) setClaudeTaskRead({ executionId: run, tasks: [], rejected: 1 }); });
+    return () => { cancelled = true; };
+  }, [selected, events, eventList, openEvidence, historyRetry]);
+  // #1560: the Runtime's task projection changes when a `task.*` record lands, not on every new
+  // event. Keyed on those records' sequences (plus a slow clock for liveness), a busy run no longer
+  // re-downloads the whole projection on every poll that brought one unrelated event.
+  const taskKey = events === null ? null : eventList.filter(isTaskEventSignal).map((event) => event.sequence).join(",");
+  const [tasksTick, setTasksTick] = useState(0);
+  useEffect(() => {
+    if (!selected) return;
+    const timer = setInterval(() => setTasksTick((tick) => tick + 1), TASKS_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [selected]);
+  useEffect(() => {
+    if (!selected || taskKey === null) return;
+    let cancelled = false;
+    const run = selected;
+    const client = clientRef.current;
+    setHistoryFailure(null);
+    setTasksRouteFailure((current) => (current?.executionId === run ? null : current));
     // #1192 (plan A1): the task projection is the Runtime's (`GET /v1/executions/{id}/tasks`,
     // #1149): one request returns the slices and the verified records; the browser opens no
     // envelope and folds nothing. `rejected` is the Runtime's count of envelopes that did not
@@ -71,7 +91,7 @@ export function useTeamReads({ clientRef, selected, events, eventList, openEvide
         setTaskGraphs((current) => (current?.executionId === run ? current : { executionId: run, tasks: [], records: [], slices: [], routes: [] }));
       } });
     return () => { cancelled = true; };
-  }, [selected, events, eventList, openEvidence, historyRetry]);
+  }, [selected, taskKey, tasksTick, historyRetry]);
   return {
     runTeamRead, claudeTaskRead, taskGraphs, historyFailure, setHistoryRetry, tasksRouteMissing, tasksRouteFailure,
   };

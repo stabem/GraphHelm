@@ -74,7 +74,8 @@ export function useExecutionPoll({
           // RAIL is re-read on the same tick: it claims to be a live triage surface, and a
           // non-selected run flipping to needs-you stayed frozen until the next click
           // (round-3, two reviewers).
-          const lastSeen = eventsRef.current?.events.at(-1)?.sequence ?? 0;
+          const loaded = eventsRef.current;
+          const lastSeen = loaded?.events.at(-1)?.sequence ?? 0;
           // Refresh page one on quiet ticks, then refresh the loaded prefix every fifth
           // successful rail read. Deep pages still update without making every poll traverse
           // the entire loaded rail (issue #1010, Card 2).
@@ -92,9 +93,12 @@ export function useExecutionPoll({
             }
             return rows;
           };
+          // #1560: until the run's first load lands there is no tail to grow from, and reading
+          // "since 0" re-paged the whole history beside the load (~55k events on gh-team). The first
+          // load owns the history; the status is still read, so a slow load never hides a newer state.
           const [nextStatus, fresh] = await Promise.all([
             client.getStatus(selected, true),
-            readEvents(client, selected, lastSeen),
+            loaded === null ? Promise.resolve<EventPage>({ head: 0, events: [] }) : readEvents(client, selected, lastSeen),
           ]);
           // The connection too, not just the run: Runtime B can hold the same execution id, and
           // a tick that started against A must not paint B (PR #467 review, P1).

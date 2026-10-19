@@ -1006,6 +1006,40 @@ describe("opening", () => {
     await waitFor(() => expect(client.approve).toHaveBeenCalled());
   });
 
+  /** #1560: the live gh-team load read its ~55k-event history about three times. While the first
+   * load is still paging, the poll has no tail yet, and each tick read the whole history again from
+   * sequence zero. The first load owns the history; the poll reads only what grew after it. */
+  it("does not re-read a run's history from the start while its first load is still running", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const base = stubClient();
+    const fromStart: string[] = [];
+    const client = stubClient({
+      getEvents: vi.fn(async (executionId: string, options: { after?: number } = {}) => {
+        if ((options.after ?? 0) === 0) {
+          fromStart.push(executionId);
+          await gate;
+        }
+        return (base.getEvents as (id: string) => Promise<unknown>)(executionId);
+      }),
+    });
+    render(
+      <App
+        createClient={() => client as unknown as RuntimeClient}
+        modelContext={null}
+        session={async () => ({ token: "local-token", project: "dale-api-base" })}
+        pollIntervalMs={20}
+      />,
+    );
+    await screen.findByLabelText("Projects");
+    await waitFor(() => expect(fromStart.length).toBeGreaterThan(0));
+    // Many poll ticks pass while the first load is held open.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const counts = fromStart.reduce<Record<string, number>>((all, id) => ({ ...all, [id]: (all[id] ?? 0) + 1 }), {});
+    release();
+    expect(Object.values(counts).every((count) => count === 1), JSON.stringify(counts)).toBe(true);
+  });
+
   /** THE POINT OF THE SESSION WORK. Nobody types anything: the page asks the dev server, gets the
    * token the Runtime already wrote, and is connected before the operator does a thing. */
   it("opens connected, with no token asked for", async () => {

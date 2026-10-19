@@ -284,13 +284,19 @@
       "name": "journey_approve"
     },
     {
-      "description": "Reject one journey flow with the owner's reason (POST /v1/journey-flows/{id}/reject; `graphhelm journey reject --note`): appends a rejection bound to the flow's current content, keeps every earlier record, and journey_flows shows it until the flow changes. An empty note is refused. Owner sessions only.",
+      "description": "Reject a journey flow with a note (POST /v1/journey-flows/{id}/reject). Owner only.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "id": {
             "minLength": 1,
             "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
           },
           "note": {
             "maxLength": 4096,

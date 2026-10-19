@@ -110,7 +110,7 @@ const TOOLS: [ToolSpec; 48] = [
     },
     ToolSpec {
         name: "journey_reject",
-        description: "Reject one journey flow with the owner's reason (POST /v1/journey-flows/{id}/reject; `graphhelm journey reject --note`): appends a rejection bound to the flow's current content, keeps every earlier record, and journey_flows shows it until the flow changes. An empty note is refused. Owner sessions only.",
+        description: "Reject a journey flow with a note (POST /v1/journey-flows/{id}/reject). Owner only.",
         schema: journey_reject_schema,
     },
     ToolSpec {
@@ -557,7 +557,7 @@ fn journey_approve_schema() -> serde_json::Value {
 }
 
 fn journey_reject_schema() -> serde_json::Value {
-    object_schema(
+    mutating_schema(
         serde_json::json!({
             "id": {"type": "string", "minLength": 1},
             "note": {"type": "string", "minLength": 1, "maxLength": 4096}
@@ -1256,8 +1256,9 @@ pub(crate) const UNLISTED_STUBS: [&str; 4] = [
 /// the guard below fails a change that grows it past this, so growth is a decision in a diff.
 /// Raised from 25 500 for `signal`'s `lane` and `credentialFile` (lane-signed writes), already
 /// cut to two short descriptions with their shape checked in `call` instead of the schema.
+/// Raised again for `journey_reject` (#1588): one line, and the mutation shape every write carries.
 #[cfg(test)]
-const TOOL_LIST_BUDGET_BYTES: usize = 25_700;
+const TOOL_LIST_BUDGET_BYTES: usize = 26_200;
 /// #1277: the longest a tool description may be: one line plus the route it maps to.
 #[cfg(test)]
 const DESCRIPTION_MAX_CHARS: usize = 300;

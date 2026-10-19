@@ -2621,6 +2621,7 @@ Commands:
   validate     Check journey contracts before anything records against them (#328): the contract schema, the journey id rule, step, actor, promise and screen consistency, and that every screen `scopePaths` entry exists in the project. Exit 0 clean, 2 findings, 3 input error
   compile      Generate frozen journey contracts from flow sources, or check/format their projection
   approve      Approve a canonical flow at the project's HEAD and write its generated contracts
+  reject       Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
   sign-legacy  Record the owner's signature for approvals made before #534 (lists them with the commit that introduced each; writes only for each `--id`)
   mark-safe    Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive (#518). Owner only. The mark binds the edge's acts: editing them voids it
   label        Set a flow's display labels (#1296): its short `--name` and the `--feature` the Studio groups it under. Labels sit outside the approved digest, so an approved flow stays approved
@@ -2689,6 +2690,11 @@ Usage: graphhelm help journey open
 Run a flow, draft or approved, headless along every path and keep, per screen, whether it passed and a masked frame of it (#519). Answers the kept result when it is for this flow and commit; otherwise starts a run in the background and answers `running`. Never proof
 
 Usage: graphhelm help journey preview
+
+===== graphhelm help journey reject --help
+Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
+
+Usage: graphhelm help journey reject
 
 ===== graphhelm help journey replay --help
 Replay every approved path with the explicitly installed browser observer, without a model
@@ -3046,6 +3052,7 @@ Commands:
   validate     Check journey contracts before anything records against them (#328): the contract schema, the journey id rule, step, actor, promise and screen consistency, and that every screen `scopePaths` entry exists in the project. Exit 0 clean, 2 findings, 3 input error
   compile      Generate frozen journey contracts from flow sources, or check/format their projection
   approve      Approve a canonical flow at the project's HEAD and write its generated contracts
+  reject       Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
   sign-legacy  Record the owner's signature for approvals made before #534 (lists them with the commit that introduced each; writes only for each `--id`)
   mark-safe    Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive (#518). Owner only. The mark binds the edge's acts: editing them voids it
   label        Set a flow's display labels (#1296): its short `--name` and the `--feature` the Studio groups it under. Labels sit outside the approved digest, so an approved flow stays approved
@@ -3335,6 +3342,7 @@ Commands:
   validate     Check journey contracts before anything records against them (#328): the contract schema, the journey id rule, step, actor, promise and screen consistency, and that every screen `scopePaths` entry exists in the project. Exit 0 clean, 2 findings, 3 input error
   compile      Generate frozen journey contracts from flow sources, or check/format their projection
   approve      Approve a canonical flow at the project's HEAD and write its generated contracts
+  reject       Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
   sign-legacy  Record the owner's signature for approvals made before #534 (lists them with the commit that introduced each; writes only for each `--id`)
   mark-safe    Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive (#518). Owner only. The mark binds the edge's acts: editing them voids it
   label        Set a flow's display labels (#1296): its short `--name` and the `--feature` the Studio groups it under. Labels sit outside the approved digest, so an approved flow stays approved
@@ -3409,6 +3417,11 @@ Usage: graphhelm journey help open
 Run a flow, draft or approved, headless along every path and keep, per screen, whether it passed and a masked frame of it (#519). Answers the kept result when it is for this flow and commit; otherwise starts a run in the background and answers `running`. Never proof
 
 Usage: graphhelm journey help preview
+
+===== graphhelm journey help reject --help
+Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
+
+Usage: graphhelm journey help reject
 
 ===== graphhelm journey help replay --help
 Replay every approved path with the explicitly installed browser observer, without a model
@@ -3571,6 +3584,34 @@ Options:
 
       --confirm
           The owner's click on "Run it?": this run of an approved flow may play its destructive acts (#519). Without it an approved flow stops before the first one. Implies a new run
+
+  -h, --help
+          Print help
+
+===== graphhelm journey reject --help
+Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
+
+Usage: graphhelm journey reject [OPTIONS] --note <NOTE> <ID>
+
+Arguments:
+  <ID>
+          The flow id
+
+Options:
+      --note <NOTE>
+          Why the flow is rejected: what the owner saw (1 to 4096 bytes)
+
+      --pretty
+          
+
+      --json
+          Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
+
+      --project <PROJECT>
+          
+
+      --token-file <TOKEN_FILE>
+          The project's owner token (`.graphhelm/events.token`): rejecting is the owner's
 
   -h, --help
           Print help

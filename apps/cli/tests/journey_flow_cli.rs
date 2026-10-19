@@ -1252,14 +1252,7 @@ fn the_owner_rejects_a_flow_with_a_note_and_flows_shows_it_until_the_flow_change
     assert_ne!(out.status.code(), Some(0), "no owner token: {reply}");
     let (out, reply) = run(
         dir.path(),
-        &[
-            "reject",
-            "checkout",
-            "--note",
-            "   ",
-            "--token-file",
-            &token,
-        ],
+        &["reject", "checkout", "--note", " ", "--token-file", &token],
     );
     assert_ne!(out.status.code(), Some(0), "an empty note: {reply}");
     assert_eq!(

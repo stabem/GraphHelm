@@ -446,3 +446,71 @@ fn strand_running(events: &Path, execution: &str, node: &str) {
         store.append_atomic(&request).unwrap();
     }
 }
+
+/// #1670: the amendment checks `computedAtSequence` against the head it read and must append AT
+/// that head. It appended at a fresh `next_sequence` instead, so concurrent amendments computed
+/// against one frontier all passed the check and all landed, each after the frontier its own
+/// check vouched for. In each of four rounds, eight racers submit against the same published frontier: exactly one
+/// lands, every other is refused (stale frontier or a sequence conflict), and the stream still
+/// replays.
+#[test]
+fn concurrent_amendments_against_one_frontier_land_once() {
+    const RACERS: usize = 8;
+    const ROUNDS: usize = 4;
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = story_with_unbudgeted_node_in_flight(&events, directory.path());
+    for round in 0..ROUNDS {
+        let at = frontier(&events, &execution);
+        let racers: Vec<_> = (0..RACERS)
+            .map(|index| {
+                graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+                    .args([
+                        "execution",
+                        "amend-budget",
+                        "--events",
+                        events.to_str().unwrap(),
+                        "--execution",
+                        &execution,
+                        "--node",
+                        "deploy",
+                        "--seconds",
+                        &(60 + round * RACERS + index).to_string(),
+                        "--at",
+                        &at,
+                    ])
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap()
+            })
+            .collect();
+        let mut landed = 0;
+        for racer in racers {
+            let output = racer.wait_with_output().unwrap();
+            let reply: serde_json::Value = serde_json::from_slice(&output.stdout)
+                .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&output.stdout)));
+            if reply["ok"] == true {
+                landed += 1;
+            } else {
+                assert_ne!(
+                    reply["diagnostics"][0]["code"], "GHE005_INTEGRITY_FAILURE",
+                    "a racer saw a poisoned stream: {reply}"
+                );
+            }
+        }
+        assert_eq!(
+            landed, 1,
+            "round {round}: exactly one of {RACERS} amendments computed against frontier {at} lands"
+        );
+    }
+    let status = cli(&[
+        "execution",
+        "status",
+        "--events",
+        events.to_str().unwrap(),
+        "--execution",
+        &execution,
+    ]);
+    assert_eq!(status["ok"], true, "the stream still replays: {status}");
+}

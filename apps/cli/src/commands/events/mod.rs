@@ -163,6 +163,7 @@ pub(super) fn postgres_unavailable() -> Failure {
 }
 
 /// Builds the bounded current-thread runtime used by the PostgreSQL-backed commands.
+#[cfg(feature = "postgres")]
 pub(super) fn runtime() -> Result<tokio::runtime::Runtime, Failure> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

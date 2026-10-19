@@ -644,10 +644,6 @@ fn step_reason(code: &str) -> &'static str {
 /// `fail` with the reason `preview.incomplete`, and records no proof. A screen the walk started
 /// from is reached when an edge leaving it passed: a backend flow observes no screen before its
 /// first act, so its start screen carries no result of its own.
-fn run_result(flow: &Value, screens: &Value, edges: &Value) -> String {
-    run_verdict(flow, screens, edges).0
-}
-
 fn run_verdict(flow: &Value, screens: &Value, edges: &Value) -> (String, Option<&'static str>) {
     let left_by_a_pass = |screen: &str| {
         flow["edges"].as_array().into_iter().flatten().any(|edge| {
@@ -1734,32 +1730,32 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let screens = json!({"defective-parent":{"frame":false,"reason":"not_reached"},
             "proof-report":{"frame":false,"reason":"not_reached"}});
         let edges = json!({"prove-regression":{"reason":"cli_needs_approval","result":"skipped"}});
-        assert_ne!(super::run_result(&flow, &screens, &edges), "pass");
+        assert_ne!(super::run_verdict(&flow, &screens, &edges).0, "pass");
         let ab = json!({"edges":[{"id":"a.b","from":"a","to":"b"}]});
         let passed = json!({"a":{"frame":true,"result":"pass"},"b":{"frame":true,"result":"pass"}});
         let skipped = json!({"a.b":{"result":"skipped","reason":"confirm_needed"}});
-        assert_ne!(super::run_result(&ab, &passed, &skipped), "pass");
+        assert_ne!(super::run_verdict(&ab, &passed, &skipped).0, "pass");
         assert_eq!(
-            super::run_result(&ab, &passed, &json!({"a.b":{"result":"pass"}})),
+            super::run_verdict(&ab, &passed, &json!({"a.b":{"result":"pass"}})).0,
             "pass"
         );
         // A backend flow's start screen has no result of its own; the edge leaving it passed.
         let started =
             json!({"a":{"frame":false,"reason":"not_reached"},"b":{"frame":false,"result":"pass"}});
         assert_eq!(
-            super::run_result(&ab, &started, &json!({"a.b":{"result":"pass"}})),
+            super::run_verdict(&ab, &started, &json!({"a.b":{"result":"pass"}})).0,
             "pass"
         );
         // A destination never reached is not excused by the edge into it.
         let unreached_end =
             json!({"a":{"frame":true,"result":"pass"},"b":{"frame":false,"reason":"not_reached"}});
         assert_ne!(
-            super::run_result(&ab, &unreached_end, &json!({"a.b":{"result":"pass"}})),
+            super::run_verdict(&ab, &unreached_end, &json!({"a.b":{"result":"pass"}})).0,
             "pass"
         );
         let drifted =
             json!({"a":{"frame":true,"result":"drift"},"b":{"frame":false,"reason":"not_reached"}});
-        assert_eq!(super::run_result(&ab, &drifted, &json!({})), "drift");
+        assert_eq!(super::run_verdict(&ab, &drifted, &json!({})).0, "drift");
     }
 
     /// #519: a stored preview answers only for the flow and commit it ran on; a changed flow or a

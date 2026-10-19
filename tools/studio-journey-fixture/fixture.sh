@@ -98,6 +98,12 @@ up)
   cp -R "$repo/.graphhelm/journeys" "$dir/project/.graphhelm/"
   # #1041: the files the flows name in `scope`, so a fixture preview is not refused flow.scope_path_missing.
   node "$(dirname "$0")/copy_scope.mjs" "$repo" "$dir/project" > /dev/null
+  # #1635: an owner approval needs a preview recorded at the flow's scope commit, the last commit
+  # touching the flow and its scope; untracked copies have none, so commit them (never the keys).
+  git -C "$dir/project" add -f -- .graphhelm/journeys
+  git -C "$dir/project" add -A -- apps docs
+  git -C "$dir/project" diff --cached --quiet \
+    || git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: journeys and their scope'
   # #1448: the browser observer the fixture's own previews (the Studio's Run again) need, set up as
   # `setup --install-observer playwright` does: the driver and judge from this checkout, and the
   # pinned @playwright/test resolvable from the project (the runner clears NODE_PATH). Offline cache

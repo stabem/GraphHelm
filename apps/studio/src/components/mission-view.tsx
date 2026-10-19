@@ -214,9 +214,18 @@ function flowStepOrder(flow: JourneyFlowView): JourneyFlowView["screens"] {
   if (ordered.some((screen) => screen === undefined)) return flow.screens;
   return [...ordered as JourneyFlowView["screens"], ...flow.screens.filter((screen) => !ids.includes(screen.id))];
 }
+/** The compiled contracts plus one synthesized from each flow that has none yet (a draft before
+ * `journey approve` compiles it), so a previewed draft can be listed and approved (#1635). */
+export function withFlowContracts(compiled: readonly JourneyView[], flows: readonly JourneyFlowView[]): JourneyView[] {
+  const known = new Set(compiled.map((journey) => journey.contractId));
+  return [...compiled, ...flows.filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
+    contractId: flow.id, title: flow.title ?? flow.id, arrows: [],
+    steps: flowStepOrder(flow).map((screen) => ({ stepId: screen.id, screen: { screenId: screen.id, title: screen.title ?? screen.id, scopePaths: [] }, promises: [] })),
+  }))];
+}
 const VERDICT_LABEL: Record<JourneyVerdict, string> = { passed: "✓ passed", failed: "✕ failed", stale: "! stale", needs_you: "! needs you", not_run: "○ not run", running: "… running" };
 const VERDICT_HINT: Record<JourneyVerdict, string> = {
-  passed: "Last replay passed and still matches the current flow.",
+  passed: "Last run passed and still matches the current flow.",
   failed: "Last replay failed. Open it to see where.",
   stale: "The flow changed since the last replay. Run it again.",
   needs_you: "The replay stopped at a step only you can mark safe.",
@@ -316,13 +325,7 @@ function stepIds(m: Mission): string[] {
 
 export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, seenActorSources, onDemandLanes = [], slots = [], backlog = [], durations, runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot, livenessBudgets }: Props) {
   const freeAfterMs = livenessBudgets ? livenessBudgets.freeAfterSeconds * 1000 : laneBudgets(lanes).freeAfterMs;
-  const journeys = useMemo(() => {
-    const known = new Set(compiledJourneys.map((journey) => journey.contractId));
-    return [...compiledJourneys, ...(flows?.flows ?? []).filter((flow) => !known.has(flow.id)).map((flow): JourneyView => ({
-      contractId: flow.id, title: flow.title ?? flow.id, arrows: [],
-      steps: flowStepOrder(flow).map((screen) => ({ stepId: screen.id, screen: { screenId: screen.id, title: screen.title ?? screen.id, scopePaths: [] }, promises: [] })),
-    }))];
-  }, [compiledJourneys, flows]);
+  const journeys = useMemo(() => withFlowContracts(compiledJourneys, flows?.flows ?? []), [compiledJourneys, flows]);
 
   const [chosen, setChosen] = useState<Selection | null>(null);
   const [stepId, setStepId] = useState<string | null>(null);

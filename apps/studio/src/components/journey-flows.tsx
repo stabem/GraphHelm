@@ -132,6 +132,8 @@ export function journeyVerdict(statuses: readonly string[], run: JourneyRunView 
   if (statuses.includes("stale")) return "stale";
   if (statuses.includes("needs_you")) return "needs_you";
   if (statuses.length > 0 && statuses.every((s) => s === "proven")) return "passed";
+  // #1635: a draft has no captures until it is approved; its passing preview is what the rail shows.
+  if (run?.state === "ready" && run.result === "pass") return "passed";
   return "not_run";
 }
 

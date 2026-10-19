@@ -220,6 +220,13 @@ this change was keyed on HEAD and reads as not run until it runs once more. Limi
 owner's record, a process running as the same OS user that writes `.graphhelm/events` directly can
 still forge the record; it needs a deliberate binary-level act, not a written file.
 
+**A flow that admits it is not fully observed (#1633).** When a flow's `title` or `purpose`, or a
+screen's or edge's `title` or `notes`, contains `OBSERVER_MISSING`, the flow says part of its
+purpose has no observer yet. `journey validate` reports the blocking finding
+`flow.observer_missing` at that field, `journey flows` lists the flow as not approvable, and
+`journey approve` refuses it, even with a passing preview. Remove the mark only once that part is
+observed.
+
 **Approving several drafts at once (#1309).** On the Studio's Journeys rail, **Approve N** counts the
 drafts the single Approve button would accept: `approvable`, with a passing preview on the current
 version. It first opens a confirm step that names every flow; **Approve all** then approves them one

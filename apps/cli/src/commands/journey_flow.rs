@@ -258,6 +258,7 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
         }
     }
     findings.extend(weak_journey(value, false));
+    findings.extend(observer_missing(value, false));
     let mut reached = BTreeSet::new();
     for (name, path) in value["paths"].as_object().unwrap() {
         let contract_id = if name == "main" {
@@ -392,6 +393,47 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
 /// another URL, or pointing the flow at another app voids the mark: "Send" marked safe on one
 /// page of one app is not "Send" on another. `base_not_local` keeps a flow on this machine, not
 /// on the app the owner was shown, so `base` is bound here.
+/// #1633 follow-up: a flow that admits part of its purpose is not observed (the token
+/// `OBSERVER_MISSING` in its title or purpose, or in a screen's or edge's title or notes) is not
+/// proof of that purpose. `strict` (approval, and so `approvable`) refuses it as
+/// `flow.observer_missing`; everywhere else it is a `flow.weak_journey` warning naming it, so an
+/// existing or approved flow is flagged, never broken (#1287).
+fn observer_missing(value: &Value, strict: bool) -> Vec<Finding> {
+    const MARK: &str = "OBSERVER_MISSING";
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+    let marked = |text: &str| {
+        text.match_indices(MARK).any(|(at, _)| {
+            !word(text[..at].chars().next_back()) && !word(text[at + MARK.len()..].chars().next())
+        })
+    };
+    let message = "this flow says part of its purpose is not observed (OBSERVER_MISSING); observe it before approving";
+    let mut found = Vec::new();
+    let mut check = |text: &Value, pointer: String| {
+        if text.as_str().is_some_and(marked) {
+            found.push(if strict {
+                Finding::new("flow.observer_missing", pointer, message)
+            } else {
+                Finding::new(
+                    "flow.weak_journey",
+                    pointer,
+                    format!("flow.observer_missing: {message}"),
+                )
+            });
+        }
+    };
+    for field in ["title", "purpose"] {
+        check(&value[field], format!("/{field}"));
+    }
+    for kind in ["screens", "edges"] {
+        for (i, step) in value[kind].as_array().into_iter().flatten().enumerate() {
+            for field in ["title", "notes"] {
+                check(&step[field], format!("/{kind}/{i}/{field}"));
+            }
+        }
+    }
+    found
+}
+
 /// #1287: a journey must say what it proves. `strict` (the agent's draft writer and approval) refuses
 /// each gap; everywhere else (validate, flows, watch, replay, keel) a flow that already exists keeps
 /// working and carries each gap as a `flow.weak_journey` warning, so it is flagged, never broken.
@@ -1224,6 +1266,7 @@ fn approval_findings(file: &Path, text: &str, flow: &Value, project: &Path) -> V
     // #1287: nothing is approved that does not say what it proves.
     findings.retain(|f| f.code != "flow.weak_journey");
     findings.extend(weak_journey(flow, true));
+    findings.extend(observer_missing(flow, true));
     if text != canonical(flow, false) {
         findings.push(Finding::new(
             "flow.not_canonical",
@@ -2074,6 +2117,34 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// #1633 follow-up (gh-claude-18): the mark is the whole token. Lookalikes do not fire; the
+    /// token beside punctuation or a space does. Cost: microseconds.
+    #[test]
+    fn only_the_whole_observer_missing_token_marks_a_flow() {
+        let flow = |title: &str| json!({"title": title, "screens": [], "edges": []});
+        for lookalike in [
+            "NOT_OBSERVER_MISSING",
+            "OBSERVER_MISSING_FIXED",
+            "XOBSERVER_MISSING2",
+        ] {
+            assert!(
+                super::observer_missing(&flow(lookalike), true).is_empty(),
+                "{lookalike}"
+            );
+        }
+        for marked in [
+            "(OBSERVER_MISSING: #1042)",
+            "card: OBSERVER_MISSING #1042",
+            "OBSERVER_MISSING",
+        ] {
+            assert_eq!(
+                super::observer_missing(&flow(marked), true).len(),
+                1,
+                "{marked}"
+            );
+        }
+    }
+
     use super::*;
 
     /// #1287 follow-up: replay is proof. Defect named: a flow approved before the rule, still

@@ -6644,7 +6644,21 @@ pub(super) async fn wake_lease_status(
             "/sessionId",
         );
     };
-    match execution::wake::status(&state.events, Some(&execution_id), &session_id) {
+    // #1649: a store open and a stream read; off the reactor like every other read here.
+    let events = state.events.clone();
+    let Some(result) = off_reactor(move || {
+        execution::timing::request("executions.wake_status", || {
+            execution::wake::status(&events, Some(&execution_id), &session_id)
+        })
+    })
+    .await
+    else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(WAKE_LEASE_COMMAND, "the wake status task failed").output,
+        );
+    };
+    match result {
         Ok(value) => respond(
             StatusCode::OK,
             Outcome::success(WAKE_LEASE_COMMAND, value).output,
@@ -7482,6 +7496,38 @@ pub(super) mod tests {
         assert!(
             text.contains(graphhelm_schema::NOT_A_REGULAR_FILE),
             "the reply must name the regular-file rule: {text}"
+        );
+    }
+
+    /// #1649: wake-waits poll this read. It ran on the reactor and, uncached, refolded the whole
+    /// stream on every poll (3.5 s of reactor CPU per call on a copy of live `gh-team`), so every
+    /// other request waited behind it.
+    #[test]
+    fn the_wake_lease_status_read_goes_through_off_reactor() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reactor = std::thread::current().id();
+        let (_directory, state) = known_execution_state();
+        let (text, runs) = measured(async {
+            let response = super::wake_lease_status(
+                axum::extract::State(state),
+                UrlPath("execution-known".to_owned()),
+                axum::extract::RawQuery(Some("sessionId=session-a".to_owned())),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            body_text(response).await
+        });
+        assert!(text.contains("\"live\":false"), "{text}");
+        assert_eq!(
+            runs.len(),
+            1,
+            "the wake status read did not go through off_reactor"
+        );
+        assert_ne!(
+            runs[0], reactor,
+            "the wake status read ran on the reactor thread"
         );
     }
 

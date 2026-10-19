@@ -22,6 +22,45 @@ fn enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("GRAPHHELM_SERVE_TIMING").is_ok_and(|v| v == "1"))
 }
 
+/// #1649: whether `GRAPHHELM_SERVE_TIMING=1` is on, for the serve-level lines below.
+pub(crate) fn is_enabled() -> bool {
+    enabled()
+}
+
+/// #1649: one `serve.request` line: method, matched route template, status and milliseconds.
+pub(crate) fn emit_request(method: &str, route: &str, status: u16, total: Duration) {
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "event": "serve.request",
+            "method": method,
+            "route": route,
+            "status": status,
+            "totalMs": total.as_millis() as u64,
+        })
+    );
+}
+
+/// #1649: one `serve.lag` line over `samples` (how late each probe tick was woken), then clears it.
+pub(crate) fn emit_lag(samples: &mut Vec<Duration>) {
+    if samples.is_empty() {
+        return;
+    }
+    samples.sort_unstable();
+    let p50 = samples[samples.len() / 2];
+    let max = samples[samples.len() - 1];
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "event": "serve.lag",
+            "samples": samples.len(),
+            "p50Ms": p50.as_millis() as u64,
+            "maxMs": max.as_millis() as u64,
+        })
+    );
+    samples.clear();
+}
+
 /// Runs `work` as one timed request named `route`, and logs its phases when timing is on.
 pub(crate) fn request<T>(route: &'static str, work: impl FnOnce() -> T) -> T {
     if !enabled() {

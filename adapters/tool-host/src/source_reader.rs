@@ -210,6 +210,21 @@ impl BoundedSourceReader for WorkspaceExcerptReader {
     ) -> Result<SourceExcerpt, SourceReadError> {
         self.read_prefix_racing(relative_path, max_bytes, &mut || {})
     }
+
+    fn read_relevant_cancellable(
+        &self,
+        relative_path: &str,
+        terms: &[String],
+        max_bytes: u64,
+        cancel: &graphhelm_runtime::ports::ScanCancel,
+    ) -> Result<graphhelm_runtime::ports::SourceWindow, graphhelm_runtime::ports::SourceReadError>
+    {
+        let reader = Self {
+            root: self.root.clone(),
+            cancel: Some(cancel.clone()),
+        };
+        reader.read_relevant(relative_path, terms, max_bytes)
+    }
 }
 
 impl WorkspaceExcerptReader {

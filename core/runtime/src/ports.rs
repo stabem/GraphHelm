@@ -236,6 +236,23 @@ pub trait BoundedSourceSearch: Send + Sync {
         })
     }
 
+    /// The bounded search with cooperative cancellation for an abandoned compile.
+    fn search_with_provenance_cancellable(
+        &self,
+        terms: &[String],
+        bounds: &SourceSearchBounds,
+        cancel: &ScanCancel,
+    ) -> Result<SourceSearchResult, SourceSearchError> {
+        if cancel.is_cancelled() {
+            return Err(SourceSearchError::Unavailable);
+        }
+        let result = self.search_with_provenance(terms, bounds)?;
+        if cancel.is_cancelled() {
+            return Err(SourceSearchError::Unavailable);
+        }
+        Ok(result)
+    }
+
     /// The immutable content identity used by this search, when the provider can prove one.
     /// Live providers intentionally return `None`; callers must not invent an identity for them.
     fn snapshot_digest(&self) -> Option<graphhelm_protocols::RawSha256> {
@@ -419,6 +436,24 @@ pub trait BoundedSourceReader: Send + Sync {
                 start_byte: 0,
                 excerpt,
             })
+    }
+
+    /// The relevant read with cooperative cancellation for an abandoned compile.
+    fn read_relevant_cancellable(
+        &self,
+        relative_path: &str,
+        terms: &[String],
+        max_bytes: u64,
+        cancel: &ScanCancel,
+    ) -> Result<SourceWindow, SourceReadError> {
+        if cancel.is_cancelled() {
+            return Err(SourceReadError::Unreadable);
+        }
+        let result = self.read_relevant(relative_path, terms, max_bytes)?;
+        if cancel.is_cancelled() {
+            return Err(SourceReadError::Unreadable);
+        }
+        Ok(result)
     }
 
     /// The immutable content identity behind this reader, when the provider can prove one.

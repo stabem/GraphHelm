@@ -11,13 +11,13 @@ risks: [critical_ux]
 screens:
   - id: proof
     title: Review the promise and named observer evidence before deciding
-    url: /?session=studio-fixture
+    url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: tabpanel, name: Proof}, {role: region, name: Proof}, {role: navigation, name: Journeys}, {role: heading, name: Promise}, {role: heading, name: Observer and evidence}, {role: group, name: Journey actions}, {role: button, name: Approve}]
+    expect: [{role: region, name: Proof}, {role: navigation, name: Journeys}, {role: heading, name: Promise}, {role: heading, name: Observer and evidence}, {role: group, name: Journey actions}, {role: button, name: Approve}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/components/proof-table.tsx]
   - id: run
     title: A run is open on its Mission graph
-    url: /?session=studio-fixture
+    url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: region, name: Canvas}, {role: tablist, name: Mission views}, {role: tab, name: Proof}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/mission-view.tsx]

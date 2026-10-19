@@ -1766,7 +1766,7 @@ export default function App({
     }
     return last;
   }, [eventList]);
-  const { flowsRead, journeysView, journeysFailed, approveFlow, markFlowEdgeSafe, watchFlow, journeyRun } =
+  const { flowsRead, journeysView, journeysFailed, approveFlow, rejectFlow, markFlowEdgeSafe, watchFlow, journeyRun } =
     useJourneys({ clientRef, selectedRef, selected, lastJpdSequence });
   const beforeAfter = useMemo(() => beforeAfterPairs(captureDocuments(eventList, envelopes)), [eventList, envelopes]);
   // #446: captures whose envelopes are not opened yet; the before/after list is not empty, it is opening.
@@ -2562,7 +2562,9 @@ export default function App({
             )}
 
             <section className="canvas-column" aria-label="Canvas">
-            {canvasTab === "team" && handover !== null && !handoverHidden && (
+            {/* #1636: on every canvas. No control reaches "team" since #617, so a team-only card was
+                unreachable. It shows only while an undismissed handover exists, and Got it / Hide remove it. */}
+            {handover !== null && !handoverHidden && (
               <HandoverCard handover={handover} onOpen={openRecords} onDismiss={markSeen} onHide={hideHandover} />
             )}
             {/* #583: the Graph tab is the whole page: its own top bar replaces the banner and this strip. */}
@@ -2609,7 +2611,7 @@ export default function App({
               <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
                 <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners ?? []} seenActors={status?.seenActors ?? []} seenActorAgesMs={status?.seenActorAgesMs ?? {}} seenActorSources={status?.seenActorSources ?? {}} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} backlog={currentTaskGraphs?.backlog ?? []} {...(currentTaskGraphs?.durations ? { durations: currentTaskGraphs.durations } : {})} {...(currentTaskGraphs?.liveness ? { livenessBudgets: currentTaskGraphs.liveness.budgets } : {})} tasksRouteMissing={tasksRouteMissing === selected} tasksRouteFailure={tasksRouteFailure?.executionId === selected ? tasksRouteFailure.text : null} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
                   initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
-                  flows={flowsRead.view} onApprove={approveFlow} onWatch={watchFlow}
+                  flows={flowsRead.view} onApprove={approveFlow} onReject={rejectFlow} onWatch={watchFlow}
 
                   run={journeyRun} onRun={recordMissionRun}
                   lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}

@@ -23,10 +23,27 @@ export function approvalBlockReason(flow: JourneyFlowView, contract: { contractI
     return "Contract out of date, regenerate first";
   }
   const proof = flow.status === "approved" ? "replay" : run?.kind === "replay" ? "replay" : "preview";
-  if (run?.state !== "ready" || run.kind !== proof || run.result !== "pass"
-    || contract.steps.length === 0 || contract.steps.some((step) => run.screens?.[step.stepId]?.result !== "pass")
-    || edgeIds.some((id) => run.edges?.[id]?.result !== "pass")) return `Not run yet — complete every step in a ${proof} first`;
+  if (run?.kind !== proof || !runProves(flow, contract, run)) return `Not run yet — complete every step in a ${proof} first`;
   return null;
+}
+
+/** #1653: a screen whose expectations are all process output (exit, stdout, stderr) is a backend
+ * step: its run captures no frame. Every other screen is a browser screen and needs one. */
+const PROCESS_ROLES = new Set(["exit", "stdout", "stderr"]);
+export function stepNeedsFrame(screen: { expect?: ReadonlyArray<{ role: string }> } | undefined): boolean {
+  return !(screen?.expect?.length && screen.expect.every((item) => PROCESS_ROLES.has(item.role)));
+}
+
+/** #1653: the one check the Proof list and Approve share. A run proves a contract when it is ready
+ * and passing, every step passed (with a frame for each browser step), and every edge of the
+ * contract's path passed. A record that says `pass` with no step results proves nothing. */
+export function runProves(flow: JourneyFlowView, contract: { contractId: string; steps: readonly { stepId: string }[] }, run: JourneyRunView | null): boolean {
+  const path = contract.contractId === flow.id ? "main" : contract.contractId.slice(flow.id.length + 1);
+  const edgeIds = flow.paths[path] ?? [];
+  return run?.state === "ready" && run.result === "pass" && contract.steps.length > 0
+    && contract.steps.every((step) => run.screens?.[step.stepId]?.result === "pass"
+      && (!stepNeedsFrame(flow.screens.find((screen) => screen.id === step.stepId)) || run.screens[step.stepId]?.frame === true))
+    && edgeIds.every((id) => run.edges?.[id]?.result === "pass");
 }
 
 export const SCREEN_CAPTURE_KIND = "jpd.screen_captured";

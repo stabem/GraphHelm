@@ -573,7 +573,7 @@ describe("live team layout", () => {
       steps: [{ stepId: "mark", screen: { screenId: "mark", title: "Mark", scopePaths: [] }, promises: [] }] }] };
     await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [flow] })),
       journeys: vi.fn(async () => journeys), journeyRun: vi.fn(async () => ({ state: "ready", kind: "replay", result: "pass",
-        screens: { mark: { result: "pass", frame: false } }, edges: {} })) }));
+        screens: { mark: { result: "pass", frame: true } }, edges: {} })), journeyScreenFrame: vi.fn(async () => null) }));
     await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
     expect(await screen.findByRole("button", { name: "1 decision needs you" })).toHaveClass("beacon-lit");
   });
@@ -587,14 +587,65 @@ describe("live team layout", () => {
       edges: [{ id: "gate.connect", from: "gate", to: "run" }], paths: { main: ["gate.connect"] } };
     const other = { ...flow, id: "share", title: "Share" };
     const journeyRun = vi.fn(async () => ({ state: "ready", kind: "preview", result: "pass",
-      screens: { gate: { result: "pass", frame: false }, run: { result: "pass", frame: false } }, edges: { "gate.connect": { result: "pass" } } }));
+      screens: { gate: { result: "pass", frame: true }, run: { result: "pass", frame: true } }, edges: { "gate.connect": { result: "pass" } } }));
     await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [flow, other] })),
-      journeys: vi.fn(async () => ({ journeys: [] })), journeyRun }));
+      journeys: vi.fn(async () => ({ journeys: [] })), journeyRun, journeyScreenFrame: vi.fn(async () => null) }));
     await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
     expect(await screen.findByRole("button", { name: "Approve 2" })).toBeEnabled();
     expect(journeyRun).toHaveBeenCalledWith("share");
-    expect(screen.getAllByText("✓ passed")).toHaveLength(2);
+    expect(await screen.findAllByText("✓ passed")).toHaveLength(2);
     expect(await screen.findByRole("button", { name: "2 decisions need you" })).toHaveClass("beacon-lit");
+  });
+
+  // #1658: the owner rejects from the Proof view through the Runtime client, and the list shows it.
+  it("#1658: Reject sends the owner's note and the list marks the flow rejected", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const flow = { id: "connect", title: "Connect", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "gate", url: "/", state: "stable" }], edges: [], paths: { main: [] } };
+    let rejected: { note: string; digest: string; sequence: number } | null = null;
+    const rejectJourneyFlow = vi.fn(async (_id: string, note: string) => { rejected = { note, digest: "sha256:x", sequence: 7 }; return { id: "connect" }; });
+    await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [{ ...flow, rejected }] })),
+      journeys: vi.fn(async () => ({ journeys: [] })), rejectJourneyFlow,
+      journeyRun: vi.fn(async () => ({ state: "none", screens: {} })) }));
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Reject" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Why reject" }), "no receipt");
+    await userEvent.click(screen.getByRole("button", { name: "Send reject" }));
+    await waitFor(() => expect(rejectJourneyFlow).toHaveBeenCalledWith("connect", "no receipt"));
+    expect(await screen.findByText("✕ rejected")).toBeInTheDocument();
+    expect(screen.getByText("Rejected: no receipt")).toBeInTheDocument();
+  });
+
+  // #1653: the owner saw every flow "passed" 0/N in the Proof list while the detail said Not run:
+  // the preview record said pass but held no step results. The list must agree with the detail.
+  it("#1653: a pass record with no step results reads not run in the Proof list", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const flow = { id: "connect", title: "Connect", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "gate", url: "/", state: "stable" }, { id: "run", url: "/run", state: "stable" }],
+      edges: [{ id: "gate.connect", from: "gate", to: "run" }], paths: { main: ["gate.connect"] } };
+    await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [flow] })),
+      journeys: vi.fn(async () => ({ journeys: [] })),
+      journeyRun: vi.fn(async () => ({ state: "ready", kind: "preview", result: "pass", screens: {}, edges: {} })) }));
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    expect(await screen.findByText("○ not run")).toBeInTheDocument();
+    expect(screen.queryByText("✓ passed")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Approve \d/ })).toBeNull();
+  });
+
+  // #1653: a preview whose steps passed but whose edge failed is not a pass on the list either.
+  it("#1653: a failed edge reads not run in the Proof list, as Approve stays blocked", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const flow = { id: "connect", title: "Connect", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "gate", url: "/", state: "stable" }, { id: "run", url: "/run", state: "stable" }],
+      edges: [{ id: "gate.connect", from: "gate", to: "run" }], paths: { main: ["gate.connect"] } };
+    await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [flow] })),
+      journeys: vi.fn(async () => ({ journeys: [] })), journeyScreenFrame: vi.fn(async () => null),
+      journeyRun: vi.fn(async () => ({ state: "ready", kind: "preview", result: "pass",
+        screens: { gate: { result: "pass", frame: true }, run: { result: "pass", frame: true } }, edges: { "gate.connect": { result: "fail" } } })) }));
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    expect(await screen.findByText("○ not run")).toBeInTheDocument();
+    expect(screen.queryByText("✓ passed")).toBeNull();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
   });
 
   it("shows the handover after a long gap and advances only on Got it", async () => {
@@ -642,7 +693,22 @@ describe("live team layout", () => {
     sessionStorage.clear();
   });
 
-  it("#583: with nothing saved, Graph is the whole page: no handover, no tab strip, no Team tab", async () => {
+  // #1636: since #617 no control selects the Team canvas, and this suite's beforeEach seeds "team",
+  // so the card was proven only on a tab the owner cannot reach. On the default canvas (no saved
+  // tab) the owner who returns after a long gap still sees the handover.
+  it("shows the handover on the default canvas, which is where the owner lands", async () => {
+    sessionStorage.removeItem("graphhelm.studio.canvas-tab");
+    localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
+    await open(longGapClient());
+    const card = await screen.findByRole("region", { name: "While you were away" });
+    expect(card).toHaveTextContent("24 records");
+    await userEvent.click(within(card).getByRole("button", { name: "Got it" }));
+    expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+  });
+
+  // #1636 narrows #583: Graph stays the whole page (no tab strip, no Team tab), but an undismissed
+  // handover is a slim bar the owner can dismiss, because no other canvas would ever show it.
+  it("#583: with nothing saved, Graph is the whole page: no tab strip, no Team tab; a pending handover is a dismissible bar", async () => {
     sessionStorage.clear();
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
     await open(longGapClient());
@@ -650,7 +716,10 @@ describe("live team layout", () => {
     expect(screen.getByText("Mission graph")).toBeInTheDocument();
     expect(screen.getByText("Run demo-deploy")).toBeInTheDocument();
     expect(screen.queryByRole("tablist", { name: "Canvas views" })).toBeNull();
+    const bar = screen.getByRole("region", { name: "While you were away" });
+    await userEvent.click(within(bar).getByRole("button", { name: "Hide for now" }));
     expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+    sessionStorage.clear(); // Hide lasts the session; do not hide the next test's card
     expect(within(nav).queryByRole("tab", { name: "Team" })).toBeNull();
     expect(within(nav).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Graph", "Lanes", "Proof"]);
   });

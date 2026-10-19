@@ -227,7 +227,7 @@ describe("MissionView", () => {
     const flow = (id: string, title: string, name: string): JourneyFlowView => ({ id, title, name, status: "draft", approved: null,
       drift: [], findings: [], approvable: true, screens: [{ id: "mark", url: "/", state: "stable" }], edges: [], paths: { main: [] } } as JourneyFlowView);
     const passed = { state: "ready" as const, kind: "preview" as const, result: "pass" as const,
-      screens: { mark: { result: "pass" as const, frame: false } }, edges: {} };
+      screens: { mark: { result: "pass" as const, frame: true } }, edges: {} };
     // `basket` has no passing preview: it is not offered.
     const runFor = (id: string) => (id === "basket" ? null : passed);
     const onApprove = vi.fn(async (id: string) => {

@@ -2075,6 +2075,12 @@ export class RuntimeClient {
    * The owner's Approve (#353): `POST /v1/journey-flows/{id}/approve`, exactly
    * `graphhelm journey approve <id>`. A flow with validate findings is refused by the Runtime.
    */
+  /** #1658: `POST /v1/journey-flows/{id}/reject` with the owner's note (#1588). Owner-only route. */
+  async rejectJourneyFlow(flowId: string, note: string): Promise<{ id: string }> {
+    const id = checkedId(flowId, "flowId");
+    return this.#request<{ id: string }>({ method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/reject`, body: { note } });
+  }
+
   async approveJourneyFlow(flowId: string): Promise<{ id: string; status: string }> {
     const id = checkedId(flowId, "flowId");
     return this.#request<{ id: string; status: string }>({ method: "POST", path: `/v1/journey-flows/${encodeURIComponent(id)}/approve` });

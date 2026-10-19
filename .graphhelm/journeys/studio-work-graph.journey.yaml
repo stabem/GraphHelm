@@ -12,31 +12,31 @@ viewport: {width: 1440, height: 900}
 screens:
   - id: graph
     title: The PR is selected on its issue graph
-    url: /?session=studio-fixture
+    url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: tab, name: Graph}, {role: button, name: "Row PR #721: Observe issue graph and work kanban · plan ✓"}, {role: button, name: "Column Implement: 0"}, {role: button, name: "Column Review: 1"}, {role: button, name: "Column Fix: 0"}, {role: button, name: "Column Merge: 0"}, {role: button, name: "Column Merged: 1"}]
     scope: [apps/studio/src/components/mission-graph.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/runtime/work-groups.ts]
   - id: lanes
     title: The seeded open PR appears in the work kanban
-    url: /?session=studio-fixture
+    url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: region, name: Work by stage}, {role: heading, name: IMPLEMENT · 0}, {role: heading, name: REVIEW · 1}, {role: heading, name: BLOCKED · 0}, {role: heading, name: Waiting for build · 0}, {role: heading, name: SILENT · 0}, {role: heading, name: MERGE · 0}]
     scope: [apps/studio/src/components/work-kanban.tsx, apps/studio/src/runtime/work-kanban.ts]
   - id: merged
     title: The merged PR remains unproven
-    url: /?session=studio-fixture
+    url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: button, name: "Row PR #722: Merged fixture row"}, {role: button, name: Merged · 1}, {role: region, name: Work graph}]
     scope: [apps/studio/src/components/mission-graph.tsx, apps/studio/src/runtime/work-groups.ts]
   - id: merged-selected
     title: The merged PR shows no proof record
-    url: /?session=studio-fixture
+    url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: heading, name: Merged fixture row}, {role: complementary, name: Selected work}, {role: button, name: "#722 Merged · not proven"}]
     scope: [apps/studio/src/components/mission-graph.tsx, apps/studio/src/runtime/work-groups.ts]
   - id: run
     title: The work kanban is available
-    url: /?session=studio-fixture
+    url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: region, name: Canvas}, {role: tablist, name: Mission views}, {role: tab, name: Lanes}]
     scope: [apps/studio/src/components/mission-view.tsx]

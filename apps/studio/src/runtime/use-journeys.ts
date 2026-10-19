@@ -42,6 +42,16 @@ export function useJourneys({ clientRef, selectedRef, selected, lastJpdSequence 
       setFlowsRevision((revision) => revision + 1);
     }
   }, []);
+  // #1658: the owner's Reject, then the flows are re-read so the list shows it.
+  const rejectFlow = useCallback(async (flowId: string, note: string) => {
+    const client = clientRef.current;
+    if (client === null) throw new Error("Not connected to the Runtime.");
+    try {
+      await client.rejectJourneyFlow(flowId, note);
+    } finally {
+      setFlowsRevision((revision) => revision + 1);
+    }
+  }, []);
   const [journeysRead, setJourneysRead] = useState<{ view: JourneysView | null; failed: boolean; failure?: string } | null>(null);
   useEffect(() => {
     const client = clientRef.current;
@@ -98,5 +108,5 @@ export function useJourneys({ clientRef, selectedRef, selected, lastJpdSequence 
       setFlowsRevision((revision) => revision + 1);
     }
   }, []);
-  return { flowsRead, journeysView, journeysFailed, approveFlow, markFlowEdgeSafe, watchFlow, journeyRun };
+  return { flowsRead, journeysView, journeysFailed, approveFlow, rejectFlow, markFlowEdgeSafe, watchFlow, journeyRun };
 }

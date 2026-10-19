@@ -21,6 +21,25 @@ const mission: Mission = {
 
 describe("ProofTable", () => {
 
+  // #1658: the owner rejects a flow from the Proof view with a note; the note must say something.
+  it("#1658: rejects a flow with the owner's note, never an empty one, and shows the rejection", async () => {
+    const onReject = vi.fn(async () => {});
+    const flow = { id: "j", title: "J", status: "draft" as const, approved: null, drift: [], findings: [], approvable: true,
+      screens: [], edges: [], paths: { main: [] } };
+    const { rerender } = render(<ProofTable mission={mission} onOpenTest={vi.fn()} onReject={onReject} flow={flow} />);
+    await userEvent.click(screen.getByRole("button", { name: "Reject" }));
+    const send = screen.getByRole("button", { name: "Send reject" });
+    expect(send).toBeDisabled();
+    await userEvent.type(screen.getByRole("textbox", { name: "Why reject" }), "   ");
+    expect(send).toBeDisabled();
+    await userEvent.type(screen.getByRole("textbox", { name: "Why reject" }), "the receipt never shows");
+    await userEvent.click(send);
+    await waitFor(() => expect(onReject).toHaveBeenCalledWith("j", "the receipt never shows"));
+    rerender(<ProofTable mission={mission} onOpenTest={vi.fn()} onReject={onReject}
+      flow={{ ...flow, rejected: { note: "the receipt never shows", digest: "sha256:x", sequence: 9 } }} />);
+    expect(screen.getByText("Rejected: the receipt never shows")).toBeInTheDocument();
+  });
+
   it("does not claim observer identity that the journey response does not carry", () => {
     render(<ProofTable mission={mission} onOpenTest={vi.fn()}
       flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true,
@@ -60,7 +79,7 @@ describe("ProofTable", () => {
       screens: [{ id: "mark", url: "/", state: "stable" }, { id: "next", url: "/", state: "stable" }],
       edges: [{ id: "mark.next", from: "mark", to: "next" }], paths: { main: ["mark.next"] } };
     const result = { state: "ready" as const, result: "pass" as const,
-      screens: { mark: { result: "pass" as const, frame: false }, next: { result: "pass" as const, frame: false } },
+      screens: { mark: { result: "pass" as const, frame: true }, next: { result: "pass" as const, frame: true } },
       edges: { "mark.next": { result: "pass" as const } } };
     const run: JourneyRunSource = { start: vi.fn(), read: vi.fn(async () => ({ ...result, kind: "preview" as const,
       result: "fail" as const, edges: { "mark.next": { result: "fail" as const } } })),

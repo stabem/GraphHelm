@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { CaptureView, JourneyFlowView, JourneyRunView, JourneyView, RuntimeEvent } from "./types";
-import { approvalBlockReason, beforeAfterPairs, captureDocuments, journeySummary } from "./journeys";
+import { approvalBlockReason, runProves, stepNeedsFrame, beforeAfterPairs, captureDocuments, journeySummary } from "./journeys";
 
 function capture(over: Partial<CaptureView>): CaptureView {
   return { signalId: "s", sequence: 1, imageEvidenceId: "img", revision: "abc", dirty: false, viewport: { width: 1, height: 1 },
@@ -93,5 +93,27 @@ describe("approvalBlockReason (#1448)", () => {
   it("an approved flow still needs a replay; its preview is not proof", () => {
     expect(approvalBlockReason(flow("approved"), contract, run("preview"))).toMatch(/Not run yet/);
     expect(approvalBlockReason(flow("approved"), contract, run("replay"))).toBeNull();
+  });
+  // #1653: the Proof list and Approve share runProves, so they cannot disagree.
+  it("a browser step without its frame blocks Approve, as it keeps the list at not run", () => {
+    const frameless = { ...run("preview"), screens: { a: { result: "pass" as const, frame: false }, b: { result: "pass" as const, frame: true } } };
+    expect(runProves(flow("draft"), contract, frameless)).toBe(false);
+    expect(approvalBlockReason(flow("draft"), contract, frameless)).toMatch(/Not run yet/);
+  });
+  it("a failed edge is not a pass for the list or for Approve", () => {
+    const broken = { ...run("preview"), edges: { "a.b": { result: "fail" as const } } };
+    expect(runProves(flow("draft"), contract, broken)).toBe(false);
+    expect(approvalBlockReason(flow("draft"), contract, broken)).toMatch(/Not run yet/);
+  });
+  it("a pass record with no step results proves nothing", () => {
+    expect(runProves(flow("draft"), contract, { state: "ready", kind: "preview", result: "pass", screens: {}, edges: {} })).toBe(false);
+    expect(runProves(flow("draft"), contract, run("preview"))).toBe(true);
+  });
+  it("a backend step passes on its result alone; a mixed screen still needs a frame", () => {
+    const backend = { ...flow("draft"), screens: [{ id: "a", url: "/", state: "stable", expect: [{ role: "exit", name: "0" }] },
+      { id: "b", url: "/", state: "stable", expect: [{ role: "exit", name: "0" }, { role: "stdout", name: "ok" }] }] } as JourneyFlowView;
+    const noFrames = { ...run("preview"), screens: { a: { result: "pass" as const, frame: false }, b: { result: "pass" as const, frame: false } } };
+    expect(runProves(backend, contract, noFrames)).toBe(true);
+    expect(stepNeedsFrame({ expect: [{ role: "heading" }, { role: "exit" }] })).toBe(true);
   });
 });

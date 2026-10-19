@@ -1,5 +1,5 @@
 import "./proof-table.css";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Mission, StepStatus } from "../runtime/mission";
 import { layoutMission } from "../runtime/mission-layout";
 import { STATUS_LABEL } from "./mission-graph";
@@ -40,6 +40,8 @@ interface Props {
   flow?: JourneyFlowView;
   run?: JourneyRunSource;
   onApprove?: (flowId: string) => Promise<void>;
+  /** #1658: the owner's Reject; the note is trimmed and 1 to 4096 UTF-8 bytes. */
+  onReject?: (flowId: string, note: string) => Promise<void>;
   onWatch?: (flowId: string) => Promise<void>;
   busy?: boolean;
   onBusy?: (value: boolean) => void;
@@ -48,7 +50,7 @@ interface Props {
   onRun?: (run: JourneyRunView) => void;
 }
 
-export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove, onWatch, busy = false, onBusy, error, onActionError, onRun }: Props) {
+export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove, onReject, onWatch, busy = false, onBusy, error, onActionError, onRun }: Props) {
   const preview = useJourneyRun(mission.contractId, flow ? run : undefined, false);
   const reported = useRef<JourneyRunView | null>(null);
   useEffect(() => {
@@ -78,6 +80,9 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
   const title = draft?.[1] ?? mission.title;
   const draftNote = draft?.[2];
   const approvalReason = flow ? approvalBlockReason(flow, mission, preview.run) : null;
+  const [rejecting, setRejecting] = useState(false);
+  const [note, setNote] = useState("");
+  const noteBytes = new TextEncoder().encode(note.trim()).length;
   return (
     <section className="proof" aria-label="Proof">
       <div className="proof-head">
@@ -92,11 +97,19 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         <span>{flow.status === "draft" ? "Waiting for your approval" : flow.status === "approval_stale" ? "Changed since approval" : flow.status === "weak" ? "Does not say what it proves" : flow.status === "approved" ? "Approved" : "Can't be read"}</span>
         {flow.status !== "approved" && <><button type="button" disabled={!flow.approvable || approvalReason !== null || busy || !onApprove}
           aria-describedby={approvalReason ? "proof-approval-reason" : undefined} onClick={() => onApprove && act(() => onApprove(flow.id))}>Approve</button>
-          {approvalReason && <span id="proof-approval-reason">{approvalReason}</span>}</>}
+          {approvalReason && <span id="proof-approval-reason">{approvalReason}</span>}
+          {onReject && <button type="button" disabled={busy || rejecting} onClick={() => setRejecting(true)}>Reject</button>}</>}
         {onWatch && <button type="button" disabled={busy} onClick={() => act(() => onWatch(flow.id))}>Watch</button>}
         {run && <button type="button" disabled={running} onClick={preview.again}>Run again</button>}
         {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}
         {running && <span role="status">Running…</span>}
+        {flow.rejected && <p className="proof-rejected">{`Rejected: ${flow.rejected.note}`}</p>}
+        {rejecting && onReject && <div className="proof-reject">
+          <textarea aria-label="Why reject" value={note} maxLength={4096} onChange={(event) => setNote(event.target.value)} />
+          <button type="button" disabled={busy || noteBytes === 0 || noteBytes > 4096}
+            onClick={() => act(() => onReject(flow.id, note.trim()).then(() => { setRejecting(false); setNote(""); }))}>Send reject</button>
+          <button type="button" onClick={() => { setRejecting(false); setNote(""); }}>Cancel</button>
+        </div>}
         {(error || preview.failure || preview.busyReason) && <p role="alert">{error ?? preview.failure ?? preview.busyReason}</p>}
         {!error && !preview.failure && !preview.busyReason && preview.run?.state === "failed" && <p role="alert">{runFailure(preview.run, mission.steps.map((s) => s.stepId))}</p>}
       </div>}

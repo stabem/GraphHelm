@@ -519,8 +519,7 @@ def main(argv):
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if args.kind == "heartbeat":
         reject_heartbeat_overrides(args)
-        history = read_execution_history(args)
-        doc = heartbeat_document(args, history, now)
+        doc = heartbeat_document(args, now)
     else:
         doc = document(args, now)
     if args.kind in ("pr_opened", "review_assigned") and not args.no_github:
@@ -659,64 +658,18 @@ def read_execution_history(args):
     return [(event, kind, evidence_docs[event["evidenceRefs"][0]["evidenceId"]]) for event, kind in relevant]
 
 
-def heartbeat_document(args, history, now):
-    """The heartbeat record for the lane's open pre-PR claim. The 300 s cooldown is not checked
-    here (#1147): the Runtime owns that rule (`validate_heartbeat`) and its refusal is the answer.
-    Earlier heartbeats still count toward the revision."""
-    task_id = f"issue-{args.issue}"
-    open_claims = []
-    opened_prs = []
-    max_revision = 0
-    for event, kind, envelope in history:
-        if envelope.get("type") != kind or envelope.get("source", {}).get("id") != args.lane:
-            sys.exit("task_record: heartbeat task history identity is invalid; no record sent")
-        description = envelope.get("description")
-        try:
-            record = json.loads(description) if isinstance(description, str) else None
-        except json.JSONDecodeError:
-            record = None
-        if not isinstance(record, dict) or record.get("schema") != "graphhelm-task-event-v1":
-            sys.exit("task_record: heartbeat task history description is invalid; no record sent")
-        if (not isinstance(record.get("taskId"), str) or not isinstance(record.get("lane"), str)
-                or record["lane"] != args.lane):
-            sys.exit("task_record: heartbeat task history identity is invalid; no record sent")
-        if record.get("taskId") != task_id:
-            continue
-        revision = record.get("revision")
-        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
-            sys.exit("task_record: heartbeat task history revision is invalid; no record sent")
-        max_revision = max(max_revision, revision)
-        if kind == "task.claimed":
-            open_claims.append(event["sequence"])
-        elif kind == "task.pr_opened":
-            pr = record.get("pr")
-            if not isinstance(pr, int) or isinstance(pr, bool) or pr < 1:
-                sys.exit("task_record: heartbeat PR history is invalid; no record sent")
-            if pr not in opened_prs:
-                opened_prs.append(pr)
-                if open_claims:
-                    open_claims.pop(0)
-        elif kind == "task.released":
-            sequence = record.get("claimSequence")
-            if not isinstance(sequence, int) or isinstance(sequence, bool):
-                sys.exit("task_record: heartbeat release history is invalid; no record sent")
-            open_claims = [claim for claim in open_claims if claim != sequence]
-        elif kind in ("task.merged", "task.closed"):
-            pr = record.get("pr")
-            if not isinstance(pr, int) or isinstance(pr, bool) or pr < 1:
-                sys.exit("task_record: heartbeat terminal PR history is invalid; no record sent")
-            if opened_prs:
-                if pr not in opened_prs:
-                    continue
-                opened_prs.remove(pr)
-            if open_claims:
-                # A terminal record names the task's PR. If PR-open history is incomplete,
-                # still fail closed for this task rather than heartbeat a terminal claim.
-                open_claims.pop(0)
-    if not open_claims:
-        sys.exit("task_record: no open pre-PR claim for this lane/task; heartbeat not sent")
-    return {"schema": "graphhelm-task-event-v1", "taskId": task_id,
-            "revision": max_revision + 1, "at": now, "lane": args.lane}
+def heartbeat_document(args, now):
+    """The heartbeat record for the lane's open pre-PR claim, sent without reading history (#1556).
+
+    A lane credential may record but not read the execution's history, so a read before the write
+    refused every heartbeat (HTTP 401) and every waiting lane read as Silent. The Runtime is the
+    one authority for both rules (`validate_heartbeat` over trusted history: an open pre-PR claim,
+    and one heartbeat per 300 s, #1147); its refusal is the answer the lane reads. The revision is
+    the 300-second window of `now`, so a retry inside the window is the same record (same key)
+    and the next window is a new one."""
+    stamp = datetime.datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+    return {"schema": "graphhelm-task-event-v1", "taskId": f"issue-{args.issue}",
+            "revision": int(stamp.timestamp()) // 300, "at": now, "lane": args.lane}
 
 
 def send_opening(args, doc, now):

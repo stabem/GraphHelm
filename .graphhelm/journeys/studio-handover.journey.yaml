@@ -24,10 +24,10 @@ screens:
     expect: [{role: tablist, name: Mission views}, {role: region, name: While you were away}, {role: button, name: Show details}, {role: button, name: Got it}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/runtime/handover.ts]
   - id: run
-    title: Back on the Graph canvas after dismissing the handover
+    title: Back on the Graph canvas and the While you were away bar is gone after Got it
     url: /?session=studio-fixture&run=:run
     state: stable
-    expect: [{role: tablist, name: Mission views}]
+    expect: [{role: tablist, name: Mission views}, {role: region, name: While you were away, absent: true}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx, apps/studio/src/components/mission-view.tsx]
 edges:
   - id: handover.details

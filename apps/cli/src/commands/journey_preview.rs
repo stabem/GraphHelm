@@ -641,17 +641,37 @@ fn step_reason(code: &str) -> &'static str {
 
 /// A run's result (#1633): its worst step result, and `pass` only when every screen and edge
 /// passed. A step not reached or skipped proves nothing, so a run with one and no failure is
-/// `fail` with the reason `preview.incomplete`, and records no proof. A screen the walk started
-/// from is reached when an edge leaving it passed: a backend flow observes no screen before its
-/// first act, so its start screen carries no result of its own.
+/// `fail` with the reason `preview.incomplete`, and records no proof. A path's entry screen is
+/// reached when an edge leaving it passed: a backend flow observes no screen before its first act,
+/// so its start screen carries no result of its own. No other screen is excused.
 fn run_verdict(flow: &Value, screens: &Value, edges: &Value) -> (String, Option<&'static str>) {
+    let edge_of = |id: &Value| {
+        flow["edges"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|edge| edge["id"] == *id)
+    };
+    // A path's entry screen: where its first edge starts.
+    let entry = |screen: &str| {
+        flow["paths"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .any(|(_, path)| {
+                path.get(0)
+                    .and_then(edge_of)
+                    .is_some_and(|edge| edge["from"] == screen)
+            })
+    };
     let left_by_a_pass = |screen: &str| {
-        flow["edges"].as_array().into_iter().flatten().any(|edge| {
-            edge["from"] == screen
-                && edge["id"]
-                    .as_str()
-                    .is_some_and(|id| edges[id]["result"] == "pass")
-        })
+        entry(screen)
+            && flow["edges"].as_array().into_iter().flatten().any(|edge| {
+                edge["from"] == screen
+                    && edge["id"]
+                        .as_str()
+                        .is_some_and(|id| edges[id]["result"] == "pass")
+            })
     };
     let screen_steps = screens.as_object().into_iter().flatten();
     let edge_steps = edges.as_object().into_iter().flatten();
@@ -1747,7 +1767,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             "proof-report":{"frame":false,"reason":"not_reached"}});
         let edges = json!({"prove-regression":{"reason":"cli_needs_approval","result":"skipped"}});
         assert_ne!(super::run_verdict(&flow, &screens, &edges).0, "pass");
-        let ab = json!({"edges":[{"id":"a.b","from":"a","to":"b"}]});
+        let ab = json!({"edges":[{"id":"a.b","from":"a","to":"b"}],"paths":{"main":["a.b"]}});
         let passed = json!({"a":{"frame":true,"result":"pass"},"b":{"frame":true,"result":"pass"}});
         let skipped = json!({"a.b":{"result":"skipped","reason":"confirm_needed"}});
         assert_ne!(super::run_verdict(&ab, &passed, &skipped).0, "pass");

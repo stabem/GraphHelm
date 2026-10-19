@@ -13,34 +13,23 @@ storage: [{key: graphhelm.handover.last-seen:demo:demo, value: "{\"sequence\":1,
 screens:
   - id: details
     title: The handover details cite what happened while away
-    url: /?session=studio-fixture
+    url: /?session=studio-fixture&run=:run
     state: stable
     expect: [{role: region, name: While you were away}, {role: heading, name: Shipped}, {role: heading, name: Went quiet}, {role: heading, name: Nobody touched}, {role: heading, name: Goal}, {role: link, name: Cited evidence}, {role: heading, name: Open duties}, {role: button, name: Got it}]
     scope: [apps/studio/src/components/handover-card.tsx, apps/studio/src/runtime/handover.ts]
-  - id: entry
-    title: Open the Team column to read the handover
-    url: /?session=studio-fixture
-    state: stable
-    expect: [{role: tablist, name: Studio columns}, {role: tab, name: Team}]
-    scope: [apps/studio/src/App.tsx]
   - id: handover
-    title: The While you were away card (shows after 15+ minutes and 20+ events away)
-    url: /?session=studio-fixture
+    title: The owner lands on the Graph canvas and the While you were away bar is there (after 15+ minutes and 20+ events away)
+    url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: region, name: While you were away}, {role: button, name: Show details}, {role: button, name: Got it}]
-    scope: [apps/studio/src/components/handover-card.tsx, apps/studio/src/runtime/handover.ts]
+    expect: [{role: tablist, name: Mission views}, {role: region, name: While you were away}, {role: button, name: Show details}, {role: button, name: Got it}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx, apps/studio/src/components/mission-view.tsx, apps/studio/src/runtime/handover.ts]
   - id: run
-    title: The run remains open after dismissing the handover
-    url: /?session=studio-fixture
+    title: Back on the Graph canvas after dismissing the handover
+    url: /?session=studio-fixture&run=:run
     state: stable
-    expect: [{role: tablist, name: Canvas views}, {role: tab, name: Team (live)}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx]
+    expect: [{role: tablist, name: Mission views}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/components/handover-card.tsx, apps/studio/src/components/mission-view.tsx]
 edges:
-  - id: entry.handover
-    from: entry
-    to: handover
-    acts:
-      - {kind: activate, role: tab, name: Team}
   - id: handover.details
     from: handover
     to: details
@@ -52,5 +41,5 @@ edges:
     acts:
       - {kind: activate, role: button, name: Got it}
 paths:
-  main: [entry.handover, handover.details, handover.dismiss]
+  main: [handover.details, handover.dismiss]
 drift: []

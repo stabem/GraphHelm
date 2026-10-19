@@ -2562,7 +2562,9 @@ export default function App({
             )}
 
             <section className="canvas-column" aria-label="Canvas">
-            {canvasTab === "team" && handover !== null && !handoverHidden && (
+            {/* #1636: on every canvas. No control reaches "team" since #617, so a team-only card was
+                unreachable. It shows only while an undismissed handover exists, and Got it / Hide remove it. */}
+            {handover !== null && !handoverHidden && (
               <HandoverCard handover={handover} onOpen={openRecords} onDismiss={markSeen} onHide={hideHandover} />
             )}
             {/* #583: the Graph tab is the whole page: its own top bar replaces the banner and this strip. */}

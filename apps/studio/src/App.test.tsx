@@ -642,7 +642,22 @@ describe("live team layout", () => {
     sessionStorage.clear();
   });
 
-  it("#583: with nothing saved, Graph is the whole page: no handover, no tab strip, no Team tab", async () => {
+  // #1636: since #617 no control selects the Team canvas, and this suite's beforeEach seeds "team",
+  // so the card was proven only on a tab the owner cannot reach. On the default canvas (no saved
+  // tab) the owner who returns after a long gap still sees the handover.
+  it("shows the handover on the default canvas, which is where the owner lands", async () => {
+    sessionStorage.removeItem("graphhelm.studio.canvas-tab");
+    localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
+    await open(longGapClient());
+    const card = await screen.findByRole("region", { name: "While you were away" });
+    expect(card).toHaveTextContent("24 records");
+    await userEvent.click(within(card).getByRole("button", { name: "Got it" }));
+    expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+  });
+
+  // #1636 narrows #583: Graph stays the whole page (no tab strip, no Team tab), but an undismissed
+  // handover is a slim bar the owner can dismiss, because no other canvas would ever show it.
+  it("#583: with nothing saved, Graph is the whole page: no tab strip, no Team tab; a pending handover is a dismissible bar", async () => {
     sessionStorage.clear();
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
     await open(longGapClient());
@@ -650,7 +665,10 @@ describe("live team layout", () => {
     expect(screen.getByText("Mission graph")).toBeInTheDocument();
     expect(screen.getByText("Run demo-deploy")).toBeInTheDocument();
     expect(screen.queryByRole("tablist", { name: "Canvas views" })).toBeNull();
+    const bar = screen.getByRole("region", { name: "While you were away" });
+    await userEvent.click(within(bar).getByRole("button", { name: "Hide for now" }));
     expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+    sessionStorage.clear(); // Hide lasts the session; do not hide the next test's card
     expect(within(nav).queryByRole("tab", { name: "Team" })).toBeNull();
     expect(within(nav).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Graph", "Lanes", "Proof"]);
   });

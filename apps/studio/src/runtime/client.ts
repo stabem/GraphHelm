@@ -351,10 +351,12 @@ interface EvidenceReadQueue {
   inFlight: number;
 }
 
-/** The Runtime answers at most eight ids per collection read. One batch at a time made a long
+/** The Runtime answers at most 64 ids per collection read (#1560; it was eight). One batch at a time made a long
  * run's envelopes thousands of serial round trips; four side by side leave the browser's six
  * connections per host room for the poll. */
-const EVIDENCE_BATCH_SIZE = 8;
+const EVIDENCE_BATCH_SIZE = 64;
+/** What a Runtime from before #1560 admits per collection read. */
+const LEGACY_EVIDENCE_BATCH_SIZE = 8;
 const EVIDENCE_BATCHES_IN_FLIGHT = 4;
 
 /** A caller-minted correlation id. `crypto.randomUUID` where available; a bounded random string
@@ -517,6 +519,7 @@ export class RuntimeClient {
   readonly #fetch: typeof fetch;
   #activeRequests = new Set<AbortController>();
   #evidenceQueues = new Map<string, EvidenceReadQueue>();
+  #evidenceBatchSize = EVIDENCE_BATCH_SIZE;
   /** Opened evidence by execution and id, oldest use first. See `readEvidence`. */
   #evidence = new Map<string, Promise<EvidenceContent>>();
   /** Set once this Runtime has refused the route listing as fixture-only. See `listRoutes`. */
@@ -2222,7 +2225,7 @@ export class RuntimeClient {
       queue.entries.set(evidenceId, waiters);
       // The first read waits one microtask so the reads beside it share its request; a full batch
       // waiting behind requests already out goes out beside them.
-      if (queue.inFlight === 0 || (queue.entries.size >= EVIDENCE_BATCH_SIZE && queue.inFlight < EVIDENCE_BATCHES_IN_FLIGHT)) {
+      if (queue.inFlight === 0 || (queue.entries.size >= this.#evidenceBatchSize && queue.inFlight < EVIDENCE_BATCHES_IN_FLIGHT)) {
         queue.inFlight += 1;
         queueMicrotask(() => { void this.#flushEvidenceQueue(id, queue!); });
       }
@@ -2230,7 +2233,7 @@ export class RuntimeClient {
   }
 
   async #flushEvidenceQueue(executionId: string, queue: EvidenceReadQueue): Promise<void> {
-    const selected = [...queue.entries.entries()].slice(0, EVIDENCE_BATCH_SIZE);
+    const selected = [...queue.entries.entries()].slice(0, this.#evidenceBatchSize);
     if (selected.length === 0) {
       queue.inFlight -= 1;
       if (queue.inFlight === 0 && this.#evidenceQueues.get(executionId) === queue) this.#evidenceQueues.delete(executionId);
@@ -2256,6 +2259,17 @@ export class RuntimeClient {
             && error.httpStatus === 404
             && error.code === "GHCLI008_SERVE_NOT_FOUND"
             && error.diagnostics[0]?.message === "no route matches this request";
+          // #1560: a Runtime from before the 64-id cap refuses a larger read at `/ids`. Read in
+          // batches of eight from then on; this batch goes back in the queue and inally sends it again.
+          const capped = error instanceof RuntimeError
+            && error.httpStatus === 400
+            && ids.length > LEGACY_EVIDENCE_BATCH_SIZE
+            && error.diagnostics[0]?.path === "/ids";
+          if (capped) {
+            this.#evidenceBatchSize = LEGACY_EVIDENCE_BATCH_SIZE;
+            for (const [id, waiters] of selected) queue.entries.set(id, [...(queue.entries.get(id) ?? []), ...waiters]);
+            return;
+          }
           if (!unsupported) throw error;
           values = new Map();
           const legacy = await Promise.allSettled(ids.map((id) => this.#readEvidenceSingle(executionId, id)));

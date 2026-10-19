@@ -3500,22 +3500,37 @@ fn eight_sealed_evidence_items_share_one_authenticated_collection_read() {
         "invalid evidence IDs are rejected before lookup: {}",
         invalid.body
     );
-    let nine = (0..9)
-        .map(|index| format!("item-{index}"))
-        .collect::<Vec<_>>();
-    let nine_response = raw_request(
+    // #1560: the cap is 64 ids per read (it was 8, and gh-team's ~8.5k envelopes took 1,070
+    // reads, each resolving the whole stream). 64 unknown ids are answered item by item; 65 are
+    // refused before lookup.
+    let ids = |count: usize| {
+        (0..count)
+            .map(|index| format!("item-{index}"))
+            .collect::<Vec<_>>()
+    };
+    let at_cap = raw_request(
         &format!(
             "{base}/v1/executions/{execution}/evidence?ids={}",
-            encode_ids(&nine)
+            encode_ids(&ids(64))
         ),
         Some(&token),
     )
     .unwrap();
+    assert_eq!(at_cap.status, 200, "64 ids are one read: {}", at_cap.body);
+    let at_cap: serde_json::Value = serde_json::from_str(&at_cap.body).unwrap();
     assert_eq!(
-        nine_response.status, 400,
-        "the request cap is eight: {}",
-        nine_response.body
+        envelope_array(&at_cap, "results", "a 64-id collection read").len(),
+        64
     );
+    let over = raw_request(
+        &format!(
+            "{base}/v1/executions/{execution}/evidence?ids={}",
+            encode_ids(&ids(65))
+        ),
+        Some(&token),
+    )
+    .unwrap();
+    assert_eq!(over.status, 400, "the request cap is 64: {}", over.body);
     let unauthorized = raw_request(
         &format!(
             "{base}/v1/executions/{execution}/evidence?ids={}",

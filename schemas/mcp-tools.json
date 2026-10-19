@@ -481,7 +481,7 @@
       "name": "events"
     },
     {
-      "description": "Open the content behind an evidence reference (GET /v1/executions/{executionId}/evidence/{evidenceId}); for up to eight references in one execution, use GET /v1/executions/{executionId}/evidence?ids=<JSON array>.",
+      "description": "Open the content behind an evidence reference (GET /v1/executions/{executionId}/evidence/{evidenceId}); for up to 64 references in one execution, use GET /v1/executions/{executionId}/evidence?ids=<JSON array>.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

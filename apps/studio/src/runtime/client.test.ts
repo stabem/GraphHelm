@@ -392,7 +392,8 @@ describe("RuntimeClient reads", () => {
       return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results }, diagnostics: [] }), { status: 200 });
     }) as typeof fetch;
     const client = new RuntimeClient("token", { fetch: fetchImpl });
-    const ids = Array.from({ length: 48 }, (_, index) => `e-${index}`);
+    // #1560: enough ids for more than four full batches of 64.
+    const ids = Array.from({ length: 320 }, (_, index) => `e-${index}`);
     const reads = Promise.all(ids.map((id) => client.readEvidence("demo", id)));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(releases.length).toBe(4);
@@ -403,6 +404,44 @@ describe("RuntimeClient reads", () => {
     const values = await reads;
     expect(values.map((value) => value.content)).toEqual(ids.map((id) => `content-${id}`));
     expect(peak).toBe(4);
+  });
+
+  // #1560: gh-team's ~8,528 envelopes took 1,070 batches of eight (206-324 s per load); every
+  // batch makes the Runtime resolve the whole stream. A batch carries up to 64 ids now.
+  it("packs up to 64 evidence ids per collection read", async () => {
+    const sizes: number[] = [];
+    const fetchImpl = (async (url: string) => {
+      const ids = JSON.parse(new URL(url, "http://runtime").searchParams.get("ids") ?? "[]") as string[];
+      sizes.push(ids.length);
+      const results = ids.map((id) => ({ status: "available", evidenceId: id, mediaType: "text/plain", sensitivity: "internal", contentSha256: id, content: `content-${id}` }));
+      return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results }, diagnostics: [] }), { status: 200 });
+    }) as typeof fetch;
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    const ids = Array.from({ length: 200 }, (_, index) => `e-${index}`);
+    const values = await Promise.all(ids.map((id) => client.readEvidence("demo", id)));
+    expect(values.map((value) => value.content)).toEqual(ids.map((id) => `content-${id}`));
+    expect(Math.max(...sizes)).toBe(64);
+    expect(sizes.length).toBeLessThanOrEqual(5);
+  });
+
+  it("falls back to batches of eight when a Runtime from before #1560 refuses a larger read", async () => {
+    const sizes: number[] = [];
+    const fetchImpl = (async (url: string) => {
+      const ids = JSON.parse(new URL(url, "http://runtime").searchParams.get("ids") ?? "[]") as string[];
+      sizes.push(ids.length);
+      if (ids.length > 8) {
+        return new Response(JSON.stringify({ ok: false, command: "execution.evidence", data: null, diagnostics: [{ code: "GHCLI001_ARGUMENT_INVALID", severity: "error", path: "/ids", message: "ids must contain between one and eight evidence identifiers" }] }), { status: 400 });
+      }
+      const results = ids.map((id) => ({ status: "available", evidenceId: id, mediaType: "text/plain", sensitivity: "internal", contentSha256: id, content: `content-${id}` }));
+      return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results }, diagnostics: [] }), { status: 200 });
+    }) as typeof fetch;
+    const client = new RuntimeClient("token", { fetch: fetchImpl });
+    const ids = Array.from({ length: 100 }, (_, index) => `e-${index}`);
+    const values = await Promise.all(ids.map((id) => client.readEvidence("demo", id)));
+    expect(values.map((value) => value.content)).toEqual(ids.map((id) => `content-${id}`));
+    const refused = sizes.filter((size) => size > 8);
+    expect(refused.length).toBeGreaterThan(0);
+    expect(refused.length).toBeLessThanOrEqual(4);
   });
 
   it("maps reordered collection results by ID and keeps an item refusal local", async () => {

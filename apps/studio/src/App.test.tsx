@@ -241,7 +241,7 @@ describe("Studio organization and responsive navigation", () => {
     expect(identity).toHaveTextContent("Project: dale-api-base");
     expect(identity).toHaveTextContent("Run: demo-deploy");
     expect(identity).not.toHaveTextContent("Joined sessions");
-    await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByText("demo-calm", { exact: true }).closest("button")!);
+    await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
     expect(identity).toHaveTextContent("Run: demo-calm");
     expect(identity).not.toHaveTextContent("Run: demo-deploy");
   });
@@ -279,7 +279,7 @@ describe("Studio organization and responsive navigation", () => {
       const toggle = screen.getByRole("button", { name: "Toggle projects" });
       await userEvent.click(toggle);
       hold = true;
-      await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByText("demo-calm", { exact: true }));
+      await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
       expect(await screen.findByText("Opening this run…")).toBeInTheDocument();
       expect(toggle).toHaveAttribute("aria-expanded", "false");
       await userEvent.click(toggle);
@@ -308,7 +308,7 @@ describe("Studio organization and responsive navigation", () => {
       const toggle = screen.getByRole("button", { name: "Toggle projects" });
       if (!wide) await userEvent.click(toggle);
       expect(toggle).toHaveAttribute("aria-expanded", "true");
-      await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByText(run, { exact: true }));
+      await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
       expect(toggle).toHaveAttribute("aria-expanded", wide ? "true" : "false");
       expect(screen.getByRole("button", { name: "Toggle conversation" })).toHaveAttribute("aria-expanded", "false");
     } finally {
@@ -359,99 +359,6 @@ describe("Studio organization and responsive navigation", () => {
     }
   });
 
-  it("clears busy when the selected run is removed during a pending action", async () => {
-    let finish!: (value: MutationEvidence) => void;
-    const pause = vi.fn(() => new Promise<MutationEvidence>((resolve) => { finish = resolve; }));
-    const client = stubClient({ pause });
-    await open(client);
-    await userEvent.click(screen.getByRole("button", { name: "pause · finish in-flight" }));
-    await waitFor(() => expect(pause).toHaveBeenCalled());
-    await userEvent.click(screen.getByRole("button", { name: "Remove demo-deploy from this browser's list" }));
-    await userEvent.click(screen.getByRole("button", { name: /^Remove$/ }));
-    const newTask = screen.getByRole("button", { name: "New task in dale-api-base" });
-    expect(newTask).toBeEnabled();
-    await userEvent.click(newTask);
-    finish(PAUSED_EVIDENCE);
-    expect(await screen.findByLabelText("What should this task do?")).toBeVisible();
-    expect(screen.getByLabelText("What should this task do?")).toBeEnabled();
-  });
-
-  it("loads a removed run from a later page before restoring its row", async () => {
-    saveRemovedRuns(`${location.origin}:dale-api-base`, ["later-run"]);
-    const row = { executionId: "later-run", mode: "supervised", status: "running", attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 3 };
-    const listExecutions = vi.fn(async (options?: { after?: string }) => options?.after === "last" ? {
-      executions: [row, { ...row, executionId: "target-page-neighbor" }], hasMore: false, nextCursor: null,
-    } : options?.after === "next" ? {
-      executions: [{ ...row, executionId: "intermediate-run" }], hasMore: true, nextCursor: "last",
-    } : {
-      executions: [{ ...row, executionId: "demo-deploy", attention: "needs_you" }], hasMore: true, nextCursor: "next",
-    });
-    const client = stubClient({ listExecutions });
-    const props = {
-      createClient: () => client as unknown as RuntimeClient,
-      modelContext: null,
-      session: async () => ({ token: "local-token", project: "dale-api-base" }),
-    };
-    const view = render(<App {...props} pollIntervalMs={60_000} />);
-    await screen.findByRole("navigation", { name: "Projects" });
-    await userEvent.click(screen.getByRole("button", { name: "restore later-run" }));
-    const rail = screen.getByRole("region", { name: /^History of / });
-    expect(await within(rail).findByRole("button", { name: /^later-run/ })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "restore later-run" })).not.toBeInTheDocument();
-    expect(listExecutions).toHaveBeenCalledWith(expect.objectContaining({ after: "last" }));
-    expect(within(rail).queryByRole("button", { name: /^intermediate-run/ })).not.toBeInTheDocument();
-    expect(within(rail).queryByRole("button", { name: /^target-page-neighbor/ })).not.toBeInTheDocument();
-    const callsBeforePause = listExecutions.mock.calls.length;
-    const pause = screen.getByRole("button", { name: "pause · finish in-flight" });
-    await userEvent.click(pause);
-    await waitFor(() => expect(client.pause).toHaveBeenCalled());
-    await waitFor(() => expect(listExecutions.mock.calls.length).toBeGreaterThan(callsBeforePause));
-    // The acknowledged pause at head 14 must not be undone by the stub's older head-13 read.
-    // Refresh observes that the action finished; pause correctly stays illegal on a paused run.
-    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled());
-    expect(pause).toBeDisabled();
-    expect(within(rail).getAllByRole("button", { name: /^later-run/ })).toHaveLength(1);
-    listExecutions.mockClear();
-    view.rerender(<App {...props} pollIntervalMs={10} />);
-    await waitFor(() => expect(listExecutions.mock.calls.length).toBeGreaterThanOrEqual(3));
-    view.rerender(<App {...props} pollIntervalMs={60_000} />);
-    expect(listExecutions.mock.calls.every(([options]) => options?.after === undefined)).toBe(true);
-    expect(within(rail).queryByRole("button", { name: /^intermediate-run/ })).not.toBeInTheDocument();
-    expect(within(rail).getAllByRole("button", { name: /^later-run/ })).toHaveLength(1);
-    await userEvent.click(within(rail).getByRole("button", { name: /show more/i }));
-    expect(await within(rail).findByRole("button", { name: /^intermediate-run/ })).toBeVisible();
-    await userEvent.click(within(rail).getByRole("button", { name: /show more/i }));
-    expect(await within(rail).findByRole("button", { name: /^target-page-neighbor/ })).toBeVisible();
-    expect(within(rail).getAllByRole("button", { name: /^later-run/ })).toHaveLength(1);
-  });
-
-  it("keeps the restore entry when a missing run cannot be loaded", async () => {
-    saveRemovedRuns(`${location.origin}:dale-api-base`, ["later-run"]);
-    const client = stubClient();
-    await open(client);
-    client.listExecutions.mockRejectedValueOnce(new Error("offline"));
-    await userEvent.click(screen.getByRole("button", { name: "restore later-run" }));
-    expect(await screen.findByText(/The run could not be loaded/)).toHaveAttribute("role", "status");
-    expect(screen.getByRole("button", { name: "restore later-run" })).toBeVisible();
-  });
-
-  it("discards a pending restore after disconnecting", async () => {
-    saveRemovedRuns(`${location.origin}:dale-api-base`, ["later-run"]);
-    const client = stubClient();
-    await open(client);
-    let finish!: (page: Awaited<ReturnType<typeof client.listExecutions>>) => void;
-    client.listExecutions.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-    await userEvent.click(screen.getByRole("button", { name: "restore later-run" }));
-    fireEvent.click(screen.getByRole("button", { name: /^disconnect$/i }), { detail: 1 });
-    fireEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }), { detail: 1 });
-    await screen.findByLabelText(/bearer token/i);
-    finish({ executions: [{ executionId: "later-run", mode: "supervised", status: "running", attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 3 }], hasMore: false, nextCursor: null });
-    await userEvent.type(screen.getByLabelText(/bearer token/i), "local-token");
-    await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
-    expect(await screen.findByRole("button", { name: "restore later-run" })).toBeVisible();
-    expect(within(screen.getByRole("navigation", { name: "Projects" })).queryByRole("button", { name: /^later-run/ })).not.toBeInTheDocument();
-  });
-
   it("keeps the objective when the conversation is hidden and reopened", async () => {
     await open(stubClient());
     await userEvent.click(screen.getByRole("button", { name: "New task in dale-api-base" }));
@@ -479,21 +386,15 @@ describe("Studio organization and responsive navigation", () => {
     expect(screen.getByLabelText(/say something into this run/i)).toHaveValue("Do not lose these words");
   });
 
-  it("persists rename and reversible removal across a remount without cancelling execution", async () => {
+  it("persists a rename across a remount", async () => {
     const client = stubClient();
     await open(client);
     await userEvent.click(screen.getByRole("button", { name: "Rename dale-api-base" }));
     await userEvent.clear(screen.getByRole("textbox", { name: "Project name" }));
     await userEvent.type(screen.getByRole("textbox", { name: "Project name" }), "My workspace{Enter}");
-    await userEvent.click(screen.getByRole("button", { name: "Remove demo-deploy from this browser's list" }));
-    await userEvent.click(screen.getByRole("button", { name: /^Remove$/ }));
-    expect(within(screen.getByRole("region", { name: /^History of / })).queryByRole("button", { name: /^demo-deploy/ })).not.toBeInTheDocument();
-    expect(client.cancel).not.toHaveBeenCalled();
     cleanup();
     await open(stubClient());
     expect(screen.getByRole("button", { name: "Rename My workspace" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "restore demo-deploy" }));
-    expect(within(screen.getByRole("region", { name: /^History of / })).getByRole("button", { name: /^demo-deploy/ })).toBeInTheDocument();
   });
 
   it("reports failed browser persistence instead of claiming a saved rename", async () => {
@@ -740,7 +641,7 @@ describe("live team layout", () => {
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-calm", "1");
     await open(longGapClient());
     expect(await screen.findByRole("region", { name: "While you were away" })).toBeInTheDocument();
-    await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByText("demo-calm", { exact: true }).closest("button")!);
+    await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
     // Immediately, before run B's own reads land: run B has a last-seen of its own, and run A's
     // events and status are still the ones in memory. select() clears status and events, which hides
     // A's card; the status.executionId guard is defence-in-depth behind it.
@@ -1040,9 +941,8 @@ describe("opening", () => {
     await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
     await userEvent.click(screen.getByRole("button", { name: "Close this panel" }));
     expect(document.querySelector(".topbar .tag")).toHaveTextContent("agent work recorded · graph step waiting");
-    const selected = screen.getByRole("region", { name: /^History of / }).querySelector('button[aria-current="true"]')!;
-    expect(selected).toHaveAttribute("title", "agent work recorded · graph step waiting");
-    expect(selected).toHaveClass("calm");
+    // #1696: the sidebar card carries the project name, never the run's state text as its title.
+    expect(screen.getByRole("button", { name: /^Open project / })).toHaveTextContent("dale-api-base");
   });
 
   it("does not turn a capacity wait into an owner reply request", async () => {
@@ -1157,7 +1057,7 @@ describe("the projects rail", () => {
       session={async () => ({ token: "local-token", project: "fixture-service", projectPath: "fixtures/service" })}
     />);
     const rail = await screen.findByRole("navigation", { name: "Projects" });
-    expect(within(rail).getByText("fixture-service")).toBeVisible();
+    expect(within(rail).getAllByText("fixture-service")[0]).toBeVisible();
     expect(within(rail).getByText("fixtures/service")).toBeVisible();
   });
   /** A project is a FOLDER and the runs live inside it. The rail says how many projects there
@@ -1166,12 +1066,10 @@ describe("the projects rail", () => {
     await open(stubClient());
     const rail = screen.getByRole("navigation", { name: "Projects" });
     // The rail calls the folder what the operator named it, not "this runtime".
-    expect(within(rail).getByText("dale-api-base")).toBeInTheDocument();
-    // #1654 (D-060): one card per project; its runs are history inside the project's screen.
+    expect(within(rail).getAllByText("dale-api-base").length).toBeGreaterThan(0);
+    // #1696 (D-060): one card per project, no run rows and no run history.
     expect(within(rail).getAllByRole("button", { name: /^Open project / })).toHaveLength(1);
-    const history = screen.getByRole("region", { name: /^History of / });
-    expect(within(history).getByText("demo-deploy")).toBeInTheDocument();
-    expect(within(history).getByText("demo-calm")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /^History of / })).toBeNull();
     await userEvent.click(within(rail).getByRole("button", { name: /add project folder/i }));
     expect(await screen.findByLabelText("Add project folder")).toBeInTheDocument();
   });
@@ -1186,11 +1084,8 @@ describe("the projects rail", () => {
    */
   it("names each task's state in full, where no width can cut it", async () => {
     await open(stubClient());
-    const rail = screen.getByRole("region", { name: /^History of / });
-    expect(
-      within(rail).getByRole("button", { name: /demo-deploy.*needs you/i }),
-    ).toBeInTheDocument();
-    expect(within(rail).getByRole("button", { name: /demo-calm.*can sleep/i })).toBeInTheDocument();
+    // #1696: the project card's accessible name carries the state of the run it opens.
+    expect(screen.getByRole("button", { name: /^Open project dale-api-base; can sleep/i })).toBeInTheDocument();
   });
 
   it("opens on the run that needs the operator, not merely the first one", async () => {
@@ -3366,11 +3261,9 @@ describe("controls keep their own guards", () => {
 describe("the rail states each fact once", () => {
   it("a run's state reaches the accessible name exactly once", async () => {
     await open(stubClient());
-    const rail = screen.getByRole("region", { name: /^History of / });
-    const row = within(rail).getByRole("button", { name: /^demo-deploy/i });
-    const matches = (row.textContent ?? "").match(/needs you/gi) ?? [];
+    const card = screen.getByRole("button", { name: /^Open project / });
+    const matches = (card.textContent ?? "").match(/can sleep/gi) ?? [];
     expect(matches.length).toBeLessThanOrEqual(1);
-    expect(row.querySelector("[title='needs you']")).toBeNull();
   });
 });
 
@@ -3431,109 +3324,6 @@ describe("drafts survive, and the waiting line is true", () => {
 });
 
 describe("the live rail and one run per screen", () => {
-  it("refreshes the loaded rail prefix every fifth successful poll and retries a failed full refresh", async () => {
-    vi.useFakeTimers();
-    const makeRun = (index: number, attention: "can_sleep" | "needs_you") => ({
-      executionId: `run-${String(index).padStart(2, "0")}`,
-      mode: "supervised",
-      status: "running",
-      attention,
-      startedAt: null,
-      lastEventAt: "2026-10-12T12:00:00Z",
-      headSequence: 13,
-    });
-    let firstPageAttention: "can_sleep" | "needs_you" = "can_sleep";
-    let thirdPageAttention: "can_sleep" | "needs_you" = "can_sleep";
-    let holdSecondPage = false;
-    let rejectSecondPage!: (error: Error) => void;
-    const secondPagePending = new Promise<never>((_resolve, reject) => { rejectSecondPage = reject; });
-    const listExecutions = vi.fn(async (options?: { after?: string }) => {
-      if (options?.after === "page-two") {
-        if (holdSecondPage) return secondPagePending;
-        return { executions: Array.from({ length: 20 }, (_, offset) => makeRun(offset + 20, "can_sleep")), hasMore: true, nextCursor: "page-three" };
-      }
-      if (options?.after === "page-three") {
-        return { executions: [makeRun(40, thirdPageAttention)], hasMore: false, nextCursor: null };
-      }
-      return {
-        executions: Array.from({ length: 20 }, (_, index) => makeRun(index, index === 0 ? "needs_you" : firstPageAttention)),
-        hasMore: true,
-        nextCursor: "page-two",
-      };
-    });
-    let status = "running";
-    let eventHead = 13;
-    const client = stubClient({
-      listExecutions,
-      getStatus: vi.fn(async (executionId: string) => ({ ...STATUS, executionId, status })),
-      getEvents: vi.fn(async () => ({ head: ++eventHead, events: [] })),
-    });
-    const settle = async () => act(async () => {
-      for (let turn = 0; turn < 40; turn += 1) await Promise.resolve();
-    });
-    const tick = async () => {
-      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
-      await settle();
-    };
-
-    try {
-      render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
-        session={async () => ({ token: "local-token", project: "dale-api-base" })} pollIntervalMs={4000} />);
-      await settle();
-      const rail = screen.getByRole("region", { name: /^History of / });
-      expect(within(rail).getByRole("button", { name: /^run-00/i })).toBeInTheDocument();
-      fireEvent.click(within(rail).getByRole("button", { name: /show more/i }));
-      await settle();
-      expect(within(rail).getByRole("button", { name: /^run-20/i })).toBeInTheDocument();
-      fireEvent.click(within(rail).getByRole("button", { name: /show more/i }));
-      await settle();
-      expect(within(rail).getByRole("button", { name: /^run-40/i })).toBeInTheDocument();
-      listExecutions.mockClear();
-
-      firstPageAttention = "needs_you";
-      for (let refresh = 0; refresh < 4; refresh += 1) await tick();
-      expect(listExecutions).toHaveBeenCalledTimes(4);
-      expect(listExecutions.mock.calls.every(([options]) => options?.after === undefined)).toBe(true);
-      expect(within(rail).getByRole("button", { name: /^run-01.*needs you/i })).toBeInTheDocument();
-      expect(within(rail).getByRole("button", { name: /^run-40.*can sleep/i })).toBeInTheDocument();
-
-      thirdPageAttention = "needs_you";
-      await tick();
-      expect(listExecutions).toHaveBeenCalledTimes(7);
-      expect(listExecutions.mock.calls.slice(4).map(([options]) => options?.after)).toEqual([undefined, "page-two", "page-three"]);
-      expect(within(rail).getByRole("button", { name: /^run-40.*needs you/i })).toBeInTheDocument();
-
-      for (let refresh = 0; refresh < 4; refresh += 1) await tick();
-      expect(listExecutions).toHaveBeenCalledTimes(11);
-      expect(listExecutions.mock.calls.slice(7).every(([options]) => options?.after === undefined)).toBe(true);
-
-      thirdPageAttention = "can_sleep";
-      status = "paused";
-      holdSecondPage = true;
-      const statusReadsBeforeHold = vi.mocked(client.getStatus).mock.calls.length;
-      const eventReadsBeforeHold = vi.mocked(client.getEvents).mock.calls.length;
-      await tick();
-      expect(listExecutions).toHaveBeenCalledTimes(13);
-      expect(listExecutions.mock.calls.slice(11).map(([options]) => options?.after)).toEqual([undefined, "page-two"]);
-      await tick();
-      expect(vi.mocked(client.getStatus).mock.calls.length).toBeGreaterThan(statusReadsBeforeHold);
-      expect(vi.mocked(client.getEvents).mock.calls.length).toBeGreaterThan(eventReadsBeforeHold);
-      expect(screen.getByText(/^Execution \/ paused$/)).toBeInTheDocument();
-      expect(listExecutions).toHaveBeenCalledTimes(13);
-
-      holdSecondPage = false;
-      await act(async () => { rejectSecondPage(new Error("deep page unavailable")); });
-      await settle();
-      await tick();
-      expect(listExecutions).toHaveBeenCalledTimes(16);
-      expect(listExecutions.mock.calls.slice(13).map(([options]) => options?.after)).toEqual([undefined, "page-two", "page-three"]);
-      expect(within(rail).getByRole("button", { name: /^run-40.*can sleep/i })).toBeInTheDocument();
-    } finally {
-      cleanup();
-      vi.useRealTimers();
-    }
-  });
-
   it("keeps selected-run polling live while one rail refresh is pending or rejected", async () => {
     let releaseRail: () => void = () => {};
     const heldRail = new Promise<void>((resolve) => { releaseRail = resolve; });
@@ -3614,10 +3404,8 @@ describe("the live rail and one run per screen", () => {
       />,
     );
     await screen.findByLabelText("Projects");
-    const rail = screen.getByRole("region", { name: /^History of / });
     await waitFor(() => {
-      const row = within(rail).getByRole("button", { name: /^demo-calm/i });
-      expect(row.textContent).toMatch(/needs you/i);
+      expect(screen.getByRole("button", { name: /^Open project dale-api-base; needs you/i })).toBeInTheDocument();
     });
   });
 
@@ -3778,7 +3566,7 @@ describe("isolation across surfaces, runs and sessions", () => {
     await userEvent.click(screen.getByRole("button", { name: /pause · finish in-flight/i }));
     await screen.findByText(/paused — done/i);
 
-    await userEvent.click(screen.getByRole("button", { name: /^demo-calm/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
     await screen.findByLabelText(/^Run demo-calm/);
     expect(screen.queryByText(/only demo-deploy's problem/)).not.toBeInTheDocument();
     expect(screen.queryByText(/paused — done/i)).not.toBeInTheDocument();
@@ -3852,7 +3640,7 @@ describe("isolation across surfaces, runs and sessions", () => {
     await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
     const idA = client.startTask.mock.calls[0][0] as string;
     const keyA = (client.startTask.mock.calls[0][2] as { idempotencyKey: string }).idempotencyKey;
-    await userEvent.click(screen.getByRole("button", { name: /^demo-deploy/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
     fireEvent.click(screen.getByRole("button", { name: /^disconnect$/i }), { detail: 1 });
     fireEvent.click(screen.getByRole("button", { name: /click again to disconnect/i }), {
       detail: 1,
@@ -4109,7 +3897,7 @@ describe("health and read-state honesty", () => {
     await userEvent.type(await screen.findByLabelText(/bearer token/i), "local-token");
     await userEvent.click(screen.getByRole("button", { name: /^connect$/i }));
     await waitFor(() => expect(screen.queryByText(/stale/i)).not.toBeInTheDocument());
-    expect(await screen.findByText(/No task yet/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Open project .*nothing running/ })).toBeInTheDocument();
   });
 
   /** A refused WebMCP tool call was invisible: the chip lit identically for success and
@@ -4422,7 +4210,7 @@ describe("the exchange", () => {
       render(<App createClient={() => client as unknown as RuntimeClient}
         session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
       await screen.findByLabelText("Projects");
-      await userEvent.click(await screen.findByRole("button", { name: "demo-deploy" }));
+      await userEvent.click(await screen.findByRole("button", { name: /^demo-deploy/ }));
       await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
       const mission = await screen.findByRole("region", { name: "Canvas" });
       await userEvent.click(within(mission).getByRole("tab", { name: "Lanes" }));
@@ -4444,7 +4232,7 @@ describe("the exchange", () => {
   it("titles a team run by its execution and hides the placeholder steps of its demonstration form", async () => {
     const client = stubClient({
       listExecutions: vi.fn(async () => ({ executions: [{ executionId: "demo-deploy", mode: "supervised", status: "running",
-        attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 13, executor: "fixture", objective: "Produce a deployable build." }],
+        attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 13, objective: "Produce a deployable build." }],
         hasMore: false, nextCursor: null })),
       getStatus: vi.fn(async () => ({ ...STATUS, executor: "fixture", attention: "can_sleep", attentionReasons: [] })),
       getTasks: vi.fn(async () => tasksReply("demo-deploy", [taskState({ taskId: "issue-941", issue: 941, lane: "codex-18", claimSequence: 1 })])),
@@ -4452,8 +4240,6 @@ describe("the exchange", () => {
     await open(client);
     await userEvent.click(screen.getByRole("tab", { name: "Graph" }));
     const mission = await screen.findByRole("region", { name: "Canvas" });
-    await waitFor(() => expect(screen.getByRole("button", { name: /^demo-deploy · team work;/ })).toBeInTheDocument());
-    expect(screen.getByText("demo-deploy · team work", { selector: "button[title='demo-deploy']" })).toBeInTheDocument();
     expect(screen.queryByText("Produce a deployable build.")).toBeNull();
     expect(screen.queryByText(/demonstration/)).toBeNull();
     expect(within(mission).getByText("Run demo-deploy")).toBeInTheDocument();
@@ -4986,7 +4772,7 @@ describe("the run it just started", () => {
     await userEvent.type(await screen.findByLabelText(/what should this task do/i), OBJECTIVE);
     await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
     await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(within(screen.getByRole("region", { name: /^History of / })).getByRole("button", { current: true })).toHaveTextContent(committed!));
+    await waitFor(() => expect(document.querySelector(".topbar")).toHaveTextContent(committed!));
     expect(screen.queryByRole("button", { name: /starting/i })).not.toBeInTheDocument();
     finish({ ...PAUSED_EVIDENCE, action: "start", executionId: committed! });
   });
@@ -4997,9 +4783,7 @@ describe("the run it just started", () => {
     expect(await screen.findByRole("region", { name: "Team" })).toBeInTheDocument();
     expect(screen.queryByText("This board is empty.")).not.toBeInTheDocument();
     expect(screen.queryByText("pick a run, or start one")).not.toBeInTheDocument();
-    const rail = screen.getByRole("region", { name: /^History of / });
-    await waitFor(() => expect(within(rail).getByRole("button", { current: true })).toHaveAttribute("title", expect.any(String)));
-    expect(within(rail).getByRole("button", { current: true }).textContent).toContain(id.slice(0, 8));
+    await waitFor(() => expect(document.querySelector(".topbar")).toHaveTextContent(id.slice(0, 8)));
   });
 
   /** #1079 review: `select` clears the act-note, and the start path used to set the note BEFORE
@@ -5031,11 +4815,7 @@ describe("the run it just started", () => {
     // objective; only a MISSING ROUTE answers 404 (which the client reports as null).
     const client = withStarted({ getBriefing: vi.fn(async (id: string) => (id.startsWith("run-") ? BRIEFING : { ...BRIEFING, name: null, objective: null })) });
     const id = await startOne(client);
-    // The rail row: objective as the name, id kept on the row as its address.
-    const rail = screen.getByRole("region", { name: /^History of / });
-    const row = await within(rail).findByRole("button", { name: new RegExp(OBJECTIVE) });
-    expect(row).toHaveAttribute("aria-current", "true");
-    expect(within(rail).getByTitle(id)).toBeInTheDocument();
+    // #1696: the sidebar has no run rows; the run is named in the header below.
     // The header names it too; the id stays reachable on hover.
     const strip = document.querySelector(".topbar") as HTMLElement;
     expect(await within(strip).findByRole("button", { name: OBJECTIVE })).toHaveAttribute("title", id);
@@ -5066,7 +4846,7 @@ describe("a selection that lands while the rail is prefetching", () => {
       listExecutions: vi.fn(async () => ({
         executions: [
           { executionId: "demo-deploy", mode: "supervised", status: "running", attention: "needs_you", startedAt: null, lastEventAt: null, headSequence: 13 },
-          { executionId: GENERATED, mode: "supervised", status: "running", attention: "can_sleep", startedAt: null, lastEventAt: null, headSequence: 3 },
+          { executionId: GENERATED, mode: "supervised", status: "running", attention: "can_sleep", startedAt: null, lastEventAt: "2026-10-12T00:00:00Z", headSequence: 3 },
         ],
         hasMore: false,
         nextCursor: null,
@@ -5078,15 +4858,32 @@ describe("a selection that lands while the rail is prefetching", () => {
       ),
     });
     await open(client);
-    // The rail's prefetch is in flight for the generated row; the operator clicks it now.
+    // The prefetch is in flight for the generated run; the operator opens the project card (its home run) now.
     await waitFor(() => expect(client.getBriefing).toHaveBeenCalledWith(GENERATED));
-    await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByTitle(GENERATED).closest("button")!);
+    await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
     const strip = document.querySelector(".topbar") as HTMLElement;
     expect(await within(strip).findByRole("button", { name: GENERATED })).toBeInTheDocument();
     settle(undefined);
     expect(await within(strip).findByRole("button", { name: "Investigate slow login on mobile" })).toHaveAttribute("title", GENERATED);
     // One read for that run, not one per caller.
     expect(client.getBriefing.mock.calls.filter((call) => (call as unknown[])[0] === GENERATED)).toHaveLength(1);
+  });
+});
+
+describe("the project card opens the team work (#1696)", () => {
+  it("opens gh-team even when another ongoing run is newer", async () => {
+    const run = (executionId: string, lastEventAt: string, attention: string) => ({ executionId, mode: "supervised", status: "running", attention, startedAt: null, lastEventAt, headSequence: 5 });
+    const client = stubClient({
+      listExecutions: vi.fn(async () => ({ executions: [
+        run("other-live", "2026-10-19T12:00:00Z", "needs_you"),
+        run("gh-team", "2026-10-10T12:00:00Z", "can_sleep"),
+      ], hasMore: false, nextCursor: null })),
+      getTasks: vi.fn(async (id: string) => tasksReply(id, id === "gh-team" ? [taskState({ taskId: "issue-1", issue: 1, lane: "l", claimSequence: 1 })] : [])),
+    });
+    await open(client);
+    await waitFor(() => expect(client.getTasks).toHaveBeenCalledWith("gh-team"));
+    await userEvent.click(await screen.findByRole("button", { name: /^Open project / }));
+    await waitFor(() => expect(client.getStatus).toHaveBeenCalledWith("gh-team", true));
   });
 });
 
@@ -5111,8 +4908,7 @@ describe("selecting a run leaves the new-task draft", () => {
     const box = await screen.findByLabelText("What should this task do?");
     await userEvent.type(box, "Rotate the staging credentials");
 
-    const rail = screen.getByRole("region", { name: /^History of / });
-    await userEvent.click(within(rail).getByRole("button", { name: /^demo-calm/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
 
     // The body is the run's, not the draft's.
     await waitFor(() =>
@@ -5178,9 +4974,7 @@ describe("a parked draft keeps its identity, not just its words", () => {
     const firstId = client.startTask.mock.calls[0][0] as string;
     const firstKey = (client.startTask.mock.calls[0][2] as { idempotencyKey: string }).idempotencyKey;
 
-    // The operator goes to look at another run while the outcome is unknown, then comes back.
-    const rail = screen.getByRole("region", { name: /^History of / });
-    await userEvent.click(within(rail).getByRole("button", { name: /^demo-calm/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
     await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
     expect(await screen.findByLabelText("What should this task do?")).toHaveValue(
       "Rotate the staging credentials",
@@ -5243,10 +5037,8 @@ describe("a parked draft keeps its identity, not just its words", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
     await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
-
     // The selection lands while the start is still in flight; THEN the start succeeds.
-    const rail = screen.getByRole("region", { name: /^History of / });
-    await userEvent.click(within(rail).getByRole("button", { name: /^demo-calm/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
     release();
     await waitFor(() => expect(screen.queryByLabelText("What should this task do?")).not.toBeInTheDocument());
 
@@ -5288,14 +5080,14 @@ describe("a parked draft keeps its identity, not just its words", () => {
     await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
     expect(client.startTask).toHaveBeenCalledTimes(1);
 
-    await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByRole("button", { name: /^demo-calm/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
     await userEvent.click(screen.getByRole("button", { name: /new task in dale-api-base/i }));
     expect(await screen.findByLabelText("What should this task do?")).toBeDisabled();
     expect(screen.getByRole("button", { name: /starting/i })).toBeDisabled();
 
     // The old start is still pending, but the selected run starts its own read. Its busy state
     // must survive the old completion and its receipt must not be painted onto this run.
-    await userEvent.click(within(screen.getByRole("region", { name: /^History of / })).getByRole("button", { name: /^demo-calm/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
     holdRefresh = true;
     const refreshButton = screen.getByRole("button", { name: "Refresh" });
     const statusCallsBeforeRefresh = client.getStatus.mock.calls.length;

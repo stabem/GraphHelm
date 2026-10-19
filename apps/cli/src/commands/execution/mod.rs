@@ -389,10 +389,25 @@ pub(crate) fn load_projection(
     store: &LocalEventRepository,
     execution: Option<&str>,
 ) -> Result<(RepositoryScope, String, ExecutionProjection), Failure> {
+    load_projection_at(store, execution)
+        .map(|(scope, stream, projection, _)| (scope, stream, projection))
+}
+
+/// [`load_projection`] plus the head sequence the projection was folded to: what a command that
+/// decides on the projection and then appends passes to [`append_event`] (#1670).
+pub(crate) fn load_projection_at(
+    store: &LocalEventRepository,
+    execution: Option<&str>,
+) -> Result<(RepositoryScope, String, ExecutionProjection, u64), Failure> {
     let (scope, stream, history) = resolve_stream(store, execution)?;
     let projection = status::replay_cached(store.root(), &scope, &stream, &history)
         .map_err(|error| replay_failure(&error))?;
-    Ok((scope, stream, projection))
+    Ok((
+        scope,
+        stream,
+        projection,
+        at_sequence(&history).unwrap_or(0),
+    ))
 }
 
 /// Re-reads and replays a stream already resolved to a `scope`/`stream` pair — every command that
@@ -403,11 +418,22 @@ pub(super) fn replay_projection(
     scope: &RepositoryScope,
     stream: &str,
 ) -> Result<ExecutionProjection, Failure> {
+    replay_projection_at(store, scope, stream).map(|(projection, _)| projection)
+}
+
+/// [`replay_projection`] plus the head it was folded to, for a decision that is followed by an
+/// append (#1670).
+pub(super) fn replay_projection_at(
+    store: &LocalEventRepository,
+    scope: &RepositoryScope,
+    stream: &str,
+) -> Result<(ExecutionProjection, u64), Failure> {
     let history = store
         .read_replay_stream(scope, stream)
         .map_err(|error| repository_failure(&error))?;
-    status::replay_cached(store.root(), scope, stream, &history)
-        .map_err(|error| replay_failure(&error))
+    let projection = status::replay_cached(store.root(), scope, stream, &history)
+        .map_err(|error| replay_failure(&error))?;
+    Ok((projection, at_sequence(&history).unwrap_or(0)))
 }
 
 /// The actor for owner-initiated commands: approve, pause, resume, cancel, signal.
@@ -441,15 +467,36 @@ pub(super) fn idempotency_key(prefix: &'static str) -> OpaqueId {
 }
 
 /// Appends one prepared event to `stream` at its next sequence.
-pub(super) fn append_event(
+/// Appends a record that no state check guards (a signal, a lease) at the store's current head.
+/// Anything appended after a decision on a projection goes through [`append_event`] instead.
+pub(super) fn append_record_at_head(
     store: &LocalEventRepository,
     scope: &RepositoryScope,
     stream: &OpaqueId,
     event: NewEvent,
 ) -> Result<(), Failure> {
-    let next_sequence = store
+    let head = store
         .next_sequence(scope, stream.as_str())
-        .map_err(|error| repository_failure(&error))?;
+        .map_err(|error| repository_failure(&error))?
+        .saturating_sub(1);
+    append_event(store, scope, stream, head, event)
+}
+
+/// Appends `event` at `observed + 1`, where `observed` is the head of the history the caller's
+/// decision was made on (#1670). Taking the sequence from the store instead let two writers that
+/// both checked the same state both append: two concurrent pauses wrote paused -> paused and the
+/// stream replayed as `GHE005_INTEGRITY_FAILURE` for good. The store refuses a stale sequence with
+/// `GHE001_SEQUENCE_CONFLICT`, so the loser is told the state moved instead of corrupting it.
+pub(super) fn append_event(
+    store: &LocalEventRepository,
+    scope: &RepositoryScope,
+    stream: &OpaqueId,
+    observed: u64,
+    event: NewEvent,
+) -> Result<(), Failure> {
+    let next_sequence = observed
+        .checked_add(1)
+        .ok_or_else(|| execution_state("the stream head is at its limit", "/execution"))?;
     let request = PreparedAppend::new(
         scope.clone(),
         stream.clone(),
@@ -556,7 +603,7 @@ pub(super) fn record_outcome_with_key(
         reason,
         executor,
     } = recorded;
-    let projection = replay_projection(store, scope, stream.as_str())?;
+    let (projection, observed) = replay_projection_at(store, scope, stream.as_str())?;
     let current = projection
         .node_states
         .get(node)
@@ -591,6 +638,7 @@ pub(super) fn record_outcome_with_key(
         store,
         scope,
         stream,
+        observed,
         NewEvent::new(
             key,
             actor.clone(),

@@ -35,7 +35,6 @@ const KNOWN_USERS = [
   "components/board.test.tsx",
   "components/panel.saybox.test.tsx",
   "components/compose.test.tsx",
-  "components/rail.naming.test.tsx",
 ];
 
 describe("the user-event delay", () => {

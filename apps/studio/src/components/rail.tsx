@@ -7,8 +7,8 @@
  * not be.
  *
  * ONE CARD PER PROJECT (#1654, D-060). The rail shows each project as one card and no run rows;
- * the card opens the project's live run (`homeRun`), and every run stays reachable as history
- * inside the project's screen (`RunHistory`).
+ * the card is labelled with the project name and opens the project's work directly (`homeRun`);
+ * there is no run history in the UI (#1696).
  *
  * ONE LONG THING PER LINE, and that rule is the whole layout. The folder name owns its line; the
  * task id owns its own. Everything beside them is fixed width, so when the rail narrows the
@@ -25,43 +25,10 @@
  */
 
 import { useEffect, useState } from "react";
-import { Activity, Check, Folder, FolderPlus, ListFilter, Pencil, Plus, RotateCcw, Trash2, X, SlidersHorizontal } from "lucide-react";
+import { Activity, Check, Folder, FolderPlus, Pencil, Plus, X, SlidersHorizontal } from "lucide-react";
 
 import type { ExecutionSummary, RuntimePreviousExit } from "../runtime/types";
-import { ago, hueOf, initialOf, readable, runLabel, verdictOf } from "./format";
-
-/** How the rail groups its runs. "day" is the default: the work of each day together, the day
- * touched last on top, so the run being worked on now is the first thing on the list. */
-export type RailGroup = "day" | "status" | "none";
-/** Which clock orders runs inside a group: the last recorded event, or the start. */
-export type RailSort = "activity" | "started";
-const VIEW_KEY = "graphhelm.studio.rail-view";
-
-function loadView(): { group: RailGroup; sort: RailSort } {
-  try {
-    const parsed: unknown = JSON.parse(window.localStorage.getItem(VIEW_KEY) ?? "null");
-    const value = (parsed ?? {}) as { group?: unknown; sort?: unknown };
-    return {
-      group: value.group === "status" || value.group === "none" ? value.group : "day",
-      sort: value.sort === "started" ? "started" : "activity",
-    };
-  } catch {
-    return { group: "day", sort: "activity" };
-  }
-}
-
-function saveView(view: { group: RailGroup; sort: RailSort }): void {
-  try {
-    window.localStorage.setItem(VIEW_KEY, JSON.stringify(view));
-  } catch {
-    // A browser that refuses storage still gets the choice for this page; it just is not kept.
-  }
-}
-
-function timeOf(value: string | null | undefined): number {
-  const parsed = value ? Date.parse(value) : NaN;
-  return Number.isFinite(parsed) ? parsed : -Infinity;
-}
+import { ago, readable } from "./format";
 
 /** The local calendar day a time falls on, as a sortable key and a label ("Today", "Oct 2"). */
 export function dayOf(time: number, now: Date = new Date()): { key: string; label: string } {
@@ -77,11 +44,6 @@ export function dayOf(time: number, now: Date = new Date()): { key: string; labe
   return { key, label };
 }
 
-function sortedBy(runs: ExecutionSummary[], sort: RailSort): ExecutionSummary[] {
-  const clock = (run: ExecutionSummary) => timeOf(sort === "started" ? run.startedAt : run.lastEventAt);
-  return [...runs].sort((a, b) => clock(b) - clock(a) || (a.executionId < b.executionId ? -1 : a.executionId > b.executionId ? 1 : 0));
-}
-
 function recentFirst(runs: ExecutionSummary[]): ExecutionSummary[] {
   return [...runs].sort((a, b) => {
     const at = a.lastEventAt ? Date.parse(a.lastEventAt) : NaN;
@@ -90,19 +52,6 @@ function recentFirst(runs: ExecutionSummary[]): ExecutionSummary[] {
     const timeB = Number.isFinite(bt) ? bt : -Infinity;
     return timeB - timeA || (a.executionId < b.executionId ? -1 : a.executionId > b.executionId ? 1 : 0);
   });
-}
-
-function railTitle(value: string): string {
-  const oneLine = value.replace(/\s+/g, " ").trim();
-  if (oneLine.length <= 40) return oneLine;
-  const words = oneLine.split(" ");
-  let title = "";
-  for (const word of words) {
-    const next = title ? `${title} ${word}` : word;
-    if (next.length > 39) break;
-    title = next;
-  }
-  return title ? `${title}…` : "Run";
 }
 
 function relativeActivity(value: string | null | undefined): string {
@@ -114,10 +63,6 @@ function relativeActivity(value: string | null | undefined): string {
   if (age.endsWith("h")) return `${age.slice(0, -1)} h ago`;
   if (age.endsWith("d")) return `${age.slice(0, -1)} d ago`;
   return age;
-}
-
-function hasRecordedActivity(run: ExecutionSummary): boolean {
-  return typeof run.lastEventAt === "string" && Number.isFinite(Date.parse(run.lastEventAt));
 }
 
 export interface Project {
@@ -148,9 +93,6 @@ export function ProjectRail({
   onOpenModels,
   projectName,
   onRenameProject,
-  removedRuns = [],
-  onRemoveRun,
-  onRestoreRun,
   onRefreshRuntimeDetails,
   briefings = {},
   teamRuns,
@@ -180,9 +122,6 @@ export function ProjectRail({
   onOpenModels: () => void;
   projectName?: string;
   onRenameProject?: (name: string) => boolean;
-  removedRuns?: string[];
-  onRemoveRun?: (id: string) => void;
-  onRestoreRun?: (id: string) => void;
   onRefreshRuntimeDetails?: () => void;
   /** What each run is ABOUT, by id, read from its briefing (#1077). A generated `run-<uuid>`
    * wears its objective as its name; the id stays visible below it. Absent
@@ -308,8 +247,8 @@ export function ProjectRail({
             </div>
             {(() => {
               const home = homeRun(project.runs, teamRuns);
-              const on = project.runs.some((run) => run.executionId === selected);
-              const state = home ? (home.executionId === selected && selectedPresentation ? selectedPresentation.status : readable(home.attention)) : "nothing running";
+              const on = home !== null && home.executionId === selected;
+              const state = home ? (on && selectedPresentation ? selectedPresentation.status : readable(home.attention)) : "nothing running";
               return (
                 <button
                   type="button"
@@ -320,7 +259,7 @@ export function ProjectRail({
                   onClick={() => (home ? onSelect(home.executionId) : onNewTask())}
                 >
                   <span className="run-lines">
-                    <span className="run-id">{state}</span>
+                    <span className="run-id">{project.name}</span>
                     <span className="run-when">{home ? `${relativeActivity(home.lastEventAt)} · ${readable(home.status)}` : "start a task"}</span>
                   </span>
                 </button>
@@ -328,12 +267,6 @@ export function ProjectRail({
             })()}
           </div>
         ))}
-        {removedRuns.length > 0 && (
-          <div className="removed-runs" aria-label="Removed tasks">
-            <p className="lbl">Removed from this browser</p>
-            {removedRuns.map((id) => <button type="button" className="show-more" key={id} onClick={() => onRestoreRun?.(id)}><RotateCcw aria-hidden="true" /> restore {id}</button>)}
-          </div>
-        )}
       </div>
 
       <button type="button" className="add-project" onClick={onOpenModels}>
@@ -350,214 +283,14 @@ export function ProjectRail({
   );
 }
 
-/** The project's live run: the run its card opens (#1654). A run carrying task records is the
- * project's work guided by issues, so it wins; otherwise the newest ongoing run; otherwise the
- * newest run of any status. Every other run is history inside the project's screen. */
+/** The run the project card opens (#1696, D-060). Only the project's real work counts: a run
+ * carrying task records (the work guided by issues) wins; otherwise the newest ongoing run;
+ * otherwise the newest run. A demonstration run (the fixture executor) is never the project's
+ * view; with nothing but demonstrations the card starts a task instead. */
 export function homeRun(runs: ExecutionSummary[], teamRuns?: ReadonlySet<string>): ExecutionSummary | null {
-  const team = recentFirst(runs.filter((run) => teamRuns?.has(run.executionId)));
+  const real = runs.filter((run) => teamRuns?.has(run.executionId) || run.executor !== "fixture");
+  const team = recentFirst(real.filter((run) => teamRuns?.has(run.executionId)));
   if (team.length > 0) return team[0];
-  const ongoing = recentFirst(runs.filter((run) => ["running", "paused", "blocked"].includes(run.status)));
-  return ongoing[0] ?? recentFirst(runs)[0] ?? null;
-}
-
-/**
- * Every run of one project, as history inside the project's screen (#1654). The rail no longer
- * lists runs: it shows one card per project. This is the grouped list the rail used to carry,
- * moved, so no run stops being reachable and no event is touched - choosing a row only changes
- * which run this page shows.
- */
-export function RunHistory({
-  project,
-  selected,
-  hasMore,
-  busy,
-  onSelect,
-  onLoadMore,
-  onNewTask,
-  onRemoveRun,
-  briefings = {},
-  teamRuns,
-  selectedPresentation = null,
-  defaultOpen = false,
-}: {
-  project: Project;
-  selected: string;
-  hasMore: boolean;
-  busy: boolean;
-  onSelect: (id: string) => void;
-  onLoadMore: () => void;
-  onNewTask: () => void;
-  onRemoveRun?: (id: string) => void;
-  briefings?: Record<string, { objective: string | null; name?: string | null } | null>;
-  teamRuns?: ReadonlySet<string>;
-  selectedPresentation?: { key: string; status: string } | null;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
-  const [historyMode, setHistoryMode] = useState<"auto" | "shown" | "hidden">("auto");
-  const [view, setView] = useState(loadView);
-  const [viewMenu, setViewMenu] = useState(false);
-  const chooseView = (next: Partial<{ group: RailGroup; sort: RailSort }>) => {
-    const merged = { ...view, ...next };
-    setView(merged);
-    saveView(merged);
-  };
-  const runs = project.runs;
-  return (
-    <section className="run-history" aria-label={`History of ${project.name}`}>
-      <div className="run-history-head">
-        <button type="button" className="run-group-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-          History ({runs.length})
-        </button>
-        {open && (
-              <button
-                type="button"
-                className={`icon-action ${viewMenu ? "on" : ""}`}
-                onClick={() => setViewMenu((open) => !open)}
-                aria-label="Group and sort tasks"
-                aria-expanded={viewMenu}
-                title="Group and sort"
-              >
-                <ListFilter aria-hidden="true" />
-              </button>
-        )}
-      </div>
-      {open && (<>
-            {viewMenu && (
-              <div className="rail-view-menu" role="group" aria-label="Group and sort tasks">
-                <p className="lbl">Group by</p>
-                {([["day", "Day"], ["status", "Status"], ["none", "None"]] as const).map(([value, text]) => (
-                  <button key={value} type="button" aria-pressed={view.group === value} onClick={() => chooseView({ group: value })}>
-                    <span>{text}</span>{view.group === value && <Check aria-hidden="true" />}
-                  </button>
-                ))}
-                <p className="lbl">Sort by</p>
-                {([["activity", "Last activity"], ["started", "Started"]] as const).map(([value, text]) => (
-                  <button key={value} type="button" aria-pressed={view.sort === value} onClick={() => chooseView({ sort: value })}>
-                    <span>{text}</span>{view.sort === value && <Check aria-hidden="true" />}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="project-runs">
-              {(() => {
-                const dated = runs.filter(hasRecordedActivity);
-                const unknownTime = recentFirst(runs.filter((run) => !hasRecordedActivity(run)));
-                const ongoing = recentFirst(dated.filter((run) => ["running", "paused", "blocked"].includes(run.status)));
-                const history = recentFirst(dated.filter((run) => ["completed", "failed", "cancelled"].includes(run.status)));
-                const unknown = recentFirst(dated.filter((run) => !["running", "paused", "blocked", "completed", "failed", "cancelled"].includes(run.status)));
-                const selectedHistory = history.find((run) => run.executionId === selected);
-                const historyExpanded = historyMode === "shown" || (historyMode === "auto" && ongoing.length === 0);
-                const visibleHistory = historyExpanded ? history : selectedHistory ? [selectedHistory] : [];
-                const renderRows = (runs: ExecutionSummary[]) => runs.map((run) => {
-                const verdict = verdictOf(run.attention);
-                const reviewCount = run.status === "completed" && run.executor !== "fixture" && typeof run.unverifiedResults === "number" && run.unverifiedResults > 0
-                  ? run.unverifiedResults : 0;
-                const on = run.executionId === selected;
-                const rowKey = run.status === "cancelled" ? "cancelled" : reviewCount > 0 ? "review" : on && selectedPresentation ? selectedPresentation.key : verdict.key;
-                const rowStatus = run.status === "cancelled" ? "cancelled" : reviewCount > 0 ? `${reviewCount} result${reviewCount === 1 ? " needs" : "s need"} review` : on && selectedPresentation ? selectedPresentation.status : readable(run.attention);
-                // #1083 F7: the row's own declared objective first (one index read names every
-                // row), the briefing a selection already read as the fallback for an older
-                // Runtime whose rows do not carry it.
-                const team = teamRuns?.has(run.executionId) ?? false;
-                const briefing = team ? { objective: null, teamWork: true } : typeof run.objective === "string" ? { objective: run.objective } : briefings[run.executionId];
-                const label = runLabel(
-                  run.executionId,
-                  briefing,
-                );
-                const fullObjective = briefing?.objective?.trim() ?? "";
-                const fullLabel = fullObjective || label;
-                const titleSource = fullObjective.split(/\r?\n/, 1)[0].replace(/\s+/g, " ").trim() || label;
-                const title = railTitle(titleSource);
-                const relativeTime = relativeActivity(run.lastEventAt);
-                const metaStatus = reviewCount > 0 ? `${reviewCount} result${reviewCount === 1 ? " needs" : "s need"} review` : readable(run.status);
-                return (
-                  <div key={run.executionId} className={`run-row ${rowKey} ${on ? "on" : ""}`}>
-                  <button type="button" className={`run ${rowKey} ${on ? "on" : ""}`} aria-current={on ? "true" : undefined} aria-label={`${title}; ${relativeTime} · ${metaStatus}; ${rowStatus}`} onClick={() => onSelect(run.executionId)} title={rowStatus}>
-                    {/* Each room wears its own derived colour, like a contact in a messenger -
-                        the same hue its actors' avatars key off nothing, but the ROOM's identity
-                        comes from its id, stable across every view. */}
-                    <span
-                      className="avatar"
-                      aria-hidden="true"
-                      style={{ background: `hsl(${hueOf(run.executionId)} 52% 46%)` }}
-                    >
-                      {initialOf(run.executionId)}
-                    </span>
-                    <span className="run-lines">
-                      <span className="run-id" title={fullLabel}>{title}</span>
-                      {/* The id is available on hover or keyboard focus below the short title. */}
-                      {label !== run.executionId && (
-                        <span className="run-address" title={run.executionId} aria-hidden="true">{run.executionId}</span>
-                      )}
-                      <span className="run-when">
-                        {run.lastEventAt && Number.isFinite(Date.parse(run.lastEventAt))
-                          ? <time dateTime={run.lastEventAt}>{relativeTime} · {metaStatus}</time>
-                          : `${relativeTime} · ${metaStatus}`}
-                        {/* #1064: a run started under the fixture executor says so in the index
-                          * too, not only once opened — the word, never a glyph. */}
-                        {run.executor === "fixture" && !team && (
-                          <span className="run-demo"> · demonstration</span>
-                        )}
-                        {reviewCount > 0 && <span className="run-review"> · review needed</span>}
-                      </span>
-                    </span>
-                    {/* The hover word lives on the BUTTON's title; putting it here too made
-                        every row utter its state twice ("needs you needs you"). */}
-                    <span className="run-mark" aria-hidden="true" />
-                    {/* The state reaches a screen reader as words: the mark alone would leave it
-                        as a colour, which is not a name for anything. */}
-                    <span className="sr-only">{rowStatus}</span>
-                  </button>
-                  {onRemoveRun && (confirmRemove === run.executionId ? <span className="run-remove-confirm"><span>Remove from this browser’s list; history stays intact and execution continues.</span><button type="button" onClick={() => { onRemoveRun(run.executionId); setConfirmRemove(null); }}>Remove</button><button type="button" onClick={() => setConfirmRemove(null)} aria-label="Cancel remove">Cancel</button></span> : <button type="button" className="icon-action run-remove" onClick={() => setConfirmRemove(run.executionId)} aria-label={`Remove ${run.executionId} from this browser's list`} title="Remove from this browser’s list"><Trash2 aria-hidden="true" /></button>)}
-                  </div>
-                );
-                });
-                if (view.group !== "status") {
-                  const ordered = sortedBy(runs, view.sort);
-                  if (view.group === "none") return <div role="group" aria-label={`All runs (${ordered.length})`}>{renderRows(ordered)}</div>;
-                  // DAY GROUPS follow the same clock as the sort, so a run sits under the day it
-                  // was last touched (or started) and the newest day is always on top.
-                  const days: { key: string; label: string; runs: ExecutionSummary[] }[] = [];
-                  const undated: ExecutionSummary[] = [];
-                  for (const run of ordered) {
-                    const time = timeOf(view.sort === "started" ? run.startedAt : run.lastEventAt);
-                    if (time === -Infinity) { undated.push(run); continue; }
-                    const day = dayOf(time);
-                    const last = days[days.length - 1];
-                    if (last && last.key === day.key) last.runs.push(run);
-                    else days.push({ ...day, runs: [run] });
-                  }
-                  return <>
-                    {days.map((day) => <div key={day.key} role="group" aria-label={`${day.label} (${day.runs.length})`}><p className="lbl run-group-title">{day.label}</p>{renderRows(day.runs)}</div>)}
-                    {undated.length > 0 && <div role="group" aria-label={`Date unknown (${undated.length})`}><p className="lbl run-group-title">Date unknown</p>{renderRows(undated)}</div>}
-                  </>;
-                }
-                return <>
-                  {ongoing.length > 0 && <div role="group" aria-label={`Ongoing runs (${ongoing.length})`}><p className="lbl run-group-title">Ongoing ({ongoing.length})</p>{renderRows(ongoing)}</div>}
-                  {unknown.length > 0 && <div role="group" aria-label={`Status unknown (${unknown.length})`}><p className="lbl run-group-title">Status unknown ({unknown.length})</p>{renderRows(unknown)}</div>}
-                  {history.length > 0 && <div role="group" aria-label={`Historical runs (${history.length})`}>
-                    <button type="button" className="run-group-toggle" aria-expanded={historyExpanded} onClick={() => setHistoryMode(historyExpanded ? "hidden" : "shown")}>{historyExpanded ? "Hide history" : "Show history"} ({history.length})</button>
-                    {renderRows(visibleHistory)}
-                  </div>}
-                  {unknownTime.length > 0 && <div role="group" aria-label={`Activity time unknown (${unknownTime.length})`}><p className="lbl run-group-title">Activity time unknown ({unknownTime.length})</p>{renderRows(unknownTime)}</div>}
-                </>;
-              })()}
-
-              {runs.length === 0 && (
-                <button type="button" className="rail-empty" onClick={onNewTask}>
-                  No task yet — start one
-                </button>
-              )}
-
-              {hasMore && (
-                <><p className="run-page-note">Loaded runs only; more may have newer activity.</p><button type="button" className="show-more" onClick={onLoadMore} disabled={busy}>
-                  show more
-                </button></>
-              )}
-            </div>
-      </>)}
-    </section>
-  );
+  const ongoing = recentFirst(real.filter((run) => ["running", "paused", "blocked"].includes(run.status)));
+  return ongoing[0] ?? recentFirst(real)[0] ?? null;
 }

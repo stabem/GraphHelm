@@ -325,8 +325,7 @@ describe("the stylesheet and the components agree", () => {
   // selecting a run scrolled the hidden overflow into view, cutting the project name.
   it("keeps the rail's rows no wider than the rail (#1155)", () => {
     expect(ruleOf(".projects")).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-    expect(ruleOf(".project-runs")).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-    expect(ruleOf(".run-row .run-when")).toMatch(/text-overflow:\s*ellipsis/);
+    expect(ruleOf(".project-card .run-when")).toMatch(/text-overflow:\s*ellipsis/);
   });
 
   it("keeps the Chat column below the top bar at narrow viewport widths (#797)", () => {

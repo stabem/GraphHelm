@@ -109,7 +109,11 @@ function AgentBoard({ rows, agents = [], onOpenBotDetails, onNameBot }: { rows: 
             : tag && full.startsWith(tag) ? full.slice(tag.length).trim() : full;
           const bot = agents.find((b) => b.name === r.name);
           return (
-            <li key={bot ? `bot:${bot.key}` : `lane:${r.name}`} className="ab-row">
+            // #1556: the card's name says what the lane is doing (lane, status, step, slot command)
+            // and leaves the pill's running clock out, so a journey can address it and the name
+            // changes only when the work does.
+            <li key={bot ? `bot:${bot.key}` : `lane:${r.name}`} className="ab-row"
+              aria-label={[r.name, PILL[r.status], r.step, r.command].filter(Boolean).join(" · ")}>
               <span className="ab-pill" data-status={r.status}>{pill}</span>
               <span className="ab-name">{r.name}</span>
               <span className="ab-what">

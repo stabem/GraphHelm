@@ -7,8 +7,8 @@ use graphhelm_protocols::{
 
 use super::{
     Failure, RecordedOutcome, append_event, execution_state, finish, idempotency_key, is_terminal,
-    load_projection, owner_actor, record_outcome, render, replay_projection, repository_failure,
-    simulation_status_label,
+    load_projection, owner_actor, record_outcome, render, replay_projection, replay_projection_at,
+    repository_failure, simulation_status_label,
 };
 use crate::commands::event_store;
 use crate::output::Outcome;
@@ -102,10 +102,26 @@ pub(crate) fn execute(
         )?;
     }
 
+    // #1670: the cancel appends at the head it re-checks here, after its own node outcomes, so a
+    // concurrent cancel that finished first is refused instead of cancelling a cancelled run.
+    let (latest, observed) = replay_projection_at(&store, &scope, &stream)?;
+    if matches!(
+        latest.simulation_status,
+        Some(SimulationStatus::Completed | SimulationStatus::Failed | SimulationStatus::Cancelled)
+    ) {
+        return Err(execution_state(
+            &format!(
+                "the execution is already {}",
+                simulation_status_label(latest.simulation_status.as_ref())
+            ),
+            "/execution",
+        ));
+    }
     append_event(
         &store,
         &scope,
         &stream_id,
+        observed,
         NewEvent::new(
             key,
             actor,

@@ -6,7 +6,7 @@ use std::path::Path;
 
 use graphhelm_protocols::{EventKind, NewEvent, OpaqueId, PersistedActor, Sensitivity, WakeLease};
 
-use super::{Failure, append_event, execution_state, resolve_stream};
+use super::{Failure, execution_state, resolve_stream};
 use crate::commands::event_store;
 
 /// Whether an event is CONTENT — something that happened to the work — rather than wake
@@ -112,7 +112,8 @@ pub(crate) fn arm(
     let mut attempts = 0;
     loop {
         attempts += 1;
-        let appended = append_event(
+        // A lease guards no state transition: a record, appended at the head (#1670).
+        let appended = super::append_record_at_head(
             &store,
             &scope,
             &stream_opaque,

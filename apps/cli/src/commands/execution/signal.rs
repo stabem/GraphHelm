@@ -16,8 +16,8 @@ use graphhelm_protocols::{
 
 use super::attachments::{ImageAttachment, MAX_ATTACHMENTS};
 use super::{
-    Failure, append_event, argument, execution_state, finish, idempotency_key, load_projection,
-    owner_actor, repository_failure, signal_invalid, signal_unrecordable,
+    Failure, argument, execution_state, finish, idempotency_key, load_projection, owner_actor,
+    repository_failure, signal_invalid, signal_unrecordable,
 };
 use crate::commands::event_store;
 use crate::output::Outcome;
@@ -919,7 +919,7 @@ fn record_once(
         }
         None => {
             for event in pending {
-                append_event(store, &scope, &stream_id, event)?;
+                super::append_record_at_head(store, &scope, &stream_id, event)?;
             }
         }
     }

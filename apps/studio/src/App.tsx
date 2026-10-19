@@ -85,7 +85,7 @@ import { teamLinks, teamModel } from "./runtime/team";
 import { needsYou, type DraftItem, type StepItem } from "./runtime/needs-you";
 import { buildHandover, hiddenThisSession, hideThisSession, readLastSeen, shouldShowHandover, writeLastSeen } from "./runtime/handover";
 import { EVERYONE, describeActivity, namesOf } from "./runtime/threads";
-import { ProjectRail, RunHistory } from "./components/rail";
+import { ProjectRail } from "./components/rail";
 import { Composer } from "./components/compose";
 import { Models } from "./components/models";
 import { AddProject } from "./components/addproject";
@@ -234,7 +234,7 @@ export default function App({
   const restoredOutsidePage = useRef(new Set<string>());
   const {
     project, projectPath, onDemandLanes, removedRuns, removedRunsRef, projectPreferenceNotice,
-    openProject, resetProject, renameProject, removeRunFromView, restoreRun,
+    openProject, resetProject, renameProject,
   } = useProjectPrefs({ clientRef, executionsRef, restoredOutsidePage, setExecutions, listPageSize: LIST_PAGE_SIZE });
   useEffect(() => {
     executionsRef.current = executions;
@@ -1128,11 +1128,13 @@ export default function App({
       // Bounded at 50 hops (1,000 runs) - a triage pick, not a full index scan; the rail still
       // shows page one and the selected run loads by id regardless of which page held it.
       const visible = (row: ExecutionSummary) => !removedRunsRef.current.includes(row.executionId);
-      let firstVisible = page.executions.find(visible);
+      // #1696: a demonstration (fixture) run is never the project's view, so it is never the opening pick.
+      const real = (row: ExecutionSummary) => visible(row) && row.executor !== "fixture";
+      let firstVisible = page.executions.find(real);
       // The first page may contain several runs needing attention. Open the one whose log
       // changed most recently, so a quiet old run does not hide the conversation in progress.
       const mostRecentNeedsYou = (rows: ExecutionSummary[]) => rows
-        .filter((row) => visible(row) && row.attention === "needs_you")
+        .filter((row) => real(row) && row.attention === "needs_you")
         .reduce<ExecutionSummary | undefined>((best, row) => {
           if (best === undefined) return row;
           const at = row.lastEventAt ? Date.parse(row.lastEventAt) : NaN;
@@ -1144,7 +1146,7 @@ export default function App({
       for (let hops = 0; candidate === undefined && cursor !== null && hops < 50; hops += 1) {
         const next = await client.listExecutions({ after: cursor, limit: LIST_PAGE_SIZE });
         if (clientRef.current !== client) return;
-        firstVisible ??= next.executions.find(visible);
+        firstVisible ??= next.executions.find(real);
         candidate = mostRecentNeedsYou(next.executions);
         cursor = next.hasMore ? next.nextCursor : null;
       }
@@ -1785,6 +1787,28 @@ export default function App({
     if (!selected || !runTasks || runTasks.length === 0) return;
     setTeamRuns((seen) => (seen.has(selected) ? seen : new Set(seen).add(selected)));
   }, [selected, runTasks]);
+  // #1696: the project card opens the team work, so the run carrying task records must be known
+  // BEFORE anything is selected: ask the public tasks route once for each of the newest runs.
+  const probedForTeam = useRef(new Set<string>());
+  const probedClient = useRef<RuntimeClient | null>(null);
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!connected || !client) return;
+    if (probedClient.current !== client) {
+      probedClient.current = client;
+      probedForTeam.current.clear();
+      setTeamRuns(new Set());
+    }
+    const newest = [...executions].sort((x, y) => (Date.parse(y.lastEventAt ?? "") || 0) - (Date.parse(x.lastEventAt ?? "") || 0)).slice(0, 12);
+    for (const run of newest) {
+      if (probedForTeam.current.has(run.executionId)) continue;
+      probedForTeam.current.add(run.executionId);
+      void client.getTasks(run.executionId).then((reply) => {
+        if (clientRef.current !== client || !reply || reply.tasks.length === 0) return;
+        setTeamRuns((seen) => (seen.has(run.executionId) ? seen : new Set(seen).add(run.executionId)));
+      }).catch(() => { probedForTeam.current.delete(run.executionId); });
+    }
+  }, [connected, executions, clientRef]);
   const teamRun = !!selected && teamRuns.has(selected);
   // #479: a message's issue/PR numbers link to the run's GitHub repository (read off its task
   // records) and a journey id it names opens the Journey tab on that journey.
@@ -2124,10 +2148,6 @@ export default function App({
   const visibleExecutions = executions.filter((run) => !removedRuns.includes(run.executionId));
   // #1654: one card per project. The rail shows the project; its runs are history in the stage.
   const railProject = { name: project ?? "this runtime", path: projectPath, runs: visibleExecutions.map((run) => run.executionId === selected && pendingOwnerReview ? { ...run, attention: "needs_you" as const } : run) };
-  const removeRun = (id: string) => {
-    removeRunFromView(id);
-    if (selected === id) select("");
-  };
 
   const conversationVisible = talkOpen && (draft !== null || !["node", "agent", "talk"].includes(focus.kind));
 
@@ -2242,9 +2262,6 @@ export default function App({
         }}
         projectName={project ?? undefined}
         onRenameProject={renameProject}
-        removedRuns={removedRuns}
-        onRemoveRun={removeRun}
-        onRestoreRun={restoreRun}
         briefings={briefings}
         teamRuns={teamRuns}
       />
@@ -2398,32 +2415,6 @@ export default function App({
               <LogOut aria-hidden="true" />
             </button>
         </header>
-        {connected && (
-          <RunHistory
-            defaultOpen
-            project={railProject}
-            selected={selected}
-            hasMore={nextCursor !== null}
-            busy={busy}
-            onSelect={(id) => {
-              setModelsOpen(false);
-              select(id);
-              if (typeof window.matchMedia === "function" && !window.matchMedia("(min-width: 901px)").matches) {
-                setProjectsOpen(false);
-                setTalkOpen(false);
-              }
-            }}
-            onLoadMore={() => void loadList({ append: true, cursor: nextCursor })}
-            onNewTask={() => {
-              setModelsOpen(false);
-              startDraft();
-            }}
-            onRemoveRun={removeRun}
-            briefings={briefings}
-            teamRuns={teamRuns}
-            selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded · graph step waiting" } : null}
-          />
-        )}
 
         {error && (
           <div className="banner" role="alert">

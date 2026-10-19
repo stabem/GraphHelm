@@ -372,6 +372,16 @@ describe("LanesTimeline", () => {
     expect(row.querySelector(".ab-doing")).toHaveTextContent("D:/gh/c");
   });
 
+  it("#1556: a card is named by what its lane is doing, without its running clock", async () => {
+    render(<LanesTimeline lanes={[lanes[1]!]} now={now} windowMs={1000} slots={[
+      { root: "D:/gh/c", ok: true, holder: { lane: "gh-claude-6", label: "cargo test -p studio", pid: 1, worktree: null, heldSeconds: 240 }, waiting: [] },
+    ]} />);
+    await fastUserEvent().click(screen.getByRole("button", { name: "Working 1" }));
+    // The journey flow (studio-lanes-board) addresses the card by this name; the pill's "4m" is
+    // left out, so the name only changes when what the lane is doing changes.
+    expect(screen.getByRole("listitem", { name: "gh-claude-6 · Building · proving · cargo test -p studio" })).toBeInTheDocument();
+  });
+
   it("shows queued position and wait duration once with the build location", async () => {
     render(<LanesTimeline lanes={[lanes[1]!]} now={now} windowMs={1000} slots={[{
       root: "D:/gh", ok: true, holder: { lane: "gh-claude-5", label: null, pid: 1, worktree: null, heldSeconds: 240 },

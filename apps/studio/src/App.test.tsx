@@ -623,6 +623,19 @@ describe("live team layout", () => {
     sessionStorage.clear();
   });
 
+  // #1636: since #617 no control selects the Team canvas, and this suite's beforeEach seeds "team",
+  // so the card was proven only on a tab the owner cannot reach. On the default canvas (no saved
+  // tab) the owner who returns after a long gap still sees the handover.
+  it("shows the handover on the default canvas, which is where the owner lands", async () => {
+    sessionStorage.removeItem("graphhelm.studio.canvas-tab");
+    localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
+    await open(longGapClient());
+    const card = await screen.findByRole("region", { name: "While you were away" });
+    expect(card).toHaveTextContent("24 records");
+    await userEvent.click(within(card).getByRole("button", { name: "Got it" }));
+    expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+  });
+
   it("#583: with nothing saved, Graph is the whole page: no handover, no tab strip, no Team tab", async () => {
     sessionStorage.clear();
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");

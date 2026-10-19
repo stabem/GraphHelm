@@ -972,6 +972,28 @@ fn a_flow_marked_observer_missing_is_refused_by_validate_and_approve() {
     assert!(finding(&reply, "flow.observer_missing"), "{reply}");
 }
 
+/// #1684: `journey flows` answers "approvable" as approve does. A committed draft with no recorded
+/// passing preview (the gh-team keel-* drafts' state) is not approvable; once the runner's record
+/// exists for its digest and scope commit, it is. Built on the fixture, not a live flow (#1680).
+#[test]
+fn a_draft_is_approvable_only_once_its_preview_is_recorded() {
+    let dir = committed(EXAMPLE);
+    owner_token(dir.path());
+    let approvable = |dir: &Path| {
+        let (_, listed) = run(dir, &["flows"]);
+        listed["data"]["flows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|flow| flow["id"] == "checkout")
+            .unwrap()["approvable"]
+            .clone()
+    };
+    assert_eq!(approvable(dir.path()), false, "no preview recorded yet");
+    passing_preview(dir.path(), "checkout");
+    assert_eq!(approvable(dir.path()), true, "the preview is recorded");
+}
+
 #[test]
 fn approve_without_the_owner_token_is_refused_and_writes_nothing() {
     let dir = committed(EXAMPLE);

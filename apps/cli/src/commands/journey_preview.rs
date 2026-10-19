@@ -86,7 +86,7 @@ fn flow_and_key(project: &Path, id: &str) -> Result<(Value, String, String)> {
     if !safe_node(&file) {
         return Err(failure("preview.flow_unknown", "/id", 2));
     }
-    let flow = super::journey_flow::read_for_watch(&file, project).map_err(|findings| {
+    let flow = super::journey_flow::read_for_preview(&file, project).map_err(|findings| {
         let finding = findings.into_iter().find(|f| !f.is_warning()).unwrap();
         failure(finding.code, finding.pointer, 2)
     })?;

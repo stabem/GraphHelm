@@ -709,6 +709,30 @@ pub(crate) fn read_for_watch(file: &Path, project: &Path) -> Result<Value, Vec<F
     }
 }
 
+/// #1684: what a preview plays. As `read_for_watch`, and an approved flow edited since its approval
+/// (`flow.approval_stale`) is previewed as the draft it now is: re-approving it needs a recorded
+/// preview, and the approval digest leaves out `status` and `approved`, so the key is unchanged.
+pub(crate) fn read_for_preview(file: &Path, project: &Path) -> Result<Value, Vec<Finding>> {
+    let (text, mut value) = read(file)?;
+    let mut findings = check_snapshot(file, &text, &value, project);
+    findings.retain(|f| {
+        !matches!(
+            f.code,
+            "flow.contract_stale" | "flow.approval_unsigned" | "flow.approval_unverifiable"
+        )
+    });
+    if findings.iter().any(|f| f.code == "flow.approval_stale") {
+        findings.retain(|f| f.code != "flow.approval_stale");
+        value["status"] = json!("draft");
+        value["approved"] = Value::Null;
+    }
+    if findings.iter().any(|f| !f.is_warning()) {
+        Err(findings)
+    } else {
+        Ok(value)
+    }
+}
+
 /// Replay consumes exactly the validated source snapshot, never a second unchecked read.
 pub(crate) fn read_for_replay(file: &Path, project: &Path) -> Result<Value, Vec<Finding>> {
     let (text, value) = read(file)?;
@@ -1258,6 +1282,23 @@ fn write_batch(writes: &BTreeMap<std::path::PathBuf, Vec<u8>>) -> std::io::Resul
     Ok(())
 }
 
+/// #1309 card 1c, #1684: the preview gate, one answer for approve and for `journey flows`'
+/// `approvable`: a recorded passing preview of `flow` at its digest and scope commit, or the
+/// finding approve refuses on.
+fn preview_gate(project: &Path, id: &str, flow: &Value) -> Option<Finding> {
+    let scope_commit = super::journey_preview::scope_commit_of(project, id, flow);
+    let passed =
+        super::journey_owner::previewed(project, id, &approval_digest(flow), &scope_commit)
+            .unwrap_or(false);
+    (!passed).then(|| {
+        Finding::new(
+            "flow.preview_not_passed",
+            "",
+            "approve requires a recorded passing preview of this flow at its scope commit",
+        )
+    })
+}
+
 /// The findings `run_approve` refuses on: everything `semantic` reports except what approval
 /// itself clears (a stale binding, drift), plus non-canonical bytes.
 fn approval_findings(file: &Path, text: &str, flow: &Value, project: &Path) -> Vec<Finding> {
@@ -1310,7 +1351,8 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
             };
             let accepted = approval_findings(file, &text, &flow, &project)
                 .iter()
-                .all(Finding::is_warning);
+                .all(Finding::is_warning)
+                && preview_gate(&project, id, &flow).is_none();
             let stale = findings.iter().any(|f| f.code == "flow.approval_stale");
             let drifted = flow["drift"].as_array().is_some_and(|d| !d.is_empty());
             let settled = flow["status"] == "approved" && !stale && !drifted;
@@ -1714,17 +1756,7 @@ pub(crate) fn approve_as(id: &str, project: std::path::PathBuf) -> Outcome {
     let mut findings = approval_findings(file, &text, &flow, &project);
     // #1309 ruling A, card 1c: the owner approves what the preview runner recorded passing on
     // this flow's digest and scope commit. A kept `state.json` is a cache and proves nothing.
-    let scope_commit = super::journey_preview::scope_commit_of(&project, &args.id, &flow);
-    let passed =
-        super::journey_owner::previewed(&project, &args.id, &approval_digest(&flow), &scope_commit)
-            .unwrap_or(false);
-    if !passed {
-        findings.push(Finding::new(
-            "flow.preview_not_passed",
-            "",
-            "approve requires a recorded passing preview of this flow at its scope commit",
-        ));
-    }
+    findings.extend(preview_gate(&project, &args.id, &flow));
     if !findings.iter().all(Finding::is_warning) {
         return report(
             COMMAND,

@@ -160,7 +160,7 @@ const TOOLS: [ToolSpec; 48] = [
     },
     ToolSpec {
         name: "evidence",
-        description: "Open the content behind an evidence reference (GET /v1/executions/{executionId}/evidence/{evidenceId}); for up to eight references in one execution, use GET /v1/executions/{executionId}/evidence?ids=<JSON array>.",
+        description: "Open the content behind an evidence reference (GET /v1/executions/{executionId}/evidence/{evidenceId}); for up to 64 references in one execution, use GET /v1/executions/{executionId}/evidence?ids=<JSON array>.",
         schema: evidence_schema,
     },
     ToolSpec {

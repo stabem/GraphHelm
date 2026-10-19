@@ -351,10 +351,10 @@ interface EvidenceReadQueue {
   inFlight: number;
 }
 
-/** The Runtime answers at most eight ids per collection read. One batch at a time made a long
+/** The Runtime answers at most 64 ids per collection read (#1560; it was eight). One batch at a time made a long
  * run's envelopes thousands of serial round trips; four side by side leave the browser's six
  * connections per host room for the poll. */
-const EVIDENCE_BATCH_SIZE = 8;
+const EVIDENCE_BATCH_SIZE = 64;
 const EVIDENCE_BATCHES_IN_FLIGHT = 4;
 
 /** A caller-minted correlation id. `crypto.randomUUID` where available; a bounded random string

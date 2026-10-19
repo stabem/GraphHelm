@@ -2216,6 +2216,22 @@ mod journey_approval_tests {
             &commit,
         );
         assert!(super::validate_owner_signal(&other, &runner, false).is_err());
+        // #1633: a v1 id, the salt the false-pass runs recorded under, no longer names a record.
+        let v1 = {
+            use sha2::{Digest, Sha256};
+            let hash = Sha256::digest(
+                format!(
+                    "previewed
+{}
+{}
+{}",
+                    "checkout", digest, commit
+                )
+                .as_bytes(),
+            );
+            format!("journey-previewed-{}", &hex::encode(hash)[..32])
+        };
+        assert!(super::validate_owner_signal(&record(v1, &commit), &runner, false).is_err());
         // Another kind may not take the prefix.
         let mut squat = good.clone();
         squat["type"] = "note".into();

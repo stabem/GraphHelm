@@ -578,6 +578,41 @@ describe("live team layout", () => {
     expect(await screen.findByRole("button", { name: "1 decision needs you" })).toHaveClass("beacon-lit");
   });
 
+  // #1635: a draft whose only contract is the one the Studio synthesizes from its flow, and whose
+  // preview passed, is approvable from the Graph rail without first opening it in Proof.
+  it("#1635: a previewed draft with no compiled contract offers Approve on the Graph rail", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const flow = { id: "connect", title: "Connect", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "gate", url: "/", state: "stable" }, { id: "run", url: "/run", state: "stable" }],
+      edges: [{ id: "gate.connect", from: "gate", to: "run" }], paths: { main: ["gate.connect"] } };
+    const other = { ...flow, id: "share", title: "Share" };
+    const journeyRun = vi.fn(async () => ({ state: "ready", kind: "preview", result: "pass",
+      screens: { gate: { result: "pass", frame: true }, run: { result: "pass", frame: true } }, edges: { "gate.connect": { result: "pass" } } }));
+    await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [flow, other] })),
+      journeys: vi.fn(async () => ({ journeys: [] })), journeyRun, journeyScreenFrame: vi.fn(async () => null) }));
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    expect(await screen.findByRole("button", { name: "Approve 2" })).toBeEnabled();
+    expect(journeyRun).toHaveBeenCalledWith("share");
+    expect(await screen.findAllByText("✓ passed")).toHaveLength(2);
+    expect(await screen.findByRole("button", { name: "2 decisions need you" })).toHaveClass("beacon-lit");
+  });
+
+  // #1653: the owner saw every flow "passed" 0/N in the Proof list while the detail said Not run:
+  // the preview record said pass but held no step results. The list must agree with the detail.
+  it("#1653: a pass record with no step results reads not run in the Proof list", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const flow = { id: "connect", title: "Connect", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "gate", url: "/", state: "stable" }, { id: "run", url: "/run", state: "stable" }],
+      edges: [{ id: "gate.connect", from: "gate", to: "run" }], paths: { main: ["gate.connect"] } };
+    await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [flow] })),
+      journeys: vi.fn(async () => ({ journeys: [] })),
+      journeyRun: vi.fn(async () => ({ state: "ready", kind: "preview", result: "pass", screens: {}, edges: {} })) }));
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    expect(await screen.findByText("○ not run")).toBeInTheDocument();
+    expect(screen.queryByText("✓ passed")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Approve \d/ })).toBeNull();
+  });
+
   it("shows the handover after a long gap and advances only on Got it", async () => {
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
     await open(longGapClient());
@@ -623,7 +658,22 @@ describe("live team layout", () => {
     sessionStorage.clear();
   });
 
-  it("#583: with nothing saved, Graph is the whole page: no handover, no tab strip, no Team tab", async () => {
+  // #1636: since #617 no control selects the Team canvas, and this suite's beforeEach seeds "team",
+  // so the card was proven only on a tab the owner cannot reach. On the default canvas (no saved
+  // tab) the owner who returns after a long gap still sees the handover.
+  it("shows the handover on the default canvas, which is where the owner lands", async () => {
+    sessionStorage.removeItem("graphhelm.studio.canvas-tab");
+    localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
+    await open(longGapClient());
+    const card = await screen.findByRole("region", { name: "While you were away" });
+    expect(card).toHaveTextContent("24 records");
+    await userEvent.click(within(card).getByRole("button", { name: "Got it" }));
+    expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+  });
+
+  // #1636 narrows #583: Graph stays the whole page (no tab strip, no Team tab), but an undismissed
+  // handover is a slim bar the owner can dismiss, because no other canvas would ever show it.
+  it("#583: with nothing saved, Graph is the whole page: no tab strip, no Team tab; a pending handover is a dismissible bar", async () => {
     sessionStorage.clear();
     localStorage.setItem("graphhelm.handover.last-seen:dale-api-base:demo-deploy", "1");
     await open(longGapClient());
@@ -631,7 +681,10 @@ describe("live team layout", () => {
     expect(screen.getByText("Mission graph")).toBeInTheDocument();
     expect(screen.getByText("Run demo-deploy")).toBeInTheDocument();
     expect(screen.queryByRole("tablist", { name: "Canvas views" })).toBeNull();
+    const bar = screen.getByRole("region", { name: "While you were away" });
+    await userEvent.click(within(bar).getByRole("button", { name: "Hide for now" }));
     expect(screen.queryByRole("region", { name: "While you were away" })).toBeNull();
+    sessionStorage.clear(); // Hide lasts the session; do not hide the next test's card
     expect(within(nav).queryByRole("tab", { name: "Team" })).toBeNull();
     expect(within(nav).getAllByRole("tab").map((t) => t.textContent)).toEqual(["Graph", "Lanes", "Proof"]);
   });

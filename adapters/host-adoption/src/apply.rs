@@ -900,6 +900,17 @@ fn protect_settings(before: &[u8], after: &[u8], operation: &Value) -> Result<()
     }
     let before: Value = serde_json::from_slice(before).map_err(|_| storage::failed())?;
     let after: Value = serde_json::from_slice(after).map_err(|_| storage::failed())?;
+    // The one addition `setup` may make to the user settings: the journey-review plugin and its
+    // marketplace. Any other change falls through to the disable-only check below.
+    if operation["path"] == ".claude/settings.json"
+        && crate::hosts::claude::enable_journey_review(&before)
+            .ok()
+            .flatten()
+            .as_ref()
+            == Some(&after)
+    {
+        return Ok(());
+    }
     let accepted: Vec<String> = serde_json::from_value(operation["disablePlugins"].clone())
         .map_err(|_| storage::failed())?;
     if !accepted.is_empty() {

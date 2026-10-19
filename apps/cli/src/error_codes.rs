@@ -71,6 +71,8 @@ pub const GHCLI038_ACTOR_MISMATCH: &str = "GHCLI038_ACTOR_MISMATCH";
 /// `keel test validation` could not complete its sweep; the diagnostic names why (a failed or
 /// draft flow, missing coverage, a source change), so exit 2 is never silent (ml-saas trial).
 pub const GHCLI039_KEEL_VALIDATION_BLOCKED: &str = "GHCLI039_KEEL_VALIDATION_BLOCKED";
+/// An agent-typed MCP session asked to reject a journey flow; only the owner rejects (#1588).
+pub const GHCLI040_JOURNEY_REJECT_OWNER_ONLY: &str = "GHCLI040_JOURNEY_REJECT_OWNER_ONLY";
 
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
@@ -119,6 +121,7 @@ pub const ALL: &[&str] = &[
     GHCLI036_JOURNEY_APPROVE_OWNER_ONLY,
     GHCLI038_ACTOR_MISMATCH,
     GHCLI039_KEEL_VALIDATION_BLOCKED,
+    GHCLI040_JOURNEY_REJECT_OWNER_ONLY,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

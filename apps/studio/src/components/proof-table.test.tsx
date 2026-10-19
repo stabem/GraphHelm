@@ -4,6 +4,7 @@ import { fastUserEvent } from "../test/user-event";
 import { ProofTable } from "./proof-table";
 import type { Mission } from "../runtime/mission";
 import type { JourneyRunSource } from "./journey-flows";
+import type { JourneyRunView } from "../runtime/types";
 
 const userEvent = fastUserEvent();
 
@@ -86,6 +87,25 @@ describe("ProofTable", () => {
       flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true, screens: [], edges: [], paths: {} }} />);
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
     await waitFor(() => expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ state: "ready", result: "pass" })));
+  });
+  // #1635: a Run blocks until the run ends; the owner saw nothing move for that whole time.
+  it("#1635: says Running at once and tells the rail, until the run answers", async () => {
+    const onRun = vi.fn();
+    let finish!: (value: JourneyRunView) => void;
+    const run: JourneyRunSource = {
+      start: vi.fn(() => new Promise<JourneyRunView>((resolve) => { finish = resolve; })),
+      read: vi.fn(async () => ({ state: "none" as const, screens: {} })),
+      screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null),
+    };
+    render(<ProofTable mission={mission} onOpenTest={vi.fn()} run={run} onRun={onRun}
+      flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true, screens: [], edges: [], paths: {} }} />);
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Running…");
+    expect(screen.getByRole("button", { name: "Run again" })).toBeDisabled();
+    expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ state: "running" }));
+    finish({ state: "ready", kind: "preview", result: "pass", screens: { mark: { result: "pass", frame: false } } });
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(onRun).toHaveBeenLastCalledWith(expect.objectContaining({ state: "ready", result: "pass" }));
   });
   it("#1157: a rerun that failed for want of an observer says so and how to fix it", async () => {
     const failed = { state: "failed" as const, kind: "preview" as const, reason: "driver.observer_missing",

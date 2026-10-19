@@ -35,7 +35,7 @@ import { isRunTeamSignal } from "./runtime/run-team";
 import { isClaudeTaskSignal, isTaskEventSignal } from "./runtime/team-tasks";
 import { RUNTIME_PREDATES_TASKS_ROUTE } from "./runtime/tasks-route";
 import { SlotPoll } from "./components/slot-poll";
-import { MissionView } from "./components/mission-view";
+import { MissionView, withFlowContracts } from "./components/mission-view";
 import { applySessionEnds, laneBars, type TimedTaskEvent } from "./runtime/lane-bars";
 import { skippedEdgeInto } from "./runtime/mission";
 import { TaskGraphs } from "./components/task-graphs";
@@ -2191,7 +2191,7 @@ export default function App({
 
   const pendingJourneyApprovals = (flowsRead.view?.flows ?? []).filter((flow) => {
     if (!flow.approvable || (flow.status !== "draft" && flow.status !== "approval_stale")) return false;
-    const contract = journeysView?.journeys.find((journey) => journey.contractId === flow.id);
+    const contract = withFlowContracts(journeysView?.journeys ?? [], [flow]).find((journey) => journey.contractId === flow.id);
     return contract !== undefined && approvalBlockReason(flow, contract, missionRunFor(contract.contractId)) === null;
   });
   const beaconState = needs.state.kind === "unknown" || pendingJourneyApprovals.length === 0 ? needs.state
@@ -2562,7 +2562,9 @@ export default function App({
             )}
 
             <section className="canvas-column" aria-label="Canvas">
-            {canvasTab === "team" && handover !== null && !handoverHidden && (
+            {/* #1636: on every canvas. No control reaches "team" since #617, so a team-only card was
+                unreachable. It shows only while an undismissed handover exists, and Got it / Hide remove it. */}
+            {handover !== null && !handoverHidden && (
               <HandoverCard handover={handover} onOpen={openRecords} onDismiss={markSeen} onHide={hideHandover} />
             )}
             {/* #583: the Graph tab is the whole page: its own top bar replaces the banner and this strip. */}

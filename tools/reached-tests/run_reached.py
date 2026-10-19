@@ -753,6 +753,10 @@ def run(args: argparse.Namespace) -> int:
                 result = {"index": index, "argv": entry["argv"], "cwd": entry["cwd"], "slot": entry["slot"],
                           "returncode": proc.returncode, "late": elapsed > args.budget_seconds,
                           "stepSeconds": step_seconds, "proofKey": keys[index], "log": str(logfile), "tail": tail}
+                if proc.returncode == 0 and re.search(r"^UNOBSERVED:", tail, re.M):
+                    # A step that could not run its observer is neither a pass nor a red.
+                    result["error"] = (re.findall(r"^UNOBSERVED:.*$", tail, re.M) or ["UNOBSERVED"])[-1].strip()
+                    result["unobserved"] = True
                 if no_pytest_tests:
                     result["returncode"] = proc.returncode or 1
                     result["error"] = "pytest collected no tests"
@@ -781,7 +785,7 @@ def run(args: argparse.Namespace) -> int:
                 elif result["returncode"]:
                     report["status"] = "failed"
                     break
-                elif result.get("error"):
+                elif result.get("error") and not result.get("unobserved"):
                     report["status"] = "failed" if vitest_red else "incomplete"
                     report["error"] = f"step {index} {result['error']}"
                     break
@@ -790,7 +794,9 @@ def run(args: argparse.Namespace) -> int:
                     break
             else:
                 if report["status"] != "blocked":
-                    report["status"] = "failed" if red else "passed" if not report["pending"] else "incomplete"
+                    unobserved = any(e.get("unobserved") for e in report["completed"])
+                    report["status"] = ("failed" if red else "incomplete" if unobserved or report["pending"]
+                                        else "passed")
             if red:
                 report["status"] = "failed"  # a later stop never hides a red that already ran
             report["queueSeconds"] = queue

@@ -11,13 +11,13 @@ risks: [accessibility, critical_ux]
 screens:
   - id: node
     title: "The node shows its recorded kind, tier and effort"
-    url: /?session=studio-fixture
+    url: /?session=studio-fixture&run=routing-fixture
     state: stable
     expect: [{role: note, name: "Delegation choice: implementer · standard · medium"}]
     scope: [apps/studio/src/components/panel.tsx]
   - id: run
     title: The fixture run shows the delegating node
-    url: /?session=studio-fixture
+    url: /?session=studio-fixture&run=routing-fixture
     state: stable
     expect: [{role: button, name: Routed worker · blocked}]
     scope: [apps/studio/src/components/panel.tsx, apps/studio/src/components/mission-view.tsx]

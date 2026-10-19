@@ -92,23 +92,16 @@ pub(crate) fn drafted_signal_id(flow: &str, digest: &str, writer: &str) -> Strin
 /// runner itself (the process that drove the browser) and by no route a caller can ask.
 pub(crate) const PREVIEWED_KIND: &str = "journey_flow_previewed";
 /// The description protocol of that signal.
-pub(crate) const PREVIEWED_PROTOCOL: &str = "graphhelm-journey-preview-v1";
+pub(crate) const PREVIEWED_PROTOCOL: &str = "graphhelm-journey-preview-v2";
 /// The actor the runner appends as.
 pub(crate) const PREVIEW_RUNNER: &str = "journey-preview-runner";
 
 /// `journey-previewed-<32 hex>`: sha256 over the flow id, the draft digest and the scope commit,
-/// so the id names exactly the flow state and code the preview passed on.
+/// so the id names exactly the flow state and code the preview passed on. #1633: salted `v2`,
+/// because v1 records were written for runs that skipped or missed steps; none of them counts.
 pub(crate) fn previewed_signal_id(flow: &str, digest: &str, scope_commit: &str) -> String {
     use sha2::{Digest, Sha256};
-    let hash = Sha256::digest(
-        format!(
-            "previewed
-{flow}
-{digest}
-{scope_commit}"
-        )
-        .as_bytes(),
-    );
+    let hash = Sha256::digest(format!("previewed-v2\n{flow}\n{digest}\n{scope_commit}").as_bytes());
     format!("journey-previewed-{}", &hex::encode(hash)[..32])
 }
 
@@ -183,6 +176,80 @@ pub(crate) fn record_drafted(
         actor,
         writer,
     )
+}
+
+/// #1588: the signal kind of an owner's rejection of a flow, with the reason.
+pub(crate) const REJECTED_KIND: &str = "journey_flow_rejected";
+/// The description protocol of that signal.
+pub(crate) const REJECTED_PROTOCOL: &str = "graphhelm-journey-rejection-v1";
+
+/// `journey-rejected-<16 hex flow>-`: every rejection of a flow shares this prefix, so the latest
+/// one is found without knowing its note.
+fn rejected_prefix(flow: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(format!("rejected\n{flow}").as_bytes());
+    format!("journey-rejected-{}-", &hex::encode(hash)[..16])
+}
+
+/// The owner's latest rejection of `flow` at exactly `digest`: `{note, digest, sequence}`. Only a
+/// record in the reserved execution, by the owner, whose evidence file still hashes to the
+/// recorded envelope counts. An edit to the flow changes its digest, so it clears the rejection.
+pub(crate) fn rejection(project: &Path, flow: &str, digest: &str) -> Option<serde_json::Value> {
+    use sha2::{Digest, Sha256};
+    let prefix = rejected_prefix(flow);
+    let records = project.join(".graphhelm/owner-records");
+    owner_history(project).ok()?.iter().rev().find_map(|event| {
+        let EventKind::SignalRecorded(signal) = &event.kind else {
+            return None;
+        };
+        if event.actor.actor_type() != PersistedActorType::Owner
+            || signal.kind.as_str() != REJECTED_KIND
+            || !signal.signal_id.as_str().starts_with(&prefix)
+        {
+            return None;
+        }
+        let bytes =
+            std::fs::read(records.join(format!("{}.json", signal.signal_id.as_str()))).ok()?;
+        if hex::encode(Sha256::digest(&bytes)) != signal.envelope_sha256.as_str() {
+            return None;
+        }
+        let envelope: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        let description: serde_json::Value =
+            serde_json::from_str(envelope["description"].as_str()?).ok()?;
+        (description["protocol"] == REJECTED_PROTOCOL
+            && description["flowId"] == flow
+            && description["digest"] == digest)
+            .then(|| {
+                serde_json::json!({
+                    "note": description["note"], "digest": digest, "sequence": event.sequence,
+                })
+            })
+    })
+}
+
+/// Appends the owner's rejection of `flow` at `digest` with `note` (#1588). Every rejection is a
+/// new record: the earlier ones and any approval stay in the store.
+pub(crate) fn record_rejection(
+    project: &Path,
+    flow: &str,
+    digest: &str,
+    note: &str,
+) -> Result<(), String> {
+    let note = note.trim();
+    if note.is_empty() || note.len() > CHECKED_MAX {
+        return Err(format!(
+            "--note must say why the flow is rejected (1 to {CHECKED_MAX} bytes)"
+        ));
+    }
+    let id = format!(
+        "{}{}",
+        rejected_prefix(flow),
+        &uuid::Uuid::new_v4().simple().to_string()[..16]
+    );
+    let description = serde_json::json!({
+        "protocol": REJECTED_PROTOCOL, "flowId": flow, "digest": digest, "note": note,
+    });
+    append(project, &id, REJECTED_KIND, &description, flow)
 }
 
 fn owner_history(project: &Path) -> Result<Vec<graphhelm_protocols::EventEnvelope>, String> {

@@ -1582,8 +1582,10 @@ sweep applied; a Runtime without `--workspace-root` refusing and naming it. Plus
 
 ## 51. ADR-046 — An unacknowledged torn journal tail is trimmed on open, with an audit record and a quarantined copy
 
-**Status:** Proposed (#41). Needs the owner's acceptance before any code lands; until then the
-store keeps failing closed.
+**Status:** Accepted (#41). The orchestrator accepted it for the owner on
+https://github.com/stabem/GraphHelm/issues/41#issuecomment-6254202652, under the delegated
+authority in CLAUDE.md: the change is safety-improving and reversible. Decisions 4 and 6 were
+amended by the implementation; the reasons are given inline.
 
 **Context:** The local Event Store refuses to open a journal that ends in a torn tail
 (`IntegrityAt("load_state:journal-tail-unterminated")`, or `Integrity` for a tear mid-record).
@@ -1618,20 +1620,47 @@ the same operation again safely.
    Only an unterminated suffix is recoverable; a corrupt terminated line is never trimmed,
    repaired or skipped.
 3. **Quarantine, never delete.** The trimmed bytes are written first, and synced, to
-   `<events>/quarantine/torn-tail-<journal length>-<sha256 of the bytes>.bin`, creating no
-   links and following none. Only then is the journal truncated to the last newline, synced, and
+   `<events>.quarantine/torn-tail-<journal length>-<sha256 of the bytes>.bin`, creating no
+   links and following none. *Amended:* the Proposed text put the folder inside the store root,
+   but `inspect_layout` allows only a closed list of root entries (`MAX_ROOT_ENTRIES` = 6), so a
+   `quarantine/` there would make the store unrecognizable, a format change. The folder is a
+   SIBLING of the root instead, as #1473's `<events>.runtime-lifecycle.oom` already is. A link or
+   reparse point at that path, or at a file in it, is refused. Each quarantine file is written
+   atomically: a unique temp file in the same folder is written and synced, then renamed over the
+   final name, then the folder is synced. A crash can therefore leave no final file or a complete
+   one, never a short one. A short leftover or stray temp file from an interrupted attempt is
+   replaced rather than refused: the content is fixed by the tail it records, whose hash is in
+   the name (#1626 review, gh-claude-8). Only then is the journal truncated to the last newline, synced, and
    the directory synced. A crash between the two steps leaves the quarantine file plus an
    untrimmed journal, and the next open repeats the same idempotent step.
-4. **Audit record.** The first append after a trim carries a `journal_tail_recovered` event:
-   byte count, sha256 and quarantine file name, never the bytes. The open itself writes nothing to
-   the journal beyond the truncation, so the event store stays append-only for committed
-   history. The Runtime's `previousExit` (#1473's lifecycle record) also reports
-   `torn_tail_recovered`, so the Studio can say why the last write was lost.
+4. **Audit record.** Beside the quarantined bytes in `<events>.quarantine/`, the recovery writes and
+   syncs a manifest,
+   `torn-tail-<journal length>-<sha256>.json`, BEFORE the truncation. It carries
+   `"schema": "graphhelm.journal-tail-recovered/1"`, `quarantine` (the `.bin` name),
+   `trimmedBytes`, `sha256`, `journalBytesBefore` and `journalBytesAfter`, never the bytes.
+   *Amended from the Proposed text*, which put the record in the journal as a
+   `journal_tail_recovered` event carried by the next append. #1607's review named three gaps
+   in that, and the manifest closes all three:
+   - a store-level recovery belongs to no execution, so the event had no honest stream or scope;
+   - with no later append, the record would never be written;
+   - a new event kind is a schema and wire change, needing the catalog digest, goldens and a
+     compatibility note.
+
+   The manifest needs no stream, exists whether or not anything is appended later, and changes no
+   wire contract. The journal stays append-only for committed history: the open writes nothing to
+   it beyond the truncation. Reporting `torn_tail_recovered` in the Runtime's `previousExit`
+   (#1473's lifecycle record) is deferred to its own card, and reads these manifests.
 5. **Bound.** A tail longer than `MAX_BATCH_BYTES` cannot be one in-flight batch. It refuses as
    today (`IntegrityAt("load_state:journal-tail-oversized")`), because something other than a torn
    append wrote it.
-6. **Who may trim.** Only the store's own open under its exclusive lock. No CLI flag skips the
-   checks, and read-only opens (shared lock, verification-only paths) keep refusing.
+6. **Who may trim.** Only the Runtime's start-up: `graphhelm serve` calls
+   `LocalEventRepository::open_recovering_torn_tail` once, before it serves anything. That open
+   trims under the exclusive lock; when it finds the store shared, it takes the same upgrade to
+   the exclusive lock it already takes for any other recovery. Every other open refuses a torn tail
+   with `IntegrityAt("open:journal-tail-awaits-runtime-recovery")`, so a CLI one-shot, an MCP read
+   or a lane waiter never changes the journal behind the Runtime. That covers each request
+   serve's own handlers make and every ordinary `LocalEventRepository::open`. No CLI flag skips the
+   checks. *Amended* as decided on #1626 (orchestrator, after gh-claude-8's review).
 
 **Rejected alternatives:**
 - *Keep failing closed* (today). It is correct for integrity but leaves availability to a human

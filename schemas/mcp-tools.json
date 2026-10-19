@@ -284,6 +284,35 @@
       "name": "journey_approve"
     },
     {
+      "description": "Reject a journey flow with a note (POST /v1/journey-flows/{id}/reject). Owner only.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "ifMatch": {
+            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "note": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "note"
+        ],
+        "type": "object"
+      },
+      "name": "journey_reject"
+    },
+    {
       "description": "Open an approved journey live at one step (POST /v1/journeys/{contractId}/open): a visible browser replays the earlier edges' cached acts and reports the step's state. The reply's sessionId addresses journey_act and journey_close. Owner credential only.",
       "inputSchema": {
         "additionalProperties": false,

@@ -59,6 +59,34 @@ class TimeScaleTests(unittest.TestCase):
                 self.assertIn("GRAPHHELM_TEST_TIME_SCALE", str(refused.exception))
 
 
+class ReconcileRuntimeTimeoutTests(unittest.TestCase):
+    """#1632: the scheduled board sync waits for a slow Runtime; the Stop path keeps its 2 s / 3 s.
+    Offline: `urlopen` is replaced and refuses, so only the timeout each call asked for is seen."""
+
+    def timeouts(self, *extra):
+        token = Path(self.enterContext(tempfile.TemporaryDirectory())) / "events.agent.graphhelm.token"
+        token.write_text("tok", encoding="utf-8")
+        seen = []
+        devnull = open(os.devnull, "w", encoding="utf-8")
+        self.addCleanup(devnull.close)
+
+        def refuse(request, *args, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            raise urllib.error.URLError("offline")
+
+        argv = ["tasks_reconcile.py", "--execution", "gh-team", "--url", "http://127.0.0.1:1",
+                "--token-file", str(token), "--repo", "stabem/GraphHelm", "--lane", "graphhelm", *extra]
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=refuse), \
+                mock.patch.object(sys, "stderr", new=devnull):
+            self.assertEqual(tasks_reconcile.main(), 1)
+        return seen
+
+    def test_runtime_timeout_sets_every_runtime_call_and_its_absence_keeps_the_stop_budget(self):
+        self.assertEqual(self.timeouts("--runtime-timeout", "45"), [45.0])
+        self.assertEqual(self.timeouts(), [2])
+
+
 class ReconciledDigestTests(unittest.TestCase):
     """#1195: an unchanged reconcile reply is not posted again. Offline: `request` is replaced."""
 

@@ -22,6 +22,11 @@
       "name": "keel",
       "source": "./plugins/keel",
       "description": "Keel's plan, execute, review and merge skills for any project; no Runtime, MCP or journeys."
+    },
+    {
+      "name": "journey-review",
+      "source": "./plugins/journey-review",
+      "description": "Draws a GraphHelm journey run inline in the Claude Code chat, with Approve and Reject."
     }
   ]
 }

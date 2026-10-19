@@ -42,3 +42,28 @@ Measured again on `main` at `dd34ae68` plus that test (lane gh-claude-17, 2026-1
 
 Result: 5/5, status `pass`. Baseline green; `core/events/src/local.rs` restored byte-identically.
 Total wall time for the observation: 630.2 s (a cold target for this worktree).
+
+## After ADR-046: a torn tail is recovered, not refused (#41)
+
+ADR-046 changes what kill-mid-write means. On open, the bytes after the journal's last newline
+are now trimmed, under the exclusive lock and only after every earlier line verifies. They are
+quarantined first in the sibling `<events>.quarantine/`, with a manifest. #1582's newline-only cell
+now asserts that recovery too (renamed
+`a_complete_record_missing_only_its_newline_is_trimmed_as_an_unacknowledged_tail`). Other cells
+assert the rest: the interrupted operation's retry appends exactly one event; a torn first append
+trims to an empty journal; a corrupt terminated line, and a tail longer than one batch, still
+refuse. The planted kill-mid-write defect turns the unterminated-tail check into a pass-through.
+The torn bytes then reach the line parser, open refuses instead of recovering, and the recovery
+cells go red.
+
+Measured on `main` at `21348962` plus #41's change (lane gh-claude-17, 2026-10-18, `--jobs 2`):
+
+| Defect | Verdict | Exit |
+|---|---|---|
+| drop-dedup | caught | 101 |
+| reuse-key | caught | 101 |
+| lose-ack | caught | 101 |
+| concurrent-writers | caught | 101 |
+| kill-mid-write | caught | 101 |
+
+Result: 5/5, status `pass`, 318.5 s. `core/events/src/local.rs` restored byte-identically.

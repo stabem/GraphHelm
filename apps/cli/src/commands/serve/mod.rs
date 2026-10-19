@@ -2543,9 +2543,15 @@ async fn run_idempotent_mutation_inner<'a>(
     // times. A handle holds no lock between operations and re-reads the journal tail before each
     // one, so it sees the body's append made through `run`'s own handle; the rare error paths
     // still open their own.
-    let store = match event_store(events) {
-        Ok(store) => store,
-        Err(error) => return respond_failure(command, execution::repository_failure(&error)),
+    // #1679: the open (reconcile listing, journal fsync) is store I/O, so it runs off the reactor
+    // like every other step of the mutation below.
+    let path = events.to_path_buf();
+    let store = match routes::off_reactor(move || event_store(&path)).await {
+        Some(Ok(store)) => store,
+        Some(Err(error)) => {
+            return respond_failure(command, execution::repository_failure(&error));
+        }
+        None => return mutation_task_failed(command),
     };
     run_idempotent_mutation_on(
         &store,
@@ -2558,6 +2564,24 @@ async fn run_idempotent_mutation_inner<'a>(
         run,
     )
     .await
+}
+
+/// #1679: a blocking step of the mutation failed to run at all (its task panicked or was
+/// cancelled), so nothing can be said about the store; the caller gets the internal refusal.
+fn mutation_task_failed(command: &'static str) -> Response {
+    respond(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Outcome::internal(command, "the mutation's store task failed").output,
+    )
+}
+
+/// [`mutation_task_failed`] for the presence declaration, which reports through a `Failure`.
+fn presence_task_failed() -> execution::Failure {
+    execution::Failure {
+        code: "GHI001_INTERNAL",
+        message: "the presence declaration's store task failed".to_owned(),
+        pointer: "/".to_owned(),
+    }
 }
 
 /// The algorithm itself, on the request's one store handle (#478).
@@ -2579,9 +2603,21 @@ async fn run_idempotent_mutation_on<'a>(
     // #1623: the whole mutation is timed here, not only the command body: the pre-flight and the
     // post-write head run on this task, outside the body's thread-local `timing::request`.
     let started = std::time::Instant::now();
+    // #1679: every store read and write of the algorithm runs off the reactor. They ran inline,
+    // and serve has ONE runtime thread (#1670): each mutation's scan, presence read and append
+    // and post-write head held every other request for their whole length (live `serve.lag` max
+    // 19 s, with the wake arming's own body inline as well). The identity is shared with those
+    // blocking tasks, never copied.
+    let identity = std::sync::Arc::new(identity);
     let preflight = std::time::Instant::now();
-    let classified = classify_existing_keys_on(store, execution, &identity);
+    let classified = {
+        let (store, execution, identity) = (store.clone(), execution.to_owned(), identity.clone());
+        routes::off_reactor(move || classify_existing_keys_on(&store, &execution, &identity)).await
+    };
     let preflight = preflight.elapsed();
+    let Some(classified) = classified else {
+        return mutation_task_failed(command);
+    };
     match classified {
         Ok(KeyState::Complete(original_decision_sequence)) => {
             return reply_with_current_status(
@@ -2620,7 +2656,12 @@ async fn run_idempotent_mutation_on<'a>(
     // task. `If-Match` only lets a caller fail fast on a head it already knows is stale, without
     // waiting for the store to discover the same thing one append later.
     if let Some(expected) = identity.if_match {
-        let head = current_head_on(store, execution);
+        let head = {
+            let (store, execution) = (store.clone(), execution.to_owned());
+            routes::off_reactor(move || current_head_on(&store, &execution))
+                .await
+                .flatten()
+        };
         if head != Some(expected) {
             return if_match_conflict(command, head);
         }
@@ -2662,8 +2703,19 @@ async fn run_idempotent_mutation_on<'a>(
             // `If-Match`-chained write. Read the head and fixture-only state from one fresh,
             // validated stream snapshot so those fields describe the same committed history.
             let head = std::time::Instant::now();
-            let (head_sequence, waiting_input) =
-                fresh_stream_snapshot_on(store, events, execution, wiring.any_fixture());
+            let (head_sequence, waiting_input) = {
+                let (store, events, execution, check) = (
+                    store.clone(),
+                    events.to_path_buf(),
+                    execution.to_owned(),
+                    wiring.any_fixture(),
+                );
+                routes::off_reactor(move || {
+                    fresh_stream_snapshot_on(&store, &events, &execution, check)
+                })
+                .await
+                .unwrap_or((None, WaitingInputCheck::Undetermined))
+            };
             execution::timing::emit(
                 command,
                 started.elapsed(),
@@ -3407,7 +3459,7 @@ const PRESENCE_COMMIT_ATTEMPTS: usize = 3;
 async fn record_presence_declaration<P>(
     store: &LocalEventRepository,
     execution: &str,
-    identity: &MutationIdentity,
+    identity: &std::sync::Arc<MutationIdentity>,
     seam: P,
 ) -> Result<(), execution::Failure>
 where
@@ -3417,13 +3469,27 @@ where
     let mut attempts = 0;
     loop {
         attempts += 1;
-        let Some(planned) = plan_presence_declaration(store, execution, identity)? else {
+        // #1679: the read and the append run off the reactor; the seam stays between them.
+        let planned = {
+            let (store, execution, identity) =
+                (store.clone(), execution.to_owned(), identity.clone());
+            routes::off_reactor(move || plan_presence_declaration(&store, &execution, &identity))
+                .await
+                .ok_or_else(presence_task_failed)??
+        };
+        let Some(planned) = planned else {
             return Ok(());
         };
         if let Some(seam) = seam.take() {
             seam.await;
         }
-        match commit_presence_declaration(store, planned) {
+        let committed = {
+            let store = store.clone();
+            routes::off_reactor(move || commit_presence_declaration(&store, planned))
+                .await
+                .ok_or_else(presence_task_failed)?
+        };
+        match committed {
             Ok(()) => return Ok(()),
             Err(failure)
                 if failure.code == "GHE001_SEQUENCE_CONFLICT"

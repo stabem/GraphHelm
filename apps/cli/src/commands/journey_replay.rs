@@ -74,6 +74,9 @@ fn report(mut data: Value, failed: Option<Failure>) -> Outcome {
         "replay.observer_missing" | "driver.observer_missing" => {
             "OBSERVER_MISSING: run setup --install-observer playwright in this project, then retry with a runnable Node/Playwright/Chromium observer"
         }
+        "replay.observer_stale" => {
+            "OBSERVER_STALE: this project's observer copy differs from the one this graphhelm ships; run setup --install-observer playwright in this project to refresh it, then retry"
+        }
         "replay.timeout" => {
             "the replay budget ended; committed records and masked temporary inputs may remain; reconcile before retrying a mutation"
         }
@@ -1135,6 +1138,9 @@ pub(super) fn observer_ready(project: &Path) -> Result<()> {
     if !safe_node(&project.join(".graphhelm/observers")) {
         return Err(failure("replay.observer_missing", "/observer", 3));
     }
+    // #1722: every file present first (any absent reads missing), then each one byte-equal to
+    // the copy this binary ships (a present one that differs is stale, named by file).
+    let mut read = Vec::new();
     for (relative, expected) in OBSERVER_FILES {
         let installed = project.join(relative);
         let mut installed_bytes = Vec::new();
@@ -1145,9 +1151,19 @@ pub(super) fn observer_ready(project: &Path) -> Result<()> {
                         .read_to_end(&mut installed_bytes)
                 })
                 .is_err()
-            || installed_bytes != expected
         {
             return Err(failure("replay.observer_missing", "/observer", 3));
+        }
+        read.push((relative, expected, installed_bytes));
+    }
+    for (relative, expected, installed_bytes) in read {
+        if installed_bytes != expected {
+            let file = relative.rsplit('/').next().unwrap_or(relative);
+            return Err(failure(
+                "replay.observer_stale",
+                format!("/observer/{file}"),
+                3,
+            ));
         }
     }
     Ok(())
@@ -2130,9 +2146,10 @@ mod tests {
             "replay.observer_missing"
         );
         std::fs::write(project.path().join(judge), b"stale").unwrap();
+        // #1722: a judge that is present but not the shipped one is stale, not missing.
         assert_eq!(
             observer_ready(project.path()).unwrap_err().0,
-            "replay.observer_missing"
+            "replay.observer_stale"
         );
         std::fs::write(project.path().join(judge), judge_bytes).unwrap();
         assert!(observer_ready(project.path()).is_ok());

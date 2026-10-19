@@ -39,6 +39,8 @@ fn report(data: Value, failure: Option<Failure>) -> Outcome {
     };
     let message = if matches!(code, "replay.observer_missing" | "driver.observer_missing") {
         "OBSERVER_MISSING: explicitly install the current Playwright observer in this project"
+    } else if code == "replay.observer_stale" {
+        "OBSERVER_STALE: refresh this project's observer copy (setup --install-observer playwright); it differs from the one this graphhelm ships"
     } else if matches!(
         code,
         "explore.timeout" | "replay.timeout" | "replay.cleanup_uncertain"

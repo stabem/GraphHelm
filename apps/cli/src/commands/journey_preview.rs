@@ -1698,6 +1698,28 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         );
     }
 
+    /// #1633: a run passes only when every step passed. Seen on gh-team: six keel flows whose
+    /// screens were all `not_reached` and one edge `skipped/cli_needs_approval` read `pass` and
+    /// recorded the owner's approve proof. Cost: microseconds.
+    #[test]
+    fn a_run_that_did_not_reach_or_skipped_a_step_is_not_a_pass() {
+        // keel-red-first-proof, as the runner stored it.
+        let screens = json!({"defective-parent":{"frame":false,"reason":"not_reached"},
+            "proof-report":{"frame":false,"reason":"not_reached"}});
+        let edges = json!({"prove-regression":{"reason":"cli_needs_approval","result":"skipped"}});
+        assert_ne!(super::run_result(&screens, &edges), "pass");
+        let skipped_only = json!({"a.b":{"result":"skipped","reason":"confirm_needed"}});
+        let passed = json!({"a":{"frame":true,"result":"pass"},"b":{"frame":true,"result":"pass"}});
+        assert_ne!(super::run_result(&passed, &skipped_only), "pass");
+        assert_eq!(
+            super::run_result(&passed, &json!({"a.b":{"result":"pass"}})),
+            "pass"
+        );
+        let drifted =
+            json!({"a":{"frame":true,"result":"drift"},"b":{"frame":false,"reason":"not_reached"}});
+        assert_eq!(super::run_result(&drifted, &json!({})), "drift");
+    }
+
     /// #519: a stored preview answers only for the flow and commit it ran on; a changed flow or a
     /// new commit reads as `none` (the Studio then starts a new run), and the runner's pid and the
     /// frame files never reach the caller. Cost: microseconds.

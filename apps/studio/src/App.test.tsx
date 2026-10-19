@@ -597,6 +597,25 @@ describe("live team layout", () => {
     expect(await screen.findByRole("button", { name: "2 decisions need you" })).toHaveClass("beacon-lit");
   });
 
+  // #1658: the owner rejects from the Proof view through the Runtime client, and the list shows it.
+  it("#1658: Reject sends the owner's note and the list marks the flow rejected", async () => {
+    const calm = { ...STATUS, attention: "can_sleep", attentionReasons: [], nodeStateCounts: { ready: 1 } };
+    const flow = { id: "connect", title: "Connect", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "gate", url: "/", state: "stable" }], edges: [], paths: { main: [] } };
+    let rejected: { note: string; digest: string; sequence: number } | null = null;
+    const rejectJourneyFlow = vi.fn(async (_id: string, note: string) => { rejected = { note, digest: "sha256:x", sequence: 7 }; return { id: "connect" }; });
+    await open(stubClient({ getStatus: vi.fn(async () => calm), journeyFlows: vi.fn(async () => ({ flows: [{ ...flow, rejected }] })),
+      journeys: vi.fn(async () => ({ journeys: [] })), rejectJourneyFlow,
+      journeyRun: vi.fn(async () => ({ state: "none", screens: {} })) }));
+    await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Reject" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Why reject" }), "no receipt");
+    await userEvent.click(screen.getByRole("button", { name: "Send reject" }));
+    await waitFor(() => expect(rejectJourneyFlow).toHaveBeenCalledWith("connect", "no receipt"));
+    expect(await screen.findByText("✕ rejected")).toBeInTheDocument();
+    expect(screen.getByText("Rejected: no receipt")).toBeInTheDocument();
+  });
+
   // #1653: the owner saw every flow "passed" 0/N in the Proof list while the detail said Not run:
   // the preview record said pass but held no step results. The list must agree with the detail.
   it("#1653: a pass record with no step results reads not run in the Proof list", async () => {

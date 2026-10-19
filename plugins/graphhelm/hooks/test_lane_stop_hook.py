@@ -59,6 +59,49 @@ class TimeScaleTests(unittest.TestCase):
                 self.assertIn("GRAPHHELM_TEST_TIME_SCALE", str(refused.exception))
 
 
+class ClosedIssueLeaseTests(unittest.TestCase):
+    """#1556: closed #1309 kept gh-claude-14's lease 13082 and gh-claude-20's 13124 because a
+    lane's release reaches only its latest claim. The reconciler now ends, as graphhelm, every lease
+    on an issue GitHub reports closed, any lane, naming each claim; an open issue's lease stays.
+    Offline: GitHub and the Runtime post are replaced."""
+
+    def test_every_lease_on_a_closed_issue_is_released_as_graphhelm_and_an_open_one_is_kept(self):
+        view = {"leases": [
+            {"taskId": "issue-1309", "lane": "gh-claude-14", "claimSequence": 13082},
+            {"taskId": "issue-1309", "lane": "gh-claude-20", "claimSequence": 13124},
+            {"taskId": "issue-1556", "lane": "gh-claude-20", "claimSequence": 45461},
+        ]}
+        states = {1309: "CLOSED", 1556: "OPEN"}
+        looked = []
+
+        def lookup(issue, repo):
+            looked.append(issue)
+            return {"state": states[issue]}
+
+        with mock.patch.object(tasks_reconcile, "post_end") as post_end:
+            out = tasks_reconcile.release_closed_issues(view, "http://127.0.0.1:1", lambda lane: f"cred-{lane}",
+                                                        "gh-team", "stabem/GraphHelm", lookup=lookup)
+        self.assertEqual(sorted(looked), [1309, 1556], "GitHub is read once per issue")
+        posted = [(call.args[1], call.args[6], call.args[7]) for call in post_end.call_args_list]
+        self.assertEqual(posted, [
+            ("cred-graphhelm", "graphhelm", {"lane": "gh-claude-14", "claimSequence": 13082,
+                                             "releasedBy": "graphhelm", "reason": "issue #1309 closed on GitHub"}),
+            ("cred-graphhelm", "graphhelm", {"lane": "gh-claude-20", "claimSequence": 13124,
+                                             "releasedBy": "graphhelm", "reason": "issue #1309 closed on GitHub"}),
+        ])
+        self.assertEqual([item["claimSequence"] for item in out["released"]], [13082, 13124])
+        self.assertEqual(out["refused"], [])
+
+    def test_an_overdue_lease_already_released_for_its_closed_issue_is_not_released_twice(self):
+        view = {"leases": [{"taskId": "issue-1309", "lane": "gh-claude-14", "claimSequence": 13082,
+                            "overdue": True, "leaseSeconds": 1800, "expiresAt": "x"}]}
+        with mock.patch.object(tasks_reconcile, "post_end") as post_end:
+            out = tasks_reconcile.release_overdue(view, "http://127.0.0.1:1", lambda lane: lane, "gh-team",
+                                                  "stabem/GraphHelm", skip={("gh-claude-14", 13082)})
+        post_end.assert_not_called()
+        self.assertEqual(out, {"released": [], "refused": []})
+
+
 class ReconcileRuntimeTimeoutTests(unittest.TestCase):
     """#1632: the scheduled board sync waits for a slow Runtime; the Stop path keeps its 2 s / 3 s.
     Offline: `urlopen` is replaced and refuses, so only the timeout each call asked for is seen."""

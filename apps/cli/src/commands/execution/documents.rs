@@ -667,7 +667,16 @@ pub(crate) fn validate_task_event(
                     _ => unreachable!(),
                 }
             }
-            if open_claims.last().copied() != Some(claim_sequence)
+            // #1556: a lane releases only its latest open claim; `graphhelm` (the reconciler, on
+            // an issue GitHub reports closed) ends exactly the still-open claim it names, any of
+            // them, so a lane's older claim cannot outlive its closed issue. The reason is
+            // mandatory (shape check above) and recorded with the release.
+            let releasable = if graphhelm_release {
+                open_claims.contains(&claim_sequence)
+            } else {
+                open_claims.last().copied() == Some(claim_sequence)
+            };
+            if !releasable
                 || claim_doc["description"]
                     .as_str()
                     .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())

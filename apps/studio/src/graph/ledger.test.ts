@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RuntimeEvent } from "../runtime/types";
-import { address_of, openQuestions, readable_content, recommendations_of } from "./ledger";
+import { address_of, evidence_of, openQuestions, readable_content, recommendations_of } from "./ledger";
 
 function signal(
   sequence: number,
@@ -141,5 +141,15 @@ describe("recommendations_of", () => {
     expect(recommendations_of("{broken", "application/json")).toEqual([]);
     expect(recommendations_of(JSON.stringify({ recommendations: "Merge" }), "application/json")).toEqual([]);
     expect(recommendations_of(JSON.stringify({ recommendations: [1, null] }), "application/json")).toEqual([]);
+  });
+});
+
+describe("evidence_of", () => {
+  it("keeps a card's evidence in order and drops what is not a bounded string (#1041)", () => {
+    const sealed = JSON.stringify({ evidence: ["Promise", " a.yaml ", 7, "", "x".repeat(513), "b.yaml", "cargo test"] });
+    expect(evidence_of(sealed, "application/json")).toEqual(["Promise", "a.yaml", "b.yaml", "cargo test"]);
+    expect(evidence_of(sealed, "text/plain")).toEqual([]);
+    expect(evidence_of("not json", "application/json")).toEqual([]);
+    expect(evidence_of(JSON.stringify({ evidence: Array.from({ length: 40 }, (_, i) => `e${i}`) }), "application/json")).toHaveLength(32);
   });
 });

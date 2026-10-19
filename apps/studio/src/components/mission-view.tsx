@@ -423,8 +423,17 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
       const text = envelopes[event.sequence]?.text;
       const reading = envelopes as EnvelopeRecord & { __readingEnvelopeSequences?: number[]; __envelopeFailures?: Record<number, string> };
       const failure = reading.__envelopeFailures?.[event.sequence];
-      return <article key={event.sequence}>
-        <h3>{`${typeof source === "string" && source ? source : "Unknown node"} · record #${event.sequence}`}</h3>
+      const node = typeof source === "string" && source ? source : "Unknown node";
+      // #1041: a card's evidence is its promise, each scope path, then its proof command
+      // (docs/keel/RECORDS.md). Each is a named field, so a journey can assert the real values.
+      const evidence = envelopes[event.sequence]?.evidence ?? [];
+      const fields = evidence.length >= 2
+        ? [["Promise", evidence[0]!], ...evidence.slice(1, -1).map((path) => ["Scope", path]), ["Proof", evidence[evidence.length - 1]!]]
+        : [];
+      return <article key={event.sequence} aria-label={`Keel card from ${node}`}>
+        <h3>{`${node} · record #${event.sequence}`}</h3>
+        {fields.length > 0 && <ul aria-label="Card fields">{fields.map(([label, value], index) =>
+          <li key={index} aria-label={`${label}: ${value}`}><strong>{label}</strong> {value}</li>)}</ul>}
         <p style={{ whiteSpace: "pre-wrap" }}>{text?.trim() || (failure !== undefined ? `Keel card recorded; its content could not be read: ${failure}`
           : reading.__readingEnvelopeSequences?.includes(event.sequence) ? "Keel card recorded; reading its content…" : "Keel card recorded; content unavailable")}</p>
       </article>;

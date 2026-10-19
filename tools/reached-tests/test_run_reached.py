@@ -585,6 +585,74 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(len(report["completed"]), 1)
             self.assertEqual(report["status"], "failed")
 
+    def _batch_child_failure(self, temp, keep_going):
+        # #1459 item 18 (review risk on #1502): a slot batch whose second child fails reports
+        # `childFailure` with the failed child inside `completed` and the rest in `remaining`.
+        repo = Path(temp)
+        subprocess = __import__("subprocess")
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
+        (repo / "x").write_text("x", encoding="utf-8")
+        subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+        output = Path(temp).parent / (Path(temp).name + "-batch-red-report.json")
+        plan = {"steps": [
+            {"argv": ["cargo", "+1.97.1", "test", "--lib"], "cwd": ".", "slot": True},
+            {"argv": ["cargo", "+1.97.1", "test", "--test", "cli"], "cwd": ".", "slot": True},
+            {"argv": ["cargo", "+1.97.1", "clippy", "-p", "x"], "cwd": ".", "slot": True},
+        ]}
+        calls = []
+
+        def fake_git(_repo, *args):
+            return "sha-" + args[1] if args[0] == "rev-parse" else ""
+
+        def fake_run(command, **kwargs):
+            if command[0] == "git":
+                return subprocess.CompletedProcess(command, 0, "", "")
+            calls.append(json.loads(kwargs["env"]["GRAPHHELM_SLOT_BATCH"])["commands"])
+            if len(calls) == 1:
+                batch = {"schema": "graphhelm.slot-batch-result/1",
+                         "completed": [{"index": 0, "exitCode": 0, "elapsedSeconds": 1},
+                                       {"index": 1, "exitCode": 101, "elapsedSeconds": 1}],
+                         "remaining": [2], "stopReason": "childFailure"}
+                exit_code = 101
+            else:
+                batch = {"schema": "graphhelm.slot-batch-result/1",
+                         "completed": [{"index": 0, "exitCode": 0, "elapsedSeconds": 1}],
+                         "remaining": [], "stopReason": "exhausted"}
+                exit_code = 0
+            kwargs["stdout"].write(json.dumps({"command": "workspace.slot", "ok": True, "data": {
+                "waitedSeconds": 1, "heldSeconds": 2, "exitCode": exit_code, "batch": batch}}) + "\n")
+            return subprocess.CompletedProcess(command, exit_code, "", "")
+
+        args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "BASE", "head": "HEAD",
+                                  "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                  "allow_whole_package": None, "plan": False,
+                                  "graphhelm": sys.executable, "jobs": 1, "keep_going": keep_going})()
+        with patch.object(rr, "_selector", return_value=plan), patch.object(rr, "_git", side_effect=fake_git), \
+                patch.object(rr.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(rr.run(args), 1)
+        return plan, calls, json.loads(output.read_text(encoding="utf-8"))
+
+    def test_keep_going_requeues_a_failed_batchs_remaining_steps_once(self):
+        # The step after the red child runs, in a batch of its own; the red child is not re-run,
+        # nothing is skipped, and the run still reports failed.
+        with tempfile.TemporaryDirectory() as temp:
+            plan, calls, report = self._batch_child_failure(temp, keep_going=True)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls[1], [plan["steps"][2]["argv"]])
+            self.assertEqual([(item["index"], item["returncode"]) for item in report["completed"]],
+                             [(0, 0), (1, 101), (2, 0)])
+            self.assertEqual(report["pending"], [])
+            self.assertEqual(report["status"], "failed")
+
+    def test_without_keep_going_a_failed_batch_stops_the_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _plan, calls, report = self._batch_child_failure(temp, keep_going=False)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual([item["index"] for item in report["completed"]], [0, 1])
+            self.assertEqual(report["pending"], [2])
+            self.assertEqual(report["status"], "failed")
+
     def test_runner_executes_selected_pytest_and_unittest_fixtures(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)

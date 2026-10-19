@@ -8,7 +8,7 @@ use graphhelm_events::{LocalEventRepository, PreparedAppend};
 use graphhelm_protocols::{
     ActorId, Clock, EventKind, ExecutionId, GraphImported, GraphSourceKind, IdGenerator, NewEvent,
     OpaqueId, PersistedActor, PersistedActorType, ProjectId, RawSha256, RepositoryScope,
-    Sensitivity, WorkspaceId,
+    Sensitivity, SignalRecorded, SignalSeverity, SignalSourceKind, WorkspaceId,
 };
 
 struct FixedClock;
@@ -129,6 +129,75 @@ fn committed_journal_corruption_is_rejected_without_partial_success() {
     assert_eq!(error.code(), "GHE005_INTEGRITY_FAILURE");
 }
 
+const OLD_JOURNAL_CAP_BYTES: u64 = 64 * 1024 * 1024;
+const NEW_JOURNAL_CAP_BYTES: u64 = 256 * 1024 * 1024;
+
+#[test]
+fn valid_appends_cross_the_old_journal_cap_and_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = open(directory.path());
+    let journal = directory.path().join("journal.jsonl");
+    let large_kind = "x".repeat(768 * 1024);
+    let mut next_sequence = 1;
+    let mut crossed = false;
+
+    for batch_index in 0..16 {
+        let events = (0..8)
+            .map(|event_index| {
+                let key = format!("request-{batch_index}-{event_index}");
+                NewEvent::new(
+                    OpaqueId::parse(key).unwrap(),
+                    PersistedActor::new(
+                        PersistedActorType::System,
+                        ActorId::parse("system-test").unwrap(),
+                    ),
+                    Sensitivity::Internal,
+                    EventKind::SignalRecorded(SignalRecorded {
+                        to: None,
+                        reply_to: None,
+                        execution_id: OpaqueId::parse("execution-test").unwrap(),
+                        signal_id: OpaqueId::parse(format!("signal-{batch_index}-{event_index}"))
+                            .unwrap(),
+                        source_kind: SignalSourceKind::System,
+                        source_id: OpaqueId::parse("system-test").unwrap(),
+                        kind: large_kind.clone(),
+                        severity: SignalSeverity::Low,
+                        envelope_sha256: RawSha256::parse("a".repeat(64)).unwrap(),
+                        scoped_agent_authenticated: None,
+                    }),
+                    vec![],
+                    vec![],
+                )
+            })
+            .collect();
+        let before = std::fs::metadata(&journal).unwrap().len();
+        let written = repository
+            .append_atomic(&append(next_sequence, events))
+            .unwrap();
+        next_sequence += written.len() as u64;
+        let after = std::fs::metadata(&journal).unwrap().len();
+        if after > OLD_JOURNAL_CAP_BYTES {
+            assert!(before <= OLD_JOURNAL_CAP_BYTES);
+            crossed = true;
+            break;
+        }
+    }
+
+    assert!(
+        crossed,
+        "valid appends never crossed the former 64 MiB limit"
+    );
+    drop(repository);
+    assert_eq!(
+        open(directory.path())
+            .read_stream(&scope(), "stream-test", 1, None)
+            .unwrap()
+            .events[0]
+            .sequence,
+        1,
+    );
+}
+
 #[test]
 fn oversized_sparse_journal_is_rejected_from_metadata_before_read_allocation() {
     let directory = tempfile::tempdir().unwrap();
@@ -137,7 +206,7 @@ fn oversized_sparse_journal_is_rejected_from_metadata_before_read_allocation() {
         .write(true)
         .open(directory.path().join("journal.jsonl"))
         .unwrap()
-        .set_len(64 * 1024 * 1024 + 1)
+        .set_len(NEW_JOURNAL_CAP_BYTES + 1)
         .unwrap();
     let error = match LocalEventRepository::open(
         directory.path(),

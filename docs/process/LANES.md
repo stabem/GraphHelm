@@ -90,17 +90,17 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
       Register-ScheduledTask -TaskName "GraphHelm sweep all" -Action $a -Trigger $t -Settings $s
 
 - The board follows GitHub by itself (#1628): the Stop reconciler
-  (`plugins/graphhelm/hooks/tasks_reconcile.py`) also runs every 5 minutes as a hidden scheduled
+  (`plugins/graphhelm/hooks/tasks_reconcile.py`) also runs every 30 minutes as a hidden scheduled
   task with `--lane graphhelm --adopt-opened`, so a merge or close is recorded even when no lane
   stops again, and an open PR whose `Closes #N` names an open claim gets the `task.pr_opened` its
   lane forgot (signed with that lane's own credential file; a lane without one is reported under
   `adopted.refused`). It is a scheduled job, not a serve-side poller, so the Runtime and the Policy
   Engine stay network-free and the same reconciler code runs on Stop and on the timer. `pythonw`
   has no console, so `--log` appends each reply. The orchestrator registers it once (and mints the
-  `graphhelm` credential first: `graphhelm tasks credential --lane graphhelm --execution gh-team --token-file F:/github/GraphHelm/.graphhelm/events.token`, which mints `.graphhelm/events.agent.graphhelm.token`). `--runtime-timeout 60` lets a run wait for a loaded Runtime (#1632); the Stop hook keeps its 2 s / 3 s defaults. One run on a loaded Runtime took 566 s (2026-10-19), so the limit is 15 minutes; `IgnoreNew` skips a tick while a run is still going:
+  `graphhelm` credential first: `graphhelm tasks credential --lane graphhelm --execution gh-team --token-file F:/github/GraphHelm/.graphhelm/events.token`, which mints `.graphhelm/events.agent.graphhelm.token`). `--runtime-timeout 60` lets a run wait for a loaded Runtime (#1632); the Stop hook keeps its 2 s / 3 s defaults. One run on a loaded Runtime took 566 s (2026-10-19), so the limit is 15 minutes. The interval must never be shorter than the limit: with `IgnoreNew`, a shorter interval restarts the job as soon as the last run ends, a near-continuous load on a saturated Runtime. It is 30 minutes until the Runtime latency (#1649) lands, then 15:
 
       $a = New-ScheduledTaskAction -Execute "pythonw.exe" -Argument 'F:/github/GraphHelm/plugins/graphhelm/hooks/tasks_reconcile.py --execution gh-team --url http://127.0.0.1:8793 --token-file F:/github/GraphHelm/.graphhelm/events.agent.graphhelm.token --repo stabem/GraphHelm --lane graphhelm --adopt-opened --runtime-timeout 60 --log D:/_merge-leftovers/board-sync.log'
-      $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
+      $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 30)
       $s = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
       Register-ScheduledTask -TaskName "GraphHelm board sync" -Action $a -Trigger $t -Settings $s
 

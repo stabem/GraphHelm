@@ -217,7 +217,9 @@ pub(super) async fn sweep(
     let events_read = events.clone();
     let execution_read = execution.clone();
     let due = tokio::task::spawn_blocking(move || {
-        due_leases(&events_read, &execution_read, sealing.as_deref())
+        crate::commands::execution::timing::request("background.wake_due", || {
+            due_leases(&events_read, &execution_read, sealing.as_deref())
+        })
     })
     .await
     .ok()
@@ -241,8 +243,10 @@ pub(super) async fn sweep(
     // read and write, so the read-then-append window two racing sweeps used to slip
     // through (the double-consume that poisoned the factory pair store) no longer exists.
     let _ = tokio::task::spawn_blocking(move || {
-        test_only_phase3_delay();
-        record_consumptions(&events, &execution, &consumptions);
+        crate::commands::execution::timing::request("background.wake_record", || {
+            test_only_phase3_delay();
+            record_consumptions(&events, &execution, &consumptions);
+        });
     })
     .await;
 }

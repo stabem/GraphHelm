@@ -36,7 +36,6 @@ use graphhelm_protocols::{
 use graphhelm_runtime::driver::ImmediateCancelRequest;
 
 use crate::args::ServeArgs;
-use crate::commands::events::runtime;
 use crate::commands::execution::signal::SignalKeyring;
 use crate::commands::{event_store, execution, secret_file};
 use crate::output::{CommandOutput, Outcome};
@@ -279,7 +278,7 @@ impl ServeState {
 }
 
 /// `graphhelm serve --events <dir> --bind <addr>`: creates or loads the bearer token, binds
-/// loopback-only, and runs the router on the shared `runtime()` helper until killed. The
+/// loopback-only, and runs the router on `serve_runtime()` (#1649) until killed. The
 /// function only ever *returns* on a setup failure — once the server starts accepting
 /// connections it runs until the process is killed, by design (there is no shutdown endpoint in
 /// this milestone).
@@ -443,8 +442,8 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         grants: Arc::new(journey_credentials::Journal::open(&args.events)),
     };
 
-    let rt =
-        runtime().map_err(|_| serve_invalid("the operator runtime could not be started", "/"))?;
+    let rt = serve_runtime()
+        .map_err(|_| serve_invalid("the operator runtime could not be started", "/"))?;
     rt.block_on(serve_forever(
         address,
         state,
@@ -895,6 +894,9 @@ async fn serve_forever(
         ));
     }
 
+    if execution::timing::is_enabled() {
+        tokio::spawn(lag_probe());
+    }
     let (handed_over, handover_signal) = tokio::sync::watch::channel(false);
     if let Some(root) = handover_install {
         let events = state.events.to_path_buf();
@@ -924,6 +926,73 @@ async fn serve_forever(
     .map_err(|_| serve_invalid("the server loop ended unexpectedly", "/"));
     lifecycle.finish(result.is_ok())?;
     result
+}
+
+/// #1649: the request runtime has several worker threads.
+///
+/// `serve` used to run on the one-thread runtime the short-lived CLI commands use. Every handler
+/// that does synchronous store work before or after its `spawn_blocking` body (the mutation
+/// preflight's store open and idempotency scan, the presence declaration, the fresh stream
+/// snapshot, an agent signal's projection read) ran that work ON the only thread that accepts
+/// connections and polls every other request. Under the lanes' steady heartbeats that thread
+/// stayed busy (7034 s of CPU in 2.5 h on live 8793) and an untimed GET waited 13-18 s behind it
+/// while its own handler took 280 ms. With workers, a request doing such work occupies one worker
+/// and the others keep accepting and answering. The store stays the authority for concurrent
+/// writers (its lock and sequence check), exactly as it already is across processes.
+fn serve_runtime() -> std::io::Result<tokio::runtime::Runtime> {
+    let workers = std::thread::available_parallelism()
+        .map_or(SERVE_WORKERS_MIN, std::num::NonZeroUsize::get)
+        .clamp(SERVE_WORKERS_MIN, SERVE_WORKERS_MAX);
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
+        .thread_name("graphhelm-serve")
+        .enable_all()
+        .build()
+}
+
+const SERVE_WORKERS_MIN: usize = 4;
+const SERVE_WORKERS_MAX: usize = 8;
+
+/// #1649: with `GRAPHHELM_SERVE_TIMING=1`, how late the runtime wakes a task that asked to wake
+/// in `LAG_TICK`: the time a newly arrived request waits before any worker polls it. One
+/// `serve.lag` line per `LAG_WINDOW` with the window's sample count, p50 and max.
+async fn lag_probe() {
+    const LAG_TICK: Duration = Duration::from_millis(100);
+    const LAG_WINDOW: Duration = Duration::from_secs(30);
+    let mut samples = Vec::new();
+    let mut window = Instant::now();
+    loop {
+        let asked = Instant::now();
+        tokio::time::sleep(LAG_TICK).await;
+        samples.push(asked.elapsed().saturating_sub(LAG_TICK));
+        if window.elapsed() >= LAG_WINDOW {
+            execution::timing::emit_lag(&mut samples);
+            window = Instant::now();
+        }
+    }
+}
+
+/// #1649: with `GRAPHHELM_SERVE_TIMING=1`, one `serve.request` line for EVERY request, the routes
+/// without phase timing included: the matched route template (never the concrete path, which
+/// can carry ids), the status and the milliseconds from the moment a worker first polled it.
+async fn time_every_request(request: Request, next: Next) -> Response {
+    if !execution::timing::is_enabled() {
+        return next.run(request).await;
+    }
+    let route = request
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map_or_else(|| "unmatched".to_owned(), |path| path.as_str().to_owned());
+    let method = request.method().as_str().to_owned();
+    let started = Instant::now();
+    let response = next.run(request).await;
+    execution::timing::emit_request(
+        &method,
+        &route,
+        response.status().as_u16(),
+        started.elapsed(),
+    );
+    response
 }
 
 /// Resolves once a successor reported ready (#1523); never, without `--handover-install`.
@@ -969,30 +1038,32 @@ async fn sweep_tick(events: Arc<Path>, seconds: u64) {
         tokio::time::sleep(period).await;
         let events = Arc::clone(&events);
         let _ = tokio::task::spawn_blocking(move || {
-            let Ok(store) = crate::commands::event_store(&events) else {
-                return;
-            };
-            let Ok(streams) = store.list_streams() else {
-                return;
-            };
-            let Ok(now) = store.now() else {
-                return;
-            };
-            let actor = PersistedActor::new(
-                PersistedActorType::System,
-                ActorId::parse("system-sweep-tick").expect("constant actor id is valid"),
-            );
-            for stream in streams {
-                let _ = graphhelm_events::sweep(
-                    &store,
-                    &stream.scope,
-                    stream.stream_id.as_str(),
-                    &now,
-                    &actor,
-                    SweepCaller::Tick,
-                    None,
+            execution::timing::request("background.sweep_tick", || {
+                let Ok(store) = crate::commands::event_store(&events) else {
+                    return;
+                };
+                let Ok(streams) = store.list_streams() else {
+                    return;
+                };
+                let Ok(now) = store.now() else {
+                    return;
+                };
+                let actor = PersistedActor::new(
+                    PersistedActorType::System,
+                    ActorId::parse("system-sweep-tick").expect("constant actor id is valid"),
                 );
-            }
+                for stream in streams {
+                    let _ = graphhelm_events::sweep(
+                        &store,
+                        &stream.scope,
+                        stream.stream_id.as_str(),
+                        &now,
+                        &actor,
+                        SweepCaller::Tick,
+                        None,
+                    );
+                }
+            })
         })
         .await;
     }
@@ -1009,12 +1080,15 @@ async fn workspace_sweep_tick(
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(seconds)).await;
         let root = Arc::clone(&root);
-        let outcome =
-            tokio::task::spawn_blocking(move || crate::commands::workspace::run_sweep(&root, true))
-                .await
-                .unwrap_or_else(|_| {
-                    Outcome::internal("workspace.sweep", "the workspace sweep task failed")
-                });
+        let outcome = tokio::task::spawn_blocking(move || {
+            execution::timing::request("background.workspace_sweep", || {
+                crate::commands::workspace::run_sweep(&root, true)
+            })
+        })
+        .await
+        .unwrap_or_else(|_| {
+            Outcome::internal("workspace.sweep", "the workspace sweep task failed")
+        });
         let mut summary = outcome
             .output
             .data
@@ -1196,6 +1270,7 @@ fn build_router(state: ServeState) -> Router {
         // 401" is exactly the kind of fact that was unrecoverable before. Headers never reach
         // the recorder, so the bearer token cannot land on disk.
         .layer(middleware::from_fn_with_state(state.clone(), record_read))
+        .route_layer(middleware::from_fn(time_every_request))
         // The monitor sub-router merges AFTER the auth layer: its cookie bootstrap replaces
         // the Bearer scheme (same token bytes, same constant-time verifier — one authority),
         // and it is GET-only by construction — a mutating verb never has a handler to reach,
@@ -3747,6 +3822,26 @@ fn append_audit_line(path: &Path, line: &serde_json::Value) -> std::io::Result<(
 
 #[cfg(test)]
 mod tests {
+    /// #1649: a request doing synchronous store work on its async task must not hold up the
+    /// next request. On the one-thread runtime `serve` used before, the second task below could
+    /// not be polled until the first one's 1.5 s of blocking work ended (13-18 s on live 8793).
+    #[test]
+    fn a_request_blocking_its_task_does_not_stall_the_next_request() {
+        const BLOCKED: Duration = Duration::from_millis(1500);
+        let rt = super::serve_runtime().unwrap();
+        rt.block_on(async {
+            let asked = Instant::now();
+            let slow = tokio::spawn(async { std::thread::sleep(BLOCKED) });
+            let next = tokio::spawn(async move { asked.elapsed() });
+            let waited = next.await.unwrap();
+            slow.await.unwrap();
+            assert!(
+                waited < BLOCKED / 3,
+                "the next request waited {waited:?} behind one blocked task"
+            );
+        });
+    }
+
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

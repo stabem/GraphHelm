@@ -59,9 +59,10 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
 sqlx = { workspace = true, optional = true }
-# net/io-util are the serve wake sweep's own (serve/wake.rs rings over tokio::net):
+# net/io-util are the serve wake sweep's own (serve/wake.rs rings over tokio::net); rt-multi-thread
+# is serve's worker pool (#1649, serve_runtime):
 # declared here rather than inherited through axum's feature set (Task 2 review note).
-tokio = { workspace = true, features = ["net", "io-util"] }
+tokio = { workspace = true, features = ["net", "io-util", "rt-multi-thread"] }
 uuid.workspace = true
 zeroize.workspace = true
 

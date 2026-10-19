@@ -66,7 +66,9 @@ pub(crate) fn arm(
     } = *arming;
     let store = event_store(events).map_err(|error| super::repository_failure(&error))?;
     let (scope, stream, history) = resolve_stream(&store, execution)?;
-    let projection = graphhelm_events::replay(&scope, &stream, &history)
+    // #1649: the serve's cached fold (exactly `replay` in a one-shot command). A full refold of
+    // the owner's 43k-event `gh-team` cost 3.5 s of CPU per call, and wake-waits poll this.
+    let projection = super::status::replay_cached(events, &scope, &stream, &history)
         .map_err(|error| super::replay_failure(&error))?;
     let execution_id = projection
         .execution_id
@@ -201,7 +203,9 @@ pub(crate) fn status(
     // folds, so the cursor is readable ("armed at #N, the stream is at #M") without a
     // second pass over the store.
     let (scope, stream, history) = resolve_stream(&store, execution)?;
-    let projection = graphhelm_events::replay(&scope, &stream, &history)
+    // #1649: the serve's cached fold (exactly `replay` in a one-shot command). A full refold of
+    // the owner's 43k-event `gh-team` cost 3.5 s of CPU per call, and wake-waits poll this.
+    let projection = super::status::replay_cached(events, &scope, &stream, &history)
         .map_err(|error| super::replay_failure(&error))?;
     let head = history.last().map_or(0, |event| event.sequence);
     // The head the DOORBELL compares against, which is not the stream's head: the sweep

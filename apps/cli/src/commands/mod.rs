@@ -795,16 +795,17 @@ pub(crate) static STORE_OPENS: std::sync::LazyLock<
 > = std::sync::LazyLock::new(Default::default);
 
 /// ADR-046 (#41): opens the store once in the mode that may recover a torn journal tail, then
-/// drops the handle. Only `graphhelm serve` calls it, at start-up.
+/// drops the handle, answering what it trimmed (if anything) so the Runtime can report it. Only
+/// `graphhelm serve` calls it, at start-up.
 pub(super) fn recover_torn_journal_tail(
     path: &std::path::Path,
-) -> Result<(), EventRepositoryError> {
+) -> Result<Option<graphhelm_events::RecoveredTail>, EventRepositoryError> {
     LocalEventRepository::open_recovering_torn_tail(
         path.to_path_buf(),
         Arc::new(SystemClock),
         Arc::new(UuidIds),
     )
-    .map(drop)
+    .map(|store| store.recovered_torn_tail())
 }
 
 pub(super) fn event_store(

@@ -19,6 +19,8 @@ export interface RuntimePreviousExit {
   lastPanic?: { location: string };
   /** #41: bytes of the allocation that failed, when the Runtime ran out of memory. */
   size?: number;
+  /** ADR-046 (#41): the unfinished write the Runtime trimmed from its journal at start-up. */
+  journalTailRecovered?: { trimmedBytes: number; sha256: string; quarantine: string };
 }
 
 /** The four-key envelope every Runtime reply carries. */

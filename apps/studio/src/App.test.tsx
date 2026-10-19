@@ -5403,6 +5403,21 @@ describe("execution reads preserve newer observed state", () => {
   });
 });
 
+// ADR-046 (#41): DOM + stubbed I/O. A start-up recovery of a torn journal tail is said in the
+// restart line, and the quarantined file is named for whoever debugs it, behind Details.
+it("says the Runtime recovered an unfinished write at start-up", async () => {
+  const quarantine = "torn-tail-1133-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bin";
+  const previousExit = { state: "vanished" as const, pid: 1, at: 2, journalTailRecovered: { trimmedBytes: 19, sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", quarantine } };
+  const client = stubClient({ health: vi.fn(async () => ({ previousExit, startup: null, currentRun: null })) });
+  render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null} session={async () => ({ token: "local-token", project: "GraphHelm" })} />);
+  await screen.findByText("live");
+  const line = screen.getByLabelText("Previous Runtime exit");
+  expect(line).toHaveTextContent("and stopped without recording why · recovered an unfinished write (19 bytes set aside)");
+  const details = within(line).getByRole("group");
+  expect(details).toHaveTextContent(`quarantined: ${quarantine}`);
+  expect(Array.from(line.childNodes).filter((node) => node !== details).map((node) => node.textContent).join("")).not.toContain(quarantine);
+});
+
 // #673: DOM + stubbed I/O; observes wiring from the one health read to Runtime status.
 it.each(["vanished", "panicked", "clean", null])("shows startup timing independently of the previous exit: %s", async (state) => {
   const prior = "0123456789abcdef0123456789abcdef";

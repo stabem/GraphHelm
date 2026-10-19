@@ -7190,6 +7190,7 @@ pub(super) mod tests {
         let events: Arc<Path> = Arc::from(directory.path().to_owned());
         let state = super::ServeState {
             previous_exit: serde_json::Value::Null,
+            journal_tail_recovered: None,
             current_run: serde_json::Value::Null,
             startup: serde_json::Value::Null,
             token: Arc::<[u8]>::from(Vec::<u8>::new()),

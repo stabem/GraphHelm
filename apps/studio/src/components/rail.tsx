@@ -231,12 +231,14 @@ export function ProjectRail({
             Runtime restarted · {previousExit.state === "vanished" ? "previous run started" : "last stop"} <time dateTime={new Date(previousExit.at * 1000).toISOString()} title={`PID ${previousExit.pid} · ${new Date(previousExit.at * 1000).toISOString()}`}>
               {new Date(previousExit.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
             </time>{previousExit.state === "vanished" ? " and stopped without recording why" : ` (${({ serve_error: "failed", panicked: "crashed", out_of_memory: "ran out of memory" } as Record<string, string>)[previousExit.state] ?? "stopped"})`}
+            {previousExit.journalTailRecovered && <> · recovered an unfinished write ({previousExit.journalTailRecovered.trimmedBytes} bytes set aside)</>}
             {/* The ids are for whoever debugs the Runtime, not the sentence the owner reads. */}
             <details>
               <summary>Details</summary>
               {previousExit.instance ? `instance: ${previousExit.instance}` : "instance unavailable"}
               {previousExit.location !== undefined && <> · location: {previousExit.location}</>}
               {previousExit.lastPanic && <> · last panic: {previousExit.lastPanic.location}</>}
+              {previousExit.journalTailRecovered && <> · quarantined: {previousExit.journalTailRecovered.quarantine}</>}
             </details>
           </div>
         )}

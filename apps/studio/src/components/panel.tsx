@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NodeDeliveries, type DocumentReference } from "./deliveries";
 import { LoaderCircle, Send, TriangleAlert, X } from "lucide-react";
 
-import { MAX_MESSAGE_LENGTH, OPERATOR_ACTOR } from "../runtime/client";
+import { EVIDENCE_READS_TO_QUEUE, MAX_MESSAGE_LENGTH, OPERATOR_ACTOR } from "../runtime/client";
 import { sendsOnEnter } from "./keys";
 import { AnswerNode, type AnswerOutcome } from "./answer";
 import { SaidText } from "./said";
@@ -950,7 +950,7 @@ export function useEnvelopes(
         if (item !== undefined) await read(item);
       }
     };
-    void Promise.all(Array.from({ length: Math.min(50, uncached.length) }, readWorker)).then(() => {
+    void Promise.all(Array.from({ length: Math.min(EVIDENCE_READS_TO_QUEUE, uncached.length) }, readWorker)).then(() => {
       if (!live) return;
       if (publishTimer !== undefined) clearTimeout(publishTimer);
       publish();

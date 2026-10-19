@@ -358,6 +358,10 @@ const EVIDENCE_BATCH_SIZE = 64;
 /** What a Runtime from before #1560 admits per collection read. */
 const LEGACY_EVIDENCE_BATCH_SIZE = 8;
 const EVIDENCE_BATCHES_IN_FLIGHT = 4;
+/** #1560: how many evidence reads one reader keeps waiting, so the client can fill its
+ * EVIDENCE_BATCHES_IN_FLIGHT collection reads. With fewer waiting reads than one batch, exactly one
+ * partial batch was ever in flight (measured live: ~50 ids per round trip, one at a time). */
+export const EVIDENCE_READS_TO_QUEUE = EVIDENCE_BATCH_SIZE * EVIDENCE_BATCHES_IN_FLIGHT;
 
 /** A caller-minted correlation id. `crypto.randomUUID` where available; a bounded random string
  * otherwise, because a Studio served over plain http on some browsers has no `randomUUID`. This

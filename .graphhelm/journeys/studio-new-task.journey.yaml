@@ -1,7 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: studio-new-task
 title: Start a new task in the project
-purpose: "The owner writes a new task and sees it start: its run opens with a Keel cards section that says honestly no card is recorded yet. A recorded card with its promise, scope and proof is OBSERVER_MISSING: the fixture records no keel.card (#1041)."
+purpose: "The owner writes a new task and its run opens. Its Keel cards section says honestly that no card is recorded yet: a card appears only once an agent records it, so the start does not promise one."
 status: draft
 approved: null
 base: http://127.0.0.1:5184

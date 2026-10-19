@@ -60,7 +60,7 @@ describe("ProofTable", () => {
       screens: [{ id: "mark", url: "/", state: "stable" }, { id: "next", url: "/", state: "stable" }],
       edges: [{ id: "mark.next", from: "mark", to: "next" }], paths: { main: ["mark.next"] } };
     const result = { state: "ready" as const, result: "pass" as const,
-      screens: { mark: { result: "pass" as const, frame: false }, next: { result: "pass" as const, frame: false } },
+      screens: { mark: { result: "pass" as const, frame: true }, next: { result: "pass" as const, frame: true } },
       edges: { "mark.next": { result: "pass" as const } } };
     const run: JourneyRunSource = { start: vi.fn(), read: vi.fn(async () => ({ ...result, kind: "preview" as const,
       result: "fail" as const, edges: { "mark.next": { result: "fail" as const } } })),

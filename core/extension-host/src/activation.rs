@@ -551,17 +551,9 @@ fn claim_link_count(_file: &File) -> Result<u64, ClaimRefusal> {
     Err(ClaimRefusal::UnsupportedPlatform)
 }
 
-#[cfg(windows)]
+/// The shared reparse test (#1338).
 fn metadata_is_reparse_point(metadata: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-#[cfg(not(windows))]
-fn metadata_is_reparse_point(_metadata: &std::fs::Metadata) -> bool {
-    false
+    graphhelm_process::fs::is_reparse_point(metadata)
 }
 
 fn open_claim_child(root: &RootAnchor, create_new: bool) -> std::io::Result<File> {

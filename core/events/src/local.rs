@@ -4529,15 +4529,9 @@ fn reject_link_or_non_directory(path: &Path) -> Result<(), EventRepositoryError>
     Ok(())
 }
 
-#[cfg(windows)]
+/// The shared reparse test (#1338); callers add `is_symlink()` where a Unix link must refuse too.
 fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    metadata.file_attributes() & 0x400 != 0
-}
-
-#[cfg(not(windows))]
-const fn is_reparse_point(_: &std::fs::Metadata) -> bool {
-    false
+    graphhelm_process::fs::is_reparse_point(metadata)
 }
 
 fn read_bounded_file(file: &mut File, limit: u64) -> Result<Vec<u8>, EventRepositoryError> {

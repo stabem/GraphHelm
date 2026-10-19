@@ -1636,21 +1636,14 @@ fn validate_opened_directory(file: &File) -> Result<(), CapabilityError> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn metadata_is_reparse_point(_metadata: &std::fs::Metadata) -> bool {
-    false
-}
-
-#[cfg(windows)]
+/// The shared reparse test (#1338); its non-Windows arm is `cfg(not(windows))`, not `cfg(unix)`.
 fn metadata_is_reparse_point(metadata: &std::fs::Metadata) -> bool {
-    is_reparse_point(metadata)
+    graphhelm_process::fs::is_reparse_point(metadata)
 }
 
 #[cfg(windows)]
 fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
-    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    metadata_is_reparse_point(metadata)
 }
 
 #[cfg(windows)]

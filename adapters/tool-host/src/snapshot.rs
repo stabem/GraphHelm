@@ -590,18 +590,8 @@ fn open_directory_child(_parent: &File, _name: &OsString, _path: &Path) -> Resul
 }
 
 fn reject_reparse(metadata: &fs::Metadata) -> Result<(), HostError> {
-    if metadata.file_type().is_symlink() {
+    if metadata.file_type().is_symlink() || graphhelm_process::fs::is_reparse_point(metadata) {
         return Err(HostError::Escape);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if metadata.file_attributes()
-            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
-            != 0
-        {
-            return Err(HostError::Escape);
-        }
     }
     Ok(())
 }

@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+graphhelm-process = { path = "../process" }
 chacha20poly1305.workspace = true
 chrono.workspace = true
 fs2.workspace = true
@@ -24,7 +25,6 @@ zeroize.workspace = true
 
 [dev-dependencies]
 graphhelm-test-shims = { path = "../../tools/test-shims" }
-graphhelm-process = { path = "../process" }
 graphhelm-execution = { path = "../execution" }
 static_assertions.workspace = true
 tempfile.workspace = true

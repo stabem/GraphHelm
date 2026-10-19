@@ -3518,7 +3518,10 @@ fn eight_sealed_evidence_items_share_one_authenticated_collection_read() {
     .unwrap();
     assert_eq!(at_cap.status, 200, "64 ids are one read: {}", at_cap.body);
     let at_cap: serde_json::Value = serde_json::from_str(&at_cap.body).unwrap();
-    assert_eq!(at_cap["data"]["results"].as_array().unwrap().len(), 64);
+    assert_eq!(
+        envelope_array(&at_cap, "results", "a 64-id collection read").len(),
+        64
+    );
     let over = raw_request(
         &format!(
             "{base}/v1/executions/{execution}/evidence?ids={}",

@@ -392,7 +392,8 @@ describe("RuntimeClient reads", () => {
       return new Response(JSON.stringify({ ok: true, command: "execution.evidence", data: { results }, diagnostics: [] }), { status: 200 });
     }) as typeof fetch;
     const client = new RuntimeClient("token", { fetch: fetchImpl });
-    const ids = Array.from({ length: 48 }, (_, index) => `e-${index}`);
+    // #1560: enough ids for more than four full batches of 64.
+    const ids = Array.from({ length: 320 }, (_, index) => `e-${index}`);
     const reads = Promise.all(ids.map((id) => client.readEvidence("demo", id)));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(releases.length).toBe(4);

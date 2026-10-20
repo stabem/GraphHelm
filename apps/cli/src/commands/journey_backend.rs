@@ -357,6 +357,7 @@ mod tests {
             status: Some(200),
             exit: None,
             body: body.to_owned(),
+            stderr: String::new(),
         };
         assert_eq!(unmet(&screen, &seen("all good")), None);
         assert_eq!(

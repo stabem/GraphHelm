@@ -10,8 +10,8 @@ Take a new project from an idea to a running, journey-first build. Three phases,
 
 **You are the orchestrator.** The session that runs this skill grills, writes the doc and then
 directs; it never implements, reviews or approves itself. Every piece of work goes to an agent
-spawned with the `graphhelm-team` skill, so it is born inside the Studio and the owner watches it
-there.
+started or resumed with the `graphhelm-team` skill, with truthful own-lane task or review records
+that the owner watches in Studio.
 For a project that already has code and no journeys, use `journey-map` instead.
 
 ## Phase 1: Grill
@@ -85,9 +85,13 @@ When the v1 flows are approved:
    playwright`) in the first issue.
 2. **Orchestrate from the Studio.** Run `graphhelm studio start` in the project and keep it open
    for the owner. Start one team execution (the GraphHelm MCP `start` tool or the CLI). For each issue,
-   spawn an author lane with `graphhelm-team` (the roster's author model); it runs `task-plan`,
+   bootstrap an author lane with `graphhelm-team` (the roster's author model); withhold the task
+   payload until that actual child has an accepted own claim and a matching `task_admit` receipt.
+   Missing credentials block dispatch; do not claim as the child or substitute the coordinator.
+   After admission it runs `task-plan`,
    `implement` (under `keel`) and `journey-prove`. Then spawn a different reviewer lane for
-   `blind-review`; the approving reviewer runs `merge`. Run at most as many lanes at once as the
+   `blind-review` after confirming its `review_assigned` record for the current PR and exact head.
+   Reviewers never claim the author's issue or use pre-PR `task_admit`; the approving reviewer runs `merge`. Run at most as many lanes at once as the
    roster says; independent issues in parallel, issues on the same screen in order. You only
    assign, unblock and report.
 3. **Follow along.** The owner watches the Studio: Team tab for tasks and PRs, Journey tab for

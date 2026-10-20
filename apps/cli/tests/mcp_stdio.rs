@@ -850,7 +850,7 @@ fn journey_draft_and_review_forward_scoped_credentials_and_runtime_refusals() {
 ///
 /// #1277: `resolve_contract`, `present`, `compile_context` and `accounting` are callable but
 /// unlisted (`UNLISTED_STUBS` in tools.rs), so they are not here.
-const MCP_TOOL_NAMES: [&str; 44] = [
+const MCP_TOOL_NAMES: [&str; 45] = [
     "start",
     "list",
     "topology",
@@ -859,6 +859,7 @@ const MCP_TOOL_NAMES: [&str; 44] = [
     "journeys",
     // #1149: the task projection, a read beside journeys.
     "tasks",
+    "task_admit",
     // #382 phase B: the task planner, a read beside the project reads.
     "keel_plan",
     // #360: the agent-workspace read and the owner-only sweep, beside the project reads.
@@ -1737,7 +1738,7 @@ fn a_minimal_signal_is_accepted_and_the_sealed_envelope_carries_the_filled_field
 #[test]
 fn lane_bound_signal_uses_one_credential_for_one_call() {
     let execution = "exec-mcp-lane-bound";
-    let harness = wired_lane_sealed(execution);
+    let mut harness = wired_lane_sealed(execution);
     let credential = |lane: &str| {
         let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args([
@@ -1873,6 +1874,14 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
     );
     reply["replyTo"] = serde_json::json!("ordinary");
     let raw_credential = std::fs::read_to_string(&lane_a).unwrap();
+    let invalid_credential = harness._directory.path().join("invalid.token");
+    std::fs::write(&invalid_credential, "invalid-secret-marker").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&invalid_credential, std::fs::Permissions::from_mode(0o600))
+            .unwrap();
+    }
     let calls = [
         initialize_request(1, "2025-06-18"),
         initialized_notification(),
@@ -1958,9 +1967,15 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
                 "lane": "lane-alpha", "credentialFile": raw_credential
             }),
         ),
+        bound(
+            "invalid-file",
+            signal("invalid-file", "lane-alpha", "operator_note", "no".into()),
+            "lane-alpha",
+            &invalid_credential,
+        ),
     ];
     let session = harness.session(&calls);
-    assert_eq!(session.replies.len(), 16, "{:?}", session.replies);
+    assert_eq!(session.replies.len(), 17, "{:?}", session.replies);
     for index in [1, 2, 3, 4, 5, 8, 9] {
         let (error, reply) = tool_envelope(&session.replies[index]);
         assert!(!error, "call {index}: {reply}");
@@ -1973,6 +1988,17 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
             session.replies[index]
         );
     }
+    for index in [10, 11, 16] {
+        let reply = &session.replies[index];
+        assert_eq!(
+            reply["error"]["data"]["code"], "GHCLI020_MCP_TOKEN_INVALID",
+            "{reply}"
+        );
+        let message = reply["error"]["message"].as_str().unwrap();
+        assert!(message.contains("credential"), "{reply}");
+        assert!(!message.contains("API is unreachable"), "{reply}");
+        assert!(!message.contains(&harness._directory.path().display().to_string()));
+    }
     // A lane the header could not carry is refused by the MCP server itself, before any request.
     assert!(
         session.replies[14]["error"]["message"]
@@ -1982,6 +2008,7 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
         session.replies[14]
     );
     assert!(!String::from_utf8_lossy(&session.output.stdout).contains(&raw_credential));
+    assert!(!String::from_utf8_lossy(&session.output.stdout).contains("invalid-secret-marker"));
     let events = http_get_json(
         &harness.base,
         &harness.token,
@@ -2098,6 +2125,26 @@ fn lane_bound_signal_uses_one_credential_for_one_call() {
             .filter(|event| event["kind"]["type"] == "signal_recorded")
             .count(),
         6
+    );
+    harness._server.child.kill().unwrap();
+    harness._server.child.wait().unwrap();
+    let disconnected = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        bound(
+            "disconnected",
+            signal("disconnected", "lane-alpha", "operator_note", "no".into()),
+            "lane-alpha",
+            &lane_a,
+        ),
+    ]);
+    let result = &disconnected.replies[1]["result"];
+    assert_eq!(result["isError"], true);
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("API is unreachable")
     );
 }
 
@@ -3454,6 +3501,188 @@ fn tasks_tool_narrows_to_one_lane_or_one_issue() {
     assert_eq!(issue["data"]["leases"][0]["lane"], "lane-beta", "{issue}");
     assert!(bad_error, "{bad}");
     assert_eq!(bad["diagnostics"][0]["path"], "/lane", "{bad}");
+
+    let sequence = lane["data"]["tasks"][0]["claimSequence"].as_u64().unwrap();
+    let admission = serde_json::json!({
+        "executionId": execution, "lane": "lane-alpha", "issue": 101,
+        "branch": "issue-101-x", "repo": "stabem/GraphHelm", "claimSequence": sequence
+    });
+    let mut requests = vec![
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+    ];
+    requests.push(tool_call(
+        serde_json::json!("admit"),
+        "task_admit",
+        admission.clone(),
+    ));
+    for (field, value) in [
+        ("lane", serde_json::json!("lane-beta")),
+        ("branch", serde_json::json!("other-branch")),
+        ("repo", serde_json::json!("other/repo")),
+        ("claimSequence", serde_json::json!(sequence + 1)),
+    ] {
+        let mut wrong = admission.clone();
+        wrong[field] = value;
+        requests.push(tool_call(serde_json::json!(field), "task_admit", wrong));
+    }
+    let admissions = harness.session(&requests);
+    let (failed, receipt) = tool_envelope(&admissions.replies[1]);
+    assert!(!failed, "{receipt}");
+    assert_eq!(receipt["data"]["admitted"], true, "{receipt}");
+    assert_eq!(receipt["data"]["claimSequence"], sequence);
+    for reply in &admissions.replies[2..] {
+        let (failed, envelope) = tool_envelope(reply);
+        assert!(failed, "{reply}");
+        assert_eq!(
+            envelope["diagnostics"][0]["code"],
+            "GHCLI041_TASK_ADMISSION_REFUSED"
+        );
+    }
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "--json",
+            "tasks",
+            "admit",
+            "--execution",
+            execution,
+            "--lane",
+            "lane-alpha",
+            "--issue",
+            "101",
+            "--branch",
+            "issue-101-x",
+            "--repo",
+            "stabem/GraphHelm",
+            "--claim-sequence",
+            &sequence.to_string(),
+            "--url",
+            &harness.base,
+            "--token-file",
+            harness.token_file.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let cli: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(output.status.success(), "{cli}");
+    assert_eq!(cli["data"], receipt["data"]);
+    let after = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/tasks?lane=lane-alpha&issue=101"),
+    );
+    assert_eq!(
+        after["data"]["headSequence"], lane["data"]["headSequence"],
+        "admission must not append events: {after}"
+    );
+}
+
+/// Explicit scale observer: real event persistence, task projection, HTTP and MCP admission.
+/// Reports three samples at N and 10N; timing is evidence, never a flaky unit-test threshold.
+#[test]
+#[ignore = "explicit real-Runtime admission scale observation"]
+fn task_admission_real_runtime_scale_observation() {
+    let execution = "exec-admission-scale";
+    let harness = wired_lane_sealed(execution);
+    let lane = "scale-lane";
+    let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args([
+            "--json",
+            "tasks",
+            "credential",
+            "--lane",
+            lane,
+            "--execution",
+            execution,
+            "--token-file",
+            harness
+                ._directory
+                .path()
+                .join("events.token")
+                .to_str()
+                .unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let credential = harness
+        ._directory
+        .path()
+        .join("events.agent.scale-lane.token");
+    let token = std::fs::read_to_string(credential).unwrap();
+    let mut populated = 0;
+    let mut measurements = Vec::new();
+    for population in [100, 1000] {
+        for issue in populated + 1..=population {
+            let id = format!("scale-claim-{issue}");
+            let body = serde_json::json!({"signal": {
+                "id": id, "source": {"type": "user", "id": lane}, "type": "task.claimed",
+                "severity": "low", "evidence": ["scale"], "emittedAt": "2026-10-15T12:00:00Z",
+                "description": serde_json::json!({
+                    "schema": "graphhelm-task-event-v1", "taskId": format!("issue-{issue}"),
+                    "revision": 1, "at": "2026-10-15T12:00:00Z", "issue": issue,
+                    "lane": lane, "branch": format!("issue-{issue}-scale"),
+                    "repo": "stabem/GraphHelm", "leaseSeconds": 86400
+                }).to_string()
+            }});
+            let (status, reply) = post_json(
+                &harness.base,
+                token.trim(),
+                &format!("/v1/executions/{execution}/signal"),
+                &[
+                    ("Idempotency-Key", &id),
+                    ("X-GraphHelm-Actor", lane),
+                    ("X-GraphHelm-Actor-Type", "agent"),
+                ],
+                &body,
+            );
+            assert_eq!(status, 200, "{reply}");
+            assert_eq!(reply["ok"], true, "{reply}");
+        }
+        populated = population;
+        let before = http_get_json(
+            &harness.base,
+            &harness.token,
+            &format!("/v1/executions/{execution}/tasks?lane={lane}&issue={population}"),
+        );
+        let sequence = before["data"]["tasks"][0]["claimSequence"]
+            .as_u64()
+            .unwrap();
+        let mut samples = Vec::new();
+        for sample in 0..3 {
+            let start = Instant::now();
+            let session = harness.session(&[
+                initialize_request(1, "2025-06-18"),
+                initialized_notification(),
+                tool_call(
+                    serde_json::json!(format!("admit-{sample}")),
+                    "task_admit",
+                    serde_json::json!({"executionId": execution, "lane": lane, "issue": population,
+                        "branch": format!("issue-{population}-scale"), "repo": "stabem/GraphHelm",
+                        "claimSequence": sequence}),
+                ),
+            ]);
+            samples.push(start.elapsed().as_secs_f64());
+            let (failed, receipt) = tool_envelope(&session.replies[1]);
+            assert!(!failed, "{receipt}");
+            assert_eq!(receipt["data"]["admitted"], true, "{receipt}");
+            assert_eq!(
+                receipt["data"]["headSequence"],
+                before["data"]["headSequence"]
+            );
+        }
+        measurements.push(serde_json::json!({"tasks": population, "seconds": samples}));
+    }
+    eprintln!(
+        "ADMISSION_SCALE_RECEIPT {}",
+        serde_json::json!({
+            "observer": "real-runtime-http-mcp", "samples": measurements
+        })
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

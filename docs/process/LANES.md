@@ -345,17 +345,37 @@ refuses a `task.*` record under the shared token or under another lane's credent
 
 ### Codex process end
 
-The coordinator launcher records a process end after `codex exec` returns. Preserve its exit
-code; the record is best effort and does not turn a failed run into success. Add this line before
-the launcher's final `echo done` (with its existing lane, tag, result path and saved exit code):
+The reference implementation-author launcher requires an explicit existing own-lane pre-PR
+claim before it starts Codex. Reviewers use the existing `review_assigned` flow for their own
+identity, current PR and exact head; they never claim the author's issue or use this launcher.
+Trusted setup must provision the lane credential first; the launcher does not mint one, claim an
+issue or grant authority. An implementation child that needs registration starts with bootstrap instructions only,
+claims as itself, and returns a matching `task_admit` receipt before receiving the task payload.
+The coordinator never claims as the child. Presence or a note saying working does not satisfy this
+barrier. Direct host APIs outside this workflow are not intercepted.
 
-    graphhelm tasks run-ended --lane "%LANE%" --exit %CODEX_EXIT% --run-id "%TAG%" --result-file "%RESULT_FILE%" --token-file "F:\github\GraphHelm\.graphhelm\events.agent.token"
+`tools/codex-launcher/run-codex.cmd` delegates argument handling to `run_codex.py`:
 
-`TAG` must be unique per run and stable on retry. The reference Windows wrapper is
-`tools/codex-launcher/run-codex.cmd`. The `SessionEnd` hook remains installed. A run end
-record uses the lane as actor; a retry of the same tag keeps the same signal id. If the Runtime
-is down, the command reports `recorded: false` and exits zero. The launcher retains the original
-`codex exec` exit code.
+```text
+run-codex.cmd <actual-lane> <unique-run-tag> <prompt-file> --execution gh-team --issue <N> --branch <branch> --repo stabem/GraphHelm --claim-sequence <sequence> --url http://127.0.0.1:8793 --token-file F:/github/GraphHelm/.graphhelm/events.agent.token --result-file <lane-result-file>
+```
+
+Python, GraphHelm and Codex must already be installed. `--graphhelm` and `--codex` may pin existing
+executables; defaults resolve PATH. GraphHelm must be a native executable on Windows. A discovered
+Codex batch shim is allowed only with arguments free of shell metacharacters; the launcher refuses
+unsafe values rather than trying to escape them. Use a safe path or a native executable instead.
+`--timeout-seconds` bounds the Codex process (default 3600); the admission and end-record requests
+have 45-second deadlines. The timeout does not prove every descendant process has ended.
+
+The launcher runs `graphhelm --json tasks admit` with the six exact binding fields and checks its
+receipt before `codex exec`. Admission failure, unreadable response or a mismatched receipt starts
+no worker. The receipt is a current-claim observation, not a host reservation or a guarantee that
+the lease will remain live. Keep the ordinary heartbeat loop.
+
+After Codex returns, the launcher records `graphhelm tasks run-ended` under that actual lane,
+execution and run tag. Recording is best effort and preserves the Codex exit code; a timeout is
+reported as 124. The `SessionEnd` hook remains installed. The run tag is unique per run and stable
+on recording retry; a Runtime outage cannot turn failed work into success.
 After the end lands, the command releases, as the lane, every pre-PR claim the lane still holds
 (reason `run ended (exit N) without a PR`) and reports them under `claims`: a one-shot run
 that ended without a PR will not open one, so its issue is free at once, not after the lease.

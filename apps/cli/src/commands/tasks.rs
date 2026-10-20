@@ -313,6 +313,72 @@ const COMMAND: &str = "tasks.reconcile";
 const SCRIPT: &str = include_str!("../../../../plugins/graphhelm/hooks/tasks_reconcile.py");
 
 pub(super) fn run(args: &TasksArgs) -> Outcome {
+    if let TasksCommand::Admit {
+        execution,
+        lane,
+        issue,
+        branch,
+        repo,
+        claim_sequence,
+        url,
+        token_file,
+    } = &args.command
+    {
+        let request = super::task_admission::Request {
+            execution_id: execution.clone(),
+            lane: lane.clone(),
+            issue: *issue,
+            branch: branch.clone(),
+            repo: repo.clone(),
+            claim_sequence: *claim_sequence,
+        };
+        let url = url
+            .clone()
+            .or_else(|| std::env::var("GRAPHHELM_RUNTIME_URL").ok())
+            .unwrap_or_else(|| "http://127.0.0.1:8793".to_owned());
+        let refuse = |message: &str, pointer: &str| {
+            Outcome::application(
+                "tasks.admit",
+                Diagnostic::error(
+                    crate::error_codes::GHCLI001_ARGUMENT_INVALID,
+                    message,
+                    pointer,
+                    "task-admission",
+                ),
+            )
+        };
+        if !is_loopback_url(&url) {
+            return refuse("--url must be a loopback Runtime address", "/url");
+        }
+        let token_file = token_file
+            .clone()
+            .or_else(|| std::env::var_os("GRAPHHELM_TOKEN_FILE").map(Into::into));
+        let Some(token_file) = token_file else {
+            return refuse(
+                "--token-file or GRAPHHELM_TOKEN_FILE is required for the task read",
+                "/tokenFile",
+            );
+        };
+        let token = match super::secret_file::read_existing(&token_file, "read token") {
+            Ok(token) => token,
+            Err(_) => {
+                return refuse(
+                    "the read credential is unavailable; restore the Runtime binding before starting the worker",
+                    "/tokenFile",
+                );
+            }
+        };
+        let api = ApiClient::new(
+            url,
+            TokenSource::Fixed(Zeroizing::new(token)),
+            "graphhelm-cli".to_owned(),
+            "agent".to_owned(),
+            None,
+            None,
+            "tasks-admit".to_owned(),
+        );
+        return super::task_admission::admit(&api, &request);
+    }
     if let TasksCommand::Credential {
         lane,
         execution,

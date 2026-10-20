@@ -10,6 +10,12 @@ use zeroize::Zeroizing;
 /// Default per-call timeout for every API request this client places.
 pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// A local credential refusal means no lane request was sent to the Runtime.
+pub(crate) enum LaneRequestError {
+    CredentialUnavailable,
+    Transport(String),
+}
+
 /// The optional parts of one API request (#600): the idempotency key of a mutation, the `If-Match`
 /// head pin, and how long to wait.
 #[derive(Clone, Copy)]
@@ -275,13 +281,15 @@ impl ApiClient {
         if_match: Option<u64>,
         lane: &str,
         credential_file: &str,
-    ) -> Result<(u16, serde_json::Value), String> {
+    ) -> Result<(u16, serde_json::Value), LaneRequestError> {
         let token = crate::commands::secret_file::read_existing(
             std::path::Path::new(credential_file),
             "lane credential",
         )
-        .map_err(|_| "the lane credential file is unavailable or invalid".to_owned())?;
-        let mut endpoint = self.current_endpoint()?;
+        .map_err(|_| LaneRequestError::CredentialUnavailable)?;
+        let mut endpoint = self
+            .current_endpoint()
+            .map_err(LaneRequestError::Transport)?;
         endpoint.token = Zeroizing::new(token);
         endpoint.token_file = None;
         self.request_with(
@@ -296,6 +304,7 @@ impl ApiClient {
             },
             Some(lane),
         )
+        .map_err(LaneRequestError::Transport)
     }
 
     /// [`Self::request`] with its own wait, for a call whose Runtime side may take longer than

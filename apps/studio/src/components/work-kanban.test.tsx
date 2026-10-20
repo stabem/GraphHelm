@@ -3,7 +3,9 @@ import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
 import { MissionView } from "./mission-view";
 import { TEST_SILENT_MS as LIVENESS_MS, judgedLane } from "../test/task-fold";
-import type { Lane } from "../runtime/lane-bars";
+import { laneBars, type Lane } from "../runtime/lane-bars";
+import { tasksReply } from "../runtime/tasks-route";
+import liveTasks from "../../../../core/execution/tests/fixtures/tasks-live-route.json";
 import type { TaskState } from "../runtime/team-tasks";
 import type { TaskDurations } from "../runtime/tasks-route";
 
@@ -138,3 +140,61 @@ describe("WorkKanban step durations (#1516)", () => {
     expect(screen.queryByText(/^Slowest:/)).toBeNull();
   });
 });
+
+// Runtime-produced approved merge slice; liveness cells below are controlled scenario inputs,
+// not verdicts inferred from bars. The same fixture helper is used in lanes-timeline.test.tsx.
+function pendingMergeProjection(options: { reviewerSilent?: boolean; authorSilent?: boolean } = {}) {
+  const projection = tasksReply(liveTasks)!;
+  const source = projection.slices.find((slice) => slice.state.pr === 1013)!;
+  const task = structuredClone(source.state);
+  const routes = projection.routes.filter((route) => route.slice === source.id);
+  const sequences = new Set(routes.map((route) => route.sequence));
+  const records = projection.records.filter((record) => sequences.has(record.sequence))
+    .map((record) => ({ ...record, at: record.occurredAt! }));
+  const at = Date.parse(task.clock.lastAt!) + 60_000;
+  const liveness = {
+    budgets: { silentAfterSeconds: 1800, freeAfterSeconds: 900, stallAfterSeconds: 7200 },
+    lanes: [
+      { lane: task.lane!, silent: options.authorSilent ?? false },
+      { lane: task.currentReviewer!, silent: options.reviewerSilent ?? false },
+    ].map((row) => ({ ...row, owes: true, free: false,
+      lastRecordAt: new Date(at - (row.silent ? 2 * 3_600_000 : 60_000)).toISOString(),
+      owesSince: new Date(at - 2 * 3_600_000).toISOString() })),
+  };
+  return { at, task, records, fold: { slices: [{ ...source, state: task }], routes, liveness } };
+}
+
+describe("pending merge health owner", () => {
+  it.each([
+    { reviewerSilent: true, authorSilent: false, column: /^SILENT/ },
+    { reviewerSilent: false, authorSilent: true, column: /^MERGE/ },
+  ])("attributes merge health to the reviewer with reviewerSilent=$reviewerSilent", async (scenario) => {
+    const { at, task, records, fold } = pendingMergeProjection(scenario);
+    render(<MissionView journeys={[]} tasks={[task]} lanes={laneBars(records, fold, at, 4 * 3_600_000)}
+      now={at} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Lanes" }));
+    const card = within(col(scenario.column)).getByRole("button", { name: /recover slot polling after misses/i });
+    expect(card).toHaveTextContent(task.currentReviewer!);
+    if (scenario.reviewerSilent) expect(within(card).getByText("silent 2h")).toBeInTheDocument();
+    else expect(within(card).getByText("reviewer active 1m ago")).toBeInTheDocument();
+  });
+});
+
+  it.each(["explicit null", "legacy omitted"])("keeps merge owner semantics for %s reviewer", async (mode) => {
+    const { at, task, records, fold } = pendingMergeProjection({ reviewerSilent: true });
+    const reviewer = task.currentReviewer!;
+    if (mode === "explicit null") task.currentReviewer = null;
+    else delete task.currentReviewer;
+    render(<MissionView journeys={[]} tasks={[task]} lanes={laneBars(records, fold, at, 4 * 3_600_000)}
+      now={at} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await fastUserEvent().click(screen.getByRole("tab", { name: "Lanes" }));
+    const card = within(col(mode === "explicit null" ? /^MERGE/ : /^SILENT/))
+      .getByRole("button", { name: /recover slot polling after misses/i });
+    if (mode === "explicit null") {
+      expect(card).toHaveTextContent("Unknown");
+      expect(card.querySelector(".mg-health")).toHaveAttribute("data-flag", "unknown");
+    } else {
+      expect(card).toHaveTextContent("silent 2h");
+      expect(card.querySelector(".mg-node-who")).toHaveTextContent(reviewer);
+    }
+  });

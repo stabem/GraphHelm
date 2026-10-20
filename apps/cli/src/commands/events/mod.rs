@@ -125,12 +125,6 @@ pub(super) fn scope(
     Ok(RepositoryScope::new(workspace, project, execution))
 }
 
-/// Confirms the on-disk repository declares a format this build supports.
-pub(super) fn require_supported_format(root: &Path) -> Result<(), Failure> {
-    graphhelm_events::LocalEventRepository::inspect_format(root)
-        .map_err(|error| repository_failure(&error))
-}
-
 pub(super) fn require_absent_file(path: &Path, pointer: &str, flag: &str) -> Result<(), Failure> {
     if path.symlink_metadata().is_ok() {
         return Err(argument(

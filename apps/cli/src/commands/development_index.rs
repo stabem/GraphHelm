@@ -889,7 +889,7 @@ fn open_local_file(root: &Path, name: &str, read: bool, lock: bool) -> Result<Fi
         {
             return Err("local evidence must be a regular file".to_owned());
         }
-        return Ok(file);
+        Ok(file)
     }
     #[cfg(windows)]
     {

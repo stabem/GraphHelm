@@ -627,6 +627,7 @@ fn a_build_directory_is_reclaimed_only_when_its_worktree_is_positively_gone() {
         assert_eq!(code, 0, "{reply}");
         reply["data"]["targets"].clone()
     };
+    #[cfg(windows)]
     let kept =
         |reason: &str| serde_json::json!([{"lane": "lane-a", "name": "wt-one", "reason": reason}]);
 

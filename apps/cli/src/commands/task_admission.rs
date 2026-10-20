@@ -117,9 +117,8 @@ pub(crate) fn admit(api: &ApiClient, request: &Request) -> Outcome {
         );
     }
     let path = format!(
-        "{}?lane={}&issue={}",
+        "{}?issue={}",
         url::segment_path(&["v1", "executions", &request.execution_id, "tasks"]),
-        url::encode_component(&request.lane),
         request.issue
     );
     match api.request("GET", &path, None, None, None) {

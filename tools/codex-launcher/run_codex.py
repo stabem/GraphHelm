@@ -83,11 +83,20 @@ def main(argv=None):
                 print("launcher: Codex process exceeded its deadline", file=sys.stderr)
                 code = 124
         try:
-            ended = subprocess.run([graphhelm, "tasks", "run-ended", "--lane", args.lane,
+            ended = subprocess.run([graphhelm, "--json", "tasks", "run-ended", "--lane", args.lane,
                             "--execution", args.execution, "--url", args.url, "--exit", str(code),
                             "--run-id", args.tag, "--result-file", str(args.result_file),
-                            "--token-file", args.token_file], timeout=45, creationflags=NO_WINDOW)
-            if ended.returncode != 0:
+                            "--token-file", args.token_file], capture_output=True, text=True, timeout=45,
+                                   creationflags=NO_WINDOW)
+            try:
+                receipt = json.loads(ended.stdout)
+                data = receipt.get("data") if isinstance(receipt, dict) else None
+                recorded = (ended.returncode == 0 and isinstance(receipt, dict)
+                            and receipt.get("ok") is True and receipt.get("command") == "tasks.run-ended"
+                            and isinstance(data, dict) and data.get("recorded") is True)
+            except (ValueError, TypeError):
+                recorded = False
+            if not recorded:
                 print("launcher: run-end recording failed", file=sys.stderr)
         except (OSError, subprocess.TimeoutExpired):
             print("launcher: run-end recording unavailable", file=sys.stderr)

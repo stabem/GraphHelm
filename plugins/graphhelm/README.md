@@ -303,6 +303,11 @@ retain the existing `review_assigned` record for their actual identity, current 
 they receive an independent blind-review payload and never claim the author's issue. Flow reviews
 use their existing scoped flow contract.
 
+The Runtime permits an explicit `assignedBy` handover while the predecessor still has a live
+claim lease. Admission conservatively refuses the successor until the predecessor releases its
+own claim; an unrelated issue does not block admission. This is stricter than Runtime claim
+registration and does not change its handover rules.
+
 Admission checks the current claim snapshot; it does not start a host, prove work happened or
 prevent a later lease expiry. Direct external host spawn APIs are not intercepted. Session
 presence, mailbox acknowledgements and self-reported activity remain separate evidence; a

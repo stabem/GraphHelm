@@ -3575,6 +3575,410 @@ fn tasks_tool_narrows_to_one_lane_or_one_issue() {
         after["data"]["headSequence"], lane["data"]["headSequence"],
         "admission must not append events: {after}"
     );
+
+    // A signed handover keeps the predecessor's lease live until that lane releases it.
+    // The admission read must retain both lanes, even when checking beta's exact binding.
+    let mut handover = claim("handover-beta", "lane-beta", 101, &beta);
+    let mut document: serde_json::Value = serde_json::from_str(
+        handover["params"]["arguments"]["signal"]["description"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    document["assignedBy"] = serde_json::json!("lane-alpha");
+    handover["params"]["arguments"]["signal"]["description"] =
+        serde_json::json!(document.to_string());
+    let handed = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        handover,
+        read("handover-issue", serde_json::json!({"issue":101})),
+        read(
+            "handover-beta",
+            serde_json::json!({"issue":101,"lane":"lane-beta"}),
+        ),
+    ]);
+    let (handover_failed, handover_reply) = tool_envelope(&handed.replies[1]);
+    assert!(!handover_failed, "{handover_reply}");
+    let (_, overlap) = tool_envelope(&handed.replies[2]);
+    let (_, beta_only) = tool_envelope(&handed.replies[3]);
+    assert_eq!(
+        overlap["data"]["tasks"].as_array().unwrap().len(),
+        2,
+        "{overlap}"
+    );
+    let leases = overlap["data"]["leases"].as_array().unwrap();
+    assert_eq!(leases.len(), 2, "{overlap}");
+    assert!(
+        leases.iter().all(|lease| lease["overdue"] == false),
+        "{overlap}"
+    );
+    assert_eq!(
+        beta_only["data"]["leases"].as_array().unwrap().len(),
+        1,
+        "{beta_only}"
+    );
+    let beta_sequence = beta_only["data"]["tasks"][0]["claimSequence"]
+        .as_u64()
+        .unwrap();
+    let beta_admission = serde_json::json!({
+        "executionId":execution, "lane":"lane-beta", "issue":101,
+        "branch":"issue-101-x", "repo":"stabem/GraphHelm", "claimSequence":beta_sequence,
+    });
+    let refused = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(
+            serde_json::json!("overlap-refused"),
+            "task_admit",
+            beta_admission.clone(),
+        ),
+        read("after-refusal", serde_json::json!({"issue":101})),
+    ]);
+    let (failed, refusal) = tool_envelope(&refused.replies[1]);
+    assert!(
+        failed,
+        "beta must wait for alpha's live predecessor lease: {refusal}"
+    );
+    assert_eq!(
+        refusal["diagnostics"][0]["code"], "GHCLI041_TASK_ADMISSION_REFUSED",
+        "{refusal}"
+    );
+    let (_, after_refusal) = tool_envelope(&refused.replies[2]);
+    assert_eq!(
+        after_refusal["data"]["headSequence"], overlap["data"]["headSequence"],
+        "refused admission must not append"
+    );
+
+    let release = serde_json::json!({
+        "id":"release-alpha-handover", "source":{"type":"user","id":"lane-alpha"},
+        "type":"task.released", "severity":"low", "evidence":["task"],
+        "emittedAt":"2026-10-15T12:00:00Z",
+        "description":serde_json::json!({
+            "schema":"graphhelm-task-event-v1", "taskId":"issue-101", "revision":2,
+            "at":"2026-10-15T12:00:00Z", "lane":"lane-alpha", "claimSequence":sequence,
+            "reason":"release predecessor claim after signed handover",
+        }).to_string(),
+    });
+    let released = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(serde_json::json!("release-alpha"), "signal", serde_json::json!({
+            "executionId":execution, "lane":"lane-alpha", "credentialFile":alpha.to_str().unwrap(),
+            "signal":release,
+        })),
+        read("after-release", serde_json::json!({"issue":101})),
+        read("unrelated-held", serde_json::json!({"issue":202})),
+    ]);
+    let (release_failed, release_reply) = tool_envelope(&released.replies[1]);
+    assert!(!release_failed, "{release_reply}");
+    let (_, after_release) = tool_envelope(&released.replies[2]);
+    let (_, unrelated) = tool_envelope(&released.replies[3]);
+    assert_eq!(
+        after_release["data"]["leases"].as_array().unwrap().len(),
+        1,
+        "{after_release}"
+    );
+    assert_eq!(after_release["data"]["leases"][0]["lane"], "lane-beta");
+    assert_eq!(
+        unrelated["data"]["leases"].as_array().unwrap().len(),
+        1,
+        "{unrelated}"
+    );
+    let unrelated_sequence = unrelated["data"]["tasks"][0]["claimSequence"]
+        .as_u64()
+        .unwrap();
+    let admitted = harness.session(&[
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(serde_json::json!("successor-admitted"), "task_admit", beta_admission),
+        tool_call(serde_json::json!("unrelated-admitted"), "task_admit", serde_json::json!({
+            "executionId":execution, "lane":"lane-beta", "issue":202,
+            "branch":"issue-202-x", "repo":"stabem/GraphHelm", "claimSequence":unrelated_sequence,
+        })),
+        read("after-admissions", serde_json::json!({"issue":101})),
+    ]);
+    for reply in &admitted.replies[1..3] {
+        let (failed, receipt) = tool_envelope(reply);
+        assert!(!failed, "{receipt}");
+        assert_eq!(receipt["data"]["admitted"], true, "{receipt}");
+    }
+    let (_, after_admissions) = tool_envelope(&admitted.replies[3]);
+    assert_eq!(
+        after_admissions["data"]["headSequence"], after_release["data"]["headSequence"],
+        "successful admission must not append"
+    );
+}
+
+/// An unauthorized Runtime read and an actual connection failure are distinct from claim refusal.
+#[test]
+fn task_admission_distinguishes_unauthorized_read_from_runtime_unavailable() {
+    let execution = "exec-admission-read-errors";
+    let harness = wired_lane_sealed(execution);
+    let arguments = serde_json::json!({
+        "executionId":execution, "lane":"lane-alpha", "issue":101,
+        "branch":"issue-101-x", "repo":"stabem/GraphHelm", "claimSequence":1,
+    });
+    let requests = [
+        initialize_request(1, "2025-06-18"),
+        initialized_notification(),
+        tool_call(serde_json::json!("admission-read"), "task_admit", arguments),
+    ];
+    let before = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/tasks?issue=101"),
+    );
+    let wrong_token = "a".repeat(64);
+    let unauthorized = mcp_session_with(
+        &["--url", &harness.base, "--actor", "lane-alpha"],
+        &[("GRAPHHELM_API_TOKEN", &wrong_token)],
+        &requests,
+    );
+    let (failed, envelope) = tool_envelope(&unauthorized.replies[1]);
+    assert!(failed, "{envelope}");
+    assert_eq!(
+        envelope["diagnostics"][0]["code"], "GHCLI007_SERVE_UNAUTHORIZED",
+        "{envelope}"
+    );
+    assert!(envelope["data"].is_null());
+    let after = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/tasks?issue=101"),
+    );
+    assert_eq!(
+        after["data"]["headSequence"], before["data"]["headSequence"],
+        "unauthorized admission must not append"
+    );
+    let base = harness.base.clone();
+    let token_file = harness.token_file.clone();
+    // Retain the fixture directory and token while shutting down only its Runtime process.
+    drop(harness._server);
+    let unavailable = mcp_session_with(
+        &[
+            "--url",
+            &base,
+            "--token-file",
+            token_file.to_str().unwrap(),
+            "--actor",
+            "lane-alpha",
+        ],
+        &[],
+        &requests,
+    );
+    let (failed, envelope) = tool_envelope(&unavailable.replies[1]);
+    assert!(failed, "{envelope}");
+    assert_eq!(
+        envelope["diagnostics"][0]["code"], "GHCLI016_DRIVER_FAILURE",
+        "{envelope}"
+    );
+    assert!(envelope["data"].is_null());
+}
+
+/// Native cmd/Python launch against the tested executable and a scratch Runtime, never a model.
+#[cfg(windows)]
+#[test]
+fn native_windows_launcher_refuses_then_runs_and_records_the_fixture_worker() {
+    use std::os::windows::process::CommandExt as _;
+    let execution = "exec-native-worker-admission";
+    let lane = "native-worker";
+    let harness = wired_lane_sealed(execution);
+    let binary = assert_cmd::cargo::cargo_bin!("graphhelm");
+    let binary_digest = hex::encode(sha2::Sha256::digest(std::fs::read(binary).unwrap()));
+    eprintln!(
+        "native Windows admission executable={} sha256={binary_digest}",
+        binary.display()
+    );
+    let minted = assert_cmd::Command::from_std(graphhelm_process::command(binary))
+        .args([
+            "--json",
+            "tasks",
+            "credential",
+            "--lane",
+            lane,
+            "--execution",
+            execution,
+            "--token-file",
+            harness
+                ._directory
+                .path()
+                .join("events.token")
+                .to_str()
+                .unwrap(),
+        ])
+        .timeout(scaled(Duration::from_secs(30)))
+        .output()
+        .unwrap();
+    assert!(
+        minted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&minted.stdout)
+    );
+    let credential = harness
+        ._directory
+        .path()
+        .join(format!("events.agent.{lane}.token"));
+    let claim = serde_json::json!({
+        "id":"native-worker-claim", "type":"task.claimed", "source":{"type":"user","id":lane},
+        "severity":"low", "evidence":["task"], "emittedAt":"2026-10-15T12:00:00Z",
+        "description":serde_json::json!({"schema":"graphhelm-task-event-v1", "taskId":"issue-1739",
+            "revision":1, "at":"2026-10-15T12:00:00Z", "issue":1739, "lane":lane,
+            "branch":"issue-1739-native", "repo":"stabem/GraphHelm"}).to_string(),
+    });
+    let session = harness.session(&[
+        initialize_request(1, "2025-06-18"), initialized_notification(),
+        tool_call(serde_json::json!("native-claim"), "signal", serde_json::json!({
+            "executionId":execution, "signal":claim, "lane":lane, "credentialFile":credential.to_str().unwrap(),
+        })),
+        tool_call(serde_json::json!("native-tasks"), "tasks", serde_json::json!({"executionId":execution,"issue":1739})),
+    ]);
+    let (failed, claimed) = tool_envelope(&session.replies[1]);
+    assert!(!failed, "{claimed}");
+    let (_, tasks) = tool_envelope(&session.replies[2]);
+    let sequence = tasks["data"]["tasks"][0]["claimSequence"].as_u64().unwrap();
+    let directory = harness._directory.path().join("worker fixture with spaces");
+    std::fs::create_dir(&directory).unwrap();
+    let marker = directory.join("worker-marker.json");
+    let prompt = directory.join("prompt bytes.txt");
+    let result = directory.join("result bytes.md");
+    let shim = directory.join("codex.cmd");
+    let worker = directory.join("worker.py");
+    let bytes = b"exact native prompt\r\nsecond line: 'quoted' & inert\n";
+    std::fs::write(&prompt, bytes).unwrap();
+    std::fs::write(&worker,
+        "import json,sys\nfrom pathlib import Path\np=Path(__file__).with_name('worker-marker.json')\nassert not p.exists()\np.write_text(json.dumps({'argv':sys.argv[1:],'stdinHex':sys.stdin.buffer.read().hex()}))\nraise SystemExit(7)\n"
+    ).unwrap();
+    std::fs::write(
+        &shim,
+        "@echo off\r\npython \"%~dp0worker.py\" %*\r\nexit /b %ERRORLEVEL%\r\n",
+    )
+    .unwrap();
+    let launcher = root_dir().join("tools/codex-launcher/run-codex.cmd");
+    let tag = "native-admission-unique-run";
+    let launch = |branch: &str| {
+        let arguments = vec![
+            launcher.to_string_lossy().into_owned(),
+            lane.to_owned(),
+            tag.to_owned(),
+            prompt.to_string_lossy().into_owned(),
+            "--execution".into(),
+            execution.into(),
+            "--issue".into(),
+            "1739".into(),
+            "--branch".into(),
+            branch.into(),
+            "--repo".into(),
+            "stabem/GraphHelm".into(),
+            "--claim-sequence".into(),
+            sequence.to_string(),
+            "--url".into(),
+            harness.base.clone(),
+            "--token-file".into(),
+            harness
+                ._directory
+                .path()
+                .join("events.token")
+                .to_string_lossy()
+                .into_owned(),
+            "--result-file".into(),
+            result.to_string_lossy().into_owned(),
+            "--graphhelm".into(),
+            binary.to_string_lossy().into_owned(),
+            "--codex".into(),
+            shim.to_string_lossy().into_owned(),
+            "--timeout-seconds".into(),
+            "30".into(),
+        ];
+        assert!(
+            arguments
+                .iter()
+                .all(|value| !value.chars().any(|c| "\"%!&|<>^\r\n".contains(c)))
+        );
+        let command_line = format!(
+            "\"{}\"",
+            arguments
+                .iter()
+                .map(|value| format!("\"{value}\""))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let mut command = graphhelm_process::command("cmd");
+        command.args(["/d", "/s", "/c"]);
+        command.raw_arg(command_line);
+        assert_cmd::Command::from_std(command)
+            .timeout(scaled(Duration::from_secs(90)))
+            .output()
+            .unwrap()
+    };
+    let head = tasks["data"]["headSequence"].clone();
+    let refused = launch("wrong-branch");
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("GHCLI041_TASK_ADMISSION_REFUSED"));
+    assert!(
+        !marker.exists(),
+        "refusal must not invoke the fixture worker"
+    );
+    let after_refusal = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/tasks?issue=1739"),
+    );
+    assert_eq!(after_refusal["data"]["headSequence"], head);
+    let admitted = launch("issue-1739-native");
+    assert_eq!(
+        admitted.status.code(),
+        Some(7),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&admitted.stdout),
+        String::from_utf8_lossy(&admitted.stderr)
+    );
+    let observed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&marker).unwrap()).unwrap();
+    assert_eq!(
+        observed["argv"],
+        serde_json::json!(["exec", "-o", result.to_str().unwrap(), "-"])
+    );
+    assert_eq!(observed["stdinHex"], hex::encode(bytes));
+    let finished = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/tasks?issue=1739"),
+    );
+    assert!(
+        finished["data"]["leases"].as_array().unwrap().is_empty(),
+        "run-ended must release the fixture's own pre-PR claim: {finished}"
+    );
+    let digest = sha2::Sha256::digest(format!("{execution}\0{lane}\0{tag}\0Some(7)").as_bytes());
+    let expected_id = format!("run-ended-{}", hex::encode(&digest[..20]));
+    let events = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/events?limit=1000"),
+    );
+    let recorded = events["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| {
+            event["kind"]["type"] == "signal_recorded"
+                && event["kind"]["data"]["signalId"] == expected_id
+        })
+        .unwrap_or_else(|| panic!("fixture run end for {tag} was not recorded: {events}"));
+    let evidence_id = recorded["evidenceRefs"][0]["evidenceId"].as_str().unwrap();
+    let opened = http_get_json(
+        &harness.base,
+        &harness.token,
+        &format!("/v1/executions/{execution}/evidence?ids=%5B%22{evidence_id}%22%5D"),
+    );
+    let sealed: serde_json::Value =
+        serde_json::from_str(opened["data"]["results"][0]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(sealed["type"], "agent_session_ended");
+    assert_eq!(sealed["source"]["id"], lane);
+    assert!(
+        sealed["description"].as_str().unwrap().contains("exit 7"),
+        "{sealed}"
+    );
 }
 
 /// Explicit scale observer: real event persistence, task projection, HTTP and MCP admission.

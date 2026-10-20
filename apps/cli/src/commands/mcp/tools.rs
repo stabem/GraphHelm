@@ -1751,8 +1751,18 @@ pub(crate) fn call(
             },
         };
         let outcome = crate::commands::task_admission::admit(api, &request);
+        let serialized = match serde_json::to_string(&outcome.output) {
+            Ok(serialized) => serialized,
+            Err(_) => {
+                return HandlerOutcome::Error {
+                    data: None,
+                    code: super::INTERNAL_ERROR,
+                    message: "could not serialize the task admission receipt".to_owned(),
+                };
+            }
+        };
         return HandlerOutcome::Result(serde_json::json!({
-            "content": [{"type":"text", "text":serde_json::to_string(&outcome.output).expect("command output is serializable")}],
+            "content": [{"type":"text", "text":serialized}],
             "isError": !outcome.output.ok,
         }));
     }

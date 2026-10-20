@@ -31,7 +31,9 @@ with open(os.environ['CALL_LOG'], 'a') as f: f.write(json.dumps(sys.argv[1:])+'\
 if 'admit' in sys.argv:
  print(pathlib.Path(os.environ['RECEIPT']).read_text())
  sys.exit(int(os.environ.get('ADMIT_EXIT','0')))
-sys.exit(1)
+if os.environ.get('END_RECEIPT'):
+ print(pathlib.Path(os.environ['END_RECEIPT']).read_text())
+sys.exit(int(os.environ.get('END_EXIT','1')))
 ''')
         self.codex = self.program("codex", '''
 import json, os, sys
@@ -89,6 +91,37 @@ sys.exit(7)
                 self.assertEqual(self.run_launcher().returncode, 2)
                 self.assertEqual(len(self.calls()), 1)
 
+    def test_exit_zero_without_valid_recorded_receipt_reports_failure_and_preserves_worker_exit(self):
+        ended = self.root / "end-receipt.json"
+        self.env.update(END_EXIT='0', END_RECEIPT=str(ended))
+        for receipt in (
+            json.dumps({"ok": True, "command": "tasks.run-ended", "data":
+                        {"recorded": False, "reason": "sensitive-end-reason-do-not-print"}}),
+            'not json',
+            '[]',
+            json.dumps({"ok": True, "command": "tasks.run-ended", "data": None}),
+            json.dumps({"ok": True, "command": "tasks.admit", "data": {"recorded": True}}),
+            json.dumps({"ok": True, "command": "tasks.run-ended", "data": {}}),
+        ):
+            with self.subTest(receipt=receipt):
+                self.log.unlink(missing_ok=True)
+                ended.write_text(receipt)
+                result = self.run_launcher()
+                self.assertEqual(result.returncode, 7)
+                self.assertEqual(len(self.calls()), 3)
+                self.assertIn('launcher: run-end recording failed', result.stderr)
+                self.assertNotIn('sensitive-end-reason-do-not-print', result.stdout + result.stderr)
+
+    def test_valid_recorded_receipt_preserves_worker_exit_without_failure_diagnostic(self):
+        ended = self.root / "end-receipt.json"
+        ended.write_text(json.dumps({"ok": True, "command": "tasks.run-ended",
+                                     "data": {"recorded": True}}))
+        self.env.update(END_EXIT='0', END_RECEIPT=str(ended))
+        result = self.run_launcher()
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(len(self.calls()), 3)
+        self.assertNotIn('run-end recording failed', result.stderr)
+
     def test_admitted_run_transports_binding_and_preserves_exit_when_end_fails(self):
         self.assertEqual(self.run_launcher().returncode, 7)
         admit, worker, ended = self.calls()
@@ -98,14 +131,14 @@ sys.exit(7)
             self.assertEqual(admit[admit.index(flag)+1], value)
         self.assertEqual(worker, ['worker', 'exec', '-o', str(self.root / 'result with spaces.md'), '-',
                                   'actual task payload\n'])
-        self.assertEqual(ended[:2], ['tasks', 'run-ended'])
+        self.assertEqual(ended[:3], ['--json', 'tasks', 'run-ended'])
         self.assertEqual(ended[ended.index('--exit')+1], '7')
         self.assertEqual(ended[ended.index('--run-id')+1], 'unique-tag')
 
 
 @unittest.skipUnless(os.name == "nt", "Windows cmd entry point")
 class WindowsEntryTest(unittest.TestCase):
-    def test_missing_binding_refuses_before_worker(self):
+    def test_cmd_entrypoint_rejects_missing_required_arguments(self):
         result = subprocess.run(['cmd', '/d', '/c', str(LAUNCHER.with_name('run-codex.cmd'))],
                                 capture_output=True, timeout=10, creationflags=NO_WINDOW)
         self.assertNotEqual(result.returncode, 0)

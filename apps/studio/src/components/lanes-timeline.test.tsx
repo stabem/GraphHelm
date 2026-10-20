@@ -8,7 +8,10 @@ import { LanesTimeline } from "./lanes-timeline";
 import type { MissionTask } from "../runtime/mission";
 import { fastUserEvent } from "../test/user-event";
 import css from "./lanes-timeline.css?raw";
-import { type TimedTaskEvent } from "../runtime/lane-bars";
+import { laneBars, type TimedTaskEvent } from "../runtime/lane-bars";
+import { tasksReply } from "../runtime/tasks-route";
+import { toMissionTask } from "../runtime/mission";
+import liveTasks from "../../../../core/execution/tests/fixtures/tasks-live-route.json";
 import { teamModel } from "../runtime/team";
 import type { RuntimeEvent } from "../runtime/types";
 
@@ -399,4 +402,106 @@ describe("LanesTimeline", () => {
     expect(row.querySelector(".ab-doing")).not.toHaveTextContent("Waiting for build");
     expect(row.textContent?.match(/Waiting for build/g)).toHaveLength(1);
   });
+});
+
+// Runtime-produced approved merge slice; liveness cells below are controlled scenario inputs,
+// not verdicts inferred from bars. The same fixture helper is used in work-kanban.test.tsx.
+function pendingMergeProjection(options: { reviewerSilent?: boolean; authorSilent?: boolean } = {}) {
+  const projection = tasksReply(liveTasks)!;
+  const source = projection.slices.find((slice) => slice.state.pr === 1013)!;
+  const task = structuredClone(source.state);
+  const routes = projection.routes.filter((route) => route.slice === source.id);
+  const sequences = new Set(routes.map((route) => route.sequence));
+  const records = projection.records.filter((record) => sequences.has(record.sequence))
+    .map((record) => ({ ...record, at: record.occurredAt! }));
+  const at = Date.parse(task.clock.lastAt!) + 60_000;
+  const liveness = {
+    budgets: { silentAfterSeconds: 1800, freeAfterSeconds: 900, stallAfterSeconds: 7200 },
+    lanes: [
+      { lane: task.lane!, silent: options.authorSilent ?? false },
+      { lane: task.currentReviewer!, silent: options.reviewerSilent ?? false },
+    ].map((row) => ({ ...row, owes: true, free: false,
+      lastRecordAt: new Date(at - (row.silent ? 2 * 3_600_000 : 60_000)).toISOString(),
+      owesSince: new Date(at - 2 * 3_600_000).toISOString() })),
+  };
+  return { at, task, records, fold: { slices: [{ ...source, state: task }], routes, liveness } };
+}
+
+describe("pending merge reviewer obligation", () => {
+  it.each([
+    { reviewerSilent: false, status: "Waiting" },
+    { reviewerSilent: true, status: "Silent" },
+  ])("keeps the closed-review reviewer $status until merge, not available or working", async ({ reviewerSilent, status }) => {
+    const { at, task, records, fold } = pendingMergeProjection({ reviewerSilent });
+    const projected = laneBars(records, fold, at, 4 * 3_600_000);
+    const reviewer = task.currentReviewer!;
+    expect(projected.find((lane) => lane.lane === reviewer)!.bars.filter((bar) => bar.kind === "review")
+      .every((bar) => !bar.open)).toBe(true);
+    const props = { now: at, windowMs: 4 * 3_600_000, seenActors: [reviewer] };
+    const view = render(<LanesTimeline {...props} lanes={projected} tasks={[toMissionTask(task)]} />);
+    const board = screen.getByRole("list", { name: "Agent board" });
+    expect(within(board).queryByText(reviewer)).toBeNull();
+    expect(screen.getByRole("button", { name: "Working 0" })).toBeInTheDocument();
+    await fastUserEvent().click(screen.getByRole("button", { name: `${status} 1` }));
+    const row = within(board).getByRole("listitem", { name: `${reviewer} · ${status} · merge` });
+    expect(within(row).getByText(status, { selector: ".ab-pill" })).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: /awaiting merge.*#1013/i }))
+      .toHaveAttribute("href", "https://github.com/stabem/GraphHelm/pull/1013");
+
+    const merged = { ...task, step: "merged" as const, mergeSha: "abcdef0123456789" };
+    const mergeRecord: TimedTaskEvent = { sequence: task.lastSequence + 1, taskId: task.taskId,
+      kind: "task.merged", actorId: reviewer, reviewer, pr: task.pr!, mergeSha: merged.mergeSha,
+      at: new Date(at).toISOString() };
+    const mergedFold = { ...fold, slices: [{ ...fold.slices[0]!, state: merged }],
+      routes: [...fold.routes, { sequence: mergeRecord.sequence, slice: fold.slices[0]!.id }] };
+    view.rerender(<LanesTimeline {...props} tasks={[toMissionTask(merged)]}
+      lanes={laneBars([...records, mergeRecord], mergedFold, at, props.windowMs)} />);
+    expect(within(board).queryByText(reviewer)).toBeNull();
+    expect(within(board).queryByRole("link", { name: /awaiting merge/i })).toBeNull();
+  });
+});
+
+it("retains explicit null versus legacy pending-merge assignment in the rendered board", async () => {
+  const { at, task, records, fold } = pendingMergeProjection();
+  const reviewer = task.currentReviewer!;
+  task.currentReviewer = null;
+  const props = { now: at, windowMs: 4 * 3_600_000, seenActors: [reviewer] };
+  const view = render(<LanesTimeline {...props} lanes={laneBars(records, fold, at, props.windowMs)} tasks={[toMissionTask(task)]} />);
+  const board = screen.getByRole("list", { name: "Agent board" });
+  const available = within(board).getByText(reviewer).closest("li")!;
+  expect(available).toHaveAttribute("aria-label", `${reviewer} · Free`);
+  expect(within(available).queryByRole("link")).toBeNull();
+  delete task.currentReviewer;
+  view.rerender(<LanesTimeline {...props} lanes={laneBars(records, fold, at, props.windowMs)} tasks={[toMissionTask(task)]} />);
+  expect(within(board).queryByText(reviewer)).toBeNull();
+  await fastUserEvent().click(screen.getByRole("button", { name: "Waiting 1" }));
+  expect(within(board).getByRole("listitem", { name: `${reviewer} · Waiting · merge` })).toBeInTheDocument();
+});
+
+it("keeps real implementation and build-slot precedence over the pending merge obligation", async () => {
+  const { at, task, records, fold } = pendingMergeProjection({ reviewerSilent: true });
+  const reviewer = task.currentReviewer!;
+  const work = { ...structuredClone(task), key: "issue-2000#claim-0", taskId: "issue-2000", issue: 2000, pr: null,
+    lane: reviewer, step: "implement" as const, prTitle: "Actual implementation", reviewers: [], currentReviewer: null };
+  const next = task.lastSequence + 1, slice = 9999;
+  const activeRecords: TimedTaskEvent[] = [
+    { sequence: next, kind: "task.claimed", taskId: work.taskId, actorId: reviewer, lane: reviewer, issue: 2000, at: new Date(at - 20_000).toISOString() },
+    { sequence: next + 1, kind: "task.planned", taskId: work.taskId, actorId: reviewer, lane: reviewer, at: new Date(at - 10_000).toISOString() },
+  ];
+  const activeFold = { ...fold, slices: [...fold.slices, { id: slice, ended: false, absorbed: false, state: work }],
+    routes: [...fold.routes, ...activeRecords.map((record) => ({ sequence: record.sequence, slice }))],
+    liveness: { ...fold.liveness, lanes: fold.liveness.lanes.map((row) => row.lane === reviewer ? { ...row, silent: false } : row) } };
+  const props = { now: at, windowMs: 4 * 3_600_000, tasks: [task, work].map(toMissionTask) };
+  const view = render(<LanesTimeline {...props} lanes={laneBars([...records, ...activeRecords], activeFold, at, props.windowMs)} />);
+  await fastUserEvent().click(screen.getByRole("button", { name: "Working 1" }));
+  const board = screen.getByRole("list", { name: "Agent board" });
+  expect(within(board).getByRole("listitem", { name: `${reviewer} · Working · claimed` }))
+    .not.toHaveTextContent("awaiting merge");
+  const slots = [{ root: "D:/gh", ok: true as const, holder: { lane: reviewer, label: "#1013", pid: 1, worktree: null, heldSeconds: 10 }, waiting: [] }];
+  view.rerender(<LanesTimeline {...props} slots={slots} lanes={laneBars(records, fold, at, props.windowMs)} />);
+  expect(within(board).getByRole("listitem", { name: `${reviewer} · Building · proving · #1013` })).toBeInTheDocument();
+  view.rerender(<LanesTimeline {...props} slots={[{ ...slots[0]!, holder: null, waiting: [{ lane: reviewer, label: "#1013", pid: 2, worktree: null, priority: null, ticket: null, waitedSeconds: 10 }] }]}
+    lanes={laneBars(records, fold, at, props.windowMs)} />);
+  await fastUserEvent().click(screen.getByRole("button", { name: "Waiting 1" }));
+  expect(within(board).getByRole("listitem", { name: `${reviewer} · Waiting for build · proving · #1013` })).toBeInTheDocument();
 });

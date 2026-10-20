@@ -39,14 +39,14 @@ const pushedFix = (t: TaskState) => {
   return t.step === "review" && !openBlock(t) && last?.fixHead ? last : null;
 };
 
-/** #591: whose silence stalls the step: the author for Implement/Fix/Merge (and Plan), the reviewer
- * for Review and Re-review (the BLOCKing reviewer re-reviews). `null` when no reviewer is named yet. */
+/** #591: whose silence stalls the step: the author for Implement/Fix (and Plan), the reviewer
+ * for Review, Re-review and Merge (the BLOCKing reviewer re-reviews). `null` when no reviewer is named yet. */
 export type OwnerRole = "author" | "reviewer";
-/** #591: the role of the owner lane: the reviewer on a Review/Re-review, else the author. */
-export const ownerRole = (t: TaskState): OwnerRole => (t.step === "review" && !openBlock(t) ? "reviewer" : "author");
+/** #591: the role of the owner lane: the reviewer on a Review/Re-review or Merge, else the author. */
+export const ownerRole = (t: TaskState): OwnerRole => ((t.step === "review" && !openBlock(t)) || t.step === "merge" ? "reviewer" : "author");
 
 export function ownerLane(t: TaskState): string | null {
-  if (t.step !== "review" || openBlock(t)) return t.lane;
+  if (t.step !== "merge" && (t.step !== "review" || openBlock(t))) return t.lane;
   return t.currentReviewer === undefined
     ? pushedFix(t)?.reviewer || t.reviewers[t.reviewers.length - 1] || null
     : t.currentReviewer;

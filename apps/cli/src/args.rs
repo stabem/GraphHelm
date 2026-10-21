@@ -116,6 +116,25 @@ pub struct TasksArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum TasksCommand {
+    /// Read and verify an exact current lane claim before starting its worker; writes nothing.
+    Admit {
+        #[arg(long)]
+        execution: String,
+        #[arg(long)]
+        lane: String,
+        #[arg(long)]
+        issue: u64,
+        #[arg(long)]
+        branch: String,
+        #[arg(long)]
+        repo: String,
+        #[arg(long)]
+        claim_sequence: u64,
+        #[arg(long)]
+        url: Option<String>,
+        #[arg(long)]
+        token_file: Option<PathBuf>,
+    },
     RunEnded {
         #[arg(long, default_value = "gh-team")]
         execution: String,

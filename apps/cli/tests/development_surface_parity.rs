@@ -166,7 +166,9 @@ const CLI_ONLY_DEVELOPMENT_LEAVES: &[&str] = &["dream-shadow"];
 ///
 /// Order follows `TOOLS`'s own declaration order ("the closed list, in the plan's order"), not
 /// alphabetical, so a reader can diff the two surfaces by eye.
-const NON_DEVELOPMENT_TOOLS: [&str; 40] = [
+const NON_DEVELOPMENT_TOOLS: [&str; 41] = [
+    // Worker admission reads an existing task claim; it creates no development operation.
+    "task_admit",
     // #382 phase B. The task planner reads keel.yaml and the journey map; it is a Keel read,
     // not a development-contract operation family.
     "keel_plan",

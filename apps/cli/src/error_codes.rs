@@ -74,6 +74,9 @@ pub const GHCLI039_KEEL_VALIDATION_BLOCKED: &str = "GHCLI039_KEEL_VALIDATION_BLO
 /// An agent-typed MCP session asked to reject a journey flow; only the owner rejects (#1588).
 pub const GHCLI040_JOURNEY_REJECT_OWNER_ONLY: &str = "GHCLI040_JOURNEY_REJECT_OWNER_ONLY";
 
+/// The worker binding has no exact current claim with a live lease.
+pub const GHCLI041_TASK_ADMISSION_REFUSED: &str = "GHCLI041_TASK_ADMISSION_REFUSED";
+
 /// Every registered code. A code that is not in this list is not a code: the tests below refuse a
 /// literal anywhere else under `apps/cli/src`, so a new allocation has to come through here. The
 /// list, the tolerated pairs and `number_of` exist for the tests, which is why they are test-only:
@@ -122,6 +125,7 @@ pub const ALL: &[&str] = &[
     GHCLI038_ACTOR_MISMATCH,
     GHCLI039_KEEL_VALIDATION_BLOCKED,
     GHCLI040_JOURNEY_REJECT_OWNER_ONLY,
+    GHCLI041_TASK_ADMISSION_REFUSED,
 ];
 
 /// Numbers allocated twice BEFORE the registry existed, each pair a wire contract on both sides.

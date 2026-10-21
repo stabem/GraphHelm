@@ -1084,6 +1084,72 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
         self.assertEqual(self.counter.read_text().splitlines(), [str(environment)])
 
+    def test_controlled_app_alias_rebinds_target_bytes_and_discovery_cwd(self):
+        # Controlled routing inputs supplement the native Store observer; no Windows activation is simulated.
+        import types
+        alias = self.repo.parent / "python-alias.exe"
+        alias.write_bytes(b"opaque alias route")
+        alias.chmod(0o755)
+        first = self.repo.parent / "image-a.exe"
+        second = self.repo.parent / "image-b.exe"
+        first.write_bytes(b"same-version image A")
+        second.write_bytes(b"same-version image B")
+        child = self.repo / "child"
+        child.mkdir()
+        real_lstat = rr.os.lstat
+        def tagged(path, *args, **kwargs):
+            value = real_lstat(path, *args, **kwargs)
+            if os.path.normcase(str(path)) == os.path.normcase(str(alias)):
+                metadata = types.SimpleNamespace(**{key: getattr(value, key) for key in dir(value) if key.startswith("st_")})
+                metadata.st_reparse_tag = 0x8000001B
+                return metadata
+            return value
+        calls = []
+        selected = [first]
+        def discover(argv, cwd, env, timeout):
+            calls.append((argv, cwd, dict(env), timeout))
+            return json.dumps({"loadedImage": str(selected[0])})
+        steps = [{"argv":["python", "-c", "pass"], "cwd":"child", "slot":False}]
+        env = dict(os.environ)
+        with patch.object(rr.sys, "platform", "win32"), patch.object(rr.sys, "executable", str(alias)), patch.object(rr.os, "lstat", side_effect=tagged), patch.object(rr, "_discovery_output", side_effect=discover):
+            one = rr._tool_fingerprint(steps, None, self.repo, env)
+            self.assertTrue(one["identityComplete"])
+            self.assertEqual(one["runnerPython"]["invocationPath"], str(alias))
+            self.assertEqual(one["runnerPython"]["digestTarget"], str(first.resolve()))
+            self.assertEqual([call[1] for call in calls], [self.repo, child])
+            self.assertTrue(all(call[2] == env and call[3] <= 5 for call in calls))
+            self.assertTrue(all(call[0][0] == str(alias) and call[0][1:5] == ["-I", "-S", "-X", "utf8"] for call in calls))
+            selected[0] = second
+            two = rr._tool_fingerprint(steps, None, self.repo, env)
+            self.assertNotEqual(one, two)
+            second.write_bytes(b"same-version image changed at same target")
+            three = rr._tool_fingerprint(steps, None, self.repo, env)
+            self.assertNotEqual(two["runnerPython"]["sha256"], three["runnerPython"]["sha256"])
+            for bad in ["not-json", json.dumps({"loadedImage":"relative.exe"}), json.dumps({"loadedImage":str(alias)}), json.dumps({"loadedImage":str(child)}), json.dumps({"other":str(first)})]:
+                with self.subTest(output=bad), patch.object(rr, "_discovery_output", return_value=bad):
+                    refused = rr._tool_fingerprint(steps, None, self.repo, env)
+                    self.assertFalse(refused["identityComplete"])
+                    self.assertEqual(refused["stepPrograms"], [])
+
+    @unittest.skipUnless(os.name == "nt", "OBSERVER_MISSING: real Store Python AppExecLink activation")
+    def test_windows_store_app_alias_hashes_executed_image_and_reuses_only_unchanged_pass(self):
+        import hashlib
+        if getattr(os.lstat(sys.executable), "st_reparse_tag", None) != 0x8000001B:
+            self.skipTest("OBSERVER_MISSING: selected interpreter is not a Store AppExecLink")
+        code = ("import ctypes; from pathlib import Path; b=ctypes.create_unicode_buffer(32768); "
+                "n=ctypes.windll.kernel32.GetModuleFileNameW(None,b,len(b)); assert 0<n<len(b); "
+                f"open({str(self.counter)!r},'a',encoding='utf-8').write(b.value+'\\n')")
+        self.steps = [["python", "-I", "-S", "-c", code]]
+        result, report = self.run_once()
+        self.assertEqual(result, 0)
+        identity = report["fingerprint"]["tools"]["runnerPython"]
+        self.assertEqual(os.path.normcase(identity["invocationPath"]), os.path.normcase(sys.executable))
+        self.assertNotEqual(os.path.normcase(identity["digestTarget"]), os.path.normcase(sys.executable))
+        self.assertEqual(identity["sha256"], hashlib.sha256(Path(identity["digestTarget"]).read_bytes()).hexdigest())
+        self.assertEqual([os.path.normcase(line) for line in self.runs()], [os.path.normcase(identity["digestTarget"])])
+        self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+        self.assertEqual(len(self.runs()), 1)
+
     @unittest.skipUnless(os.name == "nt" and __import__("shutil").which("node"), "OBSERVER_MISSING: native Windows npm.cmd preparation")
     def test_windows_npm_cmd_preparation_executes_without_reusable_identity(self):
         studio = self.repo / "apps/studio"

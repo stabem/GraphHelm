@@ -451,6 +451,20 @@ def _discovery_output(argv: list[str], cwd: Path, env: dict[str, str], timeout: 
     return output.decode("utf-8", errors="replace").strip()
 
 
+_PYTHON_IMAGE_DISCOVERY = """import ctypes, json
+from ctypes import wintypes
+kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+image = kernel.GetModuleFileNameW
+image.argtypes = [wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
+image.restype = wintypes.DWORD
+buffer = ctypes.create_unicode_buffer(32768)
+length = image(None, buffer, len(buffer))
+if not length or length >= len(buffer):
+    raise OSError(ctypes.get_last_error(), "loaded image path unavailable or truncated")
+print(json.dumps({"loadedImage": buffer.value}, ensure_ascii=True))
+"""
+
+
 class _ExecutableCapture:
     """Capture-local executable resolution, discovery and streamed-byte caches."""
 
@@ -500,13 +514,27 @@ class _ExecutableCapture:
                     return candidate
         raise _MissingExecutable("required reached executable is missing or not executable")
 
-    def _identity(self, invocation: str) -> dict[str, Any]:
+    def _identity(self, invocation: str, cwd: Path) -> dict[str, Any]:
         import stat
         self._remaining()
         try:
             target = str(Path(invocation).resolve(strict=True))
         except RuntimeError:
             raise RuntimeError("executable identity has an unsupported link chain") from None
+        # Store Python aliases are activations, not readable symlinks. Query the selected child,
+        # never this parent's possibly stale image, and never probe arbitrary unreadable programs.
+        if (sys.platform == "win32" and os.path.normcase(invocation) == os.path.normcase(sys.executable)
+                and getattr(os.lstat(invocation), "st_reparse_tag", None) == 0x8000001B):
+            reply = json.loads(self._discover([invocation, "-I", "-S", "-X", "utf8", "-c", _PYTHON_IMAGE_DISCOVERY], cwd))
+            image = reply.get("loadedImage") if isinstance(reply, dict) else None
+            if (not isinstance(image, str) or not image or not os.path.isabs(image)
+                    or set(reply) != {"loadedImage"} or os.path.normcase(image) == os.path.normcase(invocation)):
+                raise RuntimeError("selected Python alias did not identify a distinct absolute executable image")
+            if getattr(os.lstat(image), "st_reparse_tag", 0):
+                raise RuntimeError("selected Python alias image is another unsupported reparse point")
+            target = str(Path(image).resolve(strict=True))
+            if os.path.normcase(target) == os.path.normcase(invocation):
+                raise RuntimeError("selected Python alias image resolves to its unreadable invocation")
         if target not in self.digests:
             if len(self.digests) >= 128:
                 raise RuntimeError("executable identity count exceeds its bound")
@@ -581,13 +609,13 @@ class _ExecutableCapture:
             rustup = self._program("rustup", cwd)
         except _MissingExecutable:
             raise RuntimeError("native Rust toolchain execution has no supported identity discovery") from None
-        result = {"rustup": self._identity(rustup)}
+        result = {"rustup": self._identity(rustup, cwd)}
         discovery_env = {**self.env, "RUSTUP_AUTO_INSTALL": "0"}
         for name in names:
             proxy = self._program(command[0] if name == "cargo" else name, cwd)
             argv = [rustup, "which", *(["--toolchain", selection] if selection else []), name]
             selected = self._discover(argv, cwd, discovery_env)
-            result[name] = {"proxy": self._identity(proxy), "selected": self._identity(selected)}
+            result[name] = {"proxy": self._identity(proxy, cwd), "selected": self._identity(selected, cwd)}
         rustc = self._program("rustc", cwd)
         result["version"] = self._discover([rustc, *(["+" + selection] if selection else []), "-Vv"], cwd)
         return result
@@ -601,8 +629,8 @@ def _tool_fingerprint(steps: list[dict[str, Any]], graphhelm: Path | None,
     tools: dict[str, Any] = {"python": sys.version, "platform": sys.platform, "identityComplete": True,
                              "stepPrograms": [], "executables": [], "preparationSteps": []}
     try:
-        tools["runnerPython"] = capture._identity(capture._program(sys.executable, repo))
-        tools["graphhelmExecutable"] = capture._identity(capture._program(str(graphhelm), repo)) if graphhelm else None
+        tools["runnerPython"] = capture._identity(capture._program(sys.executable, repo), repo)
+        tools["graphhelmExecutable"] = capture._identity(capture._program(str(graphhelm), repo), repo) if graphhelm else None
         tools["graphhelm"] = tools["graphhelmExecutable"]["sha256"] if graphhelm else None
         for index, step in enumerate(steps):
             if step.get("identitySkipped"):
@@ -612,7 +640,7 @@ def _tool_fingerprint(steps: list[dict[str, Any]], graphhelm: Path | None,
             command = _effective_argv(repo, cwd, step["argv"], graphhelm)
             invocation = capture._program(command[0], cwd)
             tools["stepPrograms"].append(invocation)
-            tools["executables"].append(capture._identity(invocation))
+            tools["executables"].append(capture._identity(invocation, cwd))
             name = Path(command[0]).name.lower()
             if name in ("cargo", "cargo.exe"):
                 rust = capture._rust(command, cwd)
@@ -624,8 +652,8 @@ def _tool_fingerprint(steps: list[dict[str, Any]], graphhelm: Path | None,
             if step["argv"][0] == "npx" and _needs_studio_preparation(repo, cwd):
                 tools["preparationSteps"].append(index)
                 npm = capture._program("npm", cwd)
-                tools["executables"].append(capture._identity(npm))
-                tools["executables"].append(capture._identity(capture._program("node", cwd)))
+                tools["executables"].append(capture._identity(npm, cwd))
+                tools["executables"].append(capture._identity(capture._program("node", cwd), cwd))
         tools["compilerConfigs"] = capture.configs
     except _MissingExecutable:
         raise

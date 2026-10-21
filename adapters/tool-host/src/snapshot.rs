@@ -581,7 +581,7 @@ fn open_directory_child(_parent: &File, _name: &OsString, _path: &Path) -> Resul
                 source: std::io::Error::last_os_error(),
             });
         }
-        return Ok(unsafe { File::from_raw_fd(fd) });
+        Ok(unsafe { File::from_raw_fd(fd) })
     }
     #[cfg(not(unix))]
     {

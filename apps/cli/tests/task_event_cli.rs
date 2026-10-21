@@ -2355,9 +2355,15 @@ fn reviewer_activity_recorder_preserves_authority_retry_history_and_revision_ord
     assert_eq!(read()["data"]["tasks"], persisted["data"]["tasks"]);
     for lane in ["review-author", "review-other"] {
         assert!(
-            !review_record(&base, &token_file, lane, "review_activity", &args)
-                .status
-                .success()
+            !review_record(
+                &base,
+                &token_file,
+                lane,
+                "review_activity",
+                &[args.as_slice(), &["--revision", "4"]].concat()
+            )
+            .status
+            .success()
         );
     }
     record(

@@ -707,6 +707,42 @@ describe("live team layout", () => {
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
     await waitFor(() => expect(startJourneyRun).toHaveBeenCalledWith("paid", true, "demo-deploy"));
   });
+
+  it("lists project journeys and flows in Proof and Graph and runs or watches them without a run", async () => {
+    sessionStorage.clear();
+    const flow = { id: "connect", title: "Connect", status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: [{ id: "gate", url: "/", state: "stable" }], edges: [], paths: { main: [] } };
+    const journeys = { journeys: [{ contractId: "health", title: "Runtime health", arrows: [],
+      steps: [{ stepId: "check", screen: { screenId: "check", title: "Check health", scopePaths: [] }, promises: [] }] }] };
+    const startJourneyRun = vi.fn(async () => ({ state: "none", screens: {} }));
+    const watchFlow = vi.fn(async () => undefined);
+    const client = stubClient({
+      listExecutions: vi.fn(async () => ({ executions: [], hasMore: false, nextCursor: null })),
+      journeys: vi.fn(async () => journeys), journeyFlows: vi.fn(async () => ({ flows: [flow] })),
+      journeyRun: vi.fn(async () => ({ state: "none", screens: {} })), journeyScreenFrame: vi.fn(async () => null),
+      startJourneyRun, watchFlow,
+    });
+    render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
+      session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
+    const views = await screen.findByRole("tablist", { name: "Canvas views" });
+    for (const name of ["Proof", "Graph"]) {
+      await userEvent.click(within(views).getByRole("tab", { name }));
+      const rail = await within(screen.getByRole("tabpanel", { name })).findByRole("navigation", { name: "Journeys" });
+      expect(await within(rail).findByRole("button", { name: /Runtime health/ })).toBeVisible();
+      expect(within(rail).getByRole("button", { name: /^Connect/ })).toBeVisible();
+      expect(screen.queryByText(/loading work/)).not.toBeInTheDocument();
+    }
+    await userEvent.click(within(views).getByRole("tab", { name: "Proof" }));
+    const rail = within(screen.getByRole("tabpanel", { name: "Proof" })).getByRole("navigation", { name: "Journeys" });
+    await userEvent.click(within(rail).getByRole("button", { name: /^Connect/ }));
+    expect(startJourneyRun).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(startJourneyRun).toHaveBeenCalledWith("connect", true, undefined));
+    await userEvent.click(screen.getByRole("button", { name: "Watch" }));
+    await waitFor(() => expect(watchFlow).toHaveBeenCalledWith("connect", undefined));
+    expect(client.getStatus).not.toHaveBeenCalled();
+    expect(client.startTask).not.toHaveBeenCalled();
+  });
 });
 
 /** The ordinary loop: the dev server hands the page a token and it opens connected. */

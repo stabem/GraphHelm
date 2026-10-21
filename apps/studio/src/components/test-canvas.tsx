@@ -51,6 +51,7 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
         <div className="tc-scrub" aria-label="Frames">
           {frames.map((f, i) => (
             <button key={f.stepId} type="button" className="tc-tick" data-status={f.status} aria-pressed={i === selected}
+              aria-busy={f.status === "running" || undefined}
               aria-label={`Jump to frame ${f.n}`} onClick={() => onSelect(i)} />
           ))}
         </div>
@@ -60,12 +61,14 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
         {frames.map((f, i) => (
           <li key={f.stepId} className="tc-strip-item">
             <button type="button" className="tc-card" data-status={f.status} aria-pressed={i === selected} onClick={() => onSelect(i)}
+              aria-busy={f.status === "running" || undefined}
               aria-label={`${f.n} ${f.verb} ${f.text} · ${LABEL[f.status]}`}>
               <span className="tc-thumb" aria-hidden="true"><span className="tc-thumb-line" /><span className="tc-thumb-hl" data-status={f.status} /><span className="tc-thumb-line" /></span>
               <span className="tc-card-body">
                 <span className="tc-card-top">
                   <span className="tc-num">{f.n}</span>
                   <span className="tc-verb">{f.verb}</span>
+                  {f.status === "running" && <span className="tc-activity" aria-hidden="true" />}
                   <span className="tc-chip" data-status={f.status}>{LABEL[f.status]}</span>
                   {badges?.[f.stepId] && <span className="tc-badge">{badges[f.stepId]}</span>}
                 </span>

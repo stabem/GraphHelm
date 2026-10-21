@@ -86,7 +86,8 @@ export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, 
     const step = currentIdx >= 0 ? currentIdx + 1 : Math.min(frames.length, count("passed") + count("failed") + 1);
     const since = run?.startedAt ? Date.parse(run.startedAt) : NaN;
     line = (
-      <p role="status" className="tc-run-progress">
+      <p role="status" className="tc-run-progress" aria-busy="true">
+        <span className="tc-activity" aria-hidden="true" />
         {run === null ? "Starting the run…" : `Running · step ${step} of ${frames.length}${Number.isNaN(since) ? "" : ` · ${clock(now - since)}`}`}
         {preview}
       </p>

@@ -63,11 +63,11 @@ def _resolve_graphhelm(args: argparse.Namespace) -> Path:
         if not candidate.is_file():
             source = "--graphhelm" if explicit else "GRAPHHELM_CLI"
             raise RuntimeError(f"{source} does not name an existing executable: {configured}")
-        return candidate.resolve()
+        return candidate if candidate.is_absolute() else Path(os.path.join(os.getcwd(), str(candidate)))
     found = shutil.which("graphhelm")
     if not found:
         raise RuntimeError("graphhelm executable was not found on PATH")
-    candidate = Path(found).resolve()
+    candidate = Path(found) if os.path.isabs(found) else Path(os.path.join(os.getcwd(), found))
     if not candidate.is_file():
         raise RuntimeError(f"graphhelm PATH entry is not an existing executable: {found}")
     return candidate
@@ -225,12 +225,10 @@ def _resolve_argv(repo: Path, cwd: Path, argv: list[str]) -> list[str]:
             f"apps/studio install is not whole ({problem}); run `npm ci` in apps/studio. "
             "A running Studio may lock files in node_modules (EPERM): stop it first, or rename the locked .node file aside. "
             "Not repaired automatically.")
-    entries = {"vitest": repo / "apps/studio/node_modules/vitest/vitest.mjs",
-               "tsc": repo / "apps/studio/node_modules/typescript/bin/tsc"}
-    entry = entries.get(package)
-    if entry is None or not entry.is_file():
+    command = _effective_argv(repo, cwd, argv, graphhelm=None)
+    if not Path(command[1]).is_file():
         raise RuntimeError(f"local Studio tool missing: {package}; run npm ci in apps/studio")
-    return ["node", str(entry), *argv[2:]]
+    return command
 
 
 def _vitest_step(step: dict[str, Any]) -> bool:
@@ -380,46 +378,299 @@ def _sha(value: Any) -> str:
 
 
 def _env_fingerprint(env: dict[str, str]) -> str:
-    return _sha(sorted((k, v) for k, v in env.items()
-                       if k.startswith(_ENV_PREFIXES) and k not in _ENV_IGNORED))
+    return _sha(sorted(((k.upper() if os.name == "nt" else k), v) for k, v in env.items()
+                       if (k.upper() if os.name == "nt" else k).startswith(_ENV_PREFIXES + ("PATH", "PATHEXT")) and k not in _ENV_IGNORED))
 
 
-def _version(argv: list[str]) -> str:
+class _MissingExecutable(RuntimeError):
+    """No existing invocation can be selected for this required command."""
+
+
+def _effective_argv(repo: Path, cwd: Path, argv: list[str], graphhelm: Path | None) -> list[str]:
+    """Select existing bounded rewrites, without preparing or installing anything."""
+    command = list(argv)
+    if command[0] == "npx":
+        entries = {"vitest": "vitest/vitest.mjs", "tsc": "typescript/bin/tsc"}
+        if cwd != repo / "apps/studio" or len(command) < 2 or command[1] not in entries:
+            raise RuntimeError("unsupported local Studio command identity")
+        command = ["node", str(cwd / "node_modules" / entries[command[1]]), *command[2:]]
+    if command[0] in ("python", "python3"):
+        command[0] = sys.executable
+    if graphhelm is not None and Path(command[0]).name.lower() in ("graphhelm", "graphhelm.exe"):
+        command[0] = str(graphhelm)
+    return command
+
+
+def _needs_studio_preparation(repo: Path, cwd: Path) -> bool:
+    return cwd == repo / "apps/studio" and _is_lane_worktree(repo) and not (cwd / "node_modules").exists()
+
+
+def _discovery_output(argv: list[str], cwd: Path, env: dict[str, str], timeout: float) -> str:
+    """Bound only identity discovery, including output held by descendants."""
+    import threading
+    deadline = time.monotonic() + timeout
+    output = bytearray()
+    overflow = threading.Event()
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+
+    def read():
+        try:
+            while True:
+                chunk = proc.stdout.read(4096)
+                if not chunk:
+                    break
+                if len(output) + len(chunk) > 65536:
+                    overflow.set()
+                    proc.kill()
+                    break
+                output.extend(chunk)
+        except OSError:
+            overflow.set()
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return f"unavailable: {type(exc).__name__}"
-    return f"{proc.returncode}:{proc.stdout.strip()}"
+        code = proc.wait(timeout=max(0.001, timeout - 0.1))
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=max(0, min(0.05, deadline - time.monotonic())))
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("executable identity discovery child could not be reaped before its cleanup deadline") from None
+        reader.join(timeout=max(0, min(0.05, deadline - time.monotonic())))
+        if not reader.is_alive():
+            proc.stdout.close()
+        raise RuntimeError("executable identity discovery exceeded its deadline") from None
+    reader.join(timeout=max(0, deadline - time.monotonic()))
+    if reader.is_alive() or overflow.is_set():
+        raise RuntimeError("executable identity discovery output is unavailable or exceeds its bound")
+    proc.stdout.close()
+    if code:
+        raise RuntimeError("executable identity discovery refused the selected tool")
+    return output.decode("utf-8", errors="replace").strip()
 
 
-def _file_digest(path: Path | None) -> str | None:
-    if path is None:
-        return None
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+_PYTHON_IMAGE_DISCOVERY = """import ctypes, json
+from ctypes import wintypes
+kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+image = kernel.GetModuleFileNameW
+image.argtypes = [wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
+image.restype = wintypes.DWORD
+buffer = ctypes.create_unicode_buffer(32768)
+current_process_module = None
+length = image(current_process_module, buffer, len(buffer))
+if not length or length >= len(buffer):
+    raise OSError(ctypes.get_last_error(), "loaded image path unavailable or truncated")
+print(json.dumps({"loadedImage": buffer.value}, ensure_ascii=True))
+"""
 
 
-def _tool_fingerprint(steps: list[dict[str, Any]], graphhelm: Path | None) -> dict[str, Any]:
-    """Versions of every tool a step reaches; an unreadable version is recorded, never guessed."""
-    tools: dict[str, Any] = {"python": sys.version, "platform": sys.platform, "graphhelm": _file_digest(graphhelm)}
-    for step in steps:
-        head = Path(step["argv"][0]).name.lower()
-        if head in ("cargo", "cargo.exe"):
-            toolchain = [step["argv"][1]] if len(step["argv"]) > 1 and step["argv"][1].startswith("+") else []
-            key = "rustc" + (toolchain[0] if toolchain else "")
-            if key not in tools:
-                tools[key] = _version(["rustc", *toolchain, "-Vv"])
-        elif head in ("npx", "npx.cmd", "npm", "npm.cmd", "node", "node.exe") and "node" not in tools:
-            tools["node"] = _version(["node", "--version"])
+class _ExecutableCapture:
+    """Capture-local executable resolution, discovery and streamed-byte caches."""
+
+    def __init__(self, env: dict[str, str]):
+        self.env = env
+        self.deadline = time.monotonic() + 60
+        self.candidates = 0
+        self.bytes = 0
+        self.digests: dict[str, dict[str, Any]] = {}
+        self.discovered: dict[tuple, str] = {}
+        self.configs: dict[str, str] = {}
+        self.config_bytes = 0
+        self.programs: dict[tuple[str, str], str] = {}
+
+    def _remaining(self) -> float:
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("executable identity capture exceeded its deadline")
+        return min(5.0, remaining)
+
+    def _program(self, name: str, cwd: Path) -> str:
+        self._remaining()
+        cache_key = (name, str(cwd))
+        if cache_key in self.programs:
+            return self.programs[cache_key]
+        env = {key.upper(): value for key, value in self.env.items()} if os.name == "nt" else self.env
+        if os.name == "nt" and len(env) != len(self.env):
+            raise RuntimeError("case-aliased Windows environment is not attested")
+        explicit = os.path.isabs(name) or os.path.dirname(name)
+        directories = [""] if explicit else env.get("PATH", os.defpath).split(os.pathsep)
+        extensions = [""]
+        if os.name == "nt" and not Path(name).suffix:
+            extensions = env.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";")
+        for directory in directories:
+            base = name if explicit else os.path.join(directory, name)
+            # Prefixing retains symlink-sensitive '..'; abspath/resolve would change invocation.
+            invocation = base if os.path.isabs(base) else os.path.join(str(cwd), base)
+            for extension in extensions:
+                self.candidates += 1
+                if self.candidates > 4096:
+                    raise RuntimeError("executable identity PATH search exceeded its bound")
+                candidate = invocation + extension
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    if os.name == "nt" and Path(candidate).suffix.lower() in (".cmd", ".bat"):
+                        raise RuntimeError("existing Windows batch invocation runs without reusable identity")
+                    self.programs[cache_key] = candidate
+                    return candidate
+        raise _MissingExecutable("required reached executable is missing or not executable")
+
+    def _identity(self, invocation: str, cwd: Path, *, python_selected: bool = False) -> dict[str, Any]:
+        import stat
+        self._remaining()
+        # AppExecLink may raise WinError1920 on strict resolve; inspect its lexical tag first.
+        # Only an explicitly selected Python role permits the fixed isolated child discovery.
+        if (sys.platform == "win32" and python_selected
+                and getattr(os.lstat(invocation), "st_reparse_tag", None) == 0x8000001B):
+            reply = json.loads(self._discover([invocation, "-I", "-S", "-X", "utf8", "-c", _PYTHON_IMAGE_DISCOVERY], cwd))
+            image = reply.get("loadedImage") if isinstance(reply, dict) else None
+            if (not isinstance(image, str) or not image or not os.path.isabs(image)
+                    or set(reply) != {"loadedImage"} or os.path.normcase(image) == os.path.normcase(invocation)):
+                raise RuntimeError("selected Python alias did not identify a distinct absolute executable image")
+            if getattr(os.lstat(image), "st_reparse_tag", 0):
+                raise RuntimeError("selected Python alias image is another unsupported reparse point")
+            target = str(Path(image).resolve(strict=True))
+            if os.path.normcase(target) == os.path.normcase(invocation):
+                raise RuntimeError("selected Python alias image resolves to its unreadable invocation")
+        else:
+            try:
+                target = str(Path(invocation).resolve(strict=True))
+            except RuntimeError:
+                raise RuntimeError("executable identity has an unsupported link chain") from None
+        if target not in self.digests:
+            if len(self.digests) >= 128:
+                raise RuntimeError("executable identity count exceeds its bound")
+            before = os.stat(target)
+            if not stat.S_ISREG(before.st_mode) or before.st_size > 256 * 1024 * 1024:
+                raise RuntimeError("executable identity requires a bounded regular file")
+            digest = hashlib.sha256()
+            with open(target, "rb") as stream:
+                opened = os.fstat(stream.fileno())
+                if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                    raise RuntimeError("executable identity changed while opening")
+                while True:
+                    self._remaining()
+                    chunk = stream.read(1 << 20)
+                    if not chunk:
+                        break
+                    self.bytes += len(chunk)
+                    if self.bytes > 1024 * 1024 * 1024 or stream.tell() > 256 * 1024 * 1024:
+                        raise RuntimeError("executable identity bytes exceed the capture bound")
+                    digest.update(chunk)
+                after = os.fstat(stream.fileno())
+            if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise RuntimeError("executable identity changed while reading")
+            self.digests[target] = {"digestTarget": target, "sha256": digest.hexdigest()}
+        return {"invocationPath": invocation, **self.digests[target]}
+
+    def _discover(self, argv: list[str], cwd: Path, env: dict[str, str] | None = None) -> str:
+        effective_env = self.env if env is None else env
+        key = (str(cwd), tuple(argv), _env_fingerprint(effective_env))
+        if key not in self.discovered:
+            self.discovered[key] = _discovery_output(argv, cwd, effective_env, self._remaining())
+        return self.discovered[key]
+
+    def _rust(self, command: list[str], cwd: Path) -> dict[str, Any]:
+        try:
+            import tomllib
+        except ImportError:
+            raise RuntimeError("Cargo configuration attestation needs an available standard-library TOML reader") from None
+        override_names = ("RUSTC", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC",
+                          "CARGO_BUILD_RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER")
+        if any(self.env.get(name) for name in override_names):
+            raise RuntimeError("compiler override execution runs without reusable identity")
+        paths = {Path(self.env.get("CARGO_HOME", str(Path.home() / ".cargo")))}
+        paths.update(parent / ".cargo" for parent in (cwd, *cwd.parents))
+        for directory in sorted(paths):
+            for filename in ("config", "config.toml"):
+                path = directory / filename
+                if not path.exists() or str(path) in self.configs:
+                    continue
+                if not path.is_file():
+                    raise RuntimeError("compiler configuration is not a regular readable file")
+                if len(self.configs) >= 64 or path.stat().st_size > 65536:
+                    raise RuntimeError("compiler configuration exceeds identity bounds")
+                with path.open("rb") as stream:
+                    data = stream.read(65537)
+                if len(data) > 65536:
+                    raise RuntimeError("compiler configuration exceeds identity bounds")
+                self.config_bytes += len(data)
+                if self.config_bytes > 1024 * 1024:
+                    raise RuntimeError("compiler configuration capture exceeds its bound")
+                self.configs[str(path)] = hashlib.sha256(data).hexdigest()
+                config = tomllib.loads(data.decode("utf-8"))
+                build = config.get("build", {})
+                if not isinstance(build, dict):
+                    raise RuntimeError("compiler configuration selection is ambiguous")
+                if any(build.get(key) for key in ("rustc", "rustc-wrapper", "rustc-workspace-wrapper")):
+                    raise RuntimeError("compiler configuration override runs without reusable identity")
+        selection = command[1][1:] if len(command) > 1 and command[1].startswith("+") else None
+        kind = command[2 if selection else 1] if len(command) > (2 if selection else 1) else ""
+        names = ["cargo", "rustc"] + (["rustfmt"] if kind == "fmt" else ["cargo-clippy", "clippy-driver"] if kind == "clippy" else [])
+        try:
+            rustup = self._program("rustup", cwd)
+        except _MissingExecutable:
+            raise RuntimeError("native Rust toolchain execution has no supported identity discovery") from None
+        result = {"rustup": self._identity(rustup, cwd)}
+        discovery_env = {**self.env, "RUSTUP_AUTO_INSTALL": "0"}
+        for name in names:
+            proxy = self._program(command[0] if name == "cargo" else name, cwd)
+            argv = [rustup, "which", *(["--toolchain", selection] if selection else []), name]
+            selected = self._discover(argv, cwd, discovery_env)
+            result[name] = {"proxy": self._identity(proxy, cwd), "selected": self._identity(selected, cwd)}
+        rustc = self._program("rustc", cwd)
+        result["version"] = self._discover([rustc, *(["+" + selection] if selection else []), "-Vv"], cwd)
+        return result
+
+
+def _tool_fingerprint(steps: list[dict[str, Any]], graphhelm: Path | None,
+                      repo: Path | None = None, env: dict[str, str] | None = None) -> dict[str, Any]:
+    """Unattested existing execution stays runnable, but never supplies reusable proof."""
+    repo = repo or Path.cwd()
+    capture = _ExecutableCapture(dict(os.environ) if env is None else env)
+    tools: dict[str, Any] = {"python": sys.version, "platform": sys.platform, "identityComplete": True,
+                             "stepPrograms": [], "executables": [], "preparationSteps": []}
+    try:
+        tools["runnerPython"] = capture._identity(capture._program(sys.executable, repo), repo, python_selected=True)
+        tools["graphhelmExecutable"] = capture._identity(capture._program(str(graphhelm), repo), repo) if graphhelm else None
+        tools["graphhelm"] = tools["graphhelmExecutable"]["sha256"] if graphhelm else None
+        for index, step in enumerate(steps):
+            if step.get("identitySkipped"):
+                tools["stepPrograms"] += [None]
+                continue
+            cwd = repo / step["cwd"]
+            command = _effective_argv(repo, cwd, step["argv"], graphhelm)
+            invocation = capture._program(command[0], cwd)
+            tools["stepPrograms"].append(invocation)
+            # The original selected command declares the role. A configured GraphHelm/Rust/npm
+            # path named python.exe is not thereby authorized to run Python discovery.
+            python_selected = (Path(step["argv"][0]).name.lower() in ("python", "python3", "python.exe", "python3.exe")
+                               or os.path.normcase(step["argv"][0]) == os.path.normcase(sys.executable))
+            tools["executables"].append(capture._identity(invocation, cwd, python_selected=python_selected))
+            name = Path(command[0]).name.lower()
+            if name in ("cargo", "cargo.exe"):
+                rust = capture._rust(command, cwd)
+                tools.setdefault("rust", {})[str(index)] = rust
+                selection = command[1] if len(command) > 1 and command[1].startswith("+") else ""
+                tools["rustc" + selection] = "0:" + rust["version"]
+            elif name in ("node", "node.exe") and "node" not in tools:
+                tools["node"] = "0:" + capture._discover([invocation, "--version"], cwd)
+            if step["argv"][0] == "npx" and _needs_studio_preparation(repo, cwd):
+                tools["preparationSteps"].append(index)
+                npm = capture._program("npm", cwd)
+                tools["executables"].append(capture._identity(npm, cwd))
+                tools["executables"].append(capture._identity(capture._program("node", cwd), cwd))
+        tools["compilerConfigs"] = capture.configs
+    except _MissingExecutable:
+        raise
+    except (OSError, RuntimeError, ValueError) as exc:
+        tools.update(identityComplete=False, identityReason=str(exc) if isinstance(exc, RuntimeError) else
+                     "executable identity cannot be read or decoded", stepPrograms=[])
     return tools
-
 
 def _fingerprint(repo: Path, steps: list[dict[str, Any]], graphhelm: Path | None, env: dict[str, str]) -> dict[str, Any]:
     """What a proof was taken against: committed code, tool versions and the environment."""
-    tools = _tool_fingerprint(steps, graphhelm)
+    tools = _tool_fingerprint(steps, graphhelm, repo, env)
     return {"tree": _git(repo, "rev-parse", "HEAD^{tree}"), "tools": tools,
             "toolsSha256": _sha(tools), "envSha256": _env_fingerprint(env)}
 
@@ -608,14 +859,17 @@ def run(args: argparse.Namespace) -> int:
                 report["pending"].remove(index)
             child_env = os.environ.copy()
             child_env.update({"CARGO_BUILD_JOBS": jobs, "RUST_TEST_THREADS": "2"})
-            report["fingerprint"] = _fingerprint(repo, steps, selected_graphhelm, child_env)
-            keys = [_proof_key(report["fingerprint"], step) for step in steps]
+            identity_steps = [{**step, "identitySkipped": index in skip_browser} for index, step in enumerate(steps)]
+            report["fingerprint"] = _fingerprint(repo, identity_steps, selected_graphhelm, child_env)
+            identities = report["fingerprint"].get("tools", {})
+            identity_complete = identities.get("identityComplete", True)
+            keys = [_proof_key(report["fingerprint"], step) if identity_complete else None for step in steps]
             problems, warnings = _preflight(repo, output, steps, getattr(args, "min_free_gb", None),
                                              getattr(args, "root", None))
             report["preflight"] = {"problems": problems, "warnings": warnings}
             reused_seconds = 0.0
             reuse: dict[str, dict[str, Any]] = {}
-            if getattr(args, "resume", True):
+            if identity_complete and getattr(args, "resume", True):
                 reuse, note = _reusable_results(output)
                 if note:
                     report["resumeNote"] = note
@@ -659,15 +913,24 @@ def run(args: argparse.Namespace) -> int:
                 print(f"[reached-tests] steps {indices}: {' | '.join(' '.join(item['argv']) for item in group)}", file=sys.stderr, flush=True)
                 commands = []
                 for item in group:
+                    if item["argv"][0] == "npx" and _needs_studio_preparation(repo, cwd) and item["index"] not in identities.get("preparationSteps", []):
+                        identity_complete = False
+                        identities["identityComplete"] = False
+                        identities["identityReason"] = "Studio preparation appeared after identity capture; execution is not reusable"
+                        report["fingerprint"]["toolsSha256"] = _sha(identities)
+                        reused = [result for result in report["completed"] if result.get("reused")]
+                        report["pending"].extend(result["index"] for result in reused)
+                        report["completed"] = [result for result in report["completed"] if not result.get("reused")]
+                        keys = [None for _ in steps]
                     command = _resolve_argv(repo, cwd, list(item["argv"]))
                     if _vitest_step(item):
                         artifact = logs / f"vitest-{item['index']}.json"
                         artifact.unlink(missing_ok=True)
                         command.extend(["--reporter=default", "--reporter=json", f"--outputFile.json={artifact}"])
-                    if command and command[0] in ("python", "python3"):
-                        command[0] = sys.executable
-                    if selected_graphhelm is not None and command and Path(command[0]).name.lower() in ("graphhelm", "graphhelm.exe"):
-                        command[0] = str(selected_graphhelm)
+                    command = _effective_argv(repo, cwd, command, selected_graphhelm)
+                    programs = identities.get("stepPrograms", [])
+                    if identity_complete and programs:
+                        command[0] = programs[item["index"]]
                     commands.append(command)
                 is_batch = batch_mode and len(group) > 1 or batch_mode and _batchable(entry)
                 if is_batch:
@@ -799,6 +1062,13 @@ def run(args: argparse.Namespace) -> int:
                                         else "passed")
             if red:
                 report["status"] = "failed"  # a later stop never hides a red that already ran
+            if not identity_complete:
+                report["error"] = identities.get("identityReason", "executable identity is not reusable")
+                if report["status"] == "passed":
+                    report["status"] = "incomplete"
+                for result in report["completed"]:
+                    result.pop("proofKey", None)
+                    result.pop("reusable", None)
             report["queueSeconds"] = queue
             report["heldSeconds"] = held
         after = _git(repo, "rev-parse", "HEAD")
@@ -812,7 +1082,7 @@ def run(args: argparse.Namespace) -> int:
             report["error"] = "worktree became dirty while running"
         elif time.monotonic() - started > args.budget_seconds and report["status"] in ("passed", "planned"):
             report["status"] = "budgetExceeded"
-        if before == after and not final_status:
+        if before == after and not final_status and report.get("fingerprint", {}).get("tools", {}).get("identityComplete", True) and all(e.get("proofKey") for e in report["completed"]):
             # Only now, with HEAD unchanged and the worktree clean, may a pass be reused later.
             for entry in report["completed"]:
                 if entry.get("returncode") == 0 and not entry.get("error") and not entry.get("zeroTests") and entry.get("proofKey"):

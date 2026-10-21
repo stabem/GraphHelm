@@ -225,7 +225,7 @@ def _resolve_argv(repo: Path, cwd: Path, argv: list[str]) -> list[str]:
             f"apps/studio install is not whole ({problem}); run `npm ci` in apps/studio. "
             "A running Studio may lock files in node_modules (EPERM): stop it first, or rename the locked .node file aside. "
             "Not repaired automatically.")
-    command = _effective_argv(repo, cwd, argv, None)
+    command = _effective_argv(repo, cwd, argv, graphhelm=None)
     if not Path(command[1]).is_file():
         raise RuntimeError(f"local Studio tool missing: {package}; run npm ci in apps/studio")
     return command
@@ -437,7 +437,7 @@ def _discovery_output(argv: list[str], cwd: Path, env: dict[str, str], timeout: 
         try:
             proc.wait(timeout=max(0, min(0.05, deadline - time.monotonic())))
         except subprocess.TimeoutExpired:
-            pass
+            raise RuntimeError("executable identity discovery child could not be reaped before its cleanup deadline") from None
         reader.join(timeout=max(0, min(0.05, deadline - time.monotonic())))
         if not reader.is_alive():
             proc.stdout.close()
@@ -606,7 +606,7 @@ def _tool_fingerprint(steps: list[dict[str, Any]], graphhelm: Path | None,
         tools["graphhelm"] = tools["graphhelmExecutable"]["sha256"] if graphhelm else None
         for index, step in enumerate(steps):
             if step.get("identitySkipped"):
-                tools["stepPrograms"].append(None)
+                tools["stepPrograms"] += [None]
                 continue
             cwd = repo / step["cwd"]
             command = _effective_argv(repo, cwd, step["argv"], graphhelm)

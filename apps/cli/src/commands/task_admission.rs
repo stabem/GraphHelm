@@ -270,7 +270,7 @@ mod tests {
             assert!(outcome.output.data.is_none(), "{pointer}");
             assert_eq!(
                 outcome.output.diagnostics[0].code,
-                "GHCLI041_TASK_ADMISSION_REFUSED"
+                crate::error_codes::GHCLI041_TASK_ADMISSION_REFUSED
             );
         }
     }

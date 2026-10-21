@@ -841,7 +841,7 @@
             "type": "integer"
           },
           "rendezvousId": {
-            "description": "Opaque rendezvous identity \u2014 never a filesystem path; the sidecar derives the platform rendezvous from it.",
+            "description": "Opaque rendezvous identity — never a filesystem path; the sidecar derives the platform rendezvous from it.",
             "type": "string"
           }
         },

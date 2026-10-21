@@ -62,6 +62,30 @@ describe("ProofRun (#746)", () => {
     expect(onRun).toHaveBeenLastCalledWith(done);
   });
 
+  it("marks the running step and the run line busy while it runs, and clears both when it ends (#1735)", async () => {
+    const running: JourneyRunView = { state: "running", kind: "preview", current: "a", screens: {} };
+    const done: JourneyRunView = { state: "ready", kind: "preview", result: "pass", screens: { a: { frame: true, result: "pass" }, b: { frame: true, result: "pass" } } };
+    const reads = [done];
+    const src = source(async () => running, async () => reads.shift()!);
+    mount(src);
+    await flush();
+    const line = screen.getByRole("status");
+    expect(line).toHaveTextContent("Running · step 1 of 2");
+    expect(line).toHaveAttribute("aria-busy", "true");
+    expect(line.querySelector(".tc-activity")).not.toBeNull();
+    const card = screen.getByRole("button", { name: /^1 SEES Home · running/ });
+    expect(card).toHaveAttribute("aria-busy", "true");
+    expect(card.querySelector(".tc-activity")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Jump to frame 1" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: /^2 / })).not.toHaveAttribute("aria-busy");
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    await flush();
+    expect(screen.getByRole("status")).toHaveTextContent("2 passed");
+    expect(screen.getByRole("status")).not.toHaveAttribute("aria-busy");
+    expect(screen.getByRole("button", { name: /^1 SEES Home · passed/ })).not.toHaveAttribute("aria-busy");
+    expect(document.querySelector(".tc-activity")).toBeNull();
+  });
+
   it("a held step shows the confirm, which starts a confirmed run", async () => {
     const held: JourneyRunView = { state: "ready", kind: "replay", result: "pass", screens: { a: { frame: true, result: "pass" } }, edges: { e: { result: "skipped", reason: "confirm_needed" } }, held: { edge: "e", act: "click", base: "http://app" } };
     const src = source(async () => held);

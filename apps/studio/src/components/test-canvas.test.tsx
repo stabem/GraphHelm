@@ -71,6 +71,17 @@ describe("TestCanvas", () => {
     expect(screen.getByText("emulated · frame 1/2")).toBeInTheDocument();
   });
 
+  it("scales the recorded frame to the panel width instead of capping its height (#1734)", () => {
+    setup(0);
+    const img = screen.getByRole("img", { name: "Frame 1: Journey tab" });
+    const style = getComputedStyle(img);
+    // jsdom lays nothing out: this pins the sizing rule (full width, height follows the aspect
+    // ratio, no height cap that letterboxes a wide panel). Pixel width is a browser observation.
+    expect(style.width).toBe("100%");
+    expect(style.height).toBe("auto");
+    expect(style.maxHeight).toBe("none");
+  });
+
   it("card click and next button move the frame", async () => {
     const p = setup(0);
     await userEvent.click(screen.getByRole("button", { name: /^2 DOES/ }));

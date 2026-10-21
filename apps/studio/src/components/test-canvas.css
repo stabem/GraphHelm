@@ -39,7 +39,9 @@
 .tc-url-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tc-count { font-family: var(--mono); font-size: 11px; color: #8D929C; white-space: nowrap; }
 .tc-viewport { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-height: 280px; background: #0F1013; color: #A9AEB8; }
-.tc-viewport img { display: block; max-width: 100%; max-height: 520px; width: 100%; object-fit: contain; }
+/* #1734: the frame fills the panel width and its height follows the aspect ratio; a height cap
+   letterboxed wide panels into a small unreadable image. */
+.tc-viewport img { display: block; width: 100%; max-width: 100%; height: auto; max-height: none; }
 .tc-status { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-top: 1px solid #1E2026; background: #121318; font-family: var(--mono); font-size: 11.5px; }
 .tc-status .tc-chip { font-size: 11.5px; }
 .tc-status-verb { color: #8D929C; }
@@ -72,7 +74,22 @@
 
 /* #746: the live run line above the strip. */
 .tc-run { display: flex; align-items: center; gap: 12px; min-height: 28px; }
-.tc-run-progress { margin: 0; font-size: 13px; }
+.tc-run-progress { margin: 0; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; }
+
+/* #1735: a running step, its frame tick and the run line move, so a live run never looks stuck. */
+.tc-activity { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--mv-ring, #9AB8FF);
+  border-top-color: transparent; animation: tc-spin .8s linear infinite; }
+.tc-card[aria-busy="true"] { border-color: #9AB8FF; animation: tc-pulse 1.4s ease-in-out infinite; }
+.tc-tick[aria-busy="true"] { opacity: 1; animation: tc-blink 1s ease-in-out infinite; }
+@keyframes tc-spin { to { transform: rotate(360deg); } }
+@keyframes tc-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(154, 184, 255, .35); } 50% { box-shadow: 0 0 0 4px rgba(154, 184, 255, .12); } }
+@keyframes tc-blink { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) {
+  .tc-activity, .tc-card[aria-busy="true"], .tc-tick[aria-busy="true"] { animation: none; }
+  .tc-activity { border-top-color: var(--mv-ring, #9AB8FF); border-style: dotted; }
+  .tc-card[aria-busy="true"] { border-style: dashed; }
+  .tc-tick[aria-busy="true"] { outline: 1px dashed #9AB8FF; outline-offset: 1px; }
+}
 .tc-run-error { margin: 0; font-size: 13px; color: #B42318; }
 .tc-run-kind { margin-left: 8px; padding: 1px 6px; border-radius: 4px; background: #FEF3C7; color: #92400E; font-size: 12px; }
 

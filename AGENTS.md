@@ -93,6 +93,8 @@ stop retries when they add no evidence or reach the approved budget boundary.
 - Every public method must have working behavior in the same commit. No `TODO`, `TBD`, `unimplemented!`, empty handler, or ceremonial scaffold is allowed.
 - **Meaningful-test rule.** A test earns its place only by protecting an observable contract against a credible regression that existing coverage misses, without production seams no real caller needs; the `test-audit` skill carries the four-question gate, the audit list and the deletion record. Reject unconditional passes, mock self-confirmation, assertions over values created by the test, and checks that merely freeze incidental source spelling or private call order. Preserve tests for real architecture, security, schema, canonical hash, deterministic replay, persistence, concurrency, compatibility, and platform contracts. A lower test count is never a win by itself; stop when the behavior is proven.
 - Runtime-affecting configuration: see the risk table in [keel/KEEL_PLAN.md](keel/KEEL_PLAN.md).
+- User-visible surface replacements remove or explicitly retire the old surface in the same PR,
+  or name the follow-up issue that will retire it; see [keel/KEEL_EXEC.md](keel/KEEL_EXEC.md).
 - This policy is versioned on `main`. Merging it does not update existing branches or installed skill copies; lanes must integrate the `main` change and reload or reinstall their bundled skills before relying on it. Bundled skills remain self-contained and must not depend on repository-external paths.
 
 ### Keel: how code is written here

@@ -1278,18 +1278,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .turn:not(.owner) .turn-said { border-bottom-left-radius: var(--r-sm); }
 
 
-/* The empty board invites the first task instead of describing its own emptiness. */
-.board-empty {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 12px;
-  color: var(--dim);
-  font-family: var(--hand);
-  font-size: 15px;
-}
-
 /* The chosen recipient, above the box it applies to. */
 .to-chip {
   display: inline-flex;

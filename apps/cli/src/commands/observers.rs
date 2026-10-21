@@ -320,6 +320,7 @@ fn run_step(
                 }
             }
         }
+        // keel-allow: keel.rel.no_swallow the caller's deadline may close the receiver before the pipe drains until 2026-11-21
         let _ = stderr_tx.send(
             super::journey_replay::masked_tail(&tail, cut, slack, &secrets)
                 .trim()
@@ -523,11 +524,14 @@ fn observer_install_lock(project: &Path, deadline: Instant) -> std::io::Result<s
     }) {
         return Err(std::io::Error::other("unsafe observer lock"));
     }
+    let read_and_write = true;
+    let create_if_missing = true;
+    let truncate_existing = false;
     let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
+        .read(read_and_write)
+        .write(read_and_write)
+        .create(create_if_missing)
+        .truncate(truncate_existing)
         .open(path)?;
     loop {
         match file.try_lock_exclusive() {

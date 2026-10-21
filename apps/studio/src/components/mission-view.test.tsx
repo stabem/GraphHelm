@@ -325,7 +325,7 @@ describe("MissionView", () => {
     const onMarkSafe = vi.fn();
     render(<MissionView journeys={journeys} tasks={[]} lanes={[]} now={0}
       runFor={() => ({ state: "ready", kind: "replay", screens: {}, edges: { mark: { result: "skipped", reason: "data-changing" } } })}
-      frameUrl={() => null} onMarkSafe={onMarkSafe} onSendBack={vi.fn()} />);
+      frameUrl={() => null} onMarkSafe={onMarkSafe} />);
     expect(document.querySelector(".mg-summary")).toHaveTextContent("0/1 proven · 0 in flight · 0 Ready · unclaimed · 1 need you");
     await userEvent.click(screen.getByRole("tab", { name: "Proof" }));
     await userEvent.click(screen.getByRole("button", { name: "Open test for step 1" }));
@@ -335,7 +335,7 @@ describe("MissionView", () => {
   });
 
   it("no journeys: says so", () => {
-    render(<MissionView journeys={[]} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} onSendBack={vi.fn()} />);
+    render(<MissionView journeys={[]} tasks={[]} lanes={[]} now={0} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
     expect(screen.getByText("No journeys in this project yet")).toBeInTheDocument();
   });
   it("is wide, shows journeys as a rail, and folds unlinked work", async () => {

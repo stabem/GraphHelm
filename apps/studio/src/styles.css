@@ -780,9 +780,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   white-space: nowrap;
 }
 
-/* One line, two truths: the tally on the left, the freshest movement on the right. */
-.node-fresh { color: var(--dim); white-space: nowrap; flex: 0 0 auto; }
-
 /* The drawer: the node's own log, opened in place. Chips speak the surface's colours. */
 .node-history-toggle {
   display: block;
@@ -1621,87 +1618,8 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .turn:hover .turn-seq,
 .turn-seq:focus-visible { opacity: 1; }
 
-/* The run capsule: a HUD over the canvas, not a citizen of it - it neither pans nor scales.
-   (Added by the logic lane; visual pass welcome to restyle/reposition.) */
-.run-capsule {
-  animation: rise-in var(--t-soft) var(--ease) both;
-  position: absolute;
-  left: 16px;
-  top: 12px;
-  z-index: 4;
-  min-width: 216px;
-  max-width: 300px;
-  padding: 12px 14px;
-  border-radius: var(--r-lg);
-  background: color-mix(in oklab, var(--raised) 90%, transparent);
-  backdrop-filter: blur(12px);
-  box-shadow: var(--lift);
-}
-.run-capsule .capsule-eyebrow {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--faint);
-  letter-spacing: 0.06em;
-}
-.run-capsule-title {
-  font-family: var(--mono);
-  font-size: 14px;
-  font-weight: 700;
-  margin-top: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.run-capsule-line {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--dim);
-  margin: 4px 0 8px;
-}
-.run-progress {
-  display: block;
-  height: 4px;
-  border-radius: var(--r-pill);
-  background: var(--high);
-  overflow: hidden;
-}
-.run-progress i {
-  display: block;
-  height: 100%;
-  border-radius: var(--r-pill);
-  background: var(--live);
-}
 
-
-/* ---- the lint strip & the reopened chip (appendix; visual pass welcome) ------------------- */
-/* The board-face lint: each line an accusation the model attests, in the refused vocabulary
-   the edge-note already speaks. Kept quiet - it is a strip, not a banner. */
-.lint-strip {
-  animation: rise-in var(--t-soft) var(--ease) both;
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  border-radius: var(--r);
-  border-left: 3px solid var(--danger);
-  background: color-mix(in oklab, var(--danger) 10%, var(--void));
-  box-shadow: var(--lift);
-  max-width: 460px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--signal);
-}
-.lint-strip li {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  color: var(--dim);
-}
-.lint-strip li .turn-seq { opacity: 1; color: var(--faint); }
-.lint-strip li .turn-seq:hover { color: var(--text); }
+/* ---- the reopened chip (appendix; visual pass welcome) ------------------- */
 /* "Reopened after done" on the node card: the alarm wash the history chips wear, with the two
    log coordinates in mono. */
 .node-reopened {
@@ -1794,12 +1712,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .node:nth-of-type(odd), .node:nth-of-type(even) { transform: none; }
 .node-title { font-size: 16px; margin-top: 8px; }
 .node-tag { font-size: 12px; letter-spacing: 0; }
-.node-fresh { white-space: normal; overflow-wrap: anywhere; }
 .node-history-toggle { font-family: var(--sans); font-size: 12px; letter-spacing: 0; text-transform: none; min-height: 28px; }
 .edge { stroke: var(--dim); stroke-width: 2; filter: none; }
 .edge-tip { stroke: var(--dim); }
-.run-capsule { top: 12px; left: 16px; min-width: 190px; max-width: 260px; padding: 12px; border-radius: 10px; }
-.run-capsule-title { font-size: 14px; }
 .tools, .dock { max-width: calc(100% - 24px); gap: 4px; overflow-x: auto; scrollbar-width: thin; padding: 5px; background: var(--surface); border-radius: 10px; }
 .tools { left: 12px; right: 12px; bottom: 66px; }
 .tools button, .dock button { flex-shrink: 0; white-space: nowrap; font-family: var(--sans); font-size: 13px; min-height: 36px; padding: 8px 10px; }
@@ -1825,7 +1740,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .graph-file { bottom: 268px; }
   .connection-legend { display: none; }
   .board-navigator { top: 12px; right: 12px; }
-  .run-capsule { top: 58px; min-width: 0; max-width: 240px; }
 }
 
 @media (max-width: 1250px) {
@@ -1873,11 +1787,9 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .canvas-arrange button { min-width: 44px; min-height: 44px; }
   .graph-file { flex-wrap: wrap; }
   .graph-file .wrap { width: 100%; }
-  .run-capsule { max-width: calc(100% - 32px); }
   .connection-legend { top: 126px; right: 12px; font-size: 11px; }
   .board-navigator { left: 12px; }
   .board-navigator select { width: 100%; font-size: 16px; }
-  .run-capsule { display: none; }
   .dock { max-height: none; }
   .tools { bottom: 162px; }
   .sheet { bottom: 294px; }
@@ -1930,7 +1842,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .canvas-arrange { position: absolute; top: 14px; left: 20px; display: flex; align-items: center; gap: 8px; z-index: 5; }
 .canvas-arrange button { min-height: 40px; padding: 7px 12px; border: 1px solid var(--edge); border-radius: 8px; font: 13px var(--sans); }
 .canvas-arrange span { color: var(--dim); font: 12px var(--sans); }
-.free-canvas-content .run-capsule { display: none; }
 .free-canvas-content .node-title { font-family: var(--sans); font-size: 17px; }
 @container (max-width: 800px) { .canvas-arrange span { display: none; } .canvas-arrange { left: 12px; } }
 
@@ -1942,12 +1853,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
   .free-canvas-content .sheet { top: 148px; }
 }
 
-.canvas-lint { position: absolute; top: 104px; left: 16px; z-index: 6; max-width: calc(100% - 32px); border-radius: 8px; background: var(--surface); color: var(--signal); font: 12px var(--sans); }
-.canvas-lint summary { padding: 7px 10px; cursor: pointer; }
-.canvas-lint .lint-strip { max-height: 220px; overflow: auto; }
-/* #1083: a demonstration run's log findings in the overview's neutral voice, not the signal. */
-.canvas-lint.canvas-note { color: var(--dim); }
-@container (max-width: 600px) { .canvas-lint { top: 146px; } }
 
 /* The map reads as people, conversations and reported work, while all objects stay draggable. */
 .canvas-story { position: absolute; top: 16px; left: 24px; right: 210px; }
@@ -1959,7 +1864,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 .free-canvas-content .sheet { top: 164px; }
 .free-canvas-content .board-navigator { top: 114px; }
 .free-canvas-content .connection-legend { top: 76px; right: 16px; left: auto; }
-.canvas-lint { top: 154px; }
 .free-canvas-content .node { width: 320px; min-height: 248px; padding: 18px; border-radius: 16px; background: #25252a; border: 1px solid #3a3a42; box-shadow: 0 8px 24px #0002; }
 .free-canvas-content .node-open { width: 100%; }
 .free-canvas-content .node-tag { display: flex; align-items: center; gap: 6px; font: 11px var(--sans); color: #aaaab6; }
@@ -1982,15 +1886,10 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
  .canvas-arrange { top: 172px; left: 16px; }
  .free-canvas-content .board-navigator { top: 216px; left: 16px; }
  .free-canvas-content .sheet { top: 264px; }
- .canvas-lint { top: 260px; }
 }
 
 .free-canvas-content .node { height: 288px; min-height: 288px; }
 .free-canvas-content .node.node-empty { height: 164px; min-height: 164px; }
-/* The card carrying the run's objective (#1077): two clamped lines + margins = the 52px
-   OBJECTIVE_ALLOWANCE in graph/board.ts; the measured box and the drawn box must agree. */
-.free-canvas-content .node.node-with-objective { height: 340px; min-height: 340px; }
-.free-canvas-content .node.node-empty.node-with-objective { height: 216px; min-height: 216px; }
 .node-empty .node-story-status { margin-bottom: 10px; }
 .free-canvas-content .node .hist-chip { font: 11px var(--sans); color: #c6c6d0; }
 .free-canvas-content .node-history { position: absolute; top: 100%; left: 0; width: 100%; max-height: 220px; overflow: auto; padding: 16px; background: #25252a; border: 1px solid #4a4a52; border-radius: 12px; z-index: 8; }
@@ -2088,7 +1987,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
 @media (max-width: 600px) {
   .app.conversation-open .scene .dock { display: none; }
 }
-.node-objective { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; quotes: none; margin: 4px 0 10px; font: 12px/1.45 var(--sans); color: #b8b8c4; overflow-wrap: anywhere; }
 .composer-hint { margin: -4px 0 8px; }
 
 /* #1083 F8, second pass (orchestrator verification at 1280x720): on a scene between 480px and
@@ -2107,7 +2005,6 @@ button:disabled { color: var(--faint); cursor: not-allowed; }
  .free-canvas-content .board-navigator { top: 44px; left: auto; right: 16px; }
  .free-canvas-content .board-navigator select { width: 200px; }
  .canvas-sections { top: 90px; }
- .canvas-lint { top: 132px; }
  .free-canvas-content .sheet { top: 130px; }
 }
 

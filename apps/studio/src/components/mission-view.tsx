@@ -58,8 +58,6 @@ interface Props {
   frameUrl(stepId: string, contractId: string): string | null;
   /** The step and the journey it belongs to: the mark is recorded against that journey's flow. */
   onMarkSafe(stepId: string, contractId: string): void | Promise<void>;
-  /** Absent: the Test canvas shows Send back as not available yet. */
-  onSendBack?: (stepId: string, contractId: string) => void;
   /** #746: present, opening a journey's test runs it (the Journey tab's run source). */
   run?: JourneyRunSource;
   /** #746: each state of that run, so the Proof rows read it. */
@@ -326,7 +324,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, onSendBack, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onReject, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, seenActorSources, onDemandLanes = [], slots = [], backlog = [], durations, runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot, livenessBudgets }: Props) {
+export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onReject, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, seenActorSources, onDemandLanes = [], slots = [], backlog = [], durations, runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot, livenessBudgets }: Props) {
   const freeAfterMs = livenessBudgets ? livenessBudgets.freeAfterSeconds * 1000 : laneBudgets(lanes).freeAfterMs;
   const journeys = useMemo(() => withFlowContracts(compiledJourneys, flows?.flows ?? []), [compiledJourneys, flows]);
 
@@ -842,11 +840,9 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
           {sub === "test" && journey && contractId && (run
             ? <ProofRun key={contractId} journey={journey} flow={flow} source={run} selected={frame} onSelect={setFrame}
               frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)}
-              {...(onRun ? { onRun: (r: JourneyRunView) => onRun(contractId, r) } : {})}
-              {...(onSendBack ? { onSendBack: (id: string) => onSendBack(id, contractId) } : {})} />
+              {...(onRun ? { onRun: (r: JourneyRunView) => onRun(contractId, r) } : {})} />
             : <TestCanvas frames={testFrames(journey, runFor(contractId), null, flow)} purpose={flow?.purpose ?? null} selected={frame} onSelect={setFrame}
-              frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)}
-              {...(onSendBack ? { onSendBack: (id: string) => onSendBack(id, contractId) } : {})} />)}
+              frameUrl={(id) => frameUrl(id, contractId)} onMarkSafe={(id) => onMarkSafe(id, contractId)} />)}
           {sub === "lanes" && lanesView}
         </div>
       </div>

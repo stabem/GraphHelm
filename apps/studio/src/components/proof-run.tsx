@@ -25,7 +25,6 @@ interface Props {
   /** Frames the Studio already holds for this journey (the Graph tab's reads); the run's own win. */
   frameUrl(stepId: string): string | null;
   onMarkSafe(stepId: string): void | Promise<void>;
-  onSendBack?: (stepId: string) => void;
   /** Each new run state, so the Proof rows read it too. */
   onRun?: (run: JourneyRunView) => void;
 }
@@ -35,7 +34,7 @@ const clock = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
 
-export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, onMarkSafe, onSendBack, onRun }: Props) {
+export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, onMarkSafe, onRun }: Props) {
   const { run, frames: runFrames, failure, again, confirm, confirming } = useJourneyRun(journey.contractId, source);
   const screenOf = (stepId: string) => journey.steps.find((s) => s.stepId === stepId)?.screen?.screenId ?? stepId;
   const running = run?.state === "running";
@@ -116,7 +115,7 @@ export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, 
   return (
     <TestCanvas frames={frames} purpose={flow?.purpose ?? null} selected={selected} onSelect={(n) => { setPinned(true); onSelect(n); }}
       frameUrl={nowFrame} onMarkSafe={onMarkSafe}
-      {...(onSendBack ? { onSendBack } : {})} runLine={runLine} inspectorTop={held} badges={badges}
+      runLine={runLine} inspectorTop={held} badges={badges}
       inspectorStep={(stepId) => (history.baseline && !running
         ? <FrameCompare history={history} screenId={screenOf(stepId)} nowUrl={runFrames[screenOf(stepId)] ?? null} nowStatus={frames.find((f) => f.stepId === stepId)?.status ?? "not_run"} />
         : null)} />

@@ -15,7 +15,6 @@ interface Props {
   /** May return a promise; a rejection is shown beside the decision buttons. */
   onMarkSafe(stepId: string): void | Promise<void>;
   /** Absent: no route sends a step back yet, so the button is shown disabled with that reason. */
-  onSendBack?: (stepId: string) => void;
   /** #746: the live run line (progress, summary, Run again, errors), shown above the strip. */
   runLine?: ReactNode;
   /** #746: shown at the top of the inspector, e.g. the held step's confirm. */
@@ -26,7 +25,7 @@ interface Props {
   inspectorStep?: (stepId: string) => ReactNode;
 }
 
-export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUrl, onMarkSafe, onSendBack, runLine, inspectorTop, badges, inspectorStep }: Props) {
+export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUrl, onMarkSafe, runLine, inspectorTop, badges, inspectorStep }: Props) {
   const cur = frames[selected];
   const [failure, setFailure] = useState<{ stepId: string; message: string } | null>(null);
   if (!cur) return <p className="tc-empty">This journey has no steps to test</p>;
@@ -152,9 +151,7 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
                     setFailure({ stepId, message: cause instanceof Error ? cause.message : String(cause) });
                   });
                 }}>I watched it — mark safe</button>
-                {onSendBack
-                  ? <button type="button" className="tc-secondary" onClick={() => onSendBack(cur.stepId)}>Send back</button>
-                  : <button type="button" className="tc-secondary" disabled>Send back — not available yet</button>}
+                <button type="button" className="tc-secondary" disabled>Send back — not available yet</button>
                 {failure?.stepId === cur.stepId && <p role="alert">{`Mark safe failed: ${failure.message}`}</p>}
               </div>
             )}

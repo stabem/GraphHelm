@@ -189,6 +189,28 @@ impl Comparison<'_> {
                     .chain(right.keys())
                     .cloned()
                     .collect::<BTreeSet<_>>();
+                let string_const_expansion =
+                    left.get("const")
+                        .and_then(Value::as_str)
+                        .is_some_and(|old| {
+                            !left.contains_key("enum")
+                                && !right.contains_key("const")
+                                && right.get("enum").and_then(Value::as_array).is_some_and(
+                                    |values| {
+                                        !values.is_empty()
+                                            && values.iter().all(Value::is_string)
+                                            && values
+                                                .iter()
+                                                .any(|value| value.as_str() == Some(old))
+                                    },
+                                )
+                                && keys.iter().all(|key| {
+                                    matches!(key.as_str(), "const" | "enum")
+                                        || annotation_keyword(key)
+                                        || key == "x-graphhelm-schema-version"
+                                        || left.get(key) == right.get(key)
+                                })
+                        });
                 for keyword in keys {
                     let left_value = left.get(&keyword);
                     let right_value = right.get(&keyword);
@@ -196,6 +218,16 @@ impl Comparison<'_> {
                         continue;
                     }
                     let keyword_pointer = join_pointer(pointer, &keyword);
+                    // This proof belongs to this object; every other keyword still takes its normal path.
+                    if keyword == "enum" && string_const_expansion {
+                        self.compatible(
+                            schema,
+                            &keyword_pointer,
+                            "string const present",
+                            "containing string enum introduced",
+                        );
+                        continue;
+                    }
                     self.compare_keyword(
                         schema,
                         owner,
@@ -242,8 +274,9 @@ impl Comparison<'_> {
         depth: usize,
     ) {
         match keyword {
-            "title" | "description" | "$comment" | "examples" | "default" | "deprecated"
-            | "readOnly" | "writeOnly" => self.annotation(schema, pointer, baseline, candidate),
+            keyword if annotation_keyword(keyword) => {
+                self.annotation(schema, pointer, baseline, candidate)
+            }
             // Version enforcement is a separate gate; this field cannot classify its own change.
             "x-graphhelm-schema-version" => {}
             "properties" => {
@@ -1541,6 +1574,20 @@ fn normalized_schema_value(
     }
 
     Some(Value::Object(normalized))
+}
+
+fn annotation_keyword(keyword: &str) -> bool {
+    matches!(
+        keyword,
+        "title"
+            | "description"
+            | "$comment"
+            | "examples"
+            | "default"
+            | "deprecated"
+            | "readOnly"
+            | "writeOnly"
+    )
 }
 
 fn summary_presence(value: Option<&Value>, label: &str) -> String {

@@ -248,8 +248,9 @@ export function groupJourneys<T>(items: readonly T[], featureOf: (item: T) => st
     .sort(([a], [b]) => a === null ? 1 : b === null ? -1 : a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }))
     .map(([key, list]) => ({ feature: key, items: list.sort(byName) }));
 }
-function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }: { mission: Mission; flow?: JourneyFlowView; duplicateTitle: boolean; selected: boolean; onSelect(): void }) {
+function JourneyRailButton({ mission, run, flow, duplicateTitle, selected, onSelect }: { mission: Mission; run: JourneyRunView | null; flow?: JourneyFlowView; duplicateTitle: boolean; selected: boolean; onSelect(): void }) {
   const { name, note } = splitDraftTitle(mission.title);
+  const passed = run?.kind === "preview" ? mission.steps.filter((step) => run.screens?.[step.stepId]?.result === "pass").length : mission.summary.proven;
   const pathName = flow === undefined ? undefined : mission.contractId === flow.id ? "main" : mission.contractId.slice(flow.id.length + 1);
   const path = pathName === undefined ? undefined : flow?.paths[pathName];
   const edges = path?.map((id) => flow?.edges.find((edge) => edge.id === id));
@@ -269,7 +270,7 @@ function JourneyRailButton({ mission, flow, duplicateTitle, selected, onSelect }
     {(duplicateTitle || stale) && <span className="mv-journey-id">{mission.contractId}</span>}
     {note && <span className="mv-draft-tag" title={note}>draft</span>}
     {stale && <span className="mv-draft-tag" title="The compiled contract does not match the current flow">contract out of date</span>}
-    <span className="mv-journey-count">{`${mission.summary.proven}/${mission.summary.total}`}</span>
+    <span className="mv-journey-count">{`${passed}/${mission.summary.total}`}</span>
   </button>;
 }
 export function JourneyProgress({ statuses, caption = true }: { statuses: string[]; caption?: boolean }) {
@@ -492,11 +493,11 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
       run.read(id).then((value) => onRun(id, value), () => {});
     }
   }, [run, onRun, journeys, runFor]);
-  const draftProven = (m: Mission) => {
+  const draftProven = (m: Mission, selectedRun = runFor(m.contractId)) => {
     const owner = flowForContract(flows?.flows ?? [], m.contractId);
-    return owner !== undefined && owner.status !== "approved" && runProves(owner, m, runFor(m.contractId));
+    return owner !== undefined && owner.status !== "approved" && runProves(owner, m, selectedRun);
   };
-  const verdictOf = (m: Mission): JourneyVerdict => (batch?.current === m.contractId ? "running" : journeyVerdict(m.steps.map((step) => step.status), runFor(m.contractId), draftProven(m)));
+  const verdictOf = (m: Mission, selectedRun = runFor(m.contractId)): JourneyVerdict => (batch?.current === m.contractId ? "running" : journeyVerdict(m.steps.map((step) => step.status), selectedRun, draftProven(m, selectedRun)));
   const verdictCount = (v: JourneyVerdict) => missions.filter((m) => runnable.includes(m.contractId) && verdictOf(m) === v).length;
   const startBatch = (ids: string[]) => {
     if (!run || batch !== null) return;
@@ -669,12 +670,14 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
             {railGroups.map((g) => {
               const cards = g.items.map((m) => {
               const on = m.contractId === contractId;
+              const selectedRun = runFor(m.contractId);
+              const verdict = verdictOf(m, selectedRun);
               return (
                 <div key={m.contractId} className="mv-jcard" data-selected={on}>
-                  <JourneyRailButton mission={m} flow={flowForContract(flows?.flows ?? [], m.contractId)} duplicateTitle={proofTitles.filter((title) => title === proofTitles[missions.indexOf(m)]).length > 1} selected={on} onSelect={() => pickProof(m.contractId)} />
+                  <JourneyRailButton mission={m} run={selectedRun} flow={flowForContract(flows?.flows ?? [], m.contractId)} duplicateTitle={proofTitles.filter((title) => title === proofTitles[missions.indexOf(m)]).length > 1} selected={on} onSelect={() => pickProof(m.contractId)} />
                   {flowForContract(flows?.flows ?? [], m.contractId)?.rejected && <span className="mv-rejected" title={flowForContract(flows?.flows ?? [], m.contractId)?.rejected?.note}>✕ rejected</span>}
                   {runnable.includes(m.contractId) && <span className="mv-jrun">
-                    <span className="mv-verdict" data-verdict={verdictOf(m)} title={VERDICT_HINT[verdictOf(m)]}>{VERDICT_LABEL[verdictOf(m)]}</span>
+                    <span className="mv-verdict" data-verdict={verdict} title={VERDICT_HINT[verdict]}>{VERDICT_LABEL[verdict]}</span>
                     <button type="button" className="mv-jrun-btn" aria-label={`Run journey ${m.title}`} disabled={batch !== null} onClick={() => startBatch([m.contractId])}>▶ Run</button>
                   </span>}
                   {historyLoading ? <span className="mv-progress-text" role="status">… loading work</span> : <JourneyProgress statuses={journeyStepProgress(m)} caption={false} />}

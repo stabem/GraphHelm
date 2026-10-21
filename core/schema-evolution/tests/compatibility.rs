@@ -1302,3 +1302,233 @@ fn a_nested_discriminator_addition_is_not_certified_when_the_inner_union_admits_
         report.changes
     );
 }
+
+// A closed string vocabulary may expand without admitting other JSON types.
+#[test]
+fn string_const_to_enum_expansion_preserves_real_instance_acceptance() {
+    use graphhelm_schema::{compile_inline_schema, validate_inline_value};
+    for nested in [false, true] {
+        let wrap = |value: Value| {
+            if nested {
+                json!({"type":"object", "properties":{"kind":value}, "required":["kind"]})
+            } else {
+                value
+            }
+        };
+        let baseline = wrap(json!({"type":"string", "const":"old"}));
+        let candidate = wrap(json!({"type":"string", "enum":["old","new"]}));
+        for schema in [&baseline, &candidate] {
+            compile_inline_schema(schema).unwrap();
+        }
+        for (value, old_accepts, new_accepts) in [
+            (json!("old"), true, true),
+            (json!("new"), false, true),
+            (json!("other"), false, false),
+            (json!(17), false, false),
+        ] {
+            let instance = if nested { json!({"kind":value}) } else { value };
+            assert_eq!(
+                validate_inline_value(&baseline, &instance, "baseline")
+                    .unwrap()
+                    .is_empty(),
+                old_accepts
+            );
+            assert_eq!(
+                validate_inline_value(&candidate, &instance, "candidate")
+                    .unwrap()
+                    .is_empty(),
+                new_accepts
+            );
+        }
+        let pointer = if nested {
+            "/properties/kind/enum"
+        } else {
+            "/enum"
+        };
+        assert_change(
+            &compare(baseline, candidate),
+            CompatibilityClass::Compatible,
+            SemverImpact::Minor,
+            "GHC103_COMPATIBLE_CHANGE",
+            pointer,
+        );
+    }
+}
+
+// The proof must use only a removed string const and unchanged constraints in that object.
+#[test]
+fn string_const_to_enum_unproven_replacements_stay_breaking() {
+    for (baseline, candidate, pointer) in [
+        (json!({"const":"old"}), json!({"enum":["new"]}), "/enum"),
+        (json!({"const":"old"}), json!({"enum":["old",1]}), "/enum"),
+        (json!({"const":"old"}), json!({"enum":[]}), "/enum"),
+        (json!({"const":1}), json!({"enum":[1,2]}), "/enum"),
+        (
+            json!({"const":{"x":1}}),
+            json!({"enum":[{"x":1},{"x":2}]}),
+            "/enum",
+        ),
+        (
+            json!({"const":"old"}),
+            json!({"const":"old","enum":["old","new"]}),
+            "/enum",
+        ),
+        (
+            json!({"const":"old"}),
+            json!({"const":"new","enum":["old","new"]}),
+            "/const",
+        ),
+        (
+            json!({"const":"old","maxLength":4}),
+            json!({"enum":["old","new"],"maxLength":3}),
+            "/maxLength",
+        ),
+        (
+            json!({"const":"old","enum":["old",1]}),
+            json!({"enum":["old","new"]}),
+            "/enum",
+        ),
+        (
+            json!({"const":"old","properties":{"kind":{"type":"string"}}}),
+            json!({"const":"old","properties":{"kind":{"type":"string","enum":["old","new"]}}}),
+            "/properties/kind/enum",
+        ),
+        (
+            json!({"properties":{"a":{"const":"old"},"b":{"type":"string"}}}),
+            json!({"properties":{"a":{"const":"old"},"b":{"type":"string","enum":["old","new"]}}}),
+            "/properties/b/enum",
+        ),
+    ] {
+        assert_change(
+            &compare(baseline, candidate),
+            CompatibilityClass::Breaking,
+            SemverImpact::Major,
+            "GHC003_BREAKING_CHANGE",
+            pointer,
+        );
+    }
+}
+
+// A local expansion cannot hide a narrowing in a different schema object.
+#[test]
+fn string_const_to_enum_expansion_keeps_remote_narrowing() {
+    let baseline = json!({"properties":{"kind":{"const":"old"},"other":{"maxLength":5}}});
+    let candidate = json!({"properties":{"kind":{"enum":["old","new"]},"other":{"maxLength":4}}});
+    let witness = json!({"kind":"old", "other":"12345"});
+    assert!(
+        graphhelm_schema::validate_inline_value(&baseline, &witness, "baseline")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !graphhelm_schema::validate_inline_value(&candidate, &witness, "candidate")
+            .unwrap()
+            .is_empty()
+    );
+    let report = compare(baseline, candidate);
+    assert_change(
+        &report,
+        CompatibilityClass::Breaking,
+        SemverImpact::Major,
+        "GHC003_BREAKING_CHANGE",
+        "/properties/other/maxLength",
+    );
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|change| change.pointer == "/properties/kind/enum"
+                && change.code == "GHC103_COMPATIBLE_CHANGE")
+    );
+}
+
+// Annotation changes remain independent, while unsupported constants and constraints stay conservative.
+#[test]
+fn string_const_to_enum_expansion_keeps_annotations_and_conservative_constraints() {
+    let report = compare(
+        json!({"const":"old","description":"before"}),
+        json!({"enum":["old","new"],"description":"after"}),
+    );
+    assert_change(
+        &report,
+        CompatibilityClass::Compatible,
+        SemverImpact::Minor,
+        "GHC103_COMPATIBLE_CHANGE",
+        "/enum",
+    );
+    assert!(report.changes.iter().any(
+        |change| change.pointer == "/description" && change.code == "GHC101_ANNOTATION_CHANGED"
+    ));
+    for value in [json!(null), json!(true), json!(["old"])] {
+        assert_change(
+            &compare(
+                json!({"const":value.clone()}),
+                json!({"enum":[value,"old"]}),
+            ),
+            CompatibilityClass::Breaking,
+            SemverImpact::Major,
+            "GHC003_BREAKING_CHANGE",
+            "/enum",
+        );
+    }
+    for keyword in ["pattern", "not", "unknownConstraint"] {
+        let mut candidate = json!({"enum":["old","new"]});
+        candidate[keyword] = match keyword {
+            "pattern" => json!("^new$"),
+            "not" => json!({"const":"old"}),
+            _ => json!(true),
+        };
+        assert_change(
+            &compare(json!({"const":"old"}), candidate),
+            CompatibilityClass::Breaking,
+            SemverImpact::Major,
+            "GHC003_BREAKING_CHANGE",
+            &format!("/{keyword}"),
+        );
+    }
+}
+
+// Explicit real comparison/validator scale observation, kept outside ordinary regression cost.
+#[test]
+#[ignore = "explicit N/10N schema compatibility observation"]
+fn string_const_to_enum_real_validator_scale_observation() {
+    use graphhelm_schema::validate_inline_value;
+    for count in [100, 1000] {
+        let mut old = serde_json::Map::new();
+        let mut new = serde_json::Map::new();
+        let mut instance = serde_json::Map::new();
+        for index in 0..count {
+            let name = format!("kind{index}");
+            old.insert(name.clone(), json!({"const":"old"}));
+            new.insert(name.clone(), json!({"enum":["old","new"]}));
+            instance.insert(name, json!("old"));
+        }
+        let baseline = json!({"type":"object","properties":old});
+        let candidate = json!({"type":"object","properties":new});
+        let instance = Value::Object(instance);
+        let mut samples = Vec::new();
+        for _ in 0..3 {
+            let started = std::time::Instant::now();
+            let report = compare(baseline.clone(), candidate.clone());
+            assert!(report.compatible);
+            assert_eq!(
+                report
+                    .changes
+                    .iter()
+                    .filter(|change| change.pointer.ends_with("/enum")
+                        && change.code == "GHC103_COMPATIBLE_CHANGE")
+                    .count(),
+                count
+            );
+            for schema in [&baseline, &candidate] {
+                assert!(
+                    validate_inline_value(schema, &instance, "scale")
+                        .unwrap()
+                        .is_empty()
+                );
+            }
+            samples.push(started.elapsed().as_secs_f64());
+        }
+        eprintln!("CONST_ENUM_SCALE objects={count} samples_seconds={samples:?}");
+    }
+}

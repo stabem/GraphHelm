@@ -1,12 +1,12 @@
 ---
 name: graphhelm-team
-description: Use when an orchestrator session puts another agent to work on a GraphHelm project (an author, a reviewer, any lane), so the agent is born inside the Studio, registered under its own lane name and visible on the Team tab from its first step.
+description: Use when an orchestrator session puts another agent to work on a GraphHelm project (an author, a reviewer, any lane), with truthful task records under its own lane: admit implementation authors before work and preserve exact-head reviewer assignments.
 ---
 
 # GraphHelm team
 
-Spawn one agent (a **lane**) so the owner sees it in the Studio from birth to merge. The
-orchestrator calls this once per agent. The orchestrator itself never takes a lane's work.
+Start or resume one agent (a **lane**) with truthful task evidence in Studio. Bootstrap presence
+does not mean task work has started. The orchestrator never takes a lane's identity or work.
 
 ## Before the first agent
 
@@ -45,32 +45,49 @@ orchestrator calls this once per agent. The orchestrator itself never takes a la
 
 1. **Name it.** `<role>-<n>` (`author-1`, `review-2`), unique in the execution. The name is the
    lane, the `X-GraphHelm-Actor`, the `--reviewer`/`--author` id and the identity line.
-2. **Register it before it works.** Mint the lane's credential (once per lane and execution; the
-   Runtime refuses a `task.*` record under the shared agent session token, #1148), then record the
-   claim and the plan as that lane, so the Team tab shows it at once:
+2. **Bootstrap implementation authors without the task payload.** Trusted local setup must already have provisioned
+   the lane's credential for this execution. A missing credential is a blocker; neither a cloud
+   orchestrator nor a child gains authority to mint it or use the owner's token. Start or resume
+   the actual child with only its lane, execution, issue, branch, repository, Runtime binding,
+   own credential-file reference and registration instructions. Keep the implementation
+   payload until admission. Never record a child claim as the coordinator or sign as the child.
+3. **The implementation child claims and proves admission.** It reads MCP `tasks` for the issue, then generates
+   its own `task.claimed` envelope with `task_record.py --lane <actual-lane> ... --dry-run`.
+   Send that envelope with MCP `signal`, supplying `lane: <actual-lane>` and
+   `credentialFile: <that lane's existing credential path>`. Read the task back; an HTTP success,
+   a recorded note, membership, or a working report alone is insufficient. Call MCP `task_admit`
+   with all six exact fields: `executionId`, `lane`, `issue`, `branch`, `repo`, `claimSequence`.
+   Only an `admitted: true` receipt for that binding allows the coordinator to send the task
+   payload. Missing credentials, refusals, conflicting holders and uncertain writes stop dispatch;
+   resolve the blocker without changing identity or taking another lane's claim.
+
+   The CLI equivalent is read-only:
 
    ```sh
-   graphhelm tasks credential --lane <lane> --execution <exec> --token-file <project>/.graphhelm/events.token
-   python <clone>/tools/task-record/task_record.py --lane <lane> --execution <exec> --repo <owner/name> --token-file <project>/.graphhelm/events.agent.token claimed --issue <N> --branch issue-<N>-<desc> --journeys <contractId> --assigned-by <orchestrator lane>
-   python <clone>/tools/task-record/task_record.py --lane <lane> --execution <exec> --repo <owner/name> --token-file <project>/.graphhelm/events.agent.token planned --issue <N> --summary "<plan in one line>"
+   graphhelm --json tasks admit --execution <exec> --lane <actual-lane> --issue <N> --branch <branch> --repo <owner/name> --claim-sequence <sequence> --url <Runtime-url> --token-file <existing-read-token-file>
    ```
 
-   `task_record.py` reads `<project>/.graphhelm/events.agent.<lane>.token` beside the
-   `--token-file` it is given; the orchestrator records as its own lane with `--assigned-by`.
-
-3. **Start it** with the host's subagent tool and the roster's model for its role. Its brief
-   carries: its lane name, the issue, the project path and branch, the Runtime URL, execution
-   and token path, the skill it runs (`implement`, `blind-review`, `journey-map` ...), the project's
-   `KEEL.md` and the Keel file for its step (`keel/KEEL_PLAN.md`, `KEEL_EXEC.md`, `KEEL_REVIEW.md` or
-   `KEEL_MERGE.md`) when the project has them, and the
-   rule that it records its own steps with `task_record.py --lane <lane>` (`pr_opened` after
-   every push, `review_verdict`, `merged`). A reviewer's brief follows `blind-review`: never the
-   author's reasoning or an expected verdict. With the GraphHelm hooks installed,
-   `SubagentStart`/`SubagentStop` also link the child to this session in the Studio.
-4. **Reuse before you spawn.** When a lane of the same role already finished a task on the same
+   Save the admitted claim sequence with the assignment. Admission observes the current claim;
+   it does not reserve a host process or prove work started. The child records its accepted plan
+   before code, and records its own later steps with `task_record.py --lane <actual-lane>`:
+   `pr_opened` after every push. Its task payload carries the
+   project's `KEEL.md` and the Keel file for its step, project path, branch and Runtime binding.
+   With hooks installed, `SubagentStart`/`SubagentStop` additionally record lifecycle links;
+   they do not replace admission. Host APIs called outside this workflow are not intercepted.
+4. **Assign reviewers through the existing review flow.** Claim admission above and the
+   `run-codex` launcher are for pre-PR implementation authors only. A reviewer never claims the
+   author's issue or calls `task_admit` to take its claim. The coordinator retains one actual
+   reviewer in `review_assigned` for the current PR and exact head, confirms that record and any
+   review of record, then sends that independent lane the `blind-review` payload. Include the PR,
+   exact head, card and author receipt; exclude author reasoning and an expected verdict. The
+   reviewer records its own `review_verdict` and, if approving, its own `merged` result. A changed
+   head requires the review assignment to be refreshed before continuing. Missing reviewer
+   credentials block writes without author impersonation. Flow-only reviews retain their own
+   scoped flow-author/reviewer contract; pre-PR claim admission does not apply to them.
+5. **Reuse before you spawn.** When a lane of the same role already finished a task on the same
    scope, hand it the next one instead of a new agent (agent reuse, ADR-041/042). An author lane
    is never reused as the reviewer of its own work.
-5. **Watch through the Studio, not the chat.** Read progress with the GraphHelm MCP `tasks` tool (every lane's step,
+6. **Watch through the Studio, not the chat.** Read progress with the GraphHelm MCP `tasks` tool (every lane's step,
    PR, head and heartbeat), `status` and `events`; never script the CLI or HTTP for the same answer. A lane silent past its heartbeat is shown stale there; re-brief or release it
    (`task_record.py ... released --claim-sequence <seq> --release-reason "<why>"`).
 

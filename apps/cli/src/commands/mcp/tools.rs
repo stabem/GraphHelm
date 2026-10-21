@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 48] = [
+const TOOLS: [ToolSpec; 49] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): a new executionId, mode, and file (a graph path on the Runtime host) or inline graph. held: true starts without driving. After a client timeout it may have started: read status, never retry. Mode governs proposals; pause holds dispatch.",
@@ -62,6 +62,11 @@ const TOOLS: [ToolSpec; 48] = [
         name: "tasks",
         description: "Read a run's open task board (GET /v1/executions/{executionId}/tasks): each open task's step, lane, issue, PR, head, BLOCK, heartbeat. lane or issue narrows it (a few KB). Read-only.",
         schema: tasks_schema,
+    },
+    ToolSpec {
+        name: "task_admit",
+        description: "Verify an exact current lane claim and live lease with one filtered GET /v1/executions/{executionId}/tasks (`graphhelm tasks admit`). Read-only admission receipt, never proof that a worker started or is working.",
+        schema: task_admit_schema,
     },
     ToolSpec {
         name: "keel_plan",
@@ -657,6 +662,24 @@ fn tasks_schema() -> serde_json::Value {
             "issue": {"type": "integer", "minimum": 1}
         }),
         &["executionId"],
+    )
+}
+
+fn task_admit_schema() -> serde_json::Value {
+    object_schema(
+        serde_json::json!({
+            "executionId": {"type":"string"}, "lane": {"type":"string"},
+            "issue": {"type":"integer", "minimum":1}, "branch": {"type":"string"},
+            "repo": {"type":"string"}, "claimSequence": {"type":"integer", "minimum":1}
+        }),
+        &[
+            "executionId",
+            "lane",
+            "issue",
+            "branch",
+            "repo",
+            "claimSequence",
+        ],
     )
 }
 
@@ -1258,7 +1281,7 @@ pub(crate) const UNLISTED_STUBS: [&str; 4] = [
 /// cut to two short descriptions with their shape checked in `call` instead of the schema.
 /// Raised again for `journey_reject` (#1588): one line, and the mutation shape every write carries.
 #[cfg(test)]
-const TOOL_LIST_BUDGET_BYTES: usize = 26_200;
+const TOOL_LIST_BUDGET_BYTES: usize = 26_900;
 /// #1277: the longest a tool description may be: one line plus the route it maps to.
 #[cfg(test)]
 const DESCRIPTION_MAX_CHARS: usize = 300;
@@ -1714,6 +1737,36 @@ pub(crate) fn call(
         return with_example(name, wake_wait_tool(api, nonce, arguments));
     }
 
+    if name == "task_admit" {
+        let request = match serde_json::from_value::<crate::commands::task_admission::Request>(
+            arguments.clone(),
+        ) {
+            Ok(request) => request,
+            Err(_) => return HandlerOutcome::Error {
+                data: None,
+                code: INVALID_PARAMS,
+                message:
+                    "task_admit requires executionId, lane, issue, branch, repo and claimSequence"
+                        .to_owned(),
+            },
+        };
+        let outcome = crate::commands::task_admission::admit(api, &request);
+        let serialized = match serde_json::to_string(&outcome.output) {
+            Ok(serialized) => serialized,
+            Err(_) => {
+                return HandlerOutcome::Error {
+                    data: None,
+                    code: super::INTERNAL_ERROR,
+                    message: "could not serialize the task admission receipt".to_owned(),
+                };
+            }
+        };
+        return HandlerOutcome::Result(serde_json::json!({
+            "content": [{"type":"text", "text":serialized}],
+            "isError": !outcome.output.ok,
+        }));
+    }
+
     let key = if name == "signal" {
         arguments.get("lane").map_or_else(
             || derive_key(nonce, rpc_id),
@@ -1975,7 +2028,7 @@ pub(crate) fn call(
                     if_match,
                 )
             }),
-        "signal" => require(arguments, "executionId").map(|id| {
+        "signal" => require(arguments, "executionId").and_then(|id| {
             let mut body = serde_json::json!({
                 "signal": arguments.get("signal").cloned().unwrap_or(serde_json::Value::Null),
             });
@@ -1993,9 +2046,17 @@ pub(crate) fn call(
             }
             let path = url::segment_path(&["v1", "executions", id, "signal"]);
             if let (Some(lane), Some(file)) = (str_arg(arguments, "lane"), str_arg(arguments, "credentialFile")) {
-                api.request_as_lane(&path, &body, &key, if_match, lane, file)
+                match api.request_as_lane(&path, &body, &key, if_match, lane, file) {
+                    Ok(reply) => Ok(Ok(reply)),
+                    Err(super::client::LaneRequestError::Transport(message)) => Ok(Err(message)),
+                    Err(super::client::LaneRequestError::CredentialUnavailable) => Err(HandlerOutcome::Error {
+                        data: Some(serde_json::json!({"code":crate::error_codes::GHCLI020_MCP_TOKEN_INVALID})),
+                        code: INVALID_PARAMS,
+                        message: "the lane credential is unavailable; the trusted coordinator must provision this lane before task recording".to_owned(),
+                    }),
+                }
             } else {
-                api.request("POST", &path, Some(&body), Some(&key), if_match)
+                Ok(api.request("POST", &path, Some(&body), Some(&key), if_match))
             }
         }),
         "sweep" => require(arguments, "executionId").map(|id| {

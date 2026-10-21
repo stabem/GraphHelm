@@ -900,7 +900,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         self.git("commit", "-qm", text)
 
     def run_once(self, **extra):
-        plan = {"steps": [{"argv": argv, "cwd": "apps/studio" if argv[:2] == ["npx", "vitest"] else ".", "slot": False} for argv in self.steps]}
+        plan = {"steps": [{"argv": argv, "cwd": "apps/studio" if argv[0] == "npx" else ".", "slot": getattr(self, "slot_steps", False)} for argv in self.steps]}
         fields = {"repo": str(self.repo), "output": str(self.output), "base": "HEAD", "head": "HEAD",
                   "root": "D:/gh", "lane": "test", "budget_seconds": 180, "allow_whole_package": None,
                   "plan": False, "min_free_gb": 0.0}
@@ -922,7 +922,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         calls = []
 
         def child(command, **kwargs):
-            if command[0] != "node" or "stdout" not in kwargs:
+            if Path(command[0]).stem != "node" or "stdout" not in kwargs:
                 return real_run(command, **kwargs)
             calls.append(command)
             kwargs["stdout"].write(" RUN  v4.1.11\n")
@@ -948,7 +948,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
                   "success": True, "testResults": [{"name": "proof.test.ts", "status": "passed"}]}
 
         def child(command, **kwargs):
-            if command[0] != "node" or "stdout" not in kwargs:
+            if Path(command[0]).stem != "node" or "stdout" not in kwargs:
                 return real_run(command, **kwargs)
             calls.append(command)
             target = Path(next(arg.split("=", 1)[1] for arg in command if arg.startswith("--outputFile.json=")))
@@ -972,6 +972,470 @@ class ResumeAndPreflightContracts(unittest.TestCase):
             self.assertEqual(self.run_once(resume=False)[1]["status"], "incomplete")
             sample.clear()
             self.assertEqual(self.run_once(resume=False)[1]["status"], "incomplete")
+
+    def executable_fixture(self, path, marker):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"#!{sys.executable}\nimport sys\n"
+            "if '--version' in sys.argv: print('same-version')\n"
+            f"else: open({str(self.counter)!r}, 'a').write({marker!r} + '\\n')\n",
+            encoding="utf-8")
+        path.chmod(0o755)
+
+    @unittest.skipIf(os.name == "nt", "POSIX executable fixture; native Windows has its own observer")
+    def test_same_version_path_switch_executes_again(self):
+        first = self.repo.parent / "tools-a" / "proof-tool"
+        second = self.repo.parent / "tools-b" / "proof-tool"
+        self.executable_fixture(first, "A")
+        self.executable_fixture(second, "B")
+        self.steps = [["proof-tool"]]
+        original_path = os.environ.get("PATH", "")
+        with patch.dict(os.environ, {"PATH": str(first.parent) + os.pathsep + original_path}):
+            self.assertEqual(self.run_once()[0], 0)
+            self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+        with patch.dict(os.environ, {"PATH": str(second.parent) + os.pathsep + original_path}):
+            self.assertFalse(self.run_once()[1]["completed"][0].get("reused"))
+        self.assertEqual(self.runs(), ["A", "B"])
+
+    @unittest.skipIf(os.name == "nt", "POSIX executable fixture")
+    def test_same_path_bytes_change_with_same_version_executes_again(self):
+        executable = self.repo.parent / "tools" / "proof-tool"
+        self.executable_fixture(executable, "before")
+        self.steps = [[str(executable)]]
+        self.assertEqual(self.run_once()[0], 0)
+        self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+        self.executable_fixture(executable, "after")
+        self.assertFalse(self.run_once()[1]["completed"][0].get("reused"))
+        self.assertEqual(self.runs(), ["before", "after"])
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink dispatch; native Windows remains separately observed")
+    def test_relative_proxy_keeps_invocation_and_retarget_invalidates_reuse(self):
+        targets = self.repo.parent / "targets"
+        self.executable_fixture(targets / "first", "first")
+        self.executable_fixture(targets / "second", "second")
+        proxy = self.repo.parent / "bin" / "proof-tool"
+        proxy.parent.mkdir()
+        proxy.symlink_to(targets / "first")
+        self.steps = [["../bin/proof-tool"]]
+        self.assertEqual(self.run_once()[0], 0)
+        self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+        proxy.unlink()
+        proxy.symlink_to(targets / "second")
+        self.assertFalse(self.run_once()[1]["completed"][0].get("reused"))
+        self.assertEqual(self.runs(), ["first", "second"])
+
+    def test_identity_read_failure_executes_without_reuse_and_preserves_actual_failure(self):
+        for command, status in ((self.ok, "incomplete"), (self.bad, "failed")):
+            self.steps = [command]
+            with patch.object(rr._ExecutableCapture, "_identity", side_effect=PermissionError("fixture denial")):
+                for _ in range(2):
+                    _, report = self.run_once()
+                    self.assertEqual(report["status"], status)
+                    self.assertEqual(report["measure"]["reusedSteps"], 0)
+                    self.assertTrue(report["completed"])
+                    self.assertFalse(any(e.get("reusable") or e.get("proofKey") for e in report["completed"]))
+        self.assertEqual(self.runs(), ["ok", "ok", "bad", "bad"])
+
+    @unittest.skipIf(os.name == "nt", "POSIX executable fixture")
+    def test_disappearing_required_program_cannot_reuse_saved_pass(self):
+        executable = self.repo.parent / "proof-tool"
+        self.executable_fixture(executable, "once")
+        self.steps = [[str(executable)]]
+        self.assertEqual(self.run_once()[0], 0)
+        executable.unlink()
+        _, report = self.run_once()
+        self.assertEqual(report["status"], "incomplete")
+        self.assertEqual(report["completed"], [])
+        self.assertEqual(report["pending"], [0])
+        self.assertEqual(self.runs(), ["once"])
+
+    @unittest.skipUnless(__import__("shutil").which("node"), "real Node executable required")
+    def test_late_preparation_invalidates_reused_cells_but_keeps_executed_outcome(self):
+        studio = self.repo / "apps/studio"
+        (studio / "node_modules/typescript/bin").mkdir(parents=True)
+        (studio / "node_modules/.bin").mkdir()
+        for lock in (studio / "package-lock.json", studio / "node_modules/.package-lock.json"):
+            lock.write_text('{"packages":{}}', encoding="utf-8")
+        (studio / "node_modules/typescript/bin/tsc").write_text(
+            f"require('fs').appendFileSync({json.dumps(str(self.counter))}, 'node\\n');", encoding="utf-8")
+        self.git("add", "apps")
+        self.git("commit", "-qm", "fixed Node fixture")
+        self.steps = [self.ok, ["npx", "tsc"]]
+        self.assertEqual(self.run_once()[0], 0)
+        saved = json.loads(self.output.read_text())
+        saved["completed"] = [e for e in saved["completed"] if e["index"] == 0]
+        self.output.write_text(json.dumps(saved))
+        with patch.object(rr, "_needs_studio_preparation", side_effect=[False, True]):
+            _, report = self.run_once()
+        self.assertEqual(report["status"], "incomplete")
+        self.assertEqual(report["pending"], [0])
+        self.assertEqual([e["index"] for e in report["completed"]], [1])
+        self.assertFalse(any(e.get("reused") or e.get("reusable") or e.get("proofKey") for e in report["completed"]))
+        self.assertEqual(self.runs(), ["ok", "node", "node"])
+
+    @unittest.skipIf(os.name == "nt", "real POSIX virtualenv symlink")
+    def test_virtualenv_invocation_is_not_replaced_by_its_digest_target(self):
+        import venv
+        environment = self.repo.parent / "venv"
+        venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
+        python = environment / "bin/python"
+        self.steps = [[str(python), "-c", f"import sys; open({str(self.counter)!r}, 'a').write(sys.prefix + '\\n')"]]
+        self.assertEqual(self.run_once()[0], 0)
+        self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+        self.assertEqual(self.counter.read_text().splitlines(), [str(environment)])
+
+    def test_controlled_app_alias_rebinds_target_bytes_and_discovery_cwd(self):
+        # Controlled routing inputs supplement the native Store observer; no Windows activation is simulated.
+        import types
+        alias = self.repo.parent / "python-alias.exe"
+        alias.write_bytes(b"opaque alias route")
+        alias.chmod(0o755)
+        first = self.repo.parent / "image-a.exe"
+        second = self.repo.parent / "image-b.exe"
+        first.write_bytes(b"same-version image A")
+        second.write_bytes(b"same-version image B")
+        child = self.repo / "child"
+        child.mkdir()
+        real_resolve = Path.resolve
+        def resolve_guard(path, *args, **kwargs):
+            if os.path.normcase(str(path)) == os.path.normcase(str(alias)):
+                raise OSError(1920, "controlled native AppExecLink strict-resolution failure")
+            return real_resolve(path, *args, **kwargs)
+        real_lstat = rr.os.lstat
+        def tagged(path, *args, **kwargs):
+            value = real_lstat(path, *args, **kwargs)
+            if os.path.normcase(str(path)) == os.path.normcase(str(alias)):
+                metadata = types.SimpleNamespace(**{key: getattr(value, key) for key in dir(value) if key.startswith("st_")})
+                metadata.st_reparse_tag = 0x8000001B
+                return metadata
+            return value
+        calls = []
+        selected = [first]
+        def discover(argv, cwd, env, timeout):
+            calls.append((argv, cwd, dict(env), timeout))
+            return json.dumps({"loadedImage": str(selected[0])})
+        steps = [{"argv":["python", "-c", "pass"], "cwd":"child", "slot":False}]
+        env = dict(os.environ)
+        with patch.object(rr.sys, "platform", "win32"), patch.object(rr.sys, "executable", str(alias)), patch.object(rr.os, "lstat", side_effect=tagged), patch.object(rr, "_discovery_output", side_effect=discover), patch.object(Path, "resolve", autospec=True, side_effect=resolve_guard):
+            one = rr._tool_fingerprint(steps, None, self.repo, env)
+            self.assertTrue(one["identityComplete"])
+            self.assertEqual(one["runnerPython"]["invocationPath"], str(alias))
+            self.assertEqual(one["runnerPython"]["digestTarget"], str(first.resolve()))
+            self.assertEqual([call[1] for call in calls], [self.repo, child])
+            self.assertTrue(all(call[2] == env and call[3] <= 5 for call in calls))
+            self.assertTrue(all(call[0][0] == str(alias) and call[0][1:5] == ["-I", "-S", "-X", "utf8"] for call in calls))
+            selected[0] = second
+            two = rr._tool_fingerprint(steps, None, self.repo, env)
+            self.assertNotEqual(one, two)
+            second.write_bytes(b"same-version image changed at same target")
+            three = rr._tool_fingerprint(steps, None, self.repo, env)
+            self.assertNotEqual(two["runnerPython"]["sha256"], three["runnerPython"]["sha256"])
+            for bad in ["not-json", json.dumps({"loadedImage":"relative.exe"}), json.dumps({"loadedImage":str(alias)}), json.dumps({"loadedImage":str(child)}), json.dumps({"other":str(first)})]:
+                with self.subTest(output=bad), patch.object(rr, "_discovery_output", return_value=bad):
+                    refused = rr._tool_fingerprint(steps, None, self.repo, env)
+                    self.assertFalse(refused["identityComplete"])
+                    self.assertEqual(refused["stepPrograms"], [])
+
+    def test_controlled_generic_python_alias_is_an_explicit_step_role_not_a_tool_name_guess(self):
+        # Controlled metadata/API results: not a native activation observation.
+        import types
+        runner = self.repo.parent / "ordinary-runner.exe"
+        alias = self.repo.parent / "python.EXE"
+        image = self.repo.parent / "actual-child.exe"
+        for path in [runner, alias, image]:
+            path.write_bytes(path.name.encode())
+            path.chmod(0o755)
+        real_lstat, real_resolve = rr.os.lstat, Path.resolve
+        def tagged(path, *args, **kwargs):
+            value = real_lstat(path, *args, **kwargs)
+            if str(path) == str(alias):
+                value = types.SimpleNamespace(**{key: getattr(value, key) for key in dir(value) if key.startswith("st_")})
+                value.st_reparse_tag = 0x8000001B
+            return value
+        def resolve_guard(path, *args, **kwargs):
+            if str(path) == str(alias):
+                raise OSError(1920, "controlled generic AppExecLink resolution failure")
+            return real_resolve(path, *args, **kwargs)
+        env = {**os.environ, "PATH": str(alias.parent) + os.pathsep + os.environ.get("PATH", "")}
+        with patch.object(rr.sys, "platform", "win32"), patch.object(rr.sys, "executable", str(runner)), \
+                patch.object(rr.os, "lstat", side_effect=tagged), \
+                patch.object(Path, "resolve", autospec=True, side_effect=resolve_guard), \
+                patch.object(rr, "_discovery_output", return_value=json.dumps({"loadedImage":str(image)})) as discover:
+            steps = [{"argv":[alias.name, "-c", "pass"], "cwd":".", "slot":False}]
+            observed = rr._tool_fingerprint(steps, None, self.repo, env)
+            self.assertTrue(observed["identityComplete"], observed.get("identityReason"))
+            self.assertEqual(observed["executables"][0]["invocationPath"], str(alias))
+            self.assertEqual(observed["executables"][0]["digestTarget"], str(image.resolve()))
+            self.assertEqual(discover.call_count, 1)
+            self.assertEqual(discover.call_args.args[0][0], str(alias))
+            self.assertEqual(discover.call_args.args[1:3], (self.repo, env))
+            discover.reset_mock()
+            # A GraphHelm configured path with the SAME basename/tag has no Python role.
+            refused = rr._tool_fingerprint([{"argv":["graphhelm", "status"], "cwd":".", "slot":False}], alias, self.repo, env)
+            self.assertFalse(refused["identityComplete"])
+            discover.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "OBSERVER_MISSING: real Store Python AppExecLink activation")
+    def test_windows_store_app_alias_hashes_executed_image_and_reuses_only_unchanged_pass(self):
+        import hashlib
+        if getattr(os.lstat(sys.executable), "st_reparse_tag", None) != 0x8000001B:
+            self.skipTest("OBSERVER_MISSING: selected interpreter is not a Store AppExecLink")
+        # Execute a tracked Python file: the selector deliberately rejects '<' in argv, even
+        # inside -c source. Keep the actual image API and its bounds check, not a parser waiver.
+        observer = self.repo / "observe_store_image.py"
+        observer.write_text("import ctypes\n"
+            "b = ctypes.create_unicode_buffer(32768)\n"
+            "n = ctypes.windll.kernel32.GetModuleFileNameW(None, b, len(b))\n"
+            "assert 0 < n < len(b)\n"
+            f"open({str(self.counter)!r}, 'a', encoding='utf-8').write(b.value + '\\n')\n", encoding="utf-8")
+        self.git("add", observer.name)
+        self.git("commit", "-qm", "Track the native Store image observer")
+        import shutil
+        generic = shutil.which("python.EXE")
+        if generic is None or getattr(os.lstat(generic), "st_reparse_tag", None) != 0x8000001B:
+            self.skipTest("OBSERVER_MISSING: generic PATH python.EXE AppExecLink selection")
+        if os.path.normcase(generic) == os.path.normcase(sys.executable):
+            self.skipTest("OBSERVER_MISSING: distinct generic PATH Python AppExecLink selection")
+        for index, selected in enumerate([sys.executable, generic]):
+            with self.subTest(selection=index):
+                self.steps = [[selected, "-I", "-S", observer.name]]
+                result, report = self.run_once()
+                self.assertEqual(result, 0)
+                identity = report["fingerprint"]["tools"]["executables"][0]
+                self.assertEqual(os.path.normcase(identity["invocationPath"]), os.path.normcase(selected))
+                self.assertNotEqual(os.path.normcase(identity["digestTarget"]), os.path.normcase(selected))
+                self.assertEqual(identity["sha256"], hashlib.sha256(Path(identity["digestTarget"]).read_bytes()).hexdigest())
+                images = self.counter.read_text(encoding="utf-8").splitlines()
+                self.assertEqual(os.path.normcase(images[-1]), os.path.normcase(identity["digestTarget"]))
+                self.assertEqual(len(images), index + 1)
+                self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+                self.assertEqual(len(self.counter.read_text(encoding="utf-8").splitlines()), index + 1)
+
+    @unittest.skipUnless(os.name == "nt" and __import__("shutil").which("node"), "OBSERVER_MISSING: native Windows npm.cmd preparation")
+    def test_windows_npm_cmd_preparation_executes_without_reusable_identity(self):
+        studio = self.repo / "apps/studio"
+        studio.mkdir(parents=True)
+        (studio / "package-lock.json").write_text('{"packages":{}}', encoding="utf-8")
+        (self.repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+        self.git("add", "apps", ".gitignore")
+        self.git("commit", "-qm", "fixed Studio preparation inputs")
+        linked = self.repo.parent / "linked"
+        self.git("worktree", "add", "--detach", str(linked), "HEAD")
+        self.repo = linked
+        prepare = linked.parent / "prepare.py"
+        javascript = f"require('fs').appendFileSync({json.dumps(str(self.counter))}, 'node\\n');"
+        prepare.write_text(
+            "from pathlib import Path\nroot=Path.cwd()\n"
+            "(root/'node_modules/typescript/bin').mkdir(parents=True)\n"
+            "(root/'node_modules/.bin').mkdir()\n"
+            "(root/'node_modules/.package-lock.json').write_text('{\"packages\":{}}')\n"
+            f"(root/'node_modules/typescript/bin/tsc').write_text({javascript!r})\n"
+            f"open({str(self.counter)!r}, 'a').write('prepared\\n')\n", encoding="utf-8")
+        tools = linked.parent / "npm-tools"
+        tools.mkdir()
+        (tools / "npm.cmd").write_text(f'@echo off\r\n"{sys.executable}" "{prepare}"\r\n', encoding="utf-8")
+        self.steps = [["npx", "tsc"]]
+        with patch.dict(os.environ, {"PATH": str(tools) + os.pathsep + os.environ.get("PATH", "")}):
+            _, report = self.run_once()
+            self.assertEqual(report["status"], "incomplete")
+            self.assertEqual(report["completed"][0]["returncode"], 0)
+            self.assertFalse(any(e.get("reusable") for e in report["completed"]))
+            self.assertEqual(self.run_once()[0], 0)
+            self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+        self.assertEqual(self.runs(), ["prepared", "node", "node"])
+
+    @unittest.skipUnless(os.name == "nt" and __import__("shutil").which("node"), "OBSERVER_MISSING: native Windows PATH/PATHEXT executable launch")
+    def test_windows_relative_path_pathext_and_environment_case_use_real_executable(self):
+        import shutil
+        node = shutil.which("node")
+        executable = self.repo.parent / "native-tools/proof-tool.exe"
+        executable.parent.mkdir()
+        shutil.copyfile(node, executable)
+        self.steps = [["proof-tool", "-e", f"require('fs').appendFileSync({json.dumps(str(self.counter))}, process.execPath+'\\n')"]]
+        path = os.path.join("..", "native-tools") + os.pathsep + os.environ.get("PATH", "")
+        with patch.dict(os.environ, {"PATH": path, "PATHEXT": ".EXE;.CMD"}):
+            self.assertEqual(self.run_once()[0], 0)
+            self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+        self.assertEqual([os.path.normcase(p) for p in self.counter.read_text().splitlines()], [os.path.normcase(str(executable))])
+        self.assertEqual(rr._env_fingerprint({"Path": path, "Pathext": ".EXE"}), rr._env_fingerprint({"PATH": path, "PATHEXT": ".EXE"}))
+
+    @unittest.skipUnless(os.environ.get("GRAPHHELM_SLOT_OBSERVER"), "real local slot observer not configured")
+    @unittest.skipIf(os.name == "nt", "POSIX proxy fixture; native Windows dispatch remains separate")
+    def test_real_slot_single_and_batch_keep_proxy_name_and_selected_tool_identity(self):
+        import shutil
+        tools = self.repo.parent / "rust-tools"
+        installed = self.repo.parent / "installed"
+        tools.mkdir()
+        installed.mkdir()
+        proxy_log = self.repo.parent / "proxy.jsonl"
+        discovery_log = self.repo.parent / "discovery.jsonl"
+        wrapper_log = self.repo.parent / "wrapper.jsonl"
+        for name in ("cargo", "rustc", "rustfmt", "cargo-clippy", "clippy-driver"):
+            (installed / name).write_text(
+                f"#!{sys.executable}\nimport json,os,sys\n"
+                f"open({str(self.counter)!r},'a').write(json.dumps({{'cwd':os.getcwd(),'args':sys.argv[1:]}})+'\\n')\n", encoding="utf-8")
+            (installed / name).chmod(0o755)
+        proxy = tools / "dispatch-A"
+        source = (f"#!{sys.executable}\nimport json,os,sys\nfrom pathlib import Path\n"
+                  "name=Path(sys.argv[0]).name\n"
+                  "if name=='rustup':\n"
+                  f" open({str(discovery_log)!r},'a').write(json.dumps({{'cwd':os.getcwd(),'args':sys.argv[1:]}})+'\\n')\n"
+                  f" print(str(Path({str(installed)!r})/sys.argv[-1]))\n"
+                  "elif name=='rustc': print('same rustc version')\n"
+                  "elif name=='cargo':\n"
+                  f" open({str(proxy_log)!r},'a').write(json.dumps({{'invocation':sys.argv[0],'args':sys.argv[1:],'dispatch':'A'}})+'\\n')\n"
+                  " wrapper=os.environ.get('RUSTC_WRAPPER')\n"
+                  f" program=wrapper or {str(installed / 'cargo')!r}\n"
+                  f" args=[program,*([{str(installed / 'cargo')!r}] if wrapper else []),*sys.argv[1:]]\n"
+                  " os.execv(program,args)\n")
+        proxy.write_text(source, encoding="utf-8")
+        proxy.chmod(0o755)
+        replacement = tools / "dispatch-B"
+        replacement.write_text(source.replace("'dispatch':'A'", "'dispatch':'B'"), encoding="utf-8")
+        replacement.chmod(0o755)
+        for name in ("rustup", "cargo", "rustc", "rustfmt", "cargo-clippy", "clippy-driver"):
+            (tools / name).symlink_to(proxy)
+        self.slot_steps = True
+        self.steps = [["cargo", "+fixture", "test", "--locked", "-p", "fixture", "--lib", "--", "--test-threads=2"]] * 2
+        wrapper = tools / "compiler-wrapper"
+        wrapper.write_text(f"#!{sys.executable}\nimport os,sys\n"
+                           f"open({str(wrapper_log)!r},'a').write('wrapper\\n')\n"
+                           "os.execv(sys.argv[1], sys.argv[1:])\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+        home = self.repo.parent / "empty-cargo-home"
+        home.mkdir()
+        with patch.dict(os.environ, {"PATH": str(tools) + os.pathsep + os.environ.get("PATH", ""), "CARGO_HOME": str(home)}):
+            for batch in (False, True):
+                self.output = self.output.with_name(f"slot-{batch}.json")
+                fields = {"batch_slot": batch, "jobs": 2, "graphhelm": os.environ["GRAPHHELM_SLOT_OBSERVER"],
+                          "root": os.environ.get("GRAPHHELM_SLOT_OBSERVER_ROOT", str(self.repo.parent / "slots"))}
+                self.assertEqual(self.run_once(**fields)[0], 0)
+                self.assertEqual(self.run_once(**fields)[1]["measure"]["reusedSteps"], 2)
+                rustc = installed / "rustc"
+                rustc.write_text(rustc.read_text() + "# selected tool bytes changed\n")
+                self.assertEqual(self.run_once(**fields)[1]["measure"]["reusedSteps"], 0)
+                cargo = tools / "cargo"
+                cargo.unlink()
+                cargo.symlink_to(replacement)
+                self.assertEqual(self.run_once(**fields)[1]["measure"]["reusedSteps"], 0)
+                cargo.unlink()
+                cargo.symlink_to(proxy)
+                with patch.dict(os.environ, {"RUSTC_WRAPPER": str(wrapper)}):
+                    for _ in range(2):
+                        _, report = self.run_once(**fields)
+                        self.assertEqual(report["status"], "incomplete")
+                        self.assertEqual(report["measure"]["reusedSteps"], 0)
+                        self.assertFalse(any(e.get("reusable") for e in report["completed"]))
+        discoveries = [json.loads(line) for line in discovery_log.read_text().splitlines()]
+        self.assertEqual(len(discoveries), 16)
+        self.assertTrue(all(d["cwd"] == str(self.repo) and d["args"][:3] == ["which", "--toolchain", "fixture"] for d in discoveries))
+        self.assertEqual(len(wrapper_log.read_text().splitlines()), 8)
+        proxies = [json.loads(line) for line in proxy_log.read_text().splitlines()]
+        self.assertEqual(len(proxies), 20)
+        self.assertEqual({Path(p["invocation"]).name for p in proxies}, {"cargo"})
+        self.assertIn("B", {p["dispatch"] for p in proxies})
+        self.assertTrue(all(p["args"] == self.steps[0][1:] for p in proxies))
+        children = [json.loads(line) for line in self.counter.read_text().splitlines()]
+        self.assertTrue(all(p["cwd"] == str(self.repo) and p["args"] == self.steps[0][1:] for p in children))
+
+    @unittest.skipUnless(__import__("shutil").which("node"), "real Node executable required")
+    def test_repeated_selection_n_and_ten_n_bound_discovery_and_streamed_reads(self):
+        import builtins
+        real_open = builtins.open
+        real_discover = rr._discovery_output
+        measurements = []
+        traces = []
+        role_traces = []
+
+        class Reader:
+            def __init__(self, stream, counts):
+                self.stream, self.counts = stream, counts
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return self.stream.__exit__(*args)
+            def __getattr__(self, name):
+                return getattr(self.stream, name)
+            def read(self, *args):
+                data = self.stream.read(*args)
+                self.counts[0] += len(data)
+                return data
+
+        for n in (2, 20):
+            counts = [0, 0]
+            calls = []
+            self.steps = [["node", "-e", f"require('fs').appendFileSync({json.dumps(str(self.counter))}, 'child\\n')"]] * n
+            def opened(path, mode="r", *args, **kwargs):
+                stream = real_open(path, mode, *args, **kwargs)
+                return Reader(stream, counts) if mode == "rb" else stream
+            def discovered(argv, cwd, env, timeout):
+                counts[1] += 1
+                calls.append((tuple(argv), str(cwd), rr._env_fingerprint(env)))
+                return real_discover(argv, cwd, env, timeout)
+            with patch("builtins.open", side_effect=opened), patch.object(rr, "_discovery_output", side_effect=discovered):
+                result, report = self.run_once(resume=False)
+                self.assertEqual(result, 0)
+            tools = report["fingerprint"]["tools"]
+            # Assert the observed selections, not a guessed allowance of two discoveries.
+            expected = {tuple([tools["stepPrograms"][0], "--version"]): "node-version"}
+            if sys.platform == "win32" and getattr(os.lstat(sys.executable), "st_reparse_tag", None) == 0x8000001B:
+                expected[tuple([tools["runnerPython"]["invocationPath"], "-I", "-S", "-X", "utf8", "-c", rr._PYTHON_IMAGE_DISCOVERY])] = "runner-python-image"
+            self.assertEqual({call[0] for call in calls}, set(expected))
+            self.assertEqual(len(calls), len(expected), "each selected role discovers once per capture")
+            self.assertEqual(len(set(calls)), len(calls), "no duplicate invocation/cwd/env discovery")
+            self.assertTrue(all(cwd == str(self.repo) and env == report["fingerprint"]["envSha256"] for _, cwd, env in calls))
+            traces.append(calls)
+            role_traces.append([expected[argv] for argv, _, _ in calls])
+            measurements.append(counts)
+        print("identity-scale " + json.dumps({"N": 2, "10N": 20, "streamedBytesAndDiscoveryCalls": measurements,
+            "selectedDiscoveryRoles": role_traces, "sameInvocationCwdEnvAcrossN": traces[0] == traces[1]}))
+        self.assertEqual(measurements[0], measurements[1])
+        self.assertGreater(measurements[0][0], 0)
+        self.assertEqual(traces[0], traces[1])
+        self.assertEqual(len(self.runs()), 22)
+
+    def test_discovery_output_and_deadline_are_bounded(self):
+        with self.assertRaisesRegex(RuntimeError, "output"):
+            rr._discovery_output([sys.executable, "-c", "print('x'*1000000)"], self.repo, dict(os.environ), 2)
+        with self.assertRaisesRegex(RuntimeError, "deadline"):
+            rr._discovery_output([sys.executable, "-c", "import time; time.sleep(5)"], self.repo, dict(os.environ), 0.1)
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink-sensitive traversal")
+    def test_invocation_parent_components_are_not_lexically_collapsed(self):
+        deep = self.repo.parent / "deep"
+        (deep / "child").mkdir(parents=True)
+        self.executable_fixture(deep / "bin/proof-tool", "correct")
+        self.executable_fixture(self.repo.parent / "bin/proof-tool", "wrong")
+        (self.repo.parent / "alias").symlink_to(deep / "child", target_is_directory=True)
+        self.steps = [["../alias/../bin/proof-tool"]]
+        self.assertEqual(self.run_once()[0], 0)
+        self.assertEqual(self.runs(), ["correct"])
+
+    @unittest.skipUnless(os.name != "nt" and __import__("shutil").which("node"), "real POSIX Node invocation")
+    def test_prepared_node_capture_needs_no_unused_npx_npm_or_path_python(self):
+        import shutil
+        studio = self.repo / "apps/studio"
+        (studio / "node_modules/typescript/bin").mkdir(parents=True)
+        (studio / "node_modules/.bin").mkdir()
+        for lock in (studio / "package-lock.json", studio / "node_modules/.package-lock.json"):
+            lock.write_text('{"packages":{}}', encoding="utf-8")
+        (studio / "node_modules/typescript/bin/tsc").write_text(
+            f"require('fs').appendFileSync({json.dumps(str(self.counter))}, 'node\\n');", encoding="utf-8")
+        self.git("add", "apps")
+        self.git("commit", "-qm", "fixed prepared Node fixture")
+        tools = self.repo.parent / "only-needed-tools"
+        tools.mkdir()
+        for name in ("node", "git"):
+            (tools / name).symlink_to(shutil.which(name))
+        self.steps = [self.ok, ["npx", "tsc"]]
+        with patch.dict(os.environ, {"PATH": str(tools)}):
+            with patch.object(rr, "_install_absent_studio", side_effect=AssertionError("capture must not prepare")):
+                fingerprint = rr._tool_fingerprint(
+                    [{"argv": ["npx", "tsc"], "cwd": "apps/studio", "slot": False}], None, self.repo, dict(os.environ))
+                self.assertTrue(fingerprint["identityComplete"])
+            self.assertEqual(self.run_once()[0], 0)
+            self.assertEqual(self.run_once()[1]["measure"]["reusedSteps"], 2)
+        self.assertEqual(self.runs(), ["ok", "node"])
 
     def test_matching_pass_is_reused_without_running_the_child(self):
         self.assertEqual(self.run_once()[0], 0)
@@ -1075,7 +1539,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
     def test_the_default_budget_lets_a_plan_continue_after_a_step_that_waited_for_the_slot(self):
         # #1459: a first step that spends 200 s (slot queue included) no longer ends the plan.
         self.steps = [self.ok, self.ok]
-        plan = {"steps": [{"argv": argv, "cwd": ".", "slot": False} for argv in self.steps]}
+        plan = {"steps": [{"argv": argv, "cwd": ".", "slot": getattr(self, "slot_steps", False)} for argv in self.steps]}
         real_run, real_clock, skew = rr.subprocess.run, rr.time.monotonic, [0.0]
 
         def child(command, **kwargs):

@@ -37,7 +37,7 @@ codex plugin add graphhelm@graphhelm
 codex plugin add graphhelm-codex-hooks@graphhelm
 ```
 
-After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, `/graphhelm:graphhelm-resume`, or `/graphhelm:graphhelm-kickoff`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, `$graphhelm-resume`, or `$graphhelm-kickoff`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you. The kickoff skill starts a brand-new project: it grills the owner one question at a time, writes `docs/PROJECT.md` and draft journey flows with them, waits for the owner to approve the flows, then runs each issue through the five task steps while the owner follows in the Studio. The kickoff session is the orchestrator: it asks once which models and how many agents to use, and spawns every author and reviewer with the team skill, which registers each agent as a lane on the Studio's Team tab before it starts.
+After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, `/graphhelm:graphhelm-resume`, or `/graphhelm:graphhelm-kickoff`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, `$graphhelm-resume`, or `$graphhelm-kickoff`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you. The kickoff skill starts a brand-new project: it grills the owner one question at a time, writes `docs/PROJECT.md` and draft journey flows with them, waits for the owner to approve the flows, then runs each issue through the five task steps while the owner follows in the Studio. The kickoff session is the orchestrator: it asks once which models and how many agents to use, and spawns every author and reviewer with the team skill, which bootstraps implementation authors under their own lanes and withholds implementation until own-claim admission; reviewers retain exact-head review assignments.
 
 ## Session hooks (version 0.1.25)
 
@@ -286,6 +286,32 @@ Requests are bounded and unknown fields fail closed. A tool failure returns MCP 
 and an unobserved result. An oversized or unterminated frame closes the transport after a sanitized
 error; its remaining bytes cannot become another request. This local transport proves adapter behavior only; native host trust and
 activation still need a separate fresh-session observation.
+
+### Admission before task dispatch
+
+`graphhelm-team` separates implementation bootstrap from task work. Trusted setup provisions each lane's scoped
+credential first. The actual implementation child claims its issue with its own credential, reads it back, and
+calls MCP `task_admit` with executionId, lane, issue, branch, repo and claimSequence. Only the
+matching `admitted: true` receipt permits dispatch of the implementation payload. The CLI
+contract is `graphhelm --json tasks admit --execution <id> --lane <lane> --issue <N> --branch <B>
+--repo <owner/name> --claim-sequence <sequence>` with explicit Runtime/read-token options when
+needed. Missing credentials or failed admission are blockers, not workers. No shared-token
+fallback, coordinator impersonation or new credential authority is provided by admission.
+
+This admission and the `run-codex` launcher cover pre-PR implementation authors only. Reviewers
+retain the existing `review_assigned` record for their actual identity, current PR and exact head;
+they receive an independent blind-review payload and never claim the author's issue. Flow reviews
+use their existing scoped flow contract.
+
+The Runtime permits an explicit `assignedBy` handover while the predecessor still has a live
+claim lease. Admission conservatively refuses the successor until the predecessor releases its
+own claim; an unrelated issue does not block admission. This is stricter than Runtime claim
+registration and does not change its handover rules.
+
+Admission checks the current claim snapshot; it does not start a host, prove work happened or
+prevent a later lease expiry. Direct external host spawn APIs are not intercepted. Session
+presence, mailbox acknowledgements and self-reported activity remain separate evidence; a
+`team_report` saying working does not create an accepted task or change task bars in Studio.
 
 ### Explicit run team and shared mailbox
 

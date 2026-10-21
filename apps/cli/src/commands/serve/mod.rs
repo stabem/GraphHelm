@@ -2289,6 +2289,17 @@ fn request_digest16(
     execution_id: &str,
     body: &serde_json::Value,
 ) -> Result<String, Response> {
+    if command == "execution.signal" && body["signal"]["type"] == "task.review_activity" {
+        return execution::signal::review_activity_http_digest(command, execution_id, body)
+            .map(|digest| digest[..DIGEST_HEX_LEN].to_owned())
+            .ok_or_else(|| {
+                mutation_bad_request(
+                    command,
+                    "review activity description cannot be canonicalized",
+                    "/signal/description",
+                )
+            });
+    }
     let canonical = serde_json::to_vec(body).map_err(|_| {
         mutation_bad_request(command, "the request body could not be canonicalized", "/")
     })?;
@@ -2669,106 +2680,20 @@ async fn run_idempotent_mutation_on<'a>(
 
     let key = identity.keys[0].full.clone();
     match run(identity.actor.clone(), key).await {
-        Ok(mut value) => {
-            // #1054 / #1057 Codex P1: THE DECLARATION IS RECORDED ONLY AFTER THE BODY
-            // COMMITTED. It used to be appended immediately before `run`, which meant a refused
-            // `start` (an invalid graph) or a refused `approve` (a state check) answered 400/409
-            // and still left `agent_presence_declared` behind it -- and for `start`, a STREAM
-            // that `execution list` reads as a run with no `ExecutionStarted` in it. The store is
-            // append-only, so nothing takes that back afterwards.
-            //
-            // The order is therefore work-then-declaration, and a reader meets the declaration
-            // beside the event that earned it rather than before it. That is the whole of what
-            // was given up, and it buys the narrower claim: a declaration now asserts who sent a
-            // request that SUCCEEDED.
-            if let Err(failure) = record_presence_declaration(
+        Ok(value) => {
+            finish_appended_mutation(
                 store,
+                events,
                 execution,
+                command,
                 &identity,
+                wiring,
+                value,
                 observation.after_presence_read,
+                started,
+                preflight,
             )
             .await
-            {
-                // NEVER SILENT. The mutation itself is durable at this point and cannot be
-                // unwound, so this arm reports a request that did half of what it was asked: the
-                // work landed, the declaration did not. It is reachable only from a store that
-                // stopped being writable between two adjacent calls, or from
-                // `PRESENCE_COMMIT_ATTEMPTS` consecutive lost races -- and a caller told nothing
-                // would leave a board showing a model that was never recorded.
-                return respond_failure(command, failure);
-            }
-            // Milestone 05a follow-up Important: a fresh mutation success previously carried no
-            // `headSequence` (only `status` and a recognized retry's `reply_with_current_status`
-            // did, both via `execution::status::execute`), forcing an extra GET per
-            // `If-Match`-chained write. Read the head and fixture-only state from one fresh,
-            // validated stream snapshot so those fields describe the same committed history.
-            let head = std::time::Instant::now();
-            let (head_sequence, waiting_input) = {
-                let (store, events, execution, check) = (
-                    store.clone(),
-                    events.to_path_buf(),
-                    execution.to_owned(),
-                    wiring.any_fixture(),
-                );
-                routes::off_reactor(move || {
-                    fresh_stream_snapshot_on(&store, &events, &execution, check)
-                })
-                .await
-                .unwrap_or((None, WaitingInputCheck::Undetermined))
-            };
-            execution::timing::emit(
-                command,
-                started.elapsed(),
-                &[
-                    ("idempotency.scan", preflight),
-                    ("stream.head", head.elapsed()),
-                ],
-            );
-            if let serde_json::Value::Object(ref mut map) = value {
-                map.insert("headSequence".to_owned(), serde_json::json!(head_sequence));
-            }
-            // 05g: the mutation's append is durable at this point — sweep the wake leases,
-            // fire-and-forget (a wake failure never fails the route that triggered it; the
-            // ring only ever happens AFTER durability, which is the sabotage-pinned order).
-            tokio::spawn(wake::sweep(
-                std::sync::Arc::from(events),
-                execution.to_owned(),
-                wiring.sealing.cloned(),
-            ));
-            let mut outcome = Outcome::success(command, value);
-            // #248: `NodeState::WaitingInput` is produced by exactly one path in this codebase
-            // today -- `FixtureExecutor::execute` answering `NeedsInput` for a node with no
-            // fixture (`core/simulation/src/executor.rs`). The real executor (`PortExecutor`,
-            // `core/runtime/src/executor.rs`) is deliberately built to never return `NeedsInput`,
-            // and an unsupported node type is refused *before* dispatch rather than parked -- so
-            // there is no other route to this state on `main` today. That makes it
-            // indistinguishable from an operator-legitimate wait ONLY while this deployment has
-            // no real-executor wiring: `ok: true`, `200`, `status: "running"` all read as normal
-            // progress. Naming the mode here, rather than refusing the mutation outright, is the
-            // smaller of the issue's two suggested fixes -- it does not risk breaking a caller
-            // that (today, only in a fixture-driven test harness) relies on the park-and-200
-            // shape for a deliberately unanswered fixture.
-            //
-            // Checked against the STORE, not against `value`'s own JSON shape: two of the nine
-            // mutation endpoints sharing this function (`signal`, `wake-lease`) never render a
-            // `nodeStateCounts` field at all (measured -- neither calls `execution::render`), so
-            // a check keyed on that field would silently never fire for them regardless of the
-            // execution's real state, which is exactly the "reads as normal progress" failure
-            // this diagnostic exists to close (M's review of #424). The snapshot above supplies
-            // the projection result without a second store open.
-            // The check has a THIRD outcome, not just present/absent (M's second finding on
-            // #424): a store read can fail. Answering `false` there would recreate exactly the
-            // ambiguity this diagnostic exists to close -- an unreadable store reads as "no
-            // problem" the same way a genuinely calm execution does, `ok: true`/`200` either
-            // way. So a read failure gets its OWN diagnostic naming that the check could not run,
-            // rather than silently agreeing with the calm case. Narrow path (this store was just
-            // written to by the mutation above), kept non-silent anyway rather than assumed safe.
-            if wiring.any_fixture()
-                && let Some(diagnostic) = fixture_only_diagnostic(waiting_input, wiring)
-            {
-                outcome.output.diagnostics.push(diagnostic);
-            }
-            respond(StatusCode::OK, outcome.output)
         }
         Err(MutationError::Prepared(response)) => response,
         Err(MutationError::Command(failure)) if failure.code == "GHE003_IDEMPOTENCY_CONFLICT" => {
@@ -2819,6 +2744,185 @@ enum KeyState {
     /// derived from a *different* request body (a different content digest) — the caller reused
     /// this bare `Idempotency-Key` (carried here) for two logically different requests.
     Divergent(String),
+}
+
+/// The ordinary successful-new-write tail. Historical review acknowledgements never enter it.
+#[allow(clippy::too_many_arguments)]
+async fn finish_appended_mutation(
+    store: &LocalEventRepository,
+    events: &Path,
+    execution: &str,
+    command: &'static str,
+    identity: &std::sync::Arc<MutationIdentity>,
+    wiring: ExecutorWiring<'_>,
+    mut value: serde_json::Value,
+    after_presence_read: impl Future<Output = ()> + Send,
+    started: std::time::Instant,
+    preflight: std::time::Duration,
+) -> Response {
+    // #1054 / #1057 Codex P1: THE DECLARATION IS RECORDED ONLY AFTER THE BODY
+    // COMMITTED. It used to be appended immediately before `run`, which meant a refused
+    // `start` (an invalid graph) or a refused `approve` (a state check) answered 400/409
+    // and still left `agent_presence_declared` behind it -- and for `start`, a STREAM
+    // that `execution list` reads as a run with no `ExecutionStarted` in it. The store is
+    // append-only, so nothing takes that back afterwards.
+    //
+    // The order is therefore work-then-declaration, and a reader meets the declaration
+    // beside the event that earned it rather than before it. That is the whole of what
+    // was given up, and it buys the narrower claim: a declaration now asserts who sent a
+    // request that SUCCEEDED.
+    if let Err(failure) =
+        record_presence_declaration(store, execution, identity, after_presence_read).await
+    {
+        // NEVER SILENT. The mutation itself is durable at this point and cannot be
+        // unwound, so this arm reports a request that did half of what it was asked: the
+        // work landed, the declaration did not. It is reachable only from a store that
+        // stopped being writable between two adjacent calls, or from
+        // `PRESENCE_COMMIT_ATTEMPTS` consecutive lost races -- and a caller told nothing
+        // would leave a board showing a model that was never recorded.
+        return respond_failure(command, failure);
+    }
+    // Milestone 05a follow-up Important: a fresh mutation success previously carried no
+    // `headSequence` (only `status` and a recognized retry's `reply_with_current_status`
+    // did, both via `execution::status::execute`), forcing an extra GET per
+    // `If-Match`-chained write. Read the head and fixture-only state from one fresh,
+    // validated stream snapshot so those fields describe the same committed history.
+    let head = std::time::Instant::now();
+    let (head_sequence, waiting_input) = {
+        let (store, events, execution, check) = (
+            store.clone(),
+            events.to_path_buf(),
+            execution.to_owned(),
+            wiring.any_fixture(),
+        );
+        routes::off_reactor(move || fresh_stream_snapshot_on(&store, &events, &execution, check))
+            .await
+            .unwrap_or((None, WaitingInputCheck::Undetermined))
+    };
+    execution::timing::emit(
+        command,
+        started.elapsed(),
+        &[
+            ("idempotency.scan", preflight),
+            ("stream.head", head.elapsed()),
+        ],
+    );
+    if let serde_json::Value::Object(ref mut map) = value {
+        map.insert("headSequence".to_owned(), serde_json::json!(head_sequence));
+    }
+    // 05g: the mutation's append is durable at this point — sweep the wake leases,
+    // fire-and-forget (a wake failure never fails the route that triggered it; the
+    // ring only ever happens AFTER durability, which is the sabotage-pinned order).
+    tokio::spawn(wake::sweep(
+        std::sync::Arc::from(events),
+        execution.to_owned(),
+        wiring.sealing.cloned(),
+    ));
+    let mut outcome = Outcome::success(command, value);
+    // #248: `NodeState::WaitingInput` is produced by exactly one path in this codebase
+    // today -- `FixtureExecutor::execute` answering `NeedsInput` for a node with no
+    // fixture (`core/simulation/src/executor.rs`). The real executor (`PortExecutor`,
+    // `core/runtime/src/executor.rs`) is deliberately built to never return `NeedsInput`,
+    // and an unsupported node type is refused *before* dispatch rather than parked -- so
+    // there is no other route to this state on `main` today. That makes it
+    // indistinguishable from an operator-legitimate wait ONLY while this deployment has
+    // no real-executor wiring: `ok: true`, `200`, `status: "running"` all read as normal
+    // progress. Naming the mode here, rather than refusing the mutation outright, is the
+    // smaller of the issue's two suggested fixes -- it does not risk breaking a caller
+    // that (today, only in a fixture-driven test harness) relies on the park-and-200
+    // shape for a deliberately unanswered fixture.
+    //
+    // Checked against the STORE, not against `value`'s own JSON shape: two of the nine
+    // mutation endpoints sharing this function (`signal`, `wake-lease`) never render a
+    // `nodeStateCounts` field at all (measured -- neither calls `execution::render`), so
+    // a check keyed on that field would silently never fire for them regardless of the
+    // execution's real state, which is exactly the "reads as normal progress" failure
+    // this diagnostic exists to close (M's review of #424). The snapshot above supplies
+    // the projection result without a second store open.
+    // The check has a THIRD outcome, not just present/absent (M's second finding on
+    // #424): a store read can fail. Answering `false` there would recreate exactly the
+    // ambiguity this diagnostic exists to close -- an unreadable store reads as "no
+    // problem" the same way a genuinely calm execution does, `ok: true`/`200` either
+    // way. So a read failure gets its OWN diagnostic naming that the check could not run,
+    // rather than silently agreeing with the calm case. Narrow path (this store was just
+    // written to by the mutation above), kept non-silent anyway rather than assumed safe.
+    if wiring.any_fixture()
+        && let Some(diagnostic) = fixture_only_diagnostic(waiting_input, wiring)
+    {
+        outcome.output.diagnostics.push(diagnostic);
+    }
+    respond(StatusCode::OK, outcome.output)
+}
+
+/// Only the new review-activity family delegates to its shared sealed evaluator. Generic
+/// families keep their existing classifier, preconditions, retry and presence behavior.
+#[allow(clippy::too_many_arguments)]
+async fn run_review_activity_mutation_with_store<'a>(
+    store: &LocalEventRepository,
+    events: &Path,
+    execution: &str,
+    command: &'static str,
+    identity: MutationIdentity,
+    wiring: ExecutorWiring<'_>,
+    run: impl FnOnce(
+        PersistedActor,
+        execution::signal::ReviewActivityHttpContext,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<execution::signal::ReviewActivityHttpOutcome, MutationError>>
+                + Send
+                + 'a,
+        >,
+    >,
+) -> Response {
+    let started = std::time::Instant::now();
+    let identity = std::sync::Arc::new(identity);
+    let context = execution::signal::ReviewActivityHttpContext {
+        command,
+        execution: execution.to_owned(),
+        prefix: identity.keys[0].prefix.clone(),
+        key: identity.keys[0].full.clone(),
+        request_body: identity.request_body.clone(),
+        if_match: identity.if_match,
+    };
+    match run(identity.actor.clone(), context).await {
+        Ok(execution::signal::ReviewActivityHttpOutcome::HistoricalAck {
+            mut reply,
+            original_decision_sequence,
+        }) => {
+            if let Err(diagnostic) =
+                annotate_recognized_retry(&mut reply, original_decision_sequence, None)
+            {
+                return respond(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Outcome::domain(command, vec![diagnostic]).output,
+                );
+            }
+            // No fresh If-Match, presence, evidence, wake sweep or fresh-success finalization.
+            respond(StatusCode::OK, Outcome::success(command, reply).output)
+        }
+        Ok(execution::signal::ReviewActivityHttpOutcome::Appended { reply }) => {
+            finish_appended_mutation(
+                store,
+                events,
+                execution,
+                command,
+                &identity,
+                wiring,
+                reply,
+                std::future::ready(()),
+                started,
+                std::time::Duration::ZERO,
+            )
+            .await
+        }
+        Err(MutationError::Prepared(response)) => response,
+        Err(MutationError::Command(failure)) if failure.code == "GHE001_SEQUENCE_CONFLICT" => {
+            conflict_with_current_head(events, execution, command)
+        }
+        // In particular, never convert a generic GHE003 into a cached success here.
+        Err(MutationError::Command(failure)) => respond_failure(command, failure),
+    }
 }
 
 /// One derived key's status against already-committed `history`. An exact match (suffix *and*

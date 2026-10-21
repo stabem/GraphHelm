@@ -3,7 +3,7 @@
   "kind": "Extension",
   "metadata": {
     "id": "graphhelm-development-contracts",
-    "version": "0.1.12",
+    "version": "0.1.13",
     "publisher": "GraphHelm",
     "source": {
       "repository": "https://github.com/stabem/GraphHelm"
@@ -611,7 +611,7 @@
           "id": "host/claude",
           "kind": "host-adapter",
           "path": ".claude-plugin/plugin.json",
-      "sha256": "sha256:9ea4b57574d0310f47639eec42a4e7dd278d17d72615bef1ef96fa20bad0e5a5",
+      "sha256": "sha256:1c45f43a533fd8eb4a377414ee4334b98133af21d2512b2c0a3abd5dc4104c8f",
           "effects": [
             "host.discover"
           ],
@@ -627,7 +627,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-      "sha256": "sha256:4b9810fe5926eed0781b74777228dd76c62216099204242c64ee4a5bce339c6f",
+      "sha256": "sha256:304b5be07218e6847700104a1d7fbab0435e1f95b85dc4c93ae216bbb1ff010d",
           "effects": [
             "host.discover"
           ],
@@ -964,7 +964,7 @@
           "id": "skill/blind-review",
           "kind": "skill",
           "path": "skills/blind-review/SKILL.md",
-          "sha256": "sha256:93ff660fc6ddce84fd40f8a632807d6af8eab0b72032fb0bfe1882c3a092b21e",
+          "sha256": "sha256:332a74fd7773e6f3cdb2c789ab0c3ce15977df1a556b85ed682ed1e93bbf3eca",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},
@@ -1025,7 +1025,7 @@
           "id": "schema/task-event",
           "kind": "schema",
           "path": "schemas/task-event.schema.json",
-          "sha256": "sha256:d8e1ae6260ee20da083779cf14e6e86eef3c8524ccecf6772ec8f181d659a029",
+          "sha256": "sha256:57482b485ac70e981de5e3861b6e9575bbaa9b8341186428b18f78699092db82",
           "effects": [],
           "permissions": [],
           "requires": {

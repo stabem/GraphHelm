@@ -23,6 +23,9 @@ export interface MissionTask {
   /** #591: reviewers assigned before the current one (on older heads, or replaced); not the live row. */
   reviewerHistory?: string[];
   currentReviewer?: string | null;
+  reviewContextSequence?: TaskState["reviewContextSequence"];
+  reviewActivityRevision?: TaskState["reviewActivityRevision"];
+  reviewActivity?: TaskState["reviewActivity"];
 }
 export interface MissionSummary { proven: number; total: number; inFlight: number; needYou: number; readyUnclaimed: number }
 export interface Mission { contractId: string; title: string; steps: MissionStep[]; tasks: MissionTask[]; summary: MissionSummary }
@@ -76,6 +79,7 @@ export function toMissionTask(raw: TaskState): MissionTask {
   const trust: TrustLevel = t.step === "merged" ? 3 : t.step === "merge" ? 2 : t.pr === null ? 0 : 1;
   return {
     key: t.key, pr: t.pr, issue: t.issue, title: t.prTitle || t.title || t.taskId, lane: t.lane,
+    reviewContextSequence: t.reviewContextSequence, reviewActivityRevision: t.reviewActivityRevision, reviewActivity: t.reviewActivity,
     reviewers: t.reviewers, currentReviewer: t.currentReviewer, step: t.step, blocked: block !== null, trust,
     blockedBy: block ? { reviewer: block.reviewer, headSha: block.headSha } : null,
     rounds: (t.rounds ?? []).map((r) => ({ reviewer: r.reviewer, headSha: r.headSha, fixHead: r.fixHead, blockedAt: r.blockedAt })),

@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use graphhelm_events::{
-    EvidenceInput, EvidenceProtector, EvidenceSealer, LocalEventRepository, SealedEvidence,
-    SecretBytes,
+    EvidenceInput, EvidenceOpener, EvidenceProtector, EvidenceSealer, LocalEventRepository,
+    SealedEvidence, SecretBytes,
 };
 use graphhelm_graph::raw_content_sha256;
 use graphhelm_sealed_key_provider::SealedKeyProvider;
@@ -11,7 +11,8 @@ use graphhelm_governor::{
     GovernanceError, MutationDecision, RejectionReason, admit_signal, decide_mutation,
 };
 use graphhelm_protocols::{
-    DraftProposed, EventKind, NewEvent, OpaqueId, PersistedActor, Sensitivity, SignalRecorded,
+    DraftProposed, EventKind, NewEvent, OpaqueId, PersistedActor, RepositoryScope, Sensitivity,
+    SignalRecorded,
 };
 
 use super::attachments::{ImageAttachment, MAX_ATTACHMENTS};
@@ -431,6 +432,102 @@ fn refuse_unpreservable(
     Ok(())
 }
 
+/// Transport provenance is internal: CLI keys remain opaque; only the HTTP route constructs
+/// this context after authenticating and validating its entire request and side-effect inputs.
+pub(crate) struct ReviewActivityHttpContext {
+    pub command: &'static str,
+    pub execution: String,
+    pub prefix: String,
+    pub key: OpaqueId,
+    pub request_body: serde_json::Value,
+    pub if_match: Option<u64>,
+}
+
+pub(crate) enum ReviewActivityHttpOutcome {
+    HistoricalAck {
+        reply: serde_json::Value,
+        original_decision_sequence: u64,
+    },
+    Appended {
+        reply: serde_json::Value,
+    },
+}
+
+impl ReviewActivityHttpOutcome {
+    fn into_reply(self) -> serde_json::Value {
+        match self {
+            Self::HistoricalAck { reply, .. } | Self::Appended { reply } => reply,
+        }
+    }
+}
+
+/// Only these two client timestamps are non-identity. All other signed envelope fields remain.
+pub(crate) fn review_activity_canonical_signal(
+    value: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let mut value = value.clone();
+    value.as_object_mut()?.remove("emittedAt");
+    let mut document: serde_json::Value =
+        serde_json::from_str(value["description"].as_str()?).ok()?;
+    document.as_object_mut()?.remove("at");
+    value["description"] = document;
+    Some(value)
+}
+
+/// The existing length-framed HTTP digest, over the COMPLETE body, specialized only for this
+/// new event family. Its truncated derived key remains divergence detection, never authority.
+pub(crate) fn review_activity_http_digest(
+    command: &str,
+    execution: &str,
+    body: &serde_json::Value,
+) -> Option<String> {
+    if command != "execution.signal" || body["signal"]["type"] != "task.review_activity" {
+        return None;
+    }
+    let mut body = body.clone();
+    body["signal"] = review_activity_canonical_signal(&body["signal"])?;
+    let canonical = serde_json::to_vec(&body).ok()?;
+    let mut bytes = Vec::new();
+    for part in [
+        command.as_bytes(),
+        execution.as_bytes(),
+        canonical.as_slice(),
+    ] {
+        bytes.extend_from_slice(&u32::try_from(part.len()).ok()?.to_be_bytes());
+        bytes.extend_from_slice(part);
+    }
+    raw_content_sha256(&bytes)
+        .ok()
+        .map(|digest| digest.as_str().to_owned())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn execute_review_activity_http_on(
+    store: &LocalEventRepository,
+    signal: &[u8],
+    evidence_out: Option<&Path>,
+    actor: PersistedActor,
+    sealing: Option<&SignalKeyring>,
+    scoped_agent_authenticated: bool,
+    attachments: &[ImageAttachment],
+    context: &ReviewActivityHttpContext,
+) -> Result<ReviewActivityHttpOutcome, Failure> {
+    refuse_unpreservable(evidence_out, sealing, attachments)?;
+    record_once(
+        store,
+        Some(&context.execution),
+        signal,
+        evidence_out,
+        actor,
+        context.key.clone(),
+        sealing,
+        scoped_agent_authenticated,
+        false,
+        attachments,
+        Some(context),
+    )
+}
+
 /// #1220: how many times a claim is validated and appended before a sequence conflict is
 /// reported. A claim appends at the head it was validated on, so any unrelated append (a
 /// heartbeat, a signal, a wake) that lands in between costs it one conflict; it is then
@@ -490,7 +587,9 @@ fn record_on(
             scoped_agent_authenticated,
             allow_native,
             attachments,
+            None,
         )
+        .map(ReviewActivityHttpOutcome::into_reply)
     })
 }
 
@@ -506,7 +605,8 @@ fn record_once(
     scoped_agent_authenticated: bool,
     allow_native: bool,
     attachments: &[ImageAttachment],
-) -> Result<serde_json::Value, Failure> {
+    http: Option<&ReviewActivityHttpContext>,
+) -> Result<ReviewActivityHttpOutcome, Failure> {
     let (scope, stream, projection) =
         super::timing::phase("projection.load", || load_projection(store, execution))?;
 
@@ -540,6 +640,12 @@ fn record_once(
             "/signal/type",
         ));
     }
+    if http.is_some() && envelope["type"] != "task.review_activity" {
+        return Err(signal_invalid(
+            "review activity HTTP context cannot authorize another signal kind",
+            "/signal/type",
+        ));
+    }
     super::documents::validate_owner_execution(execution, &envelope, &actor)?;
     super::documents::validate_owner_signal(&envelope, &actor, sealing.is_some())?;
     let task_history = if envelope
@@ -558,7 +664,7 @@ fn record_once(
     // (gh-claude-opt-2 on PR #1221).
     let heartbeat_sequence = if matches!(
         envelope.get("type").and_then(serde_json::Value::as_str),
-        Some("task.heartbeat" | "task.claimed")
+        Some("task.heartbeat" | "task.claimed" | "task.review_activity")
     ) {
         task_history
             .as_ref()
@@ -575,6 +681,24 @@ fn record_once(
             sealing.map(|keyring| (store, &scope, keyring)),
         )
     })?;
+    if envelope["type"] == "task.review_activity"
+        && let Some((reply, original_decision_sequence)) = admit_review_activity(
+            store,
+            &scope,
+            &stream,
+            &envelope,
+            &actor,
+            &key,
+            task_history.as_deref().unwrap_or_default(),
+            sealing,
+            http,
+        )?
+    {
+        return Ok(ReviewActivityHttpOutcome::HistoricalAck {
+            reply,
+            original_decision_sequence,
+        });
+    }
     if matches!(
         envelope.get("type").and_then(serde_json::Value::as_str),
         Some("actor_alias" | "owner_refusal")
@@ -941,7 +1065,168 @@ fn record_once(
     if !attachment_reply.is_empty() {
         reply["attachments"] = serde_json::Value::Array(attachment_reply);
     }
-    Ok(reply)
+    Ok(ReviewActivityHttpOutcome::Appended { reply })
+}
+
+/// Shape and current actor access were checked first. Historical acknowledgement is not a new admission.
+#[allow(clippy::too_many_arguments)]
+fn admit_review_activity(
+    store: &LocalEventRepository,
+    scope: &RepositoryScope,
+    stream: &str,
+    envelope: &serde_json::Value,
+    actor: &PersistedActor,
+    key: &OpaqueId,
+    history: &[graphhelm_protocols::EventEnvelope],
+    sealing: Option<&SignalKeyring>,
+    http: Option<&ReviewActivityHttpContext>,
+) -> Result<Option<(serde_json::Value, u64)>, Failure> {
+    let pointer = "/signal/description";
+    let refused = || {
+        signal_invalid(
+            "review activity requires an exact current reviewer/head/context and a newer explicit revision",
+            pointer,
+        )
+    };
+    let keyring = sealing.ok_or_else(|| {
+        signal_invalid(
+            "review activity requires sealed signed task records",
+            pointer,
+        )
+    })?;
+    let view = super::documents::task_view(
+        history,
+        Some((store, scope, keyring)),
+        "review activity",
+        pointer,
+    )?;
+    if view.rejected != 0
+        || view
+            .retired_lanes
+            .iter()
+            .any(|lane| lane == actor.id().as_str())
+    {
+        return Err(refused());
+    }
+    if let Some(context) = http {
+        let digest =
+            review_activity_http_digest(context.command, &context.execution, &context.request_body)
+                .ok_or_else(refused)?;
+        if context.command != "execution.signal"
+            || context.execution != stream
+            || context.key != *key
+            || format!("{}-{}", context.prefix, &digest[..16]) != key.as_str()
+        {
+            return Err(refused());
+        }
+    }
+    // Delimiter-aware comparison is enabled only by the actual HTTP context. CLI keys are opaque.
+    let same_http_prefix = |existing: &str| {
+        http.is_some_and(|context| {
+            existing.rsplit_once('-').is_some_and(|(prefix, digest)| {
+                prefix == context.prefix
+                    && digest.len() == 16
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        })
+    };
+    if let Some(event) = history.iter().find(|event| {
+        &event.idempotency_key == key || same_http_prefix(event.idempotency_key.as_str())
+    }) {
+        if event.idempotency_key != *key {
+            return Err(Failure {
+                code: "GHE003_IDEMPOTENCY_CONFLICT",
+                message:
+                    "review activity HTTP header was already used for different request content"
+                        .into(),
+                pointer: "/idempotencyKey".into(),
+            });
+        }
+        let EventKind::SignalRecorded(recorded) = &event.kind else {
+            return Err(refused());
+        };
+        if event.actor != *actor
+            || event.scope != *scope
+            || event.stream_id.as_str() != stream
+            || recorded.execution_id.as_str() != stream
+            || recorded.kind != "task.review_activity"
+        {
+            return Err(refused());
+        }
+        let reference = event.evidence_refs.first().ok_or_else(refused)?;
+        let opener = open_sealer(keyring)?;
+        let generation = sealer_generation(keyring)?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| refused())?;
+        let original = super::tasks::opened_envelope(
+            store,
+            scope,
+            &generation,
+            reference.evidence_id(),
+            recorded.envelope_sha256.as_str(),
+            |sealed| {
+                let plaintext = runtime.block_on(opener.open(scope.clone(), sealed)).ok()?;
+                plaintext.expose(|bytes| serde_json::from_slice(bytes)).ok()
+            },
+        )
+        .ok_or_else(refused)?;
+        if review_activity_canonical_signal(&original).is_none()
+            || review_activity_canonical_signal(&original)
+                != review_activity_canonical_signal(envelope)
+        {
+            return Err(refused());
+        }
+        return Ok(Some((
+            serde_json::json!({"executionId":recorded.execution_id, "signalId":recorded.signal_id,
+            "kind":recorded.kind, "mayProposeMutation":false, "decision":"rejected", "rejectionReason":"signal_not_actionable"}),
+            event.sequence,
+        )));
+    }
+    // Only a genuinely new request is subject to its original expected head. This is the SAME
+    // history used for reviewer admission and the captured PreparedAppend sequence.
+    if let Some(expected) = http.and_then(|context| context.if_match)
+        && history.last().map_or(0, |event| event.sequence) != expected
+    {
+        return Err(Failure {
+            code: "GHE001_SEQUENCE_CONFLICT",
+            message: "review activity If-Match differs from its validated history head".into(),
+            pointer: "/ifMatch".into(),
+        });
+    }
+    let document: serde_json::Value =
+        serde_json::from_str(envelope["description"].as_str().ok_or_else(refused)?)
+            .map_err(|_| refused())?;
+    let mut matching = view.tasks.iter().filter(|task| {
+        task.task_id == document["taskId"]
+            && task.pr == document["pr"].as_u64()
+            && task.repo_url.as_deref()
+                == document["repo"]
+                    .as_str()
+                    .map(|repo| format!("https://github.com/{repo}"))
+                    .as_deref()
+            && task.head_sha.as_deref() == document["headSha"].as_str()
+            && task.current_reviewer.as_deref() == Some(actor.id().as_str())
+            && task.review_context_sequence == document["reviewContextSequence"].as_u64()
+            && document["revision"]
+                .as_u64()
+                .is_some_and(|revision| revision > task.review_activity_revision.unwrap_or(0))
+            && task.released_by.is_none()
+            && !task.orphaned
+            && task.blocked_by.is_none()
+            && matches!(
+                task.step,
+                graphhelm_execution::tasks::TaskStep::Review
+                    | graphhelm_execution::tasks::TaskStep::Merge
+            )
+    });
+    if matching.next().is_none() || matching.next().is_some() {
+        return Err(refused());
+    }
+    Ok(None)
 }
 
 fn signal_id(record: &SignalRecorded) -> &str {

@@ -182,7 +182,7 @@ pub(crate) fn validate_task_event(
         | "task.heartbeat"
         | "task.pr_opened"
         | "task.critic_verdict" => Some("lane"),
-        "task.review_verdict" => Some("reviewer"),
+        "task.review_verdict" | "task.review_activity" => Some("reviewer"),
         "task.merged" => Some("merger"),
         _ => None,
     };
@@ -410,6 +410,35 @@ pub(crate) fn validate_task_event(
                 && matches!(document["ordinal"].as_u64(), Some(1 | 2)),
             &["pr", "headSha", "reviewer", "ordinal"],
         ),
+        "task.review_activity" => (
+            count("pr")
+                && repo()
+                && document.get("repo").is_some()
+                && sha("headSha")
+                && document["headSha"]
+                    .as_str()
+                    .is_some_and(|head| head.len() == 40)
+                && is_actor("reviewer")
+                && count("reviewContextSequence")
+                && match document["activity"].as_str() {
+                    Some("waiting") => document["reason"].as_str().is_some_and(|reason| {
+                        !reason.trim().is_empty()
+                            && reason.chars().count() <= 500
+                            && !reason.chars().any(char::is_control)
+                    }),
+                    Some("resumed") => document.get("reason").is_none(),
+                    _ => false,
+                },
+            &[
+                "repo",
+                "pr",
+                "headSha",
+                "reviewer",
+                "reviewContextSequence",
+                "activity",
+                "reason",
+            ],
+        ),
         "task.review_verdict" => (
             count("pr")
                 && sha("headSha")
@@ -522,7 +551,11 @@ pub(crate) fn validate_task_event(
         })
     });
     if common && fields && known {
-        validate_not_retired(actor_id, history, evidence)?;
+        // Review activity reuses its one verified view for retirement and historical/new-write
+        // admission in signal.rs, before any acknowledgement or evidence write.
+        if kind != "task.review_activity" {
+            validate_not_retired(actor_id, history, evidence)?;
+        }
         if key_release {
             return validate_key_release(&document, history, evidence);
         }
@@ -752,7 +785,7 @@ fn validate_claim_holder(
 
 /// The tasks route's fold over `history`, read through the process's shared record cache, so
 /// admission and the board agree. Fails closed: no keyring, or a read that fails, refuses `what`.
-fn task_view(
+pub(super) fn task_view(
     history: &[graphhelm_protocols::EventEnvelope],
     evidence: Option<(
         &graphhelm_events::LocalEventRepository,

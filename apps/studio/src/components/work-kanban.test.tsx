@@ -1,3 +1,4 @@
+import reviewActivityRoute from "../../../../core/execution/tests/fixtures/tasks-review-activity-route.json";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { fastUserEvent } from "../test/user-event";
@@ -198,3 +199,19 @@ describe("pending merge health owner", () => {
       expect(card.querySelector(".mg-node-who")).toHaveTextContent(reviewer);
     }
   });
+
+
+it("shows the real reviewer wait on the merge card without altering its approval or owner", async () => {
+  const projection = tasksReply(reviewActivityRoute)!;
+  const task = projection.tasks[0]!;
+  const activity = reviewActivityRoute.tasks[0]!.reviewActivity;
+  const at = Date.parse(activity.occurredAt) + 1;
+  expect(task.approvedWithRisk?.reviewer).toBe("review-reader");
+  const records = projection.records.map((record) => ({ ...record, at: record.occurredAt! }));
+  render(<MissionView journeys={[]} tasks={[task]} lanes={laneBars(records, projection, at, 4 * 3_600_000)}
+    now={at} runFor={() => null} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+  await fastUserEvent().click(screen.getByRole("tab", { name: "Lanes" }));
+  const card = within(col(/^MERGE/)).getByRole("button", { name: /Fixture review/i });
+  expect(card).toHaveTextContent("review-reader");
+  expect(card).toHaveTextContent(`Waiting: ${activity.reason}`);
+});

@@ -12,7 +12,7 @@
 //! opens the sealed envelope, checks its digest against the recorded event and that its signer is
 //! the actor that recorded it) and never reads a store, a clock or the network.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use graphhelm_protocols::PersistedTimestamp;
 use serde::{Deserialize, Serialize};
@@ -42,6 +42,8 @@ pub enum TaskEventKind {
     ReviewAssigned,
     #[serde(rename = "task.review_verdict")]
     ReviewVerdict,
+    #[serde(rename = "task.review_activity")]
+    ReviewActivity,
     #[serde(rename = "task.merged")]
     Merged,
     #[serde(rename = "task.closed")]
@@ -69,6 +71,7 @@ impl TaskEventKind {
             "task.pr_opened" => Self::PrOpened,
             "task.review_assigned" => Self::ReviewAssigned,
             "task.review_verdict" => Self::ReviewVerdict,
+            "task.review_activity" => Self::ReviewActivity,
             "task.merged" => Self::Merged,
             "task.closed" => Self::Closed,
             "task.critic_verdict" => Self::CriticVerdict,
@@ -89,6 +92,7 @@ impl TaskEventKind {
             Self::PrOpened => "task.pr_opened",
             Self::ReviewAssigned => "task.review_assigned",
             Self::ReviewVerdict => "task.review_verdict",
+            Self::ReviewActivity => "task.review_activity",
             Self::Merged => "task.merged",
             Self::Closed => "task.closed",
             Self::CriticVerdict => "task.critic_verdict",
@@ -206,6 +210,12 @@ pub struct TaskEventRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reviewer: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_context_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<Verdict>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comment_url: Option<String>,
@@ -321,6 +331,9 @@ impl TaskEventRecord {
             head_sha: None,
             journeys: None,
             reviewer: None,
+            activity: None,
+            review_context_sequence: None,
+            revision: None,
             verdict: None,
             comment_url: None,
             repo: None,
@@ -747,6 +760,53 @@ pub fn parse_task_event(
             record.verdict = Some(verdict);
             record.comment_url = Some(comment_url);
         }
+        TaskEventKind::ReviewActivity => {
+            if !document.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "schema"
+                        | "taskId"
+                        | "revision"
+                        | "at"
+                        | "repo"
+                        | "pr"
+                        | "headSha"
+                        | "reviewer"
+                        | "reviewContextSequence"
+                        | "activity"
+                        | "reason"
+                )
+            }) || !is_actor("reviewer")
+            {
+                return None;
+            }
+            let activity = field("activity").as_str()?;
+            let head = sha(field("headSha"))?;
+            if head.len() != 40 {
+                return None;
+            }
+            match activity {
+                "waiting" => {
+                    let reason = field("reason").as_str()?;
+                    if reason.trim().is_empty()
+                        || reason.chars().count() > 500
+                        || has_control(reason)
+                    {
+                        return None;
+                    }
+                    record.reason = Some(reason.to_owned());
+                }
+                "resumed" if !document.contains_key("reason") => {}
+                _ => return None,
+            }
+            record.repo = Some(repository(document).ok()??);
+            record.pr = Some(count(field("pr"))?);
+            record.head_sha = Some(head);
+            record.reviewer = Some(actor_id.to_owned());
+            record.review_context_sequence = Some(count(field("reviewContextSequence"))?);
+            record.revision = Some(count(field("revision"))?);
+            record.activity = Some(activity.to_owned());
+        }
         TaskEventKind::Merged => {
             let pr = count(field("pr"))?;
             let merge_sha = sha(field("mergeSha"))?;
@@ -999,6 +1059,21 @@ pub enum StrayVerdict {
 /// (`?:`) and never writes as `null` — `pendingReviewer`, `approvedWithRisk`, `completionRecorded`,
 /// `claimSequence`, `releasedBy` — are OMITTED when absent, because the views read
 /// `releasedBy === undefined` as "the claim is live"; a `null` there emptied the Lanes kanban.
+/// A reviewer statement bound to one current review generation; no lease or verdict semantics.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewActivity {
+    pub activity: String,
+    pub reviewer: String,
+    pub head_sha: String,
+    pub review_context_sequence: u64,
+    pub revision: u64,
+    pub sequence: u64,
+    pub occurred_at: PersistedTimestamp,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskState {
@@ -1015,6 +1090,12 @@ pub struct TaskState {
     pub assigned_reviewers: Vec<String>,
     /// Assignment on the current head only; older reviewers remain in `reviewers`.
     pub current_reviewer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_context_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_activity_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_activity: Option<ReviewActivity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_reviewer: Option<PendingReviewer>,
     pub head_sha: Option<String>,
@@ -1147,6 +1228,9 @@ fn new_state(event: &TaskEventRecord) -> TaskState {
         assigned_by: None,
         assigned_reviewers: Vec::new(),
         current_reviewer: None,
+        review_context_sequence: None,
+        review_activity_revision: None,
+        review_activity: None,
         pending_reviewer: None,
         head_sha: None,
         journeys: Vec::new(),
@@ -1182,6 +1266,12 @@ fn new_state(event: &TaskEventRecord) -> TaskState {
         claimed_at: None,
         lease_seconds: None,
     }
+}
+
+fn reset_review_context(state: &mut TaskState, sequence: u64) {
+    state.review_context_sequence = Some(sequence);
+    state.review_activity_revision = Some(0);
+    state.review_activity = None;
 }
 
 fn push_unique(list: &mut Vec<String>, value: &str) {
@@ -1440,6 +1530,29 @@ fn issue_from_task_id(task_id: &str) -> Option<u64> {
         .filter(|n| *n > 0 && *n <= 9_007_199_254_740_991)
 }
 
+/// Rebuilt only after ordinary lifecycle writes, whose existing slice routing already scans the
+/// slices. Consecutive activity records use an indexed binding, not a new per-record slice scan.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ReviewBinding {
+    task_id: String,
+    pr: u64,
+    repo_url: String,
+    head: String,
+    reviewer: String,
+    context: u64,
+}
+
+fn review_binding(state: &TaskState) -> Option<ReviewBinding> {
+    Some(ReviewBinding {
+        task_id: state.task_id.clone(),
+        pr: state.pr?,
+        repo_url: state.repo_url.clone()?,
+        head: state.head_sha.clone()?,
+        reviewer: state.current_reviewer.clone()?,
+        context: state.review_context_sequence?,
+    })
+}
+
 /// Folds records in sequence order into one state per task slice (spec §7): a new head re-arms
 /// review but keeps the red edge until a verdict lands on a newer head than the BLOCK's. Ended
 /// (closed) slices are dropped; the rest come back ordered by their last record.
@@ -1458,7 +1571,12 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
     let mut routes: Vec<Route> = Vec::new();
     let mut next_id = 0_usize;
     let mut retired: BTreeSet<String> = BTreeSet::new();
+    let mut review_index: HashMap<ReviewBinding, Option<usize>> = HashMap::new();
+    let mut review_index_dirty = true;
     for event in ordered {
+        if event.kind != TaskEventKind::ReviewActivity {
+            review_index_dirty = true;
+        }
         // #1469: the issue list belongs to no slice; `backlog` reads it.
         if event.kind == TaskEventKind::Queued {
             continue;
@@ -1477,6 +1595,17 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 }) {
                     slice.state.released_by = Some(event.actor_id.clone());
                     slice.state.orphaned = true;
+                    reset_review_context(&mut slice.state, event.sequence);
+                }
+                for slice in &mut slices {
+                    if slice
+                        .state
+                        .current_reviewer
+                        .as_ref()
+                        .is_some_and(|reviewer| lanes.contains(reviewer))
+                    {
+                        reset_review_context(&mut slice.state, event.sequence);
+                    }
                 }
                 retired.extend(lanes.iter().cloned());
             } else {
@@ -1503,6 +1632,79 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             if let Some(index) = found {
                 let slice = &mut slices[index];
                 slice.state.released_by = event.released_by.clone();
+                reset_review_context(&mut slice.state, event.sequence);
+                routes.push(Route {
+                    sequence: event.sequence,
+                    slice: slice.id,
+                });
+            }
+            continue;
+        }
+        if event.kind == TaskEventKind::ReviewActivity {
+            if review_index_dirty {
+                review_index.clear();
+                for (index, slice) in slices.iter().enumerate() {
+                    let state = &slice.state;
+                    if !slice.ended
+                        && state.released_by.is_none()
+                        && !state.orphaned
+                        && matches!(state.step, TaskStep::Review | TaskStep::Merge)
+                        && state.blocked_by.is_none()
+                        && let Some(binding) = review_binding(state)
+                    {
+                        review_index
+                            .entry(binding)
+                            .and_modify(|found| *found = None)
+                            .or_insert(Some(index));
+                    }
+                }
+                review_index_dirty = false;
+            }
+            let binding = event
+                .pr
+                .zip(event.repo.as_ref())
+                .zip(event.head_sha.as_ref())
+                .zip(event.reviewer.as_ref())
+                .zip(event.review_context_sequence)
+                .map(|((((pr, repo), head), reviewer), context)| ReviewBinding {
+                    task_id: event.task_id.clone(),
+                    pr,
+                    repo_url: format!("https://github.com/{repo}"),
+                    head: head.clone(),
+                    reviewer: reviewer.clone(),
+                    context,
+                });
+            let matching = binding
+                .as_ref()
+                .and_then(|binding| review_index.get(binding))
+                .copied()
+                .flatten();
+            if let Some(index) = matching
+                && event.reviewer.as_deref() == Some(event.actor_id.as_str())
+                && event.revision.is_some_and(|revision| {
+                    revision > slices[index].state.review_activity_revision.unwrap_or(0)
+                })
+                && let (Some(at), Some(context), Some(revision), Some(activity), Some(head)) = (
+                    &event.occurred_at,
+                    event.review_context_sequence,
+                    event.revision,
+                    &event.activity,
+                    &event.head_sha,
+                )
+            {
+                let slice = &mut slices[index];
+                slice.state.review_activity_revision = Some(revision);
+                slice.state.last_sequence = event.sequence;
+                slice.state.review_activity = Some(ReviewActivity {
+                    activity: activity.clone(),
+                    reviewer: event.actor_id.clone(),
+                    head_sha: head.clone(),
+                    review_context_sequence: context,
+                    revision,
+                    sequence: event.sequence,
+                    occurred_at: at.clone(),
+                    reason: event.reason.clone(),
+                });
                 routes.push(Route {
                     sequence: event.sequence,
                     slice: slice.id,
@@ -1549,6 +1751,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             if let Some(latest) = latest
                 && latest.state.claim_sequence == event.claim_sequence
             {
+                reset_review_context(&mut latest.state, event.sequence);
                 latest.state.released_by = event.released_by.clone().or_else(|| event.lane.clone());
                 routes.push(Route {
                     sequence: event.sequence,
@@ -1747,6 +1950,16 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 }
             }
             TaskEventKind::PrOpened => {
+                if !same_head_repeat
+                    || state.pending_reviewer.as_ref().is_some_and(|pending| {
+                        event
+                            .head_sha
+                            .as_deref()
+                            .is_some_and(|head| same_head(&pending.head_sha, head))
+                    })
+                {
+                    reset_review_context(state, event.sequence);
+                }
                 if let Some(repo) = &event.repo {
                     state.repo_url = Some(format!("https://github.com/{repo}"));
                 }
@@ -1843,6 +2056,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                     state.head_sha = event.head_sha.clone();
                 }
                 if same_opt_head(event.head_sha.as_ref(), state.head_sha.as_ref()) {
+                    reset_review_context(state, event.sequence);
                     state.current_reviewer = event.reviewer.clone();
                 } else if let (Some(head), Some(reviewer)) = (&event.head_sha, &event.reviewer)
                     && !state
@@ -1863,6 +2077,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 // A verdict on a head other than the current one says nothing about the current
                 // one.
                 if same_opt_head(event.head_sha.as_ref(), state.head_sha.as_ref()) {
+                    reset_review_context(state, event.sequence);
                     apply_verdict(state, event, blockers);
                 } else {
                     let reviewer = event.reviewer.clone().unwrap_or_default();
@@ -1914,6 +2129,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 }
             }
             TaskEventKind::Merged => {
+                reset_review_context(state, event.sequence);
                 if event.pr.is_some() {
                     state.pr = event.pr;
                 }
@@ -1923,11 +2139,12 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 state.blocked_sequence = None;
                 state.step = TaskStep::Merged;
             }
-            TaskEventKind::Closed => {}
+            TaskEventKind::Closed => reset_review_context(state, event.sequence),
             TaskEventKind::Heartbeat
             | TaskEventKind::Released
             | TaskEventKind::Queued
-            | TaskEventKind::LaneRetired => {
+            | TaskEventKind::LaneRetired
+            | TaskEventKind::ReviewActivity => {
                 unreachable!("handled above")
             }
         }
@@ -1966,6 +2183,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 {
                     continue;
                 }
+                reset_review_context(&mut claim.state, event.sequence);
                 let claim_before = claim.state.step;
                 claim.state.last_sequence = event.sequence;
                 if event.kind == TaskEventKind::Closed {
@@ -1998,6 +2216,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                     && claim.state.pr != event.pr
                     && claim_issue.is_some_and(|issue| closes.contains(&issue))
                 {
+                    reset_review_context(&mut claim.state, event.sequence);
                     let claim_before = claim.state.step;
                     claim.state.step = TaskStep::Merged;
                     claim.state.merge_sha = event.merge_sha.clone();

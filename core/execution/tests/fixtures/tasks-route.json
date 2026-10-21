@@ -329,6 +329,8 @@
           "bbbbbbbb"
         ],
         "repoUrl": "https://github.com/o/r",
+        "reviewActivityRevision": 0,
+        "reviewContextSequence": 14,
         "reviewers": [
           "rev-1"
         ],
@@ -405,6 +407,8 @@
         "recordedHeads": [],
         "releasedBy": "lane-b",
         "repoUrl": null,
+        "reviewActivityRevision": 0,
+        "reviewContextSequence": 11,
         "reviewers": [],
         "rounds": [],
         "step": "plan",
@@ -449,6 +453,8 @@
           "dddddddd"
         ],
         "repoUrl": null,
+        "reviewActivityRevision": 0,
+        "reviewContextSequence": 13,
         "reviewers": [],
         "rounds": [],
         "step": "review",
@@ -493,6 +499,8 @@
       "recordedHeads": [],
       "releasedBy": "lane-b",
       "repoUrl": null,
+      "reviewActivityRevision": 0,
+      "reviewContextSequence": 11,
       "reviewers": [],
       "rounds": [],
       "step": "plan",
@@ -541,6 +549,8 @@
         "bbbbbbbb"
       ],
       "repoUrl": "https://github.com/o/r",
+      "reviewActivityRevision": 0,
+      "reviewContextSequence": 14,
       "reviewers": [
         "rev-1"
       ],

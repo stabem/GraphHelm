@@ -297,6 +297,7 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | open the PR (§3), and **again after every push** to it | `task.pr_opened` | `pr`, `headSha`, `journeys`, `lane`, optional `repo` |
 | ask a reviewer (§4) | `task.review_assigned` | `pr`, `headSha`, `reviewer`, `ordinal` (1 or 2) |
 | post the verdict (§4) | `task.review_verdict` | `pr`, `headSha`, `reviewer`, `verdict`, `commentUrl` |
+| report a deliberate current-review wait or resume | `task.review_activity` | `repo`, `pr`, full `headSha`, `reviewer` equal to the signer, current `reviewContextSequence`, explicit newer `revision`, `activity` (`waiting` with one bounded plain-text `reason`, or `resumed` without reason); historical exact retries acknowledge the original record without refreshing its time. Never renews a lease or changes verdict/owner. |
 | merge and read what landed (§5) | `task.merged` | `pr`, `mergeSha`, `closes`, `merger` |
 | a PR closed without a merge (the Stop reconciler records it as the lane; by hand only to repair) | `task.closed` | `pr`, `reason` (`superseded` or `abandoned`), `by` (the superseding PR, or the PR itself when abandoned) |
 | grade the design, once per round, when the plan says `critic: design` | `task.critic_verdict` | `round`, `score`, `passScore`, `maxRounds`, `verdict`, `designRef`, `lane`, `reasons` |

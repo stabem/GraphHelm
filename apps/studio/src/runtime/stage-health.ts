@@ -7,7 +7,7 @@ import { sameHead } from "./heads";
 import type { TimedStep } from "./step-timing";
 import { slotStatus, slotText, type SlotView } from "./slots";
 
-export type HealthFlag = "needs_you" | "building" | "waiting_build" | "stalled" | "blocked" | "slow" | "moving" | "unknown";
+export type HealthFlag = "needs_you" | "waiting" | "building" | "waiting_build" | "stalled" | "blocked" | "slow" | "moving" | "unknown";
 export interface StageHealth { flag: HealthFlag; text: string; tone: "red" | "orange" | "amber" | "green" | "blue" | "unknown"; elapsedMs: number | null; elapsed: string | null }
 
 /** Slow: elapsed more than this many times the stage's expected time (`expectedTime`). */
@@ -60,6 +60,19 @@ function slotBelongsToTask(t: TaskState, owner: string | null, lanes: Lane[]): b
   const kind = t.step === "review" && !openBlock(t) ? "review" : "implement";
   return latest.kind === kind && (latest.label === `#${t.pr}` || latest.taskId === t.taskId)
     && (kind !== "review" || !t.headSha || !latest.headSha || sameHead(latest.headSha, t.headSha));
+}
+
+/** Text is bound to the task generation; Runtime liveness and active slots remain authoritative. */
+export function reviewerWait(t: Pick<TaskState, "step" | "headSha" | "currentReviewer" | "reviewContextSequence" | "reviewActivityRevision"> & { reviewActivity?: TaskState["reviewActivity"]; blockedBy?: unknown }, lanes: Lane[], now: number): { current: boolean; text: string } | null {
+  const a = t.reviewActivity;
+  if (!a || a.activity !== "waiting" || (t.step !== "review" && t.step !== "merge") || t.blockedBy
+    || a.reviewer !== t.currentReviewer || !sameHead(a.headSha, t.headSha) || a.reviewContextSequence !== t.reviewContextSequence
+    || a.revision !== t.reviewActivityRevision || typeof a.reason !== "string" || !a.reason.trim()) return null;
+  const at = Date.parse(a.occurredAt), budget = lanes.find((lane) => lane.lane === a.reviewer)?.silentAfterMs;
+  if (!Number.isFinite(at)) return null;
+  const age = Math.max(0, now - at);
+  const current = budget !== undefined && Number.isFinite(budget) && budget > 0 && age < budget;
+  return { current, text: current ? `Waiting: ${a.reason} · ${stageDuration(age)}` : `last reported wait ${stageDuration(age)} ago: ${a.reason}` };
 }
 
 export interface Liveness { live: boolean; sinceMs: number | null }
@@ -141,19 +154,22 @@ export function stageHealth(t: TaskState, lanes: Lane[], groupTasks: TaskState[]
   if (t.step === "plan" && !t.pr && (lanes.find((l) => l.lane === owner)?.overdueTasks ?? []).includes(t.taskId)) {
     return { ...base, flag: "stalled", text: `Stale claim · planning ${elapsedMs === null ? "" : stageDuration(elapsedMs) + ", "}no PR`, tone: "red" };
   }
+  const wait = reviewerWait(t, lanes, now);
   const live = laneLiveness(owner, lanes, groupTasks, now, slots);
   if (!live.live && live.sinceMs !== null) {
-    return { ...base, flag: "stalled", text: `${owner} silent ${stageDuration(live.sinceMs)}`, tone: "red" };
+    return { ...base, flag: "stalled", text: `${owner} silent ${stageDuration(live.sinceMs)}${wait ? ` · ${wait.text}` : ""}`, tone: "red" };
   }
   const block = openBlock(t);
   if (block) return { ...base, flag: "blocked", text: `Blocked by ${block.reviewer || "a reviewer"}`, tone: "orange" };
-  if (live.sinceMs === null) return { ...base, flag: "unknown", text: "Unknown", tone: "unknown" };
+  if (wait?.current) return { ...base, flag: "waiting", text: wait.text, tone: "blue" };
+  const historical = wait ? ` · ${wait.text}` : "";
+  if (live.sinceMs === null) return { ...base, flag: "unknown", text: `Unknown${historical}`, tone: "unknown" };
   const exp = expectedTime(t, groupTasks);
   if (elapsedMs !== null && exp && exp.samples >= SLOW_MIN_SAMPLES && elapsedMs > SLOW_FACTOR * exp.expectedMs) {
     const who = live.sinceMs !== null ? ` · ${ownerRole(t)} active ${stageDuration(live.sinceMs)} ago` : "";
-    return { ...base, flag: "slow", text: `Slow${who}`, tone: "amber" };
+    return { ...base, flag: "slow", text: `Slow${who}${historical}`, tone: "amber" };
   }
-  return { ...base, flag: "moving", text: "Moving", tone: "green" };
+  return { ...base, flag: "moving", text: `Moving${historical}`, tone: "green" };
 }
 
 /** "5h 28m 12s"; under an hour "4m 03s"; under a minute "12s". The live card timer. */

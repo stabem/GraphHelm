@@ -1123,5 +1123,75 @@ class LaneDocsGuardTest(unittest.TestCase):
         self.assertEqual(in_delivery, kinds, f"DELIVERY.md step table names {sorted(in_delivery)}, task_record.py writes {sorted(kinds)}")
 
 
+class ReviewActivityCaller(unittest.TestCase):
+    def request(self, *extra):
+        output = io.StringIO()
+        with redirect_stdout(output), redirect_stderr(io.StringIO()), patch.object(task_record.urllib.request, "urlopen", side_effect=AssertionError("dry-run must not contact Runtime")):
+            code = task_record.main(["--lane", "reviewer", "review_activity", "--issue", "1745",
+                "--repo", "fixture/project", "--pr", "17", "--head", HEAD_A,
+                "--review-context-sequence", "41", "--revision", "1", "--activity", "waiting",
+                "--reason", "Waiting for measured dependency proof", "--no-github", "--dry-run", *extra])
+        self.assertEqual(code, 0)
+        return json.loads(output.getvalue())
+
+    def test_exact_reviewer_binding_context_revision_and_retry_key(self):
+        first = self.request()
+        same = self.request()
+        doc = json.loads(first["body"]["signal"]["description"])
+        self.assertEqual(doc["reviewer"], "reviewer")
+        self.assertEqual((doc["repo"], doc["pr"], doc["headSha"], doc["reviewContextSequence"], doc["revision"]),
+                         ("fixture/project", 17, HEAD_A, 41, 1))
+        self.assertEqual(first["headers"]["Idempotency-Key"], same["headers"]["Idempotency-Key"])
+        self.assertNotEqual(first["headers"]["Idempotency-Key"], self.request("--review-context-sequence", "42")["headers"]["Idempotency-Key"])
+        self.assertNotEqual(first["headers"]["Idempotency-Key"], self.request("--revision", "2")["headers"]["Idempotency-Key"])
+        args = task_record.parse(["--lane", "reviewer", "review_activity", "--issue", "1745", "--pr", "17", "--head", HEAD_A,
+            "--revision", "2", "--review-context-sequence", "41", "--activity", "resumed", "--no-github"])
+        resumed = task_record.document(args, "2026-01-01T00:00:00Z")
+        self.assertEqual(resumed["activity"], "resumed")
+        self.assertNotIn("reason", resumed)
+
+    def test_invalid_or_implicit_activity_binding_is_refused_before_send(self):
+        base = ["--lane", "reviewer", "review_activity", "--issue", "1745", "--pr", "17", "--head", HEAD_A,
+                "--revision", "1", "--review-context-sequence", "41", "--activity", "waiting", "--reason", "A reason", "--no-github"]
+        for key, value in [("--head", "abcdef0"), ("--pr", "0"), ("--revision", "0"), ("--review-context-sequence", "0"),
+                           ("--reason", " "), ("--reason", "x" * 501), ("--reason", "line\ncontrol"), ("--activity", "resumed")]:
+            candidate = base.copy()
+            candidate[candidate.index(key) + 1] = value
+            with self.subTest(key=key, value=value), self.assertRaises(SystemExit):
+                task_record.document(task_record.parse(candidate), "2026-01-01T00:00:00Z")
+        for key in ["--revision", "--review-context-sequence"]:
+            candidate = base.copy()
+            index = candidate.index(key)
+            del candidate[index:index + 2]
+            with self.subTest(missing=key), self.assertRaises(SystemExit):
+                task_record.document(task_record.parse(candidate), "2026-01-01T00:00:00Z")
+
+
+    def test_review_activity_refusals_and_conflicts_do_not_refresh_or_retry_without_bound(self):
+        args = SimpleNamespace(lane="reviewer", kind="review_activity", repo="fixture/project", pr=17,
+            issue=1745, comment_url=None, url="http://127.0.0.1:1", execution="e", dry_run=False, token_file="t")
+        for error, maximum in [("GHE001_SEQUENCE_CONFLICT", 2), ("GHE003_IDEMPOTENCY_CONFLICT", 2),
+                               ("GHCLI003_SIGNAL_INVALID", 1)]:
+            with self.subTest(error=error), patch.object(task_record, "read_credential", return_value="fixture-only"), \
+                    patch.object(task_record.urllib.request, "urlopen", side_effect=lambda *a, **k:
+                        io.BytesIO(json.dumps({"ok":False,"diagnostics":[{"code":error,"severity":"error"}]}).encode())) as request:
+                code, _, _ = task_record.send(args, {"taskId":"issue-1745"}, "now")
+                self.assertEqual(code, 1)
+                self.assertEqual(request.call_count, maximum)
+                self.assertEqual(len({call.args[0].get_header("Idempotency-key") for call in request.call_args_list}), 1)
+                self.assertEqual(len({call.args[0].data for call in request.call_args_list}), 1)
+        # A conflict is never success: only the actual retried Runtime acknowledgement is.
+        for final, expected in [(True, 0), (False, 1)]:
+            replies = [io.BytesIO(json.dumps({"ok":False,"diagnostics":[{"code":"GHE003_IDEMPOTENCY_CONFLICT","severity":"error"}]}).encode()),
+                       io.BytesIO(json.dumps({"ok":final,"diagnostics":[] if final else [{"code":"GHE003_IDEMPOTENCY_CONFLICT","severity":"error"}]}).encode())]
+            with self.subTest(final=final), patch.object(task_record, "read_credential", return_value="fixture-only"), \
+                    patch.object(task_record.urllib.request, "urlopen", side_effect=replies) as request:
+                code, _, _ = task_record.send(args, {"taskId":"issue-1745"}, "now")
+                self.assertEqual(code, expected)
+                self.assertEqual(request.call_count, 2)
+                self.assertIs(request.call_args_list[0].args[0], request.call_args_list[1].args[0])
+
+
+
 if __name__ == "__main__":
     unittest.main()

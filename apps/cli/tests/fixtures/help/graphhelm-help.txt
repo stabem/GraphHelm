@@ -3597,6 +3597,12 @@ Options:
       --confirm
           The owner's click on "Run it?": this run of an approved flow may play its destructive acts (#519). Without it an approved flow stops before the first one. Implies a new run
 
+      --confirm-digest <CONFIRM_DIGEST>
+          #1662: with `--confirm` on a draft, the flow digest the owner saw beside its commands. A flow edited since then is refused, so a confirm never allows argv the owner did not see
+
+      --token-file <TOKEN_FILE>
+          #1662: the owner's token, required to confirm a draft's commands from the CLI
+
   -h, --help
           Print help
 

@@ -2359,12 +2359,14 @@ fn serve_refuses_an_unsafe_events_key_file_without_printing_the_key() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(&real, &linked).unwrap();
     let below_link = linked.join("good.key");
-    let mut cases: Vec<(&str, &Path, bool)> = vec![
+    let cases: Vec<(&str, &Path, bool)> = vec![
         ("variable and file", &good, true),
         ("readable by others", &open, false),
         ("not 64 hex characters", &short, false),
         ("below a directory link", &below_link, false),
     ];
+    #[cfg(windows)]
+    let mut cases = cases;
     // #1599 review: the inherited-ACL file above is refused for inheritance alone; this one has
     // the protected owner-only DACL plus an explicit grant to Everyone.
     #[cfg(windows)]

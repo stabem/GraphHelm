@@ -112,13 +112,18 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     const openBars = allOpen.filter((b) => !staleClaim(b) && !endedClaim(b)
       && !(b.kind === "implement" && awaiting.some((p) => b.label === `#${p}`)));
     if (!openBars.some((b) => b.kind === "implement")) {
-      const rt = tasks.find((t) => t.step !== "merged" && t.step !== "merge" && t.pr !== null
-        && !hasVerdictOnHead(t, ids)
-        && !!t.currentReviewer && ids.includes(t.currentReviewer));
+      const rt = tasks.find((t) => {
+        const reviewer = t.step === "merge" && t.currentReviewer === undefined
+          ? t.reviewers[t.reviewers.length - 1] : t.currentReviewer;
+        return t.step !== "merged" && t.pr !== null && !!reviewer && ids.includes(reviewer)
+          && (t.step === "merge" || !hasVerdictOnHead(t, ids));
+      });
       if (rt) {
         const last0 = delivered.get(name) ?? (lane ? delivered.get(lane.lane) : undefined) ?? null;
+        const merge = rt.step === "merge";
         return {
-          name, status: "waiting", stage: "review", pr: rt.pr, title: rt.title, label: "Reviewing", doing: `reviewing #${rt.pr} ${rt.title}`,
+          name, status: merge && lane?.silent ? "silent" : "waiting", stage: merge ? "merge" : "review", pr: rt.pr, title: rt.title,
+          label: merge ? "Awaiting merge" : "Reviewing", doing: `${merge ? "awaiting merge" : "reviewing"} #${rt.pr} ${rt.title}`,
           href: rt.repoUrl ? `${rt.repoUrl}/pull/${rt.pr}` : null, lastDelivered: last0, ...when,
         };
       }

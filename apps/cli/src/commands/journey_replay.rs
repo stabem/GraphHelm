@@ -524,6 +524,12 @@ impl Driver {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         safe_environment(&mut command, false);
+        if project
+            .join("node_modules/playwright-core/.local-browsers")
+            .is_dir()
+        {
+            command.env("PLAYWRIGHT_BROWSERS_PATH", "0");
+        }
         for (name, value) in secrets {
             command.env(name, value);
         }

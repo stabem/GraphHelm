@@ -516,6 +516,11 @@ export interface JourneyRunScreen { frame: boolean; width?: number; height?: num
 /** An edge the destructive guard stopped reads `skipped` (it does not turn the run red); an edge the
  * run never got to reads `null`. */
 export interface JourneyRunEdge { result?: JourneyStepResult | "skipped" | null; reason?: string; detail?: { code: string; pointer: string }; seen?: string }
+export interface JourneyObserverSetup {
+  state: "installing" | "ready" | "failed";
+  message: string;
+  error?: string;
+}
 /** The run a journey gets when it is opened: `GET|POST /v1/journey-flows/{id}/preview`. `replay` is
  * an approved flow's real replay; `preview` is a draft's and is never proof. While `running`,
  * `screens` holds only the screens reached so far and `current` is the one being played. */
@@ -543,6 +548,8 @@ export interface JourneyRunView {
   /** Who observed a recorded passing run (#1672), as the Runtime's record names it: the runner
    * actor, the sha256 of its binary and its version. Absent when nothing was recorded. */
   observer?: { actor: string; runnerSha256: string; version: string };
+  /** Progress of automatic browser observer provisioning requested by Run again. */
+  observerSetup?: JourneyObserverSetup;
   /** The browser driver died before it answered (#1448): its last stderr, secrets masked. */
   driverLog?: { tail?: string };
 }

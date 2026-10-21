@@ -3,8 +3,9 @@
 //! from the closed list, and `--force` runs anew. Credible defects: a run that never leaves
 //! `running` when it cannot start a browser, a kept result served for a changed flow, and a second
 //! run started on every read. Real CLI/tempdir/Git boundary, the installed observer is a tripwire
-//! that must never start; cost: seconds after build, offline, no Node/browser/provider.
-use std::path::Path;
+//! that must never start; cost: seconds after build, offline, real Node only, no browser/provider/npm/download.
+use std::net::TcpListener;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[path = "support/time_scale.rs"]
@@ -31,8 +32,117 @@ fn cli(project: &Path, args: &[&str]) -> (i32, Value) {
     )
 }
 
+fn cli_with_path(project: &Path, args: &[&str], path: &Path) -> (i32, Value) {
+    let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["--json", "journey"])
+        .args(args)
+        .arg("--project")
+        .arg(project)
+        .env("PATH", path)
+        .env("GRAPHHELM_SECRET_shopper_password", "preview_canary_519")
+        .output()
+        .unwrap();
+    (
+        out.status.code().unwrap(),
+        serde_json::from_slice(&out.stdout).unwrap_or(Value::Null),
+    )
+}
+
+const FAKE_PLAYWRIGHT: &str = r##"
+const fs = require('fs');
+class L {
+  count() { return Promise.resolve(1); }
+  first() { return this; }
+  isVisible() { return Promise.resolve(true); }
+  waitFor() { return Promise.resolve(); }
+  click() { const e = new Error('fixture action failure'); e.code = 'driver.action_failed'; throw e; }
+  fill() { return Promise.resolve(); }
+}
+const page = {
+  _url: 'http://localhost:3000/cart',
+  url() { return this._url; },
+  goto: async u => { page._url = u; },
+  getByRole: () => new L(),
+  getByText: () => new L(),
+  locator: s => s === 'body' ? {ariaSnapshot: async () => '- heading "Cart"\n- button "Checkout"'} :
+    s === 'iframe,frame' ? {count: async () => 0} : new L(),
+  frames: () => [page],
+  viewportSize: () => ({width: 1280, height: 720}),
+  screenshot: async o => fs.writeFileSync(o.path, 'fixture'),
+};
+const context = {
+  setDefaultTimeout() {}, setDefaultNavigationTimeout() {},
+  route: async () => {}, routeWebSocket: async () => {},
+  newPage: async () => page, close: async () => {},
+};
+module.exports = {chromium: {launch: async () => ({newContext: async () => context, close: async () => {}})}};
+"##;
+
+fn fixture_path(root: &Path, success: bool) -> PathBuf {
+    let bin = root.join("fixture-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let existing = std::env::var_os("PATH").unwrap_or_default();
+    #[cfg(windows)]
+    {
+        let npm = if success {
+            "@echo off\necho npm>>.graphhelm\\fixture-install.log\nif not exist package.json echo {\"private\":true}>package.json\nif not exist node_modules\\@playwright\\test mkdir node_modules\\@playwright\\test\necho {\"name\":\"@playwright/test\",\"version\":\"1.64.0\",\"main\":\"index.js\"}>node_modules\\@playwright\\test\\package.json\ncopy /Y fake_playwright.js node_modules\\@playwright\\test\\index.js >nul\nexit /b 0\n".to_owned()
+        } else {
+            "@echo off\necho fixture registry unavailable 1>&2\nexit /b 23\n".to_owned()
+        };
+        std::fs::write(bin.join("npm.cmd"), npm).unwrap();
+        let npx = if success {
+            "@echo off\necho npx>>.graphhelm\\fixture-install.log\nif not exist node_modules\\playwright-core\\.local-browsers mkdir node_modules\\playwright-core\\.local-browsers\nmkdir node_modules\\playwright-core\\.local-browsers\\chromium-fixture 2>nul\nexit /b 0\n".to_owned()
+        } else {
+            "@echo off\necho fixture registry unavailable 1>&2\nexit /b 23\n".to_owned()
+        };
+        std::fs::write(bin.join("npx.cmd"), npx).unwrap();
+    }
+    #[cfg(not(windows))]
+    {
+        let npm = if success {
+            r#"#!/bin/sh
+echo npm >> .graphhelm/fixture-install.log
+mkdir -p node_modules/@playwright/test node_modules/playwright-core/.local-browsers/chromium-fixture
+printf '%s' '{"private":true}' > package.json
+printf '%s' '{"name":"@playwright/test","version":"1.64.0","main":"index.js"}' > node_modules/@playwright/test/package.json
+cp fake_playwright.js node_modules/@playwright/test/index.js
+exit 0
+"#
+            .to_owned()
+        } else {
+            "#!/bin/sh\necho 'fixture registry unavailable' >&2\nexit 23\n".to_owned()
+        };
+        std::fs::write(bin.join("npm"), npm).unwrap();
+        std::fs::write(
+            bin.join("npx"),
+            if success {
+                "#!/bin/sh\necho npx >> .graphhelm/fixture-install.log\nexit 0\n"
+            } else {
+                "#!/bin/sh\necho 'fixture registry unavailable' >&2\nexit 23\n"
+            },
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        for name in ["npm", "npx"] {
+            std::fs::set_permissions(bin.join(name), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+    }
+    if success {
+        std::fs::write(root.join("fake_playwright.js"), FAKE_PLAYWRIGHT).unwrap();
+    }
+    let mut joined = std::ffi::OsString::from(bin);
+    joined.push(if cfg!(windows) { ";" } else { ":" });
+    joined.push(existing);
+    PathBuf::from(joined)
+}
+
 /// A DRAFT `checkout` flow in a committed project, with a tripwire observer installed.
 fn draft() -> tempfile::TempDir {
+    draft_with_flow(FLOW)
+}
+
+fn draft_with_flow(flow: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     for path in [
         "app/cart/page.tsx",
@@ -46,7 +156,7 @@ fn draft() -> tempfile::TempDir {
     std::fs::create_dir_all(dir.path().join(".graphhelm/journeys")).unwrap();
     std::fs::write(
         dir.path().join(".graphhelm/journeys/checkout.journey.yaml"),
-        FLOW,
+        flow,
     )
     .unwrap();
     let (code, reply) = cli(
@@ -81,11 +191,10 @@ fn draft() -> tempfile::TempDir {
     dir
 }
 
-/// Reads until the background run leaves `running`, within a bound.
-fn settled(project: &Path) -> Value {
+fn settled_with_path(project: &Path, path: &Path) -> Value {
     let deadline = Instant::now() + scaled(Duration::from_secs(60));
     loop {
-        let (code, reply) = cli(project, &["preview", "checkout", "--read"]);
+        let (code, reply) = cli_with_path(project, &["preview", "checkout", "--read"], path);
         assert_eq!(code, 0, "{reply}");
         if reply["data"]["state"] != "running" {
             return reply["data"].clone();
@@ -101,6 +210,7 @@ fn settled(project: &Path) -> Value {
 #[test]
 fn a_preview_runs_once_keeps_its_result_and_runs_anew_only_when_asked() {
     let dir = draft();
+    let fixture = fixture_path(dir.path(), false);
     let (code, reply) = cli(dir.path(), &["preview", "nowhere"]);
     assert_eq!(code, 2, "{reply}");
     assert!(
@@ -117,29 +227,36 @@ fn a_preview_runs_once_keeps_its_result_and_runs_anew_only_when_asked() {
     assert!(!dir.path().join(".graphhelm/journey-previews").exists());
 
     // A start answers `running` at once, and the run ends with a reason, not `running` forever.
-    let (code, reply) = cli(dir.path(), &["preview", "checkout"]);
+    let (code, reply) = cli_with_path(dir.path(), &["preview", "checkout"], &fixture);
     assert_eq!(code, 0, "{reply}");
     assert_eq!(reply["data"]["state"], "running", "{reply}");
     assert!(reply["data"].get("pid").is_none(), "{reply}");
-    let first = settled(dir.path());
+    let first = settled_with_path(dir.path(), &fixture);
     assert_eq!(first["state"], "failed", "{first}");
-    assert_eq!(first["reason"], "driver.observer_missing", "{first}");
+    assert_eq!(first["reason"], "observer.setup_failed", "{first}");
     // #677: the closed reason must not replace the original refusal. No page text is kept.
     assert_eq!(
         first["detail"],
-        serde_json::json!({"code":"replay.observer_missing","pointer":"/observer"})
+        serde_json::json!({"code":"observer.setup_failed","pointer":"/observer"})
     );
+    assert_eq!(first["observerSetup"]["state"], "failed", "{first}");
+    let setup_error = first["observerSetup"]["error"].as_str().unwrap_or_default();
+    assert!(
+        setup_error.contains("fixture registry unavailable"),
+        "{first}"
+    );
+    assert!(setup_error.contains("exit 23"), "{first}");
     assert!(first["ranAt"].is_string(), "{first}");
 
     // Kept: a second start answers the same run instead of running again.
-    let (_, again) = cli(dir.path(), &["preview", "checkout"]);
+    let (_, again) = cli_with_path(dir.path(), &["preview", "checkout"], &fixture);
     assert_eq!(again["data"]["state"], "failed", "{again}");
     assert_eq!(again["data"]["ranAt"], first["ranAt"], "{again}");
 
     // Run again runs anew.
-    let (_, forced) = cli(dir.path(), &["preview", "checkout", "--force"]);
+    let (_, forced) = cli_with_path(dir.path(), &["preview", "checkout", "--force"], &fixture);
     assert_eq!(forced["data"]["state"], "running", "{forced}");
-    let second = settled(dir.path());
+    let second = settled_with_path(dir.path(), &fixture);
     assert_ne!(second["ranAt"], first["ranAt"], "{second}");
 
     // A changed flow makes the kept result stale.
@@ -154,6 +271,84 @@ fn a_preview_runs_once_keeps_its_result_and_runs_anew_only_when_asked() {
     assert!(
         !dir.path().join("DRIVER_STARTED").exists(),
         "the tripwire observer never starts"
+    );
+}
+
+#[test]
+fn a_preview_installs_a_missing_observer_and_refreshes_a_stale_copy() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let flow = FLOW.replacen("http://localhost:3000", &base, 1);
+    let dir = draft_with_flow(&flow);
+    std::fs::remove_file(dir.path().join(".graphhelm/observers/journey_driver.mjs")).unwrap();
+    let fixture = fixture_path(dir.path(), true);
+    let (code, started) = cli_with_path(dir.path(), &["preview", "checkout"], &fixture);
+    assert_eq!(code, 0, "{started}");
+    assert_eq!(started["data"]["state"], "running", "{started}");
+
+    let first = settled_with_path(dir.path(), &fixture);
+    assert_eq!(first["state"], "ready", "{first}");
+    assert_eq!(first["screens"]["cart"]["result"], "pass", "{first}");
+    assert_eq!(first["edges"]["cart.checkout"]["result"], "fail", "{first}");
+    assert_eq!(
+        first["edges"]["cart.checkout"]["reason"], "act_failed",
+        "{first}"
+    );
+    assert_eq!(first["observerSetup"]["state"], "ready", "{first}");
+    assert!(
+        dir.path()
+            .join("node_modules/@playwright/test/package.json")
+            .is_file()
+    );
+    assert!(
+        dir.path()
+            .join("node_modules/playwright-core/.local-browsers/chromium-fixture")
+            .is_dir()
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".graphhelm/fixture-install.log"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+    let (_, restarted) = cli_with_path(dir.path(), &["preview", "checkout", "--force"], &fixture);
+    assert_eq!(restarted["data"]["state"], "running", "{restarted}");
+    let current = settled_with_path(dir.path(), &fixture);
+    assert_eq!(current["screens"]["cart"]["result"], "pass", "{current}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".graphhelm/fixture-install.log"))
+            .unwrap()
+            .lines()
+            .count(),
+        2
+    );
+
+    std::fs::write(
+        dir.path().join(".graphhelm/observers/journey_driver.mjs"),
+        "// stale fixture observer\n",
+    )
+    .unwrap();
+    let (code, forced) = cli_with_path(dir.path(), &["preview", "checkout", "--force"], &fixture);
+    assert_eq!(code, 0, "{forced}");
+    assert_eq!(forced["data"]["state"], "running", "{forced}");
+    let refreshed = settled_with_path(dir.path(), &fixture);
+    assert_eq!(refreshed["observerSetup"]["state"], "ready", "{refreshed}");
+    assert_eq!(
+        refreshed["screens"]["cart"]["result"], "pass",
+        "{refreshed}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".graphhelm/fixture-install.log"))
+            .unwrap()
+            .lines()
+            .count(),
+        4
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join(".graphhelm/observers/journey_driver.mjs")).unwrap(),
+        include_bytes!("../../../tools/journey-driver/driver.mjs"),
+        "stale observer was not replaced by the shipped driver",
     );
 }
 

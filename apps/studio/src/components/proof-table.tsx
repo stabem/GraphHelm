@@ -25,9 +25,6 @@ const TONE: Record<StepStatus, string> = { proven: "proven", stale: "stalled", f
 
 /** #1157: a finished run that failed is said, not left reading "not replayed yet". */
 function runFailure(run: JourneyRunView, stepIds: string[]): string {
-  if (run.reason === "driver.observer_missing" || run.detail?.code === "replay.observer_missing") {
-    return "Couldn't run this journey: no browser observer is installed. Run `graphhelm setup --install-observer playwright` in this project, then Run again.";
-  }
   const failed = explain(run, stepIds);
   return `Couldn't run this journey. ${failed.text}${failed.log ? ` The ${failed.logFrom === "driver" ? "browser driver" : "launcher"} said: ${failed.log.split("\n").slice(-2).join(" / ")}` : ""}`;
 }
@@ -61,6 +58,7 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
   }, [preview.run, onRun]);
   // #1635: a Run blocks until the run ends; say so at once, here and on the rail.
   const running = preview.launching || preview.run?.state === "running";
+  const observerInstalling = running && preview.run?.observerSetup?.state === "installing";
   // The rail's running mark is cleared by the run's answer; an answer of "none" is reported too.
   // `onRun` is a fresh closure each render, so it is read through a ref and never re-fires this.
   const onRunRef = useRef(onRun);
@@ -102,7 +100,7 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         {onWatch && <button type="button" disabled={busy} onClick={() => act(() => onWatch(flow.id))}>Watch</button>}
         {run && <button type="button" disabled={running} onClick={preview.again}>Run again</button>}
         {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}
-        {running && <span role="status">Running…</span>}
+        {running && <span role="status">{observerInstalling ? preview.run!.observerSetup!.message : "Running…"}</span>}
         {flow.rejected && <p className="proof-rejected" id="proof-rejected" role="note" aria-labelledby="proof-rejected">{`Rejected: ${flow.rejected.note}`}</p>}
         {rejecting && onReject && <div className="proof-reject">
           <textarea aria-label="Why reject" value={note} maxLength={4096} onChange={(event) => setNote(event.target.value)} />

@@ -33,4 +33,11 @@ describe("runFailure (#1296)", () => {
     expect(f.text).toContain("the journey uses a step the browser cannot do");
     expect(f.text).not.toContain("before step 1");
   });
+  it("explains automatic observer setup failures with the Runtime error", () => {
+    const f = runFailure({ state: "failed", reason: "observer.setup_failed",
+      detail: { code: "observer.setup_failed", pointer: "/observer" },
+      observerSetup: { state: "failed", message: "Setup failed", error: "npm exited with code 1" } }, ["home"]);
+    expect(f.text).toContain("browser observer setup failed: npm exited with code 1");
+    expect(f.logFrom).toBeNull();
+  });
 });

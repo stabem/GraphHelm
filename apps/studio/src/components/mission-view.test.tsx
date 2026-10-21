@@ -166,15 +166,35 @@ describe("MissionView", () => {
     await waitFor(() => expect(onRun).toHaveBeenCalledTimes(2));
     expect(read.mock.calls.map((c) => (c as unknown[])[0])).toEqual([journeys[0]!.contractId, "second"]);
   });
-  it("#830: a preview-only step is not counted in work even with a linked task", async () => {
-    const preview = { ...journeys[0]!, contractId: "preview" };
+  it("a preview-only passing run shows its selected step count without proving work", async () => {
+    const ids = ["one", "two", "three", "four", "five"];
+    const preview = { ...journeys[0]!, contractId: "preview", title: "Preview five steps",
+      steps: ids.map((id) => ({ stepId: id, screen: { screenId: id, title: id, scopePaths: [] }, promises: [] })) };
+    const other = { ...preview, contractId: "other", title: "Other journey" };
+    const flow = { id: "preview", title: preview.title, status: "draft", approved: null, drift: [], findings: [], approvable: true,
+      screens: ids.map((id) => ({ id, url: "/", state: "ready" })),
+      edges: ids.slice(1).map((id, i) => ({ id: `edge-${id}`, from: ids[i]!, to: id })),
+      paths: { main: ids.slice(1).map((id) => `edge-${id}`) } } as JourneyFlowView;
     const tasks = [{ key: "active", taskId: "active", pr: 10, journeys: ["preview"], step: "review", reviewers: [] }] as unknown as TaskState[];
-    render(<MissionView journeys={[preview]} tasks={tasks} lanes={[]} now={0}
-      runFor={() => ({ state: "ready", kind: "preview", screens: { mark: { result: "pass" } }, edges: {} }) as never}
-      frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    const runFor = (id: string) => ({ state: "ready", kind: "preview", result: "pass",
+      screens: Object.fromEntries([...(id === "preview" ? ids : ["one"]), "unrelated"].map((step) => [step, { result: "pass", frame: true }])),
+      edges: Object.fromEntries(ids.slice(1).map((id) => [`edge-${id}`, { result: "pass" }])) }) as never;
+    const props = { journeys: [preview, other], flows: { flows: [flow] }, tasks, lanes: [], now: 0,
+      runFor, frameUrl: () => null, onMarkSafe: vi.fn(),
+      run: { start: vi.fn(async () => ({ state: "none" })), read: vi.fn(async () => ({ state: "none" })), screenFrame: vi.fn(), liveFrame: vi.fn() } as never };
+    const { rerender } = render(<MissionView {...props} />);
     await fastUserEvent().click(screen.getByRole("tab", { name: "Proof" }));
     const rail = screen.getByRole("navigation", { name: "Journeys" });
-    expect(within(rail).getByRole("img", { name: "1 step · 0 proven · 0 in work · 0 merged, not proven · 1 not proven" })).toBeInTheDocument();
+    const row = within(rail).getByRole("button", { name: /^Preview five steps/ }).closest(".mv-jcard")!;
+    expect(row.querySelector(".mv-journey-count")).toHaveTextContent("5/5");
+    expect(row.querySelector(".mv-verdict")).toHaveTextContent("passed");
+    expect(within(row as HTMLElement).getByRole("img", { name: "5 steps · 0 proven · 0 in work · 0 merged, not proven · 5 not proven" })).toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: /Other journey/ }).querySelector(".mv-journey-count")).toHaveTextContent("1/5");
+    rerender(<MissionView {...props} runFor={(id) => id === "preview" ? { state: "ready", kind: "preview",
+      screens: { one: { result: "pass" }, two: { result: "fail" }, unrelated: { result: "pass" } }, edges: {} } as never : null} />);
+    expect(row.querySelector(".mv-journey-count")).toHaveTextContent("1/5");
+    rerender(<MissionView {...props} runFor={() => null} />);
+    expect(row.querySelector(".mv-journey-count")).toHaveTextContent("0/5");
   });
 
   it("#830: a stale contract keeps the flow title wide and shows its id", async () => {

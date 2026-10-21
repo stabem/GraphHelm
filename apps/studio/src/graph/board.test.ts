@@ -4,7 +4,6 @@ import { MIN_FRAME_ZOOM, READABLE_ZOOM, chromeInsets, frameCards } from "./board
 import {
   CARD_HEIGHT,
   EMPTY_CARD_HEIGHT,
-  OBJECTIVE_ALLOWANCE,
   cardHeight,
   clearBoards,
   defaultPosition,
@@ -135,49 +134,27 @@ describe("where a card sits before anyone moves it", () => {
   });
 });
 
-/** #1079 review: the entry card gained the objective (two clamped lines, ~49px with margins)
- * but its measured box stayed 164px, so a draft-started run's card overflowed it. The bounds
- * the camera and edges use must be as tall as the box the CSS draws (.node-with-objective). */
+/** #1077: the default grid's row step follows the card it holds, so a row never overlaps the one
+ * above it. */
 describe("the default grid's row step", () => {
-  /** #1077: the step was 320 while an entry card with an objective is 340, so the row below
-   * overlapped it by 20px and took its pointer band. The step follows the tallest card. */
-  it("is as tall as the tallest card it can hold, plus the gap", () => {
-    expect(gridRowStep(false)).toBe(CARD_HEIGHT + 32);
-    expect(gridRowStep(true)).toBe(CARD_HEIGHT + OBJECTIVE_ALLOWANCE + 32);
+  it("is the card's height plus the gap", () => {
+    expect(gridRowStep()).toBe(CARD_HEIGHT + 32);
   });
 
-  it("never lets the card below overlap a first-entry card with an objective at default positions", () => {
-    const entry = { touches: 3, reopened: null };
-    const columns = 2;
-    const top = gridPosition(0, columns, true);
-    const below = gridPosition(columns, columns, true);
-    expect(below.x).toBe(top.x);
-    expect(below.y).toBeGreaterThanOrEqual(top.y + cardHeight(entry, true));
-    expect(below.y - (top.y + cardHeight(entry, true))).toBe(32);
-  });
-
-  it("keeps the tighter step for a run without an objective", () => {
+  it("places the card below one full step down, and the next column one step across", () => {
     const columns = 3;
-    expect(gridPosition(columns, columns, false).y - gridPosition(0, columns, false).y).toBe(CARD_HEIGHT + 32);
-    expect(gridPosition(1, columns, false)).toEqual({ x: 680 + 380, y: 100 });
+    expect(gridPosition(columns, columns).y - gridPosition(0, columns).y).toBe(CARD_HEIGHT + 32);
+    expect(gridPosition(1, columns)).toEqual({ x: 680 + 380, y: 100 });
   });
 });
 
 describe("the card's measured height", () => {
-  const untouched = { touches: 0, reopened: null };
-  const touched = { touches: 3, reopened: null };
-  it("is the short box for an untouched card without an objective", () => {
-    expect(cardHeight(untouched, false)).toBe(EMPTY_CARD_HEIGHT);
-    expect(cardHeight(touched, false)).toBe(CARD_HEIGHT);
-  });
-  it("is taller by the objective's allowance when the card carries one", () => {
-    expect(cardHeight(untouched, true)).toBe(EMPTY_CARD_HEIGHT + OBJECTIVE_ALLOWANCE);
-    expect(cardHeight(touched, true)).toBe(CARD_HEIGHT + OBJECTIVE_ALLOWANCE);
-    // Two clamped lines of 12px/1.45 plus 4px + 10px margins is 48.8px; the box never undercuts it.
-    expect(OBJECTIVE_ALLOWANCE).toBeGreaterThanOrEqual(Math.ceil(12 * 1.45 * 2 + 14));
+  it("is the short box for an untouched card and the full box once touched", () => {
+    expect(cardHeight({ touches: 0, reopened: null })).toBe(EMPTY_CARD_HEIGHT);
+    expect(cardHeight({ touches: 3, reopened: null })).toBe(CARD_HEIGHT);
   });
   it("counts a reopened card as a full card even with no touches", () => {
-    expect(cardHeight({ touches: 0, reopened: { settledAt: 1, reopenedAt: 2, by: null } }, false)).toBe(CARD_HEIGHT);
+    expect(cardHeight({ touches: 0, reopened: { settledAt: 1, reopenedAt: 2, by: null } })).toBe(CARD_HEIGHT);
   });
 });
 

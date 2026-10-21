@@ -260,11 +260,11 @@ export function Board({
   const [surfaceWidth, setSurfaceWidth] = useState(0);
   const columns = Math.max(2, Math.floor(surfaceWidth / CARD_WIDTH));
   const nodePosition = (nodeId: string, index: number): Point =>
-    board.positions[nodeId] ?? gridPosition(index, columns, false);
+    board.positions[nodeId] ?? gridPosition(index, columns);
   const places = new Map<string, Point>(
     model.nodes.map((node, index) => [node.id, nodePosition(node.id, index)]),
   );
-  const nodeHeight = (node: GraphNode) => cardHeight(node, false);
+  const nodeHeight = (node: GraphNode) => cardHeight(node);
   /* THE INK COVERS WHAT IS DRAWN (#1072). The sheet-ink SVG was a fixed 2600x1700 box, so a
      verified connection into a generated column or row past it was clipped while the card it
      points at stayed visible. The box grows to the farthest card plus a margin; the old size

@@ -1,6 +1,6 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync, unlinkSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync, realpathSync, statSync, unlinkSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve, toNamespacedPath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { defineConfig, loadEnv, type Plugin } from "vite";
@@ -99,6 +99,27 @@ function ticketPath(env: Record<string, string>): string | null {
   return token === null || !token.endsWith(".token") ? null : `${token.slice(0, -".token".length)}.studio-ticket`;
 }
 
+/** Mirrors execution::delivery::project_id; only the conventional ticket location supports open. */
+function studioProjectId(env: Record<string, string>): string | null {
+  const folder = projectFolder(env);
+  const token = tokenPath(env);
+  const ticket = ticketPath(env);
+  if (folder === null || token === null || ticket === null || readToken(env) === null) return null;
+  try {
+    if (basename(ticket) !== "events.studio-ticket"
+      || realpathSync.native(dirname(ticket)) !== realpathSync.native(join(folder, ".graphhelm"))) return null;
+    if (realpathSync.native(token) !== realpathSync.native(join(folder, ".graphhelm", "events.token"))) return null;
+    const canonical = realpathSync.native(folder);
+    if (!statSync(canonical).isDirectory()) return null;
+    // Rust canonicalize retains the Windows verbatim prefix and path case.
+    const identity = process.platform === "win32" ? toNamespacedPath(canonical).replace(/\\/g, "/") : canonical;
+    return createHash("sha256").update(identity).digest("hex");
+  } catch {
+    // Missing paths cannot establish which project's ticket this server can consume.
+    return null;
+  }
+}
+
 /** #1264: true once for the ticket on disk: a match deletes it, so the link in browser history
  * is dead after its first use. A failed delete refuses, so a ticket can never be used twice. */
 export function consumeTicket(path: string | null, presented: string): boolean {
@@ -127,6 +148,12 @@ function devSession(env: Record<string, string>): Plugin {
     name: "graphhelm-studio-dev-session",
     apply: "serve",
     configureServer(server) {
+      server.middlewares.use("/__studio/identity", (request, response) => {
+        response.setHeader("Content-Type", "application/json");
+        response.setHeader("Cache-Control", "no-store");
+        response.statusCode = request.method === "GET" ? 200 : 405;
+        response.end(JSON.stringify({ projectId: request.method === "GET" ? studioProjectId(env) : null }));
+      });
       server.httpServer?.once("listening", () => {
         // Printed ONLY when the nonce was minted here - then the terminal is the sole channel
         // that can carry it to the person, and it is the owner's own ephemeral stdout, the same

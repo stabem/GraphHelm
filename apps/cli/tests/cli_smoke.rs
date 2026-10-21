@@ -12,6 +12,179 @@ fn command() -> Command {
     )))
 }
 
+fn studio_identity_server(status: u16, body: String) -> (u16, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    let mut request = [0; 4096];
+                    let size = stream.read(&mut request).unwrap();
+                    let request = String::from_utf8_lossy(&request[..size]);
+                    assert!(request.starts_with("GET /__studio/identity HTTP/1.1\r\n"));
+                    assert!(!request.to_ascii_lowercase().contains("authorization:"));
+                    write!(stream, "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                    return;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("identity fixture accept failed: {error}"),
+            }
+        }
+    });
+    (port, server)
+}
+
+fn studio_project() -> (tempfile::TempDir, String) {
+    use sha2::{Digest, Sha256};
+    let project = tempfile::tempdir().unwrap();
+    std::fs::create_dir(project.path().join(".graphhelm")).unwrap();
+    std::fs::write(
+        project.path().join(".graphhelm/events.token"),
+        "fixture-token",
+    )
+    .unwrap();
+    let canonical = project.path().canonicalize().unwrap();
+    let identity = canonical.to_str().unwrap();
+    #[cfg(windows)]
+    let identity = identity.replace('\\', "/");
+    let id = hex::encode(Sha256::digest(identity.as_bytes()));
+    (project, id)
+}
+
+#[test]
+fn studio_open_matching_projects_have_separate_tickets_and_journey_links() {
+    let projects = [studio_project(), studio_project()];
+    let mut tickets = Vec::new();
+    for (project, id) in &projects {
+        let (port, server) =
+            studio_identity_server(200, serde_json::json!({"projectId": id}).to_string());
+        let output = command()
+            .args(["studio", "open", "--project"])
+            .arg(project.path())
+            .args([
+                "--port",
+                &port.to_string(),
+                "--no-browser",
+                "--journey",
+                "studio-connect",
+            ])
+            .output()
+            .unwrap();
+        server.join().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let reply = json(&output.stdout);
+        assert_eq!(reply["ok"], true);
+        let ticket =
+            std::fs::read_to_string(project.path().join(".graphhelm/events.studio-ticket"))
+                .unwrap();
+        assert_eq!(
+            reply["data"]["url"],
+            format!("http://127.0.0.1:{port}/?session={ticket}&journey=studio-connect")
+        );
+        tickets.push(ticket);
+    }
+    assert_ne!(tickets[0], tickets[1]);
+    assert_eq!(
+        std::fs::read_to_string(projects[0].0.path().join(".graphhelm/events.studio-ticket"))
+            .unwrap(),
+        tickets[0]
+    );
+}
+
+#[test]
+fn studio_open_refuses_wrong_or_unknown_ports_without_replacing_a_ticket() {
+    let (project, expected) = studio_project();
+    let (other, other_id) = studio_project();
+    let ticket = project.path().join(".graphhelm/events.studio-ticket");
+    std::fs::write(&ticket, "keep-requested-ticket").unwrap();
+    let other_ticket = other.path().join(".graphhelm/events.studio-ticket");
+    std::fs::write(&other_ticket, "keep-other-ticket").unwrap();
+    for (status, body) in [
+        (200, serde_json::json!({"projectId": other_id}).to_string()),
+        (200, "{\"projectId\":null}".to_owned()),
+        (200, "not JSON".to_owned()),
+        (
+            200,
+            serde_json::json!({"projectId": expected, "extra": "x".repeat(1024)}).to_string(),
+        ),
+        (404, serde_json::json!({"projectId": expected}).to_string()),
+        (302, serde_json::json!({"projectId": expected}).to_string()),
+    ] {
+        let mismatched = body.contains(&other_id);
+        let (port, server) = studio_identity_server(status, body);
+        let output = command()
+            .args(["studio", "open", "--project"])
+            .arg(project.path())
+            .args(["--port", &port.to_string(), "--no-browser"])
+            .output()
+            .unwrap();
+        server.join().unwrap();
+        assert!(!output.status.success());
+        let reply = json(&output.stdout);
+        assert_eq!(reply["ok"], false);
+        assert_eq!(reply["diagnostics"][0]["code"], "GHCLI032_STUDIO_REFUSED");
+        assert_eq!(reply["diagnostics"][0]["path"], "/port");
+        let message = reply["diagnostics"][0]["message"].as_str().unwrap();
+        assert!(message.contains(&port.to_string()) && message.contains(&expected));
+        if mismatched {
+            assert!(message.contains(&other_id));
+        }
+        assert!(message.contains("graphhelm studio start"));
+        assert_eq!(
+            std::fs::read_to_string(&ticket).unwrap(),
+            "keep-requested-ticket"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&other_ticket).unwrap(),
+            "keep-other-ticket"
+        );
+        assert!(reply["data"]["url"].is_null());
+    }
+}
+
+#[test]
+fn studio_open_refuses_an_unavailable_listener_without_creating_a_ticket() {
+    let (project, _) = studio_project();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // Keep the port reserved, but never answer: the identity request must time out.
+    let output = command()
+        .args(["studio", "open", "--project"])
+        .arg(project.path())
+        .args(["--port", &port.to_string(), "--no-browser"])
+        .timeout(std::time::Duration::from_secs(10))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(json(&output.stdout)["diagnostics"][0]["path"], "/port");
+    assert!(
+        !project
+            .path()
+            .join(".graphhelm/events.studio-ticket")
+            .exists()
+    );
+    drop(listener);
+}
+
 #[test]
 fn legacy_graph_parse_errors_help_and_version_keep_clap_behavior() {
     let invalid = command().args(["graph", "validate"]).output().unwrap();

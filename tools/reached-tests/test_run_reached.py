@@ -1205,10 +1205,11 @@ class ResumeAndPreflightContracts(unittest.TestCase):
                 self.assertEqual(os.path.normcase(identity["invocationPath"]), os.path.normcase(selected))
                 self.assertNotEqual(os.path.normcase(identity["digestTarget"]), os.path.normcase(selected))
                 self.assertEqual(identity["sha256"], hashlib.sha256(Path(identity["digestTarget"]).read_bytes()).hexdigest())
-                self.assertEqual(os.path.normcase(self.runs()[-1]), os.path.normcase(identity["digestTarget"]))
-                self.assertEqual(len(self.runs()), index + 1)
+                images = self.counter.read_text(encoding="utf-8").splitlines()
+                self.assertEqual(os.path.normcase(images[-1]), os.path.normcase(identity["digestTarget"]))
+                self.assertEqual(len(images), index + 1)
                 self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
-                self.assertEqual(len(self.runs()), index + 1)
+                self.assertEqual(len(self.counter.read_text(encoding="utf-8").splitlines()), index + 1)
 
     @unittest.skipUnless(os.name == "nt" and __import__("shutil").which("node"), "OBSERVER_MISSING: native Windows npm.cmd preparation")
     def test_windows_npm_cmd_preparation_executes_without_reusable_identity(self):

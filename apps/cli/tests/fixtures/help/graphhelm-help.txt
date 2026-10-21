@@ -2897,10 +2897,16 @@ Record the end of a lane's external agent process
 Usage: graphhelm help tasks [COMMAND]
 
 Commands:
+  admit       Read and verify an exact current lane claim before starting its worker; writes nothing
   run-ended   
   reconcile   
   durations   How long each delivery step lasts (#1516): per-step median and p90 over the slices merged since `--since`, read from the Runtime's `GET /v1/executions/{id}/tasks` `durations`
   credential  Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token, derived from that token, the execution and the lane. Run by the owner or the orchestrator; the Runtime verifies it by recomputation, so no restart is needed
+
+===== graphhelm help tasks admit --help
+Read and verify an exact current lane claim before starting its worker; writes nothing
+
+Usage: graphhelm help tasks admit
 
 ===== graphhelm help tasks credential --help
 Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token, derived from that token, the execution and the lane. Run by the owner or the orchestrator; the Runtime verifies it by recomputation, so no restart is needed
@@ -4905,6 +4911,7 @@ Record the end of a lane's external agent process
 Usage: graphhelm tasks [OPTIONS] <COMMAND>
 
 Commands:
+  admit       Read and verify an exact current lane claim before starting its worker; writes nothing
   run-ended   
   reconcile   
   durations   How long each delivery step lasts (#1516): per-step median and p90 over the slices merged since `--since`, read from the Runtime's `GET /v1/executions/{id}/tasks` `durations`
@@ -4917,6 +4924,45 @@ Options:
 
       --json
           Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
+
+  -h, --help
+          Print help
+
+===== graphhelm tasks admit --help
+Read and verify an exact current lane claim before starting its worker; writes nothing
+
+Usage: graphhelm tasks admit [OPTIONS] --execution <EXECUTION> --lane <LANE> --issue <ISSUE> --branch <BRANCH> --repo <REPO> --claim-sequence <CLAIM_SEQUENCE>
+
+Options:
+      --execution <EXECUTION>
+          
+
+      --pretty
+          
+
+      --json
+          Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
+
+      --lane <LANE>
+          
+
+      --issue <ISSUE>
+          
+
+      --branch <BRANCH>
+          
+
+      --repo <REPO>
+          
+
+      --claim-sequence <CLAIM_SEQUENCE>
+          
+
+      --url <URL>
+          
+
+      --token-file <TOKEN_FILE>
+          
 
   -h, --help
           Print help
@@ -4981,11 +5027,17 @@ Print this message or the help of the given subcommand(s)
 Usage: graphhelm tasks help [COMMAND]
 
 Commands:
+  admit       Read and verify an exact current lane claim before starting its worker; writes nothing
   run-ended   
   reconcile   
   durations   How long each delivery step lasts (#1516): per-step median and p90 over the slices merged since `--since`, read from the Runtime's `GET /v1/executions/{id}/tasks` `durations`
   credential  Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token, derived from that token, the execution and the lane. Run by the owner or the orchestrator; the Runtime verifies it by recomputation, so no restart is needed
   help        Print this message or the help of the given subcommand(s)
+
+===== graphhelm tasks help admit --help
+Read and verify an exact current lane claim before starting its worker; writes nothing
+
+Usage: graphhelm tasks help admit
 
 ===== graphhelm tasks help credential --help
 Write a lane's credential (#1148): `<events>.agent.<lane>.token` beside the owner token, derived from that token, the execution and the lane. Run by the owner or the orchestrator; the Runtime verifies it by recomputation, so no restart is needed

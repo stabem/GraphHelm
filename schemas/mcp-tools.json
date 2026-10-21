@@ -155,6 +155,44 @@
       "name": "tasks"
     },
     {
+      "description": "Verify an exact current lane claim and live lease with one filtered GET /v1/executions/{executionId}/tasks (`graphhelm tasks admit`). Read-only admission receipt, never proof that a worker started or is working.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "claimSequence": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "issue": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "lane": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "executionId",
+          "lane",
+          "issue",
+          "branch",
+          "repo",
+          "claimSequence"
+        ],
+        "type": "object"
+      },
+      "name": "task_admit"
+    },
+    {
       "description": "Plan one task under keel.yaml (POST /v1/keel/plan; `graphhelm keel plan`): classifies its paths and returns the graphhelm-task-plan-v1 record (reviews, proof, skills, delegation, shortest path). judgeRoute lets Jev decide an ambiguous task. Read-only.",
       "inputSchema": {
         "additionalProperties": false,

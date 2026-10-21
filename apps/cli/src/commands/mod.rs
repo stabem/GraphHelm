@@ -39,6 +39,7 @@ pub(crate) use serve::alloc_guard::Guard as AllocGuard;
 mod simulate;
 mod skills;
 mod studio;
+mod task_admission;
 mod tasks;
 mod tool;
 mod topology;

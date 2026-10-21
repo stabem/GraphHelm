@@ -423,9 +423,64 @@ class LaneStopTests(unittest.TestCase):
         with mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=capture):
             tasks_reconcile.records(self.url, token, "lane-test", "codex-4")
 
+        self.assertIsInstance(tasks_reconcile.head(self.url, token, "lane-test"), int,
+                              "an absent lane remains valid with the existing shared read token")
         self.assertGreaterEqual(len(requests), 2, "reconcile should read events and their sealed evidence")
         self.assertTrue(all(request.get_header("X-graphhelm-actor") == "codex-4" for request in requests),
                         [request.headers for request in requests])
+
+    def test_bound_reconcile_tasks_view_releases_one_closed_foreign_claim_once(self):
+        self.claim(766)
+        args = self.reconcile_args()
+        args.lane = "graphhelm"
+        token = self.lane_credential(args.lane)
+        Path(args.token_file).write_text(token, encoding="utf-8")
+        view = tasks_reconcile.get(self.url + "/v1/executions/lane-test/tasks", token, args.lane)
+        claim = next(item for item in view["leases"] if item["taskId"] == "issue-766")
+        self.assertFalse(claim["overdue"], "closed-issue proof does not fabricate an overdue lease")
+        with mock.patch.object(tasks_reconcile, "github_issue", return_value={"state": "CLOSED"}):
+            first = tasks_reconcile.reconcile(args)
+            second = tasks_reconcile.reconcile(args)
+        self.assertEqual(first["closedIssues"], {"released": [
+            {"taskId": "issue-766", "lane": "codex-4", "claimSequence": claim["claimSequence"]}], "refused": []})
+        self.assertEqual(second["closedIssues"], {"released": [], "refused": []})
+        found = tasks_reconcile.records(args.url, token, args.execution, args.lane)
+        releases = [(doc, event["actor"]["id"]) for kind, doc, event in found if kind == "task.released"]
+        self.assertEqual(len(releases), 1)
+        doc, actor = releases[0]
+        self.assertEqual((actor, doc["lane"], doc["releasedBy"], doc["claimSequence"], doc["reason"]),
+                         ("graphhelm", "codex-4", "graphhelm", claim["claimSequence"], "issue #766 closed on GitHub"))
+        self.assertEqual(tasks_reconcile.get(self.url + "/v1/executions/lane-test/tasks", token, args.lane)["leases"], [])
+
+    def test_bound_reconcile_heartbeat_reads_head_without_borrowing_write_authority(self):
+        self.claim(766)
+        args = self.reconcile_args()
+        token = self.lane_credential("codex-4")
+        Path(args.token_file).write_text(token, encoding="utf-8")
+        path = self.url + "/v1/executions/lane-test/events?after=0&limit=512"
+        for lane, execution in ((None, "lane-test"), ("graphhelm", "lane-test"),
+                                ("codex-4", "another-execution")):
+            with self.subTest(lane=lane, execution=execution):
+                with self.assertRaises(urllib.error.HTTPError) as refused:
+                    tasks_reconcile.get(path.replace("/lane-test/", f"/{execution}/"), token, lane)
+                self.assertEqual(refused.exception.code, 401)
+        before = tasks_reconcile.get(path, token, args.lane)
+        refused = tasks_reconcile.post_end(self.url, token, "lane-test", "heartbeat", "issue-766",
+                                           "stabem/GraphHelm", "graphhelm", {"lane": "graphhelm"})
+        self.assertFalse(refused["ok"])
+        self.assertEqual([item["code"] for item in refused["diagnostics"]], ["GHCLI007_SERVE_UNAUTHORIZED"])
+        self.assertEqual(tasks_reconcile.get(path, token, args.lane)["head"], before["head"])
+        with mock.patch.object(tasks_reconcile, "github_issue",
+                               return_value={"state": "OPEN", "assignees": []}):
+            first = tasks_reconcile.reconcile(args)
+            second = tasks_reconcile.reconcile(args)
+        self.assertEqual(first["heartbeat"], {"sent": [766], "refused": []})
+        self.assertEqual(second["heartbeat"]["sent"], [])
+        self.assertEqual([item["issue"] for item in second["heartbeat"]["refused"]], [766])
+        page = tasks_reconcile.get(path, token, args.lane)
+        beats = [event for event in page["events"] if event["kind"]["type"] == "signal_recorded"
+                 and event["kind"]["data"].get("kind") == "task.heartbeat"]
+        self.assertEqual([event["actor"]["id"] for event in beats], ["codex-4"])
 
     def test_reconcile_reads_each_sealed_record_once_across_runs(self):
         """#1687: each run used to page the whole journal and open every sealed task record again,

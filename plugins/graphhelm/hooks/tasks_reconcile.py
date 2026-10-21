@@ -317,10 +317,10 @@ def adopt_opened(base, token_file, execution, repo, unopened, prs):
     return out
 
 
-def head(base, token, execution):
+def head(base, token, execution, lane=None):
     """The execution's event head: the state a heartbeat observed, and so its revision."""
     path = f"{base}/v1/executions/{urllib.parse.quote(execution, safe='')}"
-    value = get(f"{path}/events?after=0&limit=1", token)["head"]
+    value = get(f"{path}/events?after=0&limit=1", token, lane)["head"]
     if type(value) is not int or value < 1:
         raise ValueError("invalid event head")
     return value
@@ -380,9 +380,9 @@ def post_closed(base, token, execution, task_id, repo, lane, fields):
 def heartbeat(base, token, credential, execution, task_id, repo, lane):
     """One `task.heartbeat` for an open claim. Returns None when it landed (or was already
     recorded), else the Runtime's refusal message: the cooldown lives there, not here.
-    The head is read with the shared token; the record is written with the lane's credential (#1148)."""
+    The head uses the configured read binding and lane; the record uses the lane's credential."""
     answer = post_end(base, credential, execution, "heartbeat", task_id, repo, lane, {"lane": lane},
-                      revision=head(base, token, execution))
+                      revision=head(base, token, execution, lane))
     if answer.get("ok") is True:
         return None
     errors = [d for d in answer.get("diagnostics", []) if isinstance(d, dict) and d.get("severity") == "error"]
@@ -399,7 +399,7 @@ def reconcile(args):
     token = Path(args.token_file).read_text(encoding="utf-8").strip()
     if not token or "\n" in token:
         raise ValueError("invalid agent token")
-    # #1148: reads use the shared agent token; a task.* record is written only with the credential
+    # #1148: reads use the configured read binding; a task.* record uses the credential
     # of the actor it names (`graphhelm` for merged, the lane for closed/released), read beside
     # --token-file at <events>.agent.<actor>.token, never the shared token.
     credentials = {}
@@ -527,7 +527,7 @@ def reconcile(args):
     # as graphhelm, whichever lane holds it; the claim's lane is told by `releasedBy`.
     base = args.url.rstrip("/")
     try:
-        view = get(f"{base}/v1/executions/{urllib.parse.quote(args.execution, safe='')}/tasks", token)
+        view = get(f"{base}/v1/executions/{urllib.parse.quote(args.execution, safe='')}/tasks", token, args.lane)
     except (OSError, ValueError, KeyError):
         view = None
     # #1556: a closed issue ends every lease still open on it, whichever lane holds it and however

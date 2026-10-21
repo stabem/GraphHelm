@@ -171,7 +171,7 @@ pub(super) fn readiness(project: &Path, home: &Path) -> serde_json::Value {
     let summary = if browser["status"] == "ready" {
         "The browser journey observer (Playwright) is ready."
     } else {
-        "No browser journey observer is ready: browser journeys end OBSERVER_MISSING. Run setup with --install-observer playwright, or the install commands yourself."
+        "The browser observer needs installation or refresh. Run prepares it automatically; setup --install-observer playwright also installs it."
     };
     serde_json::json!({
         "browser": browser,

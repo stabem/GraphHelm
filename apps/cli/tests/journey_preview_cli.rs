@@ -63,7 +63,9 @@ const page = {
   url() { return this._url; },
   goto: async u => { page._url = u; },
   getByRole: () => new L(),
-  locator: s => s === 'body' ? {ariaSnapshot: async () => '- heading "Cart"\n- button "Checkout"'} : new L(),
+  getByText: () => new L(),
+  locator: s => s === 'body' ? {ariaSnapshot: async () => '- heading "Cart"\n- button "Checkout"'} :
+    s === 'iframe,frame' ? {count: async () => 0} : new L(),
   frames: () => [page],
   viewportSize: () => ({width: 1280, height: 720}),
   screenshot: async o => fs.writeFileSync(o.path, 'fixture'),
@@ -278,6 +280,7 @@ fn a_preview_installs_a_missing_observer_and_refreshes_a_stale_copy() {
     let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
     let flow = FLOW.replacen("http://localhost:3000", &base, 1);
     let dir = draft_with_flow(&flow);
+    std::fs::remove_file(dir.path().join(".graphhelm/observers/journey_driver.mjs")).unwrap();
     let fixture = fixture_path(dir.path(), true);
     let (code, started) = cli_with_path(dir.path(), &["preview", "checkout"], &fixture);
     assert_eq!(code, 0, "{started}");

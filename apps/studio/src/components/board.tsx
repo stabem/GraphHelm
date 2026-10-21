@@ -21,19 +21,18 @@ import { Activity, ArrowUpRight, GitBranch, Hand, Minus, MousePointer2, Plus } f
 import { GraphFileRow } from "./graph-file-row";
 
 import type { GraphModel, GraphNode } from "../graph/model";
-import { isEntryNode, isFirstEntryNode, moodOf, nodeResult, nodeStatusLabel, splitLint } from "../graph/model";
+import { isEntryNode, moodOf, nodeResult, nodeStatusLabel } from "../graph/model";
 import { isAlarming } from "./format";
 import { CARD_HEIGHT, CARD_WIDTH, cardHeight, chromeInsets, fitCamera, frameCards, gridPosition, tidyBoard, type BoardBounds, type BoardState, type Camera, type Point } from "../graph/board";
 
 /** The pieces of page chrome that float over the canvas sheet (#1083 F8): the toolbar, the
- * header rows, the lint strip, the notes and connect row, the HUD capsule, and the scene's docks.
+ * header rows, the notes and connect row, the HUD capsule, and the scene's docks.
  * Measured at framing time, so whatever the container queries laid out is what is framed around. */
-const CANVAS_CHROME = ".tools, .canvas-story, .canvas-arrange, .board-navigator, .canvas-sections, .canvas-lint, .edge-note, .graph-file, .connection-legend, .canvas-hints";
+const CANVAS_CHROME = ".tools, .canvas-story, .canvas-arrange, .board-navigator, .canvas-sections, .edge-note, .graph-file, .connection-legend, .canvas-hints";
 function chromeRectsAround(sheet: HTMLElement | null): DOMRect[] {
   if (sheet === null) return [];
   const pieces = new Set<Element>();
   sheet.parentElement?.querySelectorAll(CANVAS_CHROME).forEach((piece) => pieces.add(piece));
-  sheet.querySelectorAll(".run-capsule").forEach((piece) => pieces.add(piece));
   sheet.closest(".scene")?.querySelectorAll(":scope > .dock").forEach((piece) => pieces.add(piece));
   pieces.delete(sheet);
   return [...pieces].map((piece) => piece.getBoundingClientRect());
@@ -87,12 +86,6 @@ export function Board({
   onGraphFileChange,
   onDrawConnections,
   busy,
-  focusGraphFile = 0,
-  runId,
-  objective = null,
-  demonstration = false,
-  fixtureFile = "",
-  onFixtureFileChange,
 }: {
   model: GraphModel;
   board: BoardState;
@@ -110,22 +103,8 @@ export function Board({
   onGraphFileChange: (value: string) => void;
   onDrawConnections: () => void;
   busy: boolean;
-  /** Bumped when another control (the dock's resume) needs the person AT the graph-file box:
-   * opens the row and puts the cursor in it. A nonce so a second walk works. */
-  focusGraphFile?: number;
-  /** The selected run's id, for the HUD capsule. Absent (a draft, no selection) renders none. */
-  runId?: string;
-  /** The run's objective from its briefing (#1077), for the entry node's card. */
-  objective?: string | null;
-  /** The run was started under the fixture executor (#1064). */
-  demonstration?: boolean;
-  /** #1083 F2: a fixture file path on the RUNTIME's host, sent with `resume` as the API's
-   * existing `fixtures` field. Offered only on a demonstration run - the fixture stands in for
-   * the model there, and without it a resumed node has no outcome and parks `waiting_input`. */
-  fixtureFile?: string;
-  onFixtureFileChange?: (value: string) => void;
 }) {
-  const [layoutUndo, setLayoutUndo] = useState<{ run: string | undefined; positions: BoardState["positions"]; agents: BoardState["agents"] } | null>(null);
+  const [layoutUndo, setLayoutUndo] = useState<{ positions: BoardState["positions"]; agents: BoardState["agents"] } | null>(null);
   const arrangePending = useRef(false);
   const surface = useRef<HTMLDivElement | null>(null);
   const [tool, setTool] = useState<Tool>("select");
@@ -148,14 +127,6 @@ export function Board({
   const groupStartRef = useRef<Map<string, Point>>(new Map());
   const panStartRef = useRef<{ vx: number; vy: number; sx: number; sy: number } | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
-  // The dock's resume button walks the person here when the path is missing: a control that
-  // names its own missing ingredient should go fetch it, not sit as a labelled excuse.
-  useEffect(() => {
-    if ((focusGraphFile ?? 0) > 0) setConnectOpen(true);
-  }, [focusGraphFile]);
-  useEffect(() => {
-    if (connectOpen && (focusGraphFile ?? 0) > 0) fileRef.current?.focus();
-  }, [connectOpen, focusGraphFile]);
 
   /**
    * Live state for the window listeners below.
@@ -288,18 +259,12 @@ export function Board({
      Only DEFAULT positions move with the width; a position the operator saved still wins. */
   const [surfaceWidth, setSurfaceWidth] = useState(0);
   const columns = Math.max(2, Math.floor(surfaceWidth / CARD_WIDTH));
-  /** The run carries an objective, so its first entry card is the tallest card on the board
-   * (graph/board.ts): bounds, edges, the camera AND the row step measure that card as drawn.
-   * At the old fixed step the row below overlapped the entry card by 20px (#1077). */
-  const hasObjective = objective !== null && objective.trim().length > 0;
   const nodePosition = (nodeId: string, index: number): Point =>
-    board.positions[nodeId] ?? gridPosition(index, columns, hasObjective);
+    board.positions[nodeId] ?? gridPosition(index, columns, false);
   const places = new Map<string, Point>(
     model.nodes.map((node, index) => [node.id, nodePosition(node.id, index)]),
   );
-  /** The card's measured height (graph/board.ts): the first entry node carries the objective
-   * and is taller by its allowance, so bounds, edges and the camera frame what is drawn. */
-  const nodeHeight = (node: GraphNode) => cardHeight(node, hasObjective && isFirstEntryNode(model, node.id));
+  const nodeHeight = (node: GraphNode) => cardHeight(node, false);
   /* THE INK COVERS WHAT IS DRAWN (#1072). The sheet-ink SVG was a fixed 2600x1700 box, so a
      verified connection into a generated column or row past it was clipped while the card it
      points at stayed visible. The box grows to the farthest card plus a margin; the old size
@@ -374,12 +339,12 @@ export function Board({
   useEffect(() => {
     // Keyed by run AND by column count: a width change re-lays the default grid, and a frame
     // computed for the old grid would show the new one half off screen.
-    const frameKey = `${runId ?? "draft"}@${columns}`;
+    const frameKey = `draft@${columns}`;
     if (framedRunRef.current !== frameKey && cardBounds !== null) {
       fit(undefined, true);
       framedRunRef.current = frameKey;
     }
-  }, [runId, cardBounds, columns]);
+  }, [cardBounds, columns]);
   const measure = useCallback(() => {
     const box = surface.current?.getBoundingClientRect();
     if (box && box.width > 0) setSurfaceWidth((current) => (current === box.width ? current : box.width));
@@ -526,9 +491,6 @@ export function Board({
     });
   };
 
-  /** What the lint strip says, by kind (#1083): see `splitLint`. */
-  const lintSplit = splitLint(model.lint, demonstration);
-
   return (
     <>
       <div className="free-canvas-content">
@@ -539,11 +501,11 @@ export function Board({
       </div>
       <div className="canvas-arrange" role="group" aria-label="Canvas layout">
         <button type="button" onClick={() => {
-          setLayoutUndo({ run: runId, positions: board.positions, agents: board.agents });
+          setLayoutUndo({ positions: board.positions, agents: board.agents });
           arrangePending.current = true;
           onChange(tidyBoard(board));
         }}>Organize</button>
-        {layoutUndo?.run === runId && layoutUndo !== null && <button type="button" onClick={() => {
+        {layoutUndo !== null && <button type="button" onClick={() => {
           arrangePending.current = true;
           onChange({ ...board, positions: layoutUndo.positions, agents: layoutUndo.agents });
           setLayoutUndo(null);
@@ -557,40 +519,6 @@ export function Board({
         onClick={onSurfaceClick}
         aria-label="Execution board"
       >
-        {/* THE RUN CAPSULE - a HUD, not a citizen of the canvas: it sits OUTSIDE `.world`, so it
-          * neither pans nor scales with the camera. The one card about the whole run, and the
-          * ONLY progress bar the log can honestly back: nodes that need nothing more (succeeded,
-          * waived, skipped) over nodes declared. Per-node progress does not exist in the log. */}
-        {runId !== undefined && model.nodes.length > 0 && (() => {
-          const done = model.nodes.filter(
-            (node) => (node.state === "succeeded" || node.state === "waived" || node.state === "skipped") && nodeStatusLabel(node) !== "review needed",
-          ).length;
-          const total = model.nodes.length;
-          // The run's own pulse line: the newest instant any node reported, straight off the
-          // log's timestamps - never a liveness the data cannot back.
-          const lastActivity = model.nodes.reduce<string | null>(
-            (newest, node) =>
-              node.lastEventAt !== null && (newest === null || node.lastEventAt > newest)
-                ? node.lastEventAt
-                : newest,
-            null,
-          );
-          return (
-            <article className="run-capsule" aria-label="This run's progress">
-              <p className="capsule-eyebrow">#run</p>
-              <h3 className="run-capsule-title">{runId}</h3>
-              <p className="run-capsule-line">
-                {done} of {total} nodes done
-              </p>
-              <span className="run-progress" aria-hidden="true">
-                <i style={{ width: `${Math.round((done / total) * 100)}%` }} />
-              </span>
-              {lastActivity !== null && (
-                <p className="run-capsule-line node-fresh">last activity · {ago(lastActivity)}</p>
-              )}
-            </article>
-          );
-        })()}
         <div
           className="world"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}
@@ -632,7 +560,6 @@ export function Board({
             node={node}
             at={nodePosition(node.id, index)}
             entry={isEntryNode(model, node.id)}
-            objective={isFirstEntryNode(model, node.id) ? objective : null}
             selected={node.id === selectedNode}
             multi={picked.has(`node:${node.id}`)}
             onOpen={() => {
@@ -710,36 +637,8 @@ export function Board({
         )}
       </p>
 
-      {/* THE LINT STRIP: what the model itself can accuse, on the board's face. The reference
-        * project lints a PLAN file; ours lints the LOG - each line names the disagreement and,
-        * when an event is accused, cites its #sequence click-to-copy, same as the thread's. */}
-      {model.lint.length > 0 && (
-        // #1083: the overview's rule, on the canvas. Only a demonstration run's fixture-explained
-        // findings read as neutral notes; any real disagreement (a reopened settled node, an
-        // orphan edge) keeps the amber strip and is listed first (Codex on PR #1091).
-        <details className={`canvas-lint ${lintSplit.disagreements.length === 0 ? "canvas-note" : ""}`}><summary>{lintSplit.disagreements.length === 0 ? `Demonstration run · ${lintSplit.expected.length} log note${lintSplit.expected.length === 1 ? "" : "s"}` : `${lintSplit.disagreements.length} log disagreement${lintSplit.disagreements.length === 1 ? "" : "s"}${lintSplit.expected.length > 0 ? ` · ${lintSplit.expected.length} demonstration note${lintSplit.expected.length === 1 ? "" : "s"}` : ""}`}</summary>
-        <ul className="lint-strip" aria-label={lintSplit.disagreements.length === 0 ? "Log notes on a demonstration run" : "Disagreements the log attests"}>
-          {[...lintSplit.disagreements, ...lintSplit.expected].map((finding, index) => (
-            <li key={`${finding.kind}-${finding.sequence ?? index}`}>
-              <span>{finding.detail}</span>
-              {finding.sequence !== null && runId !== undefined && (
-                <button
-                  type="button"
-                  className="turn-seq"
-                  title={`Copy ${runId}#${finding.sequence}`}
-                  onClick={() => void navigator.clipboard?.writeText(`${runId}#${finding.sequence}`)}
-                >
-                  #{finding.sequence}
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-        </details>
-      )}
-
       {showConnect && (
-      <GraphFileRow graphFile={graphFile} onGraphFileChange={onGraphFileChange} onDrawConnections={onDrawConnections} busy={busy} demonstration={demonstration} fixtureFile={fixtureFile} onFixtureFileChange={onFixtureFileChange} inputRef={fileRef} />
+      <GraphFileRow graphFile={graphFile} onGraphFileChange={onGraphFileChange} onDrawConnections={onDrawConnections} busy={busy} inputRef={fileRef} />
       )}
 
       <p className="canvas-hints" aria-hidden="true">
@@ -817,12 +716,9 @@ function NodeBlock({
   onOpen,
   onGrab,
   multi = false,
-  objective = null,
 }: {
   multi?: boolean;
   connections?: number | null;
-  /** The run's objective, on the entry node only (#1077) - the words this node was given. */
-  objective?: string | null;
   node: GraphNode;
   at: Point;
   entry: boolean;
@@ -854,7 +750,7 @@ function NodeBlock({
   };
   return (
     <article
-      className={`node ${node.touches === 0 && node.reopened === null ? "node-empty" : ""} ${objective !== null && objective.trim().length > 0 ? "node-with-objective" : ""} ${mood} ${selected ? "selected" : ""} ${multi ? "multi" : ""}`}
+      className={`node ${node.touches === 0 && node.reopened === null ? "node-empty" : ""} ${mood} ${selected ? "selected" : ""} ${multi ? "multi" : ""}`}
       style={{
         left: at.x,
         top: at.y,
@@ -872,10 +768,6 @@ function NodeBlock({
           </span>
         </span>
         <span className="node-title" title={node.declaredName ? `${node.declaredName} (${node.id})` : node.id}>{node.declaredName ?? node.id}</span>
-        {/* Clamped: the card is a fixed box the camera frames by (cardHeight, graph/board.ts -
-            taller by the objective's allowance, matched by .node-with-objective), and an
-            objective may run to 2,000 characters. The whole text is one hover away on the title. */}
-        {objective !== null && objective.trim().length > 0 && <q className="node-objective" title={objective}>{objective}</q>}
         {/* THE DISAGREEMENT CHIP - the reference project's best signal ("quietly reopened the
           * part it already called done"), derived here from the log alone: this node settled at
           * one sequence and a later event named it again. Both coordinates cited, author named. */}

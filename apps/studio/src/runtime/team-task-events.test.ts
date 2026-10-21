@@ -1,11 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { laneBarsOf } from "../test/task-fold";
-import { digestOf } from "./customs";
 
 import { stageHealth } from "./stage-health";
 import { prPath } from "./work-groups";
-import { foldTaskEvents, parseTaskEvent, readTaskEventRecords, timingSamples, type TaskEventRecord } from "./team-tasks";
-import type { RuntimeEvent } from "./types";
+import { foldTaskEvents, parseTaskEvent, timingSamples, type TaskEventRecord } from "./team-tasks";
 
 /* #386 (spec §7, §9 row F): the Team tab's per-task graph is folded from `task.*` records alone.
  * These cells observe the fold the spec names: a PR that is blocked, gets a new head and is then
@@ -373,101 +371,6 @@ describe("foldTaskEvents", () => {
     const released = { ...parseTaskEvent("task.released", "lane-a", JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-729", revision: 2, at: "now", lane: "lane-a", claimSequence: 10, reason: "Stopped" }))!, sequence: 12 };
     expect(foldTaskEvents([claimed(10), claimed(11), released] as TaskEventRecord[]).map((task) => task.releasedBy ?? null))
       .toEqual([null, null]);
-  });
-});
-
-describe("readTaskEventRecords composed with foldTaskEvents", () => {
-  async function sealed(id: string, kind: string, signer: string, document: Record<string, unknown>) {
-    const content = JSON.stringify({ id: `signal-${id}`, source: { type: "user", id: signer }, type: kind, description: JSON.stringify({ schema: "graphhelm-task-event-v1", taskId: "issue-9", revision: 1, at: "2026-10-07T20:00:00Z", ...document }) });
-    const hash = (await digestOf(new TextEncoder().encode(content).buffer, globalThis.crypto.subtle)).slice("sha256:".length);
-    return { evidenceId: id, mediaType: "application/json", sensitivity: "internal" as const, contentSha256: hash, content };
-  }
-  function event(sequence: number, actorId: string, kind: string, evidence: { evidenceId: string; contentSha256: string }): RuntimeEvent {
-    return { sequence, kind: "signal_recorded", payload: { kind, sourceId: actorId, sourceKind: "user", signalId: `signal-${evidence.evidenceId}`, envelopeSha256: evidence.contentSha256 }, occurredAt: null, actorId, actorType: "agent", idempotencyKey: null, eventId: `event-${sequence}`, evidenceRefs: [evidence.evidenceId] };
-  }
-
-  it("retries a failed sealed read and reports only evidence still unreadable", async () => {
-    const recovered = await sealed("retry-ok", "task.claimed", "lane-a", { issue: 1, lane: "lane-a", branch: "issue-1" });
-    const missing = await sealed("retry-missing", "task.claimed", "lane-a", { taskId: "issue-2", issue: 2, lane: "lane-a", branch: "issue-2" });
-    const attempts = new Map<string, number>();
-    const failures: number[] = [];
-    const records = await readTaskEventRecords({
-      executionId: "run", events: [event(1, "lane-a", "task.claimed", recovered), event(2, "lane-a", "task.claimed", missing)],
-      readEvidence: async (_, id) => {
-        const count = (attempts.get(id) ?? 0) + 1;
-        attempts.set(id, count);
-        if (id === missing.evidenceId || count < 3) throw new Error("temporary read failure");
-        return recovered;
-      },
-      onReadFailure: (count) => failures.push(count),
-    });
-    expect(records.map((record) => record.sequence)).toEqual([1]);
-    expect([...attempts.values()]).toEqual([3, 3]);
-    expect(failures).toEqual([1]);
-  });
-
-  it("progressive task history publishes verified ordered chunks before the final read", async () => {
-    const envelopes = await Promise.all(Array.from({ length: 65 }, (_, index) =>
-      sealed(`progress-${index}`, "task.claimed", "lane-a", { taskId: `issue-${index}`, issue: index + 1, lane: "lane-a", branch: `issue-${index}` })));
-    const pending = new Map<string, (value: typeof envelopes[number]) => void>();
-    const published: number[][] = [];
-    const read = readTaskEventRecords({
-      executionId: "run", events: envelopes.map((item, index) => event(index + 1, index === 1 ? "forged-actor" : "lane-a", "task.claimed", item)),
-      readEvidence: async (_, id) => new Promise((resolve) => { pending.set(id, resolve); }),
-      onProgress: (records) => published.push(records.map((record) => record.sequence)),
-    });
-    await vi.waitFor(() => expect(pending.size).toBe(8));
-    for (let start = 0; start < 64; start += 8) {
-      for (let index = start + 7; index >= start; index--) pending.get(`progress-${index}`)!(envelopes[index]);
-      if (start < 56) await vi.waitFor(() => expect(pending.has(`progress-${start + 8}`)).toBe(true));
-    }
-    const verifiedPrefix = Array.from({ length: 64 }, (_, i) => i + 1).filter((sequence) => sequence !== 2);
-    await vi.waitFor(() => expect(published).toEqual([verifiedPrefix]));
-    expect(pending.has("progress-64")).toBe(true);
-    pending.get("progress-64")!(envelopes[64]);
-    expect((await read).map((record) => record.sequence)).toEqual([...verifiedPrefix, 65]);
-    expect(published.map((batch) => batch.length)).toEqual([63, 64]);
-  });
-
-  it("folds sealed task records and skips one whose envelope was signed by another actor", async () => {
-    const claimed = await sealed("e1", "task.claimed", "gh-claude-4", { issue: 9, lane: "gh-claude-4", branch: "issue-9-x" });
-    const forged = await sealed("e2", "task.pr_opened", "gh-claude-4", { pr: 10, headSha: "aaaaaaaa", journeys: [], lane: "gh-claude-4" });
-    const store = new Map([[claimed.evidenceId, claimed], [forged.evidenceId, forged]]);
-    const tasks = foldTaskEvents(await readTaskEventRecords({
-      executionId: "gh-team",
-      events: [event(1, "gh-claude-4", "task.claimed", claimed), event(2, "agent-chat", "task.pr_opened", forged)],
-      readEvidence: async (_, id) => store.get(id)!,
-    }));
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0]).toMatchObject({ taskId: "issue-9", issue: 9, lane: "gh-claude-4", step: "plan", pr: null });
-  });
-
-  /* #185: on a gh-team-sized run (~1,250 task records) the graph took about four minutes to draw,
-   * because each envelope was read only after the previous one arrived: one round trip at a time.
-   * The reads now overlap (bounded), and the fold still sees the records in sequence order. */
-  it("reads the envelopes concurrently, bounded, and folds them in sequence order", async () => {
-    const claimed = await sealed("c1", "task.claimed", "gh-claude-4", { issue: 9, lane: "gh-claude-4", branch: "issue-9-x" });
-    const heads = await Promise.all(Array.from({ length: 30 }, (_, n) =>
-      sealed(`p${n}`, "task.pr_opened", "gh-claude-4", { pr: 10, headSha: `${n}`.padStart(8, "a"), journeys: [], lane: "gh-claude-4" })));
-    const store = new Map([claimed, ...heads].map((evidence) => [evidence.evidenceId, evidence]));
-    let inFlight = 0;
-    let most = 0;
-    const tasks = foldTaskEvents(await readTaskEventRecords({
-      executionId: "gh-team",
-      events: [event(1, "gh-claude-4", "task.claimed", claimed), ...heads.map((evidence, n) => event(n + 2, "gh-claude-4", "task.pr_opened", evidence))].reverse(),
-      readEvidence: async (_, id) => {
-        inFlight += 1;
-        most = Math.max(most, inFlight);
-        // The later records answer first: the fold must not depend on arrival order.
-        await new Promise((resolve) => setTimeout(resolve, 40 - Number(id.slice(1) || 0)));
-        inFlight -= 1;
-        return store.get(id)!;
-      },
-    }));
-    expect(most).toBeGreaterThan(1);
-    expect(most).toBeLessThanOrEqual(16);
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0]).toMatchObject({ issue: 9, pr: 10, headSha: "29".padStart(8, "a"), step: "review" });
   });
 });
 

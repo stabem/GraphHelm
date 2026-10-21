@@ -471,41 +471,6 @@ export interface JourneyFlowsView {
   flows: JourneyFlowView[];
 }
 
-/** One live journey session (#409, phase C #398): `GET /v1/journeys/sessions`. A closed or expired
- * session is simply absent from the list; `at` is the edge act (`cart.checkout/0`) on drift, else
- * the screen id. */
-export type LiveState = "pass" | "fail" | "drift" | "unknown" | "playing" | "skipped";
-export interface LiveSession {
-  sessionId: string;
-  contractId: string;
-  flowId: string;
-  path: string;
-  stepId: string;
-  state: LiveState;
-  code: string | null;
-  at: string | null;
-  screen: unknown;
-  since: string;
-  lastActAt: string | null;
-  expiresAt: string | null;
-  /** A Watch run (#462): `"watch"`; the act about to run (`edge`, `actIndex`, null between edges)
-   * and the position on the path. Absent on ordinary live sessions. */
-  mode?: string;
-  edge?: string | null;
-  actIndex?: number | null;
-  /** #505: the words the watch browser shows for the act about to run (`run.details: Clicks
-   * "Details"`); null between acts. */
-  caption?: string | null;
-  stepIndex?: number;
-  stepCount?: number;
-  /** The Runtime holds page frames for this session (#519): a headless Watch. */
-  frame?: boolean;
-  /** #515: the act a Watch of a DRAFT did not perform because its name looks destructive
-   * (`would` is the word that matched: delete, pay, send…). The play stopped there, `state:
-   * "skipped"`. Null or absent otherwise. */
-  skipped?: { edge: string; actIndex: number; kind: string; role: string; name: string; would: string } | null;
-}
-
 /** How one screen or edge fared in a journey's run (#519). The reason codes are the Runtime's
  * closed list; the Studio says them in words. */
 export type JourneyStepResult = "pass" | "fail" | "drift";

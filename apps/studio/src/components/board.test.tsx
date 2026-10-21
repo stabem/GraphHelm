@@ -52,76 +52,6 @@ const MODEL: GraphModel = {
   ],
 };
 
-/**
- * The run capsule: the one card about the WHOLE run, with the only progress bar the log can
- * honestly back — nodes that need nothing more (succeeded, waived, skipped) over nodes declared.
- * Per-node progress does not exist in the log and is never invented.
- */
-describe("the run capsule", () => {
-  const PROGRESS_MODEL: GraphModel = {
-    rosterDeclared: true,
-    edgesKnown: false,
-    edges: [],
-    entrypoints: [],
-    lint: [],
-    nodes: [
-      { id: "a", state: "succeeded", touches: 2, lastEventAt: null, history: [], reopened: null },
-      { id: "b", state: "skipped", touches: 1, lastEventAt: null, history: [], reopened: null },
-      { id: "c", state: "running", touches: 1, lastEventAt: "2026-08-27T12:03:00Z", history: [], reopened: null },
-    ],
-  };
-
-  it("says how many nodes are done, out of how many the run declared", () => {
-    render(
-      <Board
-        model={PROGRESS_MODEL}
-        board={emptyBoard()}
-        selectedNode={null}
-        onSelectNode={() => {}}
-        onChange={() => {}}
-        runId="demo-deploy"
-        {...REST}
-      />,
-    );
-    const capsule = screen.getByLabelText("This run's progress");
-    expect(capsule).toHaveTextContent("demo-deploy");
-    // The succeeded node has no typed acceptance evidence, so it remains review needed and does
-    // not inflate the run's done count.
-    expect(capsule).toHaveTextContent("1 of 3 nodes done");
-    const bar = capsule.querySelector(".run-progress i") as HTMLElement;
-    expect(bar.style.width).toBe("33%");
-  });
-
-  it("carries the run's last activity, straight off the log's newest instant", () => {
-    render(
-      <Board
-        model={PROGRESS_MODEL}
-        board={emptyBoard()}
-        selectedNode={null}
-        onSelectNode={() => {}}
-        onChange={() => {}}
-        runId="demo-deploy"
-        {...REST}
-      />,
-    );
-    expect(screen.getByLabelText("This run's progress")).toHaveTextContent(/last activity ·/);
-  });
-
-  it("stays off the canvas when no run is named", () => {
-    render(
-      <Board
-        model={PROGRESS_MODEL}
-        board={emptyBoard()}
-        selectedNode={null}
-        onSelectNode={() => {}}
-        onChange={() => {}}
-        {...REST}
-      />,
-    );
-    expect(screen.queryByLabelText("This run's progress")).not.toBeInTheDocument();
-  });
-});
-
 describe("node evidence", () => {
   it("names the runtime as recorder and keeps the event address", () => {
     render(<Board model={{ ...MODEL, nodes: [...MODEL.nodes, { id: "draft", state: "unknown", touches: 0, lastEventAt: null, history: [], reopened: null }] }} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
@@ -329,94 +259,6 @@ describe("reopened after done", () => {
   });
 });
 
-/** The lint strip: the model's own accusations on the board's face, each citing the log. */
-describe("the lint strip", () => {
-  it("names each disagreement and offers the accused sequence to copy", () => {
-    const model: GraphModel = {
-      ...MODEL,
-      lint: [
-        { kind: "done-without-evidence", detail: "deploy settled as succeeded carrying no evidence", sequence: 7 },
-        { kind: "orphan-edge", detail: "the graph file draws a → ghost, but ghost is not on this run's roster", sequence: null },
-      ],
-    };
-    render(
-      <Board
-        model={model}
-        board={emptyBoard()}
-        selectedNode={null}
-        onSelectNode={() => {}}
-        onChange={() => {}}
-        runId="demo"
-        {...REST}
-      />,
-    );
-    const strip = screen.getByLabelText("Disagreements the log attests");
-    expect(strip).toHaveTextContent("deploy settled as succeeded carrying no evidence");
-    expect(strip).toHaveTextContent("ghost is not on this run's roster");
-    // The accused event is a copyable coordinate; the file's edge has no sequence to cite.
-    expect(screen.getByTitle("Copy demo#7")).toBeInTheDocument();
-  });
-
-  /** #1083: on the same completed demonstration run the canvas said an orange "6 log
-   * disagreements" while the overview said the neutral "Demonstration run · 6 log notes". The
-   * canvas now speaks as the overview does; a real run keeps the amber strip. */
-  it("uses the overview's neutral note on a demonstration run, and amber on a real run", () => {
-    const model: GraphModel = { ...MODEL, lint: [{ kind: "done-without-evidence", detail: "deploy settled with no evidence", sequence: 7 }, { kind: "done-without-evidence", detail: "tests settled with no evidence", sequence: 8 }] };
-    const demo = render(<Board model={model} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} runId="demo" demonstration {...REST} />);
-    const note = demo.container.querySelector(".canvas-lint") as HTMLElement;
-    expect(note).toHaveClass("canvas-note");
-    expect(note.querySelector("summary")).toHaveTextContent("Demonstration run · 2 log notes");
-    expect(screen.queryByText(/log disagreements/)).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Log notes on a demonstration run")).toHaveTextContent("deploy settled with no evidence");
-    demo.unmount();
-
-    const real = render(<Board model={model} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} runId="real" {...REST} />);
-    const strip = real.container.querySelector(".canvas-lint") as HTMLElement;
-    expect(strip).not.toHaveClass("canvas-note");
-    expect(strip.querySelector("summary")).toHaveTextContent("2 log disagreements");
-    expect(screen.getByLabelText("Disagreements the log attests")).toBeInTheDocument();
-  });
-
-  /** Codex on PR #1091: the canvas downgrade applies to the fixture-explained kind only. With one
-   * of each kind on a demonstration run the strip stays amber, counts the two real disagreements,
-   * lists them first, and counts the explained one separately. */
-  it("keeps the amber strip for real disagreements on a demonstration run", () => {
-    const model: GraphModel = {
-      ...MODEL,
-      lint: [
-        { kind: "done-without-evidence", detail: "docs settled as succeeded carrying no evidence", sequence: 8 },
-        { kind: "reopened-after-done", detail: "tests was reopened after it settled by codex", sequence: 11 },
-        { kind: "orphan-edge", detail: "the graph file draws plan → ghost, but ghost is not on this run's roster", sequence: null },
-      ],
-    };
-    const { container } = render(<Board model={model} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} runId="demo" demonstration {...REST} />);
-    const strip = container.querySelector(".canvas-lint") as HTMLElement;
-    expect(strip).not.toHaveClass("canvas-note");
-    expect(strip.querySelector("summary")).toHaveTextContent("2 log disagreements · 1 demonstration note");
-    const list = screen.getByLabelText("Disagreements the log attests");
-    expect(screen.queryByLabelText("Log notes on a demonstration run")).not.toBeInTheDocument();
-    const items = [...list.querySelectorAll("li")].map((item) => item.textContent ?? "");
-    expect(items).toHaveLength(3);
-    expect(items[0]).toContain("reopened after it settled");
-    expect(items[1]).toContain("ghost is not on this run's roster");
-    expect(items[2]).toContain("carrying no evidence");
-  });
-
-  it("stays entirely off a clean board", () => {
-    render(
-      <Board
-        model={MODEL}
-        board={emptyBoard()}
-        selectedNode={null}
-        onSelectNode={() => {}}
-        onChange={() => {}}
-        {...REST}
-      />,
-    );
-    expect(screen.queryByLabelText("Disagreements the log attests")).not.toBeInTheDocument();
-  });
-});
-
 describe("what the board refuses to imply", () => {
   it("keeps the directly opened node framed after a navigator choice and resize", async () => {
     let resize = () => {};
@@ -427,7 +269,7 @@ describe("what the board refuses to imply", () => {
     });
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, right: 900, bottom: 700, width: 900, height: 700, toJSON() {} });
     try {
-      const { container } = render(<Board model={MODEL} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="resize-test" {...REST} />);
+      const { container } = render(<Board model={MODEL} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} {...REST} />);
       const transform = () => (container.querySelector(".world") as HTMLElement).style.transform;
       await userEvent.selectOptions(screen.getByRole("combobox", { name: "Find on board" }), "node:implementation");
       const expected = transform();
@@ -500,15 +342,6 @@ describe("canvas graph evidence boundaries", () => {
 });
 
 
-it("does not intercept Space on a disclosure", () => {
-  render(<Board model={{ ...MODEL, lint: [{ kind: "orphan-edge", detail: "Missing node", sequence: null }] }} board={emptyBoard()} selectedNode={null} onSelectNode={() => {}} onChange={() => {}} {...REST} />);
-  const summary = document.querySelector(".canvas-lint summary") as HTMLElement;
-  summary.focus();
-  expect(fireEvent.keyDown(summary, { key: " " })).toBe(true);
-  expect(screen.getByRole("button", { name: "pan" })).toHaveAttribute("aria-pressed", "false");
-});
-
-
 /**
  * #1077: the blind judge opened the free canvas and saw 2 of 7 cards - an 80% floor on the
  * first framing and a one-column stack. First framing and Organize FIT THE CONTENT, and the
@@ -545,7 +378,7 @@ describe("framing a run with lanes", () => {
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, right: viewport.width, bottom: viewport.height, width: viewport.width, height: viewport.height, toJSON() {} });
     try {
-      const { container } = render(<Board model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} />);
+      const { container } = render(<Board model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} {...REST} />);
       const first = zoomOf(container);
       expect(first).toBeGreaterThanOrEqual(0.75);
       const cards = onScreen(container, viewport);
@@ -570,7 +403,7 @@ describe("framing a run with lanes", () => {
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, top: 0, left: 0, right: viewport.width, bottom: viewport.height, width: viewport.width, height: viewport.height, toJSON() {} });
     try {
-      const { container } = render(<Board model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} />);
+      const { container } = render(<Board model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} {...REST} />);
       expect(zoomOf(container)).toBeGreaterThanOrEqual(0.75);
       expect(onScreen(container, viewport).every((card) => card.inside)).toBe(true);
     } finally {
@@ -584,24 +417,23 @@ describe("framing a run with lanes", () => {
  * #1083 F8, second pass (orchestrator verification at 1280x720): first framing and `fit` held 75%,
  * but the cards' lower third sat under the canvas toolbar row and the header chrome ate the top.
  * Framing now measures the chrome that floats over the sheet and frames inside the band between.
- * Here the sheet is 683x360; a lint strip covers its top 40px and the toolbar its bottom 60px, as
+ * Here the sheet is 683x360; a header covers its top 40px and the toolbar its bottom 60px, as
  * laid out on the narrow scene. No framed card may cross into either, and the first rank is whole.
  */
 describe("framing around the canvas chrome", () => {
   const SIX: GraphModel = {
     ...MODEL,
-    lint: [{ kind: "done-without-evidence", detail: "no evidence", sequence: 3 }],
     nodes: ["docs", "implement", "map_repository", "plan", "review", "tests"].map((id) => ({ id, state: "succeeded" as const, touches: 0, lastEventAt: null, history: [], reopened: null })),
   };
   const SHEET = { top: 300, bottom: 660, left: 0, right: 683 };
-  const LINT = { top: 300, bottom: 340, left: 16, right: 260 };
+  const STORY = { top: 300, bottom: 340, left: 16, right: 260 };
   const TOOLS = { top: 600, bottom: 652, left: 12, right: 640 };
   const rectOf = (r: { top: number; bottom: number; left: number; right: number }) => ({ ...r, x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top, toJSON() {} });
   function mockLayout() {
     vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
     return vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
       if (this.classList.contains("sheet")) return rectOf(SHEET) as DOMRect;
-      if (this.classList.contains("canvas-lint")) return rectOf(LINT) as DOMRect;
+      if (this.classList.contains("canvas-story")) return rectOf(STORY) as DOMRect;
       if (this.classList.contains("tools")) return rectOf(TOOLS) as DOMRect;
       return rectOf({ top: 0, bottom: 0, left: 0, right: 0 }) as DOMRect;
     });
@@ -616,14 +448,14 @@ describe("framing around the canvas chrome", () => {
     });
     return { zoom, cards };
   }
-  const crosses = (card: { top: number; bottom: number; left: number; right: number }, piece: typeof LINT) =>
+  const crosses = (card: { top: number; bottom: number; left: number; right: number }, piece: typeof STORY) =>
     card.left < piece.right && piece.left < card.right && card.top < piece.bottom && piece.top < card.bottom;
   const onSheet = (card: { top: number; bottom: number }) => card.bottom > SHEET.top && card.top < SHEET.bottom;
 
-  it("frames the cards inside the band the lint strip and the toolbar leave, on first framing and on fit", () => {
+  it("frames the cards inside the band the header and the toolbar leave, on first framing and on fit", () => {
     const rect = mockLayout();
     try {
-      const { container } = render(<Board model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="exec_feature" {...REST} />);
+      const { container } = render(<Board model={SIX} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} {...REST} />);
       for (const pass of ["first framing", "fit"]) {
         if (pass === "fit") fireEvent.click(screen.getByRole("button", { name: "fit" }));
         const { zoom, cards } = framed(container);
@@ -637,13 +469,13 @@ describe("framing around the canvas chrome", () => {
         for (const card of firstRank) {
           expect(onSheet(card), pass).toBe(true);
           expect(crosses(card, TOOLS), `${pass}: a framed card sits under the toolbar`).toBe(false);
-          expect(crosses(card, LINT), `${pass}: a framed card sits under the lint strip`).toBe(false);
-          expect(card.top, pass).toBeGreaterThanOrEqual(LINT.bottom);
+          expect(crosses(card, STORY), `${pass}: a framed card sits under the header`).toBe(false);
+          expect(card.top, pass).toBeGreaterThanOrEqual(STORY.bottom);
           expect(card.bottom, pass).toBeLessThanOrEqual(TOOLS.top);
         }
-        // Nothing sits under the lint strip at the top: later ranks only continue downward.
+        // Nothing sits under the header at the top: later ranks only continue downward.
         for (const card of cards.filter(onSheet)) {
-          expect(crosses(card, LINT), `${pass}: a card sits under the lint strip`).toBe(false);
+          expect(crosses(card, STORY), `${pass}: a card sits under the header`).toBe(false);
         }
       }
     } finally {
@@ -686,7 +518,7 @@ describe("first framing", () => {
   it("opens with every card on screen, laid out across the width", () => {
     const rect = mockViewport();
     try {
-      const { container } = render(<Board model={SEVEN} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="seven" {...REST} />);
+      const { container } = render(<Board model={SEVEN} board={emptyBoard()} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} {...REST} />);
       const { rects, zoom } = cardsOnScreen(container);
       expect(rects).toHaveLength(7);
       expect(rects.every(inside)).toBe(true);
@@ -704,9 +536,9 @@ describe("first framing", () => {
     const rect = mockViewport();
     try {
       let board: BoardState = { ...emptyBoard(), positions: { a: { x: 4000, y: 3000 } } };
-      const view = render(<Board model={SEVEN} board={board} selectedNode={null} onSelectNode={vi.fn()} onChange={(next) => { board = next; }} runId="seven" {...REST} />);
+      const view = render(<Board model={SEVEN} board={board} selectedNode={null} onSelectNode={vi.fn()} onChange={(next) => { board = next; }} {...REST} />);
       fireEvent.click(screen.getByRole("button", { name: "Organize" }));
-      view.rerender(<Board model={SEVEN} board={board} selectedNode={null} onSelectNode={vi.fn()} onChange={(next) => { board = next; }} runId="seven" {...REST} />);
+      view.rerender(<Board model={SEVEN} board={board} selectedNode={null} onSelectNode={vi.fn()} onChange={(next) => { board = next; }} {...REST} />);
       expect(board.positions).toEqual({});
       const { rects } = cardsOnScreen(view.container);
       expect(rects.every(inside)).toBe(true);
@@ -720,7 +552,7 @@ describe("first framing", () => {
   it("still honours a position the operator saved", () => {
     const rect = mockViewport();
     try {
-      const { container } = render(<Board model={SEVEN} board={{ ...emptyBoard(), positions: { a: { x: 4000, y: 3000 } } }} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} runId="seven" {...REST} />);
+      const { container } = render(<Board model={SEVEN} board={{ ...emptyBoard(), positions: { a: { x: 4000, y: 3000 } } }} selectedNode={null} onSelectNode={vi.fn()} onChange={vi.fn()} {...REST} />);
       const moved = [...container.querySelectorAll<HTMLElement>("article.node")].find((card) => card.style.left === "4000px");
       expect(moved).toBeDefined();
     } finally {

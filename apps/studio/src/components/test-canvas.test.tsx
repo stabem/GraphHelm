@@ -12,7 +12,7 @@ const frames: TestFrame[] = [
 ];
 
 function setup(selected = 0, frameUrl = (id: string) => (id === "a" ? "blob:a" : null)) {
-  const p = { frames, selected, onSelect: vi.fn(), frameUrl, onMarkSafe: vi.fn(), onSendBack: vi.fn() };
+  const p = { frames, selected, onSelect: vi.fn(), frameUrl, onMarkSafe: vi.fn() };
   render(<TestCanvas {...p} />);
   return p;
 }
@@ -95,17 +95,15 @@ describe("TestCanvas", () => {
     expect(p.onSelect).toHaveBeenCalledWith(0);
   });
 
-  it("a frame that waits for you offers mark safe and send back", async () => {
+  it("a frame that waits for you offers mark safe", async () => {
     const p = setup(1);
     expect(screen.getByText("No frame recorded for this step")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "I watched it — mark safe" }));
-    await userEvent.click(screen.getByRole("button", { name: "Send back" }));
     expect(p.onMarkSafe).toHaveBeenCalledWith("b");
-    expect(p.onSendBack).toHaveBeenCalledWith("b");
   });
 
-  it("without a send-back handler, Send back is disabled and says why", () => {
-    render(<TestCanvas frames={frames} selected={1} onSelect={vi.fn()} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+  it("Send back is disabled and says why", () => {
+    setup(1);
     expect(screen.getByRole("button", { name: "Send back — not available yet" })).toBeDisabled();
   });
 

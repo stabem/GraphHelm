@@ -66,7 +66,7 @@ function slotBelongsToTask(t: TaskState, owner: string | null, lanes: Lane[]): b
 export function reviewerWait(t: Pick<TaskState, "step" | "headSha" | "currentReviewer" | "reviewContextSequence" | "reviewActivityRevision"> & { reviewActivity?: TaskState["reviewActivity"]; blockedBy?: unknown }, lanes: Lane[], now: number): { current: boolean; text: string } | null {
   const a = t.reviewActivity;
   if (!a || a.activity !== "waiting" || (t.step !== "review" && t.step !== "merge") || t.blockedBy
-    || a.reviewer !== t.currentReviewer || a.headSha !== t.headSha || a.reviewContextSequence !== t.reviewContextSequence
+    || a.reviewer !== t.currentReviewer || !sameHead(a.headSha, t.headSha) || a.reviewContextSequence !== t.reviewContextSequence
     || a.revision !== t.reviewActivityRevision || typeof a.reason !== "string" || !a.reason.trim()) return null;
   const at = Date.parse(a.occurredAt), budget = lanes.find((lane) => lane.lane === a.reviewer)?.silentAfterMs;
   if (!Number.isFinite(at)) return null;

@@ -531,6 +531,10 @@ it("renders the real reviewer wait projection and expires its reason at the serv
   const row = within(screen.getByRole("list", { name: "Agent board" })).getByRole("listitem", { name: "review-reader · Waiting · merge" });
   expect(row).toHaveTextContent(`Waiting: ${activity.reason}`);
   expect(row).toHaveTextContent("#17");
+  // Existing UI head compatibility: a short display head still names the signed full head.
+  view.rerender(<LanesTimeline {...props} tasks={[toMissionTask({ ...task, headSha: task.headSha!.slice(0, 8) })]}
+    now={at + 1} lanes={laneBars(records, projection, at + 1, props.windowMs)} />);
+  expect(row).toHaveTextContent(`Waiting: ${activity.reason}`);
   const boundary = at + projection.liveness!.budgets.silentAfterSeconds * 1000;
   view.rerender(<LanesTimeline {...props} now={boundary - 1} lanes={laneBars(records, projection, boundary - 1, props.windowMs)} />);
   expect(row).toHaveTextContent(`Waiting: ${activity.reason}`);

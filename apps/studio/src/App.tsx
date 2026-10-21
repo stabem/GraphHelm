@@ -2324,7 +2324,9 @@ export default function App({
               >
                 {runLabel(selected, teamRun ? { objective: null, teamWork: true } : briefing)}
               </button>
-            </>) : (
+            </>) : draft !== null ? (
+              <button type="button" className="ghost" onClick={() => select("")}>Back to project</button>
+            ) : (
               <span className="meta">pick a run, or start one</span>
             )}
             {selected && <p className="run-selection-identity" aria-label="Selected run identity">Project: {project ?? "this runtime"} / Run: {selected}</p>}
@@ -2462,7 +2464,6 @@ export default function App({
               />
             </aside>
             <div className="scene">
-              <button type="button" className="ghost" onClick={() => select("")}>Back to project</button>
               <Board
                 model={draftModel}
                 board={board}

@@ -641,7 +641,11 @@ def _mcp_stdio() -> int:
                     continue
                 continue
             if method == "initialize":
-                manifest = json.loads(Path(__file__).resolve().parent.parent.joinpath("plugin.json").read_text(encoding="utf-8"))
+                package = Path(__file__).resolve().parent.parent
+                manifest_path = package / "plugin.json"
+                if not manifest_path.is_file():
+                    manifest_path = package / ".codex-plugin" / "plugin.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 result = {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {"tools": {}},
                           "serverInfo": {"name": "graphhelm-task-handoff", "version": manifest["version"]}}
                 response = _mcp_result(request_id, result)

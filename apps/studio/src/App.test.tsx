@@ -4801,7 +4801,7 @@ describe("the run it just started", () => {
     expect(client.startTask).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Start a team run" }));
     await userEvent.type(await screen.findByLabelText(/what should this task do/i), OBJECTIVE);
-    await userEvent.click(screen.getByRole("button", { name: "Back to project" }));
+    await userEvent.click(within(document.querySelector(".topbar") as HTMLElement).getByRole("button", { name: "Back to project" }));
     expect(screen.queryByRole("heading", { name: "New task" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Start a team run" }));
     expect(await screen.findByLabelText(/what should this task do/i)).toHaveValue(OBJECTIVE);

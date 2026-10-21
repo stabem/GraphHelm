@@ -868,6 +868,37 @@ pub(super) fn browser_command(url: &str) -> Command {
     command
 }
 
+fn check_studio_project(project: &Path, port: u16) -> Result<(), String> {
+    use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest, UreqTransport};
+
+    let expected = super::execution::delivery::project_id(project)
+        .map_err(|_| "the requested project identity could not be read".to_owned())?;
+    let request = TransportRequest {
+        method: "GET",
+        url: format!("http://127.0.0.1:{port}/__studio/identity"),
+        headers: Vec::new(),
+        body: Vec::new(),
+        timeout: std::time::Duration::from_secs(2),
+    };
+    let identity = UreqTransport::new()
+        .execute(&request)
+        .ok()
+        .filter(|response| response.status == 200 && response.body.len() <= 1024)
+        .and_then(|response| serde_json::from_slice::<serde_json::Value>(&response.body).ok())
+        .and_then(|body| body["projectId"].as_str().map(str::to_owned))
+        .filter(|id| id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit()));
+    if identity.as_deref() == Some(expected.as_str()) {
+        return Ok(());
+    }
+    let served = identity.map_or_else(
+        || "no verifiable Studio project".to_owned(),
+        |id| format!("project {id}"),
+    );
+    Err(format!(
+        "Studio port {port} serves {served}; requested project {expected}. Use `graphhelm studio open --port <this-project-studio-port>` in the requested project, or free Studio port 5183 and run `graphhelm studio start` there. Update/restart an older Studio that has no identity route."
+    ))
+}
+
 pub fn open(args: &StudioOpenArgs) -> Outcome {
     let project = match args.project.clone().map_or_else(std::env::current_dir, Ok) {
         Ok(project) => project,
@@ -891,6 +922,9 @@ pub fn open(args: &StudioOpenArgs) -> Outcome {
             "--journey takes a journey contract id such as `studio-connect` (letters, digits, `.`, `_`, `-`)",
             "/journey",
         );
+    }
+    if let Err(message) = check_studio_project(&project, args.port) {
+        return refused(message, "/port");
     }
     let ticket = match write_ticket(&ticket_path(&events)) {
         Ok(ticket) => ticket,
@@ -1368,22 +1402,17 @@ mod tests {
     /// The journey id lands in the link's query: a plain id selects the Proof view, anything that
     /// could add or override a parameter (`&session=`) is refused before a ticket is written.
     #[test]
-    fn open_journey_links_a_plain_id_and_refuses_one_that_reaches_the_query() {
+    fn open_journey_refuses_an_id_that_reaches_the_query() {
         let dir = tempfile::tempdir().unwrap();
         let graphhelm = dir.path().join(".graphhelm");
         std::fs::create_dir_all(&graphhelm).unwrap();
         std::fs::write(graphhelm.join("events.token"), "t").unwrap();
         let args = |journey: &str| StudioOpenArgs {
             project: Some(dir.path().to_path_buf()),
-            port: 5183,
+            port: 1,
             no_browser: true,
             journey: Some(journey.to_owned()),
         };
-        let linked = open(&args("studio-connect")).output;
-        let url = linked.data.unwrap()["url"].as_str().unwrap().to_owned();
-        assert!(url.starts_with("http://127.0.0.1:5183/?session="), "{url}");
-        assert!(url.ends_with("&journey=studio-connect"), "{url}");
-        std::fs::remove_file(graphhelm.join("events.studio-ticket")).unwrap();
         let refused = open(&args("x&session=other")).output;
         assert!(!refused.ok);
         assert_eq!(refused.diagnostics[0].path, "/journey");

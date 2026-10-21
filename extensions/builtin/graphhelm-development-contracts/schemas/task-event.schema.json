@@ -2,8 +2,91 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/task-event.schema.json",
   "title": "Task Event",
-  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.released, task.heartbeat, task.pr_opened, task.review_assigned, task.review_verdict, task.merged, task.closed, task.critic_verdict, task.queued, and the owner's task.lane_retired); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
+  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.released, task.heartbeat, task.pr_opened, task.review_assigned, task.review_verdict, task.review_activity, task.merged, task.closed, task.critic_verdict, task.queued, and the owner's task.lane_retired); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
   "oneOf": [
+    {
+      "title": "task.review_activity",
+      "description": "A deliberate current-reviewer statement bound to its exact current head and review generation; never a lease renewal or verdict.",
+      "type": "object",
+      "required": [
+        "schema",
+        "taskId",
+        "revision",
+        "at",
+        "repo",
+        "pr",
+        "headSha",
+        "reviewer",
+        "reviewContextSequence",
+        "activity"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {
+          "const": "graphhelm-task-event-v1"
+        },
+        "taskId": {
+          "$ref": "#/$defs/taskId"
+        },
+        "revision": {
+          "$ref": "#/$defs/positive"
+        },
+        "at": {
+          "$ref": "#/$defs/at"
+        },
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "pr": {
+          "$ref": "#/$defs/positive"
+        },
+        "headSha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "reviewer": {
+          "$ref": "#/$defs/actor"
+        },
+        "reviewContextSequence": {
+          "$ref": "#/$defs/positive"
+        },
+        "activity": {
+          "enum": [
+            "waiting",
+            "resumed"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*[^\\s\\u0000-\\u001f\\u007f-\\u009f][^\\u0000-\\u001f\\u007f-\\u009f]*$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "activity": {
+                "const": "waiting"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reason"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "reason"
+              ]
+            }
+          }
+        }
+      ]
+    },
     {
       "title": "task.claimed",
       "type": "object",

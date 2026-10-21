@@ -1,3 +1,4 @@
+import reviewActivityRoute from "../../../../core/execution/tests/fixtures/tasks-review-activity-route.json";
 import { describe, expect, it } from "vitest";
 import { TEST_FREE_MS, TEST_SILENT_MS, laneBarsOf } from "../test/task-fold";
 
@@ -504,4 +505,71 @@ it("keeps real implementation and build-slot precedence over the pending merge o
     lanes={laneBars(records, fold, at, props.windowMs)} />);
   await fastUserEvent().click(screen.getByRole("button", { name: "Waiting 1" }));
   expect(within(board).getByRole("listitem", { name: `${reviewer} · Waiting for build · proving · #1013` })).toBeInTheDocument();
+});
+
+
+it("renders the real reviewer wait projection and expires its reason at the served boundary", async () => {
+  // Advancing frontend time expires text, not the captured Runtime liveness verdict.
+  const projection = tasksReply(reviewActivityRoute)!;
+  expect(projection).not.toBeNull();
+  const task = projection.tasks[0]!;
+  const source = reviewActivityRoute.tasks[0]!;
+  const activity = source.reviewActivity;
+  expect(projection.routes.find((route) => route.sequence === activity.sequence)?.slice).toBe(projection.slices[0]!.id);
+  expect(projection.records.find((record) => record.sequence === activity.sequence)?.kind).toBe("task.review_activity");
+  expect(task.step).toBe("merge");
+  expect(task.lane).toBe("review-author");
+  expect(task.currentReviewer).toBe("review-reader");
+  expect(source.reviewContextSequence).toBe(activity.reviewContextSequence);
+  expect(source.reviewActivityRevision).toBe(activity.revision);
+  const at = Date.parse(activity.occurredAt);
+  const records = projection.records.map((record) => ({ ...record, at: record.occurredAt! }));
+  const props = { windowMs: 4 * 3_600_000, seenActors: [task.currentReviewer!], tasks: [toMissionTask(task)] };
+  const view = render(<LanesTimeline {...props} now={at + 1} lanes={laneBars(records, projection, at + 1, props.windowMs)} />);
+  expect(screen.getByRole("button", { name: "Working 0" })).toBeInTheDocument();
+  await fastUserEvent().click(screen.getByRole("button", { name: "Waiting 1" }));
+  const row = within(screen.getByRole("list", { name: "Agent board" })).getByRole("listitem", { name: "review-reader · Waiting · merge" });
+  expect(row).toHaveTextContent(`Waiting: ${activity.reason}`);
+  expect(row).toHaveTextContent("#17");
+  const boundary = at + projection.liveness!.budgets.silentAfterSeconds * 1000;
+  view.rerender(<LanesTimeline {...props} now={boundary - 1} lanes={laneBars(records, projection, boundary - 1, props.windowMs)} />);
+  expect(row).toHaveTextContent(`Waiting: ${activity.reason}`);
+  view.rerender(<LanesTimeline {...props} now={boundary} lanes={laneBars(records, projection, boundary, props.windowMs)} />);
+  expect(row).not.toHaveTextContent(`Waiting: ${activity.reason}`);
+  expect(row).toHaveTextContent(/last reported wait/i);
+  // Controlled invalidations of the captured task binding, retaining the Runtime liveness input.
+  for (const changed of [
+    { reviewActivity: null },
+    { reviewActivity: { ...task.reviewActivity!, activity: "resumed" as const } },
+    { reviewContextSequence: task.reviewContextSequence! + 1 },
+    { reviewActivityRevision: task.reviewActivityRevision! + 1 },
+    { headSha: "f".repeat(40) },
+  ]) {
+    view.rerender(<LanesTimeline {...props} tasks={[toMissionTask({ ...task, ...changed })]} now={at + 1}
+      lanes={laneBars(records, projection, at + 1, props.windowMs)} />);
+    expect(row).not.toHaveTextContent(`Waiting: ${activity.reason}`);
+    expect(row).not.toHaveTextContent(/last reported wait/i);
+  }
+  // Controlled N/10N histories derived from the captured record/binding. This measures the
+  // public projection -> laneBars -> real render path, not Runtime authentication/liveness.
+  const seed = projection.records.find((record) => record.sequence === activity.sequence)!;
+  for (const count of [100, 1000]) {
+    const added = Array.from({ length: count }, (_, index) => ({ ...seed, sequence: activity.sequence + index,
+      revision: index + 1 }));
+    const last = added.at(-1)!;
+    const scaledTask = { ...task, lastSequence: last.sequence, reviewActivityRevision: count,
+      reviewActivity: { ...task.reviewActivity!, sequence: last.sequence, revision: count } };
+    const expanded = { ...projection, tasks: [scaledTask],
+      records: [...projection.records.filter((record) => record.sequence !== activity.sequence), ...added],
+      slices: projection.slices.map((slice) => ({ ...slice, state: scaledTask })),
+      routes: [...projection.routes.filter((route) => route.sequence !== activity.sequence),
+        ...added.map((record) => ({ sequence: record.sequence, slice: projection.slices[0]!.id }))] };
+    const started = performance.now();
+    const parsed = tasksReply(expanded)!;
+    const bars = laneBars(parsed.records.map((record) => ({ ...record, at: record.occurredAt! })), parsed, at + 1, props.windowMs);
+    view.rerender(<LanesTimeline {...props} tasks={parsed.tasks.map(toMissionTask)} now={at + 1} lanes={bars} />);
+    console.info(`review_activity controlled projection/render records=${count} tasks=1 lanes=${bars.length} elapsed_ms=${(performance.now() - started).toFixed(3)}`);
+    expect(row).toHaveTextContent(`Waiting: ${activity.reason}`);
+    expect(screen.getByRole("button", { name: "Working 0" })).toBeInTheDocument();
+  }
 });

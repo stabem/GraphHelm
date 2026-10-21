@@ -1,6 +1,7 @@
 import type { Bot } from "./team";
 import { laneBudgets, type Lane, type LaneBar } from "./lane-bars";
 import type { MissionTask } from "./mission";
+import { reviewerWait } from "./stage-health";
 import { sameHead } from "./heads";
 import { ordinal, slotDuration, slotStatus, type SlotView } from "./slots";
 
@@ -112,7 +113,10 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
     const openBars = allOpen.filter((b) => !staleClaim(b) && !endedClaim(b)
       && !(b.kind === "implement" && awaiting.some((p) => b.label === `#${p}`)));
     if (!openBars.some((b) => b.kind === "implement")) {
+      const latestReview = openBars.filter((bar) => bar.kind === "review")
+        .reduce<LaneBar | null>((latest, bar) => latest === null || (bar.since ?? bar.start) > (latest.since ?? latest.start) ? bar : latest, null);
       const rt = tasks.find((t) => {
+        if (latestReview && latestReview.label !== `#${t.pr}` && latestReview.taskId !== t.key) return false;
         const reviewer = t.step === "merge" && t.currentReviewer === undefined
           ? t.reviewers[t.reviewers.length - 1] : t.currentReviewer;
         return t.step !== "merged" && t.pr !== null && !!reviewer && ids.includes(reviewer)
@@ -121,9 +125,10 @@ export function agentBoard(bots: Bot[], lanes: Lane[], tasks: MissionTask[], now
       if (rt) {
         const last0 = delivered.get(name) ?? (lane ? delivered.get(lane.lane) : undefined) ?? null;
         const merge = rt.step === "merge";
+        const wait = reviewerWait(rt, lanes, now);
         return {
-          name, status: merge && lane?.silent ? "silent" : "waiting", stage: merge ? "merge" : "review", pr: rt.pr, title: rt.title,
-          label: merge ? "Awaiting merge" : "Reviewing", doing: `${merge ? "awaiting merge" : "reviewing"} #${rt.pr} ${rt.title}`,
+          name, status: lane?.silent ? "silent" : "waiting", stage: merge ? "merge" : "review", pr: rt.pr, title: rt.title,
+          label: merge ? "Awaiting merge" : "Reviewing", doing: `${merge ? "awaiting merge" : "reviewing"} #${rt.pr} ${rt.title}${wait ? ` · ${wait.text}` : ""}`,
           href: rt.repoUrl ? `${rt.repoUrl}/pull/${rt.pr}` : null, lastDelivered: last0, ...when,
         };
       }

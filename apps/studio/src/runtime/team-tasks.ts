@@ -156,7 +156,7 @@ const TASK_EVENT_SCHEMA = "graphhelm-task-event-v1";
 const VERDICTS = ["APPROVE", "APPROVE-WITH-RISK", "BLOCK"] as const;
 type Verdict = typeof VERDICTS[number];
 
-export type TaskEventKind = "task.claimed" | "task.planned" | "task.released" | "task.heartbeat" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged" | "task.closed" | "task.critic_verdict" | "task.queued" | "task.lane_retired";
+export type TaskEventKind = "task.claimed" | "task.planned" | "task.released" | "task.heartbeat" | "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.review_activity" | "task.merged" | "task.closed" | "task.critic_verdict" | "task.queued" | "task.lane_retired";
 
 /** #467: one round of the blind design critic, as its `task.critic_verdict` record states it. */
 export interface CriticRound { round: number; score: number; passScore: number; maxRounds: number; verdict: "pass" | "revise" | "exhausted" }
@@ -175,6 +175,9 @@ export interface TaskEventRecord {
   headSha?: string;
   journeys?: string[];
   reviewer?: string;
+  activity?: "waiting" | "resumed";
+  reviewContextSequence?: number;
+  revision?: number;
   verdict?: Verdict;
   commentUrl?: string;
   /** `owner/name` of the GitHub repository, from the record that opens the task (#420). */
@@ -358,6 +361,20 @@ export function parseTaskEvent(kind: string, actorId: string, description: strin
       const reviewer = text(document.reviewer, 128);
       return pr !== null && headSha !== null && reviewer !== null ? { ...base, kind, pr, headSha, reviewer } : null;
     }
+    case "task.review_activity": {
+      const repo = repository(document.repo), pr = count(document.pr);
+      const context = count(document.reviewContextSequence), revision = count(document.revision);
+      const headSha = typeof document.headSha === "string" && /^[0-9a-f]{40}$/.test(document.headSha) ? document.headSha : null;
+      const activity = document.activity;
+      const reason = document.reason;
+      if (!Object.keys(document).every((key) => ["schema", "taskId", "revision", "at", "repo", "pr", "headSha", "reviewer", "reviewContextSequence", "activity", "reason"].includes(key))
+        || repo === null || repo === false || pr === null || context === null || revision === null || headSha === null
+        || document.reviewer !== actorId || text(actorId, 128) === null) return null;
+      if (activity === "waiting" && (typeof reason !== "string" || !reason.trim() || Array.from(reason).length > 500 || /\p{Cc}/u.test(reason))) return null;
+      if (activity !== "waiting" && activity !== "resumed" || activity === "resumed" && reason !== undefined) return null;
+      return { ...base, kind, repo, pr, headSha, reviewer: actorId, reviewContextSequence: context, revision, activity,
+        ...(typeof reason === "string" ? { reason } : {}) };
+    }
     case "task.review_verdict": {
       const pr = count(document.pr);
       const headSha = sha(document.headSha);
@@ -421,6 +438,11 @@ export type StrayVerdict =
   | { reason: "unrecorded"; reviewer: string; verdict: string; headSha: string; record: TaskEventRecord }
   | { reason: "superseded"; reviewer: string; verdict: string; headSha: string; supersededBy: string };
 
+export interface ReviewActivity {
+  activity: "waiting" | "resumed"; reviewer: string; headSha: string; reviewContextSequence: number;
+  revision: number; sequence: number; occurredAt: string; reason?: string;
+}
+
 export interface TaskState {
   /** #460: one slice of a task, unique in the fold: its PR once one is recorded, else its claim. */
   key: string;
@@ -435,6 +457,9 @@ export interface TaskState {
   assignedReviewers?: string[];
   /** Assignment on the current head only; older reviewers remain in `reviewers`. */
   currentReviewer?: string | null;
+  reviewContextSequence?: number;
+  reviewActivityRevision?: number;
+  reviewActivity?: ReviewActivity | null;
   /** Assignment for an unseen head, waiting for the author's matching PR opening. */
   pendingReviewer?: { headSha: string; reviewer: string } | null;
   headSha: string | null;
@@ -590,12 +615,35 @@ function sliceFor(slices: TaskState[], event: TaskEventRecord): TaskState {
 
 /** Folds records in sequence order into one state per task slice (spec §7): a new head re-arms review
  * but keeps the red edge until a verdict lands on a newer head than the BLOCK's. */
+function resetReviewContext(state: TaskState, sequence: number): void {
+  state.reviewContextSequence = sequence;
+  state.reviewActivityRevision = 0;
+  delete state.reviewActivity;
+}
+
 export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: TaskEventRecord, slice: TaskState) => void): TaskState[] {
   const slices: TaskState[] = [];
   const ended = new Set<TaskState>();
   const firstPrOpening = new Map<TaskState, number>();
   const blockersBySlice = new Map<TaskState, Map<string, { reviewer: string; headSha: string; commentUrl: string; sequence: number }>>();
   for (const event of [...records].sort((a, b) => a.sequence - b.sequence)) {
+    if (event.kind === "task.review_activity") {
+      const candidates = slices.filter((state) => state.taskId === event.taskId && state.pr === event.pr
+        && state.repoUrl === `https://github.com/${event.repo}` && state.headSha === event.headSha
+        && state.currentReviewer === event.actorId && state.reviewContextSequence === event.reviewContextSequence
+        && (state.reviewActivityRevision ?? 0) < (event.revision ?? 0) && state.releasedBy === undefined
+        && !ended.has(state) && (state.step === "review" || state.step === "merge") && state.blockedBy === null);
+      if (candidates.length === 1 && event.reviewer === event.actorId && event.occurredAt && Number.isFinite(Date.parse(event.occurredAt))) {
+        const state = candidates[0]!;
+        state.reviewActivityRevision = event.revision!;
+        state.reviewActivity = { activity: event.activity!, reviewer: event.actorId,
+          headSha: event.headSha!, reviewContextSequence: event.reviewContextSequence!, revision: event.revision!,
+          sequence: event.sequence, occurredAt: event.occurredAt, ...(event.reason === undefined ? {} : { reason: event.reason }) };
+        state.lastSequence = event.sequence;
+        onRoute?.(event, state);
+      }
+      continue;
+    }
     if (event.kind === "task.heartbeat") {
       const claim = slices.filter((slice) => slice.taskId === event.taskId && slice.lane === event.lane
         && slice.releasedBy === undefined && slice.claimSequence !== undefined
@@ -613,6 +661,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
       const latest = open.at(-1);
       if (latest !== undefined && latest.claimSequence === event.claimSequence) {
         latest.releasedBy = event.lane;
+        resetReviewContext(latest, event.sequence);
         onRoute?.(event, latest);
       }
       continue;
@@ -685,6 +734,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         if (state.step === "plan" || state.step === "critic") state.step = state.plan?.critic.mode === "design" ? "critic" : "implement";
         break;
       case "task.pr_opened":
+        if (!sameHeadRepeat || state.pendingReviewer?.headSha === event.headSha) resetReviewContext(state, event.sequence);
         state.repoUrl = event.repo !== undefined ? `https://github.com/${event.repo}` : state.repoUrl;
         state.pr = event.pr ?? state.pr;
         state.lane = event.lane ?? state.lane;
@@ -731,7 +781,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         if (event.reviewer && !state.assignedReviewers?.includes(event.reviewer)) (state.assignedReviewers ??= []).push(event.reviewer);
         if (event.reviewer && !state.reviewers.includes(event.reviewer)) state.reviewers.push(event.reviewer);
         if (state.headSha === null) state.headSha = event.headSha ?? null;
-        if (event.headSha === state.headSha) state.currentReviewer = event.reviewer ?? null;
+        if (event.headSha === state.headSha) { resetReviewContext(state, event.sequence); state.currentReviewer = event.reviewer ?? null; }
         else if (event.headSha !== undefined && event.reviewer && !state.recordedHeads.includes(event.headSha)) {
           state.pendingReviewer = { headSha: event.headSha, reviewer: event.reviewer };
         }
@@ -746,6 +796,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
             : { ...base, reason: "unrecorded", record: event });
           break;
         }
+        resetReviewContext(state, event.sequence);
         applyVerdict(state, event, blockers);
         break;
       case "task.critic_verdict":
@@ -756,6 +807,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         if (state.step === "critic" && state.critic?.verdict === "pass") state.step = "implement";
         break;
       case "task.merged":
+        resetReviewContext(state, event.sequence);
         state.pr = event.pr ?? state.pr;
         state.mergeSha = event.mergeSha ?? null;
         state.completionRecorded = true;
@@ -764,6 +816,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         state.step = "merged";
         break;
       case "task.closed":
+        resetReviewContext(state, event.sequence);
         ended.add(state);
         break;
     }
@@ -773,6 +826,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
       for (const claim of slices) {
         if (claim === state || claim.pr !== event.pr || claim.step === "merged" || ended.has(claim)) continue;
         const claimBefore = claim.step;
+        resetReviewContext(claim, event.sequence);
         claim.lastSequence = event.sequence;
         if (event.kind === "task.closed") {
           ended.add(claim);
@@ -791,6 +845,7 @@ export function foldTaskEvents(records: TaskEventRecord[], onRoute?: (event: Tas
         if (claim !== state && claim.step !== "merged" && claim.pr !== event.pr
           && claimIssue !== null && event.closes.includes(claimIssue)) {
           const claimBefore = claim.step;
+          resetReviewContext(claim, event.sequence);
           claim.step = "merged";
           claim.mergeSha = event.mergeSha ?? null;
           claim.blockedBy = null;

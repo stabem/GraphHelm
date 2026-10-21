@@ -1595,3 +1595,1327 @@ fn a_critic_verdict_must_agree_with_its_score_and_round() {
         "{reply}"
     );
 }
+
+/// A deliberate current-review wait is a signed task update, never a new verdict or lease.
+#[test]
+fn reviewer_wait_is_bound_to_the_approved_head_without_changing_its_obligation() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let mut opened = as_actor(package_fixture("pr-opened"));
+    opened["headSha"] = json!("0123456789abcdef0123456789abcdef01234567");
+    opened["repo"] = json!("fixture/project");
+    assert_eq!(
+        signal(
+            scratch.path(),
+            &events,
+            "wait-open",
+            "task.pr_opened",
+            ACTOR,
+            &opened
+        )["ok"],
+        true
+    );
+    let mut assigned = package_fixture("review-assigned");
+    assigned["reviewer"] = json!(ACTOR);
+    assigned["headSha"] = opened["headSha"].clone();
+    assert_eq!(
+        signal(
+            scratch.path(),
+            &events,
+            "wait-assign",
+            "task.review_assigned",
+            ACTOR,
+            &assigned
+        )["ok"],
+        true
+    );
+    let mut approved = as_actor(package_fixture("review-verdict"));
+    approved["headSha"] = opened["headSha"].clone();
+    approved["verdict"] = json!("APPROVE-WITH-RISK");
+    assert_eq!(
+        signal(
+            scratch.path(),
+            &events,
+            "wait-approve",
+            "task.review_verdict",
+            ACTOR,
+            &approved
+        )["ok"],
+        true
+    );
+    let before = history(&events);
+    let context = before
+        .iter()
+        .rev()
+        .find(|event| {
+            matches!(&event.kind,
+        EventKind::SignalRecorded(record) if record.kind == "task.review_verdict")
+        })
+        .unwrap()
+        .sequence;
+    let waiting = json!({"schema":"graphhelm-task-event-v1", "taskId":opened["taskId"],
+        "revision":1, "at":"2099-01-01T00:00:00Z", "repo":"fixture/project",
+        "pr":opened["pr"], "headSha":opened["headSha"], "reviewer":ACTOR,
+        "reviewContextSequence":context, "activity":"waiting", "reason":"Awaiting the dependency proof"});
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "review-wait",
+        "task.review_activity",
+        ACTOR,
+        &waiting,
+    );
+    assert_eq!(reply["ok"], true, "{reply}");
+    let after = history(&events);
+    assert_eq!(after.len(), before.len() + 1);
+    let output = command()
+        .args(["execution", "status", "--events"])
+        .arg(&events)
+        .args(["--execution", RUN, "--tasks", "--keyring"])
+        .arg(scratch.path().join("keyring"))
+        .args(["--key-id", "owner-key"])
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let task = &reply["data"]["tasks"]["tasks"][0];
+    assert_eq!(task["step"], "merge");
+    assert_eq!(task["currentReviewer"], ACTOR);
+    assert_eq!(task["headSha"], opened["headSha"]);
+    assert_eq!(task["reviewContextSequence"], context);
+    assert_eq!(task["reviewActivityRevision"], 1);
+    assert_eq!(task["reviewActivity"]["reason"], waiting["reason"]);
+    assert_ne!(task["reviewActivity"]["occurredAt"], waiting["at"]);
+    assert!(task["blockedBy"].is_null());
+    // A fresh CLI process cannot trust unreadable sealed history, even with a well-shaped new
+    // statement. Temporarily move only this fixture's blobs; restore before any assertion.
+    let blobs = events.join("blobs");
+    let saved = scratch.path().join("hidden-fixture-blobs");
+    let before_unreadable = history(&events).len();
+    std::fs::rename(&blobs, &saved).unwrap();
+    std::fs::create_dir(&blobs).unwrap();
+    let mut next = waiting.clone();
+    next["revision"] = json!(2);
+    let refused = signal(
+        scratch.path(),
+        &events,
+        "unreadable-review-history",
+        "task.review_activity",
+        ACTOR,
+        &next,
+    );
+    std::fs::remove_dir(&blobs).unwrap();
+    std::fs::rename(saved, blobs).unwrap();
+    assert_eq!(
+        refused["ok"], false,
+        "unreadable verified history must fail closed: {refused}"
+    );
+    assert_eq!(history(&events).len(), before_unreadable);
+}
+
+#[path = "support/mod.rs"]
+mod review_support;
+
+struct ReviewRuntime(std::process::Child);
+impl Drop for ReviewRuntime {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn review_runtime(events: &Path, scratch: &Path) -> (ReviewRuntime, String, PathBuf) {
+    use std::io::BufRead;
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["serve", "--events"])
+        .arg(events)
+        .args(["--bind", "127.0.0.1:0", "--keyring"])
+        .arg(scratch.join("keyring"))
+        .args(["--key-id", "owner-key", "--require-lane-credential"])
+        .env("GRAPHHELM_EVENTS_KEY", "01".repeat(32))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let guard = ReviewRuntime(child);
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let read = std::io::BufReader::new(stdout).read_line(&mut line);
+        sender.send((read, line)).ok();
+    });
+    let (read, line) = receiver
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("isolated Runtime starts within budget");
+    read.unwrap();
+    let reply: Value = serde_json::from_str(&line).unwrap();
+    let base = format!(
+        "http://{}",
+        reply["data"]["address"]
+            .as_str()
+            .unwrap_or_else(|| panic!("isolated Runtime start refused: {reply}"))
+    );
+    review_support::wait_for_health(&base);
+    let token = review_support::token_path(events);
+    for lane in ["review-author", "review-reader", "review-other"] {
+        command()
+            .args([
+                "tasks",
+                "credential",
+                "--lane",
+                lane,
+                "--execution",
+                RUN,
+                "--token-file",
+            ])
+            .arg(&token)
+            .assert()
+            .success();
+    }
+    (guard, base, token)
+}
+
+fn review_record(
+    base: &str,
+    token: &Path,
+    lane: &str,
+    kind: &str,
+    args: &[&str],
+) -> std::process::Output {
+    let recorder =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/task-record/task_record.py");
+    let mut child = Command::from_std(graphhelm_process::command("python"));
+    child
+        .arg(recorder)
+        .args([
+            "--lane",
+            lane,
+            kind,
+            "--issue",
+            "1745",
+            "--repo",
+            "fixture/project",
+            "--execution",
+            RUN,
+            "--url",
+            base,
+            "--token-file",
+        ])
+        .arg(token)
+        .arg("--no-github")
+        .args(args)
+        .timeout(std::time::Duration::from_secs(20))
+        .output()
+        .unwrap()
+}
+
+/// The fixture's own lane credential; never an installed or owner credential.
+fn review_post(base: &str, credential: &str, actor: &str, key: &str, envelope: &Value) -> Value {
+    review_post_body(
+        base,
+        credential,
+        actor,
+        key,
+        &json!({"signal":envelope}),
+        &[],
+        RUN,
+    )
+}
+
+fn review_post_body(
+    base: &str,
+    credential: &str,
+    actor: &str,
+    key: &str,
+    body: &Value,
+    headers: &[(&str, &str)],
+    execution: &str,
+) -> Value {
+    use std::io::{Read, Write};
+    let (host, port, _) = review_support::split_url(base);
+    assert_eq!(host, "127.0.0.1");
+    let mut stream = std::net::TcpStream::connect((host.as_str(), port)).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let body = body.to_string();
+    let extra: String = headers
+        .iter()
+        .map(|(name, value)| {
+            assert!(!name.contains(['\r', '\n']) && !value.contains(['\r', '\n']));
+            format!("{name}: {value}\r\n")
+        })
+        .collect();
+    write!(stream, "POST /v1/executions/{execution}/signal HTTP/1.1\r\nHost: {host}:{port}\r\nAuthorization: Bearer {}\r\nX-GraphHelm-Actor: {actor}\r\nX-GraphHelm-Actor-Type: agent\r\nIdempotency-Key: {key}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n{body}", credential.trim(), body.len()).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let response = review_support::parse_response(&response).unwrap();
+    serde_json::from_str(&response.body).unwrap()
+}
+
+fn review_evidence_fingerprint(events: &Path) -> Vec<(std::ffi::OsString, String)> {
+    let mut entries: Vec<_> = std::fs::read_dir(events.join("blobs"))
+        .unwrap()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            let digest =
+                graphhelm_graph::raw_content_sha256(&std::fs::read(entry.path()).unwrap()).unwrap();
+            (entry.file_name(), digest.as_str().to_owned())
+        })
+        .collect();
+    entries.sort();
+    entries
+}
+
+#[cfg(unix)]
+struct ReviewWritePause {
+    path: PathBuf,
+    permissions: std::fs::Permissions,
+}
+#[cfg(unix)]
+impl ReviewWritePause {
+    fn new(path: &Path) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let permissions = std::fs::metadata(path).unwrap().permissions();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o500)).unwrap();
+        Self {
+            path: path.to_owned(),
+            permissions,
+        }
+    }
+}
+#[cfg(unix)]
+impl Drop for ReviewWritePause {
+    fn drop(&mut self) {
+        let _ = std::fs::set_permissions(&self.path, self.permissions.clone());
+    }
+}
+
+/// Actual distinct lane credentials and the ordinary recorder drive the real sealed Runtime.
+/// Captured `fresh["data"]` is tasks-review-activity-route.json, before the terminal transition;
+/// no timestamps or semantic fields were normalized. Capture SHA256:
+/// c31c025b9edac2bee72f655b3930cd1d7cda93dd8b47e6dd650eba6be499e40f.
+/// Producer source at capture: base75035a99 plus this author working tree, file SHA256
+/// a2d89fdd16a00c9bed3969ef7f092509c08dbe109075f180f751f0f1d846730c.
+/// Regenerate with GRAPHHELM_REVIEW_ACTIVITY_FIXTURE=<fixture-path> and the exact test filter;
+/// compare binding/transition properties, not wall-clock JSON bytes. Consumers derive now from
+/// captured occurredAt and the served budget. This snapshot proves waiting, not terminal state.
+#[test]
+fn reviewer_activity_recorder_preserves_authority_retry_history_and_revision_order() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let (_server, base, token_file) = review_runtime(&events, scratch.path());
+    let read_token = review_support::read_token(&token_file);
+    let head = "0123456789abcdef0123456789abcdef01234567";
+    let record = |lane: &str, kind: &str, args: &[&str]| {
+        let output = review_record(&base, &token_file, lane, kind, args);
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    record(
+        "review-author",
+        "claimed",
+        &[
+            "--branch",
+            "fixture-review",
+            "--title",
+            "Fixture claim",
+            "--summary",
+            "Real fixture author",
+        ],
+    );
+    record(
+        "review-author",
+        "pr_opened",
+        &[
+            "--pr",
+            "17",
+            "--head",
+            head,
+            "--reviewer",
+            "review-reader",
+            "--title",
+            "Fixture review",
+            "--summary",
+            "Real fixture PR",
+        ],
+    );
+    record(
+        "review-reader",
+        "review_verdict",
+        &[
+            "--pr",
+            "17",
+            "--head",
+            head,
+            "--verdict",
+            "APPROVE-WITH-RISK",
+            "--comment-url",
+            "https://github.com/fixture/project/pull/17#issuecomment-1",
+        ],
+    );
+    let read = || {
+        review_support::get_json(
+            &format!("{base}/v1/executions/{RUN}/tasks?full=1"),
+            Some(read_token.trim()),
+        )
+    };
+    let before = read();
+    let context = before["data"]["tasks"][0]["reviewContextSequence"]
+        .as_u64()
+        .unwrap()
+        .to_string();
+    let args = [
+        "--pr",
+        "17",
+        "--head",
+        head,
+        "--review-context-sequence",
+        &context,
+        "--revision",
+        "1",
+        "--activity",
+        "waiting",
+        "--reason",
+        "Awaiting independent dependency proof",
+    ];
+    let dry = review_record(
+        &base,
+        &token_file,
+        "review-reader",
+        "review_activity",
+        &[args.as_slice(), &["--dry-run"]].concat(),
+    );
+    let transport: Value = serde_json::from_slice(&dry.stdout).unwrap();
+    let key = transport["headers"]["Idempotency-Key"].as_str().unwrap();
+    let credential_path = token_file.with_file_name(format!(
+        "{}.agent.review-reader.token",
+        token_file
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .trim_end_matches(".token")
+    ));
+    let credential = std::fs::read_to_string(&credential_path).unwrap();
+    let original_if_match = before["data"]["headSequence"].as_u64().unwrap().to_string();
+    let first = review_post_body(
+        &base,
+        &credential,
+        "review-reader",
+        key,
+        &transport["body"],
+        &[("If-Match", &original_if_match)],
+        RUN,
+    );
+    assert_eq!(
+        first["ok"], true,
+        "actual scoped HTTP commit with If-Match: {first}"
+    );
+    let waiting = read();
+    let count = waiting["data"]["records"].as_array().unwrap().len();
+    let original_sequence = waiting["data"]["tasks"][0]["reviewActivity"]["sequence"]
+        .as_u64()
+        .unwrap();
+    let mut retry_body = transport["body"].clone();
+    retry_body["signal"]["emittedAt"] = json!("2099-01-01T00:00:00Z");
+    let mut retry_doc: Value =
+        serde_json::from_str(retry_body["signal"]["description"].as_str().unwrap()).unwrap();
+    retry_doc["at"] = json!("2099-01-01T00:00:00Z");
+    retry_body["signal"]["description"] = json!(retry_doc.to_string());
+    let historical = || {
+        let prior = read();
+        let total = history(&events).len();
+        let evidence = review_evidence_fingerprint(&events);
+        #[cfg(unix)]
+        let pause = ReviewWritePause::new(&events);
+        let reply = review_post_body(
+            &base,
+            &credential,
+            "review-reader",
+            key,
+            &retry_body,
+            &[
+                ("If-Match", &original_if_match),
+                ("X-GraphHelm-Actor-Model", "gpt-6.1-sol"),
+                ("X-GraphHelm-Actor-Effort", "low"),
+                (
+                    "X-GraphHelm-Actor-Session",
+                    "previously-unseen-historical-session",
+                ),
+            ],
+            RUN,
+        );
+        #[cfg(unix)]
+        drop(pause);
+        assert_eq!(
+            reply["ok"], true,
+            "verified history bypasses NEW-write CAS/presence: {reply}"
+        );
+        assert_eq!(
+            reply["data"]["idempotency"]["originalDecisionSequence"],
+            original_sequence
+        );
+        assert_eq!(
+            history(&events).len(),
+            total,
+            "no signal/presence/wake append on acknowledgement"
+        );
+        assert_eq!(
+            review_evidence_fingerprint(&events),
+            evidence,
+            "no sealed evidence creation/overwrite"
+        );
+        let after = read();
+        assert_eq!(after["data"]["tasks"], prior["data"]["tasks"]);
+        assert_eq!(
+            after["data"]["records"], prior["data"]["records"],
+            "original trusted timestamp remains"
+        );
+    };
+    historical();
+    // A genuinely new eligible statement still refuses the same stale expected head, before writes.
+    let mut stale = retry_body.clone();
+    stale["signal"]["id"] = json!("new-stale-head");
+    let mut stale_doc = retry_doc.clone();
+    stale_doc["revision"] = json!(2);
+    stale["signal"]["description"] = json!(stale_doc.to_string());
+    let total = history(&events).len();
+    let evidence = review_evidence_fingerprint(&events);
+    let refused = review_post_body(
+        &base,
+        &credential,
+        "review-reader",
+        "new-stale-head",
+        &stale,
+        &[("If-Match", &original_if_match)],
+        RUN,
+    );
+    assert_eq!(refused["ok"], false);
+    assert_eq!(
+        refused["diagnostics"][0]["code"],
+        "GHE001_SEQUENCE_CONFLICT"
+    );
+    assert_eq!(history(&events).len(), total);
+    assert_eq!(review_evidence_fingerprint(&events), evidence);
+    // Complete body identity includes accepted options outside the signal, even null/empty ones.
+    for (field, value) in [("attachments", json!([])), ("evidenceOut", Value::Null)] {
+        let mut changed = retry_body.clone();
+        changed[field] = value;
+        assert_eq!(
+            review_post_body(&base, &credential, "review-reader", key, &changed, &[], RUN)["ok"],
+            false
+        );
+    }
+    assert_eq!(
+        review_post_body(
+            &base,
+            &credential,
+            "review-reader",
+            key,
+            &retry_body,
+            &[],
+            "other-execution"
+        )["ok"],
+        false
+    );
+    assert_eq!(history(&events).len(), total);
+
+    // Wrong binding and absent credential all refuse without append or projection mutation.
+    for extras in [
+        vec!["--repo", "other/project"],
+        vec!["--issue", "1746"],
+        vec!["--pr", "18"],
+        vec!["--head", "ffffffffffffffffffffffffffffffffffffffff"],
+        vec!["--review-context-sequence", "1"],
+    ] {
+        let mut wrong = args.to_vec();
+        wrong.extend(extras);
+        assert!(
+            !review_record(
+                &base,
+                &token_file,
+                "review-reader",
+                "review_activity",
+                &wrong
+            )
+            .status
+            .success()
+        );
+        assert_eq!(read()["data"]["records"], waiting["data"]["records"]);
+    }
+    assert!(
+        !review_record(
+            &base,
+            &token_file,
+            "review-missing",
+            "review_activity",
+            &args
+        )
+        .status
+        .success()
+    );
+    assert_eq!(read()["data"]["records"], waiting["data"]["records"]);
+    let task = &waiting["data"]["tasks"][0];
+    assert_eq!(task["lane"], "review-author");
+    assert_eq!(task["currentReviewer"], "review-reader");
+    assert_eq!(task["step"], "merge");
+    assert_eq!(
+        task["approvedWithRisk"],
+        before["data"]["tasks"][0]["approvedWithRisk"]
+    );
+    assert_eq!(task["clock"], before["data"]["tasks"][0]["clock"]);
+    assert_eq!(
+        task["authorLastSequence"],
+        before["data"]["tasks"][0]["authorLastSequence"]
+    );
+    assert_eq!(waiting["data"]["leases"], before["data"]["leases"]);
+    assert_eq!(
+        task["reviewActivity"]["reason"],
+        "Awaiting independent dependency proof"
+    );
+    let mut altered = transport["body"]["signal"].clone();
+    let mut content: Value =
+        serde_json::from_str(altered["description"].as_str().unwrap()).unwrap();
+    content["reason"] = json!("Tampered same-key statement");
+    content["revision"] = json!(2);
+    altered["description"] = json!(content.to_string());
+    assert_eq!(
+        review_post(&base, &credential, "review-reader", key, &altered)["ok"],
+        false
+    );
+    let other_path = credential_path.with_file_name(
+        credential_path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .replace("review-reader", "review-other"),
+    );
+    let other = std::fs::read_to_string(other_path).unwrap();
+    assert_eq!(
+        review_post(
+            &base,
+            &other,
+            "review-reader",
+            key,
+            &transport["body"]["signal"]
+        )["ok"],
+        false
+    );
+    std::fs::write(&credential_path, "").unwrap();
+    let unreadable_credential = review_record(
+        &base,
+        &token_file,
+        "review-reader",
+        "review_activity",
+        &args,
+    );
+    std::fs::write(&credential_path, &credential).unwrap();
+    assert!(!unreadable_credential.status.success());
+    assert_eq!(read()["data"]["records"], waiting["data"]["records"]);
+    record("review-reader", "review_activity", &args);
+    assert_eq!(read()["data"]["records"].as_array().unwrap().len(), count);
+    record(
+        "review-reader",
+        "review_activity",
+        &[
+            "--pr",
+            "17",
+            "--head",
+            head,
+            "--review-context-sequence",
+            &context,
+            "--revision",
+            "2",
+            "--activity",
+            "resumed",
+        ],
+    );
+    record("review-reader", "review_activity", &args);
+    historical();
+    let resumed = read();
+    assert_eq!(resumed["data"]["tasks"][0]["reviewActivityRevision"], 2);
+    assert_eq!(
+        resumed["data"]["tasks"][0]["reviewActivity"]["activity"],
+        "resumed"
+    );
+    assert_eq!(
+        resumed["data"]["records"].as_array().unwrap().len(),
+        count + 1
+    );
+    // Simultaneous exact-key HTTP submissions either acknowledge or report a single conflict;
+    // one bounded retry after joining must acknowledge the one persisted statement.
+    let concurrent_args = [
+        "--pr",
+        "17",
+        "--head",
+        head,
+        "--review-context-sequence",
+        &context,
+        "--revision",
+        "3",
+        "--activity",
+        "waiting",
+        "--reason",
+        "Concurrent deliberate statement",
+    ];
+    let concurrent_dry = review_record(
+        &base,
+        &token_file,
+        "review-reader",
+        "review_activity",
+        &[concurrent_args.as_slice(), &["--dry-run"]].concat(),
+    );
+    assert!(concurrent_dry.status.success());
+    let concurrent_transport: Value = serde_json::from_slice(&concurrent_dry.stdout).unwrap();
+    let concurrent_key = concurrent_transport["headers"]["Idempotency-Key"]
+        .as_str()
+        .unwrap();
+    let concurrent_body = &concurrent_transport["body"];
+    let barrier = Arc::new(std::sync::Barrier::new(3));
+    let outputs = std::thread::scope(|scope| {
+        let children: Vec<_> = (0..2)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                let base = &base;
+                let credential = &credential;
+                scope.spawn(move || {
+                    barrier.wait();
+                    review_post_body(
+                        base,
+                        credential,
+                        "review-reader",
+                        concurrent_key,
+                        concurrent_body,
+                        &[],
+                        RUN,
+                    )
+                })
+            })
+            .collect();
+        barrier.wait();
+        children
+            .into_iter()
+            .map(|child| child.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    assert!(outputs.iter().any(|reply| reply["ok"] == true));
+    for reply in outputs.iter().filter(|reply| reply["ok"] != true) {
+        let code = reply["diagnostics"][0]["code"].as_str().unwrap();
+        assert!(
+            matches!(
+                code,
+                "GHE001_SEQUENCE_CONFLICT" | "GHE003_IDEMPOTENCY_CONFLICT"
+            ),
+            "{reply}"
+        );
+    }
+    let persisted = read();
+    assert_eq!(
+        persisted["data"]["records"].as_array().unwrap().len(),
+        count + 2
+    );
+    let concurrent_sequence = persisted["data"]["tasks"][0]["reviewActivity"]["sequence"].clone();
+    let total = history(&events).len();
+    let evidence = review_evidence_fingerprint(&events);
+    let retry = review_post_body(
+        &base,
+        &credential,
+        "review-reader",
+        concurrent_key,
+        concurrent_body,
+        &[],
+        RUN,
+    );
+    assert_eq!(retry["ok"], true, "{retry}");
+    assert_eq!(retry["data"]["idempotency"]["recognizedRetry"], true);
+    assert_eq!(
+        retry["data"]["idempotency"]["originalDecisionSequence"],
+        concurrent_sequence
+    );
+    assert_eq!(
+        history(&events).len(),
+        total,
+        "no append/presence/wake from exact concurrent retry"
+    );
+    assert_eq!(review_evidence_fingerprint(&events), evidence);
+    assert_eq!(
+        read()["data"]["records"],
+        persisted["data"]["records"],
+        "original trusted time unchanged"
+    );
+    assert_eq!(read()["data"]["tasks"], persisted["data"]["tasks"]);
+    for lane in ["review-author", "review-other"] {
+        assert!(
+            !review_record(&base, &token_file, lane, "review_activity", &args)
+                .status
+                .success()
+        );
+    }
+    record(
+        "review-author",
+        "review_assigned",
+        &[
+            "--pr",
+            "17",
+            "--head",
+            head,
+            "--reviewer",
+            "review-other",
+            "--revision",
+            "5",
+        ],
+    );
+    record(
+        "review-author",
+        "review_assigned",
+        &[
+            "--pr",
+            "17",
+            "--head",
+            head,
+            "--reviewer",
+            "review-reader",
+            "--revision",
+            "6",
+        ],
+    );
+    historical();
+    let generation = read();
+    let next_context = generation["data"]["tasks"][0]["reviewContextSequence"]
+        .as_u64()
+        .unwrap()
+        .to_string();
+    assert_ne!(next_context, context);
+    // Delayed FIRST delivery cannot resurrect the former generation after A -> B -> A.
+    assert!(
+        !review_record(
+            &base,
+            &token_file,
+            "review-reader",
+            "review_activity",
+            &[
+                "--pr",
+                "17",
+                "--head",
+                head,
+                "--review-context-sequence",
+                &context,
+                "--revision",
+                "3",
+                "--activity",
+                "waiting",
+                "--reason",
+                "Old first delivery"
+            ]
+        )
+        .status
+        .success()
+    );
+    record("review-reader", "review_activity", &args); // historical acknowledgement only
+    assert!(read()["data"]["tasks"][0]["reviewActivity"].is_null());
+    record(
+        "review-reader",
+        "review_activity",
+        &[
+            "--pr",
+            "17",
+            "--head",
+            head,
+            "--review-context-sequence",
+            &next_context,
+            "--revision",
+            "1",
+            "--activity",
+            "waiting",
+            "--reason",
+            "Awaiting independent dependency proof",
+        ],
+    );
+    if let Some(path) = std::env::var_os("GRAPHHELM_REVIEW_ACTIVITY_FIXTURE") {
+        std::fs::write(path, serde_json::to_vec_pretty(&read()["data"]).unwrap()).unwrap();
+    }
+    // A hyphenated header is one exact prefix, not a starts_with match against another header.
+    let mut prefixed = retry_body.clone();
+    prefixed["signal"]["id"] = json!("prefix-fixture");
+    let mut prefixed_doc = retry_doc.clone();
+    prefixed_doc["reviewContextSequence"] = json!(next_context.parse::<u64>().unwrap());
+    prefixed_doc["revision"] = json!(2);
+    prefixed["signal"]["description"] = json!(prefixed_doc.to_string());
+    let prefix = "fixture-review-with-hyphens";
+    let presence_before = history(&events)
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::AgentPresenceDeclared(_)))
+        .count();
+    let new_reply = review_post_body(
+        &base,
+        &credential,
+        "review-reader",
+        prefix,
+        &prefixed,
+        &[
+            ("X-GraphHelm-Actor-Model", "gpt-6.1-sol"),
+            ("X-GraphHelm-Actor-Effort", "low"),
+            (
+                "X-GraphHelm-Actor-Session",
+                "fresh-activity-positive-control",
+            ),
+        ],
+        RUN,
+    );
+    assert_eq!(new_reply["ok"], true, "{new_reply}");
+    assert_eq!(
+        new_reply["data"]["decision"], "rejected",
+        "non-actionable is still a fresh durable task record"
+    );
+    assert_eq!(
+        history(&events)
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::AgentPresenceDeclared(_)))
+            .count(),
+        presence_before + 1,
+        "fresh typed outcome retains ordinary post-append presence behavior"
+    );
+    let prefix_count = history(&events).len();
+    let exact_retry = review_post_body(
+        &base,
+        &credential,
+        "review-reader",
+        prefix,
+        &prefixed,
+        &[],
+        RUN,
+    );
+    assert_eq!(exact_retry["data"]["idempotency"]["recognizedRetry"], true);
+    assert_eq!(history(&events).len(), prefix_count);
+    prefixed_doc["revision"] = json!(3);
+    prefixed["signal"]["description"] = json!(prefixed_doc.to_string());
+    let divergent = review_post_body(
+        &base,
+        &credential,
+        "review-reader",
+        prefix,
+        &prefixed,
+        &[],
+        RUN,
+    );
+    assert_eq!(divergent["ok"], false);
+    assert_eq!(
+        divergent["diagnostics"][0]["code"],
+        "GHE003_IDEMPOTENCY_CONFLICT"
+    );
+    assert_eq!(history(&events).len(), prefix_count);
+    // A new statement also needs its own evidence id, as the real recorder provides.
+    prefixed["signal"]["id"] = json!("prefix-fixture-next-statement");
+    let similar = review_post_body(
+        &base,
+        &credential,
+        "review-reader",
+        "fixture-review-with-hyphens-suffix",
+        &prefixed,
+        &[],
+        RUN,
+    );
+    assert_eq!(
+        similar["ok"],
+        true,
+        "{similar}; task={}",
+        read()["data"]["tasks"][0]["reviewActivityRevision"]
+    );
+    let fresh = read();
+    assert_eq!(fresh["data"]["tasks"][0]["reviewActivityRevision"], 3);
+    // The closed recorder verifies a real GitHub PR; this isolated terminal transition is owner-signed.
+    let closed = json!({"schema":"graphhelm-task-event-v1", "taskId":"issue-1745", "revision":6,
+        "at":"2026-01-01T00:00:00Z", "pr":17, "reason":"abandoned", "by":17});
+    assert_eq!(
+        signal(
+            scratch.path(),
+            &events,
+            "fixture-owner-close",
+            "task.closed",
+            ACTOR,
+            &closed
+        )["ok"],
+        true
+    );
+    historical();
+    let closed_count = history(&events).len();
+    record("review-reader", "review_activity", &args);
+    assert_eq!(history(&events).len(), closed_count);
+    assert!(read()["data"]["tasks"].as_array().unwrap().is_empty());
+    // A cold real HTTP reader must verify the sealed history. Warm readers deliberately cache
+    // envelopes by generation/root/digest; moving their directory does not invalidate that cache.
+    drop(_server); // release actual fixture Runtime ownership before a cold restart
+    let before_missing = history(&events).len();
+    let (_cold_server, cold_base, _) = review_runtime(&events, scratch.path());
+    let blobs = events.join("blobs");
+    let hidden = scratch.path().join("http-hidden-blobs");
+    std::fs::create_dir(&hidden).unwrap();
+    let blob_names: Vec<_> = std::fs::read_dir(&blobs)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    for name in &blob_names {
+        std::fs::rename(blobs.join(name), hidden.join(name)).unwrap();
+    }
+    let missing = review_post_body(
+        &cold_base,
+        &credential,
+        "review-reader",
+        key,
+        &retry_body,
+        &[],
+        RUN,
+    );
+    for name in &blob_names {
+        std::fs::rename(hidden.join(name), blobs.join(name)).unwrap();
+    }
+    assert_eq!(
+        missing["ok"], false,
+        "cold missing sealed history must not become cached success: {missing}"
+    );
+    assert_eq!(history(&events).len(), before_missing);
+    let retirement = json!({"schema":"graphhelm-task-event-v1", "taskId":"lanes", "revision":1,
+        "at":"2026-01-01T00:00:00Z", "lanes":["review-reader"], "retired":true, "reason":"Retired fixture reviewer"});
+    assert_eq!(
+        signal(
+            scratch.path(),
+            &events,
+            "fixture-retire-reader",
+            "task.lane_retired",
+            ACTOR,
+            &retirement
+        )["ok"],
+        true
+    );
+    let total = history(&events).len();
+    let evidence = review_evidence_fingerprint(&events);
+    let retired = review_post_body(
+        &cold_base,
+        &credential,
+        "review-reader",
+        key,
+        &retry_body,
+        &[],
+        RUN,
+    );
+    assert_eq!(
+        retired["ok"], false,
+        "known completed key cannot bypass current actor retirement: {retired}"
+    );
+    assert_eq!(history(&events).len(), total);
+    assert_eq!(review_evidence_fingerprint(&events), evidence);
+}
+
+/// Linux observation of the actual post-admission evidence write, before PreparedAppend. A full
+/// owned FIFO blocks that write; /proc confirms the child opened it after validation. The tests
+/// never change production code or depend on how quickly either writer happens to run.
+#[cfg(target_os = "linux")]
+#[test]
+fn review_activity_append_boundary_revalidates_after_conflicts() {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::time::{Duration, Instant};
+    for scenario in ["reassigned", "closed", "unrelated", "duplicate"] {
+        let scratch = tempfile::tempdir().unwrap();
+        let events = start(scratch.path());
+        let head = "0123456789abcdef0123456789abcdef01234567";
+        let opened = json!({"schema":"graphhelm-task-event-v1", "taskId":"issue-1745", "revision":1,
+            "at":"2026-01-01T00:00:00Z", "repo":"fixture/project", "pr":17, "headSha":head, "lane":ACTOR, "journeys":[]});
+        assert_eq!(
+            signal(
+                scratch.path(),
+                &events,
+                "race-open",
+                "task.pr_opened",
+                ACTOR,
+                &opened
+            )["ok"],
+            true
+        );
+        let mut assigned = json!({"schema":"graphhelm-task-event-v1", "taskId":"issue-1745", "revision":1,
+            "at":"2026-01-01T00:00:00Z", "pr":17, "headSha":head, "reviewer":ACTOR, "ordinal":1});
+        assert_eq!(
+            signal(
+                scratch.path(),
+                &events,
+                "race-assign",
+                "task.review_assigned",
+                ACTOR,
+                &assigned
+            )["ok"],
+            true
+        );
+        let context = history(&events).last().unwrap().sequence;
+        let waiting = json!({"schema":"graphhelm-task-event-v1", "taskId":"issue-1745", "revision":1,
+            "at":"2099-01-01T00:00:00Z", "repo":"fixture/project", "pr":17, "headSha":head,
+            "reviewer":ACTOR, "reviewContextSequence":context, "activity":"waiting", "reason":"Actual race observer"});
+        let envelope = json!({"id":"race-wait", "source":{"type":"user", "id":ACTOR}, "type":"task.review_activity",
+            "severity":"low", "description":waiting.to_string(), "evidence":["task"], "emittedAt":"2026-10-07T23:00:00Z"});
+        let input = write(scratch.path(), "race-wait.json", &envelope);
+        let fifo = scratch.path().join("post-validation.fifo");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let mut reader = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&fifo)
+            .unwrap();
+        let mut seed = std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&fifo)
+            .unwrap();
+        let mut seeded = 0;
+        loop {
+            match seed.write(&[0_u8; 4096]) {
+                Ok(n) => seeded += n,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                other => panic!("cannot fill owned FIFO: {other:?}"),
+            }
+        }
+        let output_path = scratch.path().join("race-output.json");
+        let output_file = std::fs::File::create(&output_path).unwrap();
+        let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .env("GRAPHHELM_EVENTS_KEY", "01".repeat(32))
+            .args(["execution", "signal", "--events"])
+            .arg(&events)
+            .args(["--execution", RUN, "--signal"])
+            .arg(input)
+            .arg("--evidence-out")
+            .arg(&fifo)
+            .arg("--keyring")
+            .arg(scratch.path().join("keyring"))
+            .args(["--key-id", "owner-key"])
+            .stdout(output_file)
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut child = ReviewRuntime(child);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            assert!(
+                child.0.try_wait().unwrap().is_none(),
+                "writer exited before post-validation handshake: {scenario}"
+            );
+            let opened_fifo = std::fs::read_dir(format!("/proc/{}/fd", child.0.id()))
+                .unwrap()
+                .flatten()
+                .any(|entry| std::fs::read_link(entry.path()).ok().as_ref() == Some(&fifo));
+            if opened_fifo {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "post-validation FIFO handshake timed out: {scenario}"
+            );
+            std::thread::yield_now();
+        }
+        let before = history(&events).len();
+        let interference = match scenario {
+            "reassigned" => {
+                assigned["reviewer"] = json!("different-reader");
+                assigned["revision"] = json!(2);
+                signal(
+                    scratch.path(),
+                    &events,
+                    "race-reassigned",
+                    "task.review_assigned",
+                    ACTOR,
+                    &assigned,
+                )
+            }
+            "closed" => signal(
+                scratch.path(),
+                &events,
+                "race-closed",
+                "task.closed",
+                ACTOR,
+                &json!({"schema":"graphhelm-task-event-v1", "taskId":"issue-1745", "revision":1,
+                    "at":"2026-01-01T00:00:00Z", "pr":17, "reason":"abandoned", "by":17}),
+            ),
+            "duplicate" => signal(
+                scratch.path(),
+                &events,
+                "race-wait",
+                "task.review_activity",
+                ACTOR,
+                &waiting,
+            ),
+            _ => signal(
+                scratch.path(),
+                &events,
+                "race-unrelated",
+                "operator_note",
+                ACTOR,
+                &json!({"note":"unrelated append"}),
+            ),
+        };
+        assert_eq!(interference["ok"], true, "{scenario}: {interference}");
+        let after_interference = history(&events).len();
+        assert_eq!(after_interference, before + 1);
+        let mut drained = Vec::new();
+        loop {
+            let mut bytes = [0_u8; 4096];
+            match reader.read(&mut bytes) {
+                Ok(n) => drained.extend_from_slice(&bytes[..n]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                other => panic!("cannot drain owned FIFO: {other:?}"),
+            }
+            if child.0.try_wait().unwrap().is_some() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "append observer timed out: {scenario}"
+            );
+            std::thread::yield_now();
+        }
+        // A child may finish once only the first pipe page is drained. Read the remaining
+        // buffered evidence after exit; do not assume exit implies an empty pipe.
+        loop {
+            let mut bytes = [0_u8; 4096];
+            match reader.read(&mut bytes) {
+                Ok(0) => break,
+                Ok(n) => drained.extend_from_slice(&bytes[..n]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                other => panic!("cannot finish draining owned FIFO: {other:?}"),
+            }
+        }
+        assert!(
+            drained.len() > seeded,
+            "real post-validation evidence was written: {scenario}"
+        );
+        let observed: Value = serde_json::from_slice(&drained[seeded..]).unwrap();
+        assert_eq!(observed["type"], "task.review_activity");
+        let reply: Value = serde_json::from_slice(&std::fs::read(output_path).unwrap()).unwrap();
+        assert_eq!(
+            reply["ok"], false,
+            "stale validated append must conflict: {scenario}: {reply}"
+        );
+        assert_eq!(
+            reply["diagnostics"][0]["code"], "GHE001_SEQUENCE_CONFLICT",
+            "{reply}"
+        );
+        assert_eq!(
+            history(&events).len(),
+            after_interference,
+            "no stale append: {scenario}"
+        );
+        let retry = signal(
+            scratch.path(),
+            &events,
+            "race-wait",
+            "task.review_activity",
+            ACTOR,
+            &waiting,
+        );
+        // CLI invocations have fresh keys; only the unrelated append leaves a new write eligible.
+        // Exact same-key duplicate acknowledgement is exercised by the HTTP recorder below.
+        let admitted = scenario == "unrelated";
+        assert_eq!(
+            retry["ok"], admitted,
+            "retry revalidates {scenario}: {retry}"
+        );
+        assert_eq!(
+            history(&events).len(),
+            after_interference + usize::from(scenario == "unrelated")
+        );
+    }
+}
+
+/// End-to-end signed Runtime admission + seal + append, not an isolated algorithm benchmark.
+/// N/10N uses one task and three provisioned fixture lanes. No timing threshold is an oracle.
+#[test]
+fn review_activity_admission_scales_at_fixed_task_and_lane_count() {
+    let head = "0123456789abcdef0123456789abcdef01234567";
+    for count in [10_u64, 100] {
+        let scratch = tempfile::tempdir().unwrap();
+        let events = start(scratch.path());
+        let (_server, base, token_file) = review_runtime(&events, scratch.path());
+        for (kind, args) in [
+            (
+                "claimed",
+                vec![
+                    "--branch",
+                    "scale-fixture",
+                    "--title",
+                    "Scale claim",
+                    "--summary",
+                    "Fixed-lane admission fixture",
+                ],
+            ),
+            (
+                "pr_opened",
+                vec![
+                    "--pr",
+                    "17",
+                    "--head",
+                    head,
+                    "--reviewer",
+                    "review-reader",
+                    "--title",
+                    "Scale review",
+                    "--summary",
+                    "Fixed-lane admission fixture",
+                ],
+            ),
+        ] {
+            assert!(
+                review_record(&base, &token_file, "review-author", kind, &args)
+                    .status
+                    .success()
+            );
+        }
+        let read_token = review_support::read_token(&token_file);
+        let read = || {
+            review_support::get_json(
+                &format!("{base}/v1/executions/{RUN}/tasks?full=1"),
+                Some(read_token.trim()),
+            )
+        };
+        let before = read();
+        let context = before["data"]["tasks"][0]["reviewContextSequence"]
+            .as_u64()
+            .unwrap();
+        let credential =
+            std::fs::read_to_string(token_file.with_file_name("events.agent.review-reader.token"))
+                .unwrap();
+        let started = std::time::Instant::now();
+        for revision in 1..=count {
+            let key = format!("scale-review-activity-{revision}");
+            let document = json!({"schema":"graphhelm-task-event-v1", "taskId":"issue-1745", "revision":revision,
+                "at":"2099-01-01T00:00:00Z", "repo":"fixture/project", "pr":17, "headSha":head,
+                "reviewer":"review-reader", "reviewContextSequence":context, "activity":"waiting", "reason":"Measured actual fixture statement"});
+            let envelope = json!({"id":key, "source":{"type":"user","id":"review-reader"}, "type":"task.review_activity",
+                "severity":"low", "description":document.to_string(), "evidence":["task"], "emittedAt":"2099-01-01T00:00:00Z"});
+            let reply = review_post(&base, &credential, "review-reader", &key, &envelope);
+            assert_eq!(reply["ok"], true, "revision {revision}: {reply}");
+        }
+        let elapsed = started.elapsed();
+        let after = read();
+        assert_eq!(after["data"]["tasks"][0]["reviewActivityRevision"], count);
+        assert_eq!(
+            after["data"]["records"].as_array().unwrap().len(),
+            before["data"]["records"].as_array().unwrap().len() + count as usize
+        );
+        eprintln!(
+            "review_activity end_to_end requests={count} tasks=1 fixture_lanes=3 elapsed_us={} records={}",
+            elapsed.as_micros(),
+            after["data"]["records"].as_array().unwrap().len()
+        );
+    }
+}

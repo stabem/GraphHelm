@@ -1,0 +1,350 @@
+{
+  "backlog": [],
+  "durations": {
+    "since": null,
+    "slices": [
+      {
+        "key": "issue-1745#pr-17",
+        "merged": false,
+        "mergedAt": null,
+        "pr": 17,
+        "steps": {
+          "fix": 0,
+          "implement": 0,
+          "review_wait": 0
+        }
+      }
+    ],
+    "summary": {}
+  },
+  "executionId": "task-events",
+  "headSequence": 12,
+  "leases": [],
+  "liveness": {
+    "budgets": {
+      "freeAfterSeconds": 900,
+      "silentAfterSeconds": 1800,
+      "stallAfterSeconds": 7200
+    },
+    "lanes": [
+      {
+        "free": false,
+        "lane": "review-author",
+        "lastRecordAt": "2026-10-21T01:41:47.403702048Z",
+        "owes": true,
+        "owesSince": "2026-10-21T01:41:46.503470693Z",
+        "silent": false
+      },
+      {
+        "free": false,
+        "lane": "review-reader",
+        "lastRecordAt": "2026-10-21T01:41:47.650193054Z",
+        "owes": true,
+        "owesSince": "2026-10-21T01:41:47.403702048Z",
+        "silent": false
+      }
+    ]
+  },
+  "now": "2026-10-21T01:41:47.679022620Z",
+  "opened": 1,
+  "records": [
+    {
+      "actorId": "review-author",
+      "branch": "fixture-review",
+      "issue": 1745,
+      "kind": "task.claimed",
+      "lane": "review-author",
+      "leaseSeconds": 1800,
+      "occurredAt": "2026-10-21T01:41:46.503470693Z",
+      "repo": "fixture/project",
+      "sequence": 4,
+      "summary": "Real fixture author",
+      "taskId": "issue-1745",
+      "title": "Fixture claim"
+    },
+    {
+      "actorId": "review-author",
+      "headSha": "0123456789abcdef0123456789abcdef01234567",
+      "journeys": [],
+      "kind": "task.pr_opened",
+      "lane": "review-author",
+      "occurredAt": "2026-10-21T01:41:46.594392304Z",
+      "pr": 17,
+      "repo": "fixture/project",
+      "sequence": 5,
+      "summary": "Real fixture PR",
+      "taskId": "issue-1745",
+      "title": "Fixture review"
+    },
+    {
+      "actorId": "review-author",
+      "headSha": "0123456789abcdef0123456789abcdef01234567",
+      "kind": "task.review_assigned",
+      "occurredAt": "2026-10-21T01:41:46.612939915Z",
+      "pr": 17,
+      "reviewer": "review-reader",
+      "sequence": 6,
+      "taskId": "issue-1745"
+    },
+    {
+      "actorId": "review-reader",
+      "commentUrl": "https://github.com/fixture/project/pull/17#issuecomment-1",
+      "headSha": "0123456789abcdef0123456789abcdef01234567",
+      "kind": "task.review_verdict",
+      "occurredAt": "2026-10-21T01:41:46.700142881Z",
+      "pr": 17,
+      "reviewer": "review-reader",
+      "sequence": 7,
+      "taskId": "issue-1745",
+      "verdict": "APPROVE-WITH-RISK"
+    },
+    {
+      "activity": "waiting",
+      "actorId": "review-reader",
+      "headSha": "0123456789abcdef0123456789abcdef01234567",
+      "kind": "task.review_activity",
+      "occurredAt": "2026-10-21T01:41:46.805727404Z",
+      "pr": 17,
+      "reason": "Awaiting independent dependency proof",
+      "repo": "fixture/project",
+      "reviewContextSequence": 7,
+      "reviewer": "review-reader",
+      "revision": 1,
+      "sequence": 8,
+      "taskId": "issue-1745"
+    },
+    {
+      "activity": "resumed",
+      "actorId": "review-reader",
+      "headSha": "0123456789abcdef0123456789abcdef01234567",
+      "kind": "task.review_activity",
+      "occurredAt": "2026-10-21T01:41:46.983547237Z",
+      "pr": 17,
+      "repo": "fixture/project",
+      "reviewContextSequence": 7,
+      "reviewer": "review-reader",
+      "revision": 2,
+      "sequence": 9,
+      "taskId": "issue-1745"
+    },
+    {
+      "actorId": "review-author",
+      "headSha": "0123456789abcdef0123456789abcdef01234567",
+      "kind": "task.review_assigned",
+      "occurredAt": "2026-10-21T01:41:47.309336939Z",
+      "pr": 17,
+      "reviewer": "review-other",
+      "sequence": 10,
+      "taskId": "issue-1745"
+    },
+    {
+      "actorId": "review-author",
+      "headSha": "0123456789abcdef0123456789abcdef01234567",
+      "kind": "task.review_assigned",
+      "occurredAt": "2026-10-21T01:41:47.403702048Z",
+      "pr": 17,
+      "reviewer": "review-reader",
+      "sequence": 11,
+      "taskId": "issue-1745"
+    },
+    {
+      "activity": "waiting",
+      "actorId": "review-reader",
+      "headSha": "0123456789abcdef0123456789abcdef01234567",
+      "kind": "task.review_activity",
+      "occurredAt": "2026-10-21T01:41:47.650193054Z",
+      "pr": 17,
+      "reason": "Awaiting independent dependency proof",
+      "repo": "fixture/project",
+      "reviewContextSequence": 11,
+      "reviewer": "review-reader",
+      "revision": 1,
+      "sequence": 12,
+      "taskId": "issue-1745"
+    }
+  ],
+  "rejected": 0,
+  "retiredLanes": [],
+  "routes": [
+    {
+      "sequence": 4,
+      "slice": 0
+    },
+    {
+      "sequence": 5,
+      "slice": 0
+    },
+    {
+      "sequence": 6,
+      "slice": 0
+    },
+    {
+      "sequence": 7,
+      "slice": 0
+    },
+    {
+      "sequence": 8,
+      "slice": 0
+    },
+    {
+      "sequence": 9,
+      "slice": 0
+    },
+    {
+      "sequence": 10,
+      "slice": 0
+    },
+    {
+      "sequence": 11,
+      "slice": 0
+    },
+    {
+      "sequence": 12,
+      "slice": 0
+    }
+  ],
+  "slices": [
+    {
+      "absorbed": false,
+      "ended": false,
+      "id": 0,
+      "state": {
+        "approvedWithRisk": {
+          "commentUrl": "https://github.com/fixture/project/pull/17#issuecomment-1",
+          "reviewer": "review-reader"
+        },
+        "assignedBy": null,
+        "assignedReviewers": [
+          "review-reader",
+          "review-other"
+        ],
+        "authorLastSequence": 11,
+        "blockedBy": null,
+        "blockedSequence": null,
+        "branch": "fixture-review",
+        "claimSequence": 4,
+        "claimedAt": "2026-10-21T01:41:46.503470693Z",
+        "clock": {
+          "lastAt": "2026-10-21T01:41:47.403702048Z",
+          "since": "2026-10-21T01:41:46.700142881Z",
+          "spent": {
+            "implement": 91,
+            "review": 106
+          }
+        },
+        "critic": null,
+        "currentReviewer": "review-reader",
+        "headSha": "0123456789abcdef0123456789abcdef01234567",
+        "issue": 1745,
+        "journeys": [],
+        "key": "issue-1745#pr-17",
+        "lane": "review-author",
+        "lastHeartbeatAt": null,
+        "lastSequence": 12,
+        "leaseSeconds": 1800,
+        "mergeSha": null,
+        "parent": null,
+        "plan": null,
+        "pr": 17,
+        "prSummary": "Real fixture PR",
+        "prTitle": "Fixture review",
+        "recordedHeads": [
+          "0123456789abcdef0123456789abcdef01234567"
+        ],
+        "repoUrl": "https://github.com/fixture/project",
+        "reviewActivity": {
+          "activity": "waiting",
+          "headSha": "0123456789abcdef0123456789abcdef01234567",
+          "occurredAt": "2026-10-21T01:41:47.650193054Z",
+          "reason": "Awaiting independent dependency proof",
+          "reviewContextSequence": 11,
+          "reviewer": "review-reader",
+          "revision": 1,
+          "sequence": 12
+        },
+        "reviewActivityRevision": 1,
+        "reviewContextSequence": 11,
+        "reviewers": [
+          "review-reader",
+          "review-other"
+        ],
+        "rounds": [],
+        "step": "merge",
+        "strayVerdicts": [],
+        "summary": "Real fixture author",
+        "taskId": "issue-1745",
+        "title": "Fixture claim"
+      }
+    }
+  ],
+  "stalls": [],
+  "tasks": [
+    {
+      "approvedWithRisk": {
+        "commentUrl": "https://github.com/fixture/project/pull/17#issuecomment-1",
+        "reviewer": "review-reader"
+      },
+      "assignedBy": null,
+      "assignedReviewers": [
+        "review-reader",
+        "review-other"
+      ],
+      "authorLastSequence": 11,
+      "blockedBy": null,
+      "blockedSequence": null,
+      "branch": "fixture-review",
+      "claimSequence": 4,
+      "claimedAt": "2026-10-21T01:41:46.503470693Z",
+      "clock": {
+        "lastAt": "2026-10-21T01:41:47.403702048Z",
+        "since": "2026-10-21T01:41:46.700142881Z",
+        "spent": {
+          "implement": 91,
+          "review": 106
+        }
+      },
+      "critic": null,
+      "currentReviewer": "review-reader",
+      "headSha": "0123456789abcdef0123456789abcdef01234567",
+      "issue": 1745,
+      "journeys": [],
+      "key": "issue-1745#pr-17",
+      "lane": "review-author",
+      "lastHeartbeatAt": null,
+      "lastSequence": 12,
+      "leaseSeconds": 1800,
+      "mergeSha": null,
+      "parent": null,
+      "plan": null,
+      "pr": 17,
+      "prSummary": "Real fixture PR",
+      "prTitle": "Fixture review",
+      "recordedHeads": [
+        "0123456789abcdef0123456789abcdef01234567"
+      ],
+      "repoUrl": "https://github.com/fixture/project",
+      "reviewActivity": {
+        "activity": "waiting",
+        "headSha": "0123456789abcdef0123456789abcdef01234567",
+        "occurredAt": "2026-10-21T01:41:47.650193054Z",
+        "reason": "Awaiting independent dependency proof",
+        "reviewContextSequence": 11,
+        "reviewer": "review-reader",
+        "revision": 1,
+        "sequence": 12
+      },
+      "reviewActivityRevision": 1,
+      "reviewContextSequence": 11,
+      "reviewers": [
+        "review-reader",
+        "review-other"
+      ],
+      "rounds": [],
+      "step": "merge",
+      "strayVerdicts": [],
+      "summary": "Real fixture author",
+      "taskId": "issue-1745",
+      "title": "Fixture claim"
+    }
+  ]
+}

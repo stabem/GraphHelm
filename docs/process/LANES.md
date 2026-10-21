@@ -315,6 +315,7 @@ records"). From a lane worktree the token path must be absolute:
 | Open a PR, and again after **every** push (this also records `review_assigned`) | `$T --issue N pr_opened --pr P --head SHA --reviewer <reviewer> --journeys <contractId>` |
 | Change the reviewer without a push | `$T --issue N review_assigned --pr P --head SHA --reviewer <other>` |
 | As reviewer, after posting the verdict | `$T --issue N review_verdict --pr P --head SHA --verdict APPROVE\|APPROVE-WITH-RISK\|BLOCK --comment-url URL` |
+| As current reviewer, deliberately wait or resume on the current binding | `$T --issue N review_activity --repo owner/repo --pr PR --head FULL_SHA --review-context-sequence CURRENT_CONTEXT --revision NEXT_REVISION --activity waiting --reason "observed wait" --dry-run`; submit via MCP `signal` with your own credential and confirm tasks. For actual resumption use the next revision and `--activity resumed` without reason. Exact historical retries do not refresh time or restore old text; an older Runtime refusal has no fallback write. |
 | As merger, only after your own `gh pr merge` exits 0 | `$T --issue N merged --pr P --merge-sha SHA --closes <issues the squash closed>` |
 | A PR closed without a merge (the Stop reconciler records this; by hand only to repair) | `$T --issue N closed --pr P --reason superseded\|abandoned --by <PR>` |
 | Grade a design round when the plan says `critic: design` | `$T --issue N critic_verdict --round R --score 0-10 --design-ref <path> --reason "<why>"` |

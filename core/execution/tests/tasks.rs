@@ -2115,3 +2115,270 @@ fn step_durations_are_exact_per_slice_and_summarised_per_step_1516() {
         "open slices stay listed"
     );
 }
+
+fn review_activity(
+    sequence: u64,
+    context: u64,
+    revision: u64,
+    activity: &str,
+    reason: Option<&str>,
+) -> TaskEventRecord {
+    let mut document = json!({"taskId":"issue-1745", "revision":revision, "repo":"fixture/project", "pr":17,
+        "headSha":"0123456789abcdef0123456789abcdef01234567", "reviewer":"reader",
+        "reviewContextSequence":context, "activity":activity});
+    if let Some(reason) = reason {
+        document["reason"] = json!(reason);
+    }
+    with_time(
+        record(sequence, "task.review_activity", "reader", document),
+        at("2026-01-01T00:00:00Z", 1),
+    )
+}
+
+#[test]
+fn review_activity_keeps_stage_clock_and_watermark_across_resume_and_context_changes() {
+    let head = "0123456789abcdef0123456789abcdef01234567";
+    let mut open = opened(1, "author", "issue-1745", 17, head);
+    open.repo = Some("fixture/project".to_owned());
+    let assigned = |sequence, who: &str| {
+        record(
+            sequence,
+            "task.review_assigned",
+            "author",
+            json!({"taskId":"issue-1745", "pr":17, "headSha":head, "reviewer":who, "ordinal":1}),
+        )
+    };
+    let mut events = vec![
+        open,
+        assigned(2, "reader"),
+        verdict(
+            3,
+            "reader",
+            "issue-1745",
+            17,
+            head,
+            "APPROVE-WITH-RISK",
+            "https://github.com/fixture/project/pull/17#issuecomment-1",
+        ),
+    ];
+    let before = fold_task_events(&events).remove(0);
+    // Controlled lifecycle inputs exercise the real pure fold, independently of HTTP authority.
+    for change in [
+        assigned(4, "other"),
+        verdict(
+            4,
+            "reader",
+            "issue-1745",
+            17,
+            head,
+            "BLOCK",
+            "https://github.com/fixture/project/pull/17#issuecomment-3",
+        ),
+        merged(4, "reader", "issue-1745", 17, head, &[1745]),
+        record(
+            4,
+            "task.closed",
+            "author",
+            json!({"taskId":"issue-1745", "pr":17, "reason":"abandoned", "by":17}),
+        ),
+        record(
+            4,
+            "task.lane_retired",
+            "owner",
+            json!({"taskId":"lanes", "lanes":["author"], "retired":true, "reason":"retired fixture author"}),
+        ),
+        record(
+            4,
+            "task.lane_retired",
+            "owner",
+            json!({"taskId":"lanes", "lanes":["reader"], "retired":true, "reason":"retired fixture reviewer"}),
+        ),
+    ] {
+        let mut invalidated = events.clone();
+        invalidated.push(change);
+        invalidated.push(review_activity(
+            5,
+            3,
+            1,
+            "waiting",
+            Some("Delayed old-generation statement"),
+        ));
+        assert!(
+            fold_task_events(&invalidated)
+                .iter()
+                .all(|state| state.review_activity.is_none())
+        );
+    }
+    let mut changed_head = events.clone();
+    let mut other_head = changed_head[0].clone();
+    other_head.sequence = 4;
+    other_head.head_sha = Some("f".repeat(40));
+    let mut original_head = changed_head[0].clone();
+    original_head.sequence = 5;
+    changed_head.extend([
+        other_head,
+        original_head,
+        review_activity(
+            6,
+            3,
+            1,
+            "waiting",
+            Some("Old first delivery after head returns"),
+        ),
+    ]);
+    assert!(fold_task_events(&changed_head)[0].review_activity.is_none());
+    assert_eq!(
+        fold_task_events(&changed_head)[0].review_context_sequence,
+        Some(5)
+    );
+    events.push(review_activity(4, 3, 1, "waiting", Some("Awaiting proof")));
+    let waiting = fold_task_events(&events).remove(0);
+    assert_eq!(waiting.clock, before.clock);
+    assert_eq!(waiting.author_last_sequence, before.author_last_sequence);
+    assert_eq!(waiting.step, TaskStep::Merge);
+    assert_eq!(waiting.approved_with_risk, before.approved_with_risk);
+    assert_eq!(waiting.review_activity_revision, Some(1));
+    events.push(review_activity(5, 3, 2, "resumed", None));
+    events.push(review_activity(
+        6,
+        3,
+        1,
+        "waiting",
+        Some("Late old statement"),
+    ));
+    let resumed = fold_task_events(&events).remove(0);
+    assert_eq!(resumed.review_activity_revision, Some(2));
+    assert_eq!(resumed.review_activity.unwrap().activity, "resumed");
+    events.extend([
+        assigned(7, "other"),
+        assigned(8, "reader"),
+        review_activity(9, 3, 3, "waiting", Some("Delayed FIRST delivery")),
+    ]);
+    let changed = fold_task_events(&events).remove(0);
+    assert_eq!(changed.review_context_sequence, Some(8));
+    assert_eq!(changed.review_activity_revision, Some(0));
+    assert!(changed.review_activity.is_none());
+    events.push(review_activity(10, 8, 1, "waiting", Some("Awaiting proof")));
+    assert_eq!(
+        fold_task_events(&events)[0].review_activity_revision,
+        Some(1)
+    );
+    events.push(verdict(
+        11,
+        "reader",
+        "issue-1745",
+        17,
+        head,
+        "APPROVE",
+        "https://github.com/fixture/project/pull/17#issuecomment-2",
+    ));
+    events.push(review_activity(
+        12,
+        8,
+        2,
+        "waiting",
+        Some("Delayed before verdict"),
+    ));
+    assert_eq!(
+        fold_task_events(&events)[0].review_context_sequence,
+        Some(11)
+    );
+    assert!(fold_task_events(&events)[0].review_activity.is_none());
+    events.push(merged(13, "reader", "issue-1745", 17, head, &[1745]));
+    events.push(review_activity(
+        14,
+        13,
+        1,
+        "waiting",
+        Some("After terminal"),
+    ));
+    assert_eq!(fold_task_events(&events)[0].step, TaskStep::Merged);
+    assert!(fold_task_events(&events)[0].review_activity.is_none());
+}
+
+#[test]
+fn review_activity_parser_refuses_unsafe_shape_and_never_creates_a_slice() {
+    let valid = json!({"schema":"graphhelm-task-event-v1", "taskId":"issue-1745", "revision":1,
+        "at":"2099-01-01T00:00:00Z", "repo":"fixture/project", "pr":17,
+        "headSha":"0123456789abcdef0123456789abcdef01234567", "reviewer":"reader", "reviewContextSequence":3,
+        "activity":"waiting", "reason":"A reason"});
+    for (field, value) in [
+        ("reviewer", json!("other")),
+        ("repo", json!("bad")),
+        ("pr", json!(0)),
+        ("headSha", json!("abcdef0")),
+        ("revision", json!(0)),
+        ("reviewContextSequence", json!(0)),
+        ("activity", json!("working")),
+        ("reason", json!(" ")),
+        ("reason", json!("line\ncontrol")),
+        ("reason", json!("x".repeat(501))),
+        ("unrecognized", json!(true)),
+    ] {
+        let mut candidate = valid.clone();
+        candidate[field] = value;
+        assert!(
+            parse("task.review_activity", "reader", candidate).is_none(),
+            "{field}"
+        );
+    }
+    let alone = review_activity(1, 3, 1, "waiting", Some("No assignment"));
+    assert!(fold_task_events(&[alone]).is_empty());
+}
+
+/// Fixed eight slices: N/10N grows activity history, not the number of lanes. Timings are
+/// observations only; assertions count routed records and final watermarks, never wall time.
+#[test]
+fn review_activity_replay_scales_with_history_at_fixed_slice_count() {
+    use graphhelm_execution::tasks::fold_task_events_with_routes;
+    let head = "0123456789abcdef0123456789abcdef01234567";
+    for count in [100_u64, 1000] {
+        let mut events = Vec::new();
+        let mut contexts = Vec::new();
+        for index in 0..8_u64 {
+            let task = format!("issue-{}", 2000 + index);
+            let mut open = opened(events.len() as u64 + 1, "author", &task, 17 + index, head);
+            open.repo = Some("fixture/project".into());
+            events.push(open);
+            let sequence = events.len() as u64 + 1;
+            events.push(record(
+                sequence,
+                "task.review_assigned",
+                "author",
+                json!({"taskId":task,
+                "pr":17 + index,"headSha":head,"reviewer":"reader","ordinal":1}),
+            ));
+            contexts.push(sequence);
+        }
+        for revision in 1..=count {
+            let index = (revision - 1) % 8;
+            let mut activity = review_activity(
+                events.len() as u64 + 1,
+                contexts[index as usize],
+                revision,
+                "waiting",
+                Some("Measured fixture wait"),
+            );
+            activity.task_id = format!("issue-{}", 2000 + index);
+            activity.pr = Some(17 + index);
+            events.push(activity);
+        }
+        let started = std::time::Instant::now();
+        let fold = fold_task_events_with_routes(&events);
+        eprintln!(
+            "review_activity replay activities={count} slices={} routed={} elapsed_us={}",
+            fold.tasks.len(),
+            fold.routes.len(),
+            started.elapsed().as_micros()
+        );
+        assert_eq!(fold.tasks.len(), 8);
+        assert_eq!(fold.routes.len(), events.len());
+        assert_eq!(
+            fold.tasks
+                .iter()
+                .map(|task| task.review_activity_revision.unwrap())
+                .max(),
+            Some(count)
+        );
+    }
+}

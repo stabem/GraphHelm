@@ -55,3 +55,10 @@ for, a summary of the change or an expected verdict, you are not blind: say so a
 
 Done when the verdict comment is posted on the pinned head with commands and results, and (on
 approve) the `merge` skill has run.
+
+
+### Deliberate review waiting and resumption
+
+When you actually decide to suspend an assigned review or merge for an external condition, read the current task binding and its `reviewContextSequence` / `reviewActivityRevision`. Generate your own `task.review_activity` with `tools/task-record/task_record.py --lane <you> review_activity --issue <issue> --repo <owner/repo> --pr <pr> --head <full-head> --review-context-sequence <current-context> --revision <watermark+1> --activity waiting --reason <observed-reason> --dry-run`, then submit through MCP `signal` with your own lane credential. Confirm task readback before saying it was recorded. Preserve verdict, approval, head, author and assignment; never manufacture a BLOCK or author heartbeat for a wait.
+
+When you actually resume, use the current binding and next revision with `--activity resumed` and no reason. Keep the exact envelope/key for response-loss retries. A historical duplicate acknowledgement does not prove its old reason remains current. On sequence conflict, read back and make at most one same-envelope retry only if the binding still applies; abandon a stale statement instead of silently rebinding it. An older Runtime refusing this kind is unsupported: report missing task evidence, with no fallback write. Do not automatically repeat waits to maintain freshness, infer dependency resolution from text, or sign as another reviewer. This records a deliberate decision; it does not wake an idle host or prove a worker is running.

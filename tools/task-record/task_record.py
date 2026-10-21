@@ -30,6 +30,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,14 +41,14 @@ import os
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
-KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "merged", "closed", "critic_verdict", "queued", "lane_retired")
+KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "review_activity", "merged", "closed", "critic_verdict", "queued", "lane_retired")
 # #1469: `queued` records the open issues carrying this label that no open PR closes, oldest
 # first, at most QUEUED_MAX (the schema's maxItems), as the Lanes Backlog reads them.
 WAVE_LABEL = "current-wave"
 QUEUED_MAX = 25
 # The default revision is the step's position in the delivery. `planned` (#480) came later and is
 # the claim's companion, so the older steps keep their numbers (and their records' keys).
-REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "merged": 5, "closed": 6, "critic_verdict": 1, "queued": 1, "lane_retired": 1}
+REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "review_activity": 1, "merged": 5, "closed": 6, "critic_verdict": 1, "queued": 1, "lane_retired": 1}
 CLASSES = ("docs", "code", "user_visible", "invariant")
 PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
@@ -242,6 +243,8 @@ def parse(argv):
     p.add_argument("--retired", choices=("true", "false"), help="lane_retired: true retires the lanes, false restores them")
     p.add_argument("--pr", type=int)
     p.add_argument("--head", help="the PR head sha the step is about (a sha8 or a full 40-char sha, recorded as given; #1526)")
+    p.add_argument("--activity", choices=("waiting", "resumed"), help="review_activity: deliberate current reviewer state, never a lease renewal")
+    p.add_argument("--review-context-sequence", type=int, help="review_activity: exact current task review generation from tasks readback")
     p.add_argument("--reviewer")
     p.add_argument("--ordinal", type=int, default=1, choices=(1, 2))
     p.add_argument("--verdict", choices=("APPROVE", "APPROVE-WITH-RISK", "BLOCK"))
@@ -484,6 +487,20 @@ def document(args, now):
     elif args.kind == "review_assigned":
         need(args, "pr", "head", "reviewer")
         doc.update(pr=args.pr, headSha=args.head, reviewer=args.reviewer, ordinal=args.ordinal)
+    elif args.kind == "review_activity":
+        need(args, "repo", "pr", "head", "activity", "revision", "review-context-sequence")
+        if args.pr <= 0 or args.revision <= 0 or args.review_context_sequence <= 0:
+            sys.exit("task_record: review_activity needs positive PR, explicit revision and review context sequence")
+        if not re.fullmatch(r"[0-9a-f]{40}", args.head):
+            sys.exit("task_record: review_activity needs the exact full lowercase head SHA")
+        if args.activity == "waiting":
+            if len(args.reason) != 1 or not args.reason[0].strip() or len(args.reason[0]) > 500 or any(unicodedata.category(c) == "Cc" for c in args.reason[0]):
+                sys.exit("task_record: waiting needs exactly one nonblank control-free --reason of at most 500 characters")
+            doc["reason"] = args.reason[0]
+        elif args.reason:
+            sys.exit("task_record: resumed carries no --reason")
+        doc.update(repo=args.repo, pr=args.pr, headSha=args.head, reviewer=args.lane,
+                   reviewContextSequence=args.review_context_sequence, activity=args.activity)
     elif args.kind == "review_verdict":
         need(args, "pr", "head", "verdict", "comment-url")
         doc.update(pr=args.pr, headSha=args.head, reviewer=args.lane, verdict=args.verdict,
@@ -738,24 +755,31 @@ def send(args, doc, now):
     # under the same key is safe to send again.
     # #1526: a read timeout can follow a committed append. The key is the record's content, so
     # sending it again either lands it or answers GHE003 ("already recorded"); never a failure.
-    for attempt in range(3):
+    attempts = 2 if args.kind == "review_activity" else 3
+    for attempt in range(attempts):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 reply = json.load(response)
         except TimeoutError:
-            if attempt == 2:
-                sys.exit(f"task_record: {args.url} timed out three times; the record may or may not have landed, "
+            if attempt == attempts - 1:
+                count = "twice" if attempts == 2 else "three times"
+                sys.exit(f"task_record: {args.url} timed out {count}; the record may or may not have landed, "
                          "run the same command again to learn which")
             continue
         except urllib.error.HTTPError as error:
             reply = json.loads(error.read() or b"{}")
         except urllib.error.URLError as error:
             sys.exit(f"task_record: no Runtime at {args.url}: {error.reason}")
-        if not any(d.get("code") == "GHE001_SEQUENCE_CONFLICT" for d in reply.get("diagnostics", [])):
+        retry_codes = {"GHE001_SEQUENCE_CONFLICT"}
+        if args.kind == "review_activity":
+            # A racing append may check its key before its sequence. Re-enter the sealed
+            # verifier with this SAME request once; GHE003 itself never means success.
+            retry_codes.add("GHE003_IDEMPOTENCY_CONFLICT")
+        if not any(d.get("code") in retry_codes for d in reply.get("diagnostics", [])):
             break
     ok = reply.get("ok") is True
     codes = {d.get("code") for d in reply.get("diagnostics", []) if d.get("severity") == "error"}
-    if not ok and codes == {"GHE003_IDEMPOTENCY_CONFLICT"}:
+    if not ok and codes == {"GHE003_IDEMPOTENCY_CONFLICT"} and args.kind != "review_activity":
         # The key is this record's content, so a conflict on it is this record already committed
         # with an earlier timestamp. #1548: for a merged or closed record, prove it against the
         # stored one; a different payload is never "already recorded".

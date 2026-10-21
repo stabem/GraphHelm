@@ -4001,6 +4001,46 @@ pub(super) async fn signal(
     };
     let store_for_run = store.clone();
 
+    if signal_value.get("type").and_then(serde_json::Value::as_str) == Some("task.review_activity")
+    {
+        return super::run_review_activity_mutation_with_store(
+            &store,
+            &state.events,
+            &execution_id,
+            SIGNAL_COMMAND,
+            identity,
+            ExecutorWiring::from_state(&state),
+            |actor, context| {
+                Box::pin(async move {
+                    let recorded = tokio::task::spawn_blocking(move || {
+                        execution::timing::request("executions.signal", || {
+                            execution::signal::execute_review_activity_http_on(
+                                &store_for_run,
+                                &signal_bytes,
+                                evidence_out.as_deref(),
+                                actor,
+                                sealing.as_deref(),
+                                scoped_agent_authenticated,
+                                &attachments,
+                                &context,
+                            )
+                        })
+                    })
+                    .await
+                    .map_err(|_| {
+                        MutationError::Prepared(respond(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Outcome::internal(SIGNAL_COMMAND, "the review activity task failed")
+                                .output,
+                        ))
+                    })?;
+                    Ok(recorded?)
+                })
+            },
+        )
+        .await;
+    }
+
     run_idempotent_mutation_with_store(
         &store,
         &state.events,

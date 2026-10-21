@@ -62,8 +62,8 @@ describe("one card per project", () => {
     expect(homeRun(fixtureOnly)).toBeNull();
     const { onSelect, onNewTask, rail } = mount(fixtureOnly, { teamRuns: new Set() });
     await userEvent.click(within(rail).getByRole("button", { name: /^Open project / }));
-    expect(onSelect).not.toHaveBeenCalled();
-    expect(onNewTask).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith("");
+    expect(onNewTask).not.toHaveBeenCalled();
     // Newer fixture run beside an older real run: the real run wins.
     expect(homeRun([fixtureOnly[0], run("real", "completed", "2026-10-01T00:00:00.000Z")])?.executionId).toBe("real");
   });

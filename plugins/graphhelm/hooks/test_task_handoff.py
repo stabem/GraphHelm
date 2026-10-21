@@ -779,6 +779,14 @@ class HandoffTests(unittest.TestCase):
         self.assertFalse(replies[2]["result"]["isError"])
         self.assertEqual(replies[2]["result"]["content"][0]["type"], "text")
 
+        companion = SCRIPT.parents[2] / "graphhelm-codex-hooks" / "hooks" / "task_handoff.py"
+        companion_result = subprocess.run([sys.executable, str(companion), "--mcp-stdio"], env=env,
+                                          input=payload, capture_output=True, text=True, creationflags=NO_WINDOW)
+        self.assertEqual(companion_result.returncode, 0, companion_result.stderr)
+        companion_replies = [json.loads(line) for line in companion_result.stdout.splitlines()]
+        self.assertEqual(companion_replies[0]["result"]["serverInfo"]["version"], manifest["version"])
+        self.assertFalse(companion_replies[2]["result"]["isError"])
+
     def test_mcp_rejects_identity_override_and_oversized_request_before_runtime_io(self):
         env = os.environ.copy(); env.update(self.env)
         env["GRAPHHELM_MCP_HOST"] = "codex"

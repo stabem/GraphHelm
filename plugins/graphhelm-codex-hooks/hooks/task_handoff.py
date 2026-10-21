@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+from pathlib import Path
 import sys
 import urllib.error
 import urllib.parse
@@ -640,8 +641,13 @@ def _mcp_stdio() -> int:
                     continue
                 continue
             if method == "initialize":
+                package = Path(__file__).resolve().parent.parent
+                manifest_path = package / "plugin.json"
+                if not manifest_path.is_file():
+                    manifest_path = package / ".codex-plugin" / "plugin.json"
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 result = {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {"tools": {}},
-                          "serverInfo": {"name": "graphhelm-task-handoff", "version": "0.1.56"}}
+                          "serverInfo": {"name": "graphhelm-task-handoff", "version": manifest["version"]}}
                 response = _mcp_result(request_id, result)
             elif method == "ping":
                 response = _mcp_result(request_id, {})

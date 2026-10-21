@@ -256,11 +256,11 @@ export function ProjectRail({
                   aria-current={on ? "true" : undefined}
                   aria-label={`Open project ${project.name}; ${state}`}
                   title={state}
-                  onClick={() => (home ? onSelect(home.executionId) : onNewTask())}
+                  onClick={() => onSelect(home?.executionId ?? "")}
                 >
                   <span className="run-lines">
                     <span className="run-id">{project.name}</span>
-                    <span className="run-when">{home ? `${relativeActivity(home.lastEventAt)} · ${readable(home.status)}` : "start a task"}</span>
+                    <span className="run-when">{home ? `${relativeActivity(home.lastEventAt)} · ${readable(home.status)}` : "open team workspace"}</span>
                   </span>
                 </button>
               );

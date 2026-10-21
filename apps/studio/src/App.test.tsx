@@ -4780,6 +4780,39 @@ describe("the run it just started", () => {
     expect(screen.getByRole("region", { name: "Keel cards" })).not.toHaveTextContent("accepted");
   });
 
+  it("opens an empty project's Team, Proof and Graph before starting a team run", async () => {
+    sessionStorage.clear();
+    const client = withStarted({
+      listExecutions: vi.fn(async () => ({ executions: [], hasMore: false, nextCursor: null })),
+      listRoutes: vi.fn(async () => ({ configured: false, routes: [] })),
+    });
+    render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
+      session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
+    const views = await screen.findByRole("tablist", { name: "Canvas views" });
+    expect(within(views).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Team (live)", "Proof", "Graph"]);
+    expect(screen.queryByRole("heading", { name: "New task" })).not.toBeInTheDocument();
+    expect(screen.queryByText("No graph-node updates recorded")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
+    expect(screen.queryByRole("heading", { name: "New task" })).not.toBeInTheDocument();
+    for (const name of ["Proof", "Graph", "Team (live)"]) {
+      await userEvent.click(within(views).getByRole("tab", { name }));
+      expect(screen.getByRole("tabpanel", { name: name === "Team (live)" ? "Team" : name })).toBeInTheDocument();
+    }
+    expect(client.startTask).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Start a team run" }));
+    await userEvent.type(await screen.findByLabelText(/what should this task do/i), OBJECTIVE);
+    await userEvent.click(within(document.querySelector(".topbar") as HTMLElement).getByRole("button", { name: "Back to project" }));
+    expect(screen.queryByRole("heading", { name: "New task" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start a team run" }));
+    expect(await screen.findByLabelText(/what should this task do/i)).toHaveValue(OBJECTIVE);
+    await userEvent.click(screen.getByRole("button", { name: /start this task/i }));
+    await waitFor(() => expect(client.startTask).toHaveBeenCalledTimes(1));
+    const [id, graph, options] = firstCall(client.startTask);
+    expect(graph).toMatchObject({ spec: { nodes: { start: { objective: OBJECTIVE } } } });
+    expect(options).toMatchObject({ actor: { id: "studio-operator", type: "owner" }, idempotencyKey: `start-${id}` });
+    expect(await screen.findByRole("region", { name: "Team" })).toBeInTheDocument();
+  });
+
   it("opens a durably listed run while the start response is still waiting for the model", async () => {
     let committed: string | null = null;
     let finish!: (value: MutationEvidence) => void;

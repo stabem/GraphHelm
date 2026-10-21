@@ -22,6 +22,9 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
   and writes `Retirement:` in the pull request: each candidate removed, retained (name its live
   consumer or contract) or unobserved (name the gap). A zero-hit search or green tests are leads,
   not deletion proof.
+- When replacing a user-visible surface, remove or explicitly retire the old surface in the same
+  PR, or name the follow-up issue that will retire it. Include its entry points in `Retirement:`;
+  keeping both surfaces reachable without a named live purpose or retirement issue is not a plan.
 - Stop when the promise is proven. Do not refactor, reformat or sweep beyond it, even when a
   neighbouring file has the same defect: name it in the pull request instead.
 

@@ -632,6 +632,7 @@ export default function App({
       setBusy(false);
       selectedRef.current = id;
       setSelected(id);
+      if (id === "") rememberSelectedRun("");
       // A deselection starts no replacement read whose finally could release this flag.
       if (id === "") setBusy(false);
       setStatus(null);
@@ -2172,6 +2173,11 @@ export default function App({
     }
     try { sessionStorage.setItem(CANVAS_TAB_KEY, tab); } catch { /* storage refused: the choice lasts this page only */ }
   };
+  const canvasViews = <div className="canvas-tabs" role="tablist" aria-label="Canvas views">
+    <button type="button" role="tab" aria-selected={canvasTab === "team"} onClick={() => chooseCanvas("team")}>Team (live)</button>
+    <button type="button" role="tab" aria-selected={canvasTab === "journey"} onClick={() => chooseCanvas("journey")}>Proof</button>
+    <button type="button" role="tab" aria-selected={canvasTab === "graph"} onClick={() => chooseCanvas("graph")}>Graph</button>
+  </div>;
   /** The one legal action for a blocked or waiting step, or for a pending proposal. */
   const stepActions = (item: StepItem | DraftItem): ReactNode => {
     if (item.kind === "draft") return <button type="button" onClick={focusPendingProposal}>Review proposal</button>;
@@ -2318,7 +2324,9 @@ export default function App({
               >
                 {runLabel(selected, teamRun ? { objective: null, teamWork: true } : briefing)}
               </button>
-            </>) : (
+            </>) : draft !== null ? (
+              <button type="button" className="ghost" onClick={() => select("")}>Back to project</button>
+            ) : (
               <span className="meta">pick a run, or start one</span>
             )}
             {selected && <p className="run-selection-identity" aria-label="Selected run identity">Project: {project ?? "this runtime"} / Run: {selected}</p>}
@@ -2475,12 +2483,25 @@ export default function App({
             </div>
           </div>
         ) : selected === "" ? (
-          <div className="board-empty">
-            <p>This board is empty.</p>
-            <button type="button" className="act" onClick={startDraft}>
-              start a task
-            </button>
-          </div>
+          <section className="canvas-column" aria-label="Canvas">
+            <div className="mv-pad">
+              <h2>Start your team's work</h2>
+              <p>No run is selected. Start a run, then connect your agents to record their tasks and proof.</p>
+              <button type="button" className="act" onClick={startDraft}>Start a team run</button>
+            </div>
+            {canvasViews}
+            {canvasTab === "team" ? (
+              <div role="tabpanel" aria-label="Team" className="mv-pad">
+                <p>No team activity yet. Agents and their tasks appear here when they record work in a run.</p>
+              </div>
+            ) : (
+              <div role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
+                <MissionView key={canvasTab} journeys={[]} tasks={[]} lanes={[]} now={clock}
+                  runFor={missionRunFor} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
+                  initialView={canvasTab === "journey" ? "proof" : "graph"} />
+              </div>
+            )}
+          </section>
         ) : status === null ? (
           <section className="loading" role="status">
             {error && !busy ? (
@@ -2587,11 +2608,7 @@ export default function App({
               <HandoverCard handover={handover} onOpen={openRecords} onDismiss={markSeen} onHide={hideHandover} />
             )}
             {/* #583: the Graph tab is the whole page: its own top bar replaces the banner and this strip. */}
-            {canvasTab === "team" && <div className="canvas-tabs" role="tablist" aria-label="Canvas views">
-              <button type="button" role="tab" aria-selected={canvasTab === "team"} onClick={() => chooseCanvas("team")}>Team (live)</button>
-              <button type="button" role="tab" aria-selected={false} onClick={() => chooseCanvas("journey")}>Proof</button>
-              <button type="button" role="tab" aria-selected={false} onClick={() => chooseCanvas("graph")}>Graph</button>
-            </div>}
+            {canvasTab === "team" && canvasViews}
             <div
               className="scene"
               style={dockReservePx === null ? undefined : ({ "--dock-reserve": `${dockReservePx}px` } as CSSProperties)}

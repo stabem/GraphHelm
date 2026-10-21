@@ -2217,6 +2217,33 @@ export default function App({
     </>;
   };
 
+  const missionView = (
+    <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners ?? []} seenActors={status?.seenActors ?? []} seenActorAgesMs={status?.seenActorAgesMs ?? {}} seenActorSources={status?.seenActorSources ?? {}} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} backlog={currentTaskGraphs?.backlog ?? []} {...(currentTaskGraphs?.durations ? { durations: currentTaskGraphs.durations } : {})} {...(currentTaskGraphs?.liveness ? { livenessBudgets: currentTaskGraphs.liveness.budgets } : {})} tasksRouteMissing={tasksRouteMissing === selected} tasksRouteFailure={tasksRouteFailure?.executionId === selected ? tasksRouteFailure.text : null} historyLoading={selected !== "" && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== "" && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
+      initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
+      flows={flowsRead.view} onApprove={approveFlow} onReject={rejectFlow} onWatch={watchFlow}
+
+      run={journeyRun} onRun={recordMissionRun}
+      lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
+      runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")}
+      agents={team.bots} away={handover ? { minutes: handover.gapMinutes, shipped: handover.shipped.length } : null}
+      runNodes={teamRun && status?.executor === "fixture" ? [] : model.nodes} unassignedNodeIds={unassignedSteps.map((node) => node.id)}
+      onOpenNode={(id) => { nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFocus({ kind: "node", id }); }}
+      onOpenBotDetails={(key) => setFocus({ kind: "agent", id: key })} onNameBot={nameBot}
+      onReviewAssigned={async (task, lane) => {
+        const client = clientRef.current;
+        if (!client || selected === "") throw new Error("No Runtime is connected.");
+        await recordReviewAssigned(client, selected, task, lane);
+      }}
+      onSignal={async (note) => {
+        // #591 Nudge / Reassign: an owner note on this run, the same POST /signal the chat box uses.
+        const client = clientRef.current;
+        if (!client || selected === "") throw new Error("No Runtime is connected.");
+        const evidence = await client.signal(selected, note.description, { to: note.to, kind: note.type });
+        if (evidence.result === "unknown") throw new Error("The Runtime may have received the note, but the result is unconfirmed. Check the activity log before trying again.");
+        if (evidence.result === "refused") throw new Error(evidence.diagnostics[0]?.message ?? "The Runtime refused the note.");
+      }} />}</SlotPoll>
+  );
+
   const pendingJourneyApprovals = (flowsRead.view?.flows ?? []).filter((flow) => {
     if (!flow.approvable || (flow.status !== "draft" && flow.status !== "approval_stale")) return false;
     const contract = withFlowContracts(journeysView?.journeys ?? [], [flow]).find((journey) => journey.contractId === flow.id);
@@ -2496,9 +2523,7 @@ export default function App({
               </div>
             ) : (
               <div role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                <MissionView key={canvasTab} journeys={[]} tasks={[]} lanes={[]} now={clock}
-                  runFor={missionRunFor} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
-                  initialView={canvasTab === "journey" ? "proof" : "graph"} />
+                {missionView}
               </div>
             )}
           </section>
@@ -2645,30 +2670,7 @@ export default function App({
             </div>
             {(canvasTab === "graph" || canvasTab === "journey") && (
               <div id="studio-panel-graph" role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                <SlotPoll client={clientRef.current}>{(slots) => <MissionView key={canvasTab} events={eventList} envelopes={envelopes} wakeListeners={status?.wakeListeners ?? []} seenActors={status?.seenActors ?? []} seenActorAgesMs={status?.seenActorAgesMs ?? {}} seenActorSources={status?.seenActorSources ?? {}} onDemandLanes={onDemandLanes} slots={slots} journeys={journeysView?.journeys ?? []} tasks={runTasks ?? []} taskRecords={currentTaskGraphs?.records ?? []} backlog={currentTaskGraphs?.backlog ?? []} {...(currentTaskGraphs?.durations ? { durations: currentTaskGraphs.durations } : {})} {...(currentTaskGraphs?.liveness ? { livenessBudgets: currentTaskGraphs.liveness.budgets } : {})} tasksRouteMissing={tasksRouteMissing === selected} tasksRouteFailure={tasksRouteFailure?.executionId === selected ? tasksRouteFailure.text : null} historyLoading={selected !== null && taskGraphs?.executionId !== selected} lanesHistoryLoading={selected !== null && currentTaskGraphs === null} historyFailedCount={historyFailure?.executionId === selected ? historyFailure.count : 0} onRetryHistory={() => setHistoryRetry((value) => value + 1)} onSelectJourney={setSelectedJourney} runFor={missionRunFor}
-                  initialView={canvasTab === "journey" ? "proof" : "graph"} focusJourneyId={journeyContract}
-                  flows={flowsRead.view} onApprove={approveFlow} onReject={rejectFlow} onWatch={watchFlow}
-
-                  run={journeyRun} onRun={recordMissionRun}
-                  lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
-                  runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")}
-                  agents={team.bots} away={handover ? { minutes: handover.gapMinutes, shipped: handover.shipped.length } : null}
-                  runNodes={teamRun && status?.executor === "fixture" ? [] : model.nodes} unassignedNodeIds={unassignedSteps.map((node) => node.id)}
-                  onOpenNode={(id) => { nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFocus({ kind: "node", id }); }}
-                  onOpenBotDetails={(key) => setFocus({ kind: "agent", id: key })} onNameBot={nameBot}
-                  onReviewAssigned={async (task, lane) => {
-                    const client = clientRef.current;
-                    if (!client || selected === "") throw new Error("No Runtime is connected.");
-                    await recordReviewAssigned(client, selected, task, lane);
-                  }}
-                  onSignal={async (note) => {
-                    // #591 Nudge / Reassign: an owner note on this run, the same POST /signal the chat box uses.
-                    const client = clientRef.current;
-                    if (!client || selected === "") throw new Error("No Runtime is connected.");
-                    const evidence = await client.signal(selected, note.description, { to: note.to, kind: note.type });
-                    if (evidence.result === "unknown") throw new Error("The Runtime may have received the note, but the result is unconfirmed. Check the activity log before trying again.");
-                    if (evidence.result === "refused") throw new Error(evidence.diagnostics[0]?.message ?? "The Runtime refused the note.");
-                  }} />}</SlotPoll>
+                {missionView}
               </div>
             )}
             {citedRecords !== null && citedRecords.executionId === selected && (

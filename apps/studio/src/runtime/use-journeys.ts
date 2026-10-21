@@ -16,6 +16,7 @@ export interface JourneyInputs {
 /** The project's journeys and journey flows, the owner's actions on them, and the run source the
  * Journey and Graph tabs share (#1389, moved out of App.tsx unchanged). */
 export function useJourneys({ clientRef, selectedRef, selected, lastJpdSequence }: JourneyInputs) {
+  const client = clientRef.current;
   // Journeys are a project property (#332): one map folded from every run, read from
   // `GET /v1/journeys` and kept across run switches. A run switch or a new jpd record re-reads it.
   // Journey-flow review (#353): the flow sources and the owner's Approve. An approval bumps
@@ -23,7 +24,6 @@ export function useJourneys({ clientRef, selectedRef, selected, lastJpdSequence 
   const [flowsRevision, setFlowsRevision] = useState(0);
   const [flowsRead, setFlowsRead] = useState<{ view: JourneyFlowsView | null; failure: string | null }>({ view: null, failure: null });
   useEffect(() => {
-    const client = clientRef.current;
     if (client === null) return undefined;
     let cancelled = false;
     Promise.resolve().then(() => client.journeyFlows()).then((view) => {
@@ -32,7 +32,7 @@ export function useJourneys({ clientRef, selectedRef, selected, lastJpdSequence 
       if (!cancelled) setFlowsRead((prior) => ({ view: prior.view, failure: prior.view === null ? messageOf(reason, "") : null }));
     });
     return () => { cancelled = true; };
-  }, [selected, lastJpdSequence, flowsRevision]);
+  }, [client, selected, lastJpdSequence, flowsRevision]);
   const approveFlow = useCallback(async (flowId: string) => {
     const client = clientRef.current;
     if (client === null) throw new Error("Not connected to the Runtime.");
@@ -54,7 +54,6 @@ export function useJourneys({ clientRef, selectedRef, selected, lastJpdSequence 
   }, []);
   const [journeysRead, setJourneysRead] = useState<{ view: JourneysView | null; failed: boolean; failure?: string } | null>(null);
   useEffect(() => {
-    const client = clientRef.current;
     if (client === null) return undefined;
     let cancelled = false;
     Promise.resolve().then(() => client.journeys()).then((view) => {
@@ -64,7 +63,7 @@ export function useJourneys({ clientRef, selectedRef, selected, lastJpdSequence 
       if (!cancelled) setJourneysRead((prior) => prior !== null ? { ...prior, failed: prior.view === null, failure } : { view: null, failed: true, failure });
     });
     return () => { cancelled = true; };
-  }, [selected, lastJpdSequence, flowsRevision]);
+  }, [client, selected, lastJpdSequence, flowsRevision]);
   const journeysView = journeysRead?.view ?? null;
   const journeysFailed = journeysRead?.failed ?? false;
   // #465: Watch plays a flow in a headed browser (#462); the call answers when the play ends, and

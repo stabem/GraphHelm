@@ -5,8 +5,11 @@ const WHY: Record<string, string> = {
   "watch.launch_failed": "the app under test did not start",
   "watch.launcher_invalid": "the project's launcher file (.graphhelm/journey-fixture.json) is not valid",
   "watch.app_down": "the app under test is not running and the project has no launcher to start it",
-  "driver.observer_missing": "no browser observer is installed",
-  "replay.observer_missing": "no browser observer is installed",
+  "driver.observer_missing": "the browser observer is missing; Run again to install it",
+  "replay.observer_missing": "the browser observer is missing; Run again to install it",
+  "replay.observer_stale": "the browser observer is out of date; Run again to refresh it",
+  "observer.setup_failed": "browser observer setup failed",
+  "observer.setup_timeout": "browser observer setup timed out",
   "preview.budget_exceeded": "the run took longer than its time limit",
   "preview.launcher_not_isolated": "the launcher does not start its own copy of the app, so the run will not touch your real one",
   "driver.secret_missing": "a secret the journey types is not set",
@@ -42,7 +45,10 @@ export interface RunFailure {
 /** #1296: a failed run says which step failed, or where the failure can be located. */
 export function runFailure(run: JourneyRunView, stepIds: string[]): RunFailure {
   const code = run.detail?.code ?? run.reason ?? "internal";
-  const why = WHY[code] ?? WHY[run.reason ?? ""] ?? `the Runtime refused the run (${code})`;
+  const baseWhy = WHY[code] ?? WHY[run.reason ?? ""] ?? `the Runtime refused the run (${code})`;
+  const why = run.observerSetup?.error && (code === "observer.setup_failed" || code === "observer.setup_timeout")
+    ? `${baseWhy}: ${run.observerSetup.error}`
+    : baseWhy;
   const pointer = run.detail?.pointer ?? "";
   // The pointer names a step id when the play failed on it; the result of a screen also does.
   let step = stepIds.findIndex((id) => pointer === `/${id}` || pointer.startsWith(`/${id}/`) || pointer === id);

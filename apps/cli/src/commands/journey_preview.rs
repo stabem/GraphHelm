@@ -24,7 +24,7 @@ use super::journey_live::{
 };
 use super::journey_replay::{
     Driver, Failure, Result, SURVIVABLE, TemporaryOutput, declared_browser, failure, observe,
-    observer_ready, preflight, record, safe_directory, safe_node, walked, with_storage,
+    preflight, record, safe_directory, safe_node, walked, with_storage,
 };
 use crate::args::{JourneyPreviewArgs, JourneyReplayArgs};
 use crate::output::{CommandOutput, Outcome};
@@ -633,6 +633,8 @@ fn failed_reason(code: &str) -> &'static str {
         "watch.app_down" => "watch.app_down",
         "watch.launch_failed" => "watch.launch_failed",
         "watch.launcher_invalid" => "watch.launcher_invalid",
+        "observer.setup_failed" => "observer.setup_failed",
+        "observer.setup_timeout" => "observer.setup_timeout",
         // #1722: a stale copy keeps the closed reason list (#519); `detail.code` says which.
         "driver.observer_missing" | "replay.observer_missing" | "replay.observer_stale" => {
             "driver.observer_missing"
@@ -1085,7 +1087,31 @@ fn play(
     let backend = super::journey_backend::is_backend(flow);
     let needs_app = !backend || super::journey_backend::needs_app(flow);
     if !backend {
-        observer_ready(project)?;
+        let setup = super::observers::ensure_playwright(project, deadline, |message| {
+            run.state["observerSetup"] = json!({"state":"installing","message":message});
+            run.save();
+            eprintln!("{message}");
+        });
+        match setup {
+            Ok(_) => {
+                run.state["observerSetup"] =
+                    json!({"state":"ready","message":"Browser observer ready"});
+                run.save();
+            }
+            Err(error) => {
+                run.state["observerSetup"] = json!({
+                    "state":"failed", "message":"Browser observer setup failed",
+                    "error":error["message"],
+                });
+                run.save();
+                let code = if error["code"] == "observer.setup_timeout" {
+                    "observer.setup_timeout"
+                } else {
+                    "observer.setup_failed"
+                };
+                return Err(failure(code, "/observer", 3));
+            }
+        }
     }
     if needs_app && run.validation && !launcher_isolated(project) {
         return Err(failure(

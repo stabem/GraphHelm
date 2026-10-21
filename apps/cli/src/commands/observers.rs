@@ -1,11 +1,13 @@
 //! Browser journey observers for `graphhelm setup`: whether one is ready in the project, the exact
-//! commands that make it ready, and (only on `--install-observer`) running them.
+//! commands that make it ready, and installation for setup and journey Run.
 //!
 //! Playwright is the default observer: deterministic, no model, no AI cost
 //! (`tools/playwright-observer`). `e2e` (tester.army) is opt-in: it needs a model key for agent
-//! steps (`tools/e2e-observer`). Readiness reads files and PATH only; nothing runs without the flag.
+//! steps (`tools/e2e-observer`). Readiness reads files and PATH only.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::args::ObserverKind;
 
@@ -76,13 +78,15 @@ fn on_path(program: &str) -> bool {
 
 /// Where Playwright keeps browsers: `PLAYWRIGHT_BROWSERS_PATH`, else the per-OS cache under `home`.
 fn browser_roots(project: &Path, home: &Path) -> Vec<PathBuf> {
+    let local = project.join("node_modules/playwright-core/.local-browsers");
     if let Some(path) = std::env::var_os("PLAYWRIGHT_BROWSERS_PATH") {
         if path == "0" {
-            return vec![project.join("node_modules/playwright-core/.local-browsers")];
+            return vec![local];
         }
-        return vec![PathBuf::from(path)];
+        return vec![PathBuf::from(path), local];
     }
     let mut roots = vec![
+        local,
         home.join(".cache/ms-playwright"),
         home.join("Library/Caches/ms-playwright"),
         home.join("AppData/Local/ms-playwright"),
@@ -180,21 +184,66 @@ fn script_path(spec: &Spec, project: &Path) -> PathBuf {
     project.join(SCRIPT_DIR).join(spec.script_name)
 }
 
-/// Writes the shipped observer script into the project, replacing an older copy.
+fn safe_observer_target(project: &Path) -> std::io::Result<()> {
+    let root = project.canonicalize()?;
+    for relative in [
+        ".graphhelm",
+        SCRIPT_DIR,
+        ".graphhelm/npm-cache",
+        "node_modules",
+        "node_modules/@playwright",
+        "node_modules/@playwright/test",
+        "node_modules/playwright",
+        "node_modules/playwright-core",
+        "node_modules/playwright-core/.local-browsers",
+    ] {
+        let path = project.join(relative);
+        if let Ok(meta) = std::fs::symlink_metadata(&path) {
+            if meta.file_type().is_symlink()
+                || graphhelm_process::fs::is_reparse_point(&meta)
+                || !meta.is_dir()
+            {
+                return Err(std::io::Error::other("unsafe observer target"));
+            }
+            if path.canonicalize()?.strip_prefix(&root).is_err() {
+                return Err(std::io::Error::other("observer target escapes project"));
+            }
+        }
+    }
+    for relative in [
+        "package.json",
+        "package-lock.json",
+        ".graphhelm/observer-install.lock",
+    ] {
+        if let Ok(meta) = std::fs::symlink_metadata(project.join(relative))
+            && (meta.file_type().is_symlink()
+                || graphhelm_process::fs::is_reparse_point(&meta)
+                || !meta.is_file())
+        {
+            return Err(std::io::Error::other(format!(
+                "unsafe install target: {relative}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn write_script(spec: &Spec, project: &Path) -> std::io::Result<()> {
+    safe_observer_target(project)?;
     let path = script_path(spec, project);
     std::fs::create_dir_all(project.join(SCRIPT_DIR))?;
-    std::fs::write(path, spec.script)?;
+    safe_observer_target(project)?;
+    super::atomic::atomic_write(&path, spec.script.as_bytes())?;
     if spec.id == "playwright" {
-        std::fs::write(project.join(SCRIPT_DIR).join(DRIVER_NAME), DRIVER)?;
-        std::fs::write(project.join(SCRIPT_DIR).join(JUDGE_NAME), JUDGE)?;
+        super::atomic::atomic_write(&project.join(SCRIPT_DIR).join(DRIVER_NAME), DRIVER)?;
+        super::atomic::atomic_write(&project.join(SCRIPT_DIR).join(JUDGE_NAME), JUDGE)?;
     }
     Ok(())
 }
 
 /// What running one install step came to.
 enum Step {
-    Exited(Option<i32>),
+    Exited(Option<i32>, String),
     /// The step outlived the deadline and was killed, with its process tree.
     TimedOut,
 }
@@ -204,6 +253,10 @@ fn run_step(
     project: &Path,
     deadline: Option<std::time::Instant>,
 ) -> std::io::Result<Step> {
+    let deadline = deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(900));
+    if Instant::now() >= deadline {
+        return Ok(Step::TimedOut);
+    }
     let mut words = command.split_whitespace();
     let program = words.next().unwrap_or_default();
     let mut process = if cfg!(windows) {
@@ -213,19 +266,76 @@ fn run_step(
     } else {
         graphhelm_process::command(program)
     };
-    // The child's output would corrupt the JSON on stdout; it goes to stderr for the owner.
+    // Keep dependency and browser writes in the selected project, including npm workspaces.
+    let cache = project.join(".graphhelm/npm-cache");
+    safe_observer_target(project)?;
+    std::fs::create_dir_all(&cache)?;
+    if std::fs::symlink_metadata(&cache).is_ok_and(|meta| {
+        meta.file_type().is_symlink()
+            || graphhelm_process::fs::is_reparse_point(&meta)
+            || !meta.is_dir()
+    }) {
+        return Err(std::io::Error::other("unsafe npm cache target"));
+    }
     let mut child = process
         .args(words)
         .current_dir(project)
+        .env("PLAYWRIGHT_BROWSERS_PATH", "0")
+        .env("npm_config_cache", &cache)
+        .env("npm_config_prefix", project)
+        .env("npm_config_workspaces", "false")
+        .env("npm_config_ignore_scripts", "true")
         .stdin(std::process::Stdio::null())
-        .stdout(std::io::stderr())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()?;
-    let Some(deadline) = deadline else {
-        return Ok(Step::Exited(child.wait()?.code()));
-    };
+    let stderr = child.stderr.take();
+    let secrets: Vec<String> = std::env::vars()
+        .filter(|(key, _)| {
+            key.starts_with("GRAPHHELM_SECRET_")
+                || key.ends_with("_TOKEN")
+                || key.ends_with("_KEY")
+                || key.ends_with("_PASSWORD")
+        })
+        .map(|(_, value)| value)
+        .collect();
+    let slack = secrets.iter().map(String::len).max().unwrap_or_default();
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let mut tail = Vec::new();
+        let mut cut = false;
+        if let Some(mut stderr) = stderr {
+            let mut chunk = [0_u8; 1024];
+            loop {
+                match stderr.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(size) => {
+                        tail.extend_from_slice(&chunk[..size]);
+                        let max = 4096 + slack;
+                        if tail.len() > max {
+                            tail.drain(..tail.len() - max);
+                            cut = true;
+                        }
+                    }
+                }
+            }
+        }
+        let _ = stderr_tx.send(
+            super::journey_replay::masked_tail(&tail, cut, slack, &secrets)
+                .trim()
+                .to_owned(),
+        );
+    });
     loop {
         if let Some(status) = child.try_wait()? {
-            return Ok(Step::Exited(status.code()));
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            return match stderr_rx.recv_timeout(remaining) {
+                Ok(detail) => Ok(Step::Exited(status.code(), detail)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(Step::TimedOut),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    Ok(Step::Exited(status.code(), String::new()))
+                }
+            };
         }
         if std::time::Instant::now() >= deadline {
             kill_tree(&mut child);
@@ -330,6 +440,27 @@ fn install_until(
     home: &Path,
     deadline: Option<std::time::Instant>,
 ) -> (serde_json::Value, Installed) {
+    let deadline = deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(900));
+    let _lock = match observer_install_lock(project, deadline) {
+        Ok(lock) => lock,
+        Err(error) => {
+            return (
+                serde_json::json!({"installed":[{"error":error.to_string()}]}),
+                Installed::Failed,
+            );
+        }
+    };
+    install_until_progress(kinds, project, home, Some(deadline), |_| {}, run_step)
+}
+
+fn install_until_progress(
+    kinds: &[ObserverKind],
+    project: &Path,
+    home: &Path,
+    deadline: Option<Instant>,
+    mut progress: impl FnMut(&str),
+    mut run: impl FnMut(&str, &Path, Option<Instant>) -> std::io::Result<Step>,
+) -> (serde_json::Value, Installed) {
     let mut steps = Vec::new();
     let mut outcome = Installed::Ok;
     let mut seen = Vec::new();
@@ -339,24 +470,16 @@ fn install_until(
             continue;
         }
         seen.push(spec.id);
-        let written = write_script(spec, project);
-        steps.push(serde_json::json!({
-            "observer": spec.id,
-            "wrote": format!("{SCRIPT_DIR}/{}", spec.script_name),
-            "error": written.as_ref().err().map(ToString::to_string),
-        }));
-        if written.is_err() {
-            outcome = Installed::Failed;
-            break;
-        }
         for command in spec.install {
-            let (exit, error, timed_out) = match run_step(command, project, deadline) {
-                Ok(Step::Exited(code)) => (code, None, false),
-                Ok(Step::TimedOut) => (None, Some("timed out".to_owned()), true),
-                Err(error) => (None, Some(error.to_string()), false),
+            progress(command);
+            let (exit, error, timed_out, detail) = match run(command, project, deadline) {
+                Ok(Step::Exited(code, detail)) => (code, None, false, detail),
+                Ok(Step::TimedOut) => (None, Some("timed out".to_owned()), true, String::new()),
+                Err(error) => (None, Some(error.to_string()), false, String::new()),
             };
             steps.push(serde_json::json!({
                 "observer": spec.id, "command": command, "exitCode": exit, "error": error,
+                "detail": if detail.is_empty() { serde_json::Value::Null } else { detail.into() },
             }));
             if timed_out {
                 outcome = Installed::TimedOut;
@@ -366,6 +489,18 @@ fn install_until(
                 outcome = Installed::Failed;
                 break 'outer;
             }
+        }
+        {
+            progress("Writing the current browser observer");
+            if let Err(error) = write_script(spec, project) {
+                steps.push(serde_json::json!({"observer": spec.id, "error": error.to_string()}));
+                outcome = Installed::Failed;
+                break;
+            }
+            steps.push(serde_json::json!({
+                "observer": spec.id,
+                "wrote": format!("{SCRIPT_DIR}/{}", spec.script_name),
+            }));
         }
     }
     (
@@ -377,9 +512,241 @@ fn install_until(
     )
 }
 
+fn observer_install_lock(project: &Path, deadline: Instant) -> std::io::Result<std::fs::File> {
+    use fs2::FileExt;
+    safe_observer_target(project)?;
+    std::fs::create_dir_all(project.join(".graphhelm"))?;
+    safe_observer_target(project)?;
+    let path = project.join(".graphhelm/observer-install.lock");
+    if std::fs::symlink_metadata(&path).is_ok_and(|meta| {
+        meta.file_type().is_symlink() || graphhelm_process::fs::is_reparse_point(&meta)
+    }) {
+        return Err(std::io::Error::other("unsafe observer lock"));
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    loop {
+        match file.try_lock_exclusive() {
+            Ok(()) => return Ok(file),
+            Err(_error) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25))
+            }
+            Err(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "timed out waiting for observer installation",
+                ));
+            }
+        }
+    }
+}
+
+/// Ensures the Playwright journey observer is ready, serializing setup and preserving failed
+/// installs for a safe retry. The progress callback is emitted before each external stage.
+pub(super) fn ensure_playwright(
+    project: &Path,
+    deadline: Instant,
+    progress: impl FnMut(&str),
+) -> Result<serde_json::Value, serde_json::Value> {
+    ensure_playwright_with(project, deadline, progress, run_step)
+}
+
+fn ensure_playwright_with(
+    project: &Path,
+    deadline: Instant,
+    mut progress: impl FnMut(&str),
+    run: impl FnMut(&str, &Path, Option<Instant>) -> std::io::Result<Step>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    if super::journey_replay::observer_ready(project).is_ok() {
+        return Ok(serde_json::json!({"status":"ready", "steps":[]}));
+    }
+    let install_deadline = deadline
+        .checked_sub(Duration::from_secs(10))
+        .unwrap_or(deadline);
+    progress("Preparing the browser observer");
+    let _lock = observer_install_lock(project, install_deadline).map_err(
+        |error| serde_json::json!({"code":if error.kind() == std::io::ErrorKind::TimedOut {"observer.setup_timeout"} else {"observer.setup_failed"}, "message":error.to_string()}),
+    )?;
+    if super::journey_replay::observer_ready(project).is_ok() {
+        return Ok(serde_json::json!({"status":"ready", "steps":[]}));
+    }
+    let (data, outcome) = install_until_progress(
+        &[ObserverKind::Playwright],
+        project,
+        project,
+        Some(install_deadline),
+        &mut progress,
+        run,
+    );
+    if matches!(outcome, Installed::Ok) {
+        Ok(data)
+    } else {
+        let steps = data
+            .get("installed")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        let timed_out = matches!(outcome, Installed::TimedOut);
+        let failed = steps.as_array().and_then(|items| items.last());
+        let command = failed
+            .and_then(|step| step.get("command"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("observer install");
+        let detail = failed
+            .and_then(|step| step.get("detail"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|detail| !detail.is_empty())
+            .map(|detail| format!(": {detail}"))
+            .unwrap_or_default();
+        let error = failed
+            .and_then(|step| step.get("error"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|error| !error.is_empty())
+            .map(|error| format!(": {error}"))
+            .unwrap_or_default();
+        let exit = failed
+            .and_then(|step| step["exitCode"].as_i64())
+            .map(|code| format!(" (exit {code})"))
+            .unwrap_or_default();
+        Err(serde_json::json!({
+            "code": if timed_out { "observer.setup_timeout" } else { "observer.setup_failed" },
+            "message": if timed_out { format!("timed out: {command}") } else { format!("failed: {command}{exit}{error}{detail}") },
+            "steps": steps,
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_refreshes_missing_and_stale_observers_and_skips_a_current_copy() {
+        let (_root, project, _home) = fixture();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut commands = Vec::new();
+        let mut stages = Vec::new();
+        ensure_playwright_with(
+            &project,
+            deadline,
+            |stage| stages.push(stage.to_owned()),
+            |command, cwd, _| {
+                assert_eq!(cwd, project);
+                commands.push(command.to_owned());
+                Ok(Step::Exited(Some(0), String::new()))
+            },
+        )
+        .unwrap();
+        assert_eq!(commands, PLAYWRIGHT.install);
+        assert!(stages.iter().any(|stage| stage == PLAYWRIGHT.install[1]));
+        assert!(super::super::journey_replay::observer_ready(&project).is_ok());
+        ensure_playwright_with(
+            &project,
+            deadline,
+            |_| panic!("current observer reported installation"),
+            |_, _, _| panic!("current observer reinstalled"),
+        )
+        .unwrap();
+        std::fs::write(project.join(SCRIPT_DIR).join(JUDGE_NAME), "old judge").unwrap();
+        commands.clear();
+        ensure_playwright_with(
+            &project,
+            deadline,
+            |_| {},
+            |command, _, _| {
+                commands.push(command.to_owned());
+                Ok(Step::Exited(Some(0), String::new()))
+            },
+        )
+        .unwrap();
+        assert_eq!(commands, PLAYWRIGHT.install);
+        assert_eq!(
+            std::fs::read(project.join(SCRIPT_DIR).join(JUDGE_NAME)).unwrap(),
+            JUDGE
+        );
+    }
+
+    #[test]
+    fn a_failed_install_preserves_stale_scripts_and_retries_with_the_exact_failure() {
+        let (_root, project, _home) = fixture();
+        std::fs::create_dir_all(project.join(SCRIPT_DIR)).unwrap();
+        let driver = project.join(SCRIPT_DIR).join(DRIVER_NAME);
+        std::fs::write(&driver, "old driver").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let failed = ensure_playwright_with(
+            &project,
+            deadline,
+            |_| {},
+            |_, _, _| {
+                Ok(Step::Exited(
+                    Some(23),
+                    "fixture registry unavailable".into(),
+                ))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(failed["code"], "observer.setup_failed");
+        assert_eq!(
+            failed["message"],
+            format!(
+                "failed: {} (exit 23): fixture registry unavailable",
+                PLAYWRIGHT.install[0]
+            )
+        );
+        assert_eq!(std::fs::read_to_string(&driver).unwrap(), "old driver");
+        ensure_playwright_with(
+            &project,
+            deadline,
+            |_| {},
+            |_, _, _| Ok(Step::Exited(Some(0), String::new())),
+        )
+        .unwrap();
+        assert!(super::super::journey_replay::observer_ready(&project).is_ok());
+    }
+
+    #[test]
+    fn a_setup_timeout_names_the_command_and_does_not_publish_scripts() {
+        let (_root, project, _home) = fixture();
+        let failed = ensure_playwright_with(
+            &project,
+            Instant::now() + Duration::from_secs(60),
+            |_| {},
+            |_, _, _| Ok(Step::TimedOut),
+        )
+        .unwrap_err();
+        assert_eq!(failed["code"], "observer.setup_timeout");
+        assert_eq!(
+            failed["message"],
+            format!("timed out: {}", PLAYWRIGHT.install[0])
+        );
+        assert!(!project.join(SCRIPT_DIR).join(DRIVER_NAME).exists());
+    }
+
+    #[test]
+    fn concurrent_setup_waits_with_a_deadline_and_never_starts_commands() {
+        let (_root, project, _home) = fixture();
+        let held =
+            observer_install_lock(&project, Instant::now() + Duration::from_secs(60)).unwrap();
+        let failed = ensure_playwright_with(
+            &project,
+            Instant::now(),
+            |_| {},
+            |_, _, _| panic!("concurrent install started"),
+        )
+        .unwrap_err();
+        assert_eq!(failed["code"], "observer.setup_timeout");
+        drop(held);
+        ensure_playwright_with(
+            &project,
+            Instant::now() + Duration::from_secs(60),
+            |_| {},
+            |_, _, _| Ok(Step::Exited(Some(0), String::new())),
+        )
+        .unwrap();
+    }
 
     fn fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let root = tempfile::tempdir().expect("tempdir");
@@ -507,5 +874,15 @@ mod tests {
                 .contains("playwright_observe.py"),
             "{browser}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn observer_scripts_refuse_a_symlinked_destination() {
+        let (_root, project, _home) = fixture();
+        let outside = tempfile::tempdir().expect("outside");
+        std::os::unix::fs::symlink(outside.path(), project.join(".graphhelm")).expect("symlink");
+        let error = write_script(&PLAYWRIGHT, &project).expect_err("unsafe path accepted");
+        assert!(error.to_string().contains("unsafe observer target"));
     }
 }

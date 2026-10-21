@@ -458,7 +458,8 @@ image = kernel.GetModuleFileNameW
 image.argtypes = [wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
 image.restype = wintypes.DWORD
 buffer = ctypes.create_unicode_buffer(32768)
-length = image(None, buffer, len(buffer))
+current_process_module = None
+length = image(current_process_module, buffer, len(buffer))
 if not length or length >= len(buffer):
     raise OSError(ctypes.get_last_error(), "loaded image path unavailable or truncated")
 print(json.dumps({"loadedImage": buffer.value}, ensure_ascii=True))

@@ -1180,9 +1180,16 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         import hashlib
         if getattr(os.lstat(sys.executable), "st_reparse_tag", None) != 0x8000001B:
             self.skipTest("OBSERVER_MISSING: selected interpreter is not a Store AppExecLink")
-        code = ("import ctypes; from pathlib import Path; b=ctypes.create_unicode_buffer(32768); "
-                "n=ctypes.windll.kernel32.GetModuleFileNameW(None,b,len(b)); assert 0<n<len(b); "
-                f"open({str(self.counter)!r},'a',encoding='utf-8').write(b.value+'\\n')")
+        # Execute a tracked Python file: the selector deliberately rejects '<' in argv, even
+        # inside -c source. Keep the actual image API and its bounds check, not a parser waiver.
+        observer = self.repo / "observe_store_image.py"
+        observer.write_text("import ctypes\n"
+            "b = ctypes.create_unicode_buffer(32768)\n"
+            "n = ctypes.windll.kernel32.GetModuleFileNameW(None, b, len(b))\n"
+            "assert 0 < n < len(b)\n"
+            f"open({str(self.counter)!r}, 'a', encoding='utf-8').write(b.value + '\\n')\n", encoding="utf-8")
+        self.git("add", observer.name)
+        self.git("commit", "-qm", "Track the native Store image observer")
         import shutil
         generic = shutil.which("python.EXE")
         if generic is None or getattr(os.lstat(generic), "st_reparse_tag", None) != 0x8000001B:
@@ -1191,7 +1198,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
             self.skipTest("OBSERVER_MISSING: distinct generic PATH Python AppExecLink selection")
         for index, selected in enumerate([sys.executable, generic]):
             with self.subTest(selection=index):
-                self.steps = [[selected, "-I", "-S", "-c", code]]
+                self.steps = [[selected, "-I", "-S", observer.name]]
                 result, report = self.run_once()
                 self.assertEqual(result, 0)
                 identity = report["fingerprint"]["tools"]["executables"][0]
@@ -1336,6 +1343,8 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         real_open = builtins.open
         real_discover = rr._discovery_output
         measurements = []
+        traces = []
+        role_traces = []
 
         class Reader:
             def __init__(self, stream, counts):
@@ -1353,20 +1362,35 @@ class ResumeAndPreflightContracts(unittest.TestCase):
 
         for n in (2, 20):
             counts = [0, 0]
+            calls = []
             self.steps = [["node", "-e", f"require('fs').appendFileSync({json.dumps(str(self.counter))}, 'child\\n')"]] * n
             def opened(path, mode="r", *args, **kwargs):
                 stream = real_open(path, mode, *args, **kwargs)
                 return Reader(stream, counts) if mode == "rb" else stream
-            def discovered(*args, **kwargs):
+            def discovered(argv, cwd, env, timeout):
                 counts[1] += 1
-                return real_discover(*args, **kwargs)
+                calls.append((tuple(argv), str(cwd), rr._env_fingerprint(env)))
+                return real_discover(argv, cwd, env, timeout)
             with patch("builtins.open", side_effect=opened), patch.object(rr, "_discovery_output", side_effect=discovered):
-                self.assertEqual(self.run_once(resume=False)[0], 0)
+                result, report = self.run_once(resume=False)
+                self.assertEqual(result, 0)
+            tools = report["fingerprint"]["tools"]
+            # Assert the observed selections, not a guessed allowance of two discoveries.
+            expected = {tuple([tools["stepPrograms"][0], "--version"]): "node-version"}
+            if sys.platform == "win32" and getattr(os.lstat(sys.executable), "st_reparse_tag", None) == 0x8000001B:
+                expected[tuple([tools["runnerPython"]["invocationPath"], "-I", "-S", "-X", "utf8", "-c", rr._PYTHON_IMAGE_DISCOVERY])] = "runner-python-image"
+            self.assertEqual({call[0] for call in calls}, set(expected))
+            self.assertEqual(len(calls), len(expected), "each selected role discovers once per capture")
+            self.assertEqual(len(set(calls)), len(calls), "no duplicate invocation/cwd/env discovery")
+            self.assertTrue(all(cwd == str(self.repo) and env == report["fingerprint"]["envSha256"] for _, cwd, env in calls))
+            traces.append(calls)
+            role_traces.append([expected[argv] for argv, _, _ in calls])
             measurements.append(counts)
-        print("identity-scale " + json.dumps({"N": 2, "10N": 20, "streamedBytesAndDiscoveryCalls": measurements}))
+        print("identity-scale " + json.dumps({"N": 2, "10N": 20, "streamedBytesAndDiscoveryCalls": measurements,
+            "selectedDiscoveryRoles": role_traces, "sameInvocationCwdEnvAcrossN": traces[0] == traces[1]}))
         self.assertEqual(measurements[0], measurements[1])
         self.assertGreater(measurements[0][0], 0)
-        self.assertEqual(measurements[0][1], 1)
+        self.assertEqual(traces[0], traces[1])
         self.assertEqual(len(self.runs()), 22)
 
     def test_discovery_output_and_deadline_are_bounded(self):

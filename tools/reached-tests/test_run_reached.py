@@ -1096,6 +1096,11 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         second.write_bytes(b"same-version image B")
         child = self.repo / "child"
         child.mkdir()
+        real_resolve = Path.resolve
+        def resolve_guard(path, *args, **kwargs):
+            if os.path.normcase(str(path)) == os.path.normcase(str(alias)):
+                raise OSError(1920, "controlled native AppExecLink strict-resolution failure")
+            return real_resolve(path, *args, **kwargs)
         real_lstat = rr.os.lstat
         def tagged(path, *args, **kwargs):
             value = real_lstat(path, *args, **kwargs)
@@ -1111,7 +1116,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
             return json.dumps({"loadedImage": str(selected[0])})
         steps = [{"argv":["python", "-c", "pass"], "cwd":"child", "slot":False}]
         env = dict(os.environ)
-        with patch.object(rr.sys, "platform", "win32"), patch.object(rr.sys, "executable", str(alias)), patch.object(rr.os, "lstat", side_effect=tagged), patch.object(rr, "_discovery_output", side_effect=discover):
+        with patch.object(rr.sys, "platform", "win32"), patch.object(rr.sys, "executable", str(alias)), patch.object(rr.os, "lstat", side_effect=tagged), patch.object(rr, "_discovery_output", side_effect=discover), patch.object(Path, "resolve", autospec=True, side_effect=resolve_guard):
             one = rr._tool_fingerprint(steps, None, self.repo, env)
             self.assertTrue(one["identityComplete"])
             self.assertEqual(one["runnerPython"]["invocationPath"], str(alias))
@@ -1131,6 +1136,45 @@ class ResumeAndPreflightContracts(unittest.TestCase):
                     self.assertFalse(refused["identityComplete"])
                     self.assertEqual(refused["stepPrograms"], [])
 
+    def test_controlled_generic_python_alias_is_an_explicit_step_role_not_a_tool_name_guess(self):
+        # Controlled metadata/API results: not a native activation observation.
+        import types
+        runner = self.repo.parent / "ordinary-runner.exe"
+        alias = self.repo.parent / "python.EXE"
+        image = self.repo.parent / "actual-child.exe"
+        for path in [runner, alias, image]:
+            path.write_bytes(path.name.encode())
+            path.chmod(0o755)
+        real_lstat, real_resolve = rr.os.lstat, Path.resolve
+        def tagged(path, *args, **kwargs):
+            value = real_lstat(path, *args, **kwargs)
+            if str(path) == str(alias):
+                value = types.SimpleNamespace(**{key: getattr(value, key) for key in dir(value) if key.startswith("st_")})
+                value.st_reparse_tag = 0x8000001B
+            return value
+        def resolve_guard(path, *args, **kwargs):
+            if str(path) == str(alias):
+                raise OSError(1920, "controlled generic AppExecLink resolution failure")
+            return real_resolve(path, *args, **kwargs)
+        env = {**os.environ, "PATH": str(alias.parent) + os.pathsep + os.environ.get("PATH", "")}
+        with patch.object(rr.sys, "platform", "win32"), patch.object(rr.sys, "executable", str(runner)), \
+                patch.object(rr.os, "lstat", side_effect=tagged), \
+                patch.object(Path, "resolve", autospec=True, side_effect=resolve_guard), \
+                patch.object(rr, "_discovery_output", return_value=json.dumps({"loadedImage":str(image)})) as discover:
+            steps = [{"argv":[alias.name, "-c", "pass"], "cwd":".", "slot":False}]
+            observed = rr._tool_fingerprint(steps, None, self.repo, env)
+            self.assertTrue(observed["identityComplete"], observed.get("identityReason"))
+            self.assertEqual(observed["executables"][0]["invocationPath"], str(alias))
+            self.assertEqual(observed["executables"][0]["digestTarget"], str(image.resolve()))
+            self.assertEqual(discover.call_count, 1)
+            self.assertEqual(discover.call_args.args[0][0], str(alias))
+            self.assertEqual(discover.call_args.args[1:3], (self.repo, env))
+            discover.reset_mock()
+            # A GraphHelm configured path with the SAME basename/tag has no Python role.
+            refused = rr._tool_fingerprint([{"argv":["graphhelm", "status"], "cwd":".", "slot":False}], alias, self.repo, env)
+            self.assertFalse(refused["identityComplete"])
+            discover.assert_not_called()
+
     @unittest.skipUnless(os.name == "nt", "OBSERVER_MISSING: real Store Python AppExecLink activation")
     def test_windows_store_app_alias_hashes_executed_image_and_reuses_only_unchanged_pass(self):
         import hashlib
@@ -1139,16 +1183,25 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         code = ("import ctypes; from pathlib import Path; b=ctypes.create_unicode_buffer(32768); "
                 "n=ctypes.windll.kernel32.GetModuleFileNameW(None,b,len(b)); assert 0<n<len(b); "
                 f"open({str(self.counter)!r},'a',encoding='utf-8').write(b.value+'\\n')")
-        self.steps = [["python", "-I", "-S", "-c", code]]
-        result, report = self.run_once()
-        self.assertEqual(result, 0)
-        identity = report["fingerprint"]["tools"]["runnerPython"]
-        self.assertEqual(os.path.normcase(identity["invocationPath"]), os.path.normcase(sys.executable))
-        self.assertNotEqual(os.path.normcase(identity["digestTarget"]), os.path.normcase(sys.executable))
-        self.assertEqual(identity["sha256"], hashlib.sha256(Path(identity["digestTarget"]).read_bytes()).hexdigest())
-        self.assertEqual([os.path.normcase(line) for line in self.runs()], [os.path.normcase(identity["digestTarget"])])
-        self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
-        self.assertEqual(len(self.runs()), 1)
+        import shutil
+        generic = shutil.which("python.EXE")
+        if generic is None or getattr(os.lstat(generic), "st_reparse_tag", None) != 0x8000001B:
+            self.skipTest("OBSERVER_MISSING: generic PATH python.EXE AppExecLink selection")
+        if os.path.normcase(generic) == os.path.normcase(sys.executable):
+            self.skipTest("OBSERVER_MISSING: distinct generic PATH Python AppExecLink selection")
+        for index, selected in enumerate([sys.executable, generic]):
+            with self.subTest(selection=index):
+                self.steps = [[selected, "-I", "-S", "-c", code]]
+                result, report = self.run_once()
+                self.assertEqual(result, 0)
+                identity = report["fingerprint"]["tools"]["executables"][0]
+                self.assertEqual(os.path.normcase(identity["invocationPath"]), os.path.normcase(selected))
+                self.assertNotEqual(os.path.normcase(identity["digestTarget"]), os.path.normcase(selected))
+                self.assertEqual(identity["sha256"], hashlib.sha256(Path(identity["digestTarget"]).read_bytes()).hexdigest())
+                self.assertEqual(os.path.normcase(self.runs()[-1]), os.path.normcase(identity["digestTarget"]))
+                self.assertEqual(len(self.runs()), index + 1)
+                self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+                self.assertEqual(len(self.runs()), index + 1)
 
     @unittest.skipUnless(os.name == "nt" and __import__("shutil").which("node"), "OBSERVER_MISSING: native Windows npm.cmd preparation")
     def test_windows_npm_cmd_preparation_executes_without_reusable_identity(self):

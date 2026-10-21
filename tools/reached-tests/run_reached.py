@@ -515,16 +515,12 @@ class _ExecutableCapture:
                     return candidate
         raise _MissingExecutable("required reached executable is missing or not executable")
 
-    def _identity(self, invocation: str, cwd: Path) -> dict[str, Any]:
+    def _identity(self, invocation: str, cwd: Path, *, python_selected: bool = False) -> dict[str, Any]:
         import stat
         self._remaining()
-        try:
-            target = str(Path(invocation).resolve(strict=True))
-        except RuntimeError:
-            raise RuntimeError("executable identity has an unsupported link chain") from None
-        # Store Python aliases are activations, not readable symlinks. Query the selected child,
-        # never this parent's possibly stale image, and never probe arbitrary unreadable programs.
-        if (sys.platform == "win32" and os.path.normcase(invocation) == os.path.normcase(sys.executable)
+        # AppExecLink may raise WinError1920 on strict resolve; inspect its lexical tag first.
+        # Only an explicitly selected Python role permits the fixed isolated child discovery.
+        if (sys.platform == "win32" and python_selected
                 and getattr(os.lstat(invocation), "st_reparse_tag", None) == 0x8000001B):
             reply = json.loads(self._discover([invocation, "-I", "-S", "-X", "utf8", "-c", _PYTHON_IMAGE_DISCOVERY], cwd))
             image = reply.get("loadedImage") if isinstance(reply, dict) else None
@@ -536,6 +532,11 @@ class _ExecutableCapture:
             target = str(Path(image).resolve(strict=True))
             if os.path.normcase(target) == os.path.normcase(invocation):
                 raise RuntimeError("selected Python alias image resolves to its unreadable invocation")
+        else:
+            try:
+                target = str(Path(invocation).resolve(strict=True))
+            except RuntimeError:
+                raise RuntimeError("executable identity has an unsupported link chain") from None
         if target not in self.digests:
             if len(self.digests) >= 128:
                 raise RuntimeError("executable identity count exceeds its bound")
@@ -630,7 +631,7 @@ def _tool_fingerprint(steps: list[dict[str, Any]], graphhelm: Path | None,
     tools: dict[str, Any] = {"python": sys.version, "platform": sys.platform, "identityComplete": True,
                              "stepPrograms": [], "executables": [], "preparationSteps": []}
     try:
-        tools["runnerPython"] = capture._identity(capture._program(sys.executable, repo), repo)
+        tools["runnerPython"] = capture._identity(capture._program(sys.executable, repo), repo, python_selected=True)
         tools["graphhelmExecutable"] = capture._identity(capture._program(str(graphhelm), repo), repo) if graphhelm else None
         tools["graphhelm"] = tools["graphhelmExecutable"]["sha256"] if graphhelm else None
         for index, step in enumerate(steps):
@@ -641,7 +642,11 @@ def _tool_fingerprint(steps: list[dict[str, Any]], graphhelm: Path | None,
             command = _effective_argv(repo, cwd, step["argv"], graphhelm)
             invocation = capture._program(command[0], cwd)
             tools["stepPrograms"].append(invocation)
-            tools["executables"].append(capture._identity(invocation, cwd))
+            # The original selected command declares the role. A configured GraphHelm/Rust/npm
+            # path named python.exe is not thereby authorized to run Python discovery.
+            python_selected = (Path(step["argv"][0]).name.lower() in ("python", "python3", "python.exe", "python3.exe")
+                               or os.path.normcase(step["argv"][0]) == os.path.normcase(sys.executable))
+            tools["executables"].append(capture._identity(invocation, cwd, python_selected=python_selected))
             name = Path(command[0]).name.lower()
             if name in ("cargo", "cargo.exe"):
                 rust = capture._rust(command, cwd)

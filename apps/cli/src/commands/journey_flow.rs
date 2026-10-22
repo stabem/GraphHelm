@@ -2362,7 +2362,10 @@ mod tests {
             "{written}"
         );
         let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
-        assert_eq!(reread["screens"], with["screens"], "text survives the round trip");
+        assert_eq!(
+            reread["screens"], with["screens"],
+            "text survives the round trip"
+        );
         assert_ne!(approval_digest(&with), plain_digest);
         let last = with["screens"][0]["expect"].as_array().unwrap().len() - 1;
         let mut other = with.clone();

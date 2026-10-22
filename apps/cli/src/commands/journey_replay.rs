@@ -2307,7 +2307,10 @@ mod tests {
         let mut other = failed.clone();
         other["checks"][0]["text"] = json!("daqui a 1 semana");
         let mut dropped = failed.clone();
-        dropped["checks"][0].as_object_mut().unwrap().remove("actual");
+        dropped["checks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("actual");
         for bad in [long, other, dropped] {
             assert_eq!(failed_checks(&bad, &expect), None, "{bad}");
         }

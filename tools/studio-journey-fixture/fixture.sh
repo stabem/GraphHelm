@@ -343,14 +343,21 @@ const records = [
   ['lanes-claimed', 'task.claimed', { taskId: 'issue-1556-lanes', issue: 1556, lane: 'planner', branch: 'issue-1556-lanes-fixture', journeys: ['studio2-lanes-board'], title: 'Show what each lane is doing' }],
   ['lanes-planned', 'task.planned', { taskId: 'issue-1556-lanes', lane: 'planner', classes: ['user_visible'], reviews: 1, proof: 'journey', critic: { mode: 'none', passScore: 7, maxRounds: 1 }, summary: 'Fixture plan' }],
 ];
+// #1808: Reassign hands the slice to another lane, so studio2-lanes-control gets more lanes.
+if (process.env.GRAPHHELM_JOURNEY_FLOW === 'studio2-lanes-control') {
+  records.push(['helper-claimed', 'task.claimed', { taskId: 'issue-1557-helper', issue: 1557, lane: 'helper', branch: 'issue-1557-helper-fixture', journeys: [], title: 'Take over a slice' }]);
+  // Each viewport stops the lane it shows; a third lane keeps one to reassign to at the second.
+  records.push(['spare-claimed', 'task.claimed', { taskId: 'issue-1558-spare', issue: 1558, lane: 'spare', branch: 'issue-1558-spare-fixture', journeys: [], title: 'Spare lane' }]);
+}
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
 (async () => {
   for (const [id, type, fields, attachments] of records) {
-    const signal = { id: `fixture-1556-${id}`, type, source: { type: 'user', id: 'planner' }, severity: 'low',
+    const actor = fields.lane ?? 'planner';
+    const signal = { id: `fixture-1556-${id}`, type, source: { type: 'user', id: actor }, severity: 'low',
       emittedAt: at, evidence: ['demo'], description: JSON.stringify({ ...common, ...fields }) };
     const response = await fetch(new URL('/v1/executions/demo/signal', runtime), {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
-        'Idempotency-Key': `fixture-1556-${id}`, 'X-GraphHelm-Actor': 'planner', 'X-GraphHelm-Actor-Type': 'agent' },
+        'Idempotency-Key': `fixture-1556-${id}`, 'X-GraphHelm-Actor': actor, 'X-GraphHelm-Actor-Type': 'agent' },
       body: JSON.stringify(attachments ? { signal, attachments } : { signal }), signal: AbortSignal.timeout(10000),
     });
     const result = await response.json();

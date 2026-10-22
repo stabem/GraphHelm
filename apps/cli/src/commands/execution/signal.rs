@@ -402,6 +402,49 @@ fn execute_authenticated_inner(
     )
 }
 
+/// #1839: the tasks reader keeps a task record only when its evidence is the envelope alone, or,
+/// for `task.journey_frames`, the envelope then one PNG per screen in order. Anything else would
+/// be appended and then silently dropped from the board, so it is refused here instead.
+fn validate_task_attachments(
+    envelope: &serde_json::Value,
+    attachments: &[ImageAttachment],
+) -> Result<(), Failure> {
+    let Some(kind) = envelope["type"]
+        .as_str()
+        .filter(|kind| kind.starts_with("task."))
+    else {
+        return Ok(());
+    };
+    if kind != "task.journey_frames" {
+        return if attachments.is_empty() {
+            Ok(())
+        } else {
+            Err(signal_invalid(
+                "only task.journey_frames carries attachments",
+                "/attachments",
+            ))
+        };
+    }
+    let screens = envelope["description"]
+        .as_str()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .and_then(|document| {
+            super::documents::journey_screens(&document["screens"]).map(|screens| screens.len())
+        })
+        .unwrap_or_default();
+    if attachments.len() != screens
+        || attachments
+            .iter()
+            .any(|image| image.media_type != "image/png")
+    {
+        return Err(signal_invalid(
+            "task.journey_frames carries one image/png attachment per screen, in screens order",
+            "/attachments",
+        ));
+    }
+    Ok(())
+}
+
 /// The refusals decided before the store is opened: a caller who can preserve nothing must learn
 /// that before the work rather than after it.
 fn refuse_unpreservable(
@@ -681,6 +724,7 @@ fn record_once(
             sealing.map(|keyring| (store, &scope, keyring)),
         )
     })?;
+    validate_task_attachments(&envelope, attachments)?;
     if envelope["type"] == "task.review_activity"
         && let Some((reply, original_decision_sequence)) = admit_review_activity(
             store,

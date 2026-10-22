@@ -23,6 +23,7 @@ a `task.*` record under the shared token or in another lane's name (GHCLI038_ACT
 Standard library only. `--dry-run` prints the request instead of sending it.
 """
 import argparse
+import base64
 import datetime
 import hashlib
 import json
@@ -44,14 +45,14 @@ LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # #1851: the Runtime's `agentKind` / `agentModel` rule on task.claimed (task-event.schema.json).
 AGENT_KIND = re.compile(r"[a-z][a-z0-9-]{0,31}", re.ASCII)
 AGENT_MODEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}", re.ASCII)
-KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "review_activity", "merged", "closed", "critic_verdict", "queued", "lane_retired", "request_recorded", "request_linked")
+KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "review_activity", "merged", "closed", "critic_verdict", "queued", "lane_retired", "request_recorded", "request_linked", "journey_frames")
 # #1469: `queued` records the open issues carrying this label that no open PR closes, oldest
 # first, at most QUEUED_MAX (the schema's maxItems), as the Lanes Backlog reads them.
 WAVE_LABEL = "current-wave"
 QUEUED_MAX = 25
 # The default revision is the step's position in the delivery. `planned` (#480) came later and is
 # the claim's companion, so the older steps keep their numbers (and their records' keys).
-REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "review_activity": 1, "merged": 5, "closed": 6, "critic_verdict": 1, "queued": 1, "lane_retired": 1, "request_recorded": 1, "request_linked": 1}
+REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "review_activity": 1, "merged": 5, "closed": 6, "critic_verdict": 1, "queued": 1, "lane_retired": 1, "request_recorded": 1, "request_linked": 1, "journey_frames": 3}
 CLASSES = ("docs", "code", "user_visible", "invariant")
 PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
@@ -294,6 +295,9 @@ def parse(argv):
     p.add_argument("--ask", help="request_recorded: the owner's ask in their own words (at most 2000 characters)")
     p.add_argument("--summary", help="claimed/pr_opened: one sentence; default: the body's 'Summary:' line, read with gh."
                    " planned: the plan in one line (at most 300 characters), required")
+    p.add_argument("--journey", help="journey_frames (#1839): the journey id run at the PR head")
+    p.add_argument("--preview-project", default=".",
+                   help="journey_frames: the worktree whose .graphhelm/journey-previews holds the run (default: .)")
     p.add_argument("--no-github", action="store_true", help="do not call gh for the title and summary")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
@@ -489,6 +493,10 @@ def document(args, now):
         doc.update(requestId=args.request_id, ask=args.ask, recordedBy=args.lane)
         if args.title:
             doc["title"] = args.title
+    elif args.kind == "journey_frames":
+        # #1839: filled per chunk of at most four screens by journey_frames_records.
+        need(args, "pr", "head", "journey")
+        doc.update(pr=args.pr, headSha=args.head, journey=args.journey, lane=args.lane)
     elif args.kind == "request_linked":
         need(args, "request-id")
         doc.update(requestId=args.request_id, issue=args.issue, linkedBy=args.lane)
@@ -602,6 +610,60 @@ def document(args, now):
     return doc
 
 
+MAX_FRAMES_PER_RECORD = 4
+PNG_MAGIC = bytes([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+
+
+def newest_finished_run(project, journey):
+    """#1839: the newest finished preview run of `journey` in a worktree: its state and directory.
+
+    The current run when it is ready or failed, else the newest kept history run, the same choice
+    the Runtime's Before side makes on main."""
+    base = Path(project) / ".graphhelm" / "journey-previews" / journey
+    def finished(directory):
+        try:
+            state = json.loads((directory / "state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return state if state.get("state") in ("ready", "failed") else None
+    state = finished(base)
+    if state is not None:
+        return state, base
+    history = base / "history"
+    runs = sorted(p.name for p in history.iterdir() if p.name.isdigit() and len(p.name) == 20) if history.is_dir() else []
+    for run in reversed(runs):
+        state = finished(history / run)
+        if state is not None:
+            return state, history / run
+    return None, None
+
+
+def journey_frames_records(args, doc):
+    """#1839: one record per chunk of at most four screens, each with its PNG frames attached."""
+    state, directory = newest_finished_run(args.preview_project, args.journey)
+    if state is None:
+        sys.exit(f"task_record: no finished preview run of {args.journey} under {args.preview_project}; "
+                 "run `graphhelm journey preview` at the PR head first")
+    screens = []
+    for screen, entry in sorted((state.get("screens") or {}).items()):
+        if entry.get("frame") is True and entry.get("file") == f"{screen}.png":
+            data = (directory / "frames" / f"{screen}.png").read_bytes()
+            if not data.startswith(PNG_MAGIC):
+                sys.exit(f"task_record: frames/{screen}.png is not a PNG")
+            screens.append((screen, base64.b64encode(data).decode("ascii")))
+    if not screens:
+        sys.exit(f"task_record: the newest finished run of {args.journey} kept no frames")
+    result = "pass" if state.get("result") == "pass" else "fail"
+    out = []
+    for start in range(0, len(screens), MAX_FRAMES_PER_RECORD):
+        chunk = screens[start:start + MAX_FRAMES_PER_RECORD]
+        record = dict(doc, result=result, screens=[name for name, _ in chunk])
+        if state.get("ranAt"):
+            record["ranAt"] = state["ranAt"]
+        out.append((record, [{"mediaType": "image/png", "base64": data} for _, data in chunk]))
+    return out
+
+
 def main(argv):
     args = parse(argv)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -620,6 +682,12 @@ def main(argv):
         if args.no_github:
             sys.exit("task_record: --no-github is refused for closed unless --dry-run is set")
         closed_on_github(args.pr, args.repo)
+    if args.kind == "journey_frames":
+        outcome = 0
+        for record, attachments in journey_frames_records(args, doc):
+            code, signal_id, reply = send(args, record, now, attachments)
+            outcome = max(outcome, report(code, signal_id, reply))
+        return outcome
     code, signal_id, reply = send_opening(args, doc, now)
     if args.kind == "heartbeat" and args.dry_run:
         print("task_record: dry-run only; Runtime admission and append were not observed", file=sys.stderr)
@@ -792,7 +860,7 @@ def send_opening(args, doc, now):
     return code, signal_id, reply
 
 
-def send(args, doc, now):
+def send(args, doc, now, attachments=None):
     """POSTs one record; returns (0 ok / 1 refused / 2 already recorded, signal id, reply)."""
     # The id and key are the record's content without its timestamp: the same step sent again is
     # the same key (a retry), and any change (a new head, a second reviewer, a changed verdict) is
@@ -810,6 +878,8 @@ def send(args, doc, now):
                        "source": {"type": "user", "id": args.lane}, "severity": "low",
                        "emittedAt": now, "evidence": [evidence],
                        "description": json.dumps(doc, separators=(",", ":"))}}
+    if attachments:
+        body["attachments"] = attachments
     url = f"{args.url.rstrip('/')}/v1/executions/{args.execution}/signal"
     headers = {"Content-Type": "application/json", "Idempotency-Key": signal_id,
                "X-GraphHelm-Actor": args.lane,

@@ -63,6 +63,10 @@ pub enum TaskEventKind {
     /// #1792: an issue opened for a recorded request. It opens no slice; `requests` reads it.
     #[serde(rename = "task.request_linked")]
     RequestLinked,
+    /// #1839: the frames a lane captured running one journey at its PR's head. It moves no step;
+    /// the issue's journeys view reads it as Now.
+    #[serde(rename = "task.journey_frames")]
+    JourneyFrames,
 }
 
 impl TaskEventKind {
@@ -85,6 +89,7 @@ impl TaskEventKind {
             "task.lane_retired" => Self::LaneRetired,
             "task.request_recorded" => Self::RequestRecorded,
             "task.request_linked" => Self::RequestLinked,
+            "task.journey_frames" => Self::JourneyFrames,
             _ => return None,
         })
     }
@@ -108,6 +113,7 @@ impl TaskEventKind {
             Self::LaneRetired => "task.lane_retired",
             Self::RequestRecorded => "task.request_recorded",
             Self::RequestLinked => "task.request_linked",
+            Self::JourneyFrames => "task.journey_frames",
         }
     }
 }
@@ -302,6 +308,9 @@ pub struct TaskEventRecord {
     /// serialized, as `agent_kind`.
     #[serde(default, skip_serializing)]
     pub agent_model: Option<String>,
+    /// #1839: the run a `task.journey_frames` states, with its sealed frames.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journey_frames: Option<JourneyFrames>,
 }
 
 /// #1851: `^[a-z][a-z0-9-]{0,31}$`, the `agentKind` a lane reports on `task.claimed`.
@@ -356,6 +365,36 @@ pub fn lane_identities(
         }
     }
     out
+}
+
+/// #1839: one journey run at a PR head, as a `task.journey_frames` record states it. `evidence`
+/// is not in the document: the tasks reader fills it with the sealed attachment ids, one per
+/// screen in `screens` order, and leaves the record out when they do not pair up.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JourneyFrames {
+    pub journey: String,
+    pub result: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ran_at: Option<String>,
+    pub screens: Vec<String>,
+    #[serde(default)]
+    pub evidence: Vec<String>,
+}
+
+/// The most attachments one signal carries (#313); a run with more screens records several.
+pub const MAX_JOURNEY_FRAMES: usize = 4;
+
+/// A screen id as the preview store names its frame file: `[A-Za-z0-9._-]`, 1 to 128, no leading dot.
+fn screen_id(value: &serde_json::Value) -> Option<String> {
+    let id = value.as_str()?;
+    (!id.is_empty()
+        && id.len() <= 128
+        && !id.starts_with('.')
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')))
+    .then(|| id.to_owned())
 }
 
 /// #1469: one open wave issue as a `task.queued` record lists it.
@@ -444,6 +483,7 @@ impl TaskEventRecord {
             paths: None,
             request_id: None,
             ask: None,
+            journey_frames: None,
         }
     }
 }
@@ -834,6 +874,54 @@ pub fn parse_task_event(
             }
             record.request_id = Some(task_identity(field("requestId"))?);
             record.issue = Some(count(field("issue"))?);
+        }
+        TaskEventKind::JourneyFrames => {
+            if !document.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "schema"
+                        | "taskId"
+                        | "revision"
+                        | "at"
+                        | "pr"
+                        | "headSha"
+                        | "journey"
+                        | "result"
+                        | "ranAt"
+                        | "screens"
+                        | "lane"
+                )
+            }) || !is_actor("lane")
+            {
+                return None;
+            }
+            let result = field("result").as_str()?;
+            if !matches!(result, "pass" | "fail") {
+                return None;
+            }
+            let screens = field("screens")
+                .as_array()
+                .filter(|screens| (1..=MAX_JOURNEY_FRAMES).contains(&screens.len()))?
+                .iter()
+                .map(screen_id)
+                .collect::<Option<Vec<_>>>()?;
+            if screens.iter().collect::<BTreeSet<_>>().len() != screens.len() {
+                return None;
+            }
+            let ran_at = match document.get("ranAt") {
+                None => None,
+                Some(value) => Some(text(value, 64)?),
+            };
+            record.pr = Some(count(field("pr"))?);
+            record.head_sha = Some(sha(field("headSha"))?);
+            record.lane = Some(actor_id.to_owned());
+            record.journey_frames = Some(JourneyFrames {
+                journey: task_identity(field("journey"))?,
+                result: result.to_owned(),
+                ran_at,
+                screens,
+                evidence: Vec::new(),
+            });
         }
         TaskEventKind::LaneRetired => {
             let lanes = field("lanes")
@@ -1769,7 +1857,10 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
         // #1469: the issue list belongs to no slice; `backlog` reads it. #1792: nor do requests.
         if matches!(
             event.kind,
-            TaskEventKind::Queued | TaskEventKind::RequestRecorded | TaskEventKind::RequestLinked
+            TaskEventKind::Queued
+                | TaskEventKind::RequestRecorded
+                | TaskEventKind::RequestLinked
+                | TaskEventKind::JourneyFrames
         ) {
             continue;
         }
@@ -2341,6 +2432,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             | TaskEventKind::LaneRetired
             | TaskEventKind::RequestRecorded
             | TaskEventKind::RequestLinked
+            | TaskEventKind::JourneyFrames
             | TaskEventKind::ReviewActivity => {
                 unreachable!("handled above")
             }

@@ -862,11 +862,23 @@ pub(crate) fn read_history(
         opened += 1;
         let envelope_id = format!("signal-{}", record.signal_id.as_str());
         let verified = (|| {
-            if event.evidence_refs.len() != 1
+            // #1839: a `task.journey_frames` record also carries its sealed frames, one per screen
+            // after the envelope, at the ids `signal-<id>-image-<n>`; every other kind has none.
+            let frames = record.kind == "task.journey_frames";
+            if event.evidence_refs.is_empty()
+                || (!frames && event.evidence_refs.len() != 1)
                 || event.evidence_refs[0].evidence_id().as_str() != envelope_id
             {
                 return None;
             }
+            let frame_ids: Vec<String> = event.evidence_refs[1..]
+                .iter()
+                .enumerate()
+                .map(|(index, reference)| {
+                    let id = reference.evidence_id().as_str();
+                    (id == format!("{envelope_id}-image-{}", index + 1)).then(|| id.to_owned())
+                })
+                .collect::<Option<_>>()?;
             let id = EvidenceId::parse(&envelope_id).ok()?;
             let envelope = opened_envelope(
                 store,
@@ -897,6 +909,15 @@ pub(crate) fn read_history(
                 event.sequence,
                 Some(event.occurred_at.clone()),
             )
+            .and_then(|mut parsed| {
+                if let Some(run) = parsed.journey_frames.as_mut() {
+                    if run.screens.len() != frame_ids.len() {
+                        return None;
+                    }
+                    run.evidence = frame_ids;
+                }
+                Some(parsed)
+            })
             // A release by slice key and a lane retirement are the owner's records only.
             .filter(|parsed| {
                 (parsed.slice_key.is_none()

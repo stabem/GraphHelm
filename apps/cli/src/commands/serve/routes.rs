@@ -2176,8 +2176,13 @@ pub(super) async fn issue_journeys(
             execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
         })
         .map(|view| {
+            let slices: Vec<_> = view
+                .tasks
+                .iter()
+                .filter(|task| task.issue == Some(issue))
+                .collect();
             let mut ids: Vec<String> = Vec::new();
-            for task in view.tasks.iter().filter(|task| task.issue == Some(issue)) {
+            for task in &slices {
                 for id in &task.journeys {
                     if !ids.contains(id) {
                         ids.push(id.clone());
@@ -2191,6 +2196,7 @@ pub(super) async fn issue_journeys(
                         "id": id,
                         "title": crate::commands::journey_preview::journey_title(&project, &id),
                         "before": crate::commands::journey_preview::newest_finished(&project, &id),
+                        "now": head_capture(&view.records, &slices, &id, &execution_id),
                     })
                 })
                 .collect();
@@ -2208,6 +2214,66 @@ pub(super) async fn issue_journeys(
         Ok(value) => respond(StatusCode::OK, Outcome::success(COMMAND, value).output),
         Err(failure) => respond_failure(COMMAND, failure),
     }
+}
+
+/// #1839: the frames a lane recorded running `journey` at the current head of the issue's newest
+/// open PR that names it (`task.journey_frames`), or `None` when that head has none. A capture at
+/// an older head is never Now. A run with more than four screens arrives as several records at the
+/// same head; their screens are merged, the newest record winning a screen and stating the result.
+fn head_capture(
+    records: &[graphhelm_execution::tasks::TaskEventRecord],
+    slices: &[&graphhelm_execution::tasks::TaskState],
+    journey: &str,
+    execution_id: &str,
+) -> Option<serde_json::Value> {
+    let slice = slices
+        .iter()
+        .filter(|slice| {
+            slice.pr.is_some()
+                && slice.head_sha.is_some()
+                && slice.journeys.iter().any(|id| id == journey)
+                && slice.released_by.is_none()
+        })
+        .max_by_key(|slice| slice.last_sequence)?;
+    let mut runs: Vec<(
+        &graphhelm_execution::tasks::TaskEventRecord,
+        &graphhelm_execution::tasks::JourneyFrames,
+    )> = records
+        .iter()
+        .filter(|record| {
+            record.kind == graphhelm_execution::tasks::TaskEventKind::JourneyFrames
+                && record.task_id == slice.task_id
+                && record.pr == slice.pr
+                && record.head_sha == slice.head_sha
+                && record.lane == slice.lane
+        })
+        .filter_map(|record| {
+            let run = record.journey_frames.as_ref()?;
+            (run.journey == journey).then_some((record, run))
+        })
+        .collect();
+    runs.sort_by_key(|(record, _)| record.sequence);
+    let (newest, last) = *runs.last()?;
+    let mut screens: std::collections::BTreeMap<&str, String> = std::collections::BTreeMap::new();
+    for (_, run) in &runs {
+        for (screen, evidence) in run.screens.iter().zip(&run.evidence) {
+            screens.insert(
+                screen,
+                format!("/v1/executions/{execution_id}/evidence/{evidence}"),
+            );
+        }
+    }
+    Some(serde_json::json!({
+        "pr": slice.pr,
+        "headSha": newest.head_sha,
+        "result": last.result,
+        "ranAt": last.ran_at,
+        "recordedAt": newest.occurred_at,
+        "screens": screens
+            .into_iter()
+            .map(|(screen, url)| serde_json::json!({"screen": screen, "frameUrl": url}))
+            .collect::<Vec<_>>(),
+    }))
 }
 
 /// `POST /v1/keel/plan` (#382 phase B): exactly `graphhelm keel plan` (without recording) over

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/task-event.schema.json",
   "title": "Task Event",
-  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.released, task.heartbeat, task.pr_opened, task.review_assigned, task.review_verdict, task.review_activity, task.merged, task.closed, task.critic_verdict, task.queued, task.request_recorded, task.request_linked, and the owner's task.lane_retired); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
+  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.released, task.heartbeat, task.pr_opened, task.review_assigned, task.review_verdict, task.review_activity, task.merged, task.closed, task.critic_verdict, task.queued, task.request_recorded, task.request_linked, task.journey_frames, and the owner's task.lane_retired); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
   "oneOf": [
     {
       "title": "task.review_activity",
@@ -371,6 +371,26 @@
         "requestId": {"$ref": "#/$defs/taskId"},
         "issue": {"$ref": "#/$defs/positive"},
         "linkedBy": {"$ref": "#/$defs/actor"}
+      }
+    },
+    {
+      "title": "task.journey_frames",
+      "description": "#1839: the frames a lane captured running one journey at its PR's head, so the Studio can show Now beside Before (main). The signal carries one PNG attachment per screen, in screens order (at most four per record). Only the lane that opened the PR may record it, for a journey the PR names, at the PR's current head; lane is the actor that records it.",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "pr", "headSha", "journey", "result", "screens", "lane"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "pr": {"$ref": "#/$defs/positive"},
+        "headSha": {"$ref": "#/$defs/sha"},
+        "journey": {"$ref": "#/$defs/taskId"},
+        "result": {"enum": ["pass", "fail"]},
+        "ranAt": {"$ref": "#/$defs/at"},
+        "screens": {"type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$"}},
+        "lane": {"$ref": "#/$defs/actor"}
       }
     }
   ],

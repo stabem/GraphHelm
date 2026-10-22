@@ -238,6 +238,33 @@ class TaskRecordTest(unittest.TestCase):
         self.assertIn("dry-run only", stderr.getvalue())
         self.assertIn('"type": "task.heartbeat"', out)
 
+    def test_journey_frames_send_the_newest_finished_runs_pngs_four_per_record(self):
+        # #1839: the run picked is the newest finished one; an in-flight current run is skipped.
+        project = Path(self.tmp.name) / "wt"
+        base = project / ".graphhelm" / "journey-previews" / "checkout"
+        run = base / "history" / "00000001792058400000"
+        (run / "frames").mkdir(parents=True)
+        screens = {f"s{n}": {"result": "pass", "frame": True, "file": f"s{n}.png"} for n in range(5)}
+        screens["skipped"] = {"frame": False}
+        (run / "state.json").write_text(json.dumps({"state": "ready", "result": "pass",
+                                                    "ranAt": "2026-10-22T10:00:00Z", "screens": screens}))
+        for n in range(5):
+            (run / "frames" / f"s{n}.png").write_bytes(task_record.PNG_MAGIC + f"frame-{n}".encode())
+        (base / "state.json").write_text(json.dumps({"state": "running", "screens": {}}))
+        code, out = self.run_step("--lane", "lane-a", "journey_frames", "--issue", "9", "--pr", "90",
+                                  "--head", HEAD_A, "--journey", "checkout", "--preview-project", str(project))
+        self.assertEqual(code, 0, out)
+        bodies = [body for _, body in FakeRuntime.seen]
+        self.assertEqual([json.loads(b["signal"]["description"])["screens"] for b in bodies],
+                         [["s0", "s1", "s2", "s3"], ["s4"]])
+        first = json.loads(bodies[0]["signal"]["description"])
+        self.assertEqual((bodies[0]["signal"]["type"], first["headSha"], first["journey"], first["result"], first["lane"]),
+                         ("task.journey_frames", HEAD_A, "checkout", "pass", "lane-a"))
+        self.assertEqual([a["mediaType"] for a in bodies[0]["attachments"]], ["image/png"] * 4)
+        import base64
+        self.assertEqual(base64.b64decode(bodies[1]["attachments"][0]["base64"]),
+                         task_record.PNG_MAGIC + b"frame-4")
+
     def test_release_records_the_exact_claim_sequence_and_reason(self):
         code, out = self.run_step("--lane", "lane-a", "released", "--issue", "86",
                                   "--claim-sequence", "12", "--release-reason", "Work moved elsewhere")

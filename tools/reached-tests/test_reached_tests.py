@@ -1642,6 +1642,36 @@ class CoreModules(unittest.TestCase):
         self.assertIsNone(self.plan(root, packages, rel="src/lib.rs"), "a lib.rs change")
         self.assertIsNone(self.plan(root, packages, narrow=False), "a user with no narrow plan")
 
+    def test_the_review_misses_select_the_reader_or_the_whole_package(self):
+        # #1877 review (gh-claude-23): each of these returned set(), so commands::a ran no test.
+        cases = {
+            "A brace import inside the crate": ({"core/k/src/n.rs": "use crate::{m};\npub fn g() { m::f() }\n"}, {self.CLI_A}),
+            "A super brace group": ({"core/k/src/n.rs": "use super::{m, other};\npub fn g() { m::f() }\n"}, {self.CLI_A}),
+            "B a lib.rs function calls the module": (
+                {"core/k/src/lib.rs": "pub mod m;\npub mod n;\npub fn top() { m::f() }\n",
+                 "apps/cli/src/commands/a.rs": "fn h() { graphhelm_k::top() }\n"}, None),
+            "C an impl on another module's type": (
+                {"core/k/src/m.rs": "impl crate::n::T { pub fn x(&self) {} }\n",
+                 "core/k/src/n.rs": "pub struct T;\n",
+                 "apps/cli/src/commands/a.rs": "fn h(t: graphhelm_k::n::T) { t.x() }\n"}, None),
+            "C a blanket trait impl": ({"core/k/src/m.rs": "pub trait Q {}\nimpl<X> Q for X {}\n"}, None),
+            "D a brace re-export in lib.rs": (
+                {"core/k/src/lib.rs": "pub mod m;\npub mod n;\npub use self::{m::f};\n",
+                 "apps/cli/src/commands/a.rs": "fn h() { graphhelm_k::f() }\n"}, None),
+            "G an alias inside a group": (
+                {"apps/cli/src/commands/b.rs": "use graphhelm_k::{self as k};\nfn i() { k::m::f() }\n"}, None),
+            "a nested group names the module": (
+                {"apps/cli/src/commands/a.rs": "use graphhelm_k::{n::{g}, m};\nfn h() { m::f() }\n"}, {self.CLI_A}),
+        }
+        for why, (files, expected) in cases.items():
+            with self.subTest(why):
+                root, packages = self.tree(files)
+                self.assertEqual(self.plan(root, packages), expected, why)
+
+    def test_an_impl_on_a_type_the_module_declares_keeps_the_narrow_plan(self):
+        root, packages = self.tree({"core/k/src/m.rs": "pub struct S;\nimpl S { pub fn f() {} }\nimpl Clone for S { fn clone(&self) -> S { S } }\n"})
+        self.assertEqual(self.plan(root, packages), {self.CLI_A})
+
     def test_a_crate_between_that_does_not_name_the_module_keeps_the_narrow_plan(self):
         root, packages = self.tree({"apps/cli/src/commands/a.rs": "fn h() { graphhelm_k::{n}::g() }\n"}, mid=True)
         self.assertEqual(self.plan(root, packages), {self.CLI_A})

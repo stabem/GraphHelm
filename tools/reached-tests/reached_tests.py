@@ -480,12 +480,13 @@ def core_module_cli(packages, p, rel, root):
     targets that name one. Derived from source text; None (the whole CLI package) whenever any step
     cannot be proved:
     - the change is to `lib.rs`, `main.rs`, a `mod.rs`, or not a module under `src/`;
-    - `p`'s `lib.rs` re-exports from an affected module, an affected module exports a macro, or
-      anything imports `p` by glob or alias;
+    - `p`'s `lib.rs` mentions an affected module outside its `mod` lines (a re-export, a root
+      function), an affected module exports a macro or has an `impl` on a type it does not declare,
+      or anything imports `p` by glob or alias, or with `self` inside a `{…}` group;
     - a crate between `p` and the CLI (on a normal-dependency path) names an affected path;
     - a CLI file that names one has no narrow plan (shared code, a dispatcher, an unnamed module).
     Affected modules are the changed top-level module and, transitively, `p`'s own top-level modules
-    that name one (`crate::m`, `super::m`, `self::m`)."""
+    whose source mentions one's name as a word."""
     if root is None or p["name"] == CLI or not rel.startswith("src/") or not rel.endswith(".rs"):
         return None
     if rel in ("src/lib.rs", "src/main.rs") or rel.endswith("/mod.rs"):
@@ -501,36 +502,76 @@ def core_module_cli(packages, p, rel, root):
         part = path[len("src/"):].split("/")[0]
         return part[:-len(".rs")] if part.endswith(".rs") else part
 
-    affected, changed = set(), True
-    affected.add(top(rel))
+    # Affected modules: the changed one, then every top-level module of `p` whose source mentions
+    # an affected module's name as a word at all. A word match over-approximates every way Rust
+    # can name it (`crate::m`, `super::{m, …}`, `use crate::{x, m}`, `self::m`), so none is missed
+    # (#1877 review, case A).
+    affected, changed = {top(rel)}, True
     while changed:
         changed = False
-        names = "|".join(re.escape(m) for m in sorted(affected))
-        internal = re.compile(r"\b(?:crate|super|self)(?:::super)*::(?:" + names + r")\b")
+        word = re.compile(r"\b(?:" + "|".join(re.escape(m) for m in sorted(affected)) + r")\b")
         for path, text in sources.items():
             module = top(path)
-            if path != "src/lib.rs" and module not in affected and internal.search(text):
+            if path != "src/lib.rs" and module not in affected and word.search(text):
                 affected.add(module)
                 changed = True
-    names = "|".join(re.escape(m) for m in sorted(affected))
+    word = re.compile(r"\b(?:" + "|".join(re.escape(m) for m in sorted(affected)) + r")\b")
     if any(top(path) in affected and "macro_export" in text for path, text in sources.items()):
         return None  # an exported macro is reached at the crate root, under no module path
-    if re.search(r"\bpub\s+use\s+(?:self::|crate::)?(?:" + names + r")\b", sources["src/lib.rs"]):
+    # Cases B and D: any other mention in `lib.rs` (a root function calling it, a re-export in any
+    # form) puts affected code behind a root path, which no module path names.
+    root_code = "\n".join(line for line in sources["src/lib.rs"].splitlines()
+                          if not re.match(r"\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;", line))
+    if word.search(root_code):
         return None
+    # Case C: an `impl` in an affected module changes a type declared elsewhere (an inherent
+    # method, a trait impl, a blanket impl) for callers that never name the affected module.
+    declared = {match for path, text in sources.items() if top(path) in affected
+                for match in re.findall(r"\b(?:struct|enum|union|type|trait)\s+([A-Za-z_]\w*)", text)}
+    for path, text in sources.items():
+        if top(path) not in affected:
+            continue
+        for header in re.findall(r"\bimpl\b([^{;]*)\{", text):
+            target = header.split(" for ", 1)[-1] if " for " in header else header
+            target = re.sub(r"^\s*<.*?>\s*", "", target) if " for " not in header else target
+            names_in = re.findall(r"[A-Za-z_]\w*", re.sub(r"<.*", "", target).replace("dyn", " ").replace("&", " "))
+            if not names_in or names_in[-1] not in declared:
+                return None
     ident = p["name"].replace("-", "_")
-    named = re.compile(r"\b" + ident + r"::(?:(?:" + names + r")\b|\{[^}]*\b(?:" + names + r")\b)")
-    opaque = re.compile(r"\b" + ident + r"::\*|\b" + ident + r"\s+as\b|\buse\s+" + ident + r"\s*;")
+    path_use = re.compile(r"\b" + ident + r"::(?:" + "|".join(re.escape(m) for m in sorted(affected)) + r")\b")
+    alias = re.compile(r"\b" + ident + r"::\*|\b" + ident + r"\s+as\b|\buse\s+" + ident + r"\s*;")
+
+    def groups(text):
+        """Each `<ident>::{…}` group, braces balanced."""
+        for start in re.finditer(r"\b" + ident + r"::\{", text):
+            depth, i = 0, start.end() - 1
+            while i < len(text):
+                depth += {"{": 1, "}": -1}.get(text[i], 0)
+                if depth == 0:
+                    yield text[start.end():i]
+                    break
+                i += 1
+            else:
+                yield text[start.end():]
+
+    def named(text):
+        return bool(path_use.search(text)) or any(word.search(g) for g in groups(text))
+
+    def opaque(text):
+        # Case G: `{self as k}`, `{self}` or a glob inside a group reaches modules unnamed.
+        return bool(alias.search(text)) or any(re.search(r"\bself\b|\*", g) for g in groups(text))
+
     between = (_normal_closure(packages, p["name"]) - {p["name"], CLI}) & {
         q["name"] for q in packages if CLI in _normal_closure(packages, q["name"])}
     for name in sorted(between):
         package = next(q for q in packages if q["name"] == name)
-        if any(named.search(t) or opaque.search(t) for t in _crate_sources(root, package).values()):
+        if any(named(t) or opaque(t) for t in _crate_sources(root, package).values()):
             return None
     out = set()
     for path, text in _crate_sources(root, cli).items():
-        if opaque.search(text):
+        if opaque(text):
             return None
-        if not named.search(text):
+        if not named(text):
             continue
         narrow = cli_module(packages, cli, path, root)
         if narrow is None:
@@ -539,9 +580,9 @@ def core_module_cli(packages, p, rel, root):
     tests = root / cli["dir"] / "tests"
     for f in sorted(tests.rglob("*.rs")) if tests.is_dir() else []:
         text = f.read_text(encoding="utf-8", errors="replace")
-        if opaque.search(text):
+        if opaque(text):
             return None
-        if not named.search(text):
+        if not named(text):
             continue
         path = f.relative_to(root).as_posix()
         registered = cli.get("bundle_paths", {}).get(path, set())

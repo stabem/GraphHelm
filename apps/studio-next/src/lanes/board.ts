@@ -22,6 +22,9 @@ export interface Agent {
   /** Minutes since the lane's last record, at the Runtime's `now`; `null` when it recorded none. */
   idleMinutes: number | null;
   lastRecordAt: string | null;
+  /** #1851: the kind and model the lane reported (e.g. `claude`, `opus`); never guessed from its name. */
+  kind: string | null;
+  model: string | null;
   questions: LaneWaiting[];
   /** Open questions beyond the rows served (`laneTotal` minus this lane's rows): the "+K more". */
   moreQuestions: number;
@@ -61,6 +64,8 @@ export function agents(board: TasksBoard): Agent[] {
       task,
       idleMinutes: Number.isFinite(since) && Number.isFinite(now) ? Math.max(0, Math.floor((now - since) / 60_000)) : null,
       lastRecordAt,
+      kind: liveness?.agentKind ?? null,
+      model: liveness?.agentModel ?? null,
       questions,
       moreQuestions: Math.max(0, total - questions.length),
     };

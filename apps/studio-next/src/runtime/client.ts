@@ -48,6 +48,9 @@ export interface BoardTask {
 export interface BoardLaneLiveness {
   lane: string;
   lastRecordAt?: string;
+  /** #1851: what the lane reported on its claim (owner view only); absent when it never said. */
+  agentKind?: string;
+  agentModel?: string;
   owes: boolean;
   silent: boolean;
   free: boolean;

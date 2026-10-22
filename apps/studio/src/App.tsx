@@ -5,6 +5,7 @@ import { parseRoute, routeSearch, type Route, type View } from "./routing/route"
 import { Runtime, type JourneyFlow, type RunSummary } from "./runtime/client";
 import { Sidebar, type ProjectEntry } from "./sidebar/Sidebar";
 import { useSummaries } from "./sidebar/use-summaries";
+import { useRestart } from "./sidebar/use-health";
 import { teamRun } from "./sidebar/project-summary";
 import { StartRun } from "./start-run/StartRun";
 import { Topbar } from "./topbar/Topbar";
@@ -99,6 +100,7 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
   const [journeys, setJourneys] = useState<JourneyFlow[] | null>(null);
   const [journeysError, setJourneysError] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
+  const restart = useRestart(session.base);
 
   const readRuns = useCallback(async () => {
     try {
@@ -140,6 +142,8 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
         current={session.key}
         view={route.view}
         live={live}
+        restart={restart}
+        onView={(view) => go({ ...route, view })}
         onProject={(key) => go({ project: key, run: null, view: route.view })}
         onAdd={session.sessionKey === null ? null : async (path, ticket) => {
           const added = await addFolder(path, session.sessionKey!, ticket);

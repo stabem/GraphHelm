@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { AddRefusal } from "../login/session";
 import { routeSearch, type View } from "../routing/route";
 import { subtitle, type ProjectSummary } from "./project-summary";
+import { restartDetail, type Restart } from "./use-health";
 
 export interface ProjectEntry {
   key: string;
@@ -40,8 +41,7 @@ function Subtitles({ project, open }: { project: ProjectEntry; open: boolean }) 
 }
 
 /** "Add project folder": one absolute path plus that project's own ticket, answered by the dev server's closed list of refusals. */
-function AddFolder({ onAdd }: { onAdd: (path: string, ticket: string) => Promise<AddRefusal | null> }) {
-  const [open, setOpen] = useState(false);
+function AddFolder({ onAdd, open, setOpen }: { onAdd: (path: string, ticket: string) => Promise<AddRefusal | null>; open: boolean; setOpen: (open: boolean) => void }) {
   const [path, setPath] = useState("");
   const [ticket, setTicket] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +82,15 @@ interface Props {
   onProject: (project: string) => void;
   /** Null when this tab holds no key that proves the owner. */
   onAdd: ((path: string, ticket: string) => Promise<AddRefusal | null>) | null;
+  /** The running Runtime's restart (`/health` previousExit), shown as the design's notice. */
+  restart: Restart | null;
+  /** Opens a view of the open project: the footer's Runtime log and Models land on Lanes (#1904). */
+  onView: (view: View) => void;
+}
+
+function hhmm(epochSeconds: number): string {
+  const at = new Date(epochSeconds * 1000);
+  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
 }
 
 function Folder({ stroke }: { stroke: string }) {
@@ -91,7 +100,8 @@ function Folder({ stroke }: { stroke: string }) {
 /** The left rail of the design (Sidebar.dc.html): brand, live state, every project this Studio port
  * serves (#1800), one card each (#1901): no run list, the Studio opens the project's team run.
  * Another project is a link that switches to it. */
-export function Sidebar({ projects, closed, current, view, live, onProject, onAdd }: Props) {
+export function Sidebar({ projects, closed, current, view, live, onProject, onAdd, restart, onView }: Props) {
+  const [adding, setAdding] = useState(false);
   return (
     <nav aria-label="Projects" className="sidebar">
       <div className="brand">
@@ -99,9 +109,15 @@ export function Sidebar({ projects, closed, current, view, live, onProject, onAd
         <strong>GraphHelm</strong>
         <span className={live ? "live" : "live off"}>{live ? "● LIVE" : "● OFFLINE"}</span>
       </div>
+      {restart !== null && (
+        <details className="restart" aria-label="Runtime restart">
+          <summary>Runtime restarted {hhmm(restart.startedAt)} · Details</summary>
+          <p>{restartDetail(restart)}</p>
+        </details>
+      )}
       <div className="section-head">
         <span className="section-label">PROJECTS</span>
-        {onAdd !== null && <AddFolder onAdd={onAdd} />}
+        {onAdd !== null && <AddFolder onAdd={onAdd} open={adding} setOpen={setAdding} />}
       </div>
       <div className="projects">
         {projects.map((project) => project.key === current ? (
@@ -137,6 +153,14 @@ export function Sidebar({ projects, closed, current, view, live, onProject, onAd
             <span className="closed-hint">open with <code className="mono">graphhelm studio open</code></span>
           </div>
         ))}
+      </div>
+      {/* Sidebar.dc.html: the footer, pinned to the bottom of the rail (#1904). Runtime log and
+          Models open Lanes, where the live feed and each agent's kind and model are shown. */}
+      <div className="sidebar-foot" role="group" aria-label="Studio links">
+        <button type="button" className="b foot-link" onClick={() => onView("lanes")}>Runtime log</button>
+        <button type="button" className="b foot-link" onClick={() => onView("lanes")}>Models</button>
+        {/* Named apart from the "+" button so a journey's "Add project folder" stays one control. */}
+        {onAdd !== null && <button type="button" className="b foot-link" aria-label="Add a project folder" onClick={() => setAdding(true)}>Add project folder</button>}
       </div>
     </nav>
   );

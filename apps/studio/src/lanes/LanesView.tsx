@@ -4,7 +4,7 @@ import { OWNER, type JourneyFlow, type LaneAction, type Runtime, type TasksBoard
 import { controlBody, draftFor, messageBody, newId, type Draft, type LaneControl } from "./drafts";
 import { actionLine, clock } from "./format";
 import { LanesPanels } from "./LanesPanels";
-import { agentsFor, askedCards } from "./asked";
+import { agentsFor, askedCards, requestTitles } from "./asked";
 import type { OwnerRequest } from "../graph/requests";
 import { agents, blocks, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
@@ -99,6 +99,7 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   const forRequest = pickedRequest === null ? null : new Set(agentsFor(pickedRequest, all, board.tasks).map((agent) => agent.lane));
   const shown = (filter === "reply" ? asking : filter === "idle" ? idle : all).filter((agent) => forRequest === null || forRequest.has(agent.lane));
   const asked = askedCards(requests ?? [], all, board.tasks);
+  const serves = requestTitles(requests ?? [], all, board.tasks);
   const gone = picked !== null && shownAgent.current?.lane === picked ? { ...shownAgent.current, questions: [], moreQuestions: 0 } : null;
   const selected = all.find((agent) => agent.lane === picked) ?? gone ?? asking[0] ?? all[0] ?? null;
   shownAgent.current = selected;
@@ -146,7 +147,7 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
                 <h3><span className={`col-dot ${name}`} />{COLUMN_NAME[name]}<span className="mono count">{cards.length}</span></h3>
                 {cards.length === 0 ? <span className="none">none</span> : (
                   <ul aria-label={COLUMN_NAME[name]}>
-                    {cards.map((agent) => <Card key={agent.lane} agent={agent} selected={agent.lane === selected?.lane} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
+                    {cards.map((agent) => <Card key={agent.lane} agent={agent} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
                   </ul>
                 )}
               </li>
@@ -180,7 +181,7 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   );
 }
 
-function Card({ agent, selected, last, onPick }: { agent: Agent; selected: boolean; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
+function Card({ agent, selected, serves, last, onPick }: { agent: Agent; selected: boolean; serves: string | null; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
   const task = agent.task;
   const tone = idleTone(agent.idleMinutes);
   const asking = agent.questions[0];
@@ -201,6 +202,7 @@ function Card({ agent, selected, last, onPick }: { agent: Agent; selected: boole
       <span role="group" aria-label="Request" className="request">
         {task === null ? "no task" : <><span className="mono">#{task.issue ?? "—"}</span> {task.prTitle ?? task.title ?? task.key}{task.pr !== null && <span className="mono"> · PR #{task.pr}</span>}</>}
       </span>
+      {serves !== null && <span role="group" aria-label="For request" className="serves">for: {serves}</span>}
       <span role="group" aria-label="Progress" className="blocks">
         {blocks(task?.step ?? null, agent.column === "blocked").map((block, index) => <span key={index} className={`block ${block}`} />)}
       </span>

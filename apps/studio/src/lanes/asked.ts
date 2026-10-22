@@ -42,6 +42,18 @@ export function agentsFor(request: OwnerRequest, all: readonly Agent[], tasks: r
   return all.filter((agent) => lanes.has(agent.lane));
 }
 
+/** The request each lane serves, by title (#1904, Lanes.dc.html "for:"): the newest request whose
+ * issues hold one of that lane's open slices. */
+export function requestTitles(requests: readonly OwnerRequest[], all: readonly Agent[], tasks: readonly BoardTask[]): Map<string, string> {
+  const titles = new Map<string, string>();
+  for (const request of [...requests].reverse()) {
+    for (const agent of agentsFor(request, all, tasks)) {
+      if (!titles.has(agent.lane)) titles.set(agent.lane, request.title ?? request.ask);
+    }
+  }
+  return titles;
+}
+
 /** Every request, newest first (the Runtime serves them oldest first), as the column draws it. */
 export function askedCards(requests: readonly OwnerRequest[], all: readonly Agent[], tasks: readonly BoardTask[]): AskedCard[] {
   return [...requests].reverse().map((request) => {

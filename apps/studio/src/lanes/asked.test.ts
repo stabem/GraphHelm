@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { OwnerRequest } from "../graph/requests";
 import type { BoardTask } from "../runtime/client";
-import { askedCards, askedWhen } from "./asked";
+import { askedCards, askedWhen, requestTitles } from "./asked";
 import type { Agent } from "./board";
 
 const request = (requestId: string, issues: number[], extra: Partial<OwnerRequest> = {}): OwnerRequest => ({
@@ -30,6 +30,12 @@ describe("what I asked", () => {
     expect(cards[0]).toMatchObject({ title: "ask r2", when: "21 Oct 18:30", summary: "3 agents · needs a reply" });
     expect(cards[0]!.agents).toEqual([{ lane: "b", tone: "asks" }, { lane: "c", tone: "merge" }, { lane: "d", tone: "quiet" }]);
     expect(cards[1]).toMatchObject({ title: "Old ask", when: null, summary: "1 agent" });
+  });
+
+  it("names on each card the newest request its lane serves (#1904)", () => {
+    const tasks = [slice("a", 7), slice("b", 8), slice("b", 7)];
+    const titles = requestTitles([request("r1", [7], { title: "Old ask" }), request("r2", [8])], [agent("a", 7), agent("b", 8), agent("c", null)], tasks);
+    expect([...titles]).toEqual([["b", "ask r2"], ["a", "Old ask"]]);
   });
 
   it("leaves an absent or unreadable time undated", () => {

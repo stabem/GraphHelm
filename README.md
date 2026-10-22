@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/graphhelm-logo.png" alt="GraphHelm logo" width="160"></p>
+
 # GraphHelm
 
 **Run AI-agent workflows with a clear view of the work and control over what happens next.**

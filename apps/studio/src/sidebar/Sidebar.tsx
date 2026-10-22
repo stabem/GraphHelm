@@ -93,9 +93,7 @@ export function Sidebar({ projects, closed, current, runs, selected, view, live,
   return (
     <nav aria-label="Projects" className="sidebar">
       <div className="brand">
-        <span aria-hidden="true" className="brand-mark">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0a0a0b" strokeWidth="2.5"><path d="M3 12h4l3-8 4 16 3-8h4" /></svg>
-        </span>
+        <img alt="" aria-hidden="true" className="brand-mark" src="/favicon.png" />
         <strong>GraphHelm</strong>
         <span className={live ? "live" : "live off"}>{live ? "● LIVE" : "● OFFLINE"}</span>
       </div>

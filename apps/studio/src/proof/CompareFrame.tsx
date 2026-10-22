@@ -104,21 +104,24 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
 
 /** An earlier run's frame of one screen, as an object URL revoked when it is replaced or left. */
 function usePastFrame(runtime: Runtime, flowId: string, run: string | null, screen: string, viewport?: "mobile"): { url: string | null; error: string | null } {
-  const [state, setState] = useState<{ url: string | null; error: string | null }>({ url: null, error: null });
+  // #1808: the state names the frame it was read for, so a switch of step or viewport never shows
+  // the previous frame for the render before the effect clears it.
+  const key = `${flowId}|${run}|${screen}|${viewport ?? "web"}`;
+  const [state, setState] = useState<{ key: string; url: string | null; error: string | null }>({ key: "", url: null, error: null });
   useEffect(() => {
-    setState({ url: null, error: null });
+    setState({ key, url: null, error: null });
     if (run === null) return;
     let live = true;
     let url: string | null = null;
     runtime.journeyPastFrame(flowId, run, screen, viewport).then((blob) => {
       if (!live) return;
-      if (blob === null) { setState({ url: null, error: "The earlier run kept no frame for this step." }); return; }
+      if (blob === null) { setState({ key, url: null, error: "The earlier run kept no frame for this step." }); return; }
       url = URL.createObjectURL(blob);
-      setState({ url, error: null });
-    }, (cause: unknown) => { if (live) setState({ url: null, error: cause instanceof Error ? cause.message : "The Runtime refused the frame." }); });
+      setState({ key, url, error: null });
+    }, (cause: unknown) => { if (live) setState({ key, url: null, error: cause instanceof Error ? cause.message : "The Runtime refused the frame." }); });
     return () => { live = false; if (url !== null) URL.revokeObjectURL(url); };
-  }, [runtime, flowId, run, screen, viewport]);
-  return state;
+  }, [runtime, key, flowId, run, screen, viewport]);
+  return state.key === key ? { url: state.url, error: state.error } : { url: null, error: null };
 }
 
 function decode(src: string): Promise<Pixels> {
@@ -142,24 +145,29 @@ function decode(src: string): Promise<Pixels> {
 /** Changes: both frames decoded on a canvas, compared pixel by pixel, the result shown as an object
  * URL (revoked when replaced or left) with the changed share of the screen. */
 function useChanges(before: string | null, now: string | null): { url: string | null; message: string | null; sentence: string | null } {
-  const [state, setState] = useState<{ url: string | null; message: string | null; sentence: string | null }>({ url: null, message: null, sentence: null });
+  // #1808: the result names the pair it was drawn from. A viewport switch must never leave the
+  // previous diff on screen for a render, or a reader that found it sees it vanish a moment later.
+  type Drawn = { before: string | null; now: string | null; url: string | null; message: string | null; sentence: string | null };
+  const [state, setState] = useState<Drawn>({ before: null, now: null, url: null, message: null, sentence: null });
+  const reset = { before, now, url: null, message: null, sentence: null };
   useEffect(() => {
-    setState({ url: null, message: null, sentence: null });
+    setState({ before, now, url: null, message: null, sentence: null });
     if (before === null || now === null) return;
     let live = true;
     Promise.all([decode(before), decode(now)]).then(([a, b]) => {
       if (!live) return;
       const diff = diffPixels(a, b);
-      if (diff.kind === "refused") { setState({ url: null, message: diff.reason, sentence: null }); return; }
+      if (diff.kind === "refused") { setState({ before, now, url: null, message: diff.reason, sentence: null }); return; }
       const canvas = document.createElement("canvas");
       canvas.width = diff.width;
       canvas.height = diff.height;
       canvas.getContext("2d")?.putImageData(new ImageData(diff.data, diff.width, diff.height), 0, 0);
       // #1808: synchronous, so the picture never waits on a toBlob callback a hidden or headless
       // page may hold back (the mobile switch stayed on "Comparing the two frames…").
-      setState({ url: canvas.toDataURL("image/png"), message: null, sentence: changedSentence(diff.changed, diff.percent) });
-    }, (cause: unknown) => { if (live) setState({ url: null, message: cause instanceof Error ? cause.message : "A frame could not be decoded.", sentence: null }); });
+      setState({ before, now, url: canvas.toDataURL("image/png"), message: null, sentence: changedSentence(diff.changed, diff.percent) });
+    }, (cause: unknown) => { if (live) setState({ before, now, url: null, message: cause instanceof Error ? cause.message : "A frame could not be decoded.", sentence: null }); });
     return () => { live = false; };
   }, [before, now]);
-  return state;
+  const current = state.before === before && state.now === now ? state : reset;
+  return { url: current.url, message: current.message, sentence: current.sentence };
 }

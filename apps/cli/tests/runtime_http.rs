@@ -6241,3 +6241,113 @@ fn a_recorded_request_lists_its_linked_issues_their_prs_and_its_status() {
         "a request opens no task slice: {tasks}"
     );
 }
+
+/// #1795 (R4a): the issue view asks which journeys an issue's tasks named and, for each, the
+/// newest finished run kept for it, the "before" picture. Observer: the real `serve` binary over
+/// HTTP with a project whose preview store the test seeds. Credible regressions: journeys from
+/// another issue leak in, an unfinished run is offered as "before", a journey never run gets an
+/// invented run, and a frame URL that does not serve the frame it names.
+#[test]
+fn an_issues_journeys_name_their_newest_finished_run_and_its_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let project = dir.path().join("project");
+    let previews = project.join(".graphhelm/journey-previews");
+    let archived = previews.join("checkout/history/00000001792058400000");
+    std::fs::create_dir_all(&archived).unwrap();
+    std::fs::write(
+        archived.join("state.json"),
+        serde_json::json!({"preview": true, "state": "ready", "result": "pass", "commit": "c1",
+            "ranAt": "2026-10-17T10:00:09+00:00",
+            "screens": {"cart": {"result": "pass", "frame": true, "file": "cart.png"},
+                "pay": {"result": "pass", "frame": false}}})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(archived.join("frames")).unwrap();
+    std::fs::write(archived.join("frames/cart.png"), b"cart-frame-bytes").unwrap();
+    // A newer run still in flight is not a finished "before".
+    std::fs::write(
+        previews.join("checkout/state.json"),
+        serde_json::json!({"preview": true, "state": "running", "commit": "c2", "screens": {}})
+            .to_string(),
+    )
+    .unwrap();
+    let mut extra = throwaway_keyring(dir.path());
+    extra.args.push("--project".into());
+    extra.args.push(project.to_str().unwrap().into());
+    let run = "issue-journeys";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 1);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let lane = "lane-a";
+    let mut claim = claim_document(lane, 9);
+    claim["journeys"] = serde_json::json!(["checkout", "basket"]);
+    let mut other = claim_document(lane, 10);
+    other["journeys"] = serde_json::json!(["refund"]);
+    for (id, document) in [("claim-9", claim), ("claim-10", other)] {
+        let (status, reply, _) =
+            task_record(&base, &token, run, lane, "task.claimed", id, &document);
+        assert_eq!(status, 200, "{id}: {reply}");
+    }
+
+    let view = get_json(
+        &format!("{base}/v1/executions/{run}/issues/9/journeys"),
+        Some(&token),
+    );
+    let journeys = &view["data"]["journeys"];
+    assert_eq!(
+        journeys
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|j| j["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["checkout", "basket"],
+        "only issue 9's journeys, in claim order: {view}"
+    );
+    let before = &journeys[0]["before"];
+    assert_eq!(before["run"], "00000001792058400000", "{view}");
+    assert_eq!(before["current"], false, "{view}");
+    assert_eq!(before["commit"], "c1", "{view}");
+    assert_eq!(before["result"], "pass", "{view}");
+    assert_eq!(
+        before["screens"],
+        serde_json::json!([{"screen": "cart",
+            "frameUrl": "/v1/journey-flows/checkout/history/00000001792058400000/screens/cart/frame"}]),
+        "only screens with a kept frame: {view}"
+    );
+    assert_eq!(journeys[1]["before"], Value::Null, "never run: {view}");
+    let frame = raw_request(
+        &format!(
+            "{base}{}",
+            before["screens"][0]["frameUrl"].as_str().unwrap()
+        ),
+        Some(&token),
+    )
+    .unwrap();
+    assert_eq!(frame.status, 200);
+    assert_eq!(
+        frame.body, "cart-frame-bytes",
+        "the URL serves the frame it names"
+    );
+
+    let none = get_json(
+        &format!("{base}/v1/executions/{run}/issues/11/journeys"),
+        Some(&token),
+    );
+    assert_eq!(none["data"]["journeys"], serde_json::json!([]), "{none}");
+    let bad = raw_request(
+        &format!("{base}/v1/executions/{run}/issues/0/journeys"),
+        Some(&token),
+    )
+    .unwrap();
+    assert_eq!(bad.status, 400, "{}", bad.body);
+}

@@ -1681,6 +1681,70 @@ pub(crate) fn history(project: &Path, id: &str) -> Outcome {
     answer(json!({"id": id, "runs": runs}), None)
 }
 
+/// #1795 (R4a): the journey's newest finished run on this Runtime's checkout (the "Before = main"
+/// side of a compare), as `{run, current, commit, ranAt, result, screens: [{screen, frameUrl}]}`:
+/// the current run when it finished, else the newest run in `history/`. `None` when the journey is
+/// unknown or never finished a run. Frame URLs are the existing frame routes, relative to the
+/// Runtime: no host path leaves this function.
+pub(crate) fn newest_finished(project: &Path, id: &str) -> Option<Value> {
+    if !plain_id(id) {
+        return None;
+    }
+    let dir = dir_of(project, id);
+    let finished = |state: &Value| matches!(state["state"].as_str(), Some("ready" | "failed"));
+    let (state, run, current) = match read_state(&dir).filter(finished) {
+        Some(state) => {
+            let run = history_id(&state)?;
+            (state, run, true)
+        }
+        None => {
+            let history = dir.join("history");
+            let run = history_ids(&history).into_iter().next_back()?;
+            (
+                read_state(&history.join(&run)).filter(finished)?,
+                run,
+                false,
+            )
+        }
+    };
+    let mut screens: Vec<Value> = state["screens"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(screen, entry)| {
+            plain_id(screen)
+                && entry["frame"] == true
+                && entry["file"] == format!("{screen}.png").as_str()
+        })
+        .map(|(screen, _)| {
+            let url = if current {
+                format!("/v1/journey-flows/{id}/screens/{screen}/frame")
+            } else {
+                format!("/v1/journey-flows/{id}/history/{run}/screens/{screen}/frame")
+            };
+            json!({"screen": screen, "frameUrl": url})
+        })
+        .collect();
+    screens.sort_by(|a, b| a["screen"].as_str().cmp(&b["screen"].as_str()));
+    let text = |key: &str| state[key].as_str().map(str::to_owned);
+    Some(json!({
+        "run": run,
+        "current": current,
+        "commit": text("commit"),
+        "ranAt": text("ranAt"),
+        "result": text("result"),
+        "screens": screens,
+    }))
+}
+
+/// #1795: a journey's title as its flow names it, or the id when the flow cannot be read.
+pub(crate) fn journey_title(project: &Path, id: &str) -> String {
+    flow_and_key(project, id)
+        .ok()
+        .and_then(|(flow, _, _)| flow["title"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| id.to_owned())
+}
+
 /// `GET /v1/journey-flows/{id}/history/{run}/screens/{screen}/frame`: one screen's frame as an
 /// earlier run kept it. The run's id never changes, so its bytes never do.
 pub(crate) fn history_frame(project: &Path, id: &str, run: &str, screen: &str) -> Option<Vec<u8>> {
@@ -1791,10 +1855,56 @@ fn sha_of(text: &str) -> String {
 mod tests {
     use super::{
         Guard, HISTORY_KEEP, JourneyPreviewArgs, RUNNER_LOG, archive, body, dir_of, failed_reason,
-        history_frame, history_id, history_ids, plain_id, proof_args, read_state, reap_lost,
-        reap_lost_from, reap_lost_from_with, runner_liveness, runner_liveness_with, save_state,
-        severity, step_reason, unsealed_proof, watch_budget, with_checks,
+        history_frame, history_id, history_ids, newest_finished, plain_id, proof_args, read_state,
+        reap_lost, reap_lost_from, reap_lost_from_with, runner_liveness, runner_liveness_with,
+        save_state, severity, step_reason, unsealed_proof, watch_budget, with_checks,
     };
+
+    /// #1795: the "Before = main" run is the newest FINISHED one: a run still in progress is
+    /// skipped for the newest archived run, and a finished current run is served at the current
+    /// frame route. Frame URLs are route-relative; a screen without a kept frame is left out.
+    #[test]
+    fn the_before_run_is_the_newest_finished_one() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = dir_of(project.path(), "checkout");
+        let older = dir.join("history").join("00000001760000000000");
+        std::fs::create_dir_all(&older).unwrap();
+        save_state(
+            &older,
+            &serde_json::json!({"state":"ready","result":"pass","commit":"c0ffee",
+            "startedAt":"2025-10-09T08:53:20Z","ranAt":"2025-10-09T08:54:00Z",
+            "screens":{"cart":{"frame":true,"file":"cart.png","result":"pass"},"pay":{"result":"pass"}}}),
+        );
+        save_state(
+            &dir,
+            &serde_json::json!({"state":"running","startedAt":"2026-10-22T00:00:00Z"}),
+        );
+        let before = newest_finished(project.path(), "checkout").unwrap();
+        assert_eq!(before["run"], "00000001760000000000");
+        assert_eq!(before["current"], false);
+        assert_eq!(before["commit"], "c0ffee");
+        assert_eq!(
+            before["screens"],
+            serde_json::json!([{"screen":"cart","frameUrl":"/v1/journey-flows/checkout/history/00000001760000000000/screens/cart/frame"}])
+        );
+        save_state(
+            &dir,
+            &serde_json::json!({"state":"failed","result":"fail","commit":"beef01",
+            "startedAt":"2026-10-22T00:00:00Z","ranAt":"2026-10-22T00:01:00Z",
+            "screens":{"cart":{"frame":true,"file":"cart.png","result":"fail"}}}),
+        );
+        let before = newest_finished(project.path(), "checkout").unwrap();
+        assert_eq!(
+            (before["current"].clone(), before["result"].clone()),
+            (serde_json::json!(true), serde_json::json!("fail"))
+        );
+        assert_eq!(
+            before["screens"][0]["frameUrl"],
+            "/v1/journey-flows/checkout/screens/cart/frame"
+        );
+        assert!(newest_finished(project.path(), "never-run").is_none());
+        assert!(newest_finished(project.path(), "../escape").is_none());
+    }
 
     /// #1286: a screen keeps its frame fields and gains `checks`; without checks nothing changes.
     /// Cost: microseconds, in-memory JSON.

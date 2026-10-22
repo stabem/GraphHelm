@@ -194,7 +194,12 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 26] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 27] = [
+    (
+        "GET",
+        "/v1/executions/{id}/issues/{issue}/journeys",
+        "the Studio's review modal reads an issue's journeys with their Before = main frames (#1795); owner credential only, like the frame routes it points at. An agent reads the same journeys from tasks and the runs from journey_preview",
+    ),
     (
         "GET",
         "/v1/executions/{id}/requests",

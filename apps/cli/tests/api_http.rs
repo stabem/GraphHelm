@@ -13410,3 +13410,69 @@ fn the_owner_wakes_stops_and_reassigns_a_lane_through_its_routes() {
     claim("a-44", "lane-a", 44);
     assert!(in_liveness(&tasks()), "a restored lane records again");
 }
+
+/// #1837: a signal that leaves `id`, `emittedAt` and `source` for the Runtime to fill (#1284) is
+/// retried like any other: the same `Idempotency-Key` and body answer the same signal and append
+/// nothing, and another body under that key is still a 409. Before: the retry matcher compared the
+/// request's own (absent) `id` and the envelope digest of a body whose instant the Runtime had
+/// filled, so every identical retry was refused as divergent. Catches: an identical retry refused,
+/// a retry that appends twice, and a divergent reuse accepted. Cost: one served Runtime, five POSTs.
+#[test]
+fn a_signal_left_for_the_runtime_to_fill_is_retried_as_a_replay() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-filled-retry";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let send = |key: &str, description: &str, with_source: bool| {
+        let mut signal = serde_json::json!({"type": "operator_note", "severity": "low",
+            "to": "lane-a", "description": description, "evidence": ["probe"]});
+        if with_source {
+            signal["source"] = serde_json::json!({"type": "user", "id": "orchestrator"});
+        }
+        post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", key),
+                ("X-GraphHelm-Actor", "orchestrator"),
+                ("X-GraphHelm-Actor-Type", "owner"),
+            ],
+            &serde_json::json!({"signal": signal}),
+        )
+    };
+    for (key, with_source) in [("filled-all", false), ("filled-id-and-instant", true)] {
+        let (status, first) = send(key, "probe", with_source);
+        assert_eq!(status, 200, "{key}: {first}");
+        let after = head_sequence(&base, &token, execution);
+        let (status, again) = send(key, "probe", with_source);
+        assert_eq!(status, 200, "{key} retry: {again}");
+        assert_eq!(
+            again["data"]["signalId"], first["data"]["signalId"],
+            "{key}: {again}"
+        );
+        assert_eq!(
+            head_sequence(&base, &token, execution),
+            after,
+            "{key}: a retry appends nothing"
+        );
+        let (status, reply) = send(key, "another body", with_source);
+        assert_eq!(
+            status, 409,
+            "{key}: the same key with another body: {reply}"
+        );
+        assert_eq!(head_sequence(&base, &token, execution), after);
+    }
+}

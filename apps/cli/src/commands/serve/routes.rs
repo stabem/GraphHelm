@@ -2103,6 +2103,77 @@ pub(super) async fn requests(
     }
 }
 
+/// `GET /v1/executions/{id}/issues/{issue}/journeys` (#1795, Studio v2 R4a): the journeys the
+/// issue's task slices name (`journeys` on `task.claimed` / `task.pr_opened`), in fold order and
+/// without repeats, each with its title and its "Before = main" run: the newest finished run on
+/// this Runtime's checkout with each kept frame's route-relative URL, or `null` when it never
+/// finished one. An issue no slice names answers `journeys: []`. Owner credential only, like the
+/// frame routes it points at; PR-head frames are #1839.
+pub(super) async fn issue_journeys(
+    State(state): State<ServeState>,
+    UrlPath((execution_id, issue)): UrlPath<(String, String)>,
+) -> Response {
+    const COMMAND: &str = "execution.issue_journeys";
+    let Some(issue) = issue.parse::<u64>().ok().filter(|issue| *issue > 0) else {
+        return bad_request(COMMAND, "issue must be a positive number", "/issue");
+    };
+    let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state(
+                "journey runs require an explicit --project on this Runtime",
+                "/project",
+            ),
+        );
+    };
+    let Some(keyring) = state.sealing.clone() else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state("the issue journeys require a sealed keyring", "/keyring"),
+        );
+    };
+    let events = state.events.clone();
+    let Some(result) = off_reactor(move || {
+        let budget = crate::commands::tasks_read_budget();
+        let key = execution::tasks::cache_key(&events, &execution_id);
+        execution::tasks::with_shared_cache(&key, |cache| {
+            execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
+        })
+        .map(|view| {
+            let mut ids: Vec<String> = Vec::new();
+            for task in view.tasks.iter().filter(|task| task.issue == Some(issue)) {
+                for id in &task.journeys {
+                    if !ids.contains(id) {
+                        ids.push(id.clone());
+                    }
+                }
+            }
+            let journeys: Vec<serde_json::Value> = ids
+                .into_iter()
+                .map(|id| {
+                    serde_json::json!({
+                        "id": id,
+                        "title": crate::commands::journey_preview::journey_title(&project, &id),
+                        "before": crate::commands::journey_preview::newest_finished(&project, &id),
+                    })
+                })
+                .collect();
+            serde_json::json!({"issue": issue, "journeys": journeys})
+        })
+    })
+    .await
+    else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "the issue journeys task failed").output,
+        );
+    };
+    match result {
+        Ok(value) => respond(StatusCode::OK, Outcome::success(COMMAND, value).output),
+        Err(failure) => respond_failure(COMMAND, failure),
+    }
+}
+
 /// `POST /v1/keel/plan` (#382 phase B): exactly `graphhelm keel plan` (without recording) over
 /// the Runtime's `--project`; the body names the task, its paths and promise, never a directory.
 /// Owner credentials only (`agent_route_allowed` admits no `/v1/keel`).

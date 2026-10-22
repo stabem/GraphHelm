@@ -83,3 +83,8 @@ button { font: inherit; }
   .sidebar { width: auto; border-right: 0; border-bottom: 1px solid var(--edge); }
   .views { margin-left: 0; }
 }
+.crumb-project { margin: 0; font-size: inherit; font-weight: 700; }
+.projects { display: flex; flex-direction: column; gap: 6px; }
+.project.other { background: none; border-color: transparent; padding: 0; }
+.project.other a { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 10px; color: var(--muted); text-decoration: none; }
+.project.other a:hover, .project.other a:focus-visible { background: var(--card); color: var(--text); }

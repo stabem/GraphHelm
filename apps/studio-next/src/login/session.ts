@@ -1,61 +1,97 @@
 /**
  * Login by ticket. `graphhelm studio open` (or the dev server's printed URL) opens the page with
- * `?session=<ticket or nonce>`; the dev server trades it once for the Runtime token and a stable
- * key. The key is kept in this tab's sessionStorage so a reload stays logged in without the spent
- * ticket. The token itself is kept only in memory.
+ * `?session=<ticket or nonce>` and, for a project that joined this Studio's port, `&project=<id>`;
+ * the dev server trades it once for that project's Runtime token and a stable key.
+ *
+ * #1800: one Studio port serves several projects, each with its own token. The page keeps one
+ * stable key per project in localStorage, so every tab of this Studio can switch to any project
+ * the owner opened here once; a key the dev server no longer accepts is dropped. Tokens are kept
+ * only in memory and no credential of one project is ever sent for another.
  */
 export interface Session {
+  /** The project's id, or `"first"` for the project the dev server was started for without one. */
+  key: string;
   token: string;
   project: string | null;
+  /** Where this project's Runtime is reached: `""` for `/v1`, `/p/<id>` for a joined project. */
+  base: string;
 }
 
-export const SESSION_KEY_STORAGE = "graphhelm.studio-next.sessionKey";
+export const SESSION_KEYS_STORAGE = "graphhelm.studio-next.sessionKeys";
 
-type KeyStore = Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
+const PROJECT_KEY = /^(?:first|[0-9a-f]{64})$/;
+const SESSION_KEY = /^[0-9a-f]{32,128}$/;
+
+type KeyStore = Pick<Storage, "getItem" | "setItem"> | null;
 
 function browserStore(): KeyStore {
   try {
-    return globalThis.sessionStorage ?? null;
+    return globalThis.localStorage ?? null;
   } catch {
     return null;
   }
 }
 
-/** One request per presented secret, shared: a one-shot ticket must not be spent twice by a
- * double mount. */
+function readKeys(store: KeyStore): Record<string, string> {
+  try {
+    const parsed = JSON.parse(store?.getItem(SESSION_KEYS_STORAGE) ?? "{}") as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([project, key]) => PROJECT_KEY.test(project) && typeof key === "string" && SESSION_KEY.test(key)).slice(0, 32),
+    ) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+/** One request per presented secret and project, shared: a one-shot ticket must not be spent twice
+ * by a double mount. */
 const inFlight = new Map<string, Promise<unknown>>();
 
-function ask(nonce: string): Promise<unknown> {
-  const pending = inFlight.get(nonce);
+function ask(nonce: string, project: string | null): Promise<unknown> {
+  const query = `nonce=${encodeURIComponent(nonce)}${project === null || project === "first" ? "" : `&project=${project}`}`;
+  const pending = inFlight.get(query);
   if (pending) return pending;
-  const request = fetch(`/__studio/session?nonce=${encodeURIComponent(nonce)}`, { headers: { Accept: "application/json" } })
+  const request = fetch(`/__studio/session?${query}`, { headers: { Accept: "application/json" } })
     .then((response) => (response.ok ? response.json() : null))
     .catch(() => null);
-  inFlight.set(nonce, request);
+  inFlight.set(query, request);
   return request;
 }
 
-export async function login(search: string, store: KeyStore = browserStore()): Promise<Session | null> {
-  const presented = new URLSearchParams(search).get("session");
-  let remembered: string | null = null;
-  try {
-    remembered = store?.getItem(SESSION_KEY_STORAGE) ?? null;
-  } catch {
-    remembered = null;
+type Reply = { token?: unknown; project?: unknown; projectId?: unknown; base?: unknown; sessionKey?: unknown } | null;
+
+function sessionOf(payload: Reply): { session: Session; sessionKey: string | null } | null {
+  if (!payload || typeof payload.token !== "string" || payload.token.trim().length === 0 || payload.token.length > 512) return null;
+  const key = typeof payload.projectId === "string" && /^[0-9a-f]{64}$/.test(payload.projectId) ? payload.projectId : "first";
+  const base = typeof payload.base === "string" && /^(?:\/p\/[0-9a-f]{64})?$/.test(payload.base) ? payload.base : "";
+  return {
+    session: {
+      key,
+      token: payload.token.trim(),
+      project: typeof payload.project === "string" && payload.project.length <= 120 ? payload.project : null,
+      base,
+    },
+    sessionKey: typeof payload.sessionKey === "string" && SESSION_KEY.test(payload.sessionKey) ? payload.sessionKey : null,
+  };
+}
+
+/** Every project this browser may open here, the one the URL presented first; `null` when none. */
+export async function login(search: string, store: KeyStore = browserStore()): Promise<Session[] | null> {
+  const query = new URLSearchParams(search);
+  const presented = query.get("session");
+  const wanted = query.get("project");
+  const attempts: [string, string | null][] = [];
+  if (presented) attempts.push([presented, wanted !== null && PROJECT_KEY.test(wanted) ? wanted : null]);
+  for (const [project, key] of Object.entries(readKeys(store))) attempts.push([key, project]);
+  const sessions: Session[] = [];
+  const kept: Record<string, string> = {};
+  for (const [nonce, project] of attempts) {
+    const reply = sessionOf((await ask(nonce, project)) as Reply);
+    if (reply === null || sessions.some((known) => known.key === reply.session.key)) continue;
+    sessions.push(reply.session);
+    if (reply.sessionKey !== null) kept[reply.session.key] = reply.sessionKey;
   }
-  for (const nonce of [presented, remembered]) {
-    if (!nonce) continue;
-    const payload = (await ask(nonce)) as { token?: unknown; project?: unknown; sessionKey?: unknown } | null;
-    if (payload && typeof payload.token === "string" && payload.token.trim().length > 0 && payload.token.length <= 512) {
-      if (typeof payload.sessionKey === "string" && /^[0-9a-f]{32,128}$/.test(payload.sessionKey)) {
-        try { store?.setItem(SESSION_KEY_STORAGE, payload.sessionKey); } catch { /* reload will ask again */ }
-      }
-      const project = typeof payload.project === "string" && payload.project.length <= 120 ? payload.project : null;
-      return { token: payload.token.trim(), project };
-    }
-    if (nonce === remembered) {
-      try { store?.removeItem(SESSION_KEY_STORAGE); } catch { /* nothing kept */ }
-    }
-  }
-  return null;
+  try { store?.setItem(SESSION_KEYS_STORAGE, JSON.stringify(kept)); } catch { /* a reload will ask again */ }
+  return sessions.length === 0 ? null : sessions;
 }

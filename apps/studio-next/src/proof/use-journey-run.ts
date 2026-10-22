@@ -118,13 +118,19 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     setAttempt((n) => n + 1);
   }, [drop]);
 
-  const web: Record<string, string> = {};
-  const mobile: Record<string, string> = {};
-  for (const [slot, url] of Object.entries(frames)) {
-    if (slot.startsWith("mobile:")) mobile[slot.slice("mobile:".length)] = url;
-    else web[slot] = url;
+  const split = splitFrames(frames, run?.viewportsPlanned?.[0]);
+  return { run, frames: split.web, mobileFrames: split.mobile, log, history, error, starting, start };
+}
+
+/** #1777/#1878: a run's fetched frames by viewport. The top level is the run's first viewport and
+ * `mobile:<screen>` a later mobile pass; a run that played mobile alone (first viewport `mobile`)
+ * has no web frame, so its top-level frames are mobile and never shown as web. */
+export function splitFrames(slots: Record<string, string>, first: "web" | "mobile" | undefined): { web: Record<string, string>; mobile: Record<string, string> } {
+  const top: Record<string, string> = {};
+  const later: Record<string, string> = {};
+  for (const [slot, url] of Object.entries(slots)) {
+    if (slot.startsWith("mobile:")) later[slot.slice("mobile:".length)] = url;
+    else top[slot] = url;
   }
-  // A run that played mobile alone keeps its mobile frames at the top level.
-  const mobileFrames = run?.viewportsPlanned?.[0] === "mobile" ? web : mobile;
-  return { run, frames: web, mobileFrames, log, history, error, starting, start };
+  return first === "mobile" ? { web: {}, mobile: { ...later, ...top } } : { web: top, mobile: later };
 }

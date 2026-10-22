@@ -36,7 +36,9 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
   const [viewport, setViewport] = useState<"web" | "mobile">("web");
   // #1777: Mobile is on when this run kept a mobile frame of this step; Before pairs the same viewport.
   const mobileOn = mobileNow !== undefined;
-  const shownViewport = viewport === "mobile" && mobileOn ? "mobile" : "web";
+  // #1878: a step with only a mobile frame (a mobile-only run) shows it as mobile, never as web.
+  const webOn = webNow !== undefined || !mobileOn;
+  const shownViewport = mobileOn && (viewport === "mobile" || !webOn) ? "mobile" : "web";
   const now = shownViewport === "mobile" ? mobileNow : webNow;
   const before = usePastFrame(runtime, flowId, earlier?.run ?? null, step.screen, shownViewport === "mobile" ? "mobile" : undefined);
   const changes = useChanges(mode === "changes" ? before.url : null, mode === "changes" ? now ?? null : null);
@@ -55,7 +57,7 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
         <div className="compare-bar">
           <span className="mono compare-step">step {step.n} · {step.label}</span>
           <div role="group" aria-label="Viewport" className="seg-group">
-            <button type="button" className={`seg${shownViewport === "web" ? " on" : ""}`} aria-pressed={shownViewport === "web"} onClick={() => setViewport("web")}>Web</button>
+            <button type="button" className={`seg${shownViewport === "web" ? " on" : ""}`} aria-pressed={shownViewport === "web"} disabled={!webOn} onClick={() => setViewport("web")}>Web</button>
             <button type="button" className={`seg${shownViewport === "mobile" ? " on" : ""}`} aria-pressed={shownViewport === "mobile"} disabled={!mobileOn} aria-describedby={mobileOn ? undefined : "compare-mobile-note"} onClick={() => setViewport("mobile")}>Mobile</button>
             <span className="mono compare-size">{shownViewport === "mobile" ? "390 × 844" : "1280 × 800"}</span>
           </div>

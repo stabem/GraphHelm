@@ -113,6 +113,8 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
   const said = verdict(run);
   const selected = steps.find((step) => step.n === picked) ?? steps.find((step) => step.status === "failed") ?? steps[0] ?? null;
   const frame = selected === null ? undefined : frames[selected.screen];
+  // #1878: a mobile-only run has no web frame; its step thumbnail is the mobile one.
+  const thumb = (screen: string): string | undefined => frames[screen] ?? mobileFrames[screen];
   return (
     <div className="proof-main">
       <h1>{flow.name || flow.title || flow.id}</h1>
@@ -142,7 +144,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
         {steps.map((step) => (
           <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${step.status.replace(" ", "-")}`}>
             <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
-              <span className="step-thumb">{frames[step.screen] ? <img src={frames[step.screen]} alt={`Step ${step.n} frame`} /> : <span>{step.frame ? "loading" : "no frame"}</span>}</span>
+              <span className="step-thumb">{thumb(step.screen) ? <img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /> : <span>{step.frame ? "loading" : "no frame"}</span>}</span>
               <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{MARK[step.status]} {step.status}</span></span>
               <span className="step-label">{step.label}</span>
               {viewportLine(step)}

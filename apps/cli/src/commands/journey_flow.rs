@@ -2204,7 +2204,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
         } else {
             out.push_str("drift:\n");
             for entry in drift {
-                for field in ["edge", "act", "code", "seen", "at", "healed"] {
+                for field in ["edge", "act", "code", "seen", "at", "healed", "viewport"] {
                     if let Some(v) = entry.get(field) {
                         out.push_str(&format!(
                             "{}{field}: {}\n",

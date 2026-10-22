@@ -8,6 +8,7 @@ import type { JourneyFlowView, JourneyRunView } from "../runtime/types";
 import { approvalBlockReason } from "../runtime/journeys";
 import { useJourneyRun, type JourneyRunSource } from "./journey-flows";
 import { runFailure as explain } from "../runtime/run-failure";
+import { observerSetupStatus } from "../runtime/observer-setup";
 
 const HINT: Record<StepStatus, string> = {
   proven: "Proven by a machine. Seen by you closes the ladder.",
@@ -59,6 +60,14 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
   // #1635: a Run blocks until the run ends; say so at once, here and on the rail.
   const running = preview.launching || preview.run?.state === "running";
   const observerInstalling = running && preview.run?.observerSetup?.state === "installing";
+  // #1775: Show log lists every setup line the Runtime reported for this run, in order.
+  const setupMessage = observerInstalling ? preview.run!.observerSetup!.message : null;
+  const [setupLog, setSetupLog] = useState<string[]>([]);
+  const [showLog, setShowLog] = useState(false);
+  useEffect(() => { if (preview.launching) setSetupLog([]); }, [preview.launching]);
+  useEffect(() => {
+    if (setupMessage !== null) setSetupLog((lines) => (lines[lines.length - 1] === setupMessage ? lines : [...lines, setupMessage]));
+  }, [setupMessage]);
   // The rail's running mark is cleared by the run's answer; an answer of "none" is reported too.
   // `onRun` is a fresh closure each render, so it is read through a ref and never re-fires this.
   const onRunRef = useRef(onRun);
@@ -100,7 +109,9 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         {onWatch && <button type="button" disabled={busy} onClick={() => act(() => onWatch(flow.id))}>Watch</button>}
         {run && <button type="button" disabled={running} onClick={preview.again}>Run again</button>}
         {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}
-        {running && <span role="status">{observerInstalling ? preview.run!.observerSetup!.message : "Running…"}</span>}
+        {running && <span role="status">{setupMessage !== null ? observerSetupStatus(setupMessage) : "Running…"}</span>}
+        {setupMessage !== null && <button type="button" className="proof-log-toggle" aria-expanded={showLog} onClick={() => setShowLog((open) => !open)}>{showLog ? "Hide log" : "Show log"}</button>}
+        {setupMessage !== null && showLog && <pre className="proof-run-log" aria-label="Run console">{setupLog.join("\n")}</pre>}
         {flow.rejected && <p className="proof-rejected" id="proof-rejected" role="note" aria-labelledby="proof-rejected">{`Rejected: ${flow.rejected.note}`}</p>}
         {rejecting && onReject && <div className="proof-reject">
           <textarea aria-label="Why reject" value={note} maxLength={4096} onChange={(event) => setNote(event.target.value)} />

@@ -59,12 +59,15 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
         <span className="tc-muted">click a frame to jump</span>
       </div>
       <ol className="tc-strip" aria-label="Test actions">
-        {frames.map((f, i) => (
+        {frames.map((f, i) => { const thumb = frameUrl(f.stepId); return (
           <li key={f.stepId} className="tc-strip-item">
             <button type="button" className="tc-card" data-status={f.status} aria-pressed={i === selected} onClick={() => onSelect(i)}
               aria-busy={f.status === "running" || undefined}
               aria-label={`${f.n} ${f.verb} ${f.text} · ${LABEL[f.status]}`}>
-              <span className="tc-thumb" aria-hidden="true"><span className="tc-thumb-line" /><span className="tc-thumb-hl" data-status={f.status} /><span className="tc-thumb-line" /></span>
+              {/* #1775: the step's captured frame when one exists; the skeleton only when none does. */}
+              {thumb
+                ? <span className="tc-thumb tc-thumb-frame" aria-hidden="true"><img src={thumb} alt="" /></span>
+                : <span className="tc-thumb" aria-hidden="true"><span className="tc-thumb-line" /><span className="tc-thumb-hl" data-status={f.status} /><span className="tc-thumb-line" /></span>}
               <span className="tc-card-body">
                 <span className="tc-card-top">
                   <span className="tc-num">{f.n}</span>
@@ -77,7 +80,7 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
               </span>
             </button>
           </li>
-        ))}
+        ); })}
       </ol>
       <div className="tc-main">
         <section className="tc-browser" aria-label="Emulated browser">

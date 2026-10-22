@@ -746,6 +746,8 @@ impl Driver {
                                 (if wanted["absent"] == true {
                                     closed(check, &["role", "name", "absent", "seen", "closest"])
                                         && check["absent"] == true
+                                } else if wanted["text"].is_string() {
+                                    text_check(check, wanted)
                                 } else {
                                     closed(check, &["role", "name", "seen", "closest"])
                                 }) && check["role"] == wanted["role"]
@@ -1175,6 +1177,18 @@ pub(super) fn observer_ready(project: &Path) -> Result<()> {
     Ok(())
 }
 
+/// #1781: a `text` check carries the wanted `text` and what the element held as `actual`: a
+/// string of at most 256 bytes, or null when no element was read.
+fn text_check(check: &Value, wanted: &Value) -> bool {
+    check.as_object().is_some_and(|object| {
+        object.len() == 6
+            && ["role", "name", "text", "actual", "seen", "closest"]
+                .iter()
+                .all(|key| object.contains_key(*key))
+    }) && check["text"] == wanted["text"]
+        && (check["actual"].is_null() || check["actual"].as_str().is_some_and(|t| t.len() <= 256))
+}
+
 /// The driver's per-expectation judgement on a failed snapshot (#1324), kept only when it is the
 /// exact shape the driver promises: one entry per requested expectation, in order, naming the
 /// same role and name, at least one unseen, and a `closest` that is null or one short role/name
@@ -1198,6 +1212,8 @@ pub(super) fn failed_checks(details: &Value, expect: &Value) -> Option<Value> {
                 closed(check, &["role", "name", "absent", "seen", "closest"])
                     && check["absent"] == true
                     && check["closest"].is_null()
+            } else if wanted["text"].is_string() {
+                text_check(check, wanted)
             } else {
                 closed(check, &["role", "name", "seen", "closest"])
             }) && check["role"] == wanted["role"]
@@ -2269,6 +2285,34 @@ mod tests {
         for bad in [closest, dropped, on_present] {
             assert_eq!(failed_checks(&bad, &expect), None, "{bad}");
         }
+    }
+
+    /// #1781: a failed `text` check keeps what the element held (`actual`), so the run names the
+    /// wrong text; a check without the wanted text, an unbounded `actual`, or a text shape on a
+    /// plain expectation reads as no judgement. Cost: microseconds, in-memory JSON.
+    #[test]
+    fn a_failed_text_check_keeps_what_the_element_held() {
+        let expect = json!([{"role":"heading","name":"Agenda","text":"daqui a 2 dias"}]);
+        let failed = json!({"checks":[{"role":"heading","name":"Agenda","text":"daqui a 2 dias",
+            "actual":"Agenda daqui a 1 semana","seen":false,"closest":null}]});
+        assert_eq!(
+            failed_checks(&failed, &expect),
+            Some(failed["checks"].clone())
+        );
+        let mut unread = failed.clone();
+        unread["checks"][0]["actual"] = Value::Null;
+        assert!(failed_checks(&unread, &expect).is_some());
+        let mut long = failed.clone();
+        long["checks"][0]["actual"] = json!("x".repeat(257));
+        let mut other = failed.clone();
+        other["checks"][0]["text"] = json!("daqui a 1 semana");
+        let mut dropped = failed.clone();
+        dropped["checks"][0].as_object_mut().unwrap().remove("actual");
+        for bad in [long, other, dropped] {
+            assert_eq!(failed_checks(&bad, &expect), None, "{bad}");
+        }
+        let plain = json!([{"role":"heading","name":"Agenda"}]);
+        assert_eq!(failed_checks(&failed, &plain), None);
     }
 
     /// #1286: a failed snapshot's judgement survives only in the exact shape the driver promises,

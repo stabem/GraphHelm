@@ -28,6 +28,19 @@ test('an absent expectation is met only when no visible element matches', () => 
   assert.equal(judgeExpectations([{role:'region',name:'While you were away'}],[])[0].seen, false);
 });
 
+// #1781: a `text` expectation is met only when its one visible element contains the text, read
+// with whitespace collapsed and NBSP as a space; a failure names what the element held.
+test('a text expectation compares what the element holds, whitespace and NBSP normalised', () => {
+  const total = {role:'status',name:'Total',text:'R$ 246,90'};
+  const seen = held => judgeExpectations([total],[{role:'status',name:'Total',count:1,visible:true,actual:held}])[0];
+  assert.deepEqual(seen('Total:\n  R$\u00a0246,90'), {...total,actual:'Total:\n  R$\u00a0246,90',seen:true,closest:null});
+  assert.equal(seen('Total: R$ 24,69').seen, false);
+  assert.equal(seen('Total: R$ 24,69').actual, 'Total: R$ 24,69');
+  assert.equal(seen(null).seen, false);
+  assert.equal(judgeExpectations([total],[{role:'status',name:'Total',count:2,visible:true,actual:'R$ 246,90'}])[0].seen, false);
+  assert.equal(judgeExpectations([total],[])[0].actual, null);
+});
+
 const driver = fileURLToPath(new URL('./driver.mjs', import.meta.url));
 const protocol = 'graphhelm-journey-driver/1';
 // Contract: closed bounded frames reject invalid input before loading a browser.

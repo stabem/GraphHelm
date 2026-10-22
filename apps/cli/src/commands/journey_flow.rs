@@ -498,7 +498,7 @@ fn weak_journey(value: &Value, strict: bool) -> Vec<Finding> {
         let Some(&&(i, last)) = path.last() else {
             continue;
         };
-        let expects = |id: &Value| -> BTreeSet<(String, String, bool)> {
+        let expects = |id: &Value| -> BTreeSet<(String, String, bool, String)> {
             screens
                 .get(id.as_str().unwrap_or_default())
                 .and_then(|s| s["expect"].as_array())
@@ -510,6 +510,8 @@ fn weak_journey(value: &Value, strict: bool) -> Vec<Finding> {
                         e["role"].to_string(),
                         e["name"].to_string(),
                         e["absent"] == true,
+                        // #1781: "says X" and "says Y" are different outcomes too.
+                        e["text"].to_string(),
                     )
                 })
                 .collect()
@@ -855,10 +857,13 @@ fn compile(flow: &Value) -> Result<Vec<(String, Value)>, Finding> {
                     .unwrap()
                     .iter()
                     .map(|e| format!(
-                        "{}{} {:?}",
+                        "{}{} {:?}{}",
                         if e["absent"] == true { "no " } else { "" },
                         e["role"].as_str().unwrap(),
-                        e["name"].as_str().unwrap()
+                        e["name"].as_str().unwrap(),
+                        e["text"]
+                            .as_str()
+                            .map_or(String::new(), |text| format!(" saying {text:?}"))
                     ))
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -2113,7 +2118,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
                 } else {
                     out.push_str(&format!(
                         "{prefix}{field}: {}\n",
-                        inline(v, &["role", "name", "absent", "digest"])
+                        inline(v, &["role", "name", "absent", "text", "digest"])
                     ));
                 }
             }
@@ -2330,6 +2335,53 @@ mod tests {
                 false
             )
         );
+    }
+
+    /// #1781: "the screen says X" is an expectation. Defects named: the canonical writer drops
+    /// `text` (so `--fmt` silently turns "says R$ 246,90" into "has a status"), the approval
+    /// ignores it, the schema takes `text` beside `absent` (a contradiction), or adding the field
+    /// moves the digest of flows that never use it. Cost: in memory only.
+    #[test]
+    fn a_text_expectation_is_written_validated_and_approved() {
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let schemas = flow_schemas().unwrap();
+        let plain_digest = approval_digest(&plain);
+        let mut with = plain.clone();
+        with["screens"][0]["expect"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"role":"status","name":"Total","text":"R$ 246,90"}));
+        let accepted = schemas.validate(FLOW_SCHEMA_ID, &with, "journey-flow");
+        assert!(accepted.is_empty(), "{accepted:?}");
+        let written = canonical(&with, false);
+        assert!(
+            written.contains("{role: status, name: Total, text: \"R$ 246,90\"}"),
+            "{written}"
+        );
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(reread["screens"], with["screens"], "text survives the round trip");
+        assert_ne!(approval_digest(&with), plain_digest);
+        let last = with["screens"][0]["expect"].as_array().unwrap().len() - 1;
+        let mut other = with.clone();
+        other["screens"][0]["expect"][last]["text"] = json!("R$ 24,69");
+        assert_ne!(approval_digest(&other), approval_digest(&with));
+        let mut both = with.clone();
+        both["screens"][0]["expect"][last]["absent"] = json!(true);
+        let mut empty = with.clone();
+        empty["screens"][0]["expect"][last]["text"] = json!("");
+        for refused in [both, empty] {
+            assert!(
+                !schemas
+                    .validate(FLOW_SCHEMA_ID, &refused, "journey-flow")
+                    .is_empty(),
+                "{refused}"
+            );
+        }
+        // A flow without `text` keeps its digest.
+        assert_eq!(approval_digest(&plain), plain_digest);
     }
 
     /// #1296: `name` and `feature` only label a journey for the Studio rail. Defect named: adding

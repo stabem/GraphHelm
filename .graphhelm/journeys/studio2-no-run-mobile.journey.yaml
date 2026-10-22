@@ -1,0 +1,52 @@
+schema: graphhelm.journey-flow/1
+id: studio2-no-run-mobile
+title: See journeys in a project with no team run on a phone
+name: Start from no run (mobile)
+feature: Studio
+purpose: "studio2-no-run at mobile, on its own empty fixture: a project with no team run still shows its journeys in Proof and a working Start a team run button in the top bar."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, recovery]
+viewports: [mobile]
+screens:
+  - id: empty
+    title: The project has no team run
+    url: /?session=studio-fixture
+    ignoreQuery: [session, project]
+    state: empty
+    expect: [{role: button, name: Start a team run}, {role: tab, name: Proof}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/start-run/StartRun.tsx, apps/studio/src/proof/ProofView.tsx, apps/studio/src/views/Views.tsx]
+  - id: proof
+    title: Proof lists the project's journeys
+    url: /?session=studio-fixture&view=proof
+    ignoreQuery: [session, project]
+    state: empty
+    expect: [{role: list, name: Journeys}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/start-run/StartRun.tsx, apps/studio/src/proof/ProofView.tsx, apps/studio/src/views/Views.tsx]
+  - id: started
+    title: A team run has started
+    url: /?session=studio-fixture
+    ignoreQuery: [session, project, run]
+    state: stable
+    expect: [{role: region, name: Graph}, {role: button, name: Start a team run, absent: true}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/start-run/StartRun.tsx, apps/studio/src/proof/ProofView.tsx, apps/studio/src/views/Views.tsx]
+edges:
+  - id: empty.proof
+    from: empty
+    to: proof
+    acts:
+      - {kind: activate, role: tab, name: Proof}
+  - id: proof.started
+    from: proof
+    to: started
+    intent: "Opens the new-run form, writes the objective and starts the run."
+    acts:
+      - {kind: activate, role: button, name: Start a team run}
+      - {kind: enter_text, role: textbox, name: What should the team do?, text: Check the journeys.}
+      - {kind: activate, role: button, name: Start}
+paths:
+  main: [empty.proof, proof.started]
+drift: []

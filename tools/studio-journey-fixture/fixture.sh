@@ -180,7 +180,7 @@ FLOW
   # fixture that starts none: GRAPHHELM_FIXTURE_EMPTY=1, or the studio2-no-run flow, skips both the
   # observer preview (its runner records into a run of its own) and the seeded demo run.
   empty=0
-  if [ "${GRAPHHELM_FIXTURE_EMPTY:-}" = 1 ] || [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-no-run ]; then empty=1; fi
+  if [ "${GRAPHHELM_FIXTURE_EMPTY:-}" = 1 ] || [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-no-run ] || [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-no-run-mobile ]; then empty=1; fi
   if [ "$empty" = 0 ]; then
   "$bin" --json journey preview runtime-health --force --project "$dir/project"     > "$dir/.graphhelm/observer-preview.out" 2>&1 || true
   for _ in $(seq 1 60); do

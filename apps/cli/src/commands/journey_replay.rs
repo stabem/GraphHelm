@@ -1122,7 +1122,10 @@ pub(super) fn declared_browser(flow: &Value, default: Value) -> (Value, Option<V
     if let Some(clock) = flow["clock"].as_str() {
         declared.insert("clock".into(), clock.into());
     }
-    (viewport, (!declared.is_empty()).then_some(Value::Object(declared)))
+    (
+        viewport,
+        (!declared.is_empty()).then_some(Value::Object(declared)),
+    )
 }
 
 /// `open`'s request with the fields the flow declares (`storage`, `clock`) added, when it
@@ -2439,9 +2442,20 @@ mod tests {
         let instant = "2026-10-31T12:00:00-03:00";
         let mut clocked = flow.clone();
         clocked["clock"] = instant.into();
-        let open = with_declared(json!({"base": "http://localhost/"}), declared_browser(&clocked, default.clone()).1.as_ref());
-        assert_eq!((open["clock"].as_str(), &open["storage"]), (Some(instant), &flow["storage"]));
-        let open = with_declared(json!({"base": "http://localhost/"}), declared_browser(&json!({"clock": instant}), default).1.as_ref());
+        let open = with_declared(
+            json!({"base": "http://localhost/"}),
+            declared_browser(&clocked, default.clone()).1.as_ref(),
+        );
+        assert_eq!(
+            (open["clock"].as_str(), &open["storage"]),
+            (Some(instant), &flow["storage"])
+        );
+        let open = with_declared(
+            json!({"base": "http://localhost/"}),
+            declared_browser(&json!({"clock": instant}), default)
+                .1
+                .as_ref(),
+        );
         assert_eq!(open, json!({"base": "http://localhost/", "clock": instant}));
     }
 

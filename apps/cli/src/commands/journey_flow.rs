@@ -2387,13 +2387,22 @@ mod tests {
         .unwrap();
         let schemas = flow_schemas().unwrap();
         let file = Path::new("checkout.journey.yaml");
-        // A flow without `clock` keeps its canonical bytes and approval digest, pinned here
-        // against the projection the field list had before #1782.
+        // A flow without `clock` keeps its canonical bytes and approval digest; the literal is
+        // what origin/main (ce0918b22) computes for this fixture.
         let plain_bytes = canonical(&plain, false);
         assert!(!plain_bytes.contains("clock"), "{plain_bytes}");
+        assert_eq!(
+            approval_digest(&plain),
+            "sha256:5054a765f2c89d119d54c233a2d8ea00354559708fe5919d8b4130b889ff7935",
+            "the digest origin/main computes for this fixture"
+        );
         let mut with = plain.clone();
         with["clock"] = json!("2026-10-31T12:00:00-03:00");
-        assert!(schemas.validate(FLOW_SCHEMA_ID, &with, "journey-flow").is_empty());
+        assert!(
+            schemas
+                .validate(FLOW_SCHEMA_ID, &with, "journey-flow")
+                .is_empty()
+        );
         assert!(
             !semantic(file, &with, Path::new("."))
                 .iter()
@@ -2404,7 +2413,7 @@ mod tests {
             written,
             plain_bytes.replacen(
                 "\nscreens:",
-                "\nclock: \"2026-10-31T12:00:00-03:00\"\nscreens:",
+                "\nclock: 2026-10-31T12:00:00-03:00\nscreens:",
                 1
             ),
             "only the clock line is added"
@@ -2420,7 +2429,9 @@ mod tests {
             let mut bad = plain.clone();
             bad["clock"] = json!(shape);
             assert!(
-                !schemas.validate(FLOW_SCHEMA_ID, &bad, "journey-flow").is_empty(),
+                !schemas
+                    .validate(FLOW_SCHEMA_ID, &bad, "journey-flow")
+                    .is_empty(),
                 "{shape}"
             );
         }
@@ -2434,7 +2445,9 @@ mod tests {
             let mut bad = plain.clone();
             bad["clock"] = json!(impossible);
             assert!(
-                schemas.validate(FLOW_SCHEMA_ID, &bad, "journey-flow").is_empty(),
+                schemas
+                    .validate(FLOW_SCHEMA_ID, &bad, "journey-flow")
+                    .is_empty(),
                 "{impossible} has the right shape"
             );
             assert!(

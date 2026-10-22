@@ -185,6 +185,24 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             "base must use a local HTTP host",
         ));
     }
+    // #1781: "says X" and "is gone" contradict each other. Refused here, not in the schema, so
+    // journey-flow 1.9.0 stays a purely additive change for the schema-evolution baseline.
+    for (s, screen) in value["screens"].as_array().unwrap().iter().enumerate() {
+        for (e, expect) in screen["expect"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            if expect["absent"] == true && expect.get("text").is_some() {
+                findings.push(Finding::new(
+                    "flow.text_with_absent",
+                    format!("/screens/{s}/expect/{e}/text"),
+                    "an absent expectation cannot also require text",
+                ));
+            }
+        }
+    }
     for group in ["screens", "edges"] {
         let mut seen = BTreeSet::new();
         for (i, entry) in value[group].as_array().unwrap().iter().enumerate() {
@@ -2373,16 +2391,27 @@ mod tests {
         assert_ne!(approval_digest(&other), approval_digest(&with));
         let mut both = with.clone();
         both["screens"][0]["expect"][last]["absent"] = json!(true);
+        // Text beside absent passes the additive schema but is refused with a stable code.
+        let file = Path::new("checkout.journey.yaml");
+        let refused = semantic(file, &both, Path::new("."));
+        assert!(
+            refused.iter().any(|f| f.code == "flow.text_with_absent"
+                && f.pointer == format!("/screens/0/expect/{last}/text")),
+            "{refused:?}"
+        );
+        assert!(
+            !semantic(file, &with, Path::new("."))
+                .iter()
+                .any(|f| f.code == "flow.text_with_absent")
+        );
         let mut empty = with.clone();
         empty["screens"][0]["expect"][last]["text"] = json!("");
-        for refused in [both, empty] {
-            assert!(
-                !schemas
-                    .validate(FLOW_SCHEMA_ID, &refused, "journey-flow")
-                    .is_empty(),
-                "{refused}"
-            );
-        }
+        assert!(
+            !schemas
+                .validate(FLOW_SCHEMA_ID, &empty, "journey-flow")
+                .is_empty(),
+            "{empty}"
+        );
         // A flow without `text` keeps its digest.
         assert_eq!(approval_digest(&plain), plain_digest);
     }

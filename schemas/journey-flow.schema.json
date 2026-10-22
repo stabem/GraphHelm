@@ -238,12 +238,6 @@
         "role",
         "name"
       ],
-      "not": {
-        "required": [
-          "absent",
-          "text"
-        ]
-      },
       "additionalProperties": false
     },
     "act": {

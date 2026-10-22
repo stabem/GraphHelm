@@ -194,6 +194,7 @@ fn replay_args(args: &JourneyOpenArgs, project: &Path) -> JourneyReplayArgs {
         },
         allow_origin: args.allow_origin.clone(),
         replay_worker: false,
+        viewport: None,
         heal: false,
         model: Default::default(),
         allow_act: Vec::new(),

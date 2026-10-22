@@ -932,6 +932,7 @@ fn proof_args(
         },
         allow_origin: Vec::new(),
         replay_worker: false,
+        viewport: None,
         heal: false,
         model: Default::default(),
         allow_act: Vec::new(),
@@ -1347,12 +1348,7 @@ fn play(
     paths.sort_by(|(a, _), (b, _)| (a.as_str() != "main", a).cmp(&(b.as_str() != "main", b)));
     // #1777: every viewport plays every path in its own browser, against the one app, with its
     // own share of the budget.
-    for (index, view) in views.iter().enumerate() {
-        if index > 0 {
-            stash_view(flow, &mut run.state, views[index - 1].name);
-            run.state["screens"] = json!({});
-            run.state["edges"] = json!({});
-        }
+    each_view(flow, views, run, |run, index, view| {
         run.first_view = index == 0;
         run.viewport = view.viewport.clone();
         run.device = view.device;
@@ -1364,17 +1360,41 @@ fn play(
         run.state["viewport"] = view.name.into();
         run.save();
         let deadline = deadline.min(Instant::now() + PREVIEW_BUDGET);
-        if play_paths(
+        play_paths(
             project, &base, &secrets, &screens, &edges, &paths, backend, guard, deadline, run,
-        )? {
-            break;
-        }
-    }
-    if let Some(last) = views.last() {
-        stash_view(flow, &mut run.state, last.name);
-    }
+        )
+    })?;
     // The runner retains ownership until the completed result is stored.
     Ok(launched)
+}
+
+/// #1777: plays `body` for each viewport in order and keeps what each recorded under
+/// `viewports.<name>`. A viewport whose pass is held for the owner's click (`body` answers `true`)
+/// is the last one played, and its results are kept under its own name, never a later one's.
+fn each_view(
+    flow: &Value,
+    views: &[View],
+    run: &mut Run,
+    mut body: impl FnMut(&mut Run, usize, &View) -> Result<bool>,
+) -> Result<()> {
+    let mut played: Option<&'static str> = None;
+    for (index, view) in views.iter().enumerate() {
+        if let Some(previous) = played {
+            stash_view(flow, &mut run.state, previous);
+            run.state["screens"] = json!({});
+            run.state["edges"] = json!({});
+        }
+        played = Some(view.name);
+        let held = body(run, index, view);
+        if !matches!(held, Ok(false)) {
+            stash_view(flow, &mut run.state, view.name);
+            return held.map(|_| ());
+        }
+    }
+    if let Some(last) = played {
+        stash_view(flow, &mut run.state, last);
+    }
+    Ok(())
 }
 
 /// #1777: one viewport's pass over every path. `true` when a path is held for the owner's click,
@@ -2153,6 +2173,60 @@ mod tests {
     /// #1795: the "Before = main" run is the newest FINISHED one: a run still in progress is
     /// skipped for the newest archived run, and a finished current run is served at the current
     /// frame route. Frame URLs are route-relative; a screen without a kept frame is left out.
+    /// #1777 (#1863 review): a pass held for the owner's click is the last one played, and its
+    /// results stay under its own viewport. Defects named: a run held at web stashed as mobile,
+    /// or the viewport after a held one still played. Cost: in memory only.
+    #[test]
+    fn a_pass_held_at_web_is_kept_as_web_and_mobile_is_not_played() {
+        use super::*;
+        let flow = json!({"screens": [{"id": "cart"}], "edges": [], "paths": {}});
+        let mut run = Run {
+            dir: std::path::PathBuf::from("unused"),
+            state: json!({"screens": {}, "edges": {}}),
+            frames: 0,
+            proof: None,
+            contract: String::new(),
+            last: None,
+            confirmed: false,
+            viewport: Value::Null,
+            declared: None,
+            device: None,
+            frames_sub: std::path::PathBuf::from("frames"),
+            first_view: true,
+            validation: false,
+            flow_id: String::new(),
+        };
+        let mut played = Vec::new();
+        each_view(&flow, &views_of(&json!({})), &mut run, |run, _, view| {
+            played.push(view.name);
+            run.state["screens"]["cart"] = json!({"frame": false, "result": "pass"});
+            Ok(view.name == "web")
+        })
+        .unwrap();
+        assert_eq!(played, ["web"], "nothing after a held pass is played");
+        let kept: Vec<_> = run.state["viewports"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(kept, ["web"], "{}", run.state);
+        assert_eq!(
+            run.state["viewports"]["web"]["screens"]["cart"]["result"],
+            "pass"
+        );
+        // Unheld, both are played and kept under their own names.
+        let mut played = Vec::new();
+        run.state = json!({"screens": {}, "edges": {}});
+        each_view(&flow, &views_of(&json!({})), &mut run, |_, _, view| {
+            played.push(view.name);
+            Ok(false)
+        })
+        .unwrap();
+        assert_eq!(played, ["web", "mobile"]);
+        assert_eq!(run.state["viewports"].as_object().unwrap().len(), 2);
+    }
+
     /// #1777: which viewports a Run plays. Defects named: a flow with no viewport field proves only
     /// web, `viewports` is ignored, a fixed `viewport` (#585) gains a second size, or mobile is
     /// played without the driver's mobile device.

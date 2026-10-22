@@ -874,6 +874,7 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
             },
             allow_origin: args.allow_origin.clone(),
             replay_worker: false,
+            viewport: None,
             heal: false,
             model: Default::default(),
             allow_act: Vec::new(),

@@ -17,7 +17,7 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Graph}, {role: button, name: Open review}]
+    expect: [{role: region, name: Graph}, {role: button, name: Kanban}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: closed
     title: Close shuts the modal
@@ -52,6 +52,7 @@ edges:
     from: board
     to: modal
     acts:
+      - {kind: activate, role: button, name: Kanban}
       - {kind: activate, role: button, name: Open review}
   - id: mobile.closed
     from: mobile

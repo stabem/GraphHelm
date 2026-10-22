@@ -38,7 +38,7 @@ edges:
     from: ran
     to: approved
     acts:
-      - {kind: approve, role: button, name: Approve}
+      - {kind: activate, role: button, name: Approve}
   - id: ran.rejected
     from: ran
     to: rejected

@@ -13,7 +13,7 @@ risks: [critical_ux]
 viewports: [web, mobile]
 screens:
   - id: filtered
-    title: The journey filter narrows the requests
+    title: The journey filter is offered beside the requests
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
@@ -50,7 +50,7 @@ edges:
     from: graph
     to: filtered
     acts:
-      - {kind: select, role: combobox, name: Journey filter}
+      - {kind: inspect, role: combobox, name: Journey filter}
   - id: kanban.graph-again
     from: kanban
     to: graph-again

@@ -1,4 +1,5 @@
-/** The public Runtime routes the shell reads, through the same-origin `/v1` proxy. */
+/** The public Runtime routes the shell reads, through the same-origin proxy: `/v1` for the first
+ * project, `/p/<id>/v1` for a project that joined this Studio's port (#1800). */
 export interface RunSummary {
   executionId: string;
   status: string;
@@ -26,15 +27,17 @@ const OWNER = { id: "studio-operator", type: "owner" };
 
 export class Runtime {
   readonly #token: string;
+  readonly #base: string;
 
-  constructor(token: string) {
+  constructor(token: string, base = "") {
     this.#token = token;
+    this.#base = base;
   }
 
   async #request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
     let response: Response;
     try {
-      response = await fetch(path, {
+      response = await fetch(`${this.#base}${path}`, {
         method,
         headers: {
           Authorization: `Bearer ${this.#token}`,

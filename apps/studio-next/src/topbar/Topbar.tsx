@@ -15,7 +15,7 @@ interface Props {
 export function Topbar({ project, run, view, updated, onView, onStart }: Props) {
   return (
     <header aria-label="Top bar" className="topbar">
-      <strong>{project}</strong>
+      <h2 className="crumb-project">{project}</h2>
       <span className="crumb-sep">/</span>
       <span className="crumb-run">{run ?? "no run"}</span>
       <div role="tablist" aria-label="Views" className="views">

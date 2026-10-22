@@ -1,17 +1,31 @@
 import type { RunSummary } from "../runtime/client";
 import { routeSearch, type View } from "../routing/route";
 
+export interface ProjectEntry {
+  key: string;
+  name: string;
+}
+
 interface Props {
-  project: string;
+  projects: ProjectEntry[];
+  /** Joined projects this tab has no key for (#1800): listed, opened only by their own ticket. */
+  closed: string[];
+  current: string;
   runs: RunSummary[];
   selected: string | null;
   view: View;
   live: boolean;
+  onProject: (project: string) => void;
   onSelect: (run: string) => void;
 }
 
-/** The left rail of the design (Sidebar.dc.html): brand, live state, the project and its runs. */
-export function Sidebar({ project, runs, selected, view, live, onSelect }: Props) {
+function Folder({ stroke }: { stroke: string }) {
+  return <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2"><path d="M3 7h6l2 2h10v10H3z" /></svg>;
+}
+
+/** The left rail of the design (Sidebar.dc.html): brand, live state, every project this Studio port
+ * serves (#1800), and the open project's runs. Another project is a link that switches to it. */
+export function Sidebar({ projects, closed, current, runs, selected, view, live, onProject, onSelect }: Props) {
   return (
     <nav aria-label="Projects" className="sidebar">
       <div className="brand">
@@ -22,28 +36,54 @@ export function Sidebar({ project, runs, selected, view, live, onSelect }: Props
         <span className={live ? "live" : "live off"}>{live ? "● LIVE" : "● OFFLINE"}</span>
       </div>
       <span className="section-label">PROJECTS</span>
-      <div className="project">
-        <div className="project-head">
-          <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f5f5f6" strokeWidth="2"><path d="M3 7h6l2 2h10v10H3z" /></svg>
-          <strong>{project}</strong>
-          <span className={live ? "dot on" : "dot"} />
-        </div>
-        <ul className="runs" aria-label={`Runs in ${project}`}>
-          {runs.length === 0 ? <li className="empty">no run</li> : runs.map((run) => (
-            <li key={run.executionId}>
-              <a
-                href={routeSearch({ run: run.executionId, view }) || "?"}
-                aria-current={run.executionId === selected ? "page" : undefined}
-                onClick={(event) => {
-                  event.preventDefault();
-                  onSelect(run.executionId);
-                }}
-              >
-                {run.executionId}
-              </a>
-            </li>
-          ))}
-        </ul>
+      <div className="projects">
+        {projects.map((project) => project.key === current ? (
+          <div key={project.key} className="project">
+            <div className="project-head">
+              <Folder stroke="#f5f5f6" />
+              <strong>{project.name}</strong>
+              <span className={live ? "dot on" : "dot"} />
+            </div>
+            <ul className="runs" aria-label={`Runs in ${project.name}`}>
+              {runs.length === 0 ? <li className="empty">no run</li> : runs.map((run) => (
+                <li key={run.executionId}>
+                  <a
+                    href={routeSearch({ project: project.key, run: run.executionId, view }) || "?"}
+                    aria-current={run.executionId === selected ? "page" : undefined}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onSelect(run.executionId);
+                    }}
+                  >
+                    {run.executionId}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <div key={project.key} className="project other">
+            <a
+              aria-label={project.name}
+              href={routeSearch({ project: project.key, run: null, view }) || "?"}
+              onClick={(event) => {
+                event.preventDefault();
+                onProject(project.key);
+              }}
+            >
+              <Folder stroke="#a2a2ad" />
+              <span>{project.name}</span>
+              <span className="dot" />
+            </a>
+          </div>
+        ))}
+        {closed.map((id) => (
+          <div key={id} className="project other closed">
+            <Folder stroke="#6b6b76" />
+            <span>project {id.slice(0, 8)}</span>
+            <span className="closed-hint">open with <code className="mono">graphhelm studio open</code></span>
+          </div>
+        ))}
       </div>
     </nav>
   );

@@ -53,6 +53,7 @@ edges:
     to: mobile
     acts:
       - {kind: activate, role: button, name: Mobile}
+      - {kind: wait_for, role: img, name: "Now, changed regions highlighted"}
   - id: overlay.changes
     from: overlay
     to: changes

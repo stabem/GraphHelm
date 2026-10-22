@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, realpathSync, statSync, unlinkSync } from "node:fs";
+import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { basename, dirname, isAbsolute, join, resolve, toNamespacedPath } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -69,7 +70,10 @@ export function stableNonce(token: string): string {
 
 /** Reads the one-line token file, or `null` when it is missing or is not one line. */
 function readToken(env: Record<string, string>): string | null {
-  const path = tokenPath(env);
+  return readTokenFile(tokenPath(env));
+}
+
+function readTokenFile(path: string | null): string | null {
   if (path === null) return null;
   try {
     const raw = readFileSync(path, "utf8").trim();
@@ -111,13 +115,118 @@ function studioProjectId(env: Record<string, string>): string | null {
     if (realpathSync.native(token) !== realpathSync.native(join(folder, ".graphhelm", "events.token"))) return null;
     const canonical = realpathSync.native(folder);
     if (!statSync(canonical).isDirectory()) return null;
-    // Rust canonicalize retains the Windows verbatim prefix and path case.
-    const identity = process.platform === "win32" ? toNamespacedPath(canonical).replace(/\\/g, "/") : canonical;
-    return createHash("sha256").update(identity).digest("hex");
+    return idOf(canonical);
   } catch {
     // Missing paths cannot establish which project's ticket this server can consume.
     return null;
   }
+}
+
+/** Mirrors execution::delivery::project_id over an already canonical folder. */
+function idOf(canonical: string): string {
+  // Rust canonicalize retains the Windows verbatim prefix and path case.
+  const identity = process.platform === "win32" ? toNamespacedPath(canonical).replace(/\\/g, "/") : canonical;
+  return createHash("sha256").update(identity).digest("hex");
+}
+
+/** #1767: a project this Studio serves besides the one it was started for. Only the conventional
+ * `<folder>/.graphhelm/events.token` layout qualifies, exactly as for the first project. */
+export interface StudioProject { id: string; folder: string; tokenFile: string; ticketFile: string }
+
+const PROJECT_ID = /^[0-9a-f]{64}$/;
+
+/** #1767: the conventional layout of an absolute project folder, or `null`. */
+export function projectAt(folder: unknown): StudioProject | null {
+  if (typeof folder !== "string" || folder.length === 0 || folder.length > 4096 || !isAbsolute(folder)) return null;
+  try {
+    const canonical = realpathSync.native(folder);
+    if (!statSync(canonical).isDirectory()) return null;
+    const tokenFile = join(canonical, ".graphhelm", "events.token");
+    if (readTokenFile(tokenFile) === null) return null;
+    return { id: idOf(canonical), folder: canonical, tokenFile, ticketFile: join(canonical, ".graphhelm", "events.studio-ticket") };
+  } catch {
+    return null;
+  }
+}
+
+/** #1767: the project's own Runtime, as its lifecycle record names it (`serve` writes the address
+ * it listens on). Loopback only: that project's bearer token rides every forwarded request, so the
+ * dev server must never be talked into sending it anywhere else. Re-read on every request, so a
+ * Runtime restarted on another port is followed rather than cached. */
+export function runtimeOf(folder: string): string | null {
+  try {
+    const raw = readFileSync(join(folder, ".graphhelm", "events.runtime-lifecycle.json"), "utf8");
+    if (raw.length > 16 * 1024) return null;
+    const record = JSON.parse(raw) as { state?: unknown; address?: unknown };
+    if (record.state !== "running" || typeof record.address !== "string") return null;
+    return /^(?:127\.0\.0\.1|\[::1\]):\d{1,5}$/.test(record.address) ? `http://${record.address}` : null;
+  } catch {
+    return null;
+  }
+}
+
+/** #1767: whether `presented` is the project's current `studio open` ticket. Registration only
+ * reads it; the page spends it once on `/__studio/session`, so the link stays one-shot. */
+function holdsTicket(project: StudioProject, presented: string): boolean {
+  if (presented.length === 0) return false;
+  try {
+    const ticket = readFileSync(project.ticketFile, "utf8").trim();
+    return ticket.length > 0 && sameSecret(presented, ticket);
+  } catch {
+    return false;
+  }
+}
+
+function readRoster(folder: string | null): string[] {
+  if (folder === null) return [];
+  try {
+    const team = JSON.parse(readFileSync(join(folder, ".graphhelm", "team.json"), "utf8")) as { onDemandLanes?: unknown };
+    return Array.isArray(team.onDemandLanes)
+      ? team.onDemandLanes.filter((name): name is string => typeof name === "string" && name.length > 0 && name.length <= 80).slice(0, 100)
+      : [];
+  } catch {
+    // An absent roster does not invent available lanes.
+    return [];
+  }
+}
+
+/** #1767: `/p/<projectId>/v1/...` and `/p/<projectId>/health` reach that project's own Runtime.
+ * Only those two prefixes, like the first project's proxy; nothing else is forwarded. */
+export function projectRoute(url: string): { id: string; path: string } | null {
+  const match = /^\/([0-9a-f]{64})(\/(?:v1|health)(?:[/?].*)?)$/.exec(url);
+  return match ? { id: match[1]!, path: match[2]! } : null;
+}
+
+function forward(request: IncomingMessage, response: ServerResponse, target: string, path: string) {
+  const url = new URL(path, target);
+  const upstream = httpRequest(url, { method: request.method, headers: { ...request.headers, host: url.host } }, (reply) => {
+    response.writeHead(reply.statusCode ?? 502, reply.headers);
+    reply.pipe(response);
+  });
+  upstream.on("error", (error) => {
+    if (response.headersSent) {
+      response.destroy();
+      return;
+    }
+    // #1170: a refused connection proves the request never reached the Runtime.
+    const refused = (error as { code?: string }).code === "ECONNREFUSED";
+    response.writeHead(refused ? 503 : 502, refused ? { [RUNTIME_UNREACHABLE_HEADER]: "connection-refused" } : {});
+    response.end();
+  });
+  request.pipe(upstream);
+}
+
+function readBody(request: IncomingMessage, limit: number): Promise<string | null> {
+  return new Promise((done) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size <= limit) chunks.push(chunk);
+    });
+    request.on("end", () => done(size > limit ? null : Buffer.concat(chunks).toString("utf8")));
+    request.on("error", () => done(null));
+  });
 }
 
 /** #1264: true once for the ticket on disk: a match deletes it, so the link in browser history
@@ -148,11 +257,68 @@ function devSession(env: Record<string, string>): Plugin {
     name: "graphhelm-studio-dev-session",
     apply: "serve",
     configureServer(server) {
+      // #1767: the other projects this Studio serves, registered by `graphhelm studio open` in their
+      // own folders. Held in memory only: a restarted Studio serves its first project again until
+      // each other project opens it once more.
+      const registered = new Map<string, StudioProject>();
       server.middlewares.use("/__studio/identity", (request, response) => {
         response.setHeader("Content-Type", "application/json");
         response.setHeader("Cache-Control", "no-store");
         response.statusCode = request.method === "GET" ? 200 : 405;
-        response.end(JSON.stringify({ projectId: request.method === "GET" ? studioProjectId(env) : null }));
+        const first = request.method === "GET" ? studioProjectId(env) : null;
+        // Hashes only, like `projectId`: the identity route carries no path and no secret.
+        const projectIds = request.method === "GET" ? [...new Set([...(first === null ? [] : [first]), ...registered.keys()])] : [];
+        response.end(JSON.stringify({ projectId: first, projectIds }));
+      });
+      // #1767: `graphhelm studio open` in another project registers it here. The caller proves it can
+      // read that project's owner-only ticket; the ticket is not spent (the page spends it). The path
+      // travels in the body, never the URL, and is never echoed back.
+      server.middlewares.use("/__studio/register", (request, response) => {
+        response.setHeader("Content-Type", "application/json");
+        response.setHeader("Cache-Control", "no-store");
+        const reply = (status: number, body: Record<string, unknown>) => {
+          response.statusCode = status;
+          response.end(JSON.stringify(body));
+        };
+        if (request.method !== "POST") {
+          reply(405, { ok: false });
+          return;
+        }
+        const presented = new URL(request.url ?? "/", "http://localhost").searchParams.get("nonce") ?? "";
+        void readBody(request, 8 * 1024).then((raw) => {
+          let path: unknown = null;
+          try {
+            path = raw === null ? null : (JSON.parse(raw) as { path?: unknown }).path;
+          } catch { /* an unreadable body names no project */ }
+          const project = projectAt(path);
+          if (project === null || !holdsTicket(project, presented)) {
+            reply(404, { ok: false });
+            return;
+          }
+          if (runtimeOf(project.folder) === null) {
+            // Its Runtime is not running (or predates the recorded address): nothing to proxy to.
+            reply(409, { ok: false, reason: "runtime_not_running" });
+            return;
+          }
+          if (project.id !== studioProjectId(env)) registered.set(project.id, project);
+          reply(200, { ok: true, projectId: project.id });
+        });
+      });
+      // #1767: each registered project's Runtime, behind the same same-origin rule as `/v1`.
+      server.middlewares.use("/p", (request, response, next) => {
+        const route = projectRoute(request.url ?? "");
+        const project = route === null ? undefined : registered.get(route.id);
+        const target = project === undefined ? null : runtimeOf(project.folder);
+        if (route === null || project === undefined) {
+          next();
+          return;
+        }
+        if (target === null) {
+          response.writeHead(503, { [RUNTIME_UNREACHABLE_HEADER]: "connection-refused" });
+          response.end();
+          return;
+        }
+        forward(request, response, target, route.path);
       });
       server.httpServer?.once("listening", () => {
         // Printed ONLY when the nonce was minted here - then the terminal is the sole channel
@@ -177,7 +343,32 @@ function devSession(env: Record<string, string>): Plugin {
         };
         // The nonce gate: the run's own nonce or the stable key derived from the token on disk
         // (#1264), or the one-shot ticket of `graphhelm studio open`. Headers are never evidence - any local process can forge them.
-        const presented = new URL(request.url ?? "/", "http://localhost").searchParams.get("nonce") ?? "";
+        const query = new URL(request.url ?? "/", "http://localhost").searchParams;
+        const presented = query.get("nonce") ?? "";
+        const wanted = query.get("project") ?? "";
+        const first = studioProjectId(env);
+        // #1767: another registered project answers only to ITS key or ITS ticket - never to this
+        // run's launch nonce, which belongs to the first project.
+        if (wanted !== "" && wanted !== first) {
+          const project = PROJECT_ID.test(wanted) ? registered.get(wanted) : undefined;
+          const token = project === undefined ? null : readTokenFile(project.tokenFile);
+          if (project === undefined || token === null
+            || !((presented.length > 0 && sameSecret(presented, stableNonce(token))) || consumeTicket(project.ticketFile, presented))) {
+            refuse();
+            return;
+          }
+          response.statusCode = 200;
+          response.end(JSON.stringify({
+            ok: true,
+            token,
+            project: basename(project.folder),
+            projectPath: project.folder,
+            projectId: project.id,
+            onDemandLanes: readRoster(project.folder),
+            sessionKey: stableNonce(token),
+          }));
+          return;
+        }
         const token = readToken(env);
         if (token === null || !(authorized(presented, nonce, token) || consumeTicket(ticketPath(env), presented))) {
           refuse();
@@ -188,20 +379,13 @@ function devSession(env: Record<string, string>): Plugin {
         // to distinguish projects. Only the conventional layout or an explicit path identifies
         // it; an arbitrary event store is never guessed into a source folder.
         const folder = projectFolder(env);
-        let onDemandLanes: string[] = [];
-        if (folder !== null) {
-          try {
-            const team = JSON.parse(readFileSync(join(folder, ".graphhelm", "team.json"), "utf8")) as { onDemandLanes?: unknown };
-            if (Array.isArray(team.onDemandLanes)) onDemandLanes = team.onDemandLanes
-              .filter((name): name is string => typeof name === "string" && name.length > 0 && name.length <= 80).slice(0, 100);
-          } catch { /* An absent roster does not invent available lanes. */ }
-        }
         response.end(JSON.stringify({
           ok: true,
           token,
           project: env.GRAPHHELM_PROJECT || (folder === null ? null : basename(folder)),
           projectPath: folder,
-          onDemandLanes,
+          projectId: first,
+          onDemandLanes: readRoster(folder),
           sessionKey: stableNonce(token),
         }));
       });

@@ -42,6 +42,10 @@ struct Record {
     fatal: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_panic: Option<Panic>,
+    /// #1767: the loopback address this Runtime listens on, so a Studio serving several projects
+    /// can reach each project's own Runtime. Non-secret; absent in records written before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    address: Option<String>,
 }
 
 // The lifetime lock closes the read/replace race between two different listening ports.
@@ -112,6 +116,7 @@ impl Lifecycle {
     pub(super) fn start(
         events: &Path,
         instance: &str,
+        address: Option<&str>,
     ) -> Result<(Self, serde_json::Value, serde_json::Value), super::Failure> {
         let mut name = events.file_name().ok_or_else(invalid)?.to_os_string();
         name.push(".runtime-lifecycle.json");
@@ -197,6 +202,7 @@ impl Lifecycle {
             thread: None,
             fatal: None,
             last_panic: None,
+            address: address.map(str::to_owned),
         };
         let current_run = serde_json::json!({
             "instance": record.instance.as_deref(),
@@ -349,7 +355,7 @@ mod tests {
     fn allocation_failure_note_is_served_as_out_of_memory() {
         let dir = tempfile::tempdir().unwrap();
         let events = dir.path().join("events.jsonl");
-        let Ok((first, _, _)) = super::Lifecycle::start(&events, "first") else {
+        let Ok((first, _, _)) = super::Lifecycle::start(&events, "first", None) else {
             panic!("first start failed");
         };
         drop(first);
@@ -358,7 +364,7 @@ mod tests {
             b"{\"size\":1099511627776,\"at\":1234}\n",
         )
         .unwrap();
-        let Ok((second, previous, _)) = super::Lifecycle::start(&events, "second") else {
+        let Ok((second, previous, _)) = super::Lifecycle::start(&events, "second", None) else {
             panic!("second start failed");
         };
         assert_eq!(previous["state"], "out_of_memory");
@@ -367,11 +373,30 @@ mod tests {
         assert_eq!(previous["instance"], "first");
         drop(second);
         // The note is consumed: a clean stop after it is not reported as out of memory again.
-        let Ok((third, previous, _)) = super::Lifecycle::start(&events, "third") else {
+        let Ok((third, previous, _)) = super::Lifecycle::start(&events, "third", None) else {
             panic!("third start failed");
         };
         assert_eq!(previous["state"], "vanished");
         drop(third);
+    }
+
+    // #1767: a Studio serving several projects reaches each project's Runtime at the address its
+    // lifecycle record names. Cost: one start on a temporary directory.
+    #[test]
+    fn the_record_names_the_address_the_runtime_listens_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let events = dir.path().join("events");
+        let Ok((started, _, _)) = super::Lifecycle::start(&events, "one", Some("127.0.0.1:8792"))
+        else {
+            panic!("start failed");
+        };
+        let written: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dir.path().join("events.runtime-lifecycle.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(written["state"], "running");
+        assert_eq!(written["address"], "127.0.0.1:8792");
+        drop(started);
     }
 
     // Security boundary: panic locations exposed without auth must never carry build homes.

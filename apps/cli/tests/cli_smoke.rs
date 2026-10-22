@@ -124,7 +124,7 @@ fn studio_open_refuses_wrong_or_unknown_ports_without_replacing_a_ticket() {
         (200, "not JSON".to_owned()),
         (
             200,
-            serde_json::json!({"projectId": expected, "extra": "x".repeat(1024)}).to_string(),
+            serde_json::json!({"projectId": expected, "extra": "x".repeat(16 * 1024)}).to_string(),
         ),
         (404, serde_json::json!({"projectId": expected}).to_string()),
         (302, serde_json::json!({"projectId": expected}).to_string()),
@@ -156,6 +156,162 @@ fn studio_open_refuses_wrong_or_unknown_ports_without_replacing_a_ticket() {
         assert_eq!(
             std::fs::read_to_string(&other_ticket).unwrap(),
             "keep-other-ticket"
+        );
+        assert!(reply["data"]["url"].is_null());
+    }
+}
+
+/// #1767: a Studio serving another project. Answers the identity read, then one registration with
+/// `register` (status, body), and hands back both raw requests.
+fn shared_studio_server(
+    first: String,
+    register: (u16, String),
+) -> (u16, std::thread::JoinHandle<Vec<String>>) {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut seen = Vec::new();
+        while Instant::now() < deadline && seen.len() < 2 {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_millis(500)))
+                        .unwrap();
+                    let mut raw = Vec::new();
+                    let mut chunk = [0; 4096];
+                    while let Ok(size) = stream.read(&mut chunk) {
+                        if size == 0 {
+                            break;
+                        }
+                        raw.extend_from_slice(&chunk[..size]);
+                        let text = String::from_utf8_lossy(&raw);
+                        if text.starts_with("GET ") && text.contains("\r\n\r\n") {
+                            break;
+                        }
+                        if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                            let length = head
+                                .lines()
+                                .find_map(|line| {
+                                    line.to_ascii_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                                })
+                                .unwrap_or(0);
+                            if body.len() >= length {
+                                break;
+                            }
+                        }
+                    }
+                    let request = String::from_utf8_lossy(&raw).into_owned();
+                    let (status, body) = if request.starts_with("GET /__studio/identity ") {
+                        (
+                            200,
+                            serde_json::json!({"projectId": first, "projectIds": [first]})
+                                .to_string(),
+                        )
+                    } else {
+                        register.clone()
+                    };
+                    write!(stream, "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                    seen.push(request);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("shared Studio fixture accept failed: {error}"),
+            }
+        }
+        seen
+    });
+    (port, server)
+}
+
+#[test]
+fn studio_open_joins_a_studio_serving_another_project_with_its_own_ticket() {
+    let (project, expected) = studio_project();
+    let (_other, other_id) = studio_project();
+    let (port, server) = shared_studio_server(
+        other_id,
+        (
+            200,
+            serde_json::json!({"ok": true, "projectId": expected}).to_string(),
+        ),
+    );
+    let output = command()
+        .args(["studio", "open", "--project"])
+        .arg(project.path())
+        .args(["--port", &port.to_string(), "--no-browser"])
+        .output()
+        .unwrap();
+    let requests = server.join().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let ticket =
+        std::fs::read_to_string(project.path().join(".graphhelm/events.studio-ticket")).unwrap();
+    // The registration proves ownership with this project's fresh ticket and carries the path in
+    // its body only; the bearer token is never sent.
+    let register = &requests[1];
+    assert!(register.starts_with(&format!(
+        "POST /__studio/register?nonce={ticket} HTTP/1.1\r\n"
+    )));
+    let body: serde_json::Value =
+        serde_json::from_str(register.split_once("\r\n\r\n").unwrap().1).unwrap();
+    assert_eq!(
+        std::path::Path::new(body["path"].as_str().unwrap()),
+        std::path::absolute(project.path()).unwrap()
+    );
+    assert!(!register.contains("fixture-token"));
+    assert!(!register.to_ascii_lowercase().contains("authorization:"));
+    // The link logs the page in once, on this project, with the same ticket.
+    assert_eq!(
+        json(&output.stdout)["data"]["url"],
+        format!("http://127.0.0.1:{port}/?session={ticket}&project={expected}")
+    );
+}
+
+#[test]
+fn studio_open_names_a_stopped_runtime_and_drops_the_ticket_when_the_studio_refuses_to_join() {
+    let (project, _expected) = studio_project();
+    let (_other, other_id) = studio_project();
+    for (status, says) in [
+        (409, "Runtime is not running"),
+        (404, "refused to register"),
+    ] {
+        let (port, server) = shared_studio_server(
+            other_id.clone(),
+            (status, serde_json::json!({"ok": false}).to_string()),
+        );
+        let output = command()
+            .args(["studio", "open", "--project"])
+            .arg(project.path())
+            .args(["--port", &port.to_string(), "--no-browser"])
+            .output()
+            .unwrap();
+        server.join().unwrap();
+        assert!(!output.status.success());
+        let reply = json(&output.stdout);
+        assert_eq!(reply["diagnostics"][0]["path"], "/port");
+        assert!(
+            reply["diagnostics"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains(says)
+        );
+        assert!(
+            !project
+                .path()
+                .join(".graphhelm/events.studio-ticket")
+                .exists()
         );
         assert!(reply["data"]["url"].is_null());
     }

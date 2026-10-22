@@ -1,0 +1,57 @@
+schema: graphhelm.journey-flow/1
+id: studio2-proof-run
+title: Run a journey in Proof
+name: Run a journey
+feature: Studio
+purpose: "Pressing Run shows Preparing the browser with its log, then the steps run and step cards fill with frames and pass or fail per viewport."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, recovery]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: journeys
+    title: A journey is selected
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: list, name: Journeys}, {role: button, name: Run}]
+    scope: unknown
+  - id: log
+    title: The run console is open
+    url: /?session=studio-fixture&run=demo
+    state: loading
+    expect: [{role: log, name: Run console}, {role: button, name: Hide log}]
+    scope: unknown
+  - id: preparing
+    title: The browser is being prepared
+    url: /?session=studio-fixture&run=demo
+    state: loading
+    expect: [{role: status, name: Preparing the browser}, {role: button, name: Show log}]
+    scope: unknown
+  - id: ran
+    title: Step cards hold frames and verdicts
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: list, name: Steps}, {role: img, name: Step 1 frame}]
+    scope: unknown
+edges:
+  - id: journeys.preparing
+    from: journeys
+    to: preparing
+    acts:
+      - {kind: activate, role: button, name: Run}
+  - id: log.ran
+    from: log
+    to: ran
+    acts:
+      - {kind: wait_for, role: list, name: Steps}
+  - id: preparing.log
+    from: preparing
+    to: log
+    acts:
+      - {kind: activate, role: button, name: Show log}
+paths:
+  main: [journeys.preparing, preparing.log, log.ran]
+drift: []

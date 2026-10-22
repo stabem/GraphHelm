@@ -1,0 +1,68 @@
+schema: graphhelm.journey-flow/1
+id: studio2-proof-compare
+title: Compare Before and Now on a step
+name: Compare a step
+feature: Studio
+purpose: "On a step with history, Overlay with the slider, Side by side and Changes show Before against Now, at web and at mobile."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, accessibility]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: changes
+    title: Now with the changed regions highlighted
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: img, name: "Now, changed regions highlighted"}]
+    scope: unknown
+  - id: mobile
+    title: The same compare at mobile
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: button, name: Mobile}, {role: img, name: "Now, changed regions highlighted"}]
+    scope: unknown
+  - id: overlay
+    title: Now over Before with a slider
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: slider, name: Now opacity}]
+    scope: unknown
+  - id: side
+    title: Before and Now side by side
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: group, name: Before and Now side by side}]
+    scope: unknown
+  - id: step
+    title: A step with history offers the compare
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: region, name: Compare with an earlier run}, {role: button, name: Frame}, {role: button, name: Side by side}, {role: button, name: Overlay}, {role: button, name: Changes}]
+    scope: unknown
+edges:
+  - id: changes.mobile
+    from: changes
+    to: mobile
+    acts:
+      - {kind: activate, role: button, name: Mobile}
+  - id: overlay.changes
+    from: overlay
+    to: changes
+    acts:
+      - {kind: activate, role: button, name: Changes}
+  - id: side.overlay
+    from: side
+    to: overlay
+    acts:
+      - {kind: activate, role: button, name: Overlay}
+  - id: step.side
+    from: step
+    to: side
+    acts:
+      - {kind: activate, role: button, name: Side by side}
+paths:
+  main: [step.side, side.overlay, overlay.changes, changes.mobile]
+drift: []

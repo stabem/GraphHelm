@@ -1,0 +1,36 @@
+schema: graphhelm.journey-flow/1
+id: studio2-open
+title: Open the Studio on a project
+name: Open the Studio
+feature: Studio
+purpose: "graphhelm studio open in a project opens the Studio logged in, with that project in the sidebar and the Graph view shown."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, authentication]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: graph
+    title: The project is listed and Graph is shown
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: link, name: demo}, {role: tab, name: Graph}, {role: region, name: Graph}]
+    scope: unknown
+  - id: login
+    title: The Studio opens from its login ticket
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: navigation, name: Projects}, {role: banner, name: Top bar}]
+    scope: unknown
+edges:
+  - id: login.graph
+    from: login
+    to: graph
+    intent: The owner arrived from the CLI; nothing to click.
+    acts:
+      - {kind: wait_for, role: region, name: Graph}
+paths:
+  main: [login.graph]
+drift: []

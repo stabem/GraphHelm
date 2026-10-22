@@ -1,0 +1,35 @@
+schema: graphhelm.journey-flow/1
+id: studio2-lanes-board
+title: See every agent on the Lanes board
+name: See the lanes
+feature: Studio
+purpose: "Lanes shows one card per agent in its column, with idle time, its request, progress blocks and last action; an asking agent shows its question."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: asking
+    title: An asking agent shows its question
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: region, name: Question}, {role: button, name: Reply}]
+    scope: unknown
+  - id: lanes
+    title: "One card per agent, in its column"
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: tab, name: Lanes}, {role: list, name: Agent board}, {role: group, name: Idle time}, {role: group, name: Last action}]
+    scope: unknown
+edges:
+  - id: lanes.asking
+    from: lanes
+    to: asking
+    acts:
+      - {kind: inspect, role: region, name: Question}
+paths:
+  main: [lanes.asking]
+drift: []

@@ -1,0 +1,36 @@
+schema: graphhelm.journey-flow/1
+id: studio2-lanes-reply
+title: Reply to an asking agent
+name: Reply to an agent
+feature: Studio
+purpose: "Replying to an asking agent records an operator_note with replyTo, and the card stops showing the question."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, irreversible_effect]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: answered
+    title: The reply is recorded and the question is gone
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: status, name: Reply sent}, {role: region, name: Question, absent: true}]
+    scope: unknown
+  - id: asking
+    title: The agent's question is shown
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: region, name: Question}, {role: textbox, name: Reply}]
+    scope: unknown
+edges:
+  - id: asking.answered
+    from: asking
+    to: answered
+    acts:
+      - {kind: enter_text, role: textbox, name: Reply, text: Use the existing slot.}
+      - {kind: submit, role: button, name: Send reply}
+paths:
+  main: [asking.answered]
+drift: []

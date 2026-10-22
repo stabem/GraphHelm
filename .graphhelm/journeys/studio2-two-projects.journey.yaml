@@ -1,0 +1,35 @@
+schema: graphhelm.journey-flow/1
+id: studio2-two-projects
+title: Switch between two projects
+name: Switch projects
+feature: Studio
+purpose: "A second project folder joins the same Studio port, and switching in the sidebar shows each project's own run."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, multiple_components]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: first
+    title: The first project's run is shown
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: navigation, name: Projects}, {role: link, name: demo}, {role: link, name: second}]
+    scope: unknown
+  - id: second
+    title: The second project's run is shown
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: heading, name: second}, {role: region, name: Graph}]
+    scope: unknown
+edges:
+  - id: first.second
+    from: first
+    to: second
+    acts:
+      - {kind: activate, role: link, name: second}
+paths:
+  main: [first.second]
+drift: []

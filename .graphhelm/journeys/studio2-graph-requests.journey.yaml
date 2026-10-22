@@ -1,0 +1,46 @@
+schema: graphhelm.journey-flow/1
+id: studio2-graph-requests
+title: Follow each owner request to its result
+name: Follow a request
+feature: Studio
+purpose: "Graph lists each owner request with lines to its issues, their PRs and the result; a journey filter narrows it, and Kanban and Graph toggle."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: filtered
+    title: The journey filter narrows the requests
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: combobox, name: Journey filter}, {role: list, name: Owner requests}]
+    scope: unknown
+  - id: graph
+    title: "Requests are drawn with their issues, PRs and result"
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: list, name: Owner requests}, {role: group, name: Request issues}, {role: group, name: Request pull requests}, {role: group, name: Request result}]
+    scope: unknown
+  - id: kanban
+    title: The same work as Kanban columns
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: region, name: Kanban}, {role: button, name: Graph}]
+    scope: unknown
+edges:
+  - id: filtered.kanban
+    from: filtered
+    to: kanban
+    acts:
+      - {kind: activate, role: button, name: Kanban}
+  - id: graph.filtered
+    from: graph
+    to: filtered
+    acts:
+      - {kind: select, role: combobox, name: Journey filter}
+paths:
+  main: [graph.filtered, filtered.kanban]
+drift: []

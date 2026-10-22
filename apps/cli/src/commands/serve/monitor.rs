@@ -24,8 +24,7 @@ const TAIL_LIMIT: usize = 50;
 /// operator DECLARED when the run began (`ExecutionFormDeclared.executor`). A fixture file that
 /// omits a node makes the fixture executor answer `NeedsInput` for it, and a run resumed through
 /// a server with real wiring is not re-declared on the form today — so the sentence claims the
-/// start-time provenance and nothing beyond it. The
-/// Studio's run panel prints the same sentence (`apps/studio/src/components/panel.tsx`), and
+/// start-time provenance and nothing beyond it.
 /// `apps/cli/tests/providerless_journey.rs` asserts the text on the live page, the snapshot
 /// and the document that promises it.
 pub(in crate::commands) const DEMONSTRATION_SENTENCE: &str = "Demonstration run — started under the fixture executor: outcomes at start were supplied by a fixture file, not produced by a model or a tool.";

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Replays every approved `studio-*` flow against the fixture started by fixture.sh and records
+# Replays every approved `studio2-*` flow against the fixture started by fixture.sh and records
 # the captures into the fixture's own run (#381).
 #
 #   tools/studio-journey-fixture/replay-all.sh <fixture dir> <output dir> [flow id ...]
@@ -12,23 +12,25 @@ bin=${GRAPHHELM_BIN:-graphhelm}
 dir=${1:-}; out=${2:-}; shift 2 || { sed -n 2,9p "$0"; exit 2; }
 [ -n "$dir" ] && [ -n "$out" ] || { sed -n 2,9p "$0"; exit 2; }
 dir=$(cd "$dir" && pwd); mkdir -p "$out"
-export GRAPHHELM_EVENTS_KEY="$(cat "$dir/.graphhelm/serve.key")"
-export GRAPHHELM_SECRET_STUDIO_TOKEN="$(head -1 "$dir/.graphhelm/events.token")"
+# The fixture's Runtime keeps its key and token under <fixture dir>/project/.graphhelm; the
+# private secrets file holds the token and, for studio2-two-projects, proj-two's folder and ticket.
+export GRAPHHELM_EVENTS_KEY="$(cat "$dir/project/.graphhelm/serve.key")"
+set -a; . "$dir/.graphhelm/secrets.env"; set +a
 ids=("$@")
 # Default order respects the fixture's state: flows that only read, then flows that record,
 # then flows that change the run's state. A flow
 # listed here that has no file is skipped; a file not listed here runs after them.
-ORDER="studio-journey-tab studio-chat-send studio-answer-question studio-handover studio-connect-existing-chat studio-new-task studio-connect"
+ORDER="studio2-open studio2-graph-requests studio2-graph-review-screen studio2-lanes-board studio2-proof-compare studio2-two-projects studio2-proof-run studio2-lanes-reply studio2-lanes-needs-action studio2-lanes-control studio2-proof-approve studio2-no-run"
 if [ ${#ids[@]} -eq 0 ]; then
   approved() { grep -q '^status: approved$' "$repo/.graphhelm/journeys/$1.journey.yaml" 2>/dev/null; }
   for id in $ORDER; do approved "$id" && ids+=("$id"); done
-  for f in "$repo"/.graphhelm/journeys/studio-*.journey.yaml; do id=$(basename "$f" .journey.yaml); case " $ORDER " in *" $id "*) ;; *) approved "$id" && ids+=("$id");; esac; done
-  for f in "$repo"/.graphhelm/journeys/studio-*.journey.yaml; do id=$(basename "$f" .journey.yaml); approved "$id" || echo "skipped (draft): $id"; done
+  for f in "$repo"/.graphhelm/journeys/studio2-*.journey.yaml; do id=$(basename "$f" .journey.yaml); case " $ORDER " in *" $id "*) ;; *) approved "$id" && ids+=("$id");; esac; done
+  for f in "$repo"/.graphhelm/journeys/studio2-*.journey.yaml; do id=$(basename "$f" .journey.yaml); approved "$id" || echo "skipped (draft): $id"; done
 fi
 green=0; red=0
 for id in "${ids[@]}"; do
-  "$bin" --json journey replay "$id" --project "$repo" --events "$dir/.graphhelm/events" --execution demo \
-    --keyring "$dir/.graphhelm/keyring" --key-id studio > "$out/$id.json" 2> "$out/$id.err"
+  "$bin" --json journey replay "$id" --project "$repo" --events "$dir/project/.graphhelm/events" --execution demo \
+    --keyring "$dir/project/.graphhelm/keyring" --key-id studio > "$out/$id.json" 2> "$out/$id.err"
   rc=$?
   summary=$(node -e '
     const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));

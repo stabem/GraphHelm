@@ -72,7 +72,7 @@ class FixturePortTest(unittest.TestCase):
             return {
                 flow["id"]
                 for flow in json.loads(reply.stdout)["data"]["flows"]
-                if flow["id"].startswith("studio-")
+                if flow["id"].startswith("studio2-")
                 and any(f.get("code") == "flow.scope_path_missing" for f in flow.get("findings", []))
             }
 

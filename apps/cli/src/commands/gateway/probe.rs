@@ -300,26 +300,9 @@ pub(super) fn render(result: ProbeResult) -> serde_json::Value {
     })
 }
 
-/// #600 review: how long the Studio waits for this probe, read from its client so the two cannot
-/// drift apart silently. `None` when the client names no such constant.
-#[cfg(test)]
-fn studio_probe_wait() -> Option<Duration> {
-    let client = include_str!("../../../../studio/src/runtime/client.ts");
-    let line = client
-        .lines()
-        .find(|line| line.contains("export const GATEWAY_PROBE_WAIT_MS"))?;
-    let digits: String = line
-        .split('=')
-        .nth(1)?
-        .chars()
-        .filter(char::is_ascii_digit)
-        .collect();
-    digits.parse().ok().map(Duration::from_millis)
-}
-
 #[cfg(test)]
 mod caller_waits {
-    use super::{PROBE_TIMEOUT, studio_probe_wait};
+    use super::PROBE_TIMEOUT;
 
     /// #600 review (gh-claude-11): a caller that gives up before the probe's own bound turns a
     /// slow but alive runtime into "refused", and leaves the probe child running after it left.
@@ -329,11 +312,6 @@ mod caller_waits {
     #[test]
     fn every_caller_of_the_probe_waits_longer_than_the_probe() {
         let margin = std::time::Duration::from_secs(5);
-        let studio = studio_probe_wait();
-        assert!(
-            studio.is_some_and(|wait| wait >= PROBE_TIMEOUT + margin),
-            "the Studio waits {studio:?} for a probe that may take {PROBE_TIMEOUT:?}"
-        );
         let mcp = crate::commands::mcp::tools::PROBE_CALLER_WAIT;
         assert!(
             mcp >= PROBE_TIMEOUT + margin,

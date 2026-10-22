@@ -327,6 +327,24 @@ impl TasksView {
 /// #1234: a lane with an open obligation is `silent` once it has recorded nothing of any kind for
 /// this long. Was the Studio's `LIVENESS_MS` (`lane-bars.ts`); declared here, once.
 pub const SILENT_AFTER_SECONDS: i64 = 30 * 60;
+
+/// #1808: the silence budget in force. A journey fixture's Runtime may be started with a shorter
+/// one (`GRAPHHELM_FIXTURE_SILENT_AFTER_SECONDS`, 1 to 1800) so it can show a silent lane without
+/// waiting half an hour; anything else, absent or out of range, is `SILENT_AFTER_SECONDS`. It only
+/// ever shortens the budget, and it changes what the board shows, never who may act.
+pub fn silent_after_seconds() -> i64 {
+    silent_budget(
+        std::env::var("GRAPHHELM_FIXTURE_SILENT_AFTER_SECONDS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn silent_budget(raw: Option<&str>) -> i64 {
+    raw.and_then(|value| value.trim().parse::<i64>().ok())
+        .filter(|seconds| (1..=SILENT_AFTER_SECONDS).contains(seconds))
+        .unwrap_or(SILENT_AFTER_SECONDS)
+}
 /// #1234: a lane that recorded something within this long counts as live on the board. Was the
 /// Studio's `FREE_LIVENESS_MS` (`agent-board.ts`). The board's third threshold, a PR-less claim
 /// quiet for 2 h, has no twin here: a claim is stale exactly when its lease is `overdue` (#1193).
@@ -427,7 +445,7 @@ pub fn lane_liveness(
         last_record_at: last_record_at.cloned(),
         owes,
         owes_since: owes_since.cloned(),
-        silent: owes && quiet.is_none_or(|seconds| seconds >= SILENT_AFTER_SECONDS),
+        silent: owes && quiet.is_none_or(|seconds| seconds >= silent_after_seconds()),
         // #1281: a lane that owes a step is busy with it, never free for new work.
         free: !owes && record_quiet.is_some_and(|seconds| seconds < FREE_AFTER_SECONDS),
         agent_kind: None,
@@ -507,7 +525,7 @@ fn liveness(
     }
     Liveness {
         budgets: LivenessBudgets {
-            silent_after_seconds: SILENT_AFTER_SECONDS,
+            silent_after_seconds: silent_after_seconds(),
             free_after_seconds: FREE_AFTER_SECONDS,
             stall_after_seconds: STALL_SECONDS,
         },
@@ -1279,6 +1297,21 @@ mod lease_tests {
         );
         assert!(!busy.silent, "{busy:?}");
         assert_eq!(last.get("lane-idle"), claim.occurred_at.as_ref());
+    }
+
+    /// #1808: a fixture may only shorten the silence budget; a longer, zero, negative or garbled
+    /// value keeps the real one. Credible regression: honouring any parsed number. Cost: pure calls.
+    #[test]
+    fn a_fixture_silence_budget_only_shortens() {
+        assert_eq!(super::silent_budget(Some("60")), 60);
+        assert_eq!(super::silent_budget(Some(" 1800 ")), 1800);
+        for raw in [None, Some("0"), Some("-5"), Some("1801"), Some("soon")] {
+            assert_eq!(
+                super::silent_budget(raw),
+                super::SILENT_AFTER_SECONDS,
+                "{raw:?}"
+            );
+        }
     }
 
     /// #1556 (orchestrator ruling): a heartbeat that says why the lane waits is a step, so the

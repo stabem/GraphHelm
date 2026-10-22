@@ -4,10 +4,10 @@
 //! expected the `Team` region (rendered by `team-canvas.tsx`) but scoped only `beacon.tsx` and
 //! `needs-you.ts`.
 //!
-//! The rule, for every `studio-*` flow in this repository: each `expect` name that occurs literally
+//! The rule, for every `studio2-*` flow in this repository: each `expect` name that occurs literally
 //! in some non-test Studio source file must occur in at least one file of that screen's scope.
 //! Names that occur nowhere (fixture data such as a bot's name, or text built from a template) are
-//! not judged; this guard can only see literal names. Cost: reads ~200 small files, no build output.
+//! not judged; this guard can only see literal names. Cost: reads ~30 small files, no build output.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -41,14 +41,15 @@ fn studio_sources(dir: &Path, out: &mut BTreeMap<String, String>) {
 fn every_studio_screen_scopes_a_file_that_renders_its_expected_controls() {
     let mut sources = BTreeMap::new();
     studio_sources(&repo().join("apps/studio/src"), &mut sources);
-    assert!(sources.len() > 50, "the Studio sources were not found");
+    // The Studio v2 app (#1808) has about 26 non-test sources; a missing or moved tree reads 0.
+    assert!(sources.len() > 20, "the Studio sources were not found");
 
     let mut flows = 0;
     let mut misses = Vec::new();
     for entry in std::fs::read_dir(repo().join(".graphhelm/journeys")).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        if !(name.starts_with("studio-") && name.ends_with(".journey.yaml")) {
+        if !(name.starts_with("studio2-") && name.ends_with(".journey.yaml")) {
             continue;
         }
         flows += 1;
@@ -77,7 +78,7 @@ fn every_studio_screen_scopes_a_file_that_renders_its_expected_controls() {
             }
         }
     }
-    assert!(flows > 0, "expected at least one studio-* flow");
+    assert!(flows > 0, "expected at least one studio2-* flow");
     assert!(
         misses.is_empty(),
         "too-narrow scopes:\n{}",

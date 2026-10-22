@@ -10,20 +10,22 @@ base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux]
-viewport: {width: 1440, height: 900}
+viewports: [web, mobile]
 screens:
   - id: asking
     title: An asking agent shows its question
     url: /?session=studio-fixture&run=demo&view=lanes
+    ignoreQuery: [session, project]
     state: stable
     expect: [{role: region, name: Question, text: "?"}, {role: button, name: Reply}]
-    scope: unknown
+    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
   - id: lanes
     title: "One card per agent, in its column"
     url: /?session=studio-fixture&run=demo&view=lanes
+    ignoreQuery: [session, project]
     state: stable
     expect: [{role: tab, name: Lanes}, {role: list, name: Agent board}, {role: group, name: Idle time}, {role: group, name: Request, text: "#"}, {role: group, name: Progress}, {role: group, name: Last action}]
-    scope: unknown
+    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
 edges:
   - id: lanes.asking
     from: lanes

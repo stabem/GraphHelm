@@ -738,7 +738,7 @@ fn events_schema() -> serde_json::Value {
         serde_json::json!({
             "executionId": {"type": "string"},
             "after": {"type": "integer", "minimum": 0, "maximum": u64::MAX},
-            // #1330: the HTTP route's bound (1..=1000), so MCP, HTTP and WebMCP agree.
+            // #1330: the HTTP route's bound (1..=1000), so MCP and HTTP agree.
             "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
         }),
         &["executionId"],
@@ -2592,7 +2592,7 @@ mod envelope_tests {
     }
 
     /// #1330 (plan D2): `schemas/mcp-tools.json` is `tools/list` as served, emitted from this
-    /// table. The Studio's WebMCP adapter imports it instead of hand-copying schemas, so a schema
+    /// table. It is the committed copy of the served catalog, so a schema
     /// change here that is not re-emitted fails this cell rather than drifting. Rewrite with
     /// `GRAPHHELM_WRITE_FIXTURES=1`; a rewrite is a surface change and belongs in the PR's diff.
     #[test]

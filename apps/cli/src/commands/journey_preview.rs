@@ -2438,22 +2438,23 @@ mod tests {
             .expect("OBSERVER_MISSING: browser toolchain directory");
         let project = tempfile::tempdir_in(root).unwrap();
         let project = project.path();
-        let id = "studio-answer-node";
+        // #1808: a studio2 flow of the checkout under test, so the copied scope is the live app's.
+        let id = "studio2-open";
         std::fs::create_dir_all(project.join(".graphhelm/journeys")).unwrap();
         std::fs::create_dir_all(project.join(".graphhelm/observers")).unwrap();
         std::fs::create_dir_all(super::dir_of(project, id)).unwrap();
-        std::fs::write(
-            project.join(".graphhelm/journeys/studio-answer-node.journey.yaml"),
-            include_bytes!("testdata/studio-answer-node.journey.yaml"),
-        )
-        .unwrap();
         let repo = std::path::PathBuf::from(
             std::env::var_os("GRAPHHELM_PREVIEW_OBSERVER_REPO")
                 .expect("OBSERVER_MISSING: Studio checkout"),
         );
-        let flow: Value =
-            serde_yaml_ng::from_slice(include_bytes!("testdata/studio-answer-node.journey.yaml"))
-                .unwrap();
+        let source =
+            std::fs::read(repo.join(".graphhelm/journeys/studio2-open.journey.yaml")).unwrap();
+        std::fs::write(
+            project.join(".graphhelm/journeys/studio2-open.journey.yaml"),
+            &source,
+        )
+        .unwrap();
+        let flow: Value = serde_yaml_ng::from_slice(&source).unwrap();
         for screen in flow["screens"].as_array().unwrap() {
             for scope in screen["scope"].as_array().unwrap() {
                 let scope = scope.as_str().unwrap();
@@ -2483,7 +2484,7 @@ mod tests {
             r#"#!/usr/bin/env bash
 set -eu
 if [ "$1" = down ]; then
-  cp .graphhelm/journey-previews/studio-answer-node/state.json before-down.json
+  cp .graphhelm/journey-previews/studio2-open/state.json before-down.json
 fi
 export GRAPHHELM_BIN="$GRAPHHELM_PREVIEW_OBSERVER_BIN"
 exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture.sh" "$@"

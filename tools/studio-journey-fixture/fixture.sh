@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# The fixture the `studio-*` journey flows are written against (#381): a disposable Runtime with
-# one seeded run and one unanswered agent question, and this repository's Studio dev server
-# pointed at it. `graphhelm journey replay studio-<id>` runs against what this script starts.
+# The fixture the `studio2-*` journey flows are written against (#381, #1808): a disposable
+# Runtime with one seeded run and one unanswered agent question, and this repository's Studio dev
+# server pointed at it. `graphhelm journey replay studio2-<id>` runs against what this script starts.
+# For studio2-two-projects (GRAPHHELM_JOURNEY_FLOW) it also starts a second project, `proj-two`, with
+# its own Runtime on <runtime port>+2, and registers it with the Studio.
 #
 #   tools/studio-journey-fixture/fixture.sh up   <fixture dir> [runtime port] [studio port]
 #   tools/studio-journey-fixture/fixture.sh down <fixture dir>
@@ -123,6 +125,9 @@ up)
   # runner every GRAPHHELM_SECRET_* it holds. Set for serve only, never printed.
   # #1556: the fixture's own build-slot root, so the Lanes board can show a real slot holder.
   mkdir -p "$dir/slots"
+  # #1808: studio2-lanes-needs-action needs silent lanes; this Runtime counts a lane silent after
+  # one minute instead of thirty, so the fixture comes up within the launcher's budget.
+  if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-lanes-needs-action ]; then export GRAPHHELM_FIXTURE_SILENT_AFTER_SECONDS=60; fi
   GRAPHHELM_SECRET_STUDIO_TOKEN="$(head -1 "$rt/events.token")" \
   nohup "$bin" serve --events "$rt/events" --bind "127.0.0.1:$rport" --project "$dir/project" \
     --keyring "$rt/keyring" --key-id studio --gateway-manifest "$rt/routes.json" --slot-root "$dir/slots" \
@@ -151,7 +156,7 @@ screens:
     title: The health answer read again
     url: /health
     state: success
-    expect: [{role: status, name: "200"}, {role: json, name: ok=true}]
+    expect: [{role: status, name: "200"}, {role: json, name: ok=true}, {role: json, name: command=serve.health}]
     scope: unknown
   - id: start
     title: The Runtime answers its health check
@@ -191,12 +196,6 @@ FLOW
     "$bin" --json execution delivery --events "$rt/events" --execution demo --node deploy \
       --delivery "$dir/.graphhelm/delivery.json" --project-directory "$dir/project" \
       --keyring "$rt/keyring" --key-id studio > "$dir/.graphhelm/delivery.out"
-    # studio-approve-reject (#1041): one owner rejection of studio-handover whose note carries
-    # markup, so the Proof view must show it as text. The owner token never leaves this script.
-    curl -sf --max-time 60 -X POST "http://127.0.0.1:$rport/v1/journey-flows/studio-handover/reject" \
-      -H "Authorization: Bearer $(head -1 "$rt/events.token")" -H "Content-Type: application/json" \
-      -H "Idempotency-Key: fixture-reject-studio-handover" \
-      --data-binary '{"note":"<b>no</b> receipt & no total"}' > "$dir/.graphhelm/reject.out"
     # One unanswered question from the bot `planner` to the owner (studio-answer-question).
     token=$(head -1 "$rt/events.token"); id=$(node -e 'console.log(require("crypto").randomUUID())')
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -204,6 +203,13 @@ FLOW
     curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token" \
       -H "Content-Type: application/json" -H "Idempotency-Key: $id" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent" \
       --data-binary @"$dir/.graphhelm/question.json" > "$dir/.graphhelm/question.out"
+    # #1808: studio2-lanes-reply answers a question at each viewport against this one Runtime, so
+    # it gets a second open question from the same lane: the second viewport answers that one.
+    if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-lanes-reply ]; then
+      id2=$(node -e 'console.log(require("crypto").randomUUID())')
+      printf '{"signal":{"id":"planner-question-%s","source":{"type":"tool","id":"planner"},"type":"operator_note","severity":"low","description":"Which slot should the rebuild use?","evidence":["demo"],"emittedAt":"%s","to":"studio-operator"}}' "$id2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$dir/.graphhelm/question2.json"
+      curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token"         -H "Content-Type: application/json" -H "Idempotency-Key: $id2" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent"         --data-binary @"$dir/.graphhelm/question2.json" > "$dir/.graphhelm/question2.out" || { echo 'fixture: the second question was refused' >&2; exit 1; }
+    fi
     # #1041: one Keel card from the node `deploy` (studio-keel-card). Its evidence is the promise,
     # each scope path and the proof command, in that order (docs/keel/RECORDS.md).
     cid=$(node -e 'console.log(require("crypto").randomUUID())')
@@ -226,7 +232,13 @@ FLOW
     curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token"       -H "Content-Type: application/json" -H "Idempotency-Key: $sid" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent"       --data-binary @"$dir/.graphhelm/shipped.json" > /dev/null || echo "fixture: the shipped seed was refused" >&2
   fi
   flow=${GRAPHHELM_JOURNEY_FLOW:-}
-  if [ "$flow" = studio-work-graph ]; then
+  # #1808: studio2-lanes-needs-action's quiet lanes are recorded first; `fresh` below waits for
+  # them to turn silent (one minute: the budget this Runtime was started with) before the fixture reports up.
+  if [ "$flow" = studio2-lanes-needs-action ]; then
+    node "$repo/tools/studio-journey-fixture/seed_needs.mjs" silent "$dir" "http://127.0.0.1:$rport" "$rt/events.token"
+  fi
+  # #1808: the Graph flows read a request's issues and PRs; the old studio-work-graph seed serves them.
+  if [ "$flow" = studio2-graph-requests ] || [ "$flow" = studio2-graph-review-screen ]; then
     # #721 task records use the existing planner actor, so these rows do not create fake agents.
     # Every refusal stops the seed; the fixture token's permissions are never widened.
     node - "$dir" "$now" "http://127.0.0.1:$rport" "$rt/events.token" <<'NODE'
@@ -237,26 +249,36 @@ if (runtime.protocol !== 'http:' || runtime.hostname !== '127.0.0.1' || !runtime
   throw new Error('fixture: unsafe Runtime URL');
 }
 const common = { schema: 'graphhelm-task-event-v1', revision: 1, at };
-const journey = [process.env.GRAPHHELM_JOURNEY_FLOW || 'studio-work-graph'];
+const journey = [process.env.GRAPHHELM_JOURNEY_FLOW || 'studio2-graph-requests'];
 const records = [
-  ['open-claimed', 'task.claimed', { taskId: 'issue-721-open', issue: 721, lane: 'planner', branch: 'issue-721-open-fixture', journeys: journey, title: 'Observe issue graph and work kanban' }],
-  ['open-planned', 'task.planned', { taskId: 'issue-721-open', lane: 'planner', classes: ['user_visible'], reviews: 1, proof: 'journey', critic: { mode: 'none', passScore: 7, maxRounds: 1 }, summary: 'Fixture plan' }],
-  ['open-pr', 'task.pr_opened', { taskId: 'issue-721-open', pr: 721, lane: 'planner', headSha: '721abcde', journeys: journey, title: 'Observe issue graph and work kanban' }],
   ['merged-claimed', 'task.claimed', { taskId: 'issue-721-merged', issue: 721, lane: 'planner', branch: 'issue-721-merged-fixture', journeys: journey, title: 'Merged fixture row' }],
   ['merged-pr', 'task.pr_opened', { taskId: 'issue-721-merged', pr: 722, lane: 'planner', headSha: '722abcde', journeys: journey, title: 'Merged fixture row' }],
   ['merged-review', 'task.review_verdict', { taskId: 'issue-721-merged', pr: 722, headSha: '722abcde', reviewer: 'planner', verdict: 'APPROVE', commentUrl: 'https://github.com/stabem/GraphHelm/pull/722#review' }],
   ['merged-done', 'task.merged', { taskId: 'issue-721-merged', pr: 722, mergeSha: '722fedcb', closes: [], merger: 'planner' }],
+  // The open slice is recorded last: an issue's Now reads its newest slice that has a PR (#1839).
+  ['open-claimed', 'task.claimed', { taskId: 'issue-721-open', issue: 721, lane: 'planner', branch: 'issue-721-open-fixture', journeys: journey, title: 'Observe issue graph and work kanban' }],
+  ['open-planned', 'task.planned', { taskId: 'issue-721-open', lane: 'planner', classes: ['user_visible'], reviews: 1, proof: 'journey', critic: { mode: 'none', passScore: 7, maxRounds: 1 }, summary: 'Fixture plan' }],
+  ['open-pr', 'task.pr_opened', { taskId: 'issue-721-open', pr: 721, lane: 'planner', headSha: '721abcde', journeys: journey, title: 'Observe issue graph and work kanban' }],
+  // #1808: the Graph draws owner requests (#1792); one request linked to the fixture issue.
+  ['request', 'task.request_recorded', { taskId: 'request-fixture', requestId: 'fixture', ask: 'Show the work graph for the fixture run', recordedBy: 'planner' }],
+  ['request-link', 'task.request_linked', { taskId: 'request-fixture', requestId: 'fixture', issue: 721, linkedBy: 'planner' }],
 ];
+// #1808: the review's Now is the PR head's captured frame (#1839); one for the first screen.
+if (journey[0] === 'studio2-graph-review-screen') {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  records.push(['now-frames', 'task.journey_frames', { taskId: 'issue-721-open', pr: 721, headSha: '721abcde', journey: journey[0],
+    result: 'pass', ranAt: at, screens: ['board'], lane: 'planner' }, [{ mediaType: 'image/png', base64: png }]]);
+}
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
 (async () => {
-  for (const [id, type, fields] of records) {
+  for (const [id, type, fields, attachments] of records) {
     const document = { ...common, ...fields };
     const signal = { id: `fixture-721-${id}`, type, source: { type: 'user', id: 'planner' }, severity: 'low',
       emittedAt: at, evidence: ['demo'], description: JSON.stringify(document) };
     const response = await fetch(new URL('/v1/executions/demo/signal', runtime), {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
         'Idempotency-Key': `fixture-721-${id}`, 'X-GraphHelm-Actor': 'planner', 'X-GraphHelm-Actor-Type': 'agent' },
-      body: JSON.stringify({ signal }), signal: AbortSignal.timeout(10000),
+      body: JSON.stringify(attachments ? { signal, attachments } : { signal }), signal: AbortSignal.timeout(10000),
     });
     const result = await response.json();
     fs.writeFileSync(`${dir}/.graphhelm/task-${id}.out`, JSON.stringify(result));
@@ -265,7 +287,17 @@ const token = fs.readFileSync(tokenFile, 'utf8').trim();
 })().catch(() => { console.error('fixture: task record refused; stop without widening permissions'); process.exit(1); });
 NODE
   fi
-  # #137: the async Runtime driver records delegation; no model executor is wired.
+  # #1808: the Proof compare and the review's Before read a finished run of the
+  # flow kept in the project; seed_run.mjs writes one (current + one earlier), bound to the flow's
+  # digest and commit as the preview route reports them.
+  if [ "$flow" = studio2-graph-review-screen ] || [ "$flow" = studio2-proof-compare ]; then
+    "$bin" --json journey preview "$flow" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
+    key=$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).data||{}; if(d.digest&&d.commit) console.log(d.digest+" "+d.commit)' "$dir/.graphhelm/preview-key.json")
+    [ -n "$key" ] || { echo "fixture: no preview key for $flow" >&2; exit 1; }
+    node "$repo/tools/studio-journey-fixture/seed_run.mjs" "$dir/project" "$flow" $key > /dev/null
+  fi
+  # #137: the async Runtime driver records delegation; no model executor is wired. No studio2 flow
+  # reads it yet; kept for a lanes flow that names a delegated worker.
   if [ "$flow" = studio-delegation-label ]; then
     node - "$repo" "$dir" <<'NODE'
 const fs = require('fs');
@@ -306,7 +338,7 @@ NODE
   # are signed by the existing planner actor, like studio-work-graph's. The slot holder is a real
   # `workspace slot` running a real `cargo build` of a one-file crate whose build script waits
   # while `slot.hold` exists; `down` removes it and ends the tree, so nothing is faked.
-  if [ "$flow" = studio-lanes-board ]; then
+  if [ "$flow" = studio2-lanes-board ] || [ "$flow" = studio2-lanes-control ]; then
     node - "$dir" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "http://127.0.0.1:$rport" "$rt/events.token" <<'NODE'
 const fs = require('fs');
 const [dir, at, runtimeUrl, tokenFile] = process.argv.slice(2);
@@ -316,18 +348,25 @@ if (runtime.protocol !== 'http:' || runtime.hostname !== '127.0.0.1' || !runtime
 }
 const common = { schema: 'graphhelm-task-event-v1', revision: 1, at };
 const records = [
-  ['lanes-claimed', 'task.claimed', { taskId: 'issue-1556-lanes', issue: 1556, lane: 'planner', branch: 'issue-1556-lanes-fixture', journeys: ['studio-lanes-board'], title: 'Show what each lane is doing' }],
+  ['lanes-claimed', 'task.claimed', { taskId: 'issue-1556-lanes', issue: 1556, lane: 'planner', branch: 'issue-1556-lanes-fixture', journeys: ['studio2-lanes-board'], title: 'Show what each lane is doing' }],
   ['lanes-planned', 'task.planned', { taskId: 'issue-1556-lanes', lane: 'planner', classes: ['user_visible'], reviews: 1, proof: 'journey', critic: { mode: 'none', passScore: 7, maxRounds: 1 }, summary: 'Fixture plan' }],
 ];
+// #1808: Reassign hands the slice to another lane, so studio2-lanes-control gets more lanes.
+if (process.env.GRAPHHELM_JOURNEY_FLOW === 'studio2-lanes-control') {
+  records.push(['helper-claimed', 'task.claimed', { taskId: 'issue-1557-helper', issue: 1557, lane: 'helper', branch: 'issue-1557-helper-fixture', journeys: [], title: 'Take over a slice' }]);
+  // Each viewport stops the lane it shows; a third lane keeps one to reassign to at the second.
+  records.push(['spare-claimed', 'task.claimed', { taskId: 'issue-1558-spare', issue: 1558, lane: 'spare', branch: 'issue-1558-spare-fixture', journeys: [], title: 'Spare lane' }]);
+}
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
 (async () => {
-  for (const [id, type, fields] of records) {
-    const signal = { id: `fixture-1556-${id}`, type, source: { type: 'user', id: 'planner' }, severity: 'low',
+  for (const [id, type, fields, attachments] of records) {
+    const actor = fields.lane ?? 'planner';
+    const signal = { id: `fixture-1556-${id}`, type, source: { type: 'user', id: actor }, severity: 'low',
       emittedAt: at, evidence: ['demo'], description: JSON.stringify({ ...common, ...fields }) };
     const response = await fetch(new URL('/v1/executions/demo/signal', runtime), {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
-        'Idempotency-Key': `fixture-1556-${id}`, 'X-GraphHelm-Actor': 'planner', 'X-GraphHelm-Actor-Type': 'agent' },
-      body: JSON.stringify({ signal }), signal: AbortSignal.timeout(10000),
+        'Idempotency-Key': `fixture-1556-${id}`, 'X-GraphHelm-Actor': actor, 'X-GraphHelm-Actor-Type': 'agent' },
+      body: JSON.stringify(attachments ? { signal, attachments } : { signal }), signal: AbortSignal.timeout(10000),
     });
     const result = await response.json();
     fs.writeFileSync(`${dir}/.graphhelm/task-${id}.out`, JSON.stringify(result));
@@ -368,8 +407,58 @@ NODE
   for pid in $(fixture_listeners record "$sport"); do
     if [ -r /proc/$$/winpid ]; then echo "studio-listener 0 $pid"; else echo "studio-listener $pid"; fi >> "$pids"
   done
+  # #1808 studio2-two-projects: a second project, `proj-two`, with its own Runtime and one run,
+  # registered with this Studio the way `graphhelm studio open` does it. The ticket link it prints
+  # is kept in a private file for the replay to open once; it is never echoed.
+  if [ "$flow" = studio2-two-projects ]; then
+    p2=$((rport + 2))
+    [ "$p2" != 8793 ] && [ "$p2" != "$sport" ] || { echo 'fixture: unsafe second Runtime port' >&2; exit 2; }
+    sed -i "s/^ports .*/& $p2/" "$pids"
+    second="$dir/proj-two"; rt2="$second/.graphhelm"
+    mkdir -p "$second"
+    if [ ! -d "$second/.git" ]; then
+      git -C "$second" init -q
+      printf "# proj-two\n" > "$second/README.md"
+      git -C "$second" add -A && git -C "$second" -c user.email=demo@example.com -c user.name=demo commit -qm init
+    fi
+    "$bin" --json init --project "$second" --bind "127.0.0.1:$p2" --harness codex > "$dir/.graphhelm/init-second.json"
+    nohup "$bin" serve --events "$rt2/events" --bind "127.0.0.1:$p2" --project "$second" \
+      --keyring "$rt2/keyring" --key-id studio > "$dir/.graphhelm/serve-second.out" 2> "$dir/.graphhelm/serve-second.err" &
+    echo "serve-second $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
+    for _ in $(seq 1 30); do curl -sf --max-time 10 "http://127.0.0.1:$p2/health" > /dev/null && break; sleep 1; done
+    curl -sf --max-time 10 "http://127.0.0.1:$p2/health" > /dev/null || { echo "second runtime did not answer on $p2"; exit 1; }
+    if ! grep -q '"executionId":"second-run"' "$dir/.graphhelm/seed-second.json" 2>/dev/null; then
+      GRAPHHELM_EVENTS_KEY="$(cat "$rt2/serve.key")" "$bin" --json execution start \
+        --file "$repo/examples/graphs/manual-override-deploy.yaml" --events "$rt2/events" \
+        --fixtures "$dir/.graphhelm/fixtures.json" --mode supervised --execution second-run \
+        > "$dir/.graphhelm/seed-second.json"
+    fi
+    (umask 077; "$bin" --json studio open --project "$second" --port "$sport" --no-browser > "$dir/.graphhelm/second-open.json")
+    grep -q '"ok":true' "$dir/.graphhelm/second-open.json" \
+      || { echo "fixture: the second project was not registered (see $dir/.graphhelm/second-open.json)" >&2; exit 1; }
+    # The owner adds proj-two in the sidebar with its folder and the ticket `studio open` minted,
+    # as the real Studio does. Every viewport of a replay opens a fresh browser that spends a
+    # ticket, so a FIXTURE-ONLY keeper puts the same ticket back once it is spent. Both values go
+    # to the private secrets file the replay reads; neither is printed.
+    ticket=$(cat "$rt2/events.studio-ticket")
+    [ -n "$ticket" ] || { echo 'fixture: studio open left no ticket' >&2; exit 1; }
+    folder2=$(cd "$second" && pwd -W 2> /dev/null || pwd)
+    (umask 077; printf 'GRAPHHELM_SECRET_proj_two_folder=%s\nGRAPHHELM_SECRET_proj_two_ticket=%s\n' "$folder2" "$ticket" > "$dir/.graphhelm/secrets-second.env")
+    (umask 077; printf '%s' "$ticket" > "$dir/.graphhelm/second.ticket")
+    nohup node -e '
+      const fs = require("fs"); const [file, saved] = process.argv.slice(1);
+      const keep = fs.readFileSync(saved, "utf8");
+      setInterval(() => { let now = ""; try { now = fs.readFileSync(file, "utf8").trim(); } catch {} if (now === "") fs.writeFileSync(file, keep, { mode: 0o600 }); }, 250);
+      setTimeout(() => process.exit(0), 3600000);
+    ' "$rt2/events.studio-ticket" "$dir/.graphhelm/second.ticket" > /dev/null 2>&1 &
+    echo "ticket-keeper $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
+  fi
+  if [ "$flow" = studio2-lanes-needs-action ]; then
+    node "$repo/tools/studio-journey-fixture/seed_needs.mjs" fresh "$dir" "http://127.0.0.1:$rport" "$rt/events.token"
+  fi
   # R6: the launcher reads this private data file after up; never echo the minted token.
-  (umask 077; printf 'GRAPHHELM_SECRET_STUDIO_TOKEN=%s\n' "$(head -1 "$rt/events.token")" > "$dir/.graphhelm/secrets.env")
+  (umask 077; printf 'GRAPHHELM_SECRET_STUDIO_TOKEN=%s\n' "$(head -1 "$rt/events.token")" > "$dir/.graphhelm/secrets.env"
+    if [ -f "$dir/.graphhelm/secrets-second.env" ]; then cat "$dir/.graphhelm/secrets-second.env" >> "$dir/.graphhelm/secrets.env"; fi)
   chmod 600 "$dir/.graphhelm/secrets.env"
   echo "fixture up: runtime http://127.0.0.1:$rport, studio http://127.0.0.1:$sport/?session=studio-fixture"
   ;;

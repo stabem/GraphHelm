@@ -8,28 +8,46 @@ status: draft
 approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
-secrets: []
+secrets: [proj_two_folder, proj_two_ticket]
 risks: [critical_ux, multiple_components]
-viewport: {width: 1440, height: 900}
+viewports: [web, mobile]
 screens:
+  - id: back
+    title: The first project opens again from the sidebar
+    url: /?session=studio-fixture&run=demo
+    ignoreQuery: [session, project, run]
+    state: stable
+    expect: [{role: banner, name: Top bar, text: demo}, {role: list, name: Runs in demo}, {role: list, name: Runs in proj-two, absent: true}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
   - id: first
     title: The first project's run is shown
     url: /?session=studio-fixture&run=demo
+    ignoreQuery: [session, project]
     state: stable
-    expect: [{role: navigation, name: Projects}, {role: link, name: demo}, {role: link, name: second}, {role: banner, name: Top bar, text: demo}, {role: list, name: Runs in demo}]
-    scope: unknown
+    expect: [{role: navigation, name: Projects}, {role: link, name: demo}, {role: banner, name: Top bar, text: demo}, {role: list, name: Runs in demo}, {role: button, name: Add project folder}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
   - id: second
-    title: The second project's own run is shown
+    title: The added project opens with its own run
     url: /?session=studio-fixture&run=demo
+    ignoreQuery: [session, project, run]
     state: stable
-    expect: [{role: banner, name: Top bar, text: second}, {role: list, name: Runs in second}, {role: list, name: Runs in demo, absent: true}]
-    scope: unknown
+    expect: [{role: banner, name: Top bar, text: proj-two}, {role: list, name: Runs in proj-two}, {role: link, name: demo}, {role: list, name: Runs in demo, absent: true}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
 edges:
   - id: first.second
     from: first
     to: second
+    intent: The owner adds the second project's folder with the ticket graphhelm studio open --project minted for it.
     acts:
-      - {kind: activate, role: link, name: second}
+      - {kind: activate, role: button, name: Add project folder}
+      - {kind: enter_text, role: textbox, name: Project folder, secret: proj_two_folder}
+      - {kind: enter_text, role: textbox, name: Ticket from graphhelm studio open --project, secret: proj_two_ticket}
+      - {kind: submit, role: button, name: Add}
+  - id: second.back
+    from: second
+    to: back
+    acts:
+      - {kind: activate, role: link, name: demo}
 paths:
-  main: [first.second]
+  main: [first.second, second.back]
 drift: []

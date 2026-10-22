@@ -1,5 +1,17 @@
 # Schema Changelog
 
+## journey-flow 1.10.0 - a fixed `clock` (#1782)
+
+A flow may declare a top-level `clock`: an ISO-8601 date and time with an explicit offset (for
+example `2026-10-31T12:00:00-03:00`). Every browser run of the flow (replay, preview, watch, and the
+Keel validation that replays it) installs that instant as the page's now before the first
+navigation; the clock then runs normally, so timers fire and relative dates such as "tomorrow" or
+"in 2 days" are the same on every run and can be asserted with `text`. The schema checks the shape;
+the flow validator refuses an instant that does not exist (month 13, 30 February, offset beyond
+14:00) as `flow.clock_invalid`. The canonical writer and the approval digest include `clock` only
+when present. Additive: every 1.9.0 flow stays valid with the same bytes and digest. The catalog
+digest is updated from canonical JSON.
+
 ## journey-flow 1.9.0 - `text` expectations (#1781)
 
 An expectation may carry `text` (1..256 characters): the element found by its role and name must

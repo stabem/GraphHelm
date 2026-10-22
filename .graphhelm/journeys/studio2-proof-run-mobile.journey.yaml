@@ -1,0 +1,61 @@
+schema: graphhelm.journey-flow/1
+id: studio2-proof-run-mobile
+title: Run a journey in Proof on a phone
+name: Run a journey (mobile)
+feature: Studio
+purpose: "studio2-proof-run at mobile, on its own fresh fixture: pressing Run shows Preparing the browser with its log, then the steps run and step cards fill with frames and pass or fail per viewport."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, recovery]
+viewports: [mobile]
+screens:
+  - id: journeys
+    title: A journey is selected
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-run
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: list, name: Journeys}, {role: button, name: Run}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
+  - id: log
+    title: The run console is open
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-run
+    ignoreQuery: [session, project]
+    state: loading
+    expect: [{role: log, name: Run console, text: observer}, {role: button, name: Hide log}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
+  - id: preparing
+    title: The browser is being prepared
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-run
+    ignoreQuery: [session, project]
+    state: loading
+    expect: [{role: status, name: Preparing the browser}, {role: button, name: Show log}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
+  - id: ran
+    title: Step cards hold frames and verdicts per viewport
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-run
+    ignoreQuery: [session, project]
+    state: success
+    expect: [{role: list, name: Steps}, {role: img, name: Step 1 frame}, {role: listitem, name: Step 1, text: web}, {role: listitem, name: Step 1, text: mobile}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
+edges:
+  - id: journeys.preparing
+    from: journeys
+    to: preparing
+    acts:
+      - {kind: activate, role: button, name: Run}
+  - id: log.ran
+    from: log
+    to: ran
+    acts:
+      - {kind: wait_for, role: list, name: Steps}
+  - id: preparing.log
+    from: preparing
+    to: log
+    acts:
+      - {kind: activate, role: button, name: Show log}
+paths:
+  main: [journeys.preparing, preparing.log, log.ran]
+drift: []

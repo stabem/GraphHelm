@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { JourneyPastRun, Runtime } from "../runtime/client";
 import { changedSentence, diffPixels, type CompareMode, type Pixels } from "./compare";
-import type { Step } from "./steps";
+import { failsOnlyOn, type Step } from "./steps";
 
 const MODES: { mode: CompareMode; label: string }[] = [
   { mode: "frame", label: "Frame" },
@@ -41,8 +41,9 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
   const shownViewport = mobileOn && (viewport === "mobile" || !webOn) ? "mobile" : "web";
   const now = shownViewport === "mobile" ? mobileNow : webNow;
   const before = usePastFrame(runtime, flowId, earlier?.run ?? null, step.screen, shownViewport === "mobile" ? "mobile" : undefined);
-  const changes = useChanges(mode === "changes" ? before.url : null, mode === "changes" ? now ?? null : null);
   const comparable = now !== undefined && before.url !== null;
+  // #1905: the Action panel says how much changed in every mode, so the pair is compared whenever both exist.
+  const changes = useChanges(comparable ? before.url : null, comparable ? now ?? null : null);
   const shown = comparable ? mode : "frame";
   const when = earlier === null ? "" : earlier.ranAt ?? earlier.run;
   const offReason = now === undefined
@@ -51,15 +52,46 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
       ? "No earlier run kept a frame for this step, so Side by side, Overlay and Changes are off."
       : before.error ?? (before.url === null ? "Reading the earlier run's frame…" : null);
 
+  const pastResult = earlier?.screens?.[step.screen]?.result;
+  const nowWord = step.status === "drift" ? "drifted" : step.status;
+  const only = failsOnlyOn(step);
+  const mobileReason = step.viewportReasons.mobile ?? step.reason;
+  const assertMark = step.status === "passed" ? "✓" : step.status === "failed" || step.status === "drift" ? "·" : "○";
+
+  const body = (
+    <>
+      {shown === "frame" && (now ? <img src={now} alt={`Step ${step.n} captured`} /> : <p>No frame captured for step {step.n} in this run.</p>)}
+      {shown === "side" && before.url !== null && now && (
+        <div role="group" aria-label="Before and Now side by side" className="compare-side">
+          <figure><figcaption>Before · {when}</figcaption><img src={before.url} alt={`Step ${step.n} before`} /></figure>
+          <figure><figcaption>Now</figcaption><img src={now} alt={`Step ${step.n} now`} /></figure>
+        </div>
+      )}
+      {shown === "overlay" && before.url !== null && now && (
+        <div className="compare-overlay">
+          <img src={before.url} alt={`Step ${step.n} before`} />
+          <img src={now} alt={`Step ${step.n} now`} style={{ opacity: opacity / 100 }} />
+        </div>
+      )}
+      {shown === "changes" && (changes.url !== null
+        ? <img src={changes.url} alt="Now, changed regions highlighted" />
+        : <p>{changes.message ?? "Comparing the two frames…"}</p>)}
+    </>
+  );
+
   return (
     <div className="compare">
       <section aria-label="Compare frame" className="compare-frame">
         <div className="compare-bar">
-          <span className="mono compare-step">step {step.n} · {step.label}</span>
+          <span aria-hidden="true" className="chrome-dots"><span /><span /><span /></span>
+          <span aria-hidden="true" className="mono chrome-nav"><span>&lt;</span><span>&gt;</span></span>
+          <span className="chrome-address" title={step.url}>
+            <svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+            <span className="mono">{step.url}</span>
+          </span>
           <div role="group" aria-label="Viewport" className="seg-group">
-            <button type="button" className={`seg${shownViewport === "web" ? " on" : ""}`} aria-pressed={shownViewport === "web"} disabled={!webOn} onClick={() => setViewport("web")}>Web</button>
-            <button type="button" className={`seg${shownViewport === "mobile" ? " on" : ""}`} aria-pressed={shownViewport === "mobile"} disabled={!mobileOn} aria-describedby={mobileOn ? undefined : "compare-mobile-note"} onClick={() => setViewport("mobile")}>Mobile</button>
-            <span className="mono compare-size">{shownViewport === "mobile" ? "390 × 844" : "1280 × 800"}</span>
+            <button type="button" aria-label="Web" className={`seg${shownViewport === "web" ? " on" : ""}`} aria-pressed={shownViewport === "web"} disabled={!webOn} onClick={() => setViewport("web")}>Web 1280 <ViewportMark status={step.viewports.web} /></button>
+            <button type="button" aria-label="Mobile" className={`seg${shownViewport === "mobile" ? " on" : ""}`} aria-pressed={shownViewport === "mobile"} disabled={!mobileOn} aria-describedby={mobileOn ? undefined : "compare-mobile-note"} onClick={() => setViewport("mobile")}>Mobile 390 <ViewportMark status={step.viewports.mobile} /></button>
           </div>
           <div role="group" aria-label="Compare mode" className="seg-group">
             {MODES.map(({ mode: each, label }) => (
@@ -72,34 +104,67 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
               <input type="range" min={0} max={100} value={opacity} aria-label="Now opacity" onChange={(event) => setOpacity(Number(event.target.value))} />
               Now</label>
           )}
-          <span className="mono compare-count">frame {step.n}/{steps}</span>
+          <span className="mono compare-count">emulated · {shownViewport === "mobile" ? "390 × 844" : "1280 × 800"} · frame {step.n}/{steps}</span>
         </div>
         {!mobileOn && <p id="compare-mobile-note" className="compare-note">This run kept no mobile frame of this step (a flow can name only web in `viewports`, and runs before #1777 played web alone).</p>}
-        {shown === "frame" && (now ? <img src={now} alt={`Step ${step.n} captured`} /> : <p>No frame captured for step {step.n} in this run.</p>)}
-        {shown === "side" && before.url !== null && now && (
-          <div role="group" aria-label="Before and Now side by side" className="compare-side">
-            <figure><figcaption>Before · {when}</figcaption><img src={before.url} alt={`Step ${step.n} before`} /></figure>
-            <figure><figcaption>Now</figcaption><img src={now} alt={`Step ${step.n} now`} /></figure>
-          </div>
-        )}
-        {shown === "overlay" && before.url !== null && now && (
-          <div className="compare-overlay">
-            <img src={before.url} alt={`Step ${step.n} before`} />
-            <img src={now} alt={`Step ${step.n} now`} style={{ opacity: opacity / 100 }} />
-          </div>
-        )}
-        {shown === "changes" && (changes.url !== null
-          ? <img src={changes.url} alt="Now, changed regions highlighted" />
-          : <p>{changes.message ?? "Comparing the two frames…"}</p>)}
+        {shownViewport === "mobile"
+          ? (
+            <div className="phone-stage">
+              {only === "mobile" && <span role="note" className="phone-banner">Fails only on mobile · step {step.n}{mobileReason ? `: ${mobileReason}` : ""}</span>}
+              <div className="phone">{body}</div>
+            </div>
+          )
+          : body}
       </section>
-      <section aria-label="Compare with an earlier run" className="compare-side-panel">
-        <span className="section-label">{earlier === null ? "NO EARLIER RUN" : `COMPARE WITH ${when}`}</span>
-        {offReason !== null && <span>{offReason}</span>}
-        {earlier?.screens?.[step.screen]?.result !== undefined && <span>This step {PAST[earlier.screens[step.screen]!.result!]} then.</span>}
-        {shown === "changes" && changes.sentence !== null && <span className="compare-changed">{changes.sentence}</span>}
-      </section>
+      <aside aria-label={`Action ${step.n}`} className="compare-side-panel">
+        <span className="section-label">ACTION {step.n} · DOES</span>
+        <strong className="action-title">{step.label}</strong>
+        {step.title && <span>{step.title}</span>}
+        <pre className="action-code">step {step.screen}{"\n"}does {step.label}</pre>
+        <section aria-label="Compare with an earlier run" className="action-compare">
+          <span className="section-label">{earlier === null ? "NO EARLIER RUN" : `COMPARE WITH ${when}`}</span>
+          {offReason !== null && <span>{offReason}</span>}
+          {changes.sentence !== null && <span className="compare-changed">{changes.sentence}</span>}
+          {pastResult !== undefined && <span className="compare-changed">This step {PAST[pastResult]} then, {nowWord} now.</span>}
+          {comparable && (
+            <>
+              <div className="action-thumbs">
+                <button type="button" className="b" onClick={() => setMode("side")}><img src={before.url!} alt="Before thumbnail" /></button>
+                <button type="button" className="b" onClick={() => setMode("side")}><img src={now} alt="Now thumbnail" /></button>
+              </div>
+              <button type="button" className="b link action-show" onClick={() => setMode("changes")}>show changes</button>
+            </>
+          )}
+        </section>
+        <span className="section-label">WHAT IT DID</span>
+        {step.acts.length === 0 ? <span>{step.label}</span> : step.acts.map((act, index) => <span key={index}>{act}</span>)}
+        <span className="section-label">ASSERTIONS</span>
+        {step.checks !== null && step.checks.length > 0
+          ? step.checks.map((check, index) => (
+            <span key={index}><b className={check.seen ? "pass" : "fail"}>{check.seen ? "✓" : "✕"}</b> shows {check.role} “{check.name}”{check.text ? ` with “${check.text}”` : ""}</span>
+          ))
+          : step.expects.length === 0
+            ? <span className="muted">This screen declares no assertions.</span>
+            : step.expects.map((want, index) => (
+              <span key={index}><b className={step.status === "passed" ? "pass" : "idle"}>{assertMark}</b> shows {want.role} “{want.name}”{want.text ? ` with “${want.text}”` : ""}</span>
+            ))}
+        {step.checks === null && (step.status === "failed" || step.status === "drift") && <span className="muted">This run recorded no per-assertion checks for this step.</span>}
+        {step.reason !== null && step.status !== "passed" && <span className="action-reason">{step.reason}</span>}
+        <span className="section-label">CONSOLE</span>
+        <span className="mono muted">No console captured</span>
+      </aside>
     </div>
   );
+}
+
+const VIEWPORT_MARK: Record<Step["status"], { text: string; tone: string }> = {
+  passed: { text: "✓", tone: "pass" }, failed: { text: "✕", tone: "fail" }, drift: { text: "≈", tone: "fail" },
+  skipped: { text: "–", tone: "idle" }, running: { text: "…", tone: "wait" }, "not run": { text: "○", tone: "idle" },
+};
+
+function ViewportMark({ status }: { status: Step["status"] }) {
+  const mark = VIEWPORT_MARK[status];
+  return <b aria-hidden="true" className={mark.tone}>{mark.text}</b>;
 }
 
 /** An earlier run's frame of one screen, as an object URL revoked when it is replaced or left. */

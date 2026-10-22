@@ -17,6 +17,19 @@ export interface Step {
    * size, so the viewport it did not play is `not run`. */
   viewports: Record<Viewport, StepStatus>;
   frame: boolean;
+  /** #1905: the screen's title and URL, for the Action panel and the compare's address bar. */
+  title: string | null;
+  url: string;
+  /** #1905: every act of the edge, in words (WHAT IT DID). */
+  acts: string[];
+  /** #1905: what the screen expects (ASSERTIONS), as the flow file declares it. */
+  expects: { role: string; name: string; text?: string }[];
+  /** #1905: the run's own check of each expectation, when it recorded them. */
+  checks: Check[] | null;
+  /** #1905: why the step stands as it does, as the Runtime recorded it (screen, else edge). */
+  reason: string | null;
+  /** #1905: the reason each viewport recorded for this step, when it recorded one. */
+  viewportReasons: Partial<Record<Viewport, string>>;
 }
 
 export const VIEWPORTS: readonly Viewport[] = ["web", "mobile"];
@@ -39,11 +52,36 @@ export function viewportOf(width: number | undefined): Viewport | null {
 
 const VERBS: Record<string, string> = { activate: "Clicks", click: "Clicks", fill: "Types into", type: "Types into", submit: "Submits", select: "Selects", check: "Checks", wait_for: "Waits for", press: "Presses", navigate: "Opens" };
 
-function does(edge: JourneyEdge): string {
-  const act = edge.acts?.[0];
-  if (act === undefined) return edge.id;
+type Act = NonNullable<JourneyEdge["acts"]>[number];
+
+function sayAct(act: Act): string {
+  if ((act.kind === "fill" || act.kind === "type" || act.kind === "enter_text") && act.text !== undefined) return `Types “${act.text}” into “${act.name ?? ""}”`;
   const verb = VERBS[act.kind] ?? act.kind;
   return act.name ? `${verb} “${act.name}”` : verb;
+}
+
+function does(edge: JourneyEdge): string {
+  const act = edge.acts?.[0];
+  return act === undefined ? edge.id : sayAct(act);
+}
+
+/** #1905: each expectation the run checked on this screen and whether it was seen, as the Runtime
+ * records it under `screens.<id>.checks` (absent from the typed client); `null` when none recorded. */
+export interface Check { role: string; name: string; text?: string; seen: boolean }
+
+function checksOf(seen: unknown): Check[] | null {
+  const list = (seen as { checks?: unknown } | undefined)?.checks;
+  if (!Array.isArray(list)) return null;
+  return list.filter((item): item is Check =>
+    typeof item === "object" && item !== null && typeof (item as Check).role === "string" && typeof (item as Check).name === "string" && typeof (item as Check).seen === "boolean");
+}
+
+/** The screen's `expect` list, which the Runtime serves with the flow (the typed client omits it). */
+function expectsOf(screen: unknown): { role: string; name: string; text?: string }[] {
+  const list = (screen as { expect?: unknown } | undefined)?.expect;
+  if (!Array.isArray(list)) return [];
+  return list.filter((item): item is { role: string; name: string; text?: string } =>
+    typeof item === "object" && item !== null && typeof (item as { role?: unknown }).role === "string" && typeof (item as { name?: unknown }).name === "string");
 }
 
 /** The order the run walks: the `main` path (else the first path), entry screen first, then each
@@ -75,7 +113,8 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
     const playing = run?.state === "running" && run.current === screen;
     const status = statusIn(seen, walked, playing);
     const viewports: Record<Viewport, StepStatus> = { web: "not run", mobile: "not run" };
-    if (run?.viewports !== undefined && Object.keys(run.viewports).length > 0) {
+    // A Runtime may serve `viewports: null` while a run is still playing; null is no viewport, never a crash.
+    if (run?.viewports != null && Object.keys(run.viewports).length > 0) {
       for (const viewport of VIEWPORTS) {
         const view = run.viewports[viewport];
         if (view !== undefined) viewports[viewport] = statusIn(view.screens?.[screen], edge === null ? undefined : view.edges?.[edge.id], false);
@@ -87,6 +126,12 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
       viewports[viewportOf(seen?.width) ?? "web"] = status;
     }
     const url = screens.get(screen)?.url ?? screen;
+    const viewportReasons: Partial<Record<Viewport, string>> = {};
+    for (const viewport of VIEWPORTS) {
+      const view = run?.viewports?.[viewport];
+      const said = view?.screens?.[screen]?.reason ?? (edge === null ? undefined : view?.edges?.[edge.id]?.reason);
+      if (said) viewportReasons[viewport] = said;
+    }
     return {
       n: index + 1,
       screen,
@@ -95,8 +140,52 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
       status,
       viewports,
       frame: seen?.frame === true,
+      title: screens.get(screen)?.title ?? null,
+      url,
+      acts: (edge?.acts ?? []).map(sayAct),
+      expects: expectsOf(screens.get(screen)),
+      checks: checksOf(seen),
+      reason: (walked?.result === "skipped" ? walked.reason : undefined) ?? seen?.reason ?? walked?.reason ?? null,
+      viewportReasons,
     };
   });
+}
+
+/** #1905: the run bar's counts. A step skipped because the run waits for the owner's confirmation
+ * counts as waiting for you, not as not run. */
+export interface StepCounts { passed: number; waits: number; failed: number; notRun: number }
+
+const WAITS = new Set(["confirm_needed", "cli_needs_approval"]);
+
+export function countSteps(steps: Step[]): StepCounts {
+  const counts: StepCounts = { passed: 0, waits: 0, failed: 0, notRun: 0 };
+  for (const step of steps) {
+    if (step.status === "passed") counts.passed += 1;
+    else if (step.status === "failed" || step.status === "drift") counts.failed += 1;
+    else if (step.status === "skipped" && step.reason !== null && WAITS.has(step.reason)) counts.waits += 1;
+    else counts.notRun += 1;
+  }
+  return counts;
+}
+
+/** #1905: a journey card's score and per-step bar, from the journey list's `lastRun` alone. A pass
+ * is every step; never run is none; a failure counts the steps the walk order puts before the step
+ * `failingStep` names, which is drawn red. A failure naming no step in the walk, or a Runtime that
+ * serves no `lastRun`, scores unknown (`null`), never a guessed number. */
+export type BarCell = "pass" | "fail" | "none";
+
+export function journeyScore(flow: JourneyFlow): { passed: number | null; total: number; bar: BarCell[] } {
+  const steps = journeySteps(flow, null);
+  const total = steps.length;
+  const none = steps.map((): BarCell => "none");
+  const last = flow.lastRun;
+  if (last === undefined) return { passed: null, total, bar: none };
+  if (last.status === "not_run") return { passed: 0, total, bar: none };
+  if (last.status === "passed") return { passed: total, total, bar: steps.map((): BarCell => "pass") };
+  const failing = last.failingStep;
+  const index = failing === null ? -1 : steps.findIndex((step) => (failing.kind === "edge" ? step.edge === failing.id : step.screen === failing.id));
+  if (index < 0) return { passed: null, total, bar: none };
+  return { passed: index, total, bar: steps.map((_, i): BarCell => (i < index ? "pass" : i === index ? "fail" : "none")) };
 }
 
 /** The journeys column's chip. Only a replay is proof; a preview's verdict is labelled as such, and

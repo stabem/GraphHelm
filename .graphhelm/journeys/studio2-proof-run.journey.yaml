@@ -3,14 +3,14 @@ id: studio2-proof-run
 title: Run a journey in Proof
 name: Run a journey
 feature: Studio
-purpose: "Pressing Run shows Preparing the browser with its log, then the steps run and step cards fill with frames and pass or fail per viewport."
+purpose: "Pressing Run shows Preparing the browser with its log, then the steps run and step cards fill with frames and pass or fail per viewport (web; studio2-proof-run-mobile is the same flow at mobile: a run is kept, so each width gets its own fresh fixture)."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux, recovery]
-viewports: [web, mobile]
+viewports: [web]
 screens:
   - id: journeys
     title: A journey is selected

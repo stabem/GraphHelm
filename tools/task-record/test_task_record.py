@@ -930,6 +930,18 @@ class Planned(unittest.TestCase):
         self.assertIn("first 64 of 71", err.getvalue())
         self.assertNotIn("x" * 257, err.getvalue())
 
+    def test_long_paths_shrink_to_fit_the_runtime_record_cap(self):
+        # #1861: 64 paths of 200 characters pass the count cap but not the 8 KiB description cap
+        # the Runtime enforces; the record keeps what fits, in order, and says how many it dropped.
+        names = [f"d{n:02}/" + "p" * 190 + ".rs" for n in range(64)]
+        err = io.StringIO()
+        with redirect_stderr(err):
+            doc = self.planned("--summary", "s", "--paths", *names, *self.offline())
+        self.assertLessEqual(len(json.dumps(doc, separators=(",", ":")).encode()), 8000)
+        self.assertTrue(0 < len(doc["paths"]) < 64)
+        self.assertEqual(doc["paths"], sorted(names)[:len(doc["paths"])])
+        self.assertIn(f"recording {len(doc['paths'])} of 64 paths", err.getvalue())
+
     def test_a_plan_without_paths_omits_the_field_and_git_paths_fill_it(self):
         with redirect_stderr(io.StringIO()):
             self.assertNotIn("paths", self.planned("--summary", "s", *self.offline()))

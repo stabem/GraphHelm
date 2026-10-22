@@ -528,6 +528,17 @@ def document(args, now):
         if len(args.summary) > 300 or not args.summary.isprintable():
             sys.exit("task_record: --summary is one line of at most 300 characters")
         doc.update(lane=args.lane, **planned_fields(args), summary=args.summary)
+        # #1861: the Runtime admits a description of at most 8 KiB (as for `queued`): 64 long paths
+        # can pass that, and then the whole plan is refused. The last paths in order give way first.
+        fit = doc.get("paths", [])
+        kept = len(fit)
+        while fit and len(json.dumps(doc, separators=(",", ":")).encode()) > 8000:
+            fit.pop()
+        if len(fit) < kept:
+            print(f"task_record: planned: recording {len(fit)} of {kept} paths to fit the Runtime's "
+                  "8 KiB record; the last ones in order were dropped", file=sys.stderr)
+        if not fit:
+            doc.pop("paths", None)
     elif args.kind == "pr_opened":
         # #508: the reviewer is part of opening the PR, so the Review step is never drawn unnamed.
         need(args, "pr", "head", "reviewer")

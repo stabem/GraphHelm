@@ -5870,3 +5870,155 @@ fn the_tasks_board_shows_a_lanes_open_question_until_a_reply_names_it() {
     );
     assert_eq!(waiting(""), vec![row("lane-c", "studio-operator", &open)]);
 }
+
+fn request_document(actor: &str, kind: &str, request: &str, extra: Value) -> Value {
+    let mut document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+        "taskId": format!("request-{request}"), "revision": 1, "at": "2026-10-22T12:00:00Z",
+        "requestId": request});
+    for (key, value) in extra.as_object().unwrap() {
+        document[key] = value.clone();
+    }
+    document[if kind == "task.request_recorded" {
+        "recordedBy"
+    } else {
+        "linkedBy"
+    }] = serde_json::json!(actor);
+    document
+}
+
+/// #1792 (Studio v2 R1): the owner's request, the issues opened for it, and what became of them,
+/// served by `GET /v1/executions/{id}/requests` from the task fold. Observer: the real `serve`
+/// binary over HTTP with a keyring the test makes. Contracts: a link to a request never recorded
+/// is refused at admission (nothing is appended); a request moves open → in_progress → delivered
+/// as its issues get PRs that merge; the `/tasks` board does not grow a slice for a request.
+#[test]
+fn a_recorded_request_lists_its_linked_issues_their_prs_and_its_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let extra = throwaway_keyring(dir.path());
+    let run = "requests-run";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 3);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let lead = "orchestrator";
+    let record = |id: &str, actor: &str, kind: &str, document: &Value| {
+        task_record(&base, &token, run, actor, kind, id, document)
+    };
+    let requests = || {
+        get_json(
+            &format!("{base}/v1/executions/{run}/requests"),
+            Some(&token),
+        )
+    };
+
+    let (status, reply, _) = record(
+        "link-ghost",
+        lead,
+        "task.request_linked",
+        &request_document(
+            lead,
+            "task.request_linked",
+            "ghost",
+            serde_json::json!({"issue": 9}),
+        ),
+    );
+    assert_ne!(
+        status, 200,
+        "a link to an unrecorded request is refused: {reply}"
+    );
+    assert_eq!(
+        reply["diagnostics"][0]["path"], "/signal/description/requestId",
+        "{reply}"
+    );
+
+    let (status, reply, _) = record(
+        "rec-1",
+        lead,
+        "task.request_recorded",
+        &request_document(
+            lead,
+            "task.request_recorded",
+            "one-header",
+            serde_json::json!({"ask": "Make the Studio show one header", "title": "One header"}),
+        ),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let view = requests();
+    let first = &view["data"]["requests"][0];
+    assert_eq!(first["requestId"], "one-header", "{view}");
+    assert_eq!(first["ask"], "Make the Studio show one header");
+    assert_eq!(first["recordedBy"], lead);
+    assert_eq!(first["status"], "open");
+
+    for (id, issue) in [
+        ("link-1", 1770_u64),
+        ("link-1-again", 1770),
+        ("link-2", 1771),
+    ] {
+        let (status, reply, _) = record(
+            id,
+            lead,
+            "task.request_linked",
+            &request_document(
+                lead,
+                "task.request_linked",
+                "one-header",
+                serde_json::json!({"issue": issue}),
+            ),
+        );
+        assert_eq!(status, 200, "{id}: {reply}");
+    }
+    let (status, reply, _) = record(
+        "claim-1770",
+        "lane-a",
+        "task.claimed",
+        &claim_document("lane-a", 1770),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let (status, reply, _) = record(
+        "pr-1770",
+        "lane-a",
+        "task.pr_opened",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1770", "revision": 1,
+            "at": "2026-10-22T12:00:00Z", "pr": 1771, "headSha": "0123456789abcdef", "journeys": [],
+            "lane": "lane-a", "repo": "stabem/GraphHelm"}),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let view = requests();
+    let first = &view["data"]["requests"][0];
+    assert_eq!(first["status"], "in_progress", "{view}");
+    let issues: Vec<u64> = first["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["issue"].as_u64().unwrap())
+        .collect();
+    assert_eq!(issues, [1770, 1771], "a repeated link counts once: {view}");
+    assert_eq!(first["issues"][0]["slices"][0]["pr"], 1771, "{view}");
+    assert_eq!(
+        first["issues"][1]["slices"],
+        serde_json::json!([]),
+        "{view}"
+    );
+
+    let tasks = get_json(
+        &format!("{base}/v1/executions/{run}/tasks?full=1"),
+        Some(&token),
+    );
+    assert_eq!(tasks["data"]["rejected"], 0, "every record folds: {tasks}");
+    assert!(
+        tasks["data"]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|task| task["taskId"] != "request-one-header"),
+        "a request opens no task slice: {tasks}"
+    );
+}

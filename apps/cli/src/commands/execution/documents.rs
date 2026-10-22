@@ -184,6 +184,8 @@ pub(crate) fn validate_task_event(
         | "task.critic_verdict" => Some("lane"),
         "task.review_verdict" | "task.review_activity" => Some("reviewer"),
         "task.merged" => Some("merger"),
+        "task.request_recorded" => Some("recordedBy"),
+        "task.request_linked" => Some("linkedBy"),
         _ => None,
     };
     if let Some(field) = identity
@@ -542,6 +544,26 @@ pub(crate) fn validate_task_event(
                 }),
             &["repo", "issues"],
         ),
+        // #1792: an owner request and the issues opened for it; neither opens a slice.
+        "task.request_recorded" => (
+            document["requestId"]
+                .as_str()
+                .is_some_and(|id| OpaqueId::parse(id).is_ok())
+                && document["ask"]
+                    .as_str()
+                    .is_some_and(|ask| !ask.trim().is_empty() && ask.chars().count() <= 2000)
+                && words()
+                && is_actor("recordedBy"),
+            &["requestId", "ask", "title", "recordedBy"],
+        ),
+        "task.request_linked" => (
+            document["requestId"]
+                .as_str()
+                .is_some_and(|id| OpaqueId::parse(id).is_ok())
+                && count("issue")
+                && is_actor("linkedBy"),
+            &["requestId", "issue", "linkedBy"],
+        ),
         _ => (false, &[]),
     };
     let known = document.as_object().is_some_and(|object| {
@@ -564,6 +586,9 @@ pub(crate) fn validate_task_event(
         }
         if kind == "task.heartbeat" {
             validate_heartbeat(&document, actor_id, history, evidence, chrono::Utc::now())?;
+        }
+        if kind == "task.request_linked" {
+            validate_request_known(&document, history, evidence)?;
         }
         if kind == "task.released" {
             let claim_sequence = document["claimSequence"].as_u64().expect("shape checked");
@@ -781,6 +806,34 @@ fn validate_claim_holder(
         }
     }
     Ok(())
+}
+
+/// #1792: a link names a request some earlier `task.request_recorded` recorded, read from the
+/// same shared fold the tasks route serves, so admission and the requests route agree.
+fn validate_request_known(
+    document: &serde_json::Value,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+) -> Result<(), Failure> {
+    let pointer = "/signal/description/requestId";
+    let request_id = document["requestId"].as_str().unwrap_or_default();
+    let view = task_view(history, evidence, "request link", pointer)?;
+    if view.records.iter().any(|record| {
+        record.kind == graphhelm_execution::tasks::TaskEventKind::RequestRecorded
+            && record.request_id.as_deref() == Some(request_id)
+    }) {
+        return Ok(());
+    }
+    Err(super::signal_invalid(
+        &format!(
+            "request {request_id} was never recorded; record it with task.request_recorded first"
+        ),
+        pointer,
+    ))
 }
 
 /// The tasks route's fold over `history`, read through the process's shared record cache, so

@@ -21,8 +21,8 @@ use serde_json::{Value, json};
 
 use super::journey_replay::{
     Driver, Failure, OP_BUDGET, RUN_BUDGET, Result, SURVIVABLE, TemporaryOutput, failure,
-    load_cache, observe, observer_ready, preflight, record, safe_directory, safe_environment,
-    safe_node, url_matches,
+    ignored_query, load_cache, observe, observer_ready, preflight, record, safe_directory,
+    safe_environment, safe_node, url_matches,
 };
 use crate::args::{
     JourneyActArgs, JourneyCloseArgs, JourneyOpenArgs, JourneyReplayArgs, JourneySessionsArgs,
@@ -1842,7 +1842,14 @@ fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|screen| url_matches(&session.base, screen["url"].as_str().unwrap(), &url))
+        .filter(|screen| {
+            url_matches(
+                &session.base,
+                screen["url"].as_str().unwrap(),
+                &url,
+                &ignored_query(screen),
+            )
+        })
         .map(|screen| screen["id"].as_str().unwrap().to_owned())
         .collect();
     let mut reply = json!({"ok":true,"url":url,"screen":null,"state":"unknown","code":null,"liveCaptureSignalId":null});

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/journey-flow.schema.json",
-  "x-graphhelm-schema-version": "1.12.0",
+  "x-graphhelm-schema-version": "1.13.0",
   "title": "GraphHelm Journey Flow",
   "type": "object",
   "properties": {
@@ -408,6 +408,14 @@
           "not": {
             "pattern": "\\\\"
           }
+        },
+        "ignoreQuery": {
+          "description": "Query keys this screen's URL match leaves out on both sides (#1890), e.g. a session id the app strips after login. Every other key still matches exactly; absent, the match is exact.",
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,64}$"},
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true
         },
         "state": {
           "enum": [

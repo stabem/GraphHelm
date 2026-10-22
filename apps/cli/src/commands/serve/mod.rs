@@ -2,6 +2,7 @@ pub(crate) mod alloc_guard;
 mod documents;
 mod handover;
 mod journey_credentials;
+mod lanes;
 mod lifecycle;
 pub(super) mod monitor;
 mod native_chats;
@@ -1116,6 +1117,13 @@ fn build_router(state: ServeState) -> Router {
         .route(
             "/v1/executions/{id}/lanes/{lane}/activity",
             get(routes::lane_activity),
+        )
+        // #1798: the owner's lane controls.
+        .route("/v1/executions/{id}/lanes/{lane}/wake", post(lanes::wake))
+        .route("/v1/executions/{id}/lanes/{lane}/stop", post(lanes::stop))
+        .route(
+            "/v1/executions/{id}/lanes/{lane}/reassign",
+            post(lanes::reassign),
         )
         .route("/v1/journeys", get(routes::project_journeys))
         .route("/v1/keel/plan", post(routes::keel_plan))

@@ -84,4 +84,18 @@ describe("lanes board", () => {
       ["lane-c", null, false],
     ]);
   });
+
+  it("carries each lane's kind and model from its liveness row, and none when it never said (#1851)", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [],
+      liveness: { lanes: [
+        { lane: "lane-a", agentKind: "claude", agentModel: "opus", owes: false, silent: false, free: true },
+        { lane: "lane-b", owes: false, silent: false, free: true },
+      ] },
+      stalls: [],
+      waiting: [],
+    };
+    expect(agents(board).map((agent) => [agent.lane, agent.kind, agent.model])).toEqual([["lane-a", "claude", "opus"], ["lane-b", null, null]]);
+  });
 });

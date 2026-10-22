@@ -457,6 +457,163 @@ def cli_module(packages, p, rel, root):
     return out
 
 
+def _crate_sources(root, package):
+    src = root / package["dir"] / "src"
+    return {f.relative_to(root / package["dir"]).as_posix(): f.read_text(encoding="utf-8", errors="replace")
+            for f in sorted(src.rglob("*.rs"))} if src.is_dir() else {}
+
+
+def _normal_closure(packages, start):
+    """`start` and every package that reaches it through normal or build dependencies."""
+    reached, frontier = {start}, {start}
+    while frontier:
+        frontier = {p["name"] for p in packages if p["name"] not in reached and set(p["deps"]) & frontier}
+        reached |= frontier
+    return reached
+
+
+def core_module_cli(packages, p, rel, root):
+    """#1875: the CLI part of the plan for a change to one module of a core crate `p`: the union of
+    the narrow plans (`cli_module`) of the CLI files that name an affected path, plus the CLI test
+    targets that name one. Derived from source text; None (the whole CLI package) whenever any step
+    cannot be proved:
+    - the change is to `lib.rs`, `main.rs`, a `mod.rs`, or not a module under `src/`;
+    - `p`'s `lib.rs` mentions an affected module outside its `mod` lines (a re-export, a root
+      function), an affected module exports a macro or has an `impl` on a type it does not declare,
+      or anything imports `p` by glob or alias, or with `self` inside a `{…}` group;
+    - a crate between `p` and the CLI (on a normal-dependency path) names an affected path;
+    - a CLI file that names one has no narrow plan (shared code, a dispatcher, an unnamed module).
+    Affected modules are the changed top-level module and, transitively, `p`'s own top-level modules
+    whose source mentions one's name as a word."""
+    if root is None or p["name"] == CLI or not rel.startswith("src/") or not rel.endswith(".rs"):
+        return None
+    if rel in ("src/lib.rs", "src/main.rs") or rel.endswith("/mod.rs"):
+        return None
+    cli = next((q for q in packages if q["name"] == CLI), None)
+    if cli is None or CLI not in _normal_closure(packages, p["name"]):
+        return None
+    sources = _crate_sources(root, p)
+    if not sources or "src/lib.rs" not in sources:
+        return None
+
+    def top(path):
+        part = path[len("src/"):].split("/")[0]
+        return part[:-len(".rs")] if part.endswith(".rs") else part
+
+    # Affected modules: the changed one, then every top-level module of `p` whose source mentions
+    # an affected module's name as a word at all. A word match over-approximates every way Rust
+    # can name it (`crate::m`, `super::{m, …}`, `use crate::{x, m}`, `self::m`), so none is missed
+    # (#1877 review, case A).
+    affected, changed = {top(rel)}, True
+    while changed:
+        changed = False
+        word = re.compile(r"\b(?:" + "|".join(re.escape(m) for m in sorted(affected)) + r")\b")
+        for path, text in sources.items():
+            module = top(path)
+            if path != "src/lib.rs" and module not in affected and word.search(text):
+                affected.add(module)
+                changed = True
+    word = re.compile(r"\b(?:" + "|".join(re.escape(m) for m in sorted(affected)) + r")\b")
+    if any(top(path) in affected and "macro_export" in text for path, text in sources.items()):
+        return None  # an exported macro is reached at the crate root, under no module path
+    # Cases B and D: any other mention in `lib.rs` (a root function calling it, a re-export in any
+    # form) puts affected code behind a root path, which no module path names.
+    root_code = "\n".join(line for line in sources["src/lib.rs"].splitlines()
+                          if not re.match(r"\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*;", line))
+    if word.search(root_code):
+        return None
+    # Case C: an `impl` in an affected module changes a type declared elsewhere (an inherent
+    # method, a trait impl, a blanket impl) for callers that never name the affected module. A
+    # `type` alias declares no new type (`type L = crate::n::S; impl L` adds methods to `n::S`), so
+    # it is not a declaration here (#1877 review, case Y).
+    declared = {match for path, text in sources.items() if top(path) in affected
+                for match in re.findall(r"\b(?:struct|enum|union|trait)\s+([A-Za-z_]\w*)", text)}
+    for path, text in sources.items():
+        if top(path) not in affected:
+            continue
+        for header in re.findall(r"\bimpl\b([^{;]*)\{", text):
+            # #1877 review (cases V, W): narrow only for `impl [<params>] [Trait for] Name[<args>]`
+            # where Name is one bare identifier the affected modules declare and not a generic
+            # parameter of the impl; a path (`crate::n::T`), a `where` clause, a reference, a
+            # trait object or anything else is the whole package.
+            header = header.strip()
+            params = set()
+            if header.startswith("<"):
+                depth, end = 0, None
+                for i, ch in enumerate(header):
+                    depth += {"<": 1, ">": -1}.get(ch, 0)
+                    if depth == 0:
+                        end = i
+                        break
+                if end is None:
+                    return None
+                params = set(re.findall(r"(?:^|[<,])\s*(?:const\s+)?([A-Za-z_]\w*)", header[:end + 1]))
+                header = header[end + 1:].strip()
+            if re.search(r"\bwhere\b", header):
+                return None
+            target = re.split(r"\s+for\s+", header)[-1].strip()
+            shape = re.fullmatch(r"([A-Za-z_]\w*)\s*(?:<[^:{}]*>)?", target)
+            if shape is None or shape.group(1) not in declared or shape.group(1) in params:
+                return None
+    ident = p["name"].replace("-", "_")
+    path_use = re.compile(r"\b" + ident + r"::(?:" + "|".join(re.escape(m) for m in sorted(affected)) + r")\b")
+    alias = re.compile(r"\b" + ident + r"::\*|\b" + ident + r"\s+as\b|\buse\s+" + ident + r"\s*;")
+
+    def groups(text):
+        """Each `<ident>::{…}` group, braces balanced."""
+        for start in re.finditer(r"\b" + ident + r"::\{", text):
+            depth, i = 0, start.end() - 1
+            while i < len(text):
+                depth += {"{": 1, "}": -1}.get(text[i], 0)
+                if depth == 0:
+                    yield text[start.end():i]
+                    break
+                i += 1
+            else:
+                yield text[start.end():]
+
+    def named(text):
+        return bool(path_use.search(text)) or any(word.search(g) for g in groups(text))
+
+    def opaque(text):
+        # Case G: `{self as k}`, `{self}` or a glob inside a group reaches modules unnamed.
+        return bool(alias.search(text)) or any(re.search(r"\bself\b|\*", g) for g in groups(text))
+
+    between = (_normal_closure(packages, p["name"]) - {p["name"], CLI}) & {
+        q["name"] for q in packages if CLI in _normal_closure(packages, q["name"])}
+    for name in sorted(between):
+        package = next(q for q in packages if q["name"] == name)
+        if any(named(t) or opaque(t) for t in _crate_sources(root, package).values()):
+            return None
+    out = set()
+    for path, text in _crate_sources(root, cli).items():
+        if opaque(text):
+            return None
+        if not named(text):
+            continue
+        narrow = cli_module(packages, cli, path, root)
+        if narrow is None:
+            return None
+        out |= narrow
+    tests = root / cli["dir"] / "tests"
+    for f in sorted(tests.rglob("*.rs")) if tests.is_dir() else []:
+        text = f.read_text(encoding="utf-8", errors="replace")
+        if opaque(text):
+            return None
+        if not named(text):
+            continue
+        path = f.relative_to(root).as_posix()
+        registered = cli.get("bundle_paths", {}).get(path, set())
+        target = target_of(packages, CLI, f.stem) if f.parent == tests else None
+        if registered:
+            out |= {(CLI, t, m) for t, m in registered}
+        elif target is not None:
+            out.add(target)
+        else:
+            return None  # support code or an unregistered module: every test may build on it
+    return out
+
+
 def reach(changed, packages, embedded, repo=None):
     """The plan for one diff: whole packages, single test targets/modules, Studio files, tool
     tests, extension packages to validate, and what no rule maps."""
@@ -739,7 +896,12 @@ def reach(changed, packages, embedded, repo=None):
                 hit = True
             elif rel.startswith(("src/", "build.rs", "Cargo.toml")) or rel.endswith(".rs"):
                 narrow = cli_module(packages, p, rel, root)
-                if narrow is None:
+                core = core_module_cli(packages, p, rel, root) if narrow is None else None
+                if core is not None:
+                    # #1875: the CLI runs only the tests of the modules that use the changed one.
+                    single |= core
+                    whole |= dependents(packages, {p["name"]}) - {CLI}
+                elif narrow is None:
                     whole |= dependents(packages, {p["name"]})
                 else:
                     single |= narrow

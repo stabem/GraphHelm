@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
 import { OWNER, type JourneyFlow, type LaneAction, type Runtime, type TasksBoard } from "../runtime/client";
-import { controlBody, draftFor, messageBody, type Draft, type LaneControl } from "./drafts";
+import { controlBody, draftFor, messageBody, newId, type Draft, type LaneControl } from "./drafts";
+import { actionLine, clock } from "./format";
+import { LanesPanels } from "./LanesPanels";
 import { agents, blocks, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
 /** How often the board is read again: one tasks read, plus one activity read per lane whose last
@@ -12,48 +14,12 @@ const LAST_ACTIONS = 10;
 const COLUMN_NAME: Record<Column, string> = { backlog: "Backlog", implement: "Implement", review: "Review", blocked: "Blocked", silent: "Silent", merge: "Merge" };
 type Filter = "all" | "reply" | "idle";
 
-function clock(at: string | null | undefined): string {
-  if (!at) return "--:--";
-  const date = new Date(at);
-  return Number.isNaN(date.getTime()) ? "--:--" : `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
-/** One action as the card and the panel print it. */
-function actionLine(action: LaneAction): string {
-  const pr = action.pr === undefined ? "" : ` PR #${action.pr}`;
-  const issue = action.issue === undefined ? "" : ` #${action.issue}`;
-  const what: Record<string, string> = {
-    "task.claimed": `claimed${issue}`,
-    "task.planned": `planned${issue}`,
-    "task.released": `released${issue}`,
-    "task.heartbeat": action.reason ?? "heartbeat",
-    "task.pr_opened": `opened${pr}`,
-    "task.review_assigned": `assigned${pr} to ${action.reviewer ?? "a reviewer"}`,
-    "task.review_verdict": `${action.verdict ?? "verdict"} on${pr}`,
-    "task.review_activity": action.activity ?? `reviewing${pr}`,
-    "task.merged": `merged${pr}`,
-    "task.closed": `closed${issue}`,
-    "task.critic_verdict": `critic verdict${issue}`,
-    "task.queued": "queued the wave",
-    "task.lane_retired": "retired lanes",
-  };
-  return `${clock(action.occurredAt)} ${what[action.kind] ?? action.kind}`;
-}
-
 /** What a control did, as the status and the board print it. */
 const DONE: Record<LaneControl, { status: string; word: string }> = {
   wake: { status: "Wake sent", word: "woken" },
   reassign: { status: "Work reassigned", word: "reassigned" },
   stop: { status: "Agent stopped", word: "stopped" },
 };
-
-/** A new idempotency key: `randomUUID` where the browser has it, else 128 random bits. */
-function newId(prefix: string): string {
-  const uuid = globalThis.crypto?.randomUUID?.();
-  if (uuid) return `${prefix}-${uuid}`;
-  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
-  return `${prefix}-${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
 
 const askedTo = (waitsOn: string) => (waitsOn === OWNER_ADDRESS ? "you" : waitsOn);
 
@@ -157,6 +123,7 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
             </li>
           )}
         </ul>
+        <LanesPanels runtime={runtime} executionId={executionId} board={board} actions={actions} onAnswer={(lane) => pick(lane, true)} onSent={read} />
       </div>
       {selected !== null && (
         <AgentPanel

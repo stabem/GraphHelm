@@ -15,6 +15,8 @@
 .ph-toggle { padding: 0; border: 0; background: none; color: #8AB4F8; font: 10.5px var(--mono); cursor: pointer; }
 .tc-badge { font: 10px var(--mono); color: #F0A35E; border: 1px solid #5A4128; border-radius: 3px; padding: 0 4px; }
 .ph-compare { min-width: 0; }
+/* #1776: opens Before/Now in the big frame. */
+.ph-open { align-self: flex-start; min-height: 32px; margin-top: 4px; }
 
 /* #1296: a failed launch shows the launcher's last lines. */
 .tc-run-error p { margin: 0; }

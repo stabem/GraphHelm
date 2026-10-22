@@ -23,9 +23,11 @@ interface Props {
   badges?: Record<string, string>;
   /** #history: shown in the inspector under the step, e.g. the compare with an earlier run. */
   inspectorStep?: (stepId: string) => ReactNode;
+  /** #1776: drawn in the big frame in place of the step's picture (Before/Now compare). */
+  compare?: ReactNode;
 }
 
-export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUrl, onMarkSafe, runLine, inspectorTop, badges, inspectorStep }: Props) {
+export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUrl, onMarkSafe, runLine, inspectorTop, badges, inspectorStep, compare }: Props) {
   const cur = frames[selected];
   const [failure, setFailure] = useState<{ stepId: string; message: string } | null>(null);
   if (!cur) return <p className="tc-empty">This journey has no steps to test</p>;
@@ -92,7 +94,7 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
             <span className="tc-count">{`emulated · frame ${cur.n}/${frames.length}`}</span>
           </div>
           <div className="tc-viewport" data-status={cur.status}>
-            {src ? <img src={src} alt={`Frame ${cur.n}: ${cur.text}`} /> : <p>No frame recorded for this step</p>}
+            {compare ?? (src ? <img src={src} alt={`Frame ${cur.n}: ${cur.text}`} /> : <p>No frame recorded for this step</p>)}
           </div>
           {cur.typed.length > 0 && (
             <ul aria-label="Typed on this step" className="tc-asserts">{cur.typed.map((line, i) => <li key={`${i}:${line}`}>{line}</li>)}</ul>

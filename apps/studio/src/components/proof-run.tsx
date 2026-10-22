@@ -12,7 +12,8 @@ import { testFrames } from "../runtime/test-frames";
 import { runFailure } from "../runtime/run-failure";
 import { useJourneyRun, type JourneyRunSource } from "./journey-flows";
 import { TestCanvas } from "./test-canvas";
-import { CHANGED_AT, FrameCompare, HistoryStrip, useJourneyHistory } from "./proof-history";
+import { CHANGED_AT, FrameCompare, HistoryStrip, useJourneyHistory, type CompareOpen } from "./proof-history";
+import { FrameCompareView } from "./frame-compare-view";
 import "./proof-history.css";
 
 interface Props {
@@ -63,6 +64,7 @@ export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, 
   }
   // The selection follows the step being played, until the owner clicks a frame.
   const [pinned, setPinned] = useState(false);
+  const [comparing, setComparing] = useState<(CompareOpen & { stepId: string }) | null>(null);
   useEffect(() => { if (!pinned && currentIdx >= 0) onSelect(currentIdx); }, [pinned, currentIdx, onSelect]);
   const reported = useRef<JourneyRunView | null>(null);
   useEffect(() => { if (run !== null && run !== reported.current) { reported.current = run; onRun?.(run); } }, [run, onRun]);
@@ -112,12 +114,18 @@ export function ProofRun({ journey, flow, source, selected, onSelect, frameUrl, 
       <button type="button" className="tc-primary" disabled={confirming} onClick={confirm}>{confirming ? "Running…" : "Run it"}</button>
     </div>
   ) : null;
+  // #1776: the compare belongs to the step it was opened on; moving to another step closes it.
+  const openStep = frames[selected]?.stepId ?? null;
+  const shown = comparing && comparing.stepId === openStep && !running ? comparing : null;
   return (
     <TestCanvas frames={frames} purpose={flow?.purpose ?? null} selected={selected} onSelect={(n) => { setPinned(true); onSelect(n); }}
       frameUrl={nowFrame} onMarkSafe={onMarkSafe}
       runLine={runLine} inspectorTop={held} badges={badges}
+      compare={shown ? <FrameCompareView key={`${shown.stepId}:${shown.mode}`} beforeUrl={shown.beforeUrl} nowUrl={shown.nowUrl} diffUrl={shown.diffUrl}
+        beforeLabel={shown.beforeLabel} initialMode={shown.mode} onBack={() => setComparing(null)} /> : undefined}
       inspectorStep={(stepId) => (history.baseline && !running
-        ? <FrameCompare history={history} screenId={screenOf(stepId)} nowUrl={runFrames[screenOf(stepId)] ?? null} nowStatus={frames.find((f) => f.stepId === stepId)?.status ?? "not_run"} />
+        ? <FrameCompare history={history} screenId={screenOf(stepId)} nowUrl={runFrames[screenOf(stepId)] ?? null} nowStatus={frames.find((f) => f.stepId === stepId)?.status ?? "not_run"}
+          onOpen={(open) => setComparing({ ...open, stepId })} />
         : null)} />
   );
 }

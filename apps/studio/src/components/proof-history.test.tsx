@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { fastUserEvent } from "../test/user-event";
 import { ProofRun } from "./proof-run";
 import { diffPixels, pastVerdict } from "./proof-history";
 import type { JourneyRunSource } from "./journey-flows";
@@ -62,5 +63,38 @@ describe("Proof history (#history)", () => {
     expect(buttons[1]).toHaveAttribute("aria-pressed", "true");
     expect(src.historyFrame).toHaveBeenCalledWith("cart", runs[1]!.run, "b");
     expect(screen.queryByText(/failed then/)).not.toBeInTheDocument();
+  });
+
+  function history(frameFor: (run: string, id: string) => Blob | null): JourneyRunSource {
+    const runs = [past("00000001760400000000", "2026-10-13T09:05:00Z", "pass")];
+    return {
+      start: vi.fn(async () => done), read: vi.fn(async () => done),
+      screenFrame: vi.fn(async (_f: string, id: string) => ({ blob: new Blob([id]), etag: null })),
+      liveFrame: vi.fn(async () => null),
+      history: vi.fn(async () => ({ id: "cart", runs })),
+      historyFrame: vi.fn(async (_f: string, run: string, id: string) => { const blob = frameFor(run, id); return blob ? { blob, etag: null } : null; }),
+    };
+  }
+
+  it("opens Before and Now in the main frame and Escape returns to the frame (#1776)", async () => {
+    render(<ProofRun journey={journey} source={history((run, id) => new Blob([run + id]))} selected={1} onSelect={vi.fn()} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
+    const browser = screen.getByRole("region", { name: "Emulated browser" });
+    expect(browser.querySelector(".fcv")).toBeNull();
+    const user = fastUserEvent();
+    await user.click(screen.getByRole("button", { name: "Compare Before and Now in the frame" }));
+    const view = screen.getByRole("group", { name: "Compare Before and Now" });
+    expect(browser).toContainElement(view);
+    expect(screen.getByRole("button", { name: "Overlay" })).toHaveAttribute("aria-pressed", "true");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("group", { name: "Compare Before and Now" })).toBeNull();
+    expect(screen.getByRole("img", { name: "Frame 2: Cart" })).toBeInTheDocument();
+  });
+
+  it("offers no compare when the earlier run kept no frame for the step (#1776)", async () => {
+    render(<ProofRun journey={journey} source={history(() => null)} selected={1} onSelect={vi.fn()} frameUrl={() => null} onMarkSafe={vi.fn()} />);
+    await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
+    expect(screen.getByRole("group", { name: "Compare with an earlier run" })).toHaveTextContent("That run kept no frame for this step.");
+    expect(screen.queryByRole("button", { name: "Compare Before and Now in the frame" })).toBeNull();
   });
 });

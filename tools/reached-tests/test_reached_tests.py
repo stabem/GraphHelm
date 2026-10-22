@@ -405,38 +405,28 @@ class Reach(unittest.TestCase):
         self.assertIn(("graphhelm-cli", "journeys", "journey_scope_guard"), single)
         self.assertIn("graphhelm --json journey validate --all", tools)
 
-    def test_a_studio_next_change_runs_its_whole_vitest_and_tsc_beside_the_old_studios(self):
-        # #1818: apps/studio-next/** landed in `unmapped` (PR #1817), so Studio v2 got no check.
-        next_only = reach("apps/studio-next/src/App.tsx")
-        whole, single, studio, tools, validate, other = next_only
+    def test_a_studio_change_runs_its_whole_vitest_and_tsc(self):
+        # #1818, #1808: the Studio has no related-test map; any change under apps/studio runs its whole
+        # suite and tsc in its own folder.
+        whole, single, studio, tools, validate, other = reach("apps/studio/src/App.tsx")
         self.assertEqual(other, [])
-        self.assertEqual(studio, ["apps/studio-next/src/App.tsx"])
-        next_command = "(cd apps/studio-next && npx vitest run --maxWorkers=4 && npx tsc -b)"
-        self.assertEqual(rt.commands(whole, single, studio, tools, validate), [next_command])
+        self.assertEqual(studio, ["apps/studio/src/App.tsx"])
+        self.assertEqual(rt.commands(whole, single, studio, tools, validate), ["(cd apps/studio && npx vitest run --maxWorkers=4 && npx tsc -b)"])
         self.assertEqual(rt.steps(whole, single, studio, tools, validate), [
-            {"argv": ["npx", "vitest", "run", "--maxWorkers=4"], "cwd": "apps/studio-next", "slot": False},
-            {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio-next", "slot": False},
+            {"argv": ["npx", "vitest", "run", "--maxWorkers=4"], "cwd": "apps/studio", "slot": False},
+            {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False},
         ])
-        # Both apps in one diff: each runs in its own folder, the old one still by related files.
-        whole, single, studio, tools, validate, other = reach(
-            "apps/studio/src/App.tsx", "apps/studio-next/package.json")
-        cwds = [step["cwd"] for step in rt.steps(whole, single, studio, tools, validate)]
-        self.assertEqual(cwds, ["apps/studio", "apps/studio", "apps/studio-next", "apps/studio-next"])
-        self.assertIn("(cd apps/studio && npx vitest related --run --maxWorkers=1 src/App.tsx && npx tsc -b)",
-                      rt.commands(whole, single, studio, tools, validate))
 
-    def test_the_mcp_tool_catalog_reaches_the_stdio_tests_and_the_studio_adapter_test(self):
+    def test_the_mcp_tool_catalog_reaches_the_stdio_tests(self):
         # #1449: schemas/ mapped to nothing, so a catalog change stopped run_reached as unmapped.
+        # #1808: the Studio's WebMCP adapter test was retired with the old app (#1870).
         packages = [dict(PACKAGES[2], bundles={"mcp_stdio": "cli"})]
         with tempfile.TemporaryDirectory() as repo:
-            studio_test = Path(repo, rt.MCP_CATALOG_STUDIO_TEST)
-            studio_test.parent.mkdir(parents=True)
-            studio_test.write_text("", encoding="utf-8")
             whole, single, studio, tools, validate, other = rt.reach(
                 ["schemas/mcp-tools.json"], packages, {}, repo)
         self.assertEqual(other, [])
         self.assertIn(("graphhelm-cli", "cli", "mcp_stdio"), single)
-        self.assertEqual(studio, [rt.MCP_CATALOG_STUDIO_TEST])
+        self.assertEqual(studio, [])
 
     def test_deleted_non_rust_include_reaches_embedding_crate_compile(self):
         """Compile crates whose Rust source embeds a changed non-Rust path, including deletions.
@@ -553,8 +543,7 @@ class Reach(unittest.TestCase):
         self.assertEqual(records[0], {"argv": rt.BROWSER_ARGV, "cwd": ".", "slot": True, "observer": "browser"})
         self.assertEqual(records[1]["argv"], ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli",
                                                "--", "--test-threads=2"])
-        self.assertEqual(records[-2], {"argv": ["npx", "vitest", "related", "--run", "--maxWorkers=1",
-                                                 "src/runtime/team-tasks.ts"],
+        self.assertEqual(records[-2], {"argv": ["npx", "vitest", "run", "--maxWorkers=4"],
                                        "cwd": "apps/studio", "slot": False})
         self.assertEqual(records[-1], {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False})
 
@@ -866,11 +855,10 @@ class Reach(unittest.TestCase):
         _, single, *_ = reach("extensions/builtin/graphhelm-development-contracts/extension.json")
         self.assertIn(("graphhelm-protocols", "canonical_golden", None), single)
 
-    def test_studio_files_reach_vitest_related_and_nothing_in_rust(self):
+    def test_studio_files_reach_the_whole_studio_suite_and_nothing_in_rust(self):
         whole, single, studio, *_ = reach("apps/studio/src/runtime/team-tasks.ts")
         self.assertEqual((whole, single), (set(), set()))
-        commands = rt.commands(whole, single, studio)
-        self.assertEqual(commands, ["(cd apps/studio && npx vitest related --run --maxWorkers=1 src/runtime/team-tasks.ts && npx tsc -b)"])
+        self.assertEqual(rt.commands(whole, single, studio), ["(cd apps/studio && npx vitest run --maxWorkers=4 && npx tsc -b)"])
 
     def test_studio_launcher_scripts_reach_the_cli_launcher_tests_not_vitest(self):
         """#1571: apps/studio/tools/* are exercised by `the_launcher_*` in graphhelm-cli."""
@@ -887,13 +875,11 @@ class Reach(unittest.TestCase):
                       ("apps/studio/vite.config.ts", "apps/studio/src/runtime/team-tasks.ts")):
             with self.subTest(paths=paths):
                 whole, single, studio, *_ = reach(*paths)
-                self.assertEqual(rt.commands(whole, single, studio),
-                                 ["(cd apps/studio && npx vitest run --maxWorkers=1 && npx tsc -b)"])
+                self.assertEqual(rt.commands(whole, single, studio), ["(cd apps/studio && npx vitest run --maxWorkers=4 && npx tsc -b)"])
                 self.assertEqual(rt.steps(whole, single, studio)[-2:], [
-                    {"argv": ["npx", "vitest", "run", "--maxWorkers=1"],
-                     "cwd": "apps/studio", "slot": False},
-                    {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False},
-                ])
+            {"argv": ["npx", "vitest", "run", "--maxWorkers=4"], "cwd": "apps/studio", "slot": False},
+            {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False},
+        ])
 
     def test_docs_reach_nothing_and_are_not_reported_unmapped(self):
         whole, single, studio, tools, validate, other = reach("docs/process/DELIVERY.md", "docs/journeys/x/shot.jpg")

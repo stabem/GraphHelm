@@ -85,10 +85,8 @@ CLI_COMMAND_WORDS = {
 }
 LAUNCHER_TESTS = f"cargo {TOOLCHAIN} test --locked -p graphhelm-cli --bin graphhelm {TEST_THREADS} commands::studio::tests::the_launcher_"
 JOURNEY_REVIEW_CHECK = "python tools/reached-tests/claude_plugin_check.py plugins/journey-review"
-# #1818: the Studio v2 app (#1790) beside the old one until cutover (C1 #1808) renames it.
-STUDIO_NEXT = "apps/studio-next/"
-STUDIO_NEXT_VITEST = ["npx", "vitest", "run", "--maxWorkers=4"]
-MCP_CATALOG_STUDIO_TEST = "apps/studio/src/webmcp/mcp-tools.test.ts"
+# #1808: the Studio (Studio v2, #1790) has no related-test map; any change runs its whole suite.
+STUDIO_VITEST = ["npx", "vitest", "run", "--maxWorkers=4"]
 # #1521: starts the Studio dev server the way the journey launcher does (`fixture.sh up`).
 STUDIO_START_SMOKE = "tools/studio-journey-fixture/test_studio_starts.py"
 # The `#[ignore]` browser observers (docs/guides/journeys.md): the real proof of a change to the
@@ -479,10 +477,6 @@ def reach(changed, packages, embedded, repo=None):
             # #1571: the launcher scripts are run by the CLI's `the_launcher_*` tests, not by vitest.
             tools.add(LAUNCHER_TESTS)
             continue
-        if path.startswith(STUDIO_NEXT):
-            # #1818: Studio v2 has no related-test map yet; any change runs its whole suite.
-            studio.append(path)
-            continue
         if path.startswith("apps/studio/"):
             studio.append(path)
             # #1521: Vitest and tsc never start Vite; the journey launcher does.
@@ -498,8 +492,6 @@ def reach(changed, packages, embedded, repo=None):
                 if prefix == ".graphhelm/journeys/":
                     tools.add("graphhelm --json journey validate --all")
                 hit = True
-        if path == "schemas/mcp-tools.json" and root is not None and (root / MCP_CATALOG_STUDIO_TEST).is_file():
-            studio.append(MCP_CATALOG_STUDIO_TEST)
         if path.startswith(BROWSER_REACHERS):
             tools.add(BROWSER_OBSERVERS)
         handoff_scenario = ".graphhelm/fixtures/keel-task-handoff/scenario.py"
@@ -955,16 +947,8 @@ def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, p
         if lint:
             cmds.append(f"cargo {TOOLCHAIN} clippy --locked " + " ".join(f"-p {n}" for n in lint) + " --all-targets --all-features -- -D warnings")
         cmds.append(GUARD)
-    old = [p for p in studio if not p.startswith(STUDIO_NEXT)]
-    if old:
-        if "apps/studio/vite.config.ts" in old:
-            vitest = "npx vitest run --maxWorkers=1"
-        else:
-            files = " ".join(p[len("apps/studio/"):] for p in old)
-            vitest = f"npx vitest related --run --maxWorkers=1 {files}"
-        cmds.append(f"(cd apps/studio && {vitest} && npx tsc -b)")
-    if len(old) < len(studio):
-        cmds.append(f"(cd {STUDIO_NEXT.rstrip('/')} && {' '.join(STUDIO_NEXT_VITEST)} && npx tsc -b)")
+    if studio:
+        cmds.append(f"(cd apps/studio && {' '.join(STUDIO_VITEST)} && npx tsc -b)")
     return cmds
 
 
@@ -1080,20 +1064,9 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
         out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", "graphhelm-protocols",
                                "--test", "authored_strings_across_the_workspace", *TEST_THREADS.split()],
                     "cwd": ".", "slot": True})
-    old = [p for p in studio if not p.startswith(STUDIO_NEXT)]
-    if old:
-        if "apps/studio/vite.config.ts" in old:
-            vitest = ["npx", "vitest", "run", "--maxWorkers=1"]
-        else:
-            files = [p[len("apps/studio/"):] for p in old]
-            vitest = ["npx", "vitest", "related", "--run", "--maxWorkers=1", *files]
-        out.append({"argv": vitest,
-                    "cwd": "apps/studio", "slot": False})
+    if studio:
+        out.append({"argv": list(STUDIO_VITEST), "cwd": "apps/studio", "slot": False})
         out.append({"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False})
-    if len(old) < len(studio):
-        next_root = STUDIO_NEXT.rstrip("/")
-        out.append({"argv": list(STUDIO_NEXT_VITEST), "cwd": next_root, "slot": False})
-        out.append({"argv": ["npx", "tsc", "-b"], "cwd": next_root, "slot": False})
     return out
 
 

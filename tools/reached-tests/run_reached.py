@@ -168,7 +168,7 @@ def _slot_telemetry(path: Path, command: list[str]) -> tuple[float | None, float
 
 
 # #1829: the Studio app folders whose local Node tools a step may run; each has its own lockfile.
-STUDIO_APPS = ("apps/studio", "apps/studio-next")
+STUDIO_APPS = ("apps/studio",)
 
 
 def _studio_app(repo: Path, cwd: Path) -> str | None:

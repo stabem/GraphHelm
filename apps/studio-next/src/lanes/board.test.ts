@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { BoardTask, LaneWaiting, TasksBoard } from "../runtime/client";
-import { agents, blocks, column, idleText, idleTone, stepAged } from "./board";
+import { agents, blocks, column, idleText, idleTone, minutesInStep, stepAged } from "./board";
 
 const task = (key: string, lane: string, step: BoardTask["step"], extra: Partial<BoardTask> = {}): BoardTask => ({
   key, issue: 7, pr: null, lane, currentReviewer: null, step, blockedBy: null, title: "Work", prTitle: null, journeys: [], lastSequence: 1, ...extra,
@@ -53,6 +53,17 @@ describe("lanes board", () => {
       ["lane-q", "blocked", null, null, 5],
       ["lane-r", "review", "b#1", null, 0],
     ]);
+  });
+
+  it("turns a card red exactly at 60 minutes in its step, not a second before (#1886)", () => {
+    // A fixed Runtime `now` against a fixed `clock.since`; no timers.
+    const since = "2026-10-22T11:00:00Z";
+    const slice = { key: "a#1", issue: 1, pr: null, lane: "lane-a", currentReviewer: null, step: "review", blockedBy: null,
+      title: "t", prTitle: null, journeys: [], lastSequence: 1, clock: { since } } as BoardTask;
+    const at = (now: string) => { const minutes = minutesInStep(slice, now); return [minutes, stepAged(minutes)]; };
+    expect(at("2026-10-22T11:59:59Z")).toEqual([59, false]);
+    expect(at("2026-10-22T12:00:00Z")).toEqual([60, true]);
+    expect(at("2026-10-22T12:00:01Z")).toEqual([60, true]);
   });
 
   it("ages each card from the record that moved its slice into its step, red from one hour", () => {

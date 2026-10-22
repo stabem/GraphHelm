@@ -259,6 +259,44 @@ button { font: inherit; }
   .agent-panel { max-width: none; border-left: 0; border-top: 1px solid var(--edge); }
 }
 
+/* #1804: the Lanes bottom row: Needs action, collisions and capacity, live feed. */
+.lane-panels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.lane-box { border: 1px solid var(--edge); border-radius: 12px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.lane-box > strong, .box-head strong { font-size: 11px; }
+.box-head { display: flex; gap: 6px; align-items: center; }
+.box-head .count, .box-head .live-mark { margin-left: auto; }
+.faint { color: var(--faint); font-size: 10px; }
+.count.late { color: #ff6b6b; }
+.live-mark { font-size: 10px; color: var(--live); }
+.needs, .collisions, .capacity, .feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.need { display: flex; gap: 8px; align-items: center; padding: 8px; border-radius: 8px; background: #1e1e22; }
+.need-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.need-dot.red { background: #ff6b6b; }
+.need-dot.orange { background: var(--accent); }
+.need-dot.blue { background: #8ab4ff; }
+.need-dot.green { background: var(--live); }
+.need-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.need-what { overflow-wrap: anywhere; }
+.need .b { white-space: nowrap; }
+.need [disabled] { opacity: .5; cursor: default; }
+.collision { padding: 8px; border-radius: 8px; background: #24170e; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.collision .path { color: var(--accent); }
+.capacity li { display: flex; flex-direction: column; gap: 4px; }
+.cap-line { display: flex; justify-content: space-between; gap: 8px; }
+.cap-value.ok { color: var(--live); }
+.cap-value.slow { color: var(--accent); }
+.cap-value.late { color: #ff6b6b; }
+.cap-value.unknown { color: var(--faint); }
+.cap-bar { height: 6px; border-radius: 3px; background: var(--edge); overflow: hidden; }
+.cap-fill { display: block; height: 6px; }
+.cap-fill.ok { background: var(--live); }
+.cap-fill.slow { background: var(--accent); }
+.cap-fill.late { background: #ff6b6b; }
+.feed li { display: flex; gap: 8px; font-size: 11px; min-width: 0; }
+.feed-who { flex: none; width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.feed li > .muted { overflow-wrap: anywhere; min-width: 0; }
+@media (max-width: 1100px) { .lane-panels { grid-template-columns: 1fr; } }
+
 /* #1801: the Graph region's owner requests and Kanban. */
 .requests { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .requests-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }

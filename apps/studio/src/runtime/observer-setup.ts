@@ -4,16 +4,14 @@
  * phase in plain words instead, plus a percentage only when the installer printed one.
  */
 const PHASES: ReadonlyArray<readonly [RegExp, string]> = [
-  [/playwright install|chromium/i, "Chromium download"],
-  [/npm install|@playwright\/test/i, "test tools"],
-  [/writing the current browser observer|driver/i, "driver"],
+  [/playwright install|chromium/i, "Downloading Chromium"],
+  [/npm install|@playwright\/test/i, "Installing test tools"],
+  [/writing the current browser observer|driver/i, "Writing the driver"],
 ];
 
 export function observerSetupStatus(message: string): string {
   const phase = PHASES.find(([pattern]) => pattern.test(message))?.[1];
   const percent = /\b(\d{1,3})\s?%/.exec(message)?.[1];
-  const parts = ["Preparing the browser for this run"];
-  if (phase) parts.push(phase);
-  if (percent !== undefined && Number(percent) <= 100) parts.push(`${Number(percent)}%`);
-  return parts.join(" · ");
+  const shown = percent !== undefined && Number(percent) <= 100 ? ` ${Number(percent)}%` : "";
+  return phase ? `Preparing the browser · ${phase}${shown}` : `Preparing the browser${shown}`;
 }

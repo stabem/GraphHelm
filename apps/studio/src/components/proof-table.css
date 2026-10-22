@@ -87,3 +87,5 @@
 .proof-reject { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; }
 .proof-reject textarea { flex: 1 1 100%; min-height: 64px; padding: 8px; border: 1px solid #575D6B; border-radius: 7px; background: #15171C; color: inherit; font: inherit; }
 .proof-flow-actions p { flex-basis: 100%; margin: 0; color: #FF6B5E; }
+.proof-flow-actions .proof-log-toggle { min-height: 0; padding: 0; border: 0; background: none; color: #8AB4FF; }
+.proof-run-log { flex-basis: 100%; max-height: 132px; overflow: auto; margin: 0; padding: 10px 12px; border: 1px solid #34343C; border-radius: 8px; background: #0A0A0B; color: #A2A2AD; font: 11px/1.6 var(--mono); white-space: pre-wrap; }

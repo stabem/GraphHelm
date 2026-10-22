@@ -19,7 +19,7 @@
 .tc-card[aria-pressed="true"] { background: #1A1C22; border-color: #9AB8FF; box-shadow: 0 0 0 3px rgba(154, 184, 255, .15); }
 .tc-card:focus-visible, .tc-tick:focus-visible { outline: 2px solid #9AB8FF; outline-offset: 3px; }
 .tc-thumb { height: 64px; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 0 14px; background: #0F1013; border-bottom: 1px solid #23262D; }
-.tc-thumb-frame { padding: 0; overflow: hidden; }
+.tc-thumb-frame { padding: 0; overflow: hidden; border-bottom: 2px solid var(--mv-tone); }
 .tc-thumb-frame img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
 .tc-thumb-line { height: 4px; width: 50%; background: #262930; border-radius: 2px; }
 .tc-thumb-hl { height: 14px; width: 60%; border-radius: 3px; background: var(--mv-tint); border: 1px solid var(--mv-ring); }

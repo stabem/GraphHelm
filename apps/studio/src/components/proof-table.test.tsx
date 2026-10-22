@@ -156,11 +156,29 @@ describe("ProofTable", () => {
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
     // #1775: the phase in plain words, not the bare installer command line.
     const status = await screen.findByRole("status");
-    expect(status).toHaveTextContent("Preparing the browser for this run · Chromium download");
+    expect(status).toHaveTextContent("Preparing the browser · Downloading Chromium");
     expect(status).not.toHaveTextContent("npx");
     expect(screen.getByRole("button", { name: "Run again" })).toBeDisabled();
     expect(await screen.findByRole("alert")).toHaveTextContent("browser observer setup failed: npm exited with code 1");
     expect(screen.getByRole("alert")).not.toHaveTextContent("graphhelm setup --install-observer");
+  });
+  it("#1775: Show log lists the setup lines the Runtime reported, in order", async () => {
+    const installing = (message: string): JourneyRunView => ({ state: "running", kind: "preview",
+      observerSetup: { state: "installing", message }, screens: {} });
+    const run: JourneyRunSource = {
+      start: vi.fn(async () => installing("npm install --save-dev @playwright/test@1.64.0")),
+      read: vi.fn(async () => installing("npx playwright install chromium")),
+      screenFrame: vi.fn(async () => null), liveFrame: vi.fn(async () => null),
+    };
+    render(<ProofTable mission={mission} onOpenTest={vi.fn()} run={run}
+      flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true, screens: [], edges: [], paths: {} }} />);
+    await userEvent.click(screen.getByRole("button", { name: "Run again" }));
+    expect(await screen.findByText("Preparing the browser · Downloading Chromium", {}, { timeout: 5000 })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show log" }));
+    expect(screen.getByLabelText("Run console").textContent).toBe(
+      "npm install --save-dev @playwright/test@1.64.0\nnpx playwright install chromium");
+    await userEvent.click(screen.getByRole("button", { name: "Hide log" }));
+    expect(screen.queryByLabelText("Run console")).toBeNull();
   });
   it("#813: draft note is a muted line below the clean question", () => {
     render(<ProofTable mission={{ ...mission, title: "Add a model (draft: the test setup has no model gateway)" }} onOpenTest={vi.fn()} />);

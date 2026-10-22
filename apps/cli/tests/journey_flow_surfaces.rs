@@ -417,6 +417,81 @@ fn flows_list_status_drift_findings_and_graph_identically_on_cli_http_and_mcp() 
     assert_eq!(status, 401);
 }
 
+/// #1835: each journey's last run comes from what its runner recorded, identically on the CLI,
+/// HTTP and MCP. Credible regressions: a journey never run read as passed or failed, a failed run
+/// without the step that broke, and a run in flight hiding the last finished one.
+#[test]
+fn flows_serve_each_journeys_last_recorded_run_and_not_run_when_none() {
+    let harness = prepared();
+    let (_, read) = harness.cli(&["preview", "checkout", "--read"]);
+    let digest = read["data"]["digest"].as_str().unwrap().to_owned();
+    let previews = harness.project.join(".graphhelm/journey-previews");
+    // checkout passed; a newer run is in flight, so the passed one is the newest archived run.
+    let archived = previews.join("checkout/history/00000001792058400000");
+    std::fs::create_dir_all(&archived).unwrap();
+    std::fs::write(
+        archived.join("state.json"),
+        json!({"preview":true,"kind":"replay","state":"ready","result":"pass","digest":digest,
+            "commit":"c1","startedAt":"2026-10-17T10:00:00+00:00",
+            "ranAt":"2026-10-17T10:00:09+00:00",
+            "screens":{"cart":{"result":"pass","frame":false},"pay":{"result":"pass","frame":false},
+                "done":{"result":"pass","frame":false}},
+            "edges":{"cart.checkout":{"result":"pass"},"pay.submit":{"result":"pass"}}})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        previews.join("checkout/state.json"),
+        json!({"preview":true,"state":"running","digest":digest,"commit":"c1",
+            "startedAt":"2026-10-18T10:00:00+00:00","screens":{},"edges":{}})
+        .to_string(),
+    )
+    .unwrap();
+    // basket failed at its second edge; `done` was never reached. Its flow changed since.
+    std::fs::create_dir_all(previews.join("basket")).unwrap();
+    std::fs::write(
+        previews.join("basket/state.json"),
+        json!({"preview":true,"kind":"replay","state":"ready","result":"fail","digest":"sha256:old",
+            "commit":"c1","startedAt":"2026-10-17T11:00:00+00:00",
+            "ranAt":"2026-10-17T11:00:07+00:00",
+            "screens":{"cart":{"result":"pass","frame":false},"pay":{"result":"pass","frame":false},
+                "done":{"frame":false,"reason":"not_reached"}},
+            "edges":{"cart.checkout":{"result":"pass"},
+                "pay.submit":{"result":"fail","reason":"act_failed"}}})
+        .to_string(),
+    )
+    .unwrap();
+
+    let cli = harness.flows();
+    assert_eq!(
+        flow(&cli, "checkout")["lastRun"],
+        json!({"status":"passed","ranAt":"2026-10-17T10:00:09+00:00","kind":"replay",
+            "reason":null,"failingStep":null,"flowChanged":false}),
+        "{cli}"
+    );
+    assert_eq!(
+        flow(&cli, "basket")["lastRun"],
+        json!({"status":"failed","ranAt":"2026-10-17T11:00:07+00:00","kind":"replay",
+            "reason":null,"failingStep":{"kind":"edge","id":"pay.submit","result":"fail",
+                "reason":"act_failed"},"flowChanged":true}),
+        "{cli}"
+    );
+    assert_eq!(
+        flow(&cli, "broken")["lastRun"],
+        json!({"status":"not_run","ranAt":null,"kind":null,"reason":null,"failingStep":null,
+            "flowChanged":null}),
+        "{cli}"
+    );
+
+    let (_server, base, token) = harness.serve(true);
+    let (status, over_http) = http(&base, "GET", "/v1/journey-flows", Some(&token));
+    assert_eq!(status, 200, "{over_http}");
+    assert_eq!(over_http["data"], cli, "HTTP differs from the CLI");
+    let (ok, over_mcp) = harness.mcp(&base, &token, "journey_flows", &json!({}));
+    assert!(ok, "{over_mcp}");
+    assert_eq!(over_mcp["data"], cli, "MCP differs from the CLI");
+}
+
 #[test]
 fn approve_over_http_and_mcp_does_what_the_cli_does_and_refuses_findings() {
     let harness = prepared();

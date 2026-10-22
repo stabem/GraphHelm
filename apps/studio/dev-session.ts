@@ -163,6 +163,20 @@ function folderOf(canonical: string | null): string | null {
   return canonical === null ? null : displayFolder(canonical, homedir());
 }
 
+/** #1901: the run the project's ignored `.graphhelm/team.json` names as its team run (the file the
+ * lane hooks bind to), only its `executionId`; null when the file is absent or names none. */
+export function teamRunOf(canonical: string | null): string | null {
+  if (canonical === null) return null;
+  try {
+    const raw = readFileSync(join(canonical, ".graphhelm", "team.json"), "utf8");
+    if (raw.length > 65_536) return null;
+    const id = (JSON.parse(raw) as { executionId?: unknown } | null)?.executionId;
+    return typeof id === "string" && /^[A-Za-z0-9._:-]{1,200}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 function readBody(request: IncomingMessage, limit: number): Promise<string | null> {
   return new Promise((done) => {
     let size = 0;
@@ -330,14 +344,14 @@ export function devSession(env: Record<string, string>): Plugin {
             return json(response, 404, { ok: false });
           }
           return json(response, 200, {
-            ok: true, token, project: basename(project.folder), projectId: project.id, folder: folderOf(project.folder), base: `/p/${project.id}`, sessionKey: stableKey(token),
+            ok: true, token, project: basename(project.folder), projectId: project.id, folder: folderOf(project.folder), base: `/p/${project.id}`, sessionKey: stableKey(token), teamRun: teamRunOf(project.folder),
           });
         }
         const token = readToken(tokenPath(env));
         const allowed = token !== null && presented.length > 0
           && (sameSecret(presented, nonce) || sameSecret(presented, stableKey(token)) || consumeTicket(ticketPath(env), presented));
         if (!allowed || token === null) return json(response, 404, { ok: false });
-        json(response, 200, { ok: true, token, project: projectName(env), projectId: first, folder: folderOf(firstFolder(env)), base: "", sessionKey: stableKey(token) });
+        json(response, 200, { ok: true, token, project: projectName(env), projectId: first, folder: folderOf(firstFolder(env)), base: "", sessionKey: stableKey(token), teamRun: teamRunOf(firstFolder(env)) });
       });
     },
   };

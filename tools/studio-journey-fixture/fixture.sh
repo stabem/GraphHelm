@@ -187,7 +187,9 @@ FLOW
     if [ -r /proc/$$/winpid ]; then echo "serve-listener 0 $pid"; else echo "serve-listener $pid"; fi >> "$pids"
   done
   # The seeded run: the manual-override example, one blocked node, one ready node.
-  if ! grep -q '"executionId":"demo"' "$dir/.graphhelm/seed.json" 2>/dev/null; then
+  # #1901: the Studio opens a project's team run by itself, so studio2-no-run gets a project with
+  # no run at all.
+  if [ "${GRAPHHELM_JOURNEY_FLOW:-}" != studio2-no-run ] && ! grep -q '"executionId":"demo"' "$dir/.graphhelm/seed.json" 2>/dev/null; then
     echo '{"nodeOutcomes":{"implementation":"failure"}}' > "$dir/.graphhelm/fixtures.json"
     "$bin" --json execution start --file "$repo/examples/graphs/manual-override-deploy.yaml" \
       --events "$rt/events" --fixtures "$dir/.graphhelm/fixtures.json" --mode supervised --execution demo \
@@ -238,7 +240,8 @@ FLOW
     node "$repo/tools/studio-journey-fixture/seed_needs.mjs" silent "$dir" "http://127.0.0.1:$rport" "$rt/events.token"
   fi
   # #1808: the Graph flows read a request's issues and PRs; the old studio-work-graph seed serves them.
-  if [ "$flow" = studio2-graph-requests ] || [ "$flow" = studio2-graph-review-screen ]; then
+  # #1901: studio2-lanes-board reads the same request in its WHAT I ASKED column.
+  if [ "$flow" = studio2-graph-requests ] || [ "$flow" = studio2-graph-review-screen ] || [ "$flow" = studio2-lanes-board ]; then
     # #721 task records use the existing planner actor, so these rows do not create fake agents.
     # Every refusal stops the seed; the fixture token's permissions are never widened.
     node - "$dir" "$now" "http://127.0.0.1:$rport" "$rt/events.token" <<'NODE'

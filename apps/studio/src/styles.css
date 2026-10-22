@@ -57,10 +57,6 @@ button { font: inherit; }
 .project-head { display: flex; align-items: center; gap: 6px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle); margin-left: auto; }
 .dot.on { background: var(--live); }
-.runs { list-style: none; margin: 0 0 0 5px; padding: 0 0 0 4px; border-left: 1px solid var(--edge-strong); display: flex; flex-direction: column; gap: 2px; }
-.runs a { display: block; padding: 4px 8px; border-radius: 6px; color: var(--muted); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.runs a[aria-current="page"] { background: var(--raised); color: var(--text); }
-.runs .empty { padding: 4px 8px; color: var(--muted); }
 
 .topbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--edge); background: var(--bg); flex-wrap: wrap; }
 .crumb-sep { color: var(--faint); }
@@ -112,7 +108,10 @@ button { font: inherit; }
 .add-folder-form input { flex: 1 1 100%; min-width: 0; background: var(--card); color: inherit; border: 1px solid var(--edge-strong); border-radius: 6px; padding: 4px 6px; font-size: 11px; }
 .add-folder-error { flex: 1 1 100%; color: var(--muted); font-size: 11px; }
 .project-folder { font-size: 10px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-counts { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
+/* #1901: the open project's team run and journeys, indented as Sidebar.dc.html draws them. */
+.project-counts { display: flex; flex-direction: column; gap: 2px; padding-left: 4px; border-left: 1px solid var(--edge-strong); margin-left: 5px; color: var(--muted); }
+.project-counts > span { padding: 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-counts > .project-run { border-radius: 6px; background: var(--raised); color: var(--text); }
 
 /* #1805: Proof (docs/design/studio/Proof.dc.html) - journeys column, run bar, console, step strip. */
 .proof { display: flex; min-height: 0; flex: 1; }
@@ -201,6 +200,25 @@ button { font: inherit; }
 .board-column h3 .count { margin-left: auto; color: var(--faint); font-weight: 400; }
 .board-column > ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .board-column .none { color: var(--faint); font-size: 11px; }
+/* #1901: WHAT I ASKED, the first board column of Lanes.dc.html. */
+.board.with-asked { grid-template-columns: 230px repeat(6, minmax(150px, 1fr)); }
+.board-column.asked { border-color: #5a3a22; background: #151210; }
+.board-column.asked > section { display: flex; flex-direction: column; gap: 8px; }
+.board-column.asked ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.col-dot.asked { background: var(--accent); }
+.asked-card { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 10px; border: 1px solid var(--edge-strong); background: var(--card); display: flex; flex-direction: column; gap: 6px; text-align: left; }
+.asked-card[aria-pressed="true"] { border-color: var(--accent); }
+.asked-when { font-size: 10px; color: var(--accent); }
+.asked-title { font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+.asked-summary { font-size: 10px; color: var(--muted); }
+.asked-agents { display: flex; flex-wrap: wrap; gap: 4px; }
+.asked-chip { display: inline-flex; gap: 4px; align-items: center; padding: 2px 6px; border-radius: 999px; background: #151517; font-size: 10px; color: var(--text); }
+.asked-dot { width: 6px; height: 6px; border-radius: 50%; }
+.asked-dot.asked-asks, .block.asked-asks { background: #ff6b6b; }
+.asked-dot.asked-quiet, .block.asked-quiet { background: var(--faint); }
+.asked-dot.asked-merge, .block.asked-merge { background: var(--live); }
+.block.asked-on { background: var(--accent); }
+.asked-dot.asked-on { background: var(--live); }
 .col-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .col-dot.implement { background: var(--accent); }
 .col-dot.review { background: #8ab4ff; }
@@ -255,7 +273,7 @@ button { font: inherit; }
 .sent { color: var(--live); }
 @media (max-width: 760px) {
   .lanes-main { padding: 12px 16px; }
-  .board { grid-template-columns: 1fr; overflow-x: visible; }
+  .board, .board.with-asked { grid-template-columns: 1fr; overflow-x: visible; }
   .agent-panel { max-width: none; border-left: 0; border-top: 1px solid var(--edge); }
 }
 

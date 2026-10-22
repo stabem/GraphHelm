@@ -20,6 +20,8 @@ export interface Session {
   folder: string | null;
   /** This project's stable key, in memory: it proves the owner to `/__studio/add`. */
   sessionKey: string | null;
+  /** #1901: the run the project's `.graphhelm/team.json` names, or null when it names none. */
+  teamRun: string | null;
 }
 
 export const SESSION_KEYS_STORAGE = "graphhelm.studio-next.sessionKeys";
@@ -64,7 +66,9 @@ function ask(nonce: string, project: string | null): Promise<unknown> {
   return request;
 }
 
-type Reply = { token?: unknown; folder?: unknown; project?: unknown; projectId?: unknown; base?: unknown; sessionKey?: unknown } | null;
+type Reply = { token?: unknown; folder?: unknown; project?: unknown; projectId?: unknown; base?: unknown; sessionKey?: unknown; teamRun?: unknown } | null;
+
+const RUN_ID = /^[A-Za-z0-9._:-]{1,200}$/;
 
 function sessionOf(payload: Reply): { session: Session; sessionKey: string | null } | null {
   if (!payload || typeof payload.token !== "string" || payload.token.trim().length === 0 || payload.token.length > 512) return null;
@@ -79,6 +83,7 @@ function sessionOf(payload: Reply): { session: Session; sessionKey: string | nul
       base,
       folder: typeof payload.folder === "string" && payload.folder.length <= 4096 ? payload.folder : null,
       sessionKey,
+      teamRun: typeof payload.teamRun === "string" && RUN_ID.test(payload.teamRun) ? payload.teamRun : null,
     },
     sessionKey,
   };

@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { activeRun, agentCount, failingJourneys, subtitle } from "./project-summary";
+import { activeRun, agentCount, failingJourneys, subtitle, teamRun } from "./project-summary";
 
 describe("project summary", () => {
-  it("names the newest running run, never a finished one", () => {
-    const row = (executionId: string, status: string) => ({ executionId, status, startedAt: null, lastEventAt: null });
-    expect(activeRun([row("old-done", "completed"), row("live", "running"), row("older", "running")])).toBe("live");
+  const row = (executionId: string, status: string, lastEventAt: string | null = null) => ({ executionId, status, startedAt: null, lastEventAt });
+
+  it("names the most recently active running run, never a finished one", () => {
+    expect(activeRun([row("old-done", "completed", "2026-10-22T12:00:00Z"), row("core", "running", "2026-10-20T00:00:00Z"), row("gh-team", "running", "2026-10-22T11:00:00Z")])).toBe("gh-team");
+    expect(activeRun([row("live", "running"), row("older", "running")])).toBe("live");
     expect(activeRun([row("done", "completed")])).toBeNull();
+  });
+
+  it("opens the run team.json marks, else the most recently active one (#1901)", () => {
+    const runs = [row("core", "running", "2026-10-22T11:00:00Z"), row("gh-team", "running", "2026-10-21T00:00:00Z"), row("done", "completed", "2026-10-22T12:00:00Z")];
+    expect(teamRun(runs, "gh-team")?.executionId).toBe("gh-team");
+    expect(teamRun(runs, "gone")?.executionId).toBe("core");
+    expect(teamRun([row("a", "completed", "2026-10-01T00:00:00Z"), row("b", "failed", "2026-10-02T00:00:00Z")])?.executionId).toBe("b");
+    expect(teamRun([])).toBeNull();
   });
 
   it("counts each lane the Runtime does not judge free once", () => {

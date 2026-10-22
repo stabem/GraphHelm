@@ -5,6 +5,7 @@ import { parseRoute, routeSearch, type Route, type View } from "./routing/route"
 import { Runtime, type JourneyFlow, type RunSummary } from "./runtime/client";
 import { Sidebar, type ProjectEntry } from "./sidebar/Sidebar";
 import { useSummaries } from "./sidebar/use-summaries";
+import { teamRun } from "./sidebar/project-summary";
 import { StartRun } from "./start-run/StartRun";
 import { Topbar } from "./topbar/Topbar";
 import { ProofView } from "./proof/ProofView";
@@ -92,7 +93,7 @@ interface ShellProps {
 
 function Shell({ session, projects, closed, route, go }: ShellProps) {
   const runtime = useMemo(() => new Runtime(session.token, session.base), [session.token, session.base]);
-  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [runs, setRuns] = useState<RunSummary[] | null>(null);
   const [live, setLive] = useState(false);
   const [updated, setUpdated] = useState<string | null>(null);
   const [journeys, setJourneys] = useState<JourneyFlow[] | null>(null);
@@ -126,7 +127,10 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
   }, [route.view, journeys, readJourneys]);
 
   const project = session.project ?? "this project";
-  const run = runs.find((row) => row.executionId === route.run) ?? null;
+  // #1901: one project, one team run. The URL's ?run= still deep-links; without it the Studio
+  // opens the run team.json marks, else the most recently active one, and the URL stays clean.
+  const runId = route.run ?? (runs === null ? null : teamRun(runs, session.teamRun)?.executionId ?? null);
+  const run = runs?.find((row) => row.executionId === runId) ?? null;
 
   return (
     <div className="shell">
@@ -134,12 +138,9 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
         projects={projects}
         closed={closed}
         current={session.key}
-        runs={runs}
-        selected={route.run}
         view={route.view}
         live={live}
         onProject={(key) => go({ project: key, run: null, view: route.view })}
-        onSelect={(id) => go({ ...route, run: id })}
         onAdd={session.sessionKey === null ? null : async (path, ticket) => {
           const added = await addFolder(path, session.sessionKey!, ticket);
           if ("refused" in added) return added.refused;
@@ -151,16 +152,17 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
       <div className="main">
         <Topbar
           project={project}
-          run={route.run}
+          run={runId}
           view={route.view}
           updated={live ? updated : null}
           onView={(view: View) => go({ ...route, view })}
-          onStart={route.run === null && !(composing && route.view === "graph") ? () => { setComposing(true); go({ ...route, view: "graph" }); } : null}
+          onStart={runs !== null && runId === null && !(composing && route.view === "graph") ? () => { setComposing(true); go({ ...route, view: "graph" }); } : null}
         />
-        <ViewBoundary key={`${route.view}:${route.run ?? ""}`} name={route.view}>
+        <ViewBoundary key={`${route.view}:${runId ?? ""}`} name={route.view}>
+        {runs === null && route.run === null ? <section className="view" aria-label="Reading"><p>Reading the project's team run…</p></section> : <>
         {route.view === "graph" && (
-          <GraphView run={run} runId={route.run} requests={route.run === null ? undefined : <RequestsView runtime={runtime} executionId={route.run} journeys={journeys} />}>
-            {composing && route.run === null && (
+          <GraphView run={run} runId={runId} requests={runId === null ? undefined : <RequestsView runtime={runtime} executionId={runId} journeys={journeys} />}>
+            {composing && runId === null && (
               <StartRun
                 runtime={runtime}
                 onCancel={() => setComposing(false)}
@@ -173,8 +175,9 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
             )}
           </GraphView>
         )}
-        {route.view === "lanes" && <LanesView runtime={runtime} executionId={route.run} journeys={journeys} />}
-        {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={route.run} onRan={readJourneys} initial={route.journey ?? null} />}
+        {route.view === "lanes" && <LanesView runtime={runtime} executionId={runId} journeys={journeys} />}
+        {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={runId} onRan={readJourneys} initial={route.journey ?? null} />}
+        </>}
         </ViewBoundary>
       </div>
     </div>

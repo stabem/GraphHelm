@@ -4,6 +4,8 @@ import { OWNER, type JourneyFlow, type LaneAction, type Runtime, type TasksBoard
 import { controlBody, draftFor, messageBody, newId, type Draft, type LaneControl } from "./drafts";
 import { actionLine, clock } from "./format";
 import { LanesPanels } from "./LanesPanels";
+import { agentsFor, askedCards } from "./asked";
+import type { OwnerRequest } from "../graph/requests";
 import { agents, blocks, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
 /** How often the board is read again: one tasks read, plus one activity read per lane whose last
@@ -36,6 +38,9 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  // #1901: the owner's requests (WHAT I ASKED) and the one picked to narrow the board, if any.
+  const [requests, setRequests] = useState<OwnerRequest[] | null>(null);
+  const [request, setRequest] = useState<string | null>(null);
   const [actions, setActions] = useState<Record<string, { at: string | null; rows: LaneAction[] }>>({});
   const seen = useRef<Record<string, string | null>>({});
   const replyBox = useRef<HTMLTextAreaElement>(null);
@@ -50,6 +55,8 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
 
   const read = useCallback(async () => {
     if (executionId === null) return;
+    // An older Runtime without the requests route leaves the column empty, never the board.
+    runtime.requests(executionId).then(setRequests, () => setRequests((prior) => prior ?? []));
     try {
       const next = await runtime.board(executionId);
       setBoard(next);
@@ -88,7 +95,10 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   const asking = all.filter((agent) => agent.questions.length > 0);
   const idle = all.filter((agent) => agent.idleMinutes === null || agent.idleMinutes >= 30);
   const working = all.filter((agent) => agent.task !== null && agent.questions.length === 0 && agent.idleMinutes !== null && agent.idleMinutes < 30);
-  const shown = filter === "reply" ? asking : filter === "idle" ? idle : all;
+  const pickedRequest = requests?.find((row) => row.requestId === request) ?? null;
+  const forRequest = pickedRequest === null ? null : new Set(agentsFor(pickedRequest, all).map((agent) => agent.lane));
+  const shown = (filter === "reply" ? asking : filter === "idle" ? idle : all).filter((agent) => forRequest === null || forRequest.has(agent.lane));
+  const asked = askedCards(requests ?? [], all);
   const gone = picked !== null && shownAgent.current?.lane === picked ? { ...shownAgent.current, questions: [], moreQuestions: 0 } : null;
   const selected = all.find((agent) => agent.lane === picked) ?? gone ?? asking[0] ?? all[0] ?? null;
   shownAgent.current = selected;
@@ -107,7 +117,28 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
           <span className="filter working">{working.length} working</span>
           {error !== null && <span className="error">{error}</span>}
         </div>
-        <ul className="board" aria-label="Agent board">
+        <ul className="board with-asked" aria-label="Agent board">
+          <li className="board-column asked">
+            <section aria-label="What I asked">
+              <h3><span className="col-dot asked" />What I asked<span className="mono count">{requests === null ? "…" : asked.length}</span></h3>
+              {requests !== null && asked.length === 0 && <span className="none">No request recorded yet.</span>}
+              <ul aria-label="Owner requests">
+                {asked.map((card) => (
+                  <li key={card.requestId}>
+                    <button type="button" className="b asked-card" aria-pressed={card.requestId === request} onClick={() => setRequest((prior) => (prior === card.requestId ? null : card.requestId))}>
+                      {card.when !== null && <span className="mono asked-when">{card.when}</span>}
+                      <span className="asked-title">{card.title}</span>
+                      {card.agents.length > 0 && <span className="blocks" aria-hidden="true">{card.agents.map((agent) => <span key={agent.lane} className={`block asked-${agent.tone}`} />)}</span>}
+                      <span className="mono asked-summary">{card.summary}</span>
+                      {card.agents.length > 0 && (
+                        <span className="asked-agents">{card.agents.map((agent) => <span key={agent.lane} className="mono asked-chip"><span className={`asked-dot asked-${agent.tone}`} />{agent.lane}</span>)}</span>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </li>
           {COLUMNS.map((name) => {
             const cards = shown.filter((agent) => agent.column === name);
             return (

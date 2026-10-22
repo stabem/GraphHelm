@@ -42,6 +42,9 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   // #1837: the request each lane has in flight or that last failed, kept across panel switches so
   // a resend reuses its id and bytes.
   const drafts = useRef(new Map<string, Draft>());
+  // The agent the panel last showed: a lane that only asked leaves the board once answered, and
+  // the panel stays on it so the owner sees the reply land (#1808).
+  const shownAgent = useRef<Agent | null>(null);
   // The controls this Studio sent, so the board shows what each one did.
   const [done, setDone] = useState<{ lane: string; word: string; at: string }[]>([]);
 
@@ -86,7 +89,9 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   const idle = all.filter((agent) => agent.idleMinutes === null || agent.idleMinutes >= 30);
   const working = all.filter((agent) => agent.task !== null && agent.questions.length === 0 && agent.idleMinutes !== null && agent.idleMinutes < 30);
   const shown = filter === "reply" ? asking : filter === "idle" ? idle : all;
-  const selected = all.find((agent) => agent.lane === picked) ?? asking[0] ?? all[0] ?? null;
+  const gone = picked !== null && shownAgent.current?.lane === picked ? { ...shownAgent.current, questions: [], moreQuestions: 0 } : null;
+  const selected = all.find((agent) => agent.lane === picked) ?? gone ?? asking[0] ?? all[0] ?? null;
+  shownAgent.current = selected;
   const pick = (lane: string, focus = false) => {
     setPicked(lane);
     if (focus) requestAnimationFrame(() => replyBox.current?.focus());

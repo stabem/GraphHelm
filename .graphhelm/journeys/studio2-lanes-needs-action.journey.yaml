@@ -15,42 +15,42 @@ screens:
   - id: answered
     title: Answer acts on its item
     url: /?session=studio-fixture&run=demo&view=lanes
-    ignoreQuery: [session]
+    ignoreQuery: [session, project]
     state: success
     expect: [{role: status, name: Last action, text: Answering}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: archived
     title: Archive acts on its item
     url: /?session=studio-fixture&run=demo&view=lanes
-    ignoreQuery: [session]
+    ignoreQuery: [session, project]
     state: success
     expect: [{role: status, name: Last action, text: Archived}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: assigned
     title: Assign acts on its item
     url: /?session=studio-fixture&run=demo&view=lanes
-    ignoreQuery: [session]
+    ignoreQuery: [session, project]
     state: success
     expect: [{role: status, name: Last action, text: Assigned}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: list
     title: Needs action lists items oldest first
     url: /?session=studio-fixture&run=demo&view=lanes
-    ignoreQuery: [session]
+    ignoreQuery: [session, project]
     state: stable
     expect: [{role: region, name: Needs action, text: oldest first}, {role: list, name: Needs action items}, {role: listitem, name: Needs action item 1}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: merged
     title: Merge acts on its item
     url: /?session=studio-fixture&run=demo&view=lanes
-    ignoreQuery: [session]
+    ignoreQuery: [session, project]
     state: success
     expect: [{role: status, name: Last action, text: Merge requested}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: reassigned
     title: Reassign acts on its item
     url: /?session=studio-fixture&run=demo&view=lanes
-    ignoreQuery: [session]
+    ignoreQuery: [session, project]
     state: success
     expect: [{role: status, name: Last action, text: Reassigned}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]

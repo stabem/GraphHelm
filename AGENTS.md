@@ -115,6 +115,12 @@ written outside those files.
 - Local event writes use an exclusive cross-platform file lock, ordered sequences, idempotency keys, flush, and durable sync. Replay rejects corrupt committed records rather than guessing.
 - Draft application constructs and validates an isolated candidate. Publish the version and events only after every schema, lint, policy, and concurrency check passes. Any failure leaves the active version unchanged.
 
+## Studio design first
+
+Every visual Studio change is made first in the design artifact and implemented only after the
+owner approves it there; the approved files live in [`docs/design/studio/`](docs/design/studio/README.md)
+and are updated in the pull request that implements them.
+
 ## Delivery
 
 How a change gets from an issue to `main` is [docs/process/DELIVERY.md](docs/process/DELIVERY.md)

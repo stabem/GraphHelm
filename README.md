@@ -215,7 +215,7 @@ Try the documented journey and report where it breaks. Include your version, ope
 
 [Contribution guide](https://github.com/stabem/GraphHelm/blob/main/CONTRIBUTING.md) · [Issues](https://github.com/stabem/GraphHelm/issues) · [Support](https://github.com/stabem/GraphHelm/blob/main/.github/SUPPORT.md) · [Code of conduct](https://github.com/stabem/GraphHelm/blob/main/.github/CODE_OF_CONDUCT.md)
 
-Report vulnerabilities privately through [SECURITY.md](https://github.com/stabem/GraphHelm/blob/main/SECURITY.md). GraphHelm is [MIT licensed](https://github.com/stabem/GraphHelm/blob/main/LICENSE); bundled Studio fonts retain their [OFL notices](https://github.com/stabem/GraphHelm/blob/main/apps/studio/src/fonts/README.md).
+Report vulnerabilities privately through [SECURITY.md](https://github.com/stabem/GraphHelm/blob/main/SECURITY.md). GraphHelm is [MIT licensed](https://github.com/stabem/GraphHelm/blob/main/LICENSE).
 
 <a id="make-claude-always-use-graphhelm--keel"></a>
 <details>

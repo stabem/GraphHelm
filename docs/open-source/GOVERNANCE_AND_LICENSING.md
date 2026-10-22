@@ -22,9 +22,8 @@ This document is a product and governance strategy, not legal advice. The final 
 ## 3. License
 
 **MIT.** One license for GraphHelm-authored code, for every user, with no second tier. The
-bundled Studio fonts are third-party font software under OFL-1.1; their notices and full license
-texts are in [the font directory](../../apps/studio/src/fonts/README.md). The root MIT license
-does not relicense those fonts.
+Studio bundles no font files: its stylesheet names Space Grotesk and JetBrains Mono and falls back
+to the system fonts when they are not installed.
 
 What that means, said plainly rather than left for a reader to infer:
 

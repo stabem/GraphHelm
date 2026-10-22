@@ -490,10 +490,9 @@ Get-Content "C:\path\to\your-project\.graphhelm\codex.config.toml" | Add-Content
 The server `graphhelm mcp` exposes a closed list of 28 tools named after the Runtime verbs —
 `list`, `status`, `briefing`, `events`, `evidence`, `approve`, `pause`, `resume`, `signal`,
 `cancel`, `sweep`, … (`apps/cli/src/commands/mcp/tools.rs`); a harness shows them under the
-server name, e.g. `mcp__graphhelm__list` in Claude Code. The `graphhelm_*` names in
-[`apps/studio/README.md`](../../apps/studio/README.md)'s table are the Studio's WebMCP page tools,
-a different surface: `graphhelm mcp` refuses them (`-32602 no tool named
-"graphhelm_list_executions" is part of this server`, measured). If `init` detected neither harness
+server name, e.g. `mcp__graphhelm__list` in Claude Code. The Studio's WebMCP page tools (the
+`graphhelm_*` names) were retired with the old Studio (#1808, #1870): agents use this MCP server,
+which serves every Runtime verb. If `init` detected neither harness
 (`"harnesses": []`), pass `--harness claude-code` or `--harness codex` explicitly.
 
 ## 7. Where to go next
@@ -513,8 +512,8 @@ a different surface: `graphhelm mcp` refuses them (`-32602 no tool named
 - `graphhelm execution briefing --events <events> --execution <id>` — when you come back later, or
   from another harness: the objective, the decisions, the work done, what is pending and the next
   step, read from the store alone.
-- [`apps/studio/README.md`](../../apps/studio/README.md) — the Studio in detail: the WebMCP site
-  tools, the production build, and the troubleshooting table.
+- [`apps/studio/README.md`](../../apps/studio/README.md) — the Studio in detail: its three views,
+  how it logs in, and how to run it.
 - [`docs/ux/CHAT_SURFACE_SPEC.md`](../ux/CHAT_SURFACE_SPEC.md) and
   [`examples/chat-surface/`](../../examples/chat-surface/) — the operator skills a chat harness
   can carry alongside the MCP registration.

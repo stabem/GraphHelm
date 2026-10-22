@@ -38,9 +38,9 @@ client, and the human view moves with it.
 - **Public contracts only.** The Studio imports no Rust crate and reads no event file. Every read
   and every write is an HTTP request to the Public Runtime API, the same one the CLI and the MCP
   server use.
-- **WebMCP is not a second path.** The adapter in `apps/studio/src/webmcp/adapter.ts` builds no
-  request and interprets no diagnostic; it calls the same `RuntimeClient` the buttons call. One
-  place holds the rules, so the two surfaces cannot drift into disagreeing.
+- **WebMCP page tools are retired.** The first Studio exposed its actions to browser agents as
+  WebMCP tools. The Studio v2 cutover (#1808) retired them; agents use the GraphHelm MCP server,
+  which serves every Runtime verb. A port is tracked in #1870.
 
 ## 3. The contracts this added
 

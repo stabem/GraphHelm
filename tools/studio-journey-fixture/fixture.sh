@@ -176,6 +176,12 @@ drift: []
 FLOW
   git -C "$dir/project" add -f -- .graphhelm/journeys/runtime-health.journey.yaml
   git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: observer seed flow'
+  # #1901: the Studio opens a project's team run by itself, so a project with no run at all needs a
+  # fixture that starts none: GRAPHHELM_FIXTURE_EMPTY=1, or the studio2-no-run flow, skips both the
+  # observer preview (its runner records into a run of its own) and the seeded demo run.
+  empty=0
+  if [ "${GRAPHHELM_FIXTURE_EMPTY:-}" = 1 ] || [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-no-run ]; then empty=1; fi
+  if [ "$empty" = 0 ]; then
   "$bin" --json journey preview runtime-health --force --project "$dir/project"     > "$dir/.graphhelm/observer-preview.out" 2>&1 || true
   for _ in $(seq 1 60); do
     "$bin" --json journey preview runtime-health --read --project "$dir/project"       > "$dir/.graphhelm/observer-preview.out" 2>&1 || true
@@ -183,11 +189,12 @@ FLOW
     sleep 1
   done
   grep -q '"recorded":true' "$dir/.graphhelm/observer-preview.out"     || echo "fixture: the observer preview did not record (see $dir/.graphhelm/observer-preview.out)" >&2
+  fi
   for pid in $(fixture_listeners record "$rport"); do
     if [ -r /proc/$$/winpid ]; then echo "serve-listener 0 $pid"; else echo "serve-listener $pid"; fi >> "$pids"
   done
   # The seeded run: the manual-override example, one blocked node, one ready node.
-  if ! grep -q '"executionId":"demo"' "$dir/.graphhelm/seed.json" 2>/dev/null; then
+  if [ "$empty" = 0 ] && ! grep -q '"executionId":"demo"' "$dir/.graphhelm/seed.json" 2>/dev/null; then
     echo '{"nodeOutcomes":{"implementation":"failure"}}' > "$dir/.graphhelm/fixtures.json"
     "$bin" --json execution start --file "$repo/examples/graphs/manual-override-deploy.yaml" \
       --events "$rt/events" --fixtures "$dir/.graphhelm/fixtures.json" --mode supervised --execution demo \

@@ -10,7 +10,7 @@ const SUMMARY_MS = 15_000;
 async function summaryOf(session: Session): Promise<ProjectSummary> {
   const runtime = new Runtime(session.token, session.base);
   const [runs, flows] = await Promise.allSettled([runtime.runs(), runtime.journeys()]);
-  const run = runs.status === "fulfilled" ? activeRun(runs.value) : null;
+  const run = runs.status === "fulfilled" ? activeRun(runs.value, session.teamRun) : null;
   let agents: number | null = null;
   if (run !== null) {
     try { agents = agentCount(await runtime.lanes(run)); } catch { /* not read */ }

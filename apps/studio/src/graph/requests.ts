@@ -8,6 +8,8 @@ export interface OwnerRequest {
   title: string | null;
   recordedBy: string;
   sequence: number;
+  /** #1901: when the Runtime appended the request's first record; absent from an older Runtime. */
+  recordedAt?: string;
   status: "open" | "in_progress" | "delivered";
   issues: { issue: number; slices: { pr: number | null; step: string; merged: boolean }[] }[];
 }

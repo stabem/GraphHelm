@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use graphhelm_protocols::PersistedTimestamp;
 use serde::Serialize;
 
 use crate::tasks::{TaskEventKind, TaskEventRecord, TaskState, TaskStep};
@@ -53,6 +54,10 @@ pub struct RequestView {
     pub revision: u64,
     /// The sequence of the first record of this request, so readers can order requests.
     pub sequence: u64,
+    /// #1901: when the Runtime appended the first record of this request (its own clock, which a
+    /// lane cannot write), so the Studio can date the request. Absent on a record read without it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded_at: Option<PersistedTimestamp>,
     pub status: RequestStatus,
     pub issues: Vec<RequestIssue>,
 }
@@ -100,6 +105,7 @@ pub fn requests(records: &[TaskEventRecord], tasks: &[TaskState]) -> Vec<Request
                         recorded_by: record.actor_id.clone(),
                         revision,
                         sequence: record.sequence,
+                        recorded_at: record.occurred_at.clone(),
                         status: RequestStatus::Open,
                         issues: Vec::new(),
                     });
@@ -375,5 +381,39 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    /// #1901: a request is dated by the Runtime's append time of its first record; a later
+    /// revision keeps that date, and a record read without one serves no `recordedAt`.
+    #[test]
+    fn a_request_is_dated_by_its_first_record() {
+        let at = |value: &str| Some(PersistedTimestamp::parse(value).expect("timestamp"));
+        let document = |revision: u64| {
+            serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "request-r1",
+            "revision": revision, "at": "2026-10-22T00:00:00Z", "requestId": "r1", "ask": "x", "recordedBy": "owner"})
+        };
+        let records = [
+            parse_task_event(
+                "task.request_recorded",
+                "owner",
+                &document(1).to_string(),
+                1,
+                at("2026-10-21T18:30:00Z"),
+            )
+            .expect("first"),
+            parse_task_event(
+                "task.request_recorded",
+                "owner",
+                &document(2).to_string(),
+                2,
+                at("2026-10-22T09:00:00Z"),
+            )
+            .expect("second"),
+        ];
+        let view = serde_json::to_value(&requests(&records, &[])[0]).expect("serialize");
+        assert_eq!(view["recordedAt"], "2026-10-21T18:30:00Z");
+        let view =
+            serde_json::to_value(&requests(&[recorded(1, "r1", "x")], &[])[0]).expect("serialize");
+        assert!(view.get("recordedAt").is_none(), "{view}");
     }
 }

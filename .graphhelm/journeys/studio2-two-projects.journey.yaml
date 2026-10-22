@@ -3,7 +3,7 @@ id: studio2-two-projects
 title: Switch between two projects
 name: Switch projects
 feature: Studio
-purpose: "A second project folder joins the same Studio port, and switching in the sidebar shows each project's own run."
+purpose: "A second project folder joins the same Studio port as its own sidebar card, and switching in the sidebar opens each project's own team run, with no run list."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -14,24 +14,24 @@ viewports: [web, mobile]
 screens:
   - id: back
     title: The first project opens again from the sidebar
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture
     ignoreQuery: [session, project, run]
     state: stable
-    expect: [{role: banner, name: Top bar, text: demo}, {role: list, name: Runs in demo}, {role: list, name: Runs in proj-two, absent: true}]
+    expect: [{role: banner, name: Top bar, text: demo}, {role: region, name: Project demo}, {role: link, name: proj-two}, {role: list, name: Runs in demo, absent: true}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
   - id: first
     title: The first project's run is shown
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: navigation, name: Projects}, {role: link, name: demo}, {role: banner, name: Top bar, text: demo}, {role: list, name: Runs in demo}, {role: button, name: Add project folder}]
+    expect: [{role: navigation, name: Projects}, {role: region, name: Project demo, text: journeys}, {role: banner, name: Top bar, text: demo}, {role: list, name: Runs in demo, absent: true}, {role: button, name: Add project folder}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
   - id: second
     title: The added project opens with its own run
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture
     ignoreQuery: [session, project, run]
     state: stable
-    expect: [{role: banner, name: Top bar, text: proj-two}, {role: list, name: Runs in proj-two}, {role: link, name: demo}, {role: list, name: Runs in demo, absent: true}]
+    expect: [{role: banner, name: Top bar, text: second-run}, {role: region, name: Project proj-two}, {role: link, name: demo}, {role: list, name: Runs in proj-two, absent: true}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
 edges:
   - id: first.second

@@ -3,7 +3,7 @@ id: studio2-lanes-board
 title: See every agent on the Lanes board
 name: See the lanes
 feature: Studio
-purpose: "Lanes shows one card per agent in its column, with idle time, its request, progress blocks and last action; an asking agent shows its question."
+purpose: "Lanes shows WHAT I ASKED with the owner's requests and one card per agent in its column, with idle time, its request, progress blocks and last action; an asking agent shows its question."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -18,14 +18,14 @@ screens:
     ignoreQuery: [session, project]
     state: stable
     expect: [{role: region, name: Question, text: "?"}, {role: button, name: Reply}]
-    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
+    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/asked.ts, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
   - id: lanes
     title: "One card per agent, in its column"
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: tab, name: Lanes}, {role: list, name: Agent board}, {role: group, name: Idle time}, {role: group, name: Request, text: "#"}, {role: group, name: Progress}, {role: group, name: Last action}]
-    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
+    expect: [{role: tab, name: Lanes}, {role: list, name: Agent board}, {role: region, name: What I asked, text: Show the work graph for the fixture run}, {role: list, name: Owner requests}, {role: group, name: Idle time}, {role: group, name: Request, text: "#"}, {role: group, name: Progress}, {role: group, name: Last action}]
+    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/asked.ts, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
 edges:
   - id: lanes.asking
     from: lanes

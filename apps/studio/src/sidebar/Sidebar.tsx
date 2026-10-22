@@ -1,4 +1,3 @@
-import type { RunSummary } from "../runtime/client";
 import { useState } from "react";
 
 import type { AddRefusal } from "../login/session";
@@ -19,15 +18,20 @@ const REFUSALS: Record<AddRefusal, string> = {
   refused: "The Studio refused to add that folder. The ticket may be missing or already used: run graphhelm studio open --project there for a new one.",
 };
 
-/** The two subtitle lines under a project: folder, then run and journeys. */
-function Subtitles({ project }: { project: ProjectEntry }) {
+/** Under a project (Sidebar.dc.html): the open one shows its folder, then its team run and its
+ * journeys in an indented box; another shows its folder and its run on one line. */
+function Subtitles({ project, open }: { project: ProjectEntry; open: boolean }) {
   const lines = project.summary === null ? null : subtitle(project.summary);
+  if (!open) {
+    const parts = [project.folder, lines?.run].filter((part): part is string => part != null);
+    return parts.length === 0 ? null : <span className="project-folder mono">{parts.join(" · ")}</span>;
+  }
   return (
     <>
       {project.folder !== null && <span className="project-folder mono">{project.folder}</span>}
       {lines !== null && (
         <span className="project-counts">
-          <span>{lines.run}</span>
+          <span className="project-run">{lines.run}</span>
           {lines.journeys !== null && <span>{lines.journeys}</span>}
         </span>
       )}
@@ -73,12 +77,9 @@ interface Props {
   /** Joined projects this tab has no key for (#1800): listed, opened only by their own ticket. */
   closed: string[];
   current: string;
-  runs: RunSummary[];
-  selected: string | null;
   view: View;
   live: boolean;
   onProject: (project: string) => void;
-  onSelect: (run: string) => void;
   /** Null when this tab holds no key that proves the owner. */
   onAdd: ((path: string, ticket: string) => Promise<AddRefusal | null>) | null;
 }
@@ -88,8 +89,9 @@ function Folder({ stroke }: { stroke: string }) {
 }
 
 /** The left rail of the design (Sidebar.dc.html): brand, live state, every project this Studio port
- * serves (#1800), and the open project's runs. Another project is a link that switches to it. */
-export function Sidebar({ projects, closed, current, runs, selected, view, live, onProject, onSelect, onAdd }: Props) {
+ * serves (#1800), one card each (#1901): no run list, the Studio opens the project's team run.
+ * Another project is a link that switches to it. */
+export function Sidebar({ projects, closed, current, view, live, onProject, onAdd }: Props) {
   return (
     <nav aria-label="Projects" className="sidebar">
       <div className="brand">
@@ -103,30 +105,14 @@ export function Sidebar({ projects, closed, current, runs, selected, view, live,
       </div>
       <div className="projects">
         {projects.map((project) => project.key === current ? (
-          <div key={project.key} className="project">
+          <section key={project.key} className="project" aria-label={`Project ${project.name}`}>
             <div className="project-head">
               <Folder stroke="#f5f5f6" />
               <strong>{project.name}</strong>
               <span className={live ? "dot on" : "dot"} />
             </div>
-            <Subtitles project={project} />
-            <ul className="runs" aria-label={`Runs in ${project.name}`}>
-              {runs.length === 0 ? <li className="empty">no run</li> : runs.map((run) => (
-                <li key={run.executionId}>
-                  <a
-                    href={routeSearch({ project: project.key, run: run.executionId, view }) || "?"}
-                    aria-current={run.executionId === selected ? "page" : undefined}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      onSelect(run.executionId);
-                    }}
-                  >
-                    {run.executionId}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
+            <Subtitles project={project} open />
+          </section>
         ) : (
           <div key={project.key} className="project other">
             <a
@@ -141,7 +127,7 @@ export function Sidebar({ projects, closed, current, runs, selected, view, live,
               <span>{project.name}</span>
               <span className="dot" />
             </a>
-            <Subtitles project={project} />
+            <Subtitles project={project} open={false} />
           </div>
         ))}
         {closed.map((id) => (

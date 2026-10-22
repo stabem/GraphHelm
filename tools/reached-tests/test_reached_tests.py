@@ -418,6 +418,21 @@ class Reach(unittest.TestCase):
             {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio", "slot": False},
         ])
 
+    def test_the_cutovers_deleted_paths_are_mapped(self):
+        # #1808: the rename leaves apps/studio-next paths and whole deleted tools in the diff; the
+        # first reaches the one Studio's suite, the second has nothing left to run. Neither stops
+        # the plan as unmapped. While apps/studio-next exists, its paths stay unmapped.
+        with tempfile.TemporaryDirectory() as repo:
+            Path(repo, "apps/studio").mkdir(parents=True)
+            whole, single, studio, tools, validate, other = reach(
+                "apps/studio-next/src/App.tsx", "tools/studio-perf/measure.mjs", repo=repo)
+            self.assertEqual(other, [])
+            self.assertEqual(studio, ["apps/studio-next/src/App.tsx"])
+            Path(repo, "apps/studio-next").mkdir()
+            Path(repo, "tools/studio-perf").mkdir(parents=True)
+            *_, other = reach("apps/studio-next/src/App.tsx", "tools/studio-perf/measure.mjs", repo=repo)
+            self.assertEqual(other, ["apps/studio-next/src/App.tsx", "tools/studio-perf/measure.mjs"])
+
     def test_the_mcp_tool_catalog_reaches_the_stdio_tests(self):
         # #1449: schemas/ mapped to nothing, so a catalog change stopped run_reached as unmapped.
         # #1808: the Studio's WebMCP adapter test was retired with the old app (#1870).

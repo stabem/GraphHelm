@@ -641,6 +641,11 @@ def reach(changed, packages, embedded, repo=None):
             # #1571: the launcher scripts are run by the CLI's `the_launcher_*` tests, not by vitest.
             tools.add(LAUNCHER_TESTS)
             continue
+        # #1808: the cutover renamed apps/studio-next to apps/studio; a path left on the old side
+        # of that rename is observed by the one Studio's vitest and tsc, like any Studio file.
+        if path.startswith("apps/studio-next/") and root is not None and not (root / "apps/studio-next").exists():
+            studio.append(path)
+            continue
         if path.startswith("apps/studio/"):
             studio.append(path)
             # #1521: Vitest and tsc never start Vite; the journey launcher does.
@@ -725,6 +730,9 @@ def reach(changed, packages, embedded, repo=None):
             js = sorted(f.relative_to(root).as_posix() for f in tool.glob("*.test.mjs") if ".browser." not in f.name)
             tools |= {python_test_tool(root, f) for f in py} | ({f"node --test {' '.join(js)}"} if js else set())
             hit = hit or bool(py or js)
+            # #1808: a tool deleted whole leaves no code to observe and no test of its own to run.
+            if not tool.exists():
+                hit = True
         if path in ("tools/no-window/observe.ps1", "tools/no-window/test_observe.ps1",
                     "tools/no-window/fixture/fixture.sh", "tools/no-window/fixture/server.mjs"):
             observer = "tools/no-window/test_observe.ps1"

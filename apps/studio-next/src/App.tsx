@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { login, type Session } from "./login/session";
+import { login, servedProjects, type Session } from "./login/session";
 import { parseRoute, routeSearch, type Route, type View } from "./routing/route";
 import { Runtime, type JourneyFlow, type RunSummary } from "./runtime/client";
 import { Sidebar } from "./sidebar/Sidebar";
@@ -11,7 +11,14 @@ import { GraphView, LanesView, ProofView } from "./views/Views";
 /** How often the run list is read again: one page of at most 50 rows per poll. */
 const POLL_MS = 5_000;
 
-type Login = { state: "pending" } | { state: "refused" } | { state: "in"; sessions: Session[] };
+type Login = { state: "pending" } | { state: "refused" } | { state: "in"; sessions: Session[]; closed: string[] };
+
+/** The joined projects this tab holds no key for: listed, not openable here. */
+function closedProjects(sessions: Session[], served: { first: string | null; all: string[] } | null): string[] {
+  if (served === null) return [];
+  const open = new Set(sessions.map((session) => (session.key === "first" ? served.first : session.key)));
+  return served.all.filter((id) => !open.has(id));
+}
 
 function clock(date: Date): string {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -23,9 +30,10 @@ export function App() {
 
   useEffect(() => {
     let live = true;
-    void login(location.search).then((sessions) => {
+    void login(location.search).then(async (sessions) => {
+      const served = sessions === null ? null : await servedProjects();
       if (!live) return;
-      setAuth(sessions === null ? { state: "refused" } : { state: "in", sessions });
+      setAuth(sessions === null ? { state: "refused" } : { state: "in", sessions, closed: closedProjects(sessions, served) });
       // The ticket is spent; it does not stay in the address bar or the history. The URL keeps the
       // project the ticket opened, so a reload lands on it.
       const landed = parseRoute(location.search);
@@ -59,17 +67,18 @@ export function App() {
   const session = auth.sessions.find((known) => known.key === route.project) ?? auth.sessions[0]!;
   const projects = auth.sessions.map((known) => ({ key: known.key, name: known.project ?? "this project" }));
   // Keyed by project: switching starts that project's own reads from empty, never the last one's rows.
-  return <Shell key={session.key} session={session} projects={projects} route={{ ...route, project: session.key }} go={go} />;
+  return <Shell key={session.key} session={session} projects={projects} closed={auth.closed} route={{ ...route, project: session.key }} go={go} />;
 }
 
 interface ShellProps {
   session: Session;
   projects: { key: string; name: string }[];
+  closed: string[];
   route: Route;
   go: (route: Route) => void;
 }
 
-function Shell({ session, projects, route, go }: ShellProps) {
+function Shell({ session, projects, closed, route, go }: ShellProps) {
   const runtime = useMemo(() => new Runtime(session.token, session.base), [session.token, session.base]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [live, setLive] = useState(false);
@@ -106,6 +115,7 @@ function Shell({ session, projects, route, go }: ShellProps) {
     <div className="shell">
       <Sidebar
         projects={projects}
+        closed={closed}
         current={session.key}
         runs={runs}
         selected={route.run}

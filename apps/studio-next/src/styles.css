@@ -88,3 +88,5 @@ button { font: inherit; }
 .project.other { background: none; border-color: transparent; padding: 0; }
 .project.other a { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 10px; color: var(--muted); text-decoration: none; }
 .project.other a:hover, .project.other a:focus-visible { background: var(--card); color: var(--text); }
+.project.other.closed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; color: var(--muted); }
+.project.other.closed .closed-hint { flex-basis: 100%; font-size: 11px; }

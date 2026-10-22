@@ -4,9 +4,10 @@
  * the dev server trades it once for that project's Runtime token and a stable key.
  *
  * #1800: one Studio port serves several projects, each with its own token. The page keeps one
- * stable key per project in localStorage, so every tab of this Studio can switch to any project
- * the owner opened here once; a key the dev server no longer accepts is dropped. Tokens are kept
- * only in memory and no credential of one project is ever sent for another.
+ * stable key per project in sessionStorage, so it dies with the tab (the #1264 choice): a stable
+ * key buys that project's Runtime token, so it is never kept at rest past the tab. A reload of this
+ * tab may switch to any project it opened; a key the dev server no longer accepts is dropped.
+ * Tokens are kept only in memory and no credential of one project is ever sent for another.
  */
 export interface Session {
   /** The project's id, or `"first"` for the project the dev server was started for without one. */
@@ -26,7 +27,7 @@ type KeyStore = Pick<Storage, "getItem" | "setItem"> | null;
 
 function browserStore(): KeyStore {
   try {
-    return globalThis.localStorage ?? null;
+    return globalThis.sessionStorage ?? null;
   } catch {
     return null;
   }
@@ -76,7 +77,22 @@ function sessionOf(payload: Reply): { session: Session; sessionKey: string | nul
   };
 }
 
-/** Every project this browser may open here, the one the URL presented first; `null` when none. */
+/** Every project id this Studio port serves (`GET /__studio/identity`, hashes only): which one
+ * the dev server was started for, and all joined ones. `null` when the route does not answer. */
+export async function servedProjects(): Promise<{ first: string | null; all: string[] } | null> {
+  try {
+    const response = await fetch("/__studio/identity", { headers: { Accept: "application/json" } });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { projectId?: unknown; projectIds?: unknown };
+    const hash = /^[0-9a-f]{64}$/;
+    const all = Array.isArray(body.projectIds) ? body.projectIds.filter((id): id is string => typeof id === "string" && hash.test(id)).slice(0, 32) : [];
+    return { first: typeof body.projectId === "string" && hash.test(body.projectId) ? body.projectId : null, all };
+  } catch {
+    return null;
+  }
+}
+
+/** Every project this tab may open here, the one the URL presented first; `null` when none. */
 export async function login(search: string, store: KeyStore = browserStore()): Promise<Session[] | null> {
   const query = new URLSearchParams(search);
   const presented = query.get("session");

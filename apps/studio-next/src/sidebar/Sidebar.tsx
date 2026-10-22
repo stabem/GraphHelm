@@ -8,6 +8,8 @@ export interface ProjectEntry {
 
 interface Props {
   projects: ProjectEntry[];
+  /** Joined projects this tab has no key for (#1800): listed, opened only by their own ticket. */
+  closed: string[];
   current: string;
   runs: RunSummary[];
   selected: string | null;
@@ -23,7 +25,7 @@ function Folder({ stroke }: { stroke: string }) {
 
 /** The left rail of the design (Sidebar.dc.html): brand, live state, every project this Studio port
  * serves (#1800), and the open project's runs. Another project is a link that switches to it. */
-export function Sidebar({ projects, current, runs, selected, view, live, onProject, onSelect }: Props) {
+export function Sidebar({ projects, closed, current, runs, selected, view, live, onProject, onSelect }: Props) {
   return (
     <nav aria-label="Projects" className="sidebar">
       <div className="brand">
@@ -73,6 +75,13 @@ export function Sidebar({ projects, current, runs, selected, view, live, onProje
               <span>{project.name}</span>
               <span className="dot" />
             </a>
+          </div>
+        ))}
+        {closed.map((id) => (
+          <div key={id} className="project other closed">
+            <Folder stroke="#6b6b76" />
+            <span>project {id.slice(0, 8)}</span>
+            <span className="closed-hint">open with <code className="mono">graphhelm studio open</code></span>
           </div>
         ))}
       </div>

@@ -39,8 +39,11 @@ edges:
   - id: proof.started
     from: proof
     to: started
+    intent: "Opens the new-run form, writes the objective and starts the run."
     acts:
       - {kind: activate, role: button, name: Start a team run}
+      - {kind: enter_text, role: textbox, name: What should the team do?, text: Check the journeys.}
+      - {kind: activate, role: button, name: Start}
 paths:
   main: [empty.proof, proof.started]
 drift: []

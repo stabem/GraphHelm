@@ -5,6 +5,7 @@ nobody depends on, a cli test bundle, and one embedded schema. The repository-bu
 offline Cargo metadata. Each case is a real diff shape from this repository.
 """
 import json
+import re
 import subprocess
 import io
 import sys
@@ -1579,3 +1580,83 @@ class RootFiles(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CoreModules(unittest.TestCase):
+    """#1875: a change to one module of a core crate reaches only the CLI modules that use it, and
+    falls back to the whole CLI package whenever that cannot be proved from the source."""
+
+    CLI_A = ("graphhelm-cli", "bin:graphhelm", "commands::a")
+
+    def tree(self, files, mid=False):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        base = {"core/k/src/lib.rs": "pub mod m;\npub mod n;\n", "core/k/src/m.rs": "pub fn f() {}\n",
+                "core/k/src/n.rs": "pub fn g() { crate::m::f() }\n",
+                "apps/cli/src/commands/a.rs": "fn h() { graphhelm_k::n::g() }\n",
+                "apps/cli/src/commands/b.rs": "fn i() {}\n", "apps/cli/tests/unrelated.rs": "\n"}
+        if mid:
+            base["core/mid/src/lib.rs"] = "\n"
+        for path, text in {**base, **files}.items():
+            (root / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / path).write_text(text, encoding="utf-8")
+        packages = [{"name": "graphhelm-k", "dir": "core/k", "deps": [], "dev_deps": [], "tests": [], "bundles": {}},
+                    {"name": "graphhelm-cli", "dir": "apps/cli", "deps": ["graphhelm-mid" if mid else "graphhelm-k"],
+                     "dev_deps": [], "tests": [{"name": "unrelated", "src": "apps/cli/tests/unrelated.rs"}],
+                     "bundles": {}, "targets": [{"name": "unrelated", "kind": "test"}]}]
+        if mid:
+            packages.append({"name": "graphhelm-mid", "dir": "core/mid", "deps": ["graphhelm-k"], "dev_deps": [],
+                             "tests": [], "bundles": {}})
+        return root, packages
+
+    def plan(self, root, packages, rel="src/m.rs", narrow=True):
+        k = next(p for p in packages if p["name"] == "graphhelm-k")
+        fake = (lambda _pk, _p, path, _root: {self.CLI_A} if path == "src/commands/a.rs" else None) if narrow \
+            else (lambda *_: None)
+        with patch.object(rt, "cli_module", fake):
+            return rt.core_module_cli(packages, k, rel, root)
+
+    def test_a_core_module_reaches_the_cli_modules_that_use_it_transitively(self):
+        root, packages = self.tree({})
+        self.assertEqual(self.plan(root, packages), {self.CLI_A}, "m is used by n, which a names")
+
+    def test_a_module_nobody_names_reaches_no_cli_module(self):
+        root, packages = self.tree({"core/k/src/n.rs": "pub fn g() {}\n"})
+        self.assertEqual(self.plan(root, packages), set())
+
+    def test_every_unprovable_case_is_the_whole_cli_package(self):
+        cases = {
+            "lib.rs re-exports an affected module": ({"core/k/src/lib.rs": "pub mod m;\npub mod n;\npub use n::g;\n"}, False),
+            "an affected module exports a macro": ({"core/k/src/m.rs": "#[macro_export]\nmacro_rules! x { () => {} }\n"}, False),
+            "the CLI imports the crate by glob": ({"apps/cli/src/commands/b.rs": "use graphhelm_k::*;\n"}, False),
+            "the CLI aliases the crate": ({"apps/cli/src/commands/b.rs": "use graphhelm_k as k;\n"}, False),
+            "a crate between names the module": ({"core/mid/src/lib.rs": "pub fn j() { graphhelm_k::m::f() }\n"}, True),
+            "a CLI support file names it": ({"apps/cli/tests/support/mod.rs": "use graphhelm_k::{n};\n"}, False),
+        }
+        for why, (files, mid) in cases.items():
+            with self.subTest(why):
+                root, packages = self.tree(files, mid=mid)
+                self.assertIsNone(self.plan(root, packages), why)
+        root, packages = self.tree({})
+        self.assertIsNone(self.plan(root, packages, rel="src/lib.rs"), "a lib.rs change")
+        self.assertIsNone(self.plan(root, packages, narrow=False), "a user with no narrow plan")
+
+    def test_a_crate_between_that_does_not_name_the_module_keeps_the_narrow_plan(self):
+        root, packages = self.tree({"apps/cli/src/commands/a.rs": "fn h() { graphhelm_k::{n}::g() }\n"}, mid=True)
+        self.assertEqual(self.plan(root, packages), {self.CLI_A})
+
+    def test_the_real_tasks_module_selects_every_cli_module_that_names_it(self):
+        repo = Path(__file__).resolve().parents[2]
+        packages = rt.workspace(repo)
+        whole, single, *_ = rt.reach(["core/execution/src/tasks.rs"], packages, rt.embeds(repo, packages), repo)
+        self.assertNotIn("graphhelm-cli", whole)
+        self.assertTrue({"graphhelm-execution", "graphhelm-governor", "graphhelm-runtime"} <= whole)
+        cli = next(p for p in packages if p["name"] == "graphhelm-cli")
+        users = [path for path, text in rt._crate_sources(repo, cli).items()
+                 if re.search(r"\bgraphhelm_execution::(?:tasks|requests|\{[^}]*\btasks\b)", text)]
+        self.assertIn("src/commands/execution/tasks.rs", users)
+        for path in users:
+            with self.subTest(path):
+                self.assertLessEqual(rt.cli_module(packages, cli, path, repo), single)
+        self.assertIn(("graphhelm-cli", "bin:graphhelm", "commands::execution::collisions"), single)

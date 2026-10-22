@@ -4,7 +4,7 @@ import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
 import { CompareFrame } from "./CompareFrame";
 import { decisionOf, offersDecision, rejectNote } from "./decision";
-import { failsOnlyOn, journeySteps, lastRunChip, preparingStatus, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, journeyScore, journeySteps, lastRunChip, preparingStatus, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 
 interface ProofViewProps {
@@ -19,61 +19,165 @@ interface ProofViewProps {
   initial?: string | null;
 }
 
+/** How often Run all reads a started journey again to learn it finished. */
+const RUN_ALL_POLL_MS = 1_000;
+
+function message(cause: unknown, fallback: string): string {
+  return cause instanceof Error ? cause.message : fallback;
+}
+
+function nameOf(flow: JourneyFlow): string {
+  return flow.name || flow.title || flow.id;
+}
+
 /** The Proof region (docs/design/studio/Proof.dc.html): the journeys column, then the selected
- * journey's run bar, console and step strip with the frames its run captured. */
+ * journey's run bar, console, step grid and the selected step's compare and Action panel. */
 export function ProofView({ runtime, journeys, error, executionId, onRan, initial = null }: ProofViewProps) {
   // The journey a deep link named (`studio open --journey`), until the owner picks another.
   const [picked, setPicked] = useState<string | null>(initial);
+  // #1905: bumped after a run is started from the column, so the open panel reads the run again.
+  const [reread, setReread] = useState(0);
   if (error !== null) return <section id="panel-proof" aria-label="Proof" className="view"><p className="error">{error}</p></section>;
   if (journeys === null) return <section id="panel-proof" aria-label="Proof" className="view"><p>Reading the journeys…</p></section>;
   const selected = journeys.find((flow) => flow.id === picked) ?? journeys[0] ?? null;
+  const started = (id: string) => { if (id === selected?.id) setReread((n) => n + 1); };
   return (
     <section id="panel-proof" aria-label="Proof" className="proof">
-      <JourneysColumn journeys={journeys} selected={selected?.id ?? null} onPick={setPicked} />
+      <JourneysColumn runtime={runtime} journeys={journeys} selected={selected?.id ?? null} executionId={executionId} onPick={setPicked} onStarted={started} onRan={onRan} />
       {selected === null
         ? <div className="proof-main"><p>This project has no journeys yet.</p></div>
-        : <JourneyRunPanel key={selected.id} runtime={runtime} flow={selected} executionId={executionId} onRan={onRan} />}
+        : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} executionId={executionId} onRan={onRan} />}
     </section>
   );
 }
 
-function JourneysColumn({ journeys, selected, onPick }: { journeys: JourneyFlow[]; selected: string | null; onPick: (id: string) => void }) {
-  const counts = { passed: 0, failed: 0, not_run: 0 };
-  for (const flow of journeys) if (flow.lastRun?.kind === "replay" || flow.lastRun?.status === "not_run") counts[flow.lastRun.status] += 1;
+interface ColumnProps {
+  runtime: Runtime;
+  journeys: JourneyFlow[];
+  selected: string | null;
+  executionId: string | null;
+  onPick: (id: string) => void;
+  onStarted: (id: string) => void;
+  onRan: () => void;
+}
+
+function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onStarted, onRan }: ColumnProps) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const counts = { passed: 0, failed: 0, stale: 0, not_run: 0 };
+  for (const flow of journeys) {
+    const last = flow.lastRun;
+    if (last === undefined) continue;
+    if (last.status === "not_run") counts.not_run += 1;
+    else if (last.flowChanged === true) counts.stale += 1;
+    else if (last.kind === "replay") counts[last.status] += 1;
+  }
   const groups = new Map<string, JourneyFlow[]>();
   for (const flow of journeys) {
     const feature = flow.feature || "Other";
     groups.set(feature, [...(groups.get(feature) ?? []), flow]);
   }
+  // #1905: Approve N is the single Approve, one journey at a time, on every journey the Runtime says
+  // it would accept now. The Runtime decides who may approve (owner credential only).
+  const approvable = journeys.filter((flow) => flow.approvable === true && decisionOf(flow) !== "approved");
+
+  const runOne = async (flow: JourneyFlow): Promise<void> => {
+    await runtime.startJourneyRun(flow.id, executionId);
+    onStarted(flow.id);
+  };
+  const runSingle = (flow: JourneyFlow) => {
+    setRefusal(null);
+    setBusy(`Starting ${nameOf(flow)}`);
+    onPick(flow.id);
+    runOne(flow).catch((cause: unknown) => setRefusal(message(cause, "The Runtime refused the run."))).finally(() => setBusy(null));
+  };
+  const runAll = async () => {
+    setRefusal(null);
+    try {
+      for (const [index, flow] of journeys.entries()) {
+        setBusy(`Running all · ${index + 1}/${journeys.length}`);
+        await runOne(flow);
+        for (;;) {
+          const run = await runtime.journeyRun(flow.id);
+          if (run.state !== "running") break;
+          await new Promise((resolve) => setTimeout(resolve, RUN_ALL_POLL_MS));
+        }
+      }
+    } catch (cause) {
+      setRefusal(message(cause, "The Runtime refused the run."));
+    } finally {
+      setBusy(null);
+      onRan();
+    }
+  };
+  const approveAll = async () => {
+    setRefusal(null);
+    try {
+      for (const [index, flow] of approvable.entries()) {
+        setBusy(`Approving ${index + 1}/${approvable.length}`);
+        await runtime.approveJourney(flow.id);
+      }
+    } catch (cause) {
+      setRefusal(message(cause, "The Runtime refused."));
+    } finally {
+      setBusy(null);
+      onRan();
+    }
+  };
+
   return (
-    <aside className="proof-journeys">
+    <aside className="proof-journeys" aria-label="Journeys column">
       <span className="section-label">JOURNEYS · {journeys.length}</span>
+      <div className="journeys-actions">
+        <button type="button" className="b ghost" disabled={busy !== null || approvable.length === 0} onClick={() => { void approveAll(); }}>Approve {approvable.length}</button>
+        <button type="button" className="b ghost" disabled={busy !== null || journeys.length === 0} onClick={() => { void runAll(); }}>▶ Run all</button>
+      </div>
+      {busy !== null && <span role="status" className="run-status"><span className="pulse" aria-hidden="true" />{busy}</span>}
+      {refusal !== null && <p className="error">{refusal}</p>}
       {journeys.some((flow) => flow.lastRun !== undefined) && (
-        <span className="proof-counts">{counts.passed} passed · {counts.failed} failed · {counts.not_run} not run</span>
+        <span className="proof-counts">{counts.passed} passed · {counts.failed} failed · {counts.stale} stale · {counts.not_run} not run</span>
       )}
       <ul className="journey-list" aria-label="Journeys">
-        {[...groups].map(([feature, flows]) => (
-          <li key={feature} className="journey-group">
-            <strong className="journey-feature">{feature}</strong>
-            <ul>
-              {flows.map((flow) => {
-                const chip = lastRunChip(flow.lastRun);
-                return (
-                  <li key={flow.id}>
-                    <button type="button" className="b journey" aria-pressed={flow.id === selected} onClick={() => onPick(flow.id)}>
-                      <strong>{flow.name || flow.title || flow.id}</strong>
-                      {flow.purpose && <span className="journey-purpose">{flow.purpose}</span>}
-                      <span className={`chip ${chip.tone}`}>{chip.text}</span>
-                      {decisionOf(flow) !== "undecided" && <span className={`chip ${decisionOf(flow) === "approved" ? "pass" : "fail"}`}>{decisionOf(flow)}</span>}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </li>
-        ))}
+        {[...groups].map(([feature, flows]) => {
+          const passed = flows.filter((flow) => flow.lastRun?.status === "passed").length;
+          const failed = flows.some((flow) => flow.lastRun?.status === "failed");
+          return (
+            <li key={feature} className="journey-group">
+              <div className="journey-feature">
+                <span aria-hidden="true">▾</span><strong>{feature}</strong>
+                <span className={`mono group-score${failed ? " fail" : passed > 0 ? " pass" : ""}`} aria-label={`${feature}: ${passed} of ${flows.length} passed`}>{passed}/{flows.length}</span>
+              </div>
+              <ul>
+                {flows.map((flow) => <JourneyCard key={flow.id} flow={flow} selected={flow.id === selected} disabled={busy !== null} onPick={onPick} onRun={runSingle} />)}
+              </ul>
+            </li>
+          );
+        })}
       </ul>
     </aside>
+  );
+}
+
+function JourneyCard({ flow, selected, disabled, onPick, onRun }: { flow: JourneyFlow; selected: boolean; disabled: boolean; onPick: (id: string) => void; onRun: (flow: JourneyFlow) => void }) {
+  const chip = lastRunChip(flow.lastRun);
+  const score = journeyScore(flow);
+  const decision = decisionOf(flow);
+  return (
+    <li className={`journey${selected ? " on" : ""}`}>
+      <button type="button" className="b journey-pick" aria-pressed={selected} onClick={() => onPick(flow.id)}>
+        <strong>{nameOf(flow)}</strong>
+        {flow.purpose && <span className="journey-purpose">{flow.purpose}</span>}
+      </button>
+      <div className="journey-row">
+        <span className={`chip ${chip.tone}`}>{chip.text}</span>
+        {decision !== "undecided" && <span className={`chip ${decision === "approved" ? "pass" : "fail"}`}>{decision}</span>}
+        <span className="mono journey-score">{score.passed === null ? "?" : score.passed}/{score.total}</span>
+        <button type="button" className="b ghost journey-run" aria-label={`Run ${nameOf(flow)}`} disabled={disabled} onClick={() => onRun(flow)}>▶ Run</button>
+      </div>
+      {score.total > 0 && (
+        <span className="journey-bar" aria-hidden="true">{score.bar.map((cell, index) => <span key={index} className={cell} />)}</span>
+      )}
+    </li>
   );
 }
 
@@ -94,17 +198,17 @@ function verdict(run: JourneyRun | null): string | null {
   if (run === null || run.state === "none") return "Not run yet";
   if (run.state === "running") return null;
   if (run.state === "failed") return run.reason ? `The run could not finish: ${run.reason}` : "The run could not finish";
-  const proof = run.kind === "replay" ? "" : " · Preview — not proof";
-  return `${run.result === "pass" ? "Passed" : run.result === "drift" ? "Drifted" : "Failed"}${run.ranAt ? ` · ${run.ranAt}` : ""}${proof}`;
+  return `${run.result === "pass" ? "Passed" : run.result === "drift" ? "Drifted" : "Failed"}${run.ranAt ? ` · ${run.ranAt}` : ""}`;
 }
 
 /** #1777: each viewport's mark on a step card, and the line that says a break is mobile-only. */
 function viewportLine(step: Step) {
   const mark = (viewport: Viewport) => (step.viewports[viewport] === "not run" ? "not run" : MARK[step.viewports[viewport]]);
+  const tone = (viewport: Viewport) => step.viewports[viewport].replace(" ", "-");
   const only = failsOnlyOn(step);
   return (
     <>
-      <span className="step-viewports">web <b>{mark("web")}</b> · mobile <b>{mark("mobile")}</b></span>
+      <span className="step-viewports">web <b className={tone("web")}>{mark("web")}</b> · mobile <b className={tone("mobile")}>{mark("mobile")}</b></span>
       {only !== null && <span className="fails-only">Fails only on {only}</span>}
     </>
   );
@@ -115,6 +219,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
   const [showLog, setShowLog] = useState(false);
   const [picked, setPicked] = useState<number | null>(null);
   const steps = journeySteps(flow, run);
+  const counts = countSteps(steps);
   const busy = starting || run?.state === "running";
   const status = runStatus(run, starting);
   const said = verdict(run);
@@ -122,48 +227,70 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
   const frame = selected === null ? undefined : frames[selected.screen];
   // #1878: a mobile-only run has no web frame; its step thumbnail is the mobile one.
   const thumb = (screen: string): string | undefined => frames[screen] ?? mobileFrames[screen];
+  const finished = run?.state === "ready";
   return (
     <div className="proof-main">
-      <h1>{flow.name || flow.title || flow.id}</h1>
-      {flow.purpose && <p><span className="section-label">PROVES</span> {flow.purpose}</p>}
-      <div className="run-bar">
-        <button type="button" className="b act" disabled={busy} onClick={() => { setPicked(null); start(); }}>
-          {busy ? "Running…" : run === null || run.state === "none" ? "Run" : "Run again"}
-        </button>
-        {status !== null && <span role="status" aria-label={status.name} className="run-status"><span className="pulse" aria-hidden="true" />{status.text}</span>}
-        {said !== null && <span className="run-verdict">{said}</span>}
-        {(busy || log.length > 0) && (
-          <button type="button" className="b ghost" aria-expanded={showLog} onClick={() => setShowLog(!showLog)}>{showLog ? "Hide log" : "Show log"}</button>
+      <section aria-label="Journey run" className="journey-run">
+        <div className="run-head">
+          <h1>{nameOf(flow)}</h1>
+          <span className="mono run-counts" aria-label="Step counts">
+            <span className="pass">{counts.passed} passed</span> <span className="wait">{counts.waits} waits for you</span> <span className="fail">{counts.failed} failed</span> <span className="idle">{counts.notRun} not run</span>
+          </span>
+        </div>
+        {flow.purpose && <p><span className="section-label">PROVES</span> {flow.purpose}</p>}
+        <div className="run-bar">
+          {finished && <span className="run-score">{counts.passed} passed · {counts.failed} failed</span>}
+          {finished && run?.kind !== "replay" && <span className="preview-tag">Preview — not proof</span>}
+          <button type="button" className="b act" disabled={busy} onClick={() => { setPicked(null); start(); }}>
+            {busy ? "Running…" : run === null || run.state === "none" ? "Run" : "Run again"}
+          </button>
+          {busy && (
+            // #1905: the Runtime serves no route that cancels a running journey (only GET and POST
+            // /v1/journey-flows/{id}/preview), so Stop is shown and says why it cannot act.
+            <button type="button" className="b ghost" disabled aria-describedby="proof-stop-note">Stop</button>
+          )}
+          {busy && <span id="proof-stop-note" className="run-note">The Runtime has no route to stop a run.</span>}
+          {status !== null && <span role="status" aria-label={status.name} className="run-status"><span className="pulse" aria-hidden="true" />{status.text}</span>}
+          {said !== null && <span className="run-verdict">{said}</span>}
+          {(busy || log.length > 0) && (
+            <button type="button" className="b ghost" aria-expanded={showLog} onClick={() => setShowLog(!showLog)}>{showLog ? "Hide log" : "Show log"}</button>
+          )}
+        </div>
+        {showLog && (
+          <pre role="log" aria-label="Run console" className="run-log">{log.length === 0 ? "Waiting for the Runtime's first line…" : log.join("\n")}</pre>
         )}
         {history.length > 0 && (
           <span className="run-history" aria-label="History">
             <span className="section-label">HISTORY</span>
-            {history.map((past) => <span key={past.run} className="mono">{past.result === "pass" ? "✓" : "✕"} {past.ranAt ?? past.run}</span>)}
+            {history.map((past, index) => (
+              <span key={past.run} className={`history-chip${index === 0 ? " newest" : ""}`}><b className={past.result === "pass" ? "pass" : "fail"}>{past.result === "pass" ? "✓" : "✕"}</b> {past.ranAt ?? past.run}</span>
+            ))}
           </span>
         )}
-      </div>
+        {steps.length > 0 && (
+          <span className="run-segments" aria-hidden="true">{steps.map((step) => <span key={step.n} className={step.status.replace(" ", "-")} />)}</span>
+        )}
+      </section>
       {error !== null && <p className="error">{error}</p>}
-      <DecisionBar runtime={runtime} flow={flow} runFinished={run?.state === "ready"} onDecided={onRan} />
-      {showLog && (
-        <pre role="log" aria-label="Run console" className="run-log">{log.length === 0 ? "Waiting for the Runtime's first line…" : log.join("\n")}</pre>
-      )}
-      <ol className="steps" aria-label="Steps">
-        {steps.map((step) => (
-          <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${step.status.replace(" ", "-")}`}>
-            <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
-              <span className="step-thumb">{thumb(step.screen) ? <img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /> : <span>{step.frame ? "loading" : "no frame"}</span>}</span>
-              <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{MARK[step.status]} {step.status}</span></span>
-              <span className="step-label">{step.label}</span>
-              {viewportLine(step)}
-            </button>
-          </li>
-        ))}
-      </ol>
+      <DecisionBar runtime={runtime} flow={flow} runFinished={finished} onDecided={onRan} />
+      <div className="steps-card">
+        <ol className="steps" aria-label="Steps">
+          {steps.map((step) => (
+            <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${step.status.replace(" ", "-")}`}>
+              <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
+                <span className="step-thumb">{thumb(step.screen) ? <img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /> : <span>{step.frame ? "loading" : "no frame"}</span>}</span>
+                <span className="step-text">
+                  <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{step.status}</span></span>
+                  <span className="step-label">{step.label}</span>
+                  {viewportLine(step)}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      </div>
       {selected !== null && (
-        <figure className="step-frame">
-          <CompareFrame runtime={runtime} flowId={flow.id} step={selected} steps={steps.length} now={frame} mobileNow={mobileFrames[selected.screen]} earlier={earlierRun(history, run, selected.screen)} />
-          <figcaption><span className="mono">ACTION {selected.n} · DOES</span> {selected.label}</figcaption>
-        </figure>
+        <CompareFrame runtime={runtime} flowId={flow.id} step={selected} steps={steps.length} now={frame} mobileNow={mobileFrames[selected.screen]} earlier={earlierRun(history, run, selected.screen)} />
       )}
     </div>
   );
@@ -180,7 +307,7 @@ function DecisionBar({ runtime, flow, runFinished, onDecided }: { runtime: Runti
   const act = (send: () => Promise<void>) => {
     setBusy(true);
     setRefusal(null);
-    send().then(() => { setReason(""); onDecided(); }, (cause: unknown) => setRefusal(cause instanceof Error ? cause.message : "The Runtime refused."))
+    send().then(() => { setReason(""); onDecided(); }, (cause: unknown) => setRefusal(message(cause, "The Runtime refused.")))
       .finally(() => setBusy(false));
   };
   const reject = () => {

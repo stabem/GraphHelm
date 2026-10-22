@@ -2,7 +2,7 @@ import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow } from "../runtime/client";
-import { failsOnlyOn, journeySteps, lastRunChip, preparingStatus } from "./steps";
+import { countSteps, failsOnlyOn, journeyScore, journeySteps, lastRunChip, preparingStatus } from "./steps";
 
 const flow: JourneyFlow = {
   id: "buy",
@@ -91,5 +91,27 @@ describe("splitFrames", () => {
   it("keeps web at the top level and mobile under its slot", () => {
     expect(splitFrames({ cart: "blob:w", "mobile:cart": "blob:m" }, "web")).toEqual({ web: { cart: "blob:w" }, mobile: { cart: "blob:m" } });
     expect(splitFrames({ cart: "blob:w" }, undefined)).toEqual({ web: { cart: "blob:w" }, mobile: {} });
+  });
+});
+
+// #1905: the run bar's counts and a journey card's score come from Runtime data only.
+describe("step counts and journey score", () => {
+  it("counts a step skipped for the owner's confirmation as waiting, not as not run", () => {
+    const steps = journeySteps(flow, {
+      state: "ready",
+      screens: { list: { frame: true, result: "pass" }, item: { frame: false, reason: "not_reached" } },
+      edges: { "list.item": { result: "skipped", reason: "confirm_needed" }, "item.done": { result: null, reason: "not_reached" } },
+    });
+    expect(countSteps(steps)).toEqual({ passed: 1, waits: 1, failed: 0, notRun: 1 });
+    expect(steps[1]!.reason).toBe("confirm_needed");
+  });
+
+  it("scores a failure by the step lastRun names, and an unnamed failing step as unknown", () => {
+    const last = { ranAt: null, kind: "replay" as const, reason: null, flowChanged: false };
+    const failed = journeyScore({ ...flow, lastRun: { ...last, status: "failed", failingStep: { kind: "edge", id: "item.done", result: "fail", reason: null } } });
+    expect(failed).toEqual({ passed: 2, total: 3, bar: ["pass", "pass", "fail"] });
+    expect(journeyScore({ ...flow, lastRun: { ...last, status: "failed", failingStep: null } }).passed).toBeNull();
+    expect(journeyScore({ ...flow, lastRun: { ...last, status: "passed", failingStep: null } }).passed).toBe(3);
+    expect(journeyScore({ ...flow, lastRun: undefined }).passed).toBeNull();
   });
 });

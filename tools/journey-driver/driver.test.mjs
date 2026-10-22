@@ -73,6 +73,11 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: [{key:'',value:'1'}] }, 'driver.protocol_invalid'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: [{key:'seen',value:7}] }, 'driver.protocol_invalid'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: Array.from({length:17},(_,i)=>({key:`k${i}`,value:''})) }, 'driver.protocol_invalid'],
+    // #1782: `clock` is an ISO-8601 instant with an explicit offset that Date can hold.
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], clock: '2026-10-31T12:00:00-03:00' }, 'driver.observer_missing'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], clock: '2026-10-31T12:00:00' }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], clock: '2026-13-31T12:00:00Z' }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], clock: 1793458800000 }, 'driver.protocol_invalid'],
     // #491: `show` is boolean and only for a headed window; the `show` op needs such a session.
     // #519: a headless watch shows in the page and may stream frames; a headed one may not stream.
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], show: true, screencast: true }, 'driver.observer_missing'],

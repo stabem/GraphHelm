@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { login, type Session } from "./login/session";
+import { addFolder, login, servedProjects, type Session } from "./login/session";
 import { parseRoute, routeSearch, type Route, type View } from "./routing/route";
 import { Runtime, type JourneyFlow, type RunSummary } from "./runtime/client";
-import { Sidebar } from "./sidebar/Sidebar";
+import { Sidebar, type ProjectEntry } from "./sidebar/Sidebar";
+import { useSummaries } from "./sidebar/use-summaries";
 import { StartRun } from "./start-run/StartRun";
 import { Topbar } from "./topbar/Topbar";
 import { GraphView, LanesView, ProofView } from "./views/Views";
@@ -11,7 +12,16 @@ import { GraphView, LanesView, ProofView } from "./views/Views";
 /** How often the run list is read again: one page of at most 50 rows per poll. */
 const POLL_MS = 5_000;
 
-type Login = { state: "pending" } | { state: "refused" } | { state: "in"; session: Session };
+const NO_SESSIONS: Session[] = [];
+
+type Login = { state: "pending" } | { state: "refused" } | { state: "in"; sessions: Session[]; closed: string[] };
+
+/** The joined projects this tab holds no key for: listed, not openable here. */
+function closedProjects(sessions: Session[], served: { first: string | null; all: string[] } | null): string[] {
+  if (served === null) return [];
+  const open = new Set(sessions.map((session) => (session.key === "first" ? served.first : session.key)));
+  return served.all.filter((id) => !open.has(id));
+}
 
 function clock(date: Date): string {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
@@ -23,11 +33,16 @@ export function App() {
 
   useEffect(() => {
     let live = true;
-    void login(location.search).then((session) => {
+    void login(location.search).then(async (sessions) => {
+      const served = sessions === null ? null : await servedProjects();
       if (!live) return;
-      setAuth(session === null ? { state: "refused" } : { state: "in", session });
-      // The ticket is spent; it does not stay in the address bar or the history.
-      history.replaceState(null, "", `${location.pathname}${routeSearch(parseRoute(location.search))}`);
+      setAuth(sessions === null ? { state: "refused" } : { state: "in", sessions, closed: closedProjects(sessions, served) });
+      // The ticket is spent; it does not stay in the address bar or the history. The URL keeps the
+      // project the ticket opened, so a reload lands on it.
+      const landed = parseRoute(location.search);
+      const next = sessions !== null && landed.project === null && sessions[0]!.key !== "first" ? { ...landed, project: sessions[0]!.key } : landed;
+      history.replaceState(null, "", `${location.pathname}${routeSearch(next)}`);
+      setRoute(next);
     });
     return () => { live = false; };
   }, []);
@@ -43,6 +58,9 @@ export function App() {
     history.pushState(null, "", `${location.pathname}${routeSearch(next)}`);
   }, []);
 
+  const sessions = auth.state === "in" ? auth.sessions : NO_SESSIONS;
+  const summaries = useSummaries(sessions);
+
   if (auth.state === "pending") return <main className="gate"><p>Logging in…</p></main>;
   if (auth.state === "refused") {
     return (
@@ -52,11 +70,24 @@ export function App() {
       </main>
     );
   }
-  return <Shell session={auth.session} route={route} go={go} />;
+  const session = auth.sessions.find((known) => known.key === route.project) ?? auth.sessions[0]!;
+  const projects: ProjectEntry[] = auth.sessions.map((known) => ({
+    key: known.key, name: known.project ?? "this project", folder: known.folder, summary: summaries[known.key] ?? null,
+  }));
+  // Keyed by project: switching starts that project's own reads from empty, never the last one's rows.
+  return <Shell key={session.key} session={session} projects={projects} closed={auth.closed} route={{ ...route, project: session.key }} go={go} />;
 }
 
-function Shell({ session, route, go }: { session: Session; route: Route; go: (route: Route) => void }) {
-  const runtime = useMemo(() => new Runtime(session.token), [session.token]);
+interface ShellProps {
+  session: Session;
+  projects: ProjectEntry[];
+  closed: string[];
+  route: Route;
+  go: (route: Route) => void;
+}
+
+function Shell({ session, projects, closed, route, go }: ShellProps) {
+  const runtime = useMemo(() => new Runtime(session.token, session.base), [session.token, session.base]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [live, setLive] = useState(false);
   const [updated, setUpdated] = useState<string | null>(null);
@@ -90,7 +121,24 @@ function Shell({ session, route, go }: { session: Session; route: Route; go: (ro
 
   return (
     <div className="shell">
-      <Sidebar project={project} runs={runs} selected={route.run} view={route.view} live={live} onSelect={(id) => go({ ...route, run: id })} />
+      <Sidebar
+        projects={projects}
+        closed={closed}
+        current={session.key}
+        runs={runs}
+        selected={route.run}
+        view={route.view}
+        live={live}
+        onProject={(key) => go({ project: key, run: null, view: route.view })}
+        onSelect={(id) => go({ ...route, run: id })}
+        onAdd={session.sessionKey === null ? null : async (path) => {
+          const added = await addFolder(path, session.sessionKey!);
+          if ("refused" in added) return added.refused;
+          // The new project's key is in this tab's keys now; a fresh login opens it.
+          location.assign(`${location.pathname}${routeSearch({ project: added.projectId, run: null, view: route.view })}`);
+          return null;
+        }}
+      />
       <div className="main">
         <Topbar
           project={project}
@@ -108,7 +156,7 @@ function Shell({ session, route, go }: { session: Session; route: Route; go: (ro
                 onCancel={() => setComposing(false)}
                 onStarted={(id) => {
                   setComposing(false);
-                  go({ run: id, view: "graph" });
+                  go({ project: route.project, run: id, view: "graph" });
                   void readRuns();
                 }}
               />

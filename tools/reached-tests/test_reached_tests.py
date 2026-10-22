@@ -405,6 +405,26 @@ class Reach(unittest.TestCase):
         self.assertIn(("graphhelm-cli", "journeys", "journey_scope_guard"), single)
         self.assertIn("graphhelm --json journey validate --all", tools)
 
+    def test_a_studio_next_change_runs_its_whole_vitest_and_tsc_beside_the_old_studios(self):
+        # #1818: apps/studio-next/** landed in `unmapped` (PR #1817), so Studio v2 got no check.
+        next_only = reach("apps/studio-next/src/App.tsx")
+        whole, single, studio, tools, validate, other = next_only
+        self.assertEqual(other, [])
+        self.assertEqual(studio, ["apps/studio-next/src/App.tsx"])
+        next_command = "(cd apps/studio-next && npx vitest run --maxWorkers=4 && npx tsc -b)"
+        self.assertEqual(rt.commands(whole, single, studio, tools, validate), [next_command])
+        self.assertEqual(rt.steps(whole, single, studio, tools, validate), [
+            {"argv": ["npx", "vitest", "run", "--maxWorkers=4"], "cwd": "apps/studio-next", "slot": False},
+            {"argv": ["npx", "tsc", "-b"], "cwd": "apps/studio-next", "slot": False},
+        ])
+        # Both apps in one diff: each runs in its own folder, the old one still by related files.
+        whole, single, studio, tools, validate, other = reach(
+            "apps/studio/src/App.tsx", "apps/studio-next/package.json")
+        cwds = [step["cwd"] for step in rt.steps(whole, single, studio, tools, validate)]
+        self.assertEqual(cwds, ["apps/studio", "apps/studio", "apps/studio-next", "apps/studio-next"])
+        self.assertIn("(cd apps/studio && npx vitest related --run --maxWorkers=1 src/App.tsx && npx tsc -b)",
+                      rt.commands(whole, single, studio, tools, validate))
+
     def test_the_mcp_tool_catalog_reaches_the_stdio_tests_and_the_studio_adapter_test(self):
         # #1449: schemas/ mapped to nothing, so a catalog change stopped run_reached as unmapped.
         packages = [dict(PACKAGES[2], bundles={"mcp_stdio": "cli"})]

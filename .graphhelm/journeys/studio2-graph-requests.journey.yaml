@@ -22,13 +22,19 @@ screens:
     title: "Requests are drawn with their issues, PRs and result"
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: list, name: Owner requests}, {role: group, name: Request issues}, {role: group, name: Request pull requests}, {role: group, name: Request result}]
+    expect: [{role: list, name: Owner requests}, {role: group, name: Request issues, text: "#"}, {role: group, name: Request pull requests, text: "#"}, {role: group, name: Request result}]
+    scope: unknown
+  - id: graph-again
+    title: Graph again shows the requests
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: list, name: Owner requests}, {role: region, name: Kanban, absent: true}]
     scope: unknown
   - id: kanban
     title: The same work as Kanban columns
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: region, name: Kanban}, {role: button, name: Graph}]
+    expect: [{role: region, name: Kanban}, {role: button, name: Graph}, {role: list, name: Owner requests, absent: true}]
     scope: unknown
 edges:
   - id: filtered.kanban
@@ -41,6 +47,11 @@ edges:
     to: filtered
     acts:
       - {kind: select, role: combobox, name: Journey filter}
+  - id: kanban.graph-again
+    from: kanban
+    to: graph-again
+    acts:
+      - {kind: activate, role: button, name: Graph}
 paths:
-  main: [graph.filtered, filtered.kanban]
+  main: [graph.filtered, filtered.kanban, kanban.graph-again]
 drift: []

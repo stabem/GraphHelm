@@ -16,7 +16,7 @@ screens:
     title: The project is listed and Graph is shown
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: link, name: demo}, {role: tab, name: Graph}, {role: region, name: Graph}]
+    expect: [{role: link, name: demo}, {role: banner, name: Top bar, text: demo}, {role: tab, name: Graph}, {role: region, name: Graph}, {role: heading, name: Open the Studio from your project, absent: true}]
     scope: unknown
   - id: login
     title: The Studio opens from its login ticket

@@ -788,7 +788,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     // #519: the reply says how this play is seen: frames for the Studio, or a window here.
     data["headed"] = (!streamed).into();
     data["frame"] = streamed.into();
-    let mut open = super::journey_replay::with_storage(
+    let mut open = super::journey_replay::with_declared(
         json!({"base":entry,"viewport":cache["viewport"],"allowOrigins":args.allow_origin,"headed":!streamed}),
         super::journey_replay::declared_browser(&flow, Value::Null)
             .1

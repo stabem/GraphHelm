@@ -181,6 +181,7 @@ pub(crate) fn validate_task_event(
         | "task.released"
         | "task.heartbeat"
         | "task.pr_opened"
+        | "task.journey_frames"
         | "task.critic_verdict" => Some("lane"),
         "task.review_verdict" | "task.review_activity" => Some("reviewer"),
         "task.merged" => Some("merger"),
@@ -583,6 +584,21 @@ pub(crate) fn validate_task_event(
                 && is_actor("linkedBy"),
             &["requestId", "issue", "linkedBy"],
         ),
+        // #1839: one PNG per screen rides on the signal; signal.rs pairs them with `screens`.
+        "task.journey_frames" => (
+            count("pr")
+                && sha("headSha")
+                && document["journey"]
+                    .as_str()
+                    .is_some_and(|id| OpaqueId::parse(id).is_ok())
+                && matches!(document["result"].as_str(), Some("pass" | "fail"))
+                && document.get("ranAt").is_none_or(|_| short("ranAt", 64))
+                && journey_screens(&document["screens"]).is_some()
+                && is_actor("lane"),
+            &[
+                "pr", "headSha", "journey", "result", "ranAt", "screens", "lane",
+            ],
+        ),
         _ => (false, &[]),
     };
     let known = document.as_object().is_some_and(|object| {
@@ -608,6 +624,9 @@ pub(crate) fn validate_task_event(
         }
         if kind == "task.request_linked" {
             validate_request_known(&document, history, evidence)?;
+        }
+        if kind == "task.journey_frames" {
+            validate_journey_frames(&document, actor_id, history, evidence)?;
         }
         if kind == "task.request_recorded" {
             validate_request_supersede(&document, actor_id, history, evidence)?;
@@ -826,6 +845,77 @@ fn validate_claim_holder(
                 pointer,
             ));
         }
+    }
+    Ok(())
+}
+
+/// #1839: the screens of a `task.journey_frames` record: 1 to 4 distinct ids, each a frame file
+/// name the preview store would use (`[A-Za-z0-9._-]`, 1 to 128, no leading dot).
+pub(crate) fn journey_screens(value: &serde_json::Value) -> Option<Vec<&str>> {
+    let screens = value
+        .as_array()
+        .filter(|items| {
+            (1..=graphhelm_execution::tasks::MAX_JOURNEY_FRAMES).contains(&items.len())
+        })?
+        .iter()
+        .map(|item| {
+            item.as_str().filter(|id| {
+                !id.is_empty()
+                    && id.len() <= 128
+                    && !id.starts_with('.')
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let distinct: std::collections::BTreeSet<_> = screens.iter().collect();
+    (distinct.len() == screens.len()).then_some(screens)
+}
+
+/// #1839: frames are recorded by the lane that opened the PR, for a journey that PR names, at the
+/// PR's current head, while the slice is open. Anything else would show as Now what no PR head ran.
+fn validate_journey_frames(
+    document: &serde_json::Value,
+    actor_id: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+) -> Result<(), Failure> {
+    let view = task_view(
+        history,
+        evidence,
+        "journey frames",
+        "/signal/description/pr",
+    )?;
+    let pr = document["pr"].as_u64();
+    let Some(slice) = view.tasks.iter().find(|slice| {
+        slice.task_id == document["taskId"]
+            && slice.pr == pr
+            && slice.lane.as_deref() == Some(actor_id)
+            && slice.released_by.is_none()
+            && slice.step != graphhelm_execution::tasks::TaskStep::Merged
+    }) else {
+        return Err(super::signal_invalid(
+            "journey frames need an open PR of this task that this lane opened",
+            "/signal/description/pr",
+        ));
+    };
+    if slice.head_sha.as_deref() != document["headSha"].as_str() {
+        return Err(super::signal_invalid(
+            "journey frames must be captured at the PR's current head",
+            "/signal/description/headSha",
+        ));
+    }
+    let journey = document["journey"].as_str().unwrap_or_default();
+    if !slice.journeys.iter().any(|named| named == journey) {
+        return Err(super::signal_invalid(
+            &format!("PR {} names no journey {journey}", pr.unwrap_or_default()),
+            "/signal/description/journey",
+        ));
     }
     Ok(())
 }

@@ -6429,3 +6429,187 @@ fn a_run_serves_each_viewports_frame_by_its_own_url() {
         );
     }
 }
+
+/// Records one `task.journey_frames` as `lane`, its PNG frames beside the signal (#313 transport).
+#[allow(clippy::too_many_arguments)]
+fn frames_record(
+    base: &str,
+    token: &str,
+    execution: &str,
+    lane: &str,
+    id: &str,
+    document: &Value,
+    attachments: &[(&str, &str)],
+) -> (u16, Value) {
+    post_json(
+        &format!("{base}/v1/executions/{execution}/signal"),
+        token,
+        &[
+            ("Idempotency-Key", id),
+            ("X-GraphHelm-Actor", lane),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": lane},
+            "type": "task.journey_frames", "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-13T12:00:00Z"},
+            "attachments": attachments.iter().map(|(media, base64)|
+                serde_json::json!({"mediaType": media, "base64": base64})).collect::<Vec<_>>()}),
+    )
+}
+
+/// #1839 (R4b): a lane that ran a journey at its PR's head records the frames, and the issue's
+/// journeys view shows them as Now beside Before. Observer: the real `serve` binary over HTTP with
+/// a throwaway keyring. Failure list: (a) a capture is Now only at the PR's current head, so a new
+/// head drops it; (b) a non-PNG, or a count that does not match `screens`, is refused with nothing
+/// appended; (c) a lane that did not open the PR is refused; (d) a journey the PR does not name is
+/// refused; (e) a head that is not the PR's current one is refused; (f) a replayed key appends once.
+#[test]
+fn a_pr_heads_journey_frames_are_now_beside_before() {
+    const CART: &str = "iVBORw0KGgpmcmFtZS1jYXJ0"; // PNG magic + "frame-cart"
+    const PAY: &str = "iVBORw0KGgpmcmFtZS1wYXk="; // PNG magic + "frame-pay"
+    const JPEG: &str = "/9j/anBlZw==";
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let mut extra = throwaway_keyring(dir.path());
+    extra.args.push("--project".into());
+    extra.args.push(project.to_str().unwrap().into());
+    let run = "head-frames";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 1);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let (lane, stranger) = ("lane-a", "lane-b");
+    let pr = |head: &str, revision: u64| {
+        serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-9",
+            "revision": revision, "at": "2026-10-13T12:00:00Z", "pr": 90, "headSha": head,
+            "journeys": ["checkout"], "lane": lane, "repo": "stabem/GraphHelm"})
+    };
+    for (kind, id, document) in [
+        ("task.claimed", "claim-9", claim_document(lane, 9)),
+        ("task.pr_opened", "pr-9", pr("aaaaaaa", 2)),
+    ] {
+        let (status, reply, _) = task_record(&base, &token, run, lane, kind, id, &document);
+        assert_eq!(status, 200, "{id}: {reply}");
+    }
+    let frames = |head: &str, journey: &str, screens: &[&str], by: &str| {
+        serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-9",
+            "revision": 3, "at": "2026-10-13T12:00:00Z", "pr": 90, "headSha": head,
+            "journey": journey, "result": "pass", "ranAt": "2026-10-13T11:59:00Z",
+            "screens": screens, "lane": by})
+    };
+    let head = || {
+        get_json(
+            &format!("{base}/v1/executions/{run}/events?after=0&limit=1000"),
+            Some(&token),
+        )["data"]["head"]
+            .clone()
+    };
+    let before = head();
+    for (id, by, document, attachments, pointer) in [
+        (
+            "f-jpeg",
+            lane,
+            frames("aaaaaaa", "checkout", &["cart"], lane),
+            vec![("image/jpeg", JPEG)],
+            "/attachments",
+        ),
+        (
+            "f-count",
+            lane,
+            frames("aaaaaaa", "checkout", &["cart", "pay"], lane),
+            vec![("image/png", CART)],
+            "/attachments",
+        ),
+        (
+            "f-stranger",
+            stranger,
+            frames("aaaaaaa", "checkout", &["cart"], stranger),
+            vec![("image/png", CART)],
+            "/signal/description/pr",
+        ),
+        (
+            "f-journey",
+            lane,
+            frames("aaaaaaa", "refund", &["cart"], lane),
+            vec![("image/png", CART)],
+            "/signal/description/journey",
+        ),
+        (
+            "f-head",
+            lane,
+            frames("bbbbbbb", "checkout", &["cart"], lane),
+            vec![("image/png", CART)],
+            "/signal/description/headSha",
+        ),
+    ] {
+        let (status, refused) = frames_record(&base, &token, run, by, id, &document, &attachments);
+        assert_ne!(status, 200, "{id} must be refused: {refused}");
+        assert_eq!(
+            refused["diagnostics"][0]["path"], pointer,
+            "{id}: {refused}"
+        );
+    }
+    assert_eq!(head(), before, "a refused capture appends nothing");
+
+    let document = frames("aaaaaaa", "checkout", &["cart", "pay"], lane);
+    let attachments = [("image/png", CART), ("image/png", PAY)];
+    for _ in 0..2 {
+        let (status, reply) =
+            frames_record(&base, &token, run, lane, "f-ok", &document, &attachments);
+        assert_eq!(status, 200, "{reply}");
+    }
+    let view = get_json(
+        &format!("{base}/v1/executions/{run}/issues/9/journeys"),
+        Some(&token),
+    );
+    let now = &view["data"]["journeys"][0]["now"];
+    assert_eq!(now["headSha"], "aaaaaaa", "{view}");
+    assert_eq!(now["pr"], 90, "{view}");
+    assert_eq!(now["result"], "pass", "{view}");
+    let screens = now["screens"].as_array().expect("screens");
+    assert_eq!(
+        screens
+            .iter()
+            .map(|s| s["screen"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["cart", "pay"],
+        "one frame per screen, the replayed key counted once: {view}"
+    );
+    for (screen, tail) in [(&screens[0], "frame-cart"), (&screens[1], "frame-pay")] {
+        let frame = raw_request(
+            &format!("{base}{}", screen["frameUrl"].as_str().unwrap()),
+            Some(&token),
+        )
+        .unwrap();
+        assert_eq!(frame.status, 200, "{}", frame.body);
+        assert!(
+            frame.body.ends_with(tail),
+            "the URL serves the frame it names"
+        );
+    }
+
+    // A new head: the capture above is no longer Now.
+    let (status, reply, _) = task_record(
+        &base,
+        &token,
+        run,
+        lane,
+        "task.pr_opened",
+        "pr-9b",
+        &pr("bbbbbbb", 4),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let view = get_json(
+        &format!("{base}/v1/executions/{run}/issues/9/journeys"),
+        Some(&token),
+    );
+    assert_eq!(view["data"]["journeys"][0]["now"], Value::Null, "{view}");
+}

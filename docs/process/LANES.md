@@ -323,6 +323,7 @@ records"). From a lane worktree the token path must be absolute:
 | As owner, to retire or restore lanes (signs with the owner token; `--token-file <events.token>`) | `$T lane_retired --lanes a,b --retired true\|false --reason "<why>"` (no `--issue`) |
 | As orchestrator, to record an owner request in the owner's words (#1792) | `$T request_recorded --request-id <id> --ask "<the ask>" [--title "<short>"]` (no `--issue`) |
 | As orchestrator, to link an issue opened for that request | `$T --issue N request_linked --request-id <id>` |
+| After `graphhelm journey preview <id> --project <worktree>` at your PR head, to show its frames as Now (#1839) | `$T --issue N journey_frames --pr P --head <sha> --journey <id> --preview-project <worktree>` |
 
 `--closes` is recorded exactly as given: name every issue the squash closed, and pass none for a
 `Refs` PR. Every lane merges under one GitHub account, so `mergedBy` cannot tell whose merge it

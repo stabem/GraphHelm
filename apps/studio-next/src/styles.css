@@ -1,3 +1,20 @@
+/* #1871: the design's two faces, bundled with the app (latin subset, variable weights); no
+   request leaves the machine for a glyph. Licenses: ./fonts/README.md (SIL OFL 1.1). */
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url("./fonts/space-grotesk-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin.woff2") format("woff2");
+}
+
 /* Tokens from the approved design (Sidebar.dc.html, Topbar.dc.html). */
 :root {
   --bg: #0a0a0b;
@@ -167,6 +184,7 @@ button { font: inherit; }
 .compare-changed { color: #ff8a3d; }
 @media (max-width: 760px) {
   .compare-side { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* #1803: Lanes (docs/design/studio/Lanes.dc.html) - filters, board columns, agent cards, agent panel. */
 .lanes { display: flex; flex-wrap: wrap; flex: 1; min-height: 0; }

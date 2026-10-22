@@ -19,12 +19,24 @@
  * - `/__studio/session?project=<id>` answers that project only against ITS ticket or ITS key;
  * - `/p/<id>/v1/...` and `/p/<id>/health` forward to that project's own loopback Runtime.
  *
+ * #1833 adds what the sidebar shows per project and its "Add project folder" action:
+ *
+ * - every `/__studio/session` answer carries `folder`, the project's folder for display (`~` for the
+ *   owner's home). It reaches only a caller already holding that project's token; the folder is
+ *   never written to a log line, an error body or the Runtime;
+ * - `POST /__studio/add` with header `X-GraphHelm-Studio-Key: <stable key of a project this tab
+ *   holds>` and `{"path": <folder>}` registers the folder exactly as `/__studio/register` does (a
+ *   GraphHelm project whose Runtime is running at loopback), proved by the owner's key instead of
+ *   the new project's ticket, and answers that project's id and stable key. Registration is keyed by
+ *   the canonical folder's id, so the same folder twice is one project.
+ *
  * `apply: "serve"` keeps every route out of any production bundle: a built page has no way to
  * obtain a token.
  */
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync, realpathSync, statSync, unlinkSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, toNamespacedPath } from "node:path";
 
 import type { Plugin } from "vite";
@@ -83,6 +95,15 @@ function firstProjectId(env: Record<string, string>): string | null {
   }
 }
 
+function firstFolder(env: Record<string, string>): string | null {
+  const folder = projectFolder(env);
+  try {
+    return folder === null ? null : realpathSync.native(folder);
+  } catch {
+    return null;
+  }
+}
+
 /** Another project this Studio serves: only the conventional layout of an absolute folder. */
 interface Joined { id: string; folder: string; tokenFile: string; ticketFile: string }
 
@@ -124,6 +145,20 @@ function holdsTicket(project: Joined, presented: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** The folder as the sidebar shows it: forward slashes, the owner's home as `~`. */
+export function displayFolder(canonical: string, home: string): string {
+  const slash = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "");
+  const folder = slash(canonical.replace(/^\\\\\?\\/, ""));
+  const root = slash(home);
+  const fold = process.platform === "win32" ? (value: string) => value.toLowerCase() : (value: string) => value;
+  if (root.length > 0 && (fold(folder) === fold(root) || fold(folder).startsWith(`${fold(root)}/`))) return `~${folder.slice(root.length)}`;
+  return folder;
+}
+
+function folderOf(canonical: string | null): string | null {
+  return canonical === null ? null : displayFolder(canonical, homedir());
 }
 
 function readBody(request: IncomingMessage, limit: number): Promise<string | null> {
@@ -237,6 +272,28 @@ export function devSession(env: Record<string, string>): Plugin {
           json(response, 200, { ok: true, projectId: project.id });
         });
       });
+      server.middlewares.use("/__studio/add", (request, response) => {
+        if (request.method !== "POST") return json(response, 405, { ok: false });
+        const header = request.headers["x-graphhelm-studio-key"];
+        const presented = typeof header === "string" ? header : "";
+        const firstToken = readToken(tokenPath(env));
+        const owner = presented.length > 0 && [firstToken, ...[...joined.values()].map((known) => readToken(known.tokenFile))]
+          .some((token) => token !== null && sameSecret(presented, stableKey(token)));
+        void readBody(request, 8 * 1024).then((raw) => {
+          if (!owner) return json(response, 404, { ok: false });
+          let path: unknown = null;
+          try {
+            path = raw === null ? null : (JSON.parse(raw) as { path?: unknown }).path;
+          } catch { /* an unreadable body names no folder */ }
+          const project = projectAt(path);
+          const token = project === null ? null : readToken(project.tokenFile);
+          // The reason codes never repeat the folder the caller sent.
+          if (project === null || token === null) return json(response, 422, { ok: false, reason: "not_a_project" });
+          if (runtimeOf(project.folder) === null) return json(response, 409, { ok: false, reason: "runtime_not_running" });
+          if (project.id !== firstProjectId(env)) joined.set(project.id, project);
+          json(response, 200, { ok: true, projectId: project.id, sessionKey: stableKey(token) });
+        });
+      });
       server.middlewares.use("/p", (request, response, next) => {
         const match = /^\/([0-9a-f]{64})(\/(?:v1|health)(?:[/?].*)?)$/.exec(request.url ?? "");
         const project = match === null ? undefined : joined.get(match[1]!);
@@ -263,14 +320,14 @@ export function devSession(env: Record<string, string>): Plugin {
             return json(response, 404, { ok: false });
           }
           return json(response, 200, {
-            ok: true, token, project: basename(project.folder), projectId: project.id, base: `/p/${project.id}`, sessionKey: stableKey(token),
+            ok: true, token, project: basename(project.folder), projectId: project.id, folder: folderOf(project.folder), base: `/p/${project.id}`, sessionKey: stableKey(token),
           });
         }
         const token = readToken(tokenPath(env));
         const allowed = token !== null && presented.length > 0
           && (sameSecret(presented, nonce) || sameSecret(presented, stableKey(token)) || consumeTicket(ticketPath(env), presented));
         if (!allowed || token === null) return json(response, 404, { ok: false });
-        json(response, 200, { ok: true, token, project: projectName(env), projectId: first, base: "", sessionKey: stableKey(token) });
+        json(response, 200, { ok: true, token, project: projectName(env), projectId: first, folder: folderOf(firstFolder(env)), base: "", sessionKey: stableKey(token) });
       });
     },
   };

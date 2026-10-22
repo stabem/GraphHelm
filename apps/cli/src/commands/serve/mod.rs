@@ -1826,7 +1826,13 @@ impl MutationDecisionKind {
     /// Matches both the closed event variant and the execution identity inside its payload. An
     /// envelope scope alone is not enough: repository files are untrusted, and a payload claiming
     /// a different execution must never authenticate this request.
-    fn matches(self, kind: &EventKind, execution: &str, request_body: &serde_json::Value) -> bool {
+    fn matches(
+        self,
+        kind: &EventKind,
+        execution: &str,
+        request_body: &serde_json::Value,
+        committed_key: &str,
+    ) -> bool {
         match (self, kind) {
             (Self::ExecutionStarted, EventKind::ExecutionStarted(payload)) => {
                 payload.execution_id.as_str() == execution
@@ -1835,23 +1841,41 @@ impl MutationDecisionKind {
             (Self::SignalRecorded, EventKind::SignalRecorded(payload)) => {
                 payload.execution_id.as_str() == execution
                     && request_body.get("signal").is_some_and(|signal| {
-                        signal.get("id").and_then(serde_json::Value::as_str)
-                            == Some(payload.signal_id.as_str())
-                            && signal
+                        // #1837: a request that left `id`, `emittedAt` or `source` for the Runtime
+                        // to fill (#1284) is matched by the fill rule, not by the bytes it never
+                        // sent. The committed key is the exact derived key, whose suffix is the
+                        // digest of this request's body, so the same key already proves the same
+                        // request; the envelope digest differs only by the filled instant.
+                        let absent =
+                            |field: &str| signal.get(field).is_none_or(serde_json::Value::is_null);
+                        let filled = absent("id") || absent("emittedAt") || absent("source");
+                        let id_matches = if absent("id") {
+                            let digest =
+                                graphhelm_protocols::hash::sha256_hex(committed_key.as_bytes());
+                            payload.signal_id.as_str() == format!("signal-{}", &digest[..16])
+                        } else {
+                            signal.get("id").and_then(serde_json::Value::as_str)
+                                == Some(payload.signal_id.as_str())
+                        };
+                        let source_matches = absent("source")
+                            || (signal
                                 .pointer("/source/id")
                                 .and_then(serde_json::Value::as_str)
                                 == Some(payload.source_id.as_str())
-                            && serialized_field_matches(
-                                &payload.source_kind,
-                                signal.pointer("/source/type"),
-                            )
+                                && serialized_field_matches(
+                                    &payload.source_kind,
+                                    signal.pointer("/source/type"),
+                                ));
+                        id_matches
+                            && source_matches
                             && signal.get("type").and_then(serde_json::Value::as_str)
                                 == Some(payload.kind.as_str())
                             && serialized_field_matches(&payload.severity, signal.get("severity"))
-                            && serde_json::to_vec(signal)
-                                .ok()
-                                .and_then(|bytes| raw_content_sha256(&bytes).ok())
-                                .is_some_and(|digest| digest == payload.envelope_sha256)
+                            && (filled
+                                || serde_json::to_vec(signal)
+                                    .ok()
+                                    .and_then(|bytes| raw_content_sha256(&bytes).ok())
+                                    .is_some_and(|digest| digest == payload.envelope_sha256))
                     })
             }
             (Self::NodeOutcomeRecorded, EventKind::NodeOutcomeRecorded(payload)) => {
@@ -2980,9 +3004,12 @@ impl ExpectedDecision<'_> {
                 .scope
                 .execution_id()
                 .is_some_and(|execution| execution.as_str() == self.execution)
-            && self
-                .kind
-                .matches(&event.kind, self.execution, self.request_body)
+            && self.kind.matches(
+                &event.kind,
+                self.execution,
+                self.request_body,
+                event.idempotency_key.as_str(),
+            )
     }
 }
 
@@ -4204,6 +4231,7 @@ mod tests {
                 &event,
                 "exec-cancel-proof",
                 &serde_json::Value::Null,
+                "",
             ),
             "cancel must recognize only the cancelled decision, never an unrelated completion"
         );
@@ -4224,11 +4252,11 @@ mod tests {
                             matching: EventKind,
                             poisoned: EventKind| {
             assert!(
-                decision.matches(&matching, execution, &body),
+                decision.matches(&matching, execution, &body, ""),
                 "the real decision must remain recognizable: {matching:?}"
             );
             assert!(
-                !decision.matches(&poisoned, execution, &body),
+                !decision.matches(&poisoned, execution, &body, ""),
                 "a same-kind event with different action data must not authenticate: {poisoned:?}"
             );
         };

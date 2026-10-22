@@ -1218,6 +1218,22 @@ class Reach(unittest.TestCase):
     def test_dependents_is_transitive_and_includes_the_start(self):
         self.assertEqual(rt.dependents(PACKAGES, {"graphhelm-policy"}), {"graphhelm-policy", "graphhelm-execution", "graphhelm-cli"})
 
+    def test_a_dev_dependency_reaches_its_dependents_tests_and_stops_there(self):
+        # #1873: graphhelm-events dev-depends on graphhelm-execution; a change to execution used to
+        # spread through events to every crate built on it (15 whole packages, ~275 steps).
+        packages = [
+            {"name": "a", "deps": [], "dev_deps": []},
+            {"name": "b", "deps": [], "dev_deps": ["a"]},          # b's tests link a
+            {"name": "c", "deps": ["b"], "dev_deps": []},          # c's library links b, not a
+            {"name": "d", "deps": ["a"], "dev_deps": []},          # a normal dependent still spreads
+            {"name": "e", "deps": ["d"], "dev_deps": []},
+            {"name": "f", "deps": [], "dev_deps": ["d"]},          # tests linking a reached crate run
+        ]
+        self.assertEqual(rt.dependents(packages, {"a"}), {"a", "b", "d", "e", "f"})
+        # A package that both depends and dev-depends is a normal dependent, and spreads.
+        packages[1]["deps"] = ["a"]
+        self.assertEqual(rt.dependents(packages, {"a"}), {"a", "b", "c", "d", "e", "f"})
+
 
 class CliModules(unittest.TestCase):
     """#361 (gh-claude-7's review): a change in one `apps/cli/src/commands` module used to reach the

@@ -201,7 +201,10 @@ def workspace(repo):
         packages.append({
             "name": p["name"],
             "dir": pdir.relative_to(root).as_posix(),
-            "deps": sorted(d["name"] for d in p["dependencies"] if d.get("path")),
+            # #1873: a dev-dependency links the crate into this package's tests only, never into its
+            # library, so it reaches this package and stops; normal and build dependencies spread.
+            "deps": sorted({d["name"] for d in p["dependencies"] if d.get("path") and d.get("kind") != "dev"}),
+            "dev_deps": sorted({d["name"] for d in p["dependencies"] if d.get("path") and d.get("kind") == "dev"}),
             "tests": [{"name": t["name"], "src": t["src"].relative_to(root).as_posix()} for t in tests],
             "bundles": bundles,
             "bundle_paths": bundle_paths,
@@ -296,12 +299,16 @@ def rust_reader_target(packages, package_name, source_path):
 
 
 def dependents(packages, names):
-    """`names` and every package that depends on one of them, transitively."""
+    """`names`, every package that depends on one of them through normal or build dependencies,
+    transitively, and every package whose tests take one of those as a dev-dependency (#1873).
+
+    A dev-dependency is linked into that package's tests only, never into its library, so a package
+    reached through one has nothing a further dependent compiles against: it is not followed on."""
     reached, frontier = set(names), set(names)
     while frontier:
         frontier = {p["name"] for p in packages if p["name"] not in reached and set(p["deps"]) & frontier}
         reached |= frontier
-    return reached
+    return reached | {p["name"] for p in packages if set(p.get("dev_deps", ())) & reached}
 
 
 def owner(packages, path):

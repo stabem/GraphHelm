@@ -10,7 +10,7 @@ base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux]
-viewports: [web, mobile]
+viewports: [web]
 screens:
   - id: answered
     title: Answer acts on its item
@@ -59,27 +59,27 @@ edges:
     from: answered
     to: assigned
     acts:
-      - {kind: activate, role: button, name: Assign}
+      - {kind: activate, role: button, name: Assign lane-author}
   - id: archived.reassigned
     from: archived
     to: reassigned
     acts:
-      - {kind: activate, role: button, name: Reassign}
+      - {kind: activate, role: button, name: Reassign lane-quiet}
   - id: assigned.merged
     from: assigned
     to: merged
     acts:
-      - {kind: activate, role: button, name: Merge}
+      - {kind: activate, role: button, name: Merge lane-author}
   - id: list.answered
     from: list
     to: answered
     acts:
-      - {kind: activate, role: button, name: Answer}
+      - {kind: activate, role: button, name: Answer planner}
   - id: merged.archived
     from: merged
     to: archived
     acts:
-      - {kind: activate, role: button, name: Archive}
+      - {kind: activate, role: button, name: Archive lane-gone}
 paths:
   main: [list.answered, answered.assigned, assigned.merged, merged.archived, archived.reassigned]
 drift: []

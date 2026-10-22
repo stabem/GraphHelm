@@ -229,6 +229,11 @@ FLOW
     curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token"       -H "Content-Type: application/json" -H "Idempotency-Key: $sid" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent"       --data-binary @"$dir/.graphhelm/shipped.json" > /dev/null || echo "fixture: the shipped seed was refused" >&2
   fi
   flow=${GRAPHHELM_JOURNEY_FLOW:-}
+  # #1808: studio2-lanes-needs-action's quiet lanes are recorded first; `fresh` below waits for
+  # them to turn silent (30 minutes by the Runtime's clock) before the fixture reports up.
+  if [ "$flow" = studio2-lanes-needs-action ]; then
+    node "$repo/tools/studio-journey-fixture/seed_needs.mjs" silent "$dir" "http://127.0.0.1:$rport" "$rt/events.token"
+  fi
   # #1808: the Graph flows read a request's issues and PRs; the old studio-work-graph seed serves them.
   if [ "$flow" = studio2-graph-requests ] || [ "$flow" = studio2-graph-review-screen ]; then
     # #721 task records use the existing planner actor, so these rows do not create fake agents.
@@ -444,6 +449,9 @@ NODE
       setTimeout(() => process.exit(0), 3600000);
     ' "$rt2/events.studio-ticket" "$dir/.graphhelm/second.ticket" > /dev/null 2>&1 &
     echo "ticket-keeper $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
+  fi
+  if [ "$flow" = studio2-lanes-needs-action ]; then
+    node "$repo/tools/studio-journey-fixture/seed_needs.mjs" fresh "$dir" "http://127.0.0.1:$rport" "$rt/events.token"
   fi
   # R6: the launcher reads this private data file after up; never echo the minted token.
   (umask 077; printf 'GRAPHHELM_SECRET_STUDIO_TOKEN=%s\n' "$(head -1 "$rt/events.token")" > "$dir/.graphhelm/secrets.env"

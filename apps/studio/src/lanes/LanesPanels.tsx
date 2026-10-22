@@ -131,7 +131,9 @@ export function LanesPanels({ runtime, executionId, board, actions, onAnswer, on
               <li key={need.id} aria-label={`Needs action item ${index + 1}`} className="need">
                 <span className={`need-dot ${need.tone}`} />
                 <span className="need-text"><span className="need-what">{need.what}</span><span className="mono faint">{waited(need.since)}{need.to !== null && need.verb !== "Merge" ? ` · to ${need.to}` : ""}</span></span>
-                <button type="button" className="b ghost small" disabled={sending !== null || ((need.verb === "Assign" || need.verb === "Reassign") && need.to === null)}
+                {/* #1808: the verb and its lane name the button, so it is never confused with the
+                    agent panel's own Reassign or Wake, nor with the same verb on another item. */}
+                <button type="button" aria-label={`${need.verb} ${need.lane}`} className="b ghost small" disabled={sending !== null || ((need.verb === "Assign" || need.verb === "Reassign") && need.to === null)}
                   title={(need.verb === "Assign" || need.verb === "Reassign") && need.to === null ? "No free live lane can take it." : undefined}
                   onClick={() => void act(need)}>{need.verb}</button>
               </li>

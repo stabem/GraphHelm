@@ -5811,6 +5811,8 @@ fn the_tasks_board_shows_a_lanes_open_question_until_a_reply_names_it() {
             .iter()
             .map(|row| {
                 assert!(row["since"].is_string(), "{row}");
+                // #1827: one open ask per lane here, so each lane's total is its one row.
+                assert_eq!(row["laneTotal"], 1, "{row}");
                 (
                     row["lane"].as_str().unwrap().to_owned(),
                     row["waitsOn"].as_str().unwrap().to_owned(),

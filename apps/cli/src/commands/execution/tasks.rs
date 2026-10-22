@@ -77,7 +77,15 @@ pub struct LaneWaiting {
     pub since: PersistedTimestamp,
     pub signal_id: String,
     pub sequence: u64,
+    /// #1827: how many unanswered asks this lane has in all. Only its newest
+    /// `WAITING_PER_LANE` are opened and can be rows, so `laneTotal` minus the lane's rows is the
+    /// "+K more" a reader shows. An ask among the newest whose envelope is refused still counts.
+    pub lane_total: usize,
 }
+
+/// #1827: the most open questions served, and envelopes opened, per lane. Older unanswered asks
+/// are counted in `laneTotal` but never opened, so the read grows with lanes, not with history.
+pub const WAITING_PER_LANE: usize = 5;
 
 /// #1794: the longest question text served; a longer one is not a question to show.
 pub const QUESTION_MAX_CHARS: usize = 2000;
@@ -896,7 +904,7 @@ pub(crate) fn read_history(
         .retain(|row| !fold.retired_lanes.contains(&row.lane));
     let stalls = stalled_tasks(&fold.tasks, &now);
     let backlog = backlog(&records, &fold.tasks);
-    let waiting = open_questions(history, |event, record| {
+    let waiting = open_questions(history, &fold.retired_lanes, |event, record| {
         let envelope_id = format!("signal-{}", record.signal_id.as_str());
         if event.evidence_refs.len() != 1
             || event.evidence_refs[0].evidence_id().as_str() != envelope_id
@@ -941,8 +949,13 @@ pub(crate) fn read_history(
 /// answer side is the journal's plaintext `replyTo`, so answers cost no envelope. A question whose
 /// envelope cannot be read, names another source, has no `to`, or runs past `QUESTION_MAX_CHARS`
 /// is left out rather than guessed.
+///
+/// #1827: the history is walked newest first and each lane opens at most `WAITING_PER_LANE`
+/// envelopes; older asks are only counted (`laneTotal`). A retired lane's asks are left out, as
+/// its leases and liveness are. Rows are served oldest first.
 fn open_questions<F>(
     history: &[graphhelm_protocols::EventEnvelope],
+    retired: &[String],
     mut open: F,
 ) -> Vec<LaneWaiting>
 where
@@ -958,8 +971,9 @@ where
             _ => None,
         })
         .collect();
+    let mut totals: BTreeMap<&str, usize> = BTreeMap::new();
     let mut waiting = Vec::new();
-    for event in history {
+    for event in history.iter().rev() {
         let EventKind::SignalRecorded(record) = &event.kind else {
             continue;
         };
@@ -972,13 +986,21 @@ where
                     .to
                     .as_ref()
                     .is_some_and(|to| to.as_str() == OWNER_ADDRESS));
-        if !asks || answered.contains(record.signal_id.as_str()) {
+        let lane = event.actor.id().as_str();
+        if !asks
+            || answered.contains(record.signal_id.as_str())
+            || retired.iter().any(|retired| retired == lane)
+        {
+            continue;
+        }
+        let total = totals.entry(lane).or_insert(0);
+        *total += 1;
+        if *total > WAITING_PER_LANE {
             continue;
         }
         let Some(envelope) = open(event, record) else {
             continue;
         };
-        let lane = event.actor.id().as_str();
         if envelope
             .pointer("/source/id")
             .and_then(serde_json::Value::as_str)
@@ -1004,7 +1026,12 @@ where
             since: event.occurred_at.clone(),
             signal_id: record.signal_id.as_str().to_owned(),
             sequence: event.sequence,
+            lane_total: 0,
         });
+    }
+    waiting.reverse();
+    for row in &mut waiting {
+        row.lane_total = totals.get(row.lane.as_str()).copied().unwrap_or(0);
     }
     waiting
 }
@@ -1512,5 +1539,119 @@ mod lease_tests {
             stalled_tasks(&tasks, &at("2026-10-16T00:00:00Z")).is_empty(),
             "a merged slice is done"
         );
+    }
+}
+
+#[cfg(test)]
+mod waiting_tests {
+    use super::*;
+    use graphhelm_protocols::{
+        ActorId, EventEnvelope, EventHash, NewEvent, OpaqueId, PersistedActor, PersistedActorType,
+        RawSha256, RepositoryScope, Sensitivity, SignalRecorded, SignalSeverity, SignalSourceKind,
+    };
+
+    fn ask(sequence: u64, lane: &str, reply_to: Option<&str>) -> EventEnvelope {
+        let hash = EventHash::parse(format!("sha256:{}", "0".repeat(64))).unwrap();
+        EventEnvelope::new(
+            OpaqueId::parse(format!("event-{sequence}")).unwrap(),
+            RepositoryScope::new(
+                graphhelm_protocols::WorkspaceId::parse("workspace-waiting").unwrap(),
+                graphhelm_protocols::ProjectId::parse("project-waiting").unwrap(),
+                None,
+            ),
+            OpaqueId::parse("run-waiting").unwrap(),
+            sequence,
+            PersistedTimestamp::parse("2026-10-21T00:00:00Z").unwrap(),
+            NewEvent::new(
+                OpaqueId::parse(format!("key-{sequence}")).unwrap(),
+                PersistedActor::new(PersistedActorType::Agent, ActorId::parse(lane).unwrap()),
+                Sensitivity::Internal,
+                EventKind::SignalRecorded(SignalRecorded {
+                    to: Some(OpaqueId::parse(OWNER_ADDRESS).unwrap()),
+                    reply_to: reply_to.map(|id| OpaqueId::parse(id).unwrap()),
+                    scoped_agent_authenticated: None,
+                    execution_id: OpaqueId::parse("run-waiting").unwrap(),
+                    signal_id: OpaqueId::parse(format!("signal-{sequence}")).unwrap(),
+                    source_kind: SignalSourceKind::Node,
+                    source_id: OpaqueId::parse(lane).unwrap(),
+                    kind: "question".to_owned(),
+                    severity: SignalSeverity::Medium,
+                    envelope_sha256: RawSha256::parse("a".repeat(64)).unwrap(),
+                }),
+                vec![],
+                vec![],
+            ),
+            hash.clone(),
+            hash,
+        )
+    }
+
+    /// `asks` unanswered questions per lane for `lanes` lanes, interleaved; returns the rows and
+    /// how many envelopes the read opened.
+    fn read(lanes: usize, asks: usize, retired: &[String]) -> (Vec<LaneWaiting>, usize) {
+        let mut history = Vec::new();
+        for round in 0..asks {
+            for lane in 0..lanes {
+                let sequence = (round * lanes + lane + 1) as u64;
+                history.push(ask(sequence, &format!("lane-{lane}"), None));
+            }
+        }
+        let mut opened = 0;
+        let rows = open_questions(&history, retired, |event, _| {
+            opened += 1;
+            Some(std::sync::Arc::new(serde_json::json!({
+                "source": {"id": event.actor.id().as_str()},
+                "to": OWNER_ADDRESS,
+                "description": format!("question {}", event.sequence),
+            })))
+        });
+        (rows, opened)
+    }
+
+    /// #1827: a lane with more unanswered asks than `WAITING_PER_LANE` serves only its newest,
+    /// oldest first, and reports the rest in `laneTotal`. Credible regression: the unbounded list
+    /// #1822 shipped, where every old note to the owner stays on the board forever.
+    #[test]
+    fn each_lane_serves_its_newest_questions_and_counts_the_rest() {
+        let (rows, _) = read(2, WAITING_PER_LANE + 3, &[]);
+        for lane in ["lane-0", "lane-1"] {
+            let mine: Vec<&LaneWaiting> = rows.iter().filter(|row| row.lane == lane).collect();
+            assert_eq!(mine.len(), WAITING_PER_LANE, "{lane}");
+            assert!(
+                mine.iter()
+                    .all(|row| row.lane_total == WAITING_PER_LANE + 3)
+            );
+            // The newest asks are rounds 3.. of 0..8; the oldest three are dropped.
+            let first_kept = (3 * 2 + 1 + usize::from(lane == "lane-1")) as u64;
+            assert_eq!(mine[0].sequence, first_kept, "{lane}");
+        }
+        let sequences: Vec<u64> = rows.iter().map(|row| row.sequence).collect();
+        let mut sorted = sequences.clone();
+        sorted.sort_unstable();
+        assert_eq!(sequences, sorted, "rows are served oldest first");
+        let (rows, _) = read(2, 3, &["lane-1".to_owned()]);
+        assert!(
+            rows.iter().all(|row| row.lane == "lane-0"),
+            "a retired lane is left out"
+        );
+        assert_eq!(rows.len(), 3);
+    }
+
+    /// #1827 (`keel.bigo.scale`): at N and 10N unanswered asks per lane the read opens the same
+    /// `lanes * WAITING_PER_LANE` envelopes and serves the same rows; only `laneTotal` grows.
+    /// Counts are the oracle, never wall time.
+    #[test]
+    fn opened_envelopes_stay_flat_from_n_to_ten_n_asks() {
+        let lanes = 3;
+        for asks in [20, 200] {
+            let (rows, opened) = read(lanes, asks, &[]);
+            eprintln!(
+                "waiting asks_per_lane={asks} opened={opened} rows={}",
+                rows.len()
+            );
+            assert_eq!(opened, lanes * WAITING_PER_LANE, "asks={asks}");
+            assert_eq!(rows.len(), lanes * WAITING_PER_LANE, "asks={asks}");
+            assert!(rows.iter().all(|row| row.lane_total == asks));
+        }
     }
 }

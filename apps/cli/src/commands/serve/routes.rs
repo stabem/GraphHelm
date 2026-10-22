@@ -2010,6 +2010,42 @@ pub(super) async fn tasks(
     }
 }
 
+/// `GET /v1/executions/{id}/collisions` (#1797): every path two or more open tasks name in their
+/// `task.planned` paths, by path, from the same verified records the tasks route folds; no GitHub
+/// read. Owner credentials only (`agent_route_allowed` admits no `/collisions`).
+pub(super) async fn collisions(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+) -> Response {
+    const COMMAND: &str = "execution.collisions";
+    let Some(keyring) = state.sealing.clone() else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state("the collision list requires a sealed keyring", "/keyring"),
+        );
+    };
+    let events = state.events.clone();
+    let Some(result) = off_reactor(move || {
+        let budget = crate::commands::tasks_read_budget();
+        let key = execution::tasks::cache_key(&events, &execution_id);
+        execution::tasks::with_shared_cache(&key, |cache| {
+            execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
+        })
+        .map(|view| view.file_collisions())
+    })
+    .await
+    else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "the collisions task failed").output,
+        );
+    };
+    match result {
+        Ok(value) => respond(StatusCode::OK, Outcome::success(COMMAND, value).output),
+        Err(failure) => respond_failure(COMMAND, failure),
+    }
+}
+
 /// `GET /v1/executions/{id}/lanes/{lane}/activity?limit=N` (#1793): one lane's last N actions,
 /// newest first, from the same verified task records the tasks route folds. `limit` defaults to
 /// 10 and is at most 50. Owner credentials only (`agent_route_allowed` admits no `/lanes`).

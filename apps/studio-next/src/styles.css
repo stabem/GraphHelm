@@ -193,6 +193,7 @@ button { font: inherit; }
 .agent-card.asking { border-color: #5a2a2a; }
 .agent-card.selected { border-color: var(--accent); }
 .agent-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.agent-kind { font-size: 11px; color: var(--muted); }
 .agent-name strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--live); }
 .agent-dot.asks { background: #ff6b6b; }

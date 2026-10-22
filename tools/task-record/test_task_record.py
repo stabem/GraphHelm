@@ -910,6 +910,34 @@ class Planned(unittest.TestCase):
 
         self.assertEqual(calls[0][calls[0].index("--paths") + 1:], ["new -> label.rs"])
 
+    def test_the_record_carries_normalized_valid_paths_only(self):
+        # #1825: the Runtime refuses a whole `task.planned` whose `paths` has one bad entry, so the
+        # script sends only entries the door accepts; this is the door's rule, replicated.
+        err = io.StringIO()
+        with redirect_stderr(err):
+            doc = self.planned("--summary", "s", "--paths", "b\\c.rs", "a/x.rs", "a/x.rs", "../up.rs",
+                               "/abs.rs", "C:/win.rs", "a//b.rs", "./a.rs", "sp ace.rs", "back\\slash.rs", "",
+                               "é.rs", *self.offline())
+        self.assertEqual(doc["paths"], ["a/x.rs", "b/c.rs", "back/slash.rs"])
+        self.assertIn("not recording 8 path(s)", err.getvalue())
+
+    def test_the_record_caps_paths_at_the_runtime_limit_and_the_length(self):
+        names = [f"d/f{n:03}.rs" for n in range(70)]
+        err = io.StringIO()
+        with redirect_stderr(err):
+            doc = self.planned("--summary", "s", "--paths", *names, "x" * 257, "y" * 256, *self.offline())
+        self.assertEqual(doc["paths"], sorted(names + ["y" * 256])[:64])
+        self.assertIn("first 64 of 71", err.getvalue())
+        self.assertNotIn("x" * 257, err.getvalue())
+
+    def test_a_plan_without_paths_omits_the_field_and_git_paths_fill_it(self):
+        with redirect_stderr(io.StringIO()):
+            self.assertNotIn("paths", self.planned("--summary", "s", *self.offline()))
+            self.assertNotIn("paths", self.planned("--summary", "s", "--paths", "../x", *self.offline()))
+        with patch.object(task_record, "git_paths", return_value=["z.rs", "a.rs"]):
+            doc = self.planned("--summary", "s", "--plan-file", self.plan_file(self.PLAN))
+        self.assertEqual(doc["paths"], ["a.rs", "z.rs"])
+
     def test_no_summary_is_refused(self):
         with self.assertRaises(SystemExit):
             self.planned("--plan-file", self.plan_file(self.PLAN))

@@ -1,6 +1,7 @@
 /** The public Runtime routes the shell reads, through the same-origin proxy: `/v1` for the first
  * project, `/p/<id>/v1` for a project that joined this Studio's port (#1800). */
 import type { OwnerRequest } from "../graph/requests";
+import { isFrameUrl } from "../graph/review";
 import type { Draft, LaneControl } from "../lanes/drafts";
 
 export interface RunSummary {
@@ -97,6 +98,13 @@ export interface JourneyFlow {
   approvable?: boolean;
   /** #1588: the owner's latest rejection of this exact content, with its reason. */
   rejected?: { note?: string } | null;
+}
+
+/** #1802: one journey an issue names, with its newest finished run on main (`null`: never run). */
+export interface IssueJourney {
+  id: string;
+  title: string | null;
+  before: { run: string; current: boolean; commit: string | null; ranAt: string | null; result: string | null; screens: { screen: string; frameUrl: string }[] } | null;
 }
 
 export interface JourneyScreen { id: string; url: string; title?: string }
@@ -223,6 +231,22 @@ export class Runtime {
    * `GET /v1/journey-flows/{id}/history/{run}/screens/{screen}/frame`. `null` when that run kept none. */
   async journeyPastFrame(flowId: string, run: string, screenId: string): Promise<Blob | null> {
     return this.#image(`/v1/journey-flows/${encodeURIComponent(flowId)}/history/${encodeURIComponent(run)}/screens/${encodeURIComponent(screenId)}/frame`);
+  }
+
+  /** #1802: the journeys an issue's slices name, each with its "Before = main" run and frame URLs
+   * (`GET /v1/executions/{id}/issues/{issue}/journeys`, #1795 R4a). */
+  async issueJourneys(executionId: string, issue: number): Promise<IssueJourney[]> {
+    const view = await this.#request<{ journeys?: IssueJourney[] }>("GET", `/v1/executions/${encodeURIComponent(executionId)}/issues/${issue}/journeys`);
+    return Array.isArray(view.journeys) ? view.journeys : [];
+  }
+
+  /** #1802: a frame at a route-relative URL the Runtime handed out. Only its own journey-flow frame
+   * routes are fetched, so a crafted URL cannot send the bearer anywhere else. */
+  async frameAt(url: string): Promise<Blob | null> {
+    if (!isFrameUrl(url)) {
+      throw new RuntimeError("The Runtime named a frame outside its journey frames.");
+    }
+    return this.#image(url);
   }
 
   /** A frame fetched with the bearer header (never a token in a URL). `null` for 204, 304, 404. */

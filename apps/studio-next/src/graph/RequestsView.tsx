@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { JourneyFlow, Runtime, TasksBoard } from "../runtime/client";
+import type { BoardTask, JourneyFlow, Runtime, TasksBoard } from "../runtime/client";
+import { ReviewModal } from "./ReviewModal";
+import { reviewable } from "./review";
 import { cards, journeysWithWork, KANBAN, KANBAN_NAME, requestsFor, result, type OwnerRequest } from "./requests";
 
 /** The board and the requests are read again this often. */
@@ -26,6 +28,7 @@ export function RequestsView({ runtime, executionId, journeys }: Props) {
   const [board, setBoard] = useState<TasksBoard | null>(null);
   const [requests, setRequests] = useState<OwnerRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState<BoardTask | null>(null);
 
   const read = useCallback(async () => {
     try {
@@ -115,11 +118,14 @@ export function RequestsView({ runtime, executionId, journeys }: Props) {
               <div key={column} className="kanban-col">
                 <h2>{KANBAN_NAME[column]} <span className="muted">{inColumn.length}</span></h2>
                 <ul aria-label={KANBAN_NAME[column]}>
-                  {inColumn.map(({ task }) => (
+                  {inColumn.map(({ task, column: at }) => (
                     <li key={task.key} className="kanban-card">
                       <span className="mono small">{task.issue === null ? task.key : `#${task.issue}`}{task.pr === null ? "" : ` · PR #${task.pr}`}</span>
                       <span>{task.prTitle ?? task.title ?? ""}</span>
                       <span className="muted small">{task.lane ?? "no lane"} · {task.step}</span>
+                      {reviewable(at, task.pr) && (
+                        <button type="button" className="b ghost small" onClick={() => setReviewing(task)}>Open review</button>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -129,6 +135,7 @@ export function RequestsView({ runtime, executionId, journeys }: Props) {
         </section>
       )}
       <p className="muted small">Merged is not done. Done is the journey replay proving it.</p>
+      {reviewing !== null && <ReviewModal runtime={runtime} executionId={executionId} task={reviewing} onClose={() => setReviewing(null)} />}
     </div>
   );
 }

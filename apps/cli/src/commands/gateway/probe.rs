@@ -329,9 +329,11 @@ mod caller_waits {
     #[test]
     fn every_caller_of_the_probe_waits_longer_than_the_probe() {
         let margin = std::time::Duration::from_secs(5);
+        // #1808: the Studio v2 has no gateway probe door; when its client names a probe wait
+        // again, that wait must exceed the probe like every other caller's.
         let studio = studio_probe_wait();
         assert!(
-            studio.is_some_and(|wait| wait >= PROBE_TIMEOUT + margin),
+            studio.is_none_or(|wait| wait >= PROBE_TIMEOUT + margin),
             "the Studio waits {studio:?} for a probe that may take {PROBE_TIMEOUT:?}"
         );
         let mcp = crate::commands::mcp::tools::PROBE_CALLER_WAIT;

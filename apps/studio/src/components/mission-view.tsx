@@ -1,5 +1,5 @@
 import "./mission-view.css";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNow } from "../runtime/use-now";
 import type { JourneyFlowView, JourneyFlowsView, JourneyRunView, JourneyView } from "../runtime/types";
 import type { TaskState } from "../runtime/team-tasks";
@@ -68,6 +68,8 @@ interface Props {
   lastRecordAt?: number | null;
   /** #583: present, the view is the full page. The owner retired the Team tab (Lanes replaces it), so the nav no longer offers it. */
   onTeam?: () => void;
+  /** #1770: the page's one action, drawn in this header (with no run: Start a team run). */
+  action?: ReactNode;
   initialView?: "graph" | "proof";
   focusJourneyId?: string | null;
   flows?: JourneyFlowsView | null;
@@ -324,7 +326,7 @@ function stepIds(m: Mission): string[] {
   });
 }
 
-export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, run, onRun, runName, lastRecordAt, onTeam, initialView = "graph", focusJourneyId = null, flows, onApprove, onReject, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, seenActorSources, onDemandLanes = [], slots = [], backlog = [], durations, runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot, livenessBudgets }: Props) {
+export function MissionView({ events = [], envelopes = {}, journeys: compiledJourneys, tasks, taskRecords = [], tasksRouteMissing = false, tasksRouteFailure = null, runFor, lanes, now, frameUrl, onMarkSafe, run, onRun, runName, lastRecordAt, onTeam, action, initialView = "graph", focusJourneyId = null, flows, onApprove, onReject, onWatch, agents = [], historyLoading = false, partial = false, lanesHistoryLoading = historyLoading, historyFailedCount = 0, onRetryHistory, onSelectJourney, away = null, onSignal, onReviewAssigned, wakeListeners, seenActors, seenActorAgesMs, seenActorSources, onDemandLanes = [], slots = [], backlog = [], durations, runNodes = [], unassignedNodeIds, onOpenNode, onOpenBotDetails, onNameBot, livenessBudgets }: Props) {
   const freeAfterMs = livenessBudgets ? livenessBudgets.freeAfterSeconds * 1000 : laneBudgets(lanes).freeAfterMs;
   const journeys = useMemo(() => withFlowContracts(compiledJourneys, flows?.flows ?? []), [compiledJourneys, flows]);
 
@@ -403,6 +405,7 @@ export function MissionView({ events = [], envelopes = {}, journeys: compiledJou
         {lastRecordAt != null && Number.isFinite(lastRecordAt) && (
           <span className="mv-live" aria-label={`live · last record ${ago(now - lastRecordAt)}`}><span className="mv-live-dot" aria-hidden="true" />live<span className="mv-live-age">{` · last record ${ago(now - lastRecordAt)}`}</span></span>
         )}
+        {action}
       </header>
   );
   const cardRecords = events.filter((event) => {

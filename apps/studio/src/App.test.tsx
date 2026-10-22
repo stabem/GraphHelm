@@ -724,16 +724,13 @@ describe("live team layout", () => {
     });
     render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
       session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
-    const views = await screen.findByRole("tablist", { name: "Canvas views" });
-    for (const name of ["Proof", "Graph"]) {
-      await userEvent.click(within(views).getByRole("tab", { name }));
-      const rail = await within(screen.getByRole("tabpanel", { name })).findByRole("navigation", { name: "Journeys" });
-      expect(await within(rail).findByRole("button", { name: /Runtime health/ })).toBeVisible();
-      expect(within(rail).getByRole("button", { name: /^Connect/ })).toBeVisible();
-      expect(screen.queryByText(/loading work/)).not.toBeInTheDocument();
-    }
+    const views = await screen.findByRole("tablist", { name: "Mission views" });
     await userEvent.click(within(views).getByRole("tab", { name: "Proof" }));
-    const rail = within(screen.getByRole("tabpanel", { name: "Proof" })).getByRole("navigation", { name: "Journeys" });
+    const canvas = screen.getByRole("region", { name: "Canvas" });
+    const rail = await within(canvas).findByRole("navigation", { name: "Journeys" });
+    expect(await within(rail).findByRole("button", { name: /Runtime health/ })).toBeVisible();
+    expect(within(rail).getByRole("button", { name: /^Connect/ })).toBeVisible();
+    expect(screen.queryByText(/loading work/)).not.toBeInTheDocument();
     await userEvent.click(within(rail).getByRole("button", { name: /^Connect/ }));
     expect(startJourneyRun).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
@@ -4816,7 +4813,9 @@ describe("the run it just started", () => {
     expect(screen.getByRole("region", { name: "Keel cards" })).not.toHaveTextContent("accepted");
   });
 
-  it("opens an empty project's Team, Proof and Graph before starting a team run", async () => {
+  // #1770: with no run, the Mission header is the only header: one tab row (Graph, Lanes, Proof) and
+  // the Start a team run action inside it; the old empty-project strip and its second tab row are gone.
+  it("shows an empty project one header and one tab row, with Start a team run in that header", async () => {
     sessionStorage.clear();
     const client = withStarted({
       listExecutions: vi.fn(async () => ({ executions: [], hasMore: false, nextCursor: null })),
@@ -4824,15 +4823,21 @@ describe("the run it just started", () => {
     });
     render(<App createClient={() => client as unknown as RuntimeClient} modelContext={null}
       session={async () => ({ token: "local-token", project: "dale-api-base" })} />);
-    const views = await screen.findByRole("tablist", { name: "Canvas views" });
-    expect(within(views).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Team (live)", "Proof", "Graph"]);
+    const views = await screen.findByRole("tablist", { name: "Mission views" });
+    const column = screen.getByRole("region", { name: "Canvas" });
+    expect(within(column).getAllByRole("tablist")).toEqual([views]);
+    expect(within(views).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Graph", "Lanes", "Proof"]);
+    expect(screen.queryByRole("heading", { name: "Start your team's work" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/No run is selected/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Start a team run" })).toHaveLength(1);
+    expect(views.closest("header")).toContainElement(screen.getByRole("button", { name: "Start a team run" }));
     expect(screen.queryByRole("heading", { name: "New task" })).not.toBeInTheDocument();
     expect(screen.queryByText("No graph-node updates recorded")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /^Open project / }));
     expect(screen.queryByRole("heading", { name: "New task" })).not.toBeInTheDocument();
-    for (const name of ["Proof", "Graph", "Team (live)"]) {
+    for (const name of ["Proof", "Lanes", "Graph"]) {
       await userEvent.click(within(views).getByRole("tab", { name }));
-      expect(screen.getByRole("tabpanel", { name: name === "Team (live)" ? "Team" : name })).toBeInTheDocument();
+      expect(within(views).getByRole("tab", { name })).toHaveAttribute("aria-selected", "true");
     }
     expect(client.startTask).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Start a team run" }));
@@ -4846,7 +4851,8 @@ describe("the run it just started", () => {
     const [id, graph, options] = firstCall(client.startTask);
     expect(graph).toMatchObject({ spec: { nodes: { start: { objective: OBJECTIVE } } } });
     expect(options).toMatchObject({ actor: { id: "studio-operator", type: "owner" }, idempotencyKey: `start-${id}` });
-    expect(await screen.findByRole("region", { name: "Team" })).toBeInTheDocument();
+    expect(await screen.findByText(`Run ${id}`)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start a team run" })).not.toBeInTheDocument();
   });
 
   it("opens a durably listed run while the start response is still waiting for the model", async () => {

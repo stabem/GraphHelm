@@ -2225,6 +2225,7 @@ export default function App({
       run={journeyRun} onRun={recordMissionRun}
       lanes={missionLanes} now={clock} frameUrl={missionFrameUrl} onMarkSafe={markMissionStepSafe}
       runName={selected} lastRecordAt={Date.parse(eventList[eventList.length - 1]?.occurredAt ?? "")} onTeam={() => chooseCanvas("team")}
+      action={selected === "" ? <button type="button" className="act" onClick={startDraft}>Start a team run</button> : undefined}
       agents={team.bots} away={handover ? { minutes: handover.gapMinutes, shipped: handover.shipped.length } : null}
       runNodes={teamRun && status?.executor === "fixture" ? [] : model.nodes} unassignedNodeIds={unassignedSteps.map((node) => node.id)}
       onOpenNode={(id) => { nodeFocusOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFocus({ kind: "node", id }); }}
@@ -2510,22 +2511,9 @@ export default function App({
             </div>
           </div>
         ) : selected === "" ? (
+          // #1770: with no run, the Mission header is the page's only header and tab row.
           <section className="canvas-column" aria-label="Canvas">
-            <div className="mv-pad">
-              <h2>Start your team's work</h2>
-              <p>No run is selected. Start a run, then connect your agents to record their tasks and proof.</p>
-              <button type="button" className="act" onClick={startDraft}>Start a team run</button>
-            </div>
-            {canvasViews}
-            {canvasTab === "team" ? (
-              <div role="tabpanel" aria-label="Team" className="mv-pad">
-                <p>No team activity yet. Agents and their tasks appear here when they record work in a run.</p>
-              </div>
-            ) : (
-              <div role="tabpanel" aria-label={canvasTab === "journey" ? "Proof" : "Graph"}>
-                {missionView}
-              </div>
-            )}
+            {missionView}
           </section>
         ) : status === null ? (
           <section className="loading" role="status">

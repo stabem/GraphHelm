@@ -13,16 +13,16 @@ risks: [critical_ux, accessibility]
 viewport: {width: 1440, height: 900}
 screens:
   - id: changes
-    title: Now with the changed regions highlighted
+    title: "Now with the changed regions highlighted, at web width"
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: img, name: "Now, changed regions highlighted"}]
+    expect: [{role: img, name: "Now, changed regions highlighted"}, {role: region, name: Compare frame, text: "1280"}]
     scope: unknown
   - id: mobile
-    title: The same compare at mobile
+    title: The same compare at mobile width
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: button, name: Mobile}, {role: img, name: "Now, changed regions highlighted"}]
+    expect: [{role: img, name: "Now, changed regions highlighted"}, {role: region, name: Compare frame, text: "390"}]
     scope: unknown
   - id: overlay
     title: Now over Before with a slider

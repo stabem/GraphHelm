@@ -22,19 +22,19 @@ screens:
     title: Reassign moves the agent's work
     url: /?session=studio-fixture&run=demo
     state: success
-    expect: [{role: status, name: Work reassigned}]
+    expect: [{role: status, name: Work reassigned}, {role: list, name: Agent board, text: reassigned}]
     scope: unknown
   - id: stopped
-    title: The stopped agent leaves its column
+    title: The stopped agent shows as stopped
     url: /?session=studio-fixture&run=demo
     state: success
-    expect: [{role: status, name: Agent stopped}]
+    expect: [{role: status, name: Agent stopped}, {role: list, name: Agent board, text: stopped}]
     scope: unknown
   - id: woken
     title: Wake shows on the board
     url: /?session=studio-fixture&run=demo
     state: success
-    expect: [{role: status, name: Wake sent}]
+    expect: [{role: status, name: Wake sent}, {role: list, name: Agent board, text: woken}]
     scope: unknown
 edges:
   - id: agent.woken

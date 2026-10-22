@@ -172,7 +172,10 @@ export function HistoryStrip({ history }: { history: JourneyHistory }) {
 }
 
 /** The inspector block: this step now beside the same step in the picked earlier run. */
-export function FrameCompare({ history, screenId, nowUrl, nowStatus }: { history: JourneyHistory; screenId: string; nowUrl: string | null; nowStatus: string }) {
+/** #1776: what the big frame needs to draw Before against Now. */
+export interface CompareOpen { beforeUrl: string; nowUrl: string; diffUrl: string | null; beforeLabel: string; mode: "overlay" | "changes" }
+
+export function FrameCompare({ history, screenId, nowUrl, nowStatus, onOpen }: { history: JourneyHistory; screenId: string; nowUrl: string | null; nowStatus: string; onOpen?: (open: CompareOpen) => void }) {
   const [diff, setDiff] = useState<{ ratio: number; url: string } | null>(null);
   const [showDiff, setShowDiff] = useState(true);
   const thenUrl = history.frame(screenId);
@@ -199,12 +202,20 @@ export function FrameCompare({ history, screenId, nowUrl, nowStatus }: { history
       <span className="tc-cap">{`COMPARE WITH ${when(baseline.startedAt).toUpperCase()}`}</span>
       <p className="ph-summary" data-changed={diff !== null && diff.ratio >= CHANGED_AT}>{summary}</p>
       {was !== undefined && wasWord !== nowWord && <p className="ph-verdict">{`This step ${wasWord} then, ${nowWord} now.`}</p>}
+      {onOpen && thenUrl && nowUrl && (
+        <button type="button" className="tc-secondary ph-open" aria-label="Compare Before and Now in the frame"
+          onClick={() => onOpen({ beforeUrl: thenUrl, nowUrl, diffUrl: diff && diff.ratio >= CHANGED_AT ? diff.url : null, beforeLabel: `Before (${when(baseline.startedAt)})`, mode: "overlay" })}>
+          Compare in the frame
+        </button>
+      )}
       <div className="ph-pair">
         <figure><figcaption>Before</figcaption>{thenUrl ? <img src={thenUrl} alt={`Step as of ${when(baseline.startedAt)}`} /> : <span className="ph-blank">no frame</span>}</figure>
         <figure>
           <figcaption>
             {showDiff && diff ? "Changes" : "Now"}
-            {diff && <button type="button" className="ph-toggle" onClick={() => setShowDiff((v) => !v)}>{showDiff ? "show now" : "show changes"}</button>}
+            {diff && <button type="button" className="ph-toggle" onClick={() => (onOpen && thenUrl && nowUrl && !showDiff
+              ? onOpen({ beforeUrl: thenUrl, nowUrl, diffUrl: diff.url, beforeLabel: `Before (${when(baseline.startedAt)})`, mode: "changes" })
+              : setShowDiff((v) => !v))}>{showDiff ? "show now" : "show changes"}</button>}
           </figcaption>
           {nowUrl ? <img src={showDiff && diff ? diff.url : nowUrl} alt={showDiff && diff ? "What changed, in red" : "Step now"} /> : <span className="ph-blank">no frame</span>}
         </figure>

@@ -507,6 +507,10 @@ pub struct JourneyReplayArgs {
     /// Internal contained worker; the ordinary supervisor supplies its start handshake.
     #[arg(long, hide = true)]
     pub replay_worker: bool,
+    /// #1777, internal: the viewport this worker replays when the flow names `viewports`; the
+    /// supervisor runs one worker per viewport.
+    #[arg(long, hide = true, value_parser = ["web", "mobile"])]
+    pub viewport: Option<String>,
     /// On drift, hand only the broken edge to the model door (at most eight acts) and keep the
     /// repair only when the edge's original destination is observed. Needs a model source.
     #[arg(long)]

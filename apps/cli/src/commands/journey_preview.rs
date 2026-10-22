@@ -1704,6 +1704,85 @@ pub(crate) fn history_frame(project: &Path, id: &str, run: &str, screen: &str) -
     std::fs::read(file).ok()
 }
 
+/// #1835: the journey's last finished run, as `journey flows` lists it. Read only from what the
+/// runner recorded: the kept `state.json` when it finished, else (a run in flight replaced it) the
+/// newest archived run. At most two state files are read and nothing is written, probed or
+/// reaped. No finished run is `not_run`, never a guessed verdict. `status` is `passed` only for
+/// a finished run whose result is `pass`; a `fail`, a `drift` or a run that stopped is `failed`.
+/// `failingStep` is the first step that did not pass in path order (each path's entry screen,
+/// then each edge and the screen it reaches), else in the run's own sorted keys; `null` when a
+/// run stopped before any step (its `reason` says why). `flowChanged` says the flow's approval
+/// digest moved since that run. The viewport is not here: runs do not record one yet (#1777).
+pub(crate) fn last_run(project: &Path, id: &str, flow: Option<&Value>) -> Value {
+    let not_run = json!({"status":"not_run","ranAt":null,"kind":null,"reason":null,
+        "failingStep":null,"flowChanged":null});
+    if !plain_id(id) {
+        return not_run;
+    }
+    let dir = dir_of(project, id);
+    let finished = |state: &Value| matches!(state["state"].as_str(), Some("ready" | "failed"));
+    let state = read_state(&dir).filter(finished).or_else(|| {
+        let history = dir.join("history");
+        let newest = history_ids(&history).pop()?;
+        read_state(&history.join(newest)).filter(finished)
+    });
+    let Some(state) = state else { return not_run };
+    let passed = state["state"] == "ready" && state["result"] == "pass";
+    let text = |key: &str| state[key].as_str().map_or(Value::Null, Value::from);
+    json!({"status": if passed { "passed" } else { "failed" },
+    "ranAt": text("ranAt"), "kind": text("kind"), "reason": text("reason"),
+    "failingStep": if passed { Value::Null } else { first_failing(&state, flow) },
+    "flowChanged": flow.map_or(Value::Null, |flow| {
+        (state["digest"] != super::journey_flow::approval_digest(flow).as_str()).into()
+    })})
+}
+
+/// The first recorded step whose result is `fail` or `drift`: in the flow's path order when the
+/// flow is readable, then in the run's own sorted screen and edge keys.
+fn first_failing(state: &Value, flow: Option<&Value>) -> Value {
+    let mut order: Vec<(&str, String)> = Vec::new();
+    if let Some(flow) = flow {
+        let edges = flow["edges"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        for path in flow["paths"]
+            .as_object()
+            .into_iter()
+            .flat_map(|p| p.values())
+        {
+            for (index, step) in path.as_array().into_iter().flatten().enumerate() {
+                let Some(edge) = edges.iter().find(|edge| edge["id"] == *step) else {
+                    continue;
+                };
+                if index == 0
+                    && let Some(from) = edge["from"].as_str()
+                {
+                    order.push(("screen", from.to_owned()));
+                }
+                if let Some(id) = edge["id"].as_str() {
+                    order.push(("edge", id.to_owned()));
+                }
+                if let Some(to) = edge["to"].as_str() {
+                    order.push(("screen", to.to_owned()));
+                }
+            }
+        }
+    }
+    for (kind, key) in [("screen", "screens"), ("edge", "edges")] {
+        for id in state[key].as_object().into_iter().flat_map(|m| m.keys()) {
+            order.push((kind, id.clone()));
+        }
+    }
+    order
+        .into_iter()
+        .find_map(|(kind, id)| {
+            let entry = &state[if kind == "screen" { "screens" } else { "edges" }][&id];
+            matches!(entry["result"].as_str(), Some("fail" | "drift")).then(|| {
+                json!({"kind": kind, "id": id, "result": entry["result"],
+                    "reason": entry["reason"].as_str().map_or(Value::Null, Value::from)})
+            })
+        })
+        .unwrap_or(Value::Null)
+}
+
 fn sha_of(text: &str) -> String {
     graphhelm_protocols::hash::sha256_hex(text.as_bytes())
 }

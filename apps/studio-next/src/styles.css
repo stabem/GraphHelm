@@ -48,7 +48,7 @@ button { font: inherit; }
 
 .sidebar { width: 232px; flex: none; background: var(--rail); border-right: 1px solid var(--edge); padding: 14px 12px; display: flex; flex-direction: column; gap: 14px; }
 .brand { display: flex; align-items: center; gap: 8px; }
-.brand-mark { width: 26px; height: 26px; border-radius: 7px; background: var(--brand); display: inline-flex; align-items: center; justify-content: center; }
+.brand-mark { width: 26px; height: 26px; border-radius: 7px; display: block; }
 .brand strong { font-size: 14px; }
 .live { font: 10px var(--mono); color: var(--live); margin-left: auto; }
 .live.off { color: var(--faint); }

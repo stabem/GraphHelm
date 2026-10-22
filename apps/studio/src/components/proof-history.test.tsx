@@ -86,6 +86,10 @@ describe("Proof history (#history)", () => {
     const view = screen.getByRole("group", { name: "Compare Before and Now" });
     expect(browser).toContainElement(view);
     expect(screen.getByRole("button", { name: "Overlay" })).toHaveAttribute("aria-pressed", "true");
+    // The mode control sits in the frame bar, before the frame count (approved Proof design).
+    const bar = browser.querySelector(".tc-chrome")!;
+    expect(bar).toContainElement(screen.getByRole("group", { name: "Compare mode" }));
+    expect(bar.lastElementChild).toHaveClass("tc-count");
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("group", { name: "Compare Before and Now" })).toBeNull();
     expect(screen.getByRole("img", { name: "Frame 2: Cart" })).toBeInTheDocument();

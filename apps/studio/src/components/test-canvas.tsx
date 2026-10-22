@@ -25,9 +25,11 @@ interface Props {
   inspectorStep?: (stepId: string) => ReactNode;
   /** #1776: drawn in the big frame in place of the step's picture (Before/Now compare). */
   compare?: ReactNode;
+  /** #1776: the compare's mode control and slider, drawn in the frame bar before the frame count. */
+  compareTools?: ReactNode;
 }
 
-export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUrl, onMarkSafe, runLine, inspectorTop, badges, inspectorStep, compare }: Props) {
+export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUrl, onMarkSafe, runLine, inspectorTop, badges, inspectorStep, compare, compareTools }: Props) {
   const cur = frames[selected];
   const [failure, setFailure] = useState<{ stepId: string; message: string } | null>(null);
   if (!cur) return <p className="tc-empty">This journey has no steps to test</p>;
@@ -94,6 +96,7 @@ export function TestCanvas({ frames, purpose = null, selected, onSelect, frameUr
               </svg>
               <span className="tc-url-text">{cur.text}</span>
             </span>
+            {compareTools}
             <span className="tc-count">{`emulated · frame ${cur.n}/${frames.length}`}</span>
           </div>
           <div className="tc-viewport" data-status={cur.status}>

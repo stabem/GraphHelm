@@ -17,25 +17,25 @@ screens:
     url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: combobox, name: Journey filter}, {role: list, name: Owner requests}]
-    scope: unknown
+    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/views/Views.tsx]
   - id: graph
     title: "Requests are drawn with their issues, PRs and result"
     url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: list, name: Owner requests}, {role: group, name: Request issues, text: "#"}, {role: group, name: Request pull requests, text: "#"}, {role: group, name: Request result}]
-    scope: unknown
+    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/views/Views.tsx]
   - id: graph-again
     title: Graph again shows the requests
     url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: list, name: Owner requests}, {role: region, name: Kanban, absent: true}]
-    scope: unknown
+    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/views/Views.tsx]
   - id: kanban
     title: The same work as Kanban columns
     url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: region, name: Kanban}, {role: button, name: Graph}, {role: list, name: Owner requests, absent: true}]
-    scope: unknown
+    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/views/Views.tsx]
 edges:
   - id: filtered.kanban
     from: filtered

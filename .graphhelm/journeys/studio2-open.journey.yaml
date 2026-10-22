@@ -17,13 +17,13 @@ screens:
     url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: link, name: demo}, {role: banner, name: Top bar, text: demo}, {role: tab, name: Graph}, {role: region, name: Graph}, {role: heading, name: Open the Studio from your project, absent: true}]
-    scope: unknown
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/login/session.ts, apps/studio/src/views/Views.tsx]
   - id: login
     title: The Studio opens from its login ticket
     url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: navigation, name: Projects}, {role: banner, name: Top bar}]
-    scope: unknown
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/login/session.ts, apps/studio/src/views/Views.tsx]
 edges:
   - id: login.graph
     from: login

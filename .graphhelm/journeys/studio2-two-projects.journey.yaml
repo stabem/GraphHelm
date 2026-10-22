@@ -16,20 +16,20 @@ screens:
     title: The first project's run is shown
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: navigation, name: Projects}, {role: link, name: demo}, {role: link, name: second}, {role: banner, name: Top bar, text: demo}, {role: list, name: Runs in demo}]
-    scope: unknown
+    expect: [{role: navigation, name: Projects}, {role: link, name: demo}, {role: link, name: proj-two}, {role: banner, name: Top bar, text: demo}, {role: list, name: Runs in demo}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts]
   - id: second
     title: The second project's own run is shown
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: banner, name: Top bar, text: second}, {role: list, name: Runs in second}, {role: list, name: Runs in demo, absent: true}]
-    scope: unknown
+    expect: [{role: banner, name: Top bar, text: proj-two}, {role: list, name: Runs in proj-two}, {role: list, name: Runs in demo, absent: true}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts]
 edges:
   - id: first.second
     from: first
     to: second
     acts:
-      - {kind: activate, role: link, name: second}
+      - {kind: activate, role: link, name: proj-two}
 paths:
   main: [first.second]
 drift: []

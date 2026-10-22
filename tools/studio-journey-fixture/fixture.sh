@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# The fixture the `studio-*` journey flows are written against (#381): a disposable Runtime with
-# one seeded run and one unanswered agent question, and this repository's Studio dev server
-# pointed at it. `graphhelm journey replay studio-<id>` runs against what this script starts.
+# The fixture the `studio2-*` journey flows are written against (#381, #1808): a disposable
+# Runtime with one seeded run and one unanswered agent question, and this repository's Studio dev
+# server pointed at it. `graphhelm journey replay studio2-<id>` runs against what this script starts.
+# For studio2-two-projects (GRAPHHELM_JOURNEY_FLOW) it also starts a second project, `proj-two`, with
+# its own Runtime on <runtime port>+2, and registers it with the Studio.
 #
 #   tools/studio-journey-fixture/fixture.sh up   <fixture dir> [runtime port] [studio port]
 #   tools/studio-journey-fixture/fixture.sh down <fixture dir>
@@ -191,12 +193,6 @@ FLOW
     "$bin" --json execution delivery --events "$rt/events" --execution demo --node deploy \
       --delivery "$dir/.graphhelm/delivery.json" --project-directory "$dir/project" \
       --keyring "$rt/keyring" --key-id studio > "$dir/.graphhelm/delivery.out"
-    # studio-approve-reject (#1041): one owner rejection of studio-handover whose note carries
-    # markup, so the Proof view must show it as text. The owner token never leaves this script.
-    curl -sf --max-time 60 -X POST "http://127.0.0.1:$rport/v1/journey-flows/studio-handover/reject" \
-      -H "Authorization: Bearer $(head -1 "$rt/events.token")" -H "Content-Type: application/json" \
-      -H "Idempotency-Key: fixture-reject-studio-handover" \
-      --data-binary '{"note":"<b>no</b> receipt & no total"}' > "$dir/.graphhelm/reject.out"
     # One unanswered question from the bot `planner` to the owner (studio-answer-question).
     token=$(head -1 "$rt/events.token"); id=$(node -e 'console.log(require("crypto").randomUUID())')
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -226,7 +222,8 @@ FLOW
     curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token"       -H "Content-Type: application/json" -H "Idempotency-Key: $sid" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent"       --data-binary @"$dir/.graphhelm/shipped.json" > /dev/null || echo "fixture: the shipped seed was refused" >&2
   fi
   flow=${GRAPHHELM_JOURNEY_FLOW:-}
-  if [ "$flow" = studio-work-graph ]; then
+  # #1808: the Graph flows read a request's issues and PRs; the old studio-work-graph seed serves them.
+  if [ "$flow" = studio2-graph-requests ] || [ "$flow" = studio2-graph-review-screen ]; then
     # #721 task records use the existing planner actor, so these rows do not create fake agents.
     # Every refusal stops the seed; the fixture token's permissions are never widened.
     node - "$dir" "$now" "http://127.0.0.1:$rport" "$rt/events.token" <<'NODE'
@@ -237,7 +234,7 @@ if (runtime.protocol !== 'http:' || runtime.hostname !== '127.0.0.1' || !runtime
   throw new Error('fixture: unsafe Runtime URL');
 }
 const common = { schema: 'graphhelm-task-event-v1', revision: 1, at };
-const journey = [process.env.GRAPHHELM_JOURNEY_FLOW || 'studio-work-graph'];
+const journey = [process.env.GRAPHHELM_JOURNEY_FLOW || 'studio2-graph-requests'];
 const records = [
   ['open-claimed', 'task.claimed', { taskId: 'issue-721-open', issue: 721, lane: 'planner', branch: 'issue-721-open-fixture', journeys: journey, title: 'Observe issue graph and work kanban' }],
   ['open-planned', 'task.planned', { taskId: 'issue-721-open', lane: 'planner', classes: ['user_visible'], reviews: 1, proof: 'journey', critic: { mode: 'none', passScore: 7, maxRounds: 1 }, summary: 'Fixture plan' }],
@@ -265,7 +262,8 @@ const token = fs.readFileSync(tokenFile, 'utf8').trim();
 })().catch(() => { console.error('fixture: task record refused; stop without widening permissions'); process.exit(1); });
 NODE
   fi
-  # #137: the async Runtime driver records delegation; no model executor is wired.
+  # #137: the async Runtime driver records delegation; no model executor is wired. No studio2 flow
+  # reads it yet; kept for a lanes flow that names a delegated worker.
   if [ "$flow" = studio-delegation-label ]; then
     node - "$repo" "$dir" <<'NODE'
 const fs = require('fs');
@@ -306,7 +304,7 @@ NODE
   # are signed by the existing planner actor, like studio-work-graph's. The slot holder is a real
   # `workspace slot` running a real `cargo build` of a one-file crate whose build script waits
   # while `slot.hold` exists; `down` removes it and ends the tree, so nothing is faked.
-  if [ "$flow" = studio-lanes-board ]; then
+  if [ "$flow" = studio2-lanes-board ] || [ "$flow" = studio2-lanes-control ]; then
     node - "$dir" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "http://127.0.0.1:$rport" "$rt/events.token" <<'NODE'
 const fs = require('fs');
 const [dir, at, runtimeUrl, tokenFile] = process.argv.slice(2);
@@ -316,7 +314,7 @@ if (runtime.protocol !== 'http:' || runtime.hostname !== '127.0.0.1' || !runtime
 }
 const common = { schema: 'graphhelm-task-event-v1', revision: 1, at };
 const records = [
-  ['lanes-claimed', 'task.claimed', { taskId: 'issue-1556-lanes', issue: 1556, lane: 'planner', branch: 'issue-1556-lanes-fixture', journeys: ['studio-lanes-board'], title: 'Show what each lane is doing' }],
+  ['lanes-claimed', 'task.claimed', { taskId: 'issue-1556-lanes', issue: 1556, lane: 'planner', branch: 'issue-1556-lanes-fixture', journeys: ['studio2-lanes-board'], title: 'Show what each lane is doing' }],
   ['lanes-planned', 'task.planned', { taskId: 'issue-1556-lanes', lane: 'planner', classes: ['user_visible'], reviews: 1, proof: 'journey', critic: { mode: 'none', passScore: 7, maxRounds: 1 }, summary: 'Fixture plan' }],
 ];
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
@@ -368,6 +366,36 @@ NODE
   for pid in $(fixture_listeners record "$sport"); do
     if [ -r /proc/$$/winpid ]; then echo "studio-listener 0 $pid"; else echo "studio-listener $pid"; fi >> "$pids"
   done
+  # #1808 studio2-two-projects: a second project, `proj-two`, with its own Runtime and one run,
+  # registered with this Studio the way `graphhelm studio open` does it. The ticket link it prints
+  # is kept in a private file for the replay to open once; it is never echoed.
+  if [ "$flow" = studio2-two-projects ]; then
+    p2=$((rport + 2))
+    [ "$p2" != 8793 ] && [ "$p2" != "$sport" ] || { echo 'fixture: unsafe second Runtime port' >&2; exit 2; }
+    sed -i "s/^ports .*/& $p2/" "$pids"
+    second="$dir/proj-two"; rt2="$second/.graphhelm"
+    mkdir -p "$second"
+    if [ ! -d "$second/.git" ]; then
+      git -C "$second" init -q
+      printf "# proj-two\n" > "$second/README.md"
+      git -C "$second" add -A && git -C "$second" -c user.email=demo@example.com -c user.name=demo commit -qm init
+    fi
+    "$bin" --json init --project "$second" --bind "127.0.0.1:$p2" --harness codex > "$dir/.graphhelm/init-second.json"
+    nohup "$bin" serve --events "$rt2/events" --bind "127.0.0.1:$p2" --project "$second" \
+      --keyring "$rt2/keyring" --key-id studio > "$dir/.graphhelm/serve-second.out" 2> "$dir/.graphhelm/serve-second.err" &
+    echo "serve-second $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
+    for _ in $(seq 1 30); do curl -sf --max-time 10 "http://127.0.0.1:$p2/health" > /dev/null && break; sleep 1; done
+    curl -sf --max-time 10 "http://127.0.0.1:$p2/health" > /dev/null || { echo "second runtime did not answer on $p2"; exit 1; }
+    if ! grep -q '"executionId":"second-run"' "$dir/.graphhelm/seed-second.json" 2>/dev/null; then
+      GRAPHHELM_EVENTS_KEY="$(cat "$rt2/serve.key")" "$bin" --json execution start \
+        --file "$repo/examples/graphs/manual-override-deploy.yaml" --events "$rt2/events" \
+        --fixtures "$dir/.graphhelm/fixtures.json" --mode supervised --execution second-run \
+        > "$dir/.graphhelm/seed-second.json"
+    fi
+    (umask 077; "$bin" --json studio open --project "$second" --port "$sport" --no-browser > "$dir/.graphhelm/second-open.json")
+    grep -q '"ok":true' "$dir/.graphhelm/second-open.json" \
+      || { echo "fixture: the second project was not registered (see $dir/.graphhelm/second-open.json)" >&2; exit 1; }
+  fi
   # R6: the launcher reads this private data file after up; never echo the minted token.
   (umask 077; printf 'GRAPHHELM_SECRET_STUDIO_TOKEN=%s\n' "$(head -1 "$rt/events.token")" > "$dir/.graphhelm/secrets.env")
   chmod 600 "$dir/.graphhelm/secrets.env"

@@ -25,6 +25,9 @@ fn studio_identity_server(status: u16, body: String) -> (u16, std::thread::JoinH
         while Instant::now() < deadline {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    // On Windows an accepted socket inherits the listener's non-blocking mode, so a
+                    // request that arrives a moment later would read as WouldBlock under load.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(2)))
                         .unwrap();

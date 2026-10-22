@@ -81,14 +81,20 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
 6. **Run the whole reached plan.** `tools/reached-tests/run_reached.py` on main plus the change,
    every step, never a hand-picked subset. Cite each step and its result in the pull request, and
    leave the JSON report as the receipt the reviewer reuses (`KEEL_REVIEW.md` step 2).
-7. **Report what you saw, not what you hoped.** Passed, failed, skipped and unobserved are four
+7. **Assert what the user reads** (`keel.proof.reads_screen`, `keel.test.intent`). A journey
+   over a screen checks the rendered text the promise is about: the amount with its cents, the
+   exact date phrase under a fixed clock, the plural, the label, and the effect on the other
+   screens that show the same subject. Take every expected string from the intent, never from
+   the code's current output. A known open defect stays in the proof as an expected failure
+   naming its issue, so its fix turns the proof red until the marker goes.
+8. **Report what you saw, not what you hoped.** Passed, failed, skipped and unobserved are four
    different lines. A proxy (another OS, a mock, an emulator, a test compiled out on this host) is
    not an observation. Mock only the clock, randomness and I/O at a named boundary.
-8. **A step that should run itself and does not gets its own issue.** A manual workaround, a stale
+9. **A step that should run itself and does not gets its own issue.** A manual workaround, a stale
    record, a check no test caught or a tool that failed: search for an open issue or PR first, then
    open one at once saying what should have happened automatically, what happened, the evidence and
    the shape of the fix. Review findings stay comments on the PR.
-9. **No observer, no claim.** When the promise cannot be observed on this host, change nothing
+10. **No observer, no claim.** When the promise cannot be observed on this host, change nothing
    more, say what is missing and end with `OBSERVER_MISSING: <what is missing>`. Never write
    "verified" for what you did not observe.
 

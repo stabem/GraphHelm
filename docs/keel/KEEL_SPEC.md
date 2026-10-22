@@ -85,6 +85,12 @@ reach every case.
 through 128 changes that each passed alone. A rule the machine measures now blocks, with a written
 exception the reviewer can refuse. There is no penalty ladder: the block is the cost.
 
+**What the screen says.** In October 2026 an external QA found money, date, plural and status bugs
+in a project whose journeys walked through those exact screens and whose changes all passed review:
+the journeys checked roles and names, never text, and the unit tests expected the code's own output.
+`keel.semantic`, `keel.proof.reads_screen`, `keel.test.intent` and `keel.audit.sha` come from that
+case; the analysis is [MISSED_FINDINGS_ZUVEMO.md](MISSED_FINDINGS_ZUVEMO.md).
+
 ## Limits, kept open
 
 - Most values in `KEEL.md` are `to build`: until their check lands, the reviewer checks them by

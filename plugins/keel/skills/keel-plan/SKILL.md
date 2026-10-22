@@ -36,7 +36,7 @@ and records it as one `keel.plan` record. Read [`KEEL.md`](https://github.com/st
 |---|---|
 | Docs, comments, inert config values, one line, tests only | a summary line; a test removal also carries its deletion record |
 | Bounded code | the paths, the promise, the proof |
-| A screen inside a journey's `scopePaths` | the paths, the promise, and `journeys:` naming every journey touched, replayed green at the head |
+| A screen inside a journey's `scopePaths` | the paths, the promise, `journeys:` naming every journey touched, replayed green at the head, and the strings the user will read (amounts, dates, plurals, labels) that the journey must check |
 | A new public surface (module, type, public function, dependency, route, command, tool, schema field) | the full card, and the surface is named |
 | Persisted data, permissions, compatibility, security, effects outside the process, Runtime-affecting config, concurrency, destructive operations | the full card, a journey, and the failure list `KEEL_EXEC.md` asks for |
 

@@ -8,7 +8,8 @@ import { useSummaries } from "./sidebar/use-summaries";
 import { StartRun } from "./start-run/StartRun";
 import { Topbar } from "./topbar/Topbar";
 import { ProofView } from "./proof/ProofView";
-import { GraphView, LanesView } from "./views/Views";
+import { LanesView } from "./lanes/LanesView";
+import { GraphView } from "./views/Views";
 
 /** How often the run list is read again: one page of at most 50 rows per poll. */
 const POLL_MS = 5_000;
@@ -117,7 +118,8 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
   }, [runtime]);
 
   useEffect(() => {
-    if (route.view !== "proof" || journeys !== null) return;
+    // Proof lists the journeys; Lanes reads their last result beside a slice's journeys.
+    if (route.view === "graph" || journeys !== null) return;
     readJourneys();
   }, [route.view, journeys, readJourneys]);
 
@@ -168,7 +170,7 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
             )}
           </GraphView>
         )}
-        {route.view === "lanes" && <LanesView />}
+        {route.view === "lanes" && <LanesView runtime={runtime} executionId={route.run} journeys={journeys} />}
         {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={route.run} onRan={readJourneys} />}
       </div>
     </div>

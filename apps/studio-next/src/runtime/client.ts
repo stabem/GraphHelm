@@ -14,6 +14,66 @@ export interface LaneLiveness {
   free: boolean;
 }
 
+/** #1803: the open board of `GET /v1/executions/{id}/tasks` (apps/cli/src/commands/execution/tasks.rs
+ * `OpenTasksView`), only the fields the Lanes board reads. */
+export interface TasksBoard {
+  now: string;
+  tasks: BoardTask[];
+  liveness: { lanes: BoardLaneLiveness[] };
+  stalls: { key: string; owner: string | null }[];
+  waiting: LaneWaiting[];
+}
+
+export type TaskStepName = "plan" | "critic" | "implement" | "review" | "merge" | "merged";
+
+export interface BoardTask {
+  key: string;
+  issue: number | null;
+  pr: number | null;
+  lane: string | null;
+  currentReviewer: string | null;
+  step: TaskStepName;
+  blockedBy: { reviewer: string } | null;
+  title: string | null;
+  prTitle: string | null;
+  journeys: string[];
+  lastSequence: number;
+  releasedBy?: string;
+}
+
+export interface BoardLaneLiveness {
+  lane: string;
+  lastRecordAt?: string;
+  owes: boolean;
+  silent: boolean;
+  free: boolean;
+}
+
+/** #1794/#1827: one open question of a lane; only its newest five are rows, `laneTotal` counts all. */
+export interface LaneWaiting {
+  lane: string;
+  question: string;
+  waitsOn: string;
+  since: string;
+  signalId: string;
+  sequence: number;
+  laneTotal: number;
+}
+
+/** #1793: one verified `task.*` record a lane recorded, from its activity log. */
+export interface LaneAction {
+  kind: string;
+  sequence: number;
+  issue?: number;
+  pr?: number;
+  reviewer?: string;
+  verdict?: string;
+  activity?: string;
+  reason?: string;
+  title?: string;
+  occurredAt?: string | null;
+}
+
 export interface JourneyFlow {
   id: string;
   title: string | null;
@@ -194,6 +254,35 @@ export class Runtime {
   async lanes(executionId: string): Promise<LaneLiveness[]> {
     const reply = await this.#request<{ liveness?: { lanes?: LaneLiveness[] } }>("GET", `/v1/executions/${encodeURIComponent(executionId)}/tasks`);
     return Array.isArray(reply.liveness?.lanes) ? reply.liveness.lanes : [];
+  }
+
+  /** #1803: the open board of a run (tasks, liveness, stalls and open questions). */
+  async board(executionId: string): Promise<TasksBoard> {
+    return this.#request<TasksBoard>("GET", `/v1/executions/${encodeURIComponent(executionId)}/tasks`);
+  }
+
+  /** #1793: a lane's last `limit` actions, newest first (owner credentials). */
+  async laneActivity(executionId: string, lane: string, limit: number): Promise<LaneAction[]> {
+    const log = await this.#request<{ actions?: LaneAction[] }>("GET", `/v1/executions/${encodeURIComponent(executionId)}/lanes/${encodeURIComponent(lane)}/activity?limit=${limit}`);
+    return Array.isArray(log.actions) ? log.actions : [];
+  }
+
+  /** #1803: the owner's message to a lane, `POST /v1/executions/{id}/signal`: an `operator_note`
+   * addressed (`to`) to the lane, naming the question it answers in `replyTo` when there is one,
+   * which is what takes that question off the board. `id` is both the signal id and the
+   * idempotency key, so a resend of one message is reconciled instead of recorded twice. */
+  async messageLane(executionId: string, id: string, lane: string, text: string, replyTo: string | null): Promise<void> {
+    await this.#request("POST", `/v1/executions/${encodeURIComponent(executionId)}/signal`, {
+      signal: {
+        id, to: lane, ...(replyTo === null ? {} : { replyTo }),
+        source: { type: "user", id: OWNER.id }, type: "operator_note", severity: "low",
+        description: text, evidence: [executionId], emittedAt: new Date().toISOString(),
+      },
+    }, {
+      "Idempotency-Key": id,
+      "X-GraphHelm-Actor": OWNER.id,
+      "X-GraphHelm-Actor-Type": OWNER.type,
+    });
   }
 
   /** `POST /v1/executions/{id}/start`. The idempotency key derives from the run id, so a resend of

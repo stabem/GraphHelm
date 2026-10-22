@@ -1708,5 +1708,18 @@ class StudioInstallCheck(unittest.TestCase):
             run.assert_not_called()
 
 
+class SlotProgramSpelling(unittest.TestCase):
+    """#1842: a resolved `cargo.EXE` reaches the slot as `cargo.exe`, which every slot admits."""
+
+    def test_a_resolved_windows_cargo_is_passed_in_lower_case(self):
+        resolved = str(Path("C:/Users/lane/.cargo/bin") / "cargo.EXE")
+        self.assertEqual(Path(rr._slot_program(resolved)).name, "cargo.exe")
+        self.assertEqual(Path(rr._slot_program(resolved)).parent, Path(resolved).parent)
+
+    def test_other_programs_are_left_as_resolved(self):
+        for program in (str(Path("C:/tools") / "Node.EXE"), "cargo", str(Path("/usr/bin") / "cargo")):
+            self.assertEqual(rr._slot_program(program), program)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -397,6 +397,14 @@ class _MissingExecutable(RuntimeError):
     """No existing invocation can be selected for this required command."""
 
 
+def _slot_program(program: str) -> str:
+    """#1842: Windows resolves `cargo` to `...\\cargo.EXE` (PATHEXT's spelling). The same file under
+    its lower-case name, which every `workspace slot` admits; an older slot compares the name with
+    case and refused every reached step (GHCLI037)."""
+    path = Path(program)
+    return str(path.with_name("cargo.exe")) if path.name.lower() == "cargo.exe" else program
+
+
 def _effective_argv(repo: Path, cwd: Path, argv: list[str], graphhelm: Path | None) -> list[str]:
     """Select existing bounded rewrites, without preparing or installing anything."""
     command = list(argv)
@@ -941,7 +949,7 @@ def run(args: argparse.Namespace) -> int:
                     command = _effective_argv(repo, cwd, command, selected_graphhelm)
                     programs = identities.get("stepPrograms", [])
                     if identity_complete and programs:
-                        command[0] = programs[item["index"]]
+                        command[0] = _slot_program(programs[item["index"]])
                     commands.append(command)
                 is_batch = batch_mode and len(group) > 1 or batch_mode and _batchable(entry)
                 if is_batch:

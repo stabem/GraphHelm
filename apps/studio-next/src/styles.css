@@ -221,7 +221,7 @@ button { font: inherit; }
 .idle.late { color: #ff6b6b; }
 .step-age { font-size: 10px; color: var(--faint); }
 .step-age.aged { color: #ff6b6b; }
-.agent-card.aged { border-color: #ff6b6b; }
+.agent-card.aged, .kanban-card.aged { border-color: #ff6b6b; }
 .request { overflow-wrap: anywhere; }
 .request .mono { color: var(--muted); }
 .blocks { display: flex; gap: 3px; }

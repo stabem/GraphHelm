@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { BoardTask, JourneyFlow, Runtime, TasksBoard } from "../runtime/client";
 import { ReviewModal } from "./ReviewModal";
 import { reviewable } from "./review";
+import { idleText, stepAged } from "../lanes/board";
 import { cards, journeysWithWork, KANBAN, KANBAN_NAME, requestsFor, result, type OwnerRequest } from "./requests";
 
 /** The board and the requests are read again this often. */
@@ -118,11 +119,11 @@ export function RequestsView({ runtime, executionId, journeys }: Props) {
               <div key={column} className="kanban-col">
                 <h2>{KANBAN_NAME[column]} <span className="muted">{inColumn.length}</span></h2>
                 <ul aria-label={KANBAN_NAME[column]}>
-                  {inColumn.map(({ task, column: at }) => (
-                    <li key={task.key} className="kanban-card">
+                  {inColumn.map(({ task, column: at, stepMinutes }) => (
+                    <li key={task.key} className={`kanban-card${stepAged(stepMinutes) ? " aged" : ""}`}>
                       <span className="mono small">{task.issue === null ? task.key : `#${task.issue}`}{task.pr === null ? "" : ` · PR #${task.pr}`}</span>
                       <span>{task.prTitle ?? task.title ?? ""}</span>
-                      <span className="muted small">{task.lane ?? "no lane"} · {task.step}</span>
+                      <span className="muted small">{task.lane ?? "no lane"} · {task.step}{stepMinutes === null ? "" : " "}{stepMinutes !== null && <span role="group" aria-label="Time in step" className={`mono step-age${stepAged(stepMinutes) ? " aged" : ""}`}>{idleText(stepMinutes)}</span>}</span>
                       {reviewable(at, task.pr) && (
                         <button type="button" className="b ghost small" onClick={() => setReviewing(task)}>Open review</button>
                       )}

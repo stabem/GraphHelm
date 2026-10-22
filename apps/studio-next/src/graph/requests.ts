@@ -1,4 +1,5 @@
 import type { BoardTask, JourneyFlow, TasksBoard } from "../runtime/client";
+import { minutesInStep } from "../lanes/board";
 
 /** #1801: one owner request as `GET /v1/executions/{id}/requests` serves it (#1792 R1). */
 export interface OwnerRequest {
@@ -40,7 +41,8 @@ export function kanbanColumn(task: BoardTask, stalled: ReadonlySet<string>, flow
 }
 
 /** One Kanban card. */
-export interface Card { task: BoardTask; column: KanbanColumn }
+/** `stepMinutes`: #1855, minutes in the current step at the board's `now` (`null` when untimed). */
+export interface Card { task: BoardTask; column: KanbanColumn; stepMinutes: number | null }
 
 /** The board's slices as cards, narrowed to one journey when `journey` is set. A released slice is
  * nobody's work any more and is left out. */
@@ -49,7 +51,7 @@ export function cards(board: TasksBoard, flows: readonly JourneyFlow[], journey:
   return board.tasks
     .filter((task) => task.releasedBy === undefined)
     .filter((task) => journey === null || task.journeys.includes(journey))
-    .map((task) => ({ task, column: kanbanColumn(task, stalled, flows) }));
+    .map((task) => ({ task, column: kanbanColumn(task, stalled, flows), stepMinutes: minutesInStep(task, board.now) }));
 }
 
 /** The journeys that have work in flight, for the filter: the ones some live slice names, each with

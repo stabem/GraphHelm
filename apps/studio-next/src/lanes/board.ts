@@ -56,7 +56,6 @@ export function agents(board: TasksBoard): Agent[] {
     const liveness = live.get(lane);
     const lastRecordAt = liveness?.lastRecordAt ?? null;
     const since = lastRecordAt === null ? NaN : Date.parse(lastRecordAt);
-    const entered = task?.clock?.since ? Date.parse(task.clock.since) : NaN;
     return {
       lane,
       column: column({
@@ -70,7 +69,7 @@ export function agents(board: TasksBoard): Agent[] {
       lastRecordAt,
       kind: liveness?.agentKind ?? null,
       model: liveness?.agentModel ?? null,
-      stepMinutes: Number.isFinite(entered) && Number.isFinite(now) ? Math.max(0, Math.floor((now - entered) / 60_000)) : null,
+      stepMinutes: minutesInStep(task, board.now),
       questions,
       moreQuestions: Math.max(0, total - questions.length),
     };
@@ -94,6 +93,14 @@ export function column(lane: { silent: boolean; asks: boolean; blocked: boolean;
 export function idleTone(minutes: number | null): IdleTone {
   if (minutes === null || minutes >= 30) return "late";
   return minutes >= 10 ? "slow" : "ok";
+}
+
+/** #1855: whole minutes `task` has spent in its current step at the Runtime's `now`, from the
+ * record that moved it there (`clock.since`); `null` when no record carried a time. */
+export function minutesInStep(task: BoardTask | null, now: string): number | null {
+  const entered = task?.clock?.since ? Date.parse(task.clock.since) : NaN;
+  const at = Date.parse(now);
+  return Number.isFinite(entered) && Number.isFinite(at) ? Math.max(0, Math.floor((at - entered) / 60_000)) : null;
 }
 
 /** #1855: a card turns red once its slice has sat an hour or more in its current step. */

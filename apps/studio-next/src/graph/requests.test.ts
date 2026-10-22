@@ -58,4 +58,13 @@ describe("Graph requests and Kanban", () => {
     expect(result(delivered, merged, [flow("j", "failed")]).word).toBe("merged");
     expect(result(delivered, merged, [flow("j", "passed")]).word).toBe("proven");
   });
+
+  it("ages each card from the record that moved its slice into its step (#1855)", () => {
+    const b = { ...board([
+      task({ key: "old", clock: { since: "2026-10-21T22:00:00Z" } }),
+      task({ key: "new", clock: { since: "2026-10-21T23:30:00Z" } }),
+      task({ key: "untimed" }),
+    ]) };
+    expect(cards(b, [], null).map((card) => [card.task.key, card.stepMinutes])).toEqual([["old", 120], ["new", 30], ["untimed", null]]);
+  });
 });

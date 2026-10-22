@@ -1538,7 +1538,13 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
     if std::fs::symlink_metadata(&directory).is_ok() {
         safe_directory(&directory, false)?;
     }
-    let target = directory.join(format!("{}.json", args.id));
+    // #1777: a mobile replay keeps its own cache, beside the web one whose name never changes.
+    let mobile = args.viewport.as_deref() == Some("mobile");
+    let target = directory.join(if mobile {
+        format!("{}.mobile.json", args.id)
+    } else {
+        format!("{}.json", args.id)
+    });
     let previous = load_cache(&target, &flow)?;
     let secrets = preflight(&flow, &BTreeMap::new())?;
     let mut disk = flow.clone();
@@ -1586,7 +1592,10 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
         .as_ref()
         .map(|cache| cache["viewport"].clone())
         .unwrap_or(json!({"width":1280,"height":720}));
-    let (viewport, declared) = declared_browser(&flow, fallback);
+    let (mut viewport, declared) = declared_browser(&flow, fallback);
+    if mobile {
+        viewport = json!({"width":390,"height":844});
+    }
     data["flowDigest"] = digest.clone().into();
     data["viewport"] = viewport.clone();
     data["cacheReused"] = reused.is_some().into();
@@ -1658,7 +1667,14 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
         data["paths"][index] = path_data.clone();
         let mut driver = Driver::start(&project, temporary.path(), &secrets)?;
         let base = flow["base"].as_str().unwrap();
-        driver.call("open",with_declared(json!({"base":format!("{}{}",base.trim_end_matches('/'),screens[first]["url"].as_str().unwrap()),"viewport":viewport,"allowOrigins":args.allow_origin,"survive":args.heal}),declared.as_ref()),&format!("/paths/{name}/entry"))?;
+        let mut open = with_declared(
+            json!({"base":format!("{}{}",base.trim_end_matches('/'),screens[first]["url"].as_str().unwrap()),"viewport":viewport,"allowOrigins":args.allow_origin,"survive":args.heal}),
+            declared.as_ref(),
+        );
+        if mobile {
+            open["device"] = "mobile".into();
+        }
+        driver.call("open", open, &format!("/paths/{name}/entry"))?;
         let mut last_capture: Option<String> = None;
         for (step_index, screen_id) in visited.iter().enumerate() {
             if step_index > 0 {
@@ -1975,6 +1991,90 @@ pub(crate) fn run(args: &JourneyReplayArgs) -> Outcome {
         }
         return report(data, result.err());
     }
+    // #1777: a flow that names `viewports` replays each one in its own worker, web first; a flow
+    // that does not keeps replaying exactly as it was approved (one browser, its declared or
+    // cached size), until the owner re-approves it with `viewports`.
+    let views = replay_views(args);
+    let mut outcomes = Vec::new();
+    for view in &views {
+        let mut one = args.clone();
+        one.viewport = view.map(str::to_owned);
+        if !outcomes.is_empty() {
+            // Only the first viewport records proof and heals, so the records do not change.
+            one.record = crate::args::OptionalRecordArgs {
+                events: None,
+                execution: None,
+                keyring: None,
+                key_id: None,
+            };
+            one.heal = false;
+        }
+        let outcome = supervised(&one, data.clone());
+        let failed = !outcome.output.ok;
+        outcomes.push((view.unwrap_or("web"), outcome));
+        if failed {
+            break;
+        }
+    }
+    combine_replays(outcomes, views.len())
+}
+
+/// #1777: the viewports a replay plays: `None` alone for a flow that names no `viewports` (the
+/// approved single browser, unchanged), else each named one, web first.
+fn replay_views(args: &JourneyReplayArgs) -> Vec<Option<&'static str>> {
+    let project = args.project.clone().unwrap_or_else(|| PathBuf::from("."));
+    let named = std::fs::read_to_string(
+        project
+            .join(".graphhelm/journeys")
+            .join(format!("{}.journey.yaml", args.id)),
+    )
+    .ok()
+    .and_then(|text| serde_yaml_ng::from_str::<Value>(&text).ok())
+    .and_then(|flow| flow.get("viewports").and_then(Value::as_array).cloned());
+    match named {
+        Some(names) => {
+            let views: Vec<_> = ["web", "mobile"]
+                .into_iter()
+                .filter(|name| names.iter().any(|named| named == name))
+                .map(Some)
+                .collect();
+            if views.is_empty() { vec![None] } else { views }
+        }
+        None => vec![None],
+    }
+}
+
+/// #1777: one replay's outcome, or every viewport's when there were several: the first viewport's
+/// output stays the replay's (what every caller reads today), its `viewports` names each one's
+/// outcome, and the replay fails when any viewport failed or did not run.
+fn combine_replays(mut outcomes: Vec<(&'static str, Outcome)>, planned: usize) -> Outcome {
+    if planned <= 1 {
+        return outcomes.pop().map(|(_, outcome)| outcome).unwrap();
+    }
+    let mut views = serde_json::Map::new();
+    for (name, outcome) in &outcomes {
+        views.insert(
+            (*name).to_owned(),
+            json!({"ok": outcome.output.ok, "paths": outcome.output.data.as_ref().map_or(Value::Null, |d| d["paths"].clone())}),
+        );
+    }
+    let ran = outcomes.len();
+    let index = outcomes
+        .iter()
+        .position(|(_, outcome)| !outcome.output.ok)
+        .unwrap_or(0);
+    let mut result = outcomes.swap_remove(index).1;
+    if let Some(data) = result.output.data.as_mut() {
+        data["viewports"] = views.into();
+        if ran < planned {
+            data["viewportsNotRun"] = (planned - ran).into();
+        }
+    }
+    result
+}
+
+/// One worker under the replay budget (startup included).
+fn supervised(args: &JourneyReplayArgs, data: Value) -> Outcome {
     // Path lookup/environment access and command construction are startup too.
     // Keep even those calls off the bounded caller, not just browser/storage I/O.
     let deadline = Instant::now() + RUN_BUDGET;
@@ -2007,6 +2107,11 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
     let mut command = graphhelm_process::command(executable);
     command
         .args(["--json", "journey", "replay", &args.id, "--replay-worker"])
+        .args(
+            args.viewport
+                .iter()
+                .flat_map(|view| ["--viewport", view.as_str()]),
+        )
         .arg("--project")
         .arg(args.project.as_deref().unwrap_or(Path::new(".")))
         .stdin(Stdio::piped())
@@ -2118,6 +2223,93 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
 
 #[cfg(test)]
 mod tests {
+
+    /// #1777: which viewports a replay plays. An approved flow that names no `viewports` keeps
+    /// replaying as approved, one browser, until the owner re-approves it with `viewports` (old
+    /// contracts replay unchanged); one that names them plays each, web first. Defects named: an
+    /// old flow silently gains a mobile replay, or a named one is skipped. Cost: one temp directory.
+    #[test]
+    fn a_replay_plays_each_named_viewport_and_an_old_flow_replays_unchanged() {
+        use super::*;
+        let project = tempfile::tempdir().unwrap();
+        let journeys = project.path().join(".graphhelm/journeys");
+        std::fs::create_dir_all(&journeys).unwrap();
+        let args = |id: &str| JourneyReplayArgs {
+            id: id.to_owned(),
+            project: Some(project.path().to_path_buf()),
+            record: crate::args::OptionalRecordArgs {
+                events: None,
+                execution: None,
+                keyring: None,
+                key_id: None,
+            },
+            allow_origin: Vec::new(),
+            replay_worker: false,
+            viewport: None,
+            heal: false,
+            model: Default::default(),
+            allow_act: Vec::new(),
+        };
+        std::fs::write(
+            journeys.join("old.journey.yaml"),
+            "id: old\nviewport: {width: 1280, height: 800}\n",
+        )
+        .unwrap();
+        std::fs::write(journeys.join("plain.journey.yaml"), "id: plain\n").unwrap();
+        std::fs::write(
+            journeys.join("both.journey.yaml"),
+            "id: both\nviewports: [mobile, web]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            journeys.join("phone.journey.yaml"),
+            "id: phone\nviewports: [mobile]\n",
+        )
+        .unwrap();
+        assert_eq!(replay_views(&args("old")), [None]);
+        assert_eq!(
+            replay_views(&args("plain")),
+            [None],
+            "no viewports named: replayed as approved"
+        );
+        assert_eq!(replay_views(&args("missing")), [None]);
+        assert_eq!(replay_views(&args("both")), [Some("web"), Some("mobile")]);
+        assert_eq!(replay_views(&args("phone")), [Some("mobile")]);
+    }
+
+    /// #1777: a replay of two viewports fails when either does, answers with the failed one's
+    /// output, and names each viewport's outcome; one viewport answers exactly its own outcome.
+    #[test]
+    fn a_replay_of_two_viewports_fails_when_either_does() {
+        use super::*;
+        let ok = || {
+            report(
+                json!({"paths": [{"name": "main", "outcome": "passed"}]}),
+                None,
+            )
+        };
+        let failed = || {
+            report(
+                json!({"paths": [{"name": "main", "outcome": "failed"}]}),
+                Some(failure("driver.expectation_failed", "/paths/main", 1)),
+            )
+        };
+        let single = combine_replays(vec![("web", ok())], 1);
+        assert!(single.output.ok);
+        assert!(
+            single.output.data.unwrap().get("viewports").is_none(),
+            "one viewport keeps today's shape"
+        );
+        let both = combine_replays(vec![("web", ok()), ("mobile", failed())], 2);
+        assert!(!both.output.ok);
+        let data = both.output.data.unwrap();
+        assert_eq!(data["viewports"]["web"]["ok"], true);
+        assert_eq!(data["viewports"]["mobile"]["ok"], false);
+        assert_eq!(data["paths"][0]["outcome"], "failed");
+        let stopped = combine_replays(vec![("web", failed())], 2);
+        assert!(!stopped.output.ok);
+        assert_eq!(stopped.output.data.unwrap()["viewportsNotRun"], 1);
+    }
 
     /// #1722: the binary ships its observer files byte for byte, so it must ship the same bytes
     /// whatever the build checkout's line endings: on 2026-10-19 a binary built from an autocrlf

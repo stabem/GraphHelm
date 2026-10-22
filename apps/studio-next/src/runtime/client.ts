@@ -43,6 +43,8 @@ export interface BoardTask {
   journeys: string[];
   lastSequence: number;
   releasedBy?: string;
+  /** #502: `since` is when the record that moved the slice into its current step was appended. */
+  clock?: { since: string | null };
 }
 
 export interface BoardLaneLiveness {

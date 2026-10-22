@@ -25,6 +25,9 @@ export interface Agent {
   /** #1851: the kind and model the lane reported (e.g. `claude`, `opus`); never guessed from its name. */
   kind: string | null;
   model: string | null;
+  /** #1855: minutes the card's slice has spent in its current step, at the Runtime's `now`;
+   * `null` when no record carried a time. */
+  stepMinutes: number | null;
   questions: LaneWaiting[];
   /** Open questions beyond the rows served (`laneTotal` minus this lane's rows): the "+K more". */
   moreQuestions: number;
@@ -53,6 +56,7 @@ export function agents(board: TasksBoard): Agent[] {
     const liveness = live.get(lane);
     const lastRecordAt = liveness?.lastRecordAt ?? null;
     const since = lastRecordAt === null ? NaN : Date.parse(lastRecordAt);
+    const entered = task?.clock?.since ? Date.parse(task.clock.since) : NaN;
     return {
       lane,
       column: column({
@@ -66,6 +70,7 @@ export function agents(board: TasksBoard): Agent[] {
       lastRecordAt,
       kind: liveness?.agentKind ?? null,
       model: liveness?.agentModel ?? null,
+      stepMinutes: Number.isFinite(entered) && Number.isFinite(now) ? Math.max(0, Math.floor((now - entered) / 60_000)) : null,
       questions,
       moreQuestions: Math.max(0, total - questions.length),
     };
@@ -89,6 +94,12 @@ export function column(lane: { silent: boolean; asks: boolean; blocked: boolean;
 export function idleTone(minutes: number | null): IdleTone {
   if (minutes === null || minutes >= 30) return "late";
   return minutes >= 10 ? "slow" : "ok";
+}
+
+/** #1855: a card turns red once its slice has sat an hour or more in its current step. */
+export const AGED_MINUTES = 60;
+export function stepAged(minutes: number | null): boolean {
+  return minutes !== null && minutes >= AGED_MINUTES;
 }
 
 export function idleText(minutes: number | null): string {

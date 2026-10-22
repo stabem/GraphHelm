@@ -18,6 +18,16 @@ function setup(selected = 0, frameUrl = (id: string) => (id === "a" ? "blob:a" :
 }
 
 describe("TestCanvas", () => {
+  it("#1775: a step card shows its captured frame, and the skeleton only when it has none", () => {
+    setup();
+    const strip = screen.getByRole("list", { name: "Test actions" });
+    const [withFrame, without] = [...strip.querySelectorAll(".tc-card")];
+    expect(withFrame!.querySelector(".tc-thumb img")).toHaveAttribute("src", "blob:a");
+    expect(withFrame!.querySelector(".tc-thumb-line")).toBeNull();
+    expect(without!.querySelector(".tc-thumb img")).toBeNull();
+    expect(without!.querySelector(".tc-thumb-line")).not.toBeNull();
+    expect(withFrame).toHaveAccessibleName("1 SEES Journey tab · passed");
+  });
   it("says what the journey proves, what the step typed and every check (#1287)", () => {
     const strong: TestFrame[] = [{ stepId: "salvo", n: 1, verb: "DOES", text: "Submits “Salvar”", status: "passed", reason: null,
       expected: ["success"], inputs: ["Types “parceiro” into “Tag Amazon”", "Submits “Salvar”"], intent: "Tag Amazon as a partner", checks: ["shows cell “parceiro”"], checkStatus: ["passed"], failure: null, typed: [], screenIntent: null }];

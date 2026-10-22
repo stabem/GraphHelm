@@ -143,7 +143,7 @@ describe("ProofTable", () => {
   });
   it("shows observer setup progress, then explains setup failure and keeps Run again available", async () => {
     const running: JourneyRunView = { state: "running", kind: "preview", observerSetup: {
-      state: "installing", message: "Installing the browser observer…" }, screens: {} };
+      state: "installing", message: "npx playwright install chromium" }, screens: {} };
     const failed: JourneyRunView = { state: "failed", kind: "preview", reason: "observer.setup_failed",
       detail: { code: "observer.setup_failed", pointer: "/observer" },
       observerSetup: { state: "failed", message: "Observer setup failed", error: "npm exited with code 1" }, screens: {} };
@@ -154,7 +154,10 @@ describe("ProofTable", () => {
     render(<ProofTable mission={mission} onOpenTest={vi.fn()} run={run}
       flow={{ id: "j", title: "J", status: "draft", approved: null, drift: [], findings: [], approvable: true, screens: [], edges: [], paths: {} }} />);
     await userEvent.click(screen.getByRole("button", { name: "Run again" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("Installing the browser observer…");
+    // #1775: the phase in plain words, not the bare installer command line.
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent("Preparing the browser for this run · Chromium download");
+    expect(status).not.toHaveTextContent("npx");
     expect(screen.getByRole("button", { name: "Run again" })).toBeDisabled();
     expect(await screen.findByRole("alert")).toHaveTextContent("browser observer setup failed: npm exited with code 1");
     expect(screen.getByRole("alert")).not.toHaveTextContent("graphhelm setup --install-observer");

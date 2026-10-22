@@ -8,6 +8,7 @@ import type { JourneyFlowView, JourneyRunView } from "../runtime/types";
 import { approvalBlockReason } from "../runtime/journeys";
 import { useJourneyRun, type JourneyRunSource } from "./journey-flows";
 import { runFailure as explain } from "../runtime/run-failure";
+import { observerSetupStatus } from "../runtime/observer-setup";
 
 const HINT: Record<StepStatus, string> = {
   proven: "Proven by a machine. Seen by you closes the ladder.",
@@ -100,7 +101,7 @@ export function ProofTable({ mission, onOpenTest, frameUrl, flow, run, onApprove
         {onWatch && <button type="button" disabled={busy} onClick={() => act(() => onWatch(flow.id))}>Watch</button>}
         {run && <button type="button" disabled={running} onClick={preview.again}>Run again</button>}
         {preview.run?.state === "ready" && <span>{preview.run.kind === "preview" ? "Preview only — not proof" : "Replay recorded"}</span>}
-        {running && <span role="status">{observerInstalling ? preview.run!.observerSetup!.message : "Running…"}</span>}
+        {running && <span role="status">{observerInstalling ? observerSetupStatus(preview.run!.observerSetup!.message) : "Running…"}</span>}
         {flow.rejected && <p className="proof-rejected" id="proof-rejected" role="note" aria-labelledby="proof-rejected">{`Rejected: ${flow.rejected.note}`}</p>}
         {rejecting && onReject && <div className="proof-reject">
           <textarea aria-label="Why reject" value={note} maxLength={4096} onChange={(event) => setNote(event.target.value)} />

@@ -2115,6 +2115,43 @@ fn operator_notes_ring_only_the_addressed_actor_or_everyone_when_unaddressed() {
     }
 }
 
+/// #1772: a review assignment wakes the reviewer it names and no other lane, so a lane parked on
+/// wake-wait is not rung by every peer's task bookkeeping (on the parent, every task record rang
+/// every armed lease).
+/// Cost: two local servers and one ten-second no-ring observation; temp stores only.
+#[cfg(windows)]
+#[test]
+fn a_review_assignment_rings_only_the_reviewer_it_names() {
+    for (reviewer, should_ring) in [("another-lane", false), ("agent-sleeper", true)] {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        start_execution(&events, directory.path(), "exec-review-routing");
+        let (_guard, address, token, sleeper) =
+            serve_before_arming_sleeper(&events, "exec-review-routing", "review-routing", &[]);
+        let document = serde_json::json!({
+            "schema": "graphhelm-task-event-v1", "taskId": "issue-1772", "revision": 1,
+            "at": "2026-10-21T00:00:00Z", "pr": 1772, "headSha": "0123456789abcdef0123456789abcdef01234567",
+            "reviewer": reviewer, "ordinal": 1,
+        });
+        let body = serde_json::json!({"signal": {
+            "id": format!("review-routing-{reviewer}"), "type": "task.review_assigned",
+            "source": {"type": "user", "id": "agent-wake-test"}, "severity": "low",
+            "evidence": ["https://github.com/stabem/GraphHelm/pull/1772"],
+            "emittedAt": "2026-10-21T00:00:00Z", "description": document.to_string(),
+        }});
+        let (status, reply) = post_json(
+            &address,
+            &token,
+            "/v1/executions/exec-review-routing/signal",
+            &format!("review-routing-{reviewer}"),
+            &body,
+        );
+        assert_eq!(status, 200, "{reply}");
+        let (bytes, _) = sleeper.wait();
+        assert_eq!(!bytes.is_empty(), should_ring, "reviewer {reviewer}");
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn a_missing_rendezvous_consumes_the_lease_without_a_serve_error() {

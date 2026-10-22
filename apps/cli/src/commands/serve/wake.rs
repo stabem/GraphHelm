@@ -143,7 +143,9 @@ fn due_leases(
             EventKind::WakeLease(_)
             | EventKind::WakeLeaseConsumed(_)
             | EventKind::AgentPresenceDeclared(_) => {}
-            EventKind::SignalRecorded(signal) if signal.kind == "operator_note" => {
+            EventKind::SignalRecorded(signal)
+                if signal.kind == "operator_note" || signal.kind.starts_with("task.") =>
+            {
                 let opener = opener.get_or_insert_with(|| super::ports::build_opener(sealing).ok());
                 let Some(opener) = opener else {
                     continue;
@@ -170,8 +172,26 @@ fn due_leases(
                     else {
                         continue;
                     };
-                    match envelope.get("to") {
-                        None => content_head = content_head.max(event.sequence),
+                    // #1772: a task record is lane bookkeeping. It wakes only the lane it hands
+                    // work to (a review assignment wakes its reviewer); every other task record
+                    // rings no one, so a lane parked on wake-wait is not woken by peers' claims,
+                    // plans and heartbeats.
+                    let to = if signal.kind == "operator_note" {
+                        envelope.get("to").cloned()
+                    } else if signal.kind == "task.review_assigned" {
+                        envelope["description"]
+                            .as_str()
+                            .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                            .and_then(|document| document.get("reviewer").cloned())
+                            .filter(serde_json::Value::is_string)
+                    } else {
+                        break;
+                    };
+                    match to {
+                        None if signal.kind == "operator_note" => {
+                            content_head = content_head.max(event.sequence);
+                        }
+                        None => {}
                         Some(serde_json::Value::String(to)) => {
                             if let Some(head) = notes.get_mut(to.as_str()) {
                                 *head = (*head).max(event.sequence);

@@ -525,9 +525,11 @@ def core_module_cli(packages, p, rel, root):
     if word.search(root_code):
         return None
     # Case C: an `impl` in an affected module changes a type declared elsewhere (an inherent
-    # method, a trait impl, a blanket impl) for callers that never name the affected module.
+    # method, a trait impl, a blanket impl) for callers that never name the affected module. A
+    # `type` alias declares no new type (`type L = crate::n::S; impl L` adds methods to `n::S`), so
+    # it is not a declaration here (#1877 review, case Y).
     declared = {match for path, text in sources.items() if top(path) in affected
-                for match in re.findall(r"\b(?:struct|enum|union|type|trait)\s+([A-Za-z_]\w*)", text)}
+                for match in re.findall(r"\b(?:struct|enum|union|trait)\s+([A-Za-z_]\w*)", text)}
     for path, text in sources.items():
         if top(path) not in affected:
             continue

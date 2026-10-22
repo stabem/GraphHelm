@@ -1655,6 +1655,10 @@ class CoreModules(unittest.TestCase):
                  "core/k/src/n.rs": "pub struct T;\n",
                  "apps/cli/src/commands/a.rs": "fn h(t: graphhelm_k::n::T) { t.x() }\n"}, None),
             "C a blanket trait impl": ({"core/k/src/m.rs": "pub trait Q {}\nimpl<X> Q for X {}\n"}, None),
+            "Y an impl on a type alias of another module's type": (
+                {"core/k/src/m.rs": "pub type L = crate::n::S;\nimpl L { pub fn z(&self) {} }\n",
+                 "core/k/src/n.rs": "pub struct S;\n",
+                 "apps/cli/src/commands/a.rs": "fn h(s: graphhelm_k::n::S) { s.z() }\n"}, None),
             "V a path impl while the module declares a same-named type": (
                 {"core/k/src/m.rs": "pub struct T;\nimpl crate::n::T { pub fn x(&self) {} }\n",
                  "core/k/src/n.rs": "pub struct T;\n"}, None),

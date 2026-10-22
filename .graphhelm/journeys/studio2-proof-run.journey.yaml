@@ -22,7 +22,7 @@ screens:
     title: The run console is open
     url: /?session=studio-fixture&run=demo
     state: loading
-    expect: [{role: log, name: Run console}, {role: button, name: Hide log}]
+    expect: [{role: log, name: Run console, text: Chromium}, {role: button, name: Hide log}]
     scope: unknown
   - id: preparing
     title: The browser is being prepared
@@ -31,10 +31,10 @@ screens:
     expect: [{role: status, name: Preparing the browser}, {role: button, name: Show log}]
     scope: unknown
   - id: ran
-    title: Step cards hold frames and verdicts
+    title: Step cards hold frames and verdicts per viewport
     url: /?session=studio-fixture&run=demo
     state: success
-    expect: [{role: list, name: Steps}, {role: img, name: Step 1 frame}]
+    expect: [{role: list, name: Steps}, {role: img, name: Step 1 frame}, {role: listitem, name: Step 1, text: web}, {role: listitem, name: Step 1, text: mobile}]
     scope: unknown
 edges:
   - id: journeys.preparing

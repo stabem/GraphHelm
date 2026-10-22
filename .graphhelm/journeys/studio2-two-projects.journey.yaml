@@ -16,13 +16,13 @@ screens:
     title: The first project's run is shown
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: navigation, name: Projects}, {role: link, name: demo}, {role: link, name: second}]
+    expect: [{role: navigation, name: Projects}, {role: link, name: demo}, {role: link, name: second}, {role: banner, name: Top bar, text: demo}, {role: list, name: Runs in demo}]
     scope: unknown
   - id: second
-    title: The second project's run is shown
+    title: The second project's own run is shown
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: heading, name: second}, {role: region, name: Graph}]
+    expect: [{role: banner, name: Top bar, text: second}, {role: list, name: Runs in second}, {role: list, name: Runs in demo, absent: true}]
     scope: unknown
 edges:
   - id: first.second

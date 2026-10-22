@@ -3,7 +3,7 @@ id: studio2-graph-review-screen
 title: Review a card's screens in the large modal
 name: Review a screen
 feature: Studio
-purpose: "Clicking a card in review or merged opens the large modal with Frame, Side by side, Overlay with a slider, Changes, and Web/Mobile; Esc closes it."
+purpose: "Clicking a card in review or merged opens the large modal with Frame, Side by side, Overlay with a slider, Changes, and Web/Mobile; Close shuts it."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -19,10 +19,16 @@ screens:
     expect: [{role: region, name: Graph}, {role: button, name: Open review}]
     scope: unknown
   - id: closed
-    title: Esc closes the modal
+    title: Close shuts the modal
     url: /?session=studio-fixture&run=demo
     state: stable
     expect: [{role: region, name: Graph}, {role: dialog, name: Review, absent: true}]
+    scope: unknown
+  - id: mobile
+    title: The same overlay at mobile width
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: slider, name: Now opacity}, {role: region, name: Review frame, text: "390"}]
     scope: unknown
   - id: modal
     title: The review modal compares the screens
@@ -31,10 +37,10 @@ screens:
     expect: [{role: dialog, name: Review}, {role: button, name: Frame}, {role: button, name: Side by side}, {role: button, name: Overlay}, {role: button, name: Changes}, {role: button, name: Web}, {role: button, name: Mobile}]
     scope: unknown
   - id: overlay
-    title: Overlay shows the opacity slider
+    title: Overlay shows the opacity slider at web width
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: slider, name: Now opacity}, {role: button, name: Mobile}]
+    expect: [{role: slider, name: Now opacity}, {role: region, name: Review frame, text: "1280"}]
     scope: unknown
 edges:
   - id: board.modal
@@ -42,17 +48,21 @@ edges:
     to: modal
     acts:
       - {kind: activate, role: button, name: Open review}
+  - id: mobile.closed
+    from: mobile
+    to: closed
+    acts:
+      - {kind: activate, role: button, name: Close review}
   - id: modal.overlay
     from: modal
     to: overlay
     acts:
       - {kind: activate, role: button, name: Overlay}
-  - id: overlay.closed
+  - id: overlay.mobile
     from: overlay
-    to: closed
-    intent: Closes the modal; Escape does the same.
+    to: mobile
     acts:
-      - {kind: activate, role: button, name: Close review}
+      - {kind: activate, role: button, name: Mobile}
 paths:
-  main: [board.modal, modal.overlay, overlay.closed]
+  main: [board.modal, modal.overlay, overlay.mobile, mobile.closed]
 drift: []

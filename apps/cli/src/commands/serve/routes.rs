@@ -3110,11 +3110,16 @@ async fn preview_status(response: Response) -> Response {
 pub(super) async fn journey_screen_frame(
     State(state): State<ServeState>,
     UrlPath((id, screen)): UrlPath<(String, String)>,
+    RawQuery(query): RawQuery,
     headers: HeaderMap,
 ) -> Response {
     const COMMAND: &str = "journey.preview";
     use axum::http::header;
     use axum::response::IntoResponse;
+    let viewport = match frame_viewport(query.as_deref()) {
+        Ok(viewport) => viewport,
+        Err(response) => return response,
+    };
     let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
         return respond_failure(
             COMMAND,
@@ -3124,10 +3129,11 @@ pub(super) async fn journey_screen_frame(
             ),
         );
     };
-    let read =
-        off_reactor(move || crate::commands::journey_preview::screen_frame(&project, &id, &screen))
-            .await
-            .flatten();
+    let read = off_reactor(move || {
+        crate::commands::journey_preview::screen_frame(&project, &id, &screen, viewport)
+    })
+    .await
+    .flatten();
     let Some((png, tag, width, height)) = read else {
         return respond(
             StatusCode::NOT_FOUND,
@@ -3182,6 +3188,22 @@ pub(super) async fn journey_screen_frame(
         .into_response()
 }
 
+/// #1777: a frame route's `?viewport=web|mobile`; absent is the run's first viewport, as every
+/// frame URL before #1777 meant. Any other query is refused at `/viewport`.
+#[allow(clippy::result_large_err)] // the refusal is the response, as in `start`
+fn frame_viewport(query: Option<&str>) -> std::result::Result<Option<&'static str>, Response> {
+    match query.unwrap_or("") {
+        "" => Ok(None),
+        "viewport=web" => Ok(Some("web")),
+        "viewport=mobile" => Ok(Some("mobile")),
+        _ => Err(bad_request(
+            "journey.preview",
+            "viewport must be web or mobile",
+            "/viewport",
+        )),
+    }
+}
+
 /// `GET /v1/journey-flows/{id}/history` (#history): the journey's earlier finished runs.
 pub(super) async fn journey_history(
     State(state): State<ServeState>,
@@ -3199,10 +3221,15 @@ pub(super) async fn journey_history(
 pub(super) async fn journey_history_frame(
     State(state): State<ServeState>,
     UrlPath((id, run, screen)): UrlPath<(String, String, String)>,
+    RawQuery(query): RawQuery,
 ) -> Response {
     const COMMAND: &str = "journey.preview";
     use axum::http::header;
     use axum::response::IntoResponse;
+    let viewport = match frame_viewport(query.as_deref()) {
+        Ok(viewport) => viewport,
+        Err(response) => return response,
+    };
     let Some(project) = state.project.as_deref().map(Path::to_path_buf) else {
         return respond_failure(
             COMMAND,
@@ -3213,7 +3240,7 @@ pub(super) async fn journey_history_frame(
         );
     };
     let read = off_reactor(move || {
-        crate::commands::journey_preview::history_frame(&project, &id, &run, &screen)
+        crate::commands::journey_preview::history_frame(&project, &id, &run, &screen, viewport)
     })
     .await
     .flatten();

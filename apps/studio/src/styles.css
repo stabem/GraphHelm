@@ -402,10 +402,10 @@ button { font: inherit; }
 .gv-history { font-size: 11px; color: var(--muted); white-space: pre-line; }
 /* Mobile: the design has no phone layout, so the columns stack and each request reads top-down. */
 @media (max-width: 760px) {
-  .gv { flex-direction: column; margin: 0; }
+  .gv { flex-direction: column; flex-wrap: nowrap; margin: 0; }
   .gv-journeys, .gv-detail { flex: none; max-width: none; border: 0; border-bottom: 1px solid var(--edge); }
   .gv-detail { border-top: 1px solid var(--edge); }
-  .gv-main { flex: none; padding: 12px 0; }
+  .gv-main { flex: none; width: 100%; padding: 12px 0; }
   .gv-canvas { padding: 12px; }
   .gv-cols, .gv-links { display: none; }
   .gv-request { width: auto; height: auto; display: flex; flex-direction: column; gap: 8px; }

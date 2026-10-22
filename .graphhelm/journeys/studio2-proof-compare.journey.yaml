@@ -3,7 +3,7 @@ id: studio2-proof-compare
 title: Compare Before and Now on a step
 name: Compare a step
 feature: Studio
-purpose: "On a step with history, Overlay with the slider, Side by side and Changes show Before against Now at web width; mobile waits on #1777."
+purpose: "On a step with history, Overlay with the slider, Side by side and Changes show Before against Now, at web and at mobile."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -17,6 +17,12 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof
     state: stable
     expect: [{role: img, name: "Now, changed regions highlighted"}, {role: region, name: Compare frame, text: "1280"}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
+  - id: mobile
+    title: The same compare at mobile width
+    url: /?session=studio-fixture&run=demo&view=proof
+    state: stable
+    expect: [{role: img, name: "Now, changed regions highlighted"}, {role: region, name: Compare frame, text: "390"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
   - id: overlay
     title: Now over Before with a slider
@@ -37,6 +43,11 @@ screens:
     expect: [{role: region, name: Compare with an earlier run}, {role: button, name: Frame}, {role: button, name: Side by side}, {role: button, name: Overlay}, {role: button, name: Changes}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
 edges:
+  - id: changes.mobile
+    from: changes
+    to: mobile
+    acts:
+      - {kind: activate, role: button, name: Mobile}
   - id: overlay.changes
     from: overlay
     to: changes
@@ -53,5 +64,5 @@ edges:
     acts:
       - {kind: activate, role: button, name: Side by side}
 paths:
-  main: [step.side, side.overlay, overlay.changes]
+  main: [step.side, side.overlay, overlay.changes, changes.mobile]
 drift: []

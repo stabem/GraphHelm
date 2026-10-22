@@ -249,11 +249,11 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
     flow["screens"][1]["expect"] = json!([{ "role":"heading","name":"Order 42" }]);
     // The entry screen does not depend on the control a drift case renames.
     flow["screens"][0]["expect"] = json!([{ "role":"heading","name":"Cart" }]);
-    flow["screens"].as_array_mut().unwrap().push(json!({"id":"guest","url":"/guest","state":"stable","expect":[{"role":"heading","name":"Guest checkout"}],"scope":["fixture-server.mjs"]}));
+    flow["screens"].as_array_mut().unwrap().push(json!({"id":"guest","title":"The guest checkout step","url":"/guest","state":"stable","expect":[{"role":"heading","name":"Guest checkout"}],"scope":["fixture-server.mjs"]}));
     flow["edges"][1]["acts"][1]["name"] = "Submit order".into();
     flow["edges"].as_array_mut().unwrap().extend([
         json!({"id":"cart.guest","from":"cart","to":"guest","acts":[{"kind":"navigate","role":"link","name":"Guest checkout"}]}),
-        json!({"id":"guest.submit","from":"guest","to":"done","acts":[{"kind":"submit","role":"button","name":"Place guest order"}]}),
+        json!({"id":"guest.submit","from":"guest","to":"done","intent":"The guest order is placed as shown, with no input to give","acts":[{"kind":"submit","role":"button","name":"Place guest order"}]}),
     ]);
     flow["paths"]["guest"] = json!(["cart.guest", "guest.submit"]);
     std::fs::write(
@@ -601,7 +601,9 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
         persisted["drift"],
         json!([{"edge":"cart.checkout","act":0,"code":"drift.screen_changed","seen":"screen pay","at":revision}])
     );
-    // The reader shows the drift, finds no error and offers re-approval to the owner.
+    // The reader shows the drift, finds no error and, once the owner has previewed the drifted
+    // draft (#1685: approval requires a recorded passing preview), offers re-approval.
+    support::passing_preview(&project, "checkout");
     let (code, value) = reply(cli().args(["journey", "flows", "--project"]).arg(&project));
     assert_eq!(code, 0, "{value}");
     let listed = &value["data"]["flows"][0];

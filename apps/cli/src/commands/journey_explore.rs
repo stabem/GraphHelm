@@ -586,7 +586,10 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
         "/browser/snapshot",
     )?;
     let mut pattern = screen_pattern(&snapshot, None)?;
-    let mut flow = json!({"schema":"graphhelm.journey-flow/1","id":args.id,"title":args.id,"status":"draft","approved":null,"base":base,"actors":["operator"],"secrets":args.secret,"risks":[],"screens":[],"edges":[],"paths":{"main":[]},"drift":[]});
+    // #1813: the draft writer refuses a journey that does not say what it proves (#1287), and the
+    // owner's goal is that promise; the schema bounds `purpose` at 512 characters.
+    let purpose: String = args.goal.trim().chars().take(512).collect();
+    let mut flow = json!({"schema":"graphhelm.journey-flow/1","id":args.id,"title":args.id,"purpose":purpose,"status":"draft","approved":null,"base":base,"actors":["operator"],"secrets":args.secret,"risks":[],"screens":[],"edges":[],"paths":{"main":[]},"drift":[]});
     let mut cache = json!({"schema":"graphhelm.journey-replay-cache/1","id":args.id,"flowDigest":"","viewport":viewport,"screens":{},"edges":{}});
     let mut current: Option<String> = None;
     let mut from: Option<String> = None;

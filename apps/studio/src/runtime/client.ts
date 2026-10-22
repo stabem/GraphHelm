@@ -107,7 +107,7 @@ export interface JourneyFlow {
 export interface IssueJourney {
   id: string;
   title: string | null;
-  before: { run: string; current: boolean; commit: string | null; ranAt: string | null; result: string | null; screens: { screen: string; frameUrl: string }[] } | null;
+  before: { run: string; current: boolean; commit: string | null; ranAt: string | null; result: string | null; screens: { screen: string; frameUrl: string; viewports?: Partial<Record<"web" | "mobile", string>> }[] } | null;
 }
 
 export interface JourneyScreen { id: string; url: string; title?: string }
@@ -118,8 +118,19 @@ export interface JourneyLastRun {
   ranAt: string | null;
   kind: "replay" | "preview" | null;
   reason: string | null;
-  failingStep: { kind: string; id: string; result: string; reason: string | null } | null;
+  failingStep: { kind: string; id: string; result: string; reason: string | null; viewport?: "web" | "mobile" | null } | null;
   flowChanged: boolean | null;
+  /** #1777: each viewport's status; a run recorded before viewports is web only, mobile `not_run`. */
+  viewports?: { web: "passed" | "failed" | "not_run"; mobile: "passed" | "failed" | "not_run" };
+  /** #1777: the one viewport that failed while the other passed, else `null`. */
+  failsOnlyOn?: "web" | "mobile" | null;
+}
+
+/** #1777: what one viewport of a run recorded. */
+export interface JourneyViewportRun {
+  result?: StepResult;
+  screens?: Record<string, { frame: boolean; width?: number; height?: number; result?: StepResult; reason?: string }>;
+  edges?: Record<string, { result?: StepResult | "skipped" | null; reason?: string }>;
 }
 
 export type StepResult = "pass" | "fail" | "drift";
@@ -136,6 +147,12 @@ export interface JourneyRun {
   reason?: string;
   screens?: Record<string, { frame: boolean; width?: number; height?: number; result?: StepResult; reason?: string }>;
   edges?: Record<string, { result?: StepResult | "skipped" | null; reason?: string }>;
+  /** #1777: the viewports this run plays, in order, and what each recorded. The top-level
+   * `screens`/`edges` are the first one's frames with the worst result at any viewport. */
+  viewportsPlanned?: ("web" | "mobile")[];
+  /** #1777: the viewport being played while `running`. */
+  viewport?: "web" | "mobile";
+  viewports?: Partial<Record<"web" | "mobile", JourneyViewportRun>>;
   observerSetup?: { state: "installing" | "ready" | "failed"; message: string; error?: string };
   launchLog?: { tail?: string };
   driverLog?: { tail?: string };
@@ -226,14 +243,14 @@ export class Runtime {
   }
 
   /** One screen's captured frame in the current run. `null` when the Runtime has none yet. */
-  async journeyFrame(flowId: string, screenId: string): Promise<Blob | null> {
-    return this.#image(`/v1/journey-flows/${encodeURIComponent(flowId)}/screens/${encodeURIComponent(screenId)}/frame`);
+  async journeyFrame(flowId: string, screenId: string, viewport?: "web" | "mobile"): Promise<Blob | null> {
+    return this.#image(`/v1/journey-flows/${encodeURIComponent(flowId)}/screens/${encodeURIComponent(screenId)}/frame${viewport === undefined ? "" : `?viewport=${viewport}`}`);
   }
 
   /** One screen's frame as an earlier run kept it:
    * `GET /v1/journey-flows/{id}/history/{run}/screens/{screen}/frame`. `null` when that run kept none. */
-  async journeyPastFrame(flowId: string, run: string, screenId: string): Promise<Blob | null> {
-    return this.#image(`/v1/journey-flows/${encodeURIComponent(flowId)}/history/${encodeURIComponent(run)}/screens/${encodeURIComponent(screenId)}/frame`);
+  async journeyPastFrame(flowId: string, run: string, screenId: string, viewport?: "web" | "mobile"): Promise<Blob | null> {
+    return this.#image(`/v1/journey-flows/${encodeURIComponent(flowId)}/history/${encodeURIComponent(run)}/screens/${encodeURIComponent(screenId)}/frame${viewport === undefined ? "" : `?viewport=${viewport}`}`);
   }
 
   /** #1802: the journeys an issue's slices name, each with its "Before = main" run and frame URLs

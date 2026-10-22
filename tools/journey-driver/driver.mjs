@@ -499,8 +499,11 @@ async function run(r) {
       let name=''; try { name=match[2] ? JSON.parse(match[2]) : ''; } catch { fail('driver.protocol_invalid'); }
       if (!string(name,256,true)) fail('driver.snapshot_too_large');
       const key=JSON.stringify([match[1],name]);
+      // #1813: this map only feeds the judge's closest-match hint; each expectation is measured
+      // below on its own. Bound the work without refusing a busy page: the page's size limit is
+      // the skeleton's (numbered names collapse there), which #356 lets explore see.
+      if (!observed.has(key) && observed.size>=128) continue;
       observed.set(key,{role:match[1],name,count:1,visible:true});
-      if (observed.size>128) fail('driver.snapshot_too_large');
     }
     for (const expected of r.expect) {
       const locator=page.getByRole(expected.role,{name:expected.name,exact:true});

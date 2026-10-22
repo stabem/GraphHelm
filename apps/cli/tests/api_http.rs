@@ -13476,3 +13476,165 @@ fn a_signal_left_for_the_runtime_to_fill_is_retried_as_a_replay() {
         assert_eq!(head_sequence(&base, &token, execution), after);
     }
 }
+
+/// #1797: the Studio's file-collision list. A path is listed when two or more open tasks name it
+/// in their `task.planned` paths, with each holder's lane and issue; a path one task names is
+/// absent; a released task stops counting; a plan naming more than 64 paths is refused at the
+/// signal door. Catches: single-holder paths listed, a released claim still colliding, an
+/// unbounded path list admitted, and the route reachable by a lane credential. Cost: one served
+/// Runtime, nine POSTs, three GETs.
+#[test]
+fn the_collision_list_names_the_paths_two_open_tasks_both_plan_to_touch() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-file-collisions";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let post = |id: &str, actor: &str, kind: &str, document: Value| {
+        let body = serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": actor},
+            "type": kind, "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-21T02:00:00Z"}});
+        post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", actor),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &body,
+        )
+    };
+    let head = |issue: u64, revision: u64, lane: &str| {
+        serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": format!("issue-{issue}"),
+            "revision": revision, "at": "2026-10-21T02:00:00Z", "lane": lane})
+    };
+    let claim = |issue: u64, lane: &str| {
+        let mut document = head(issue, 1, lane);
+        document["issue"] = issue.into();
+        document["branch"] = format!("issue-{issue}-work").into();
+        document["repo"] = "stabem/GraphHelm".into();
+        let (status, reply) = post(&format!("claim-{issue}"), lane, "task.claimed", document);
+        assert_eq!(status, 200, "claim {issue}: {reply}");
+    };
+    let plan = |issue: u64, label: &str, lane: &str, paths: Value| {
+        let mut document = head(issue, 2, lane);
+        for (key, value) in serde_json::json!({"classes": ["code"], "reviews": 1,
+            "proof": "tests", "critic": {"mode": "none", "passScore": 8, "maxRounds": 3},
+            "summary": "the card's scope", "paths": paths})
+        .as_object()
+        .unwrap()
+        {
+            document[key] = value.clone();
+        }
+        post(
+            &format!("plan-{issue}-{label}"),
+            lane,
+            "task.planned",
+            document,
+        )
+    };
+    claim(1, "lane-a");
+    let (status, reply) = plan(
+        1,
+        "card",
+        "lane-a",
+        serde_json::json!(["core/shared.rs", "core/only-a.rs", "core/released.rs"]),
+    );
+    assert_eq!(status, 200, "{reply}");
+    claim(2, "lane-b");
+    let (status, reply) = plan(
+        2,
+        "card",
+        "lane-b",
+        serde_json::json!(["core/only-b.rs", "core/shared.rs"]),
+    );
+    assert_eq!(status, 200, "{reply}");
+    claim(3, "lane-c");
+    let lane_c_claim = head_sequence(&base, &token, execution);
+    let (status, reply) = plan(
+        3,
+        "card",
+        "lane-c",
+        serde_json::json!(["core/released.rs", "core/shared.rs"]),
+    );
+    assert_eq!(status, 200, "{reply}");
+
+    let collisions = || {
+        get_json(
+            &format!("{base}/v1/executions/{execution}/collisions"),
+            Some(&token),
+        )
+    };
+    let listed = |reply: &Value| -> Vec<(String, Vec<String>)> {
+        reply["data"]["collisions"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{reply}"))
+            .iter()
+            .map(|collision| {
+                let lanes = collision["holders"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|holder| holder["lane"].as_str().unwrap().to_owned())
+                    .collect();
+                (collision["path"].as_str().unwrap().to_owned(), lanes)
+            })
+            .collect()
+    };
+    let lanes = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
+    let before = collisions();
+    assert_eq!(
+        listed(&before),
+        vec![
+            ("core/released.rs".to_owned(), lanes(&["lane-a", "lane-c"])),
+            (
+                "core/shared.rs".to_owned(),
+                lanes(&["lane-a", "lane-b", "lane-c"])
+            ),
+        ],
+        "colliding paths by path, single-holder paths absent: {before}"
+    );
+    assert_eq!(before["data"]["truncated"], false, "{before}");
+    assert_eq!(
+        before["data"]["collisions"][0]["holders"][0]["issue"], 1,
+        "{before}"
+    );
+
+    // lane-c releases its claim: its paths stop colliding.
+    let mut release = head(3, 3, "lane-c");
+    release["claimSequence"] = lane_c_claim.into();
+    release["reason"] = "handed back".into();
+    let (status, reply) = post("release-3", "lane-c", "task.released", release);
+    assert_eq!(status, 200, "{reply}");
+    let after = collisions();
+    assert_eq!(
+        listed(&after),
+        vec![("core/shared.rs".to_owned(), lanes(&["lane-a", "lane-b"]))],
+        "a released task no longer collides: {after}"
+    );
+
+    // The bound: 65 paths, a traversal and an absolute path are each refused at the door.
+    claim(4, "lane-d");
+    let many: Vec<String> = (0..65).map(|n| format!("core/file-{n}.rs")).collect();
+    for (label, paths) in [
+        ("too-many", serde_json::json!(many)),
+        ("traversal", serde_json::json!(["core/../secret"])),
+        ("absolute", serde_json::json!(["/etc/passwd"])),
+    ] {
+        let (status, reply) = plan(4, label, "lane-d", paths);
+        assert_eq!(status, 400, "{label}: {reply}");
+    }
+}

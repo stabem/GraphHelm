@@ -391,8 +391,14 @@ pub(crate) fn validate_task_event(
                 )
                 && critic()
                 && document.get("summary").is_some()
-                && words(),
-            &["lane", "classes", "reviews", "proof", "critic", "summary"],
+                && words()
+                // #1797: optional card paths, the schema's `$defs.paths`.
+                && document
+                    .get("paths")
+                    .is_none_or(|paths| graphhelm_execution::tasks::planned_paths(paths).is_some()),
+            &[
+                "lane", "classes", "reviews", "proof", "critic", "summary", "paths",
+            ],
         ),
         "task.pr_opened" => (
             count("pr")

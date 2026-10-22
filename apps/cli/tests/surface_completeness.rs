@@ -194,7 +194,7 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 28] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 29] = [
     (
         "GET",
         "/v1/capacity",
@@ -229,6 +229,11 @@ const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 28] = [
         "POST",
         "/v1/executions/{id}/lanes/{lane}/reassign",
         "the owner's lane control (#1798): releasing one lane's work to another is the owner's decision, refused to every agent credential; a lane releases only its own claim, through its own task record",
+    ),
+    (
+        "GET",
+        "/v1/executions/{id}/collisions",
+        "the Studio owner's file-collision view across open task slices (#1797), served to owner credentials only (`agent_route_allowed` admits no `/collisions`); an agent sees its own slice's planned paths in the tasks board it already reads through the MCP `tasks` tool",
     ),
     (
         "GET",

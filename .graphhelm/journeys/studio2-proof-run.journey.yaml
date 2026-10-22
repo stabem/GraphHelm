@@ -24,7 +24,7 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-run
     ignoreQuery: [session, project]
     state: loading
-    expect: [{role: log, name: Run console, text: Chromium}, {role: button, name: Hide log}]
+    expect: [{role: log, name: Run console, text: observer}, {role: button, name: Hide log}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
   - id: preparing
     title: The browser is being prepared

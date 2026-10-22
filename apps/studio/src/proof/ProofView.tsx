@@ -83,6 +83,10 @@ function runStatus(run: JourneyRun | null, starting: boolean): { name: string; t
   if (starting) return { name: "Starting the run", text: "Starting the run" };
   if (run?.state !== "running") return null;
   if (run.observerSetup?.state === "installing") return { name: "Preparing the browser", text: preparingStatus(run.observerSetup.message) };
+  // #1808: on a host whose observer is already installed the "installing" phase lasts less than
+  // one poll, so the run bar keeps saying the browser is being prepared until a first screen is
+  // reached: until then the observer is checked, Chromium launched and the app opened.
+  if (Object.keys(run.screens ?? {}).length === 0) return { name: "Preparing the browser", text: "Preparing the browser" };
   return { name: "Running", text: run.current ? `Running · ${run.current}` : "Running" };
 }
 

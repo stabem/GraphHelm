@@ -294,9 +294,12 @@ export function devSession(env: Record<string, string>): Plugin {
           const token = project === null ? null : readToken(project.tokenFile);
           // The reason codes never repeat the folder the caller sent.
           if (project === null || token === null) return json(response, 422, { ok: false, reason: "not_a_project" });
-          // The owner's key does not reach another project: that project's own ticket is spent first.
-          if (typeof ticket !== "string" || !consumeTicket(project.ticketFile, ticket)) return json(response, 404, { ok: false });
+          // The owner's key does not reach another project: that project's own ticket is the proof.
+          // It is checked (read, not spent) before anything else is told, and spent only on success,
+          // so a 409 for a stopped Runtime leaves it usable for the next attempt.
+          if (typeof ticket !== "string" || !holdsTicket(project, ticket)) return json(response, 404, { ok: false });
           if (runtimeOf(project.folder) === null) return json(response, 409, { ok: false, reason: "runtime_not_running" });
+          if (!consumeTicket(project.ticketFile, ticket)) return json(response, 404, { ok: false });
           if (project.id !== firstProjectId(env)) joined.set(project.id, project);
           json(response, 200, { ok: true, projectId: project.id, sessionKey: stableKey(token) });
         });

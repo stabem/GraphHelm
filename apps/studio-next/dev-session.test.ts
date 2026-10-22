@@ -97,6 +97,20 @@ describe("dev server add-folder (#1833)", () => {
     expect(logged.join(" ")).not.toContain("second-ticket");
   });
 
+  it("keeps the ticket when the project's Runtime is not running (#1840)", async () => {
+    const second = project(root, "second", "second-token");
+    ticketFor(second, "second-ticket");
+    const lifecycle = join(second, ".graphhelm", "events.runtime-lifecycle.json");
+    writeFileSync(lifecycle, JSON.stringify({ state: "stopped", address: "127.0.0.1:1" }));
+    const owner = { "x-graphhelm-studio-key": stableKey("first-token") };
+    expect(await call("/__studio/add", "POST", owner, { path: second, ticket: "second-ticket" })).toEqual({ status: 409, body: { ok: false, reason: "runtime_not_running" } });
+    expect((await call("/__studio/identity", "GET", {})).body.projectIds).toHaveLength(1);
+    writeFileSync(lifecycle, JSON.stringify({ state: "running", address: "127.0.0.1:1" }));
+    const added = await call("/__studio/add", "POST", owner, { path: second, ticket: "second-ticket" });
+    expect(added.status).toBe(200);
+    expect(added.body.sessionKey).toBe(stableKey("second-token"));
+  });
+
   it("refuses a caller without an owner key, before reading the folder", async () => {
     const second = project(root, "second", "second-token");
     for (const headers of [{} as Record<string, string>, { "x-graphhelm-studio-key": stableKey("other-token") }, { "x-graphhelm-studio-key": "first-token" }]) {

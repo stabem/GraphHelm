@@ -426,6 +426,10 @@ autonomous wake as separate statuses.
    waiter. Never assume timeout means no note arrived. Other exits are a binding/wait failure:
    diagnose it and restore the loop; do not silently retire the waiter. Always arm from the
    last read cursor, not a newly fetched head, so a note arriving between read and arm rings.
+6. What rings (#1772): a note addressed to your lane, an unaddressed note, any non-task append,
+   and a `task.review_assigned` naming you as reviewer (so a reviewer parked here is woken by
+   `pr_opened`, which records it). Other lanes' task records (claims, plans, heartbeats, verdicts)
+   do not ring, so a reviewer can park instead of polling.
 
 The plugin's `lane_stop_hook.py` runs on Stop in both host manifests. It reads the team log
 and sealed evidence, blocks with **"read the notes addressed to you"** while addressed notes

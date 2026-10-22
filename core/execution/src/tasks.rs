@@ -1199,8 +1199,9 @@ pub struct TaskState {
     pub claimed_at: Option<PersistedTimestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_seconds: Option<u64>,
-    /// #1797: the paths the newest `task.planned` of this slice named (its card's scope), the
-    /// input of the file-collision read model. Omitted while empty.
+    /// #1797: the paths of the newest `task.planned` of this slice that named any (its card's
+    /// scope); a later plan without `paths` keeps them. The input of the file-collision read
+    /// model. Omitted while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
 }

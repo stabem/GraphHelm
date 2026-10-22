@@ -264,6 +264,17 @@ test('declared storage survives a reload until the app overwrites it, at the dec
   await seen('Seen: app');
 });
 
+// #1782: a flow's declared clock is the page's now from the first navigation, and it still runs:
+// a timer fires and Date advances with it. Catches the clock ignored, installed after the page
+// loaded, or frozen (setFixedTime) so elapsed-time code never moves. Cost: one page, ~2 seconds.
+test('a declared clock is the page now from the first load and timers still run',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const c=await client(t);
+  await open(c,f.base+'/clock',[],{clock:'2026-10-31T12:00:00-03:00'});
+  const s=await c.send('snapshot',{expect:[{role:'heading',name:'Now 2026-10-31T15:00'},{role:'heading',name:'Later true'}]});
+  assert.equal(s.ok,true,JSON.stringify(s).slice(0,600));
+});
+
 // Coverage is an explicit observer: the initial page calls one named function while another stays
 // untouched. This catches a missing start-before-navigation,
 // an accidental zero-success artifact, or loss of function ranges/counts in serialization.

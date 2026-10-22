@@ -17,7 +17,7 @@ const SNAPSHOT = 32768, SNAPSHOT_DISCOVER = 6144;
 // TIMEOUT raced that deadline and surfaced as replay.timeout instead of expectation_failed (#398).
 const SCREEN_WAIT = TIMEOUT - 5000;
 const fields = {
-  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast', 'storage', 'coverage'], snapshot: ['expect','discover'],
+  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast', 'storage', 'coverage', 'clock'], snapshot: ['expect','discover'],
   show: ['caption', 'role', 'name'],
   act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
   capture: ['path', 'maskSecrets'], coverage: [], close: [],
@@ -90,6 +90,8 @@ function validate(r) {
     url(r.base,true); for (const origin of r.allowOrigins) url(origin,false,true);
     // #585: localStorage the flow declares for the base origin, seeded once when the browser opens.
     if (Object.hasOwn(r,'storage') && (!Array.isArray(r.storage) || r.storage.length > 16 || !r.storage.every(e => exactKeys(e,['key','value']) && string(e.key,256) && typeof e.value === 'string' && e.value.length <= 1024))) fail('driver.protocol_invalid');
+    // #1782: the instant the page sees as now, an ISO-8601 date-time with an explicit offset.
+    if (Object.hasOwn(r,'clock') && (typeof r.clock !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/.test(r.clock) || !Number.isFinite(Date.parse(r.clock)))) fail('driver.protocol_invalid');
   } else if (r.op === 'snapshot') {
     if (!Array.isArray(r.expect) || r.expect.length > 8 || !r.expect.every(v => expectation(v))) fail('driver.protocol_invalid');
     // #1041: absence is judged only on a settled page, so a screen needs one present expectation.
@@ -409,6 +411,14 @@ async function run(r) {
         if (!allowed.has(origin) || parsed.username || parsed.password) {hostRefused=true;socket.close();return;}
         socket.connectToServer();
       });
+      // #1782: install, not setFixedTime: the page starts at the flow's instant and its clock then
+      // runs, so timers, debounces and elapsed-time code behave as in real use while every relative
+      // date ("tomorrow") is the same on every run. Installed before the page exists, so the first
+      // navigation already sees it.
+      if (r.clock !== undefined) {
+        if (typeof context.clock?.install !== 'function') fail('driver.observer_missing');
+        await context.clock.install({time:new Date(r.clock)});
+      }
       page=await context.newPage();
       if (coverageEnabled) {
         if (!page.coverage || typeof page.coverage.startJSCoverage !== 'function') fail('driver.observer_missing');

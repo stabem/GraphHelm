@@ -57,7 +57,32 @@ pub struct TasksView {
     pub backlog: Vec<QueuedIssue>,
     /// The lanes the owner retired (`task.lane_retired`); the signal door refuses their records.
     pub retired_lanes: Vec<String>,
+    /// #1794 (Studio v2 R3): every question a lane asked that no reply answers yet, oldest first.
+    pub waiting: Vec<LaneWaiting>,
 }
+
+/// #1794: one open question of a lane. A lane asks with a signal of type `question` addressed
+/// (`to`) to the owner (`studio-operator`) or to another lane, or with an `operator_note` to
+/// `studio-operator` (the convention the reply suggestions already read). Any later signal whose
+/// `replyTo` names it answers it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaneWaiting {
+    pub lane: String,
+    pub question: String,
+    /// The actor the question is addressed to (its `to`), as the asker wrote it: the owner's
+    /// `studio-operator` or a lane id. No role is inferred here; a reader labels it from the
+    /// roster.
+    pub waits_on: String,
+    pub since: PersistedTimestamp,
+    pub signal_id: String,
+    pub sequence: u64,
+}
+
+/// #1794: the longest question text served; a longer one is not a question to show.
+pub const QUESTION_MAX_CHARS: usize = 2000;
+/// The owner's address on a run, shared with the reply suggestions.
+pub const OWNER_ADDRESS: &str = "studio-operator";
 
 /// How much of the fold a read answers. `Open` is every door's default: a long-lived run's
 /// record, slice and route histories grow without bound (3.9 MB on the gh-team run), past what
@@ -90,6 +115,8 @@ pub struct OpenTasksView {
     pub backlog: Vec<QueuedIssue>,
     /// #1516: step durations; the open board lists the open slices and the merged ones' summary.
     pub durations: TaskDurations,
+    /// #1794: the open questions, as in the full view.
+    pub waiting: Vec<LaneWaiting>,
 }
 
 /// #1516: the `?since=` window of a read: an RFC 3339 instant.
@@ -117,20 +144,7 @@ impl TasksFilter {
         let mut filter = Self::default();
         for pair in query.split('&') {
             if let Some(raw) = pair.strip_prefix("lane=") {
-                // The MCP door percent-encodes the value (`:` is `%3A`); decode before judging.
-                let lane = &super::super::serve::percent_decode(raw).unwrap_or_default();
-                let valid = !lane.is_empty()
-                    && lane.len() <= 128
-                    && lane
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c));
-                if !valid {
-                    return Err(super::signal_invalid(
-                        "lane must be 1 to 128 characters of [A-Za-z0-9._:-]",
-                        "/lane",
-                    ));
-                }
-                filter.lane = Some(lane.clone());
+                filter.lane = Some(parse_lane(raw)?);
             } else if let Some(issue) = pair.strip_prefix("issue=") {
                 let issue = super::super::serve::percent_decode(issue).unwrap_or_default();
                 filter.issue = Some(
@@ -152,6 +166,81 @@ impl TasksFilter {
     }
 }
 
+/// A lane named in a query or a path. The MCP door percent-encodes the value (`:` is `%3A`), so
+/// it is decoded before it is judged; outside the bounded id alphabet it is a failure at `/lane`.
+pub fn parse_lane(raw: &str) -> Result<String, Failure> {
+    let lane = super::super::serve::percent_decode(raw).unwrap_or_default();
+    let valid = !lane.is_empty()
+        && lane.len() <= 128
+        && lane
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c));
+    if !valid {
+        return Err(super::signal_invalid(
+            "lane must be 1 to 128 characters of [A-Za-z0-9._:-]",
+            "/lane",
+        ));
+    }
+    Ok(lane)
+}
+
+/// #1793: how many actions the activity log answers when the query names no `limit`, and the
+/// most it ever answers, so one read stays small whatever the run's history holds.
+pub const ACTIVITY_DEFAULT_LIMIT: usize = 10;
+pub const ACTIVITY_MAX_LIMIT: usize = 50;
+
+/// #1793: `GET /v1/executions/{id}/lanes/{lane}/activity`: the lane's last `limit` actions,
+/// newest first (by event sequence). An action is a verified `task.*` record the lane itself
+/// recorded; a heartbeat counts only when it carries a reason (the #1556 rule), since a
+/// reasonless one only renews a lease. The records are the ones `tasks?full=1` already serves.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaneActivity {
+    pub execution_id: String,
+    pub lane: String,
+    pub limit: usize,
+    pub actions: Vec<TaskEventRecord>,
+}
+
+/// `limit=` from a raw query: absent is the default; anything but 1..=max is a failure at `/limit`.
+pub fn parse_activity_limit(query: &str) -> Result<usize, Failure> {
+    let Some(raw) = query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("limit="))
+    else {
+        return Ok(ACTIVITY_DEFAULT_LIMIT);
+    };
+    raw.parse::<usize>()
+        .ok()
+        .filter(|limit| (1..=ACTIVITY_MAX_LIMIT).contains(limit))
+        .ok_or_else(|| super::signal_invalid("limit must be a number from 1 to 50", "/limit"))
+}
+
+impl TasksView {
+    /// #1793: the lane's activity log over this view's records (see [`LaneActivity`]).
+    pub fn lane_activity(&self, lane: &str, limit: usize) -> serde_json::Value {
+        let mut actions: Vec<TaskEventRecord> = self
+            .records
+            .iter()
+            .filter(|record| record.actor_id == lane)
+            .filter(|record| {
+                record.kind != graphhelm_execution::tasks::TaskEventKind::Heartbeat
+                    || record.reason.is_some()
+            })
+            .cloned()
+            .collect();
+        actions.sort_by_key(|record| std::cmp::Reverse(record.sequence));
+        actions.truncate(limit);
+        serde_json::to_value(LaneActivity {
+            execution_id: self.execution_id.clone(),
+            lane: lane.to_owned(),
+            limit,
+            actions,
+        })
+        .expect("an activity log of serializable task records")
+    }
+}
+
 impl TasksView {
     /// #1449: keep only the tasks `filter` names, and the leases and stalls of those tasks. The
     /// header fields, records and slices are untouched; an empty filter returns `self` as is.
@@ -166,6 +255,9 @@ impl TasksView {
             .retain(|lease| keys.contains(lease.key.as_str()));
         self.stalls
             .retain(|stall| keys.contains(stall.key.as_str()));
+        if let Some(lane) = &filter.lane {
+            self.waiting.retain(|row| &row.lane == lane);
+        }
         self
     }
 
@@ -204,6 +296,7 @@ impl TasksView {
                     liveness: self.liveness,
                     backlog: self.backlog,
                     durations,
+                    waiting: self.waiting,
                 })
             }
         };
@@ -803,6 +896,27 @@ pub(crate) fn read_history(
         .retain(|row| !fold.retired_lanes.contains(&row.lane));
     let stalls = stalled_tasks(&fold.tasks, &now);
     let backlog = backlog(&records, &fold.tasks);
+    let waiting = open_questions(history, |event, record| {
+        let envelope_id = format!("signal-{}", record.signal_id.as_str());
+        if event.evidence_refs.len() != 1
+            || event.evidence_refs[0].evidence_id().as_str() != envelope_id
+        {
+            return None;
+        }
+        let id = EvidenceId::parse(&envelope_id).ok()?;
+        opened_envelope(
+            store,
+            scope,
+            &generation,
+            &id,
+            record.envelope_sha256.as_str(),
+            |sealed| {
+                let plaintext = runtime.block_on(opener.open(scope.clone(), sealed)).ok()?;
+                plaintext.expose(|bytes| serde_json::from_slice(bytes)).ok()
+            },
+        )
+    });
+    budget.check_now(walked).map_err(exceeded)?;
     Ok(TasksView {
         execution_id: execution.to_owned(),
         head_sequence: history.last().map_or(0, |event| event.sequence),
@@ -818,7 +932,81 @@ pub(crate) fn read_history(
         stalls,
         backlog,
         retired_lanes: fold.retired_lanes,
+        waiting,
     })
+}
+
+/// #1794: the questions lanes asked that nothing answers yet. Only an agent's `question` signal,
+/// or its `operator_note` routed to the owner, is opened (`open` reads the sealed envelope); the
+/// answer side is the journal's plaintext `replyTo`, so answers cost no envelope. A question whose
+/// envelope cannot be read, names another source, has no `to`, or runs past `QUESTION_MAX_CHARS`
+/// is left out rather than guessed.
+fn open_questions<F>(
+    history: &[graphhelm_protocols::EventEnvelope],
+    mut open: F,
+) -> Vec<LaneWaiting>
+where
+    F: FnMut(
+        &graphhelm_protocols::EventEnvelope,
+        &graphhelm_protocols::SignalRecorded,
+    ) -> Option<std::sync::Arc<serde_json::Value>>,
+{
+    let answered: std::collections::BTreeSet<&str> = history
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::SignalRecorded(record) => record.reply_to.as_ref().map(|id| id.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut waiting = Vec::new();
+    for event in history {
+        let EventKind::SignalRecorded(record) = &event.kind else {
+            continue;
+        };
+        if event.actor.actor_type() != graphhelm_protocols::PersistedActorType::Agent {
+            continue;
+        }
+        let asks = record.kind == "question"
+            || (record.kind == "operator_note"
+                && record
+                    .to
+                    .as_ref()
+                    .is_some_and(|to| to.as_str() == OWNER_ADDRESS));
+        if !asks || answered.contains(record.signal_id.as_str()) {
+            continue;
+        }
+        let Some(envelope) = open(event, record) else {
+            continue;
+        };
+        let lane = event.actor.id().as_str();
+        if envelope
+            .pointer("/source/id")
+            .and_then(serde_json::Value::as_str)
+            != Some(lane)
+        {
+            continue;
+        }
+        let (Some(to), Some(question)) = (
+            envelope.get("to").and_then(serde_json::Value::as_str),
+            envelope
+                .get("description")
+                .and_then(serde_json::Value::as_str),
+        ) else {
+            continue;
+        };
+        if question.chars().count() > QUESTION_MAX_CHARS {
+            continue;
+        }
+        waiting.push(LaneWaiting {
+            lane: lane.to_owned(),
+            question: question.to_owned(),
+            waits_on: to.to_owned(),
+            since: event.occurred_at.clone(),
+            signal_id: record.signal_id.as_str().to_owned(),
+            sequence: event.sequence,
+        });
+    }
+    waiting
 }
 
 /// #1235: how long an open PR slice may go without any task record before it reads as stalled.

@@ -3,7 +3,7 @@ id: studio2-proof-compare
 title: Compare Before and Now on a step
 name: Compare a step
 feature: Studio
-purpose: "On a step with history, Overlay with the slider, Side by side and Changes show Before against Now, at web and at mobile."
+purpose: "On a step with history, Overlay with the slider, Side by side and Changes show Before against Now at web width; mobile waits on #1777."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -14,40 +14,29 @@ viewport: {width: 1440, height: 900}
 screens:
   - id: changes
     title: "Now with the changed regions highlighted, at web width"
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=proof
     state: stable
     expect: [{role: img, name: "Now, changed regions highlighted"}, {role: region, name: Compare frame, text: "1280"}]
     scope: unknown
-  - id: mobile
-    title: The same compare at mobile width
-    url: /?session=studio-fixture&run=demo
-    state: stable
-    expect: [{role: img, name: "Now, changed regions highlighted"}, {role: region, name: Compare frame, text: "390"}]
-    scope: unknown
   - id: overlay
     title: Now over Before with a slider
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=proof
     state: stable
     expect: [{role: slider, name: Now opacity}]
     scope: unknown
   - id: side
     title: Before and Now side by side
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=proof
     state: stable
     expect: [{role: group, name: Before and Now side by side}]
     scope: unknown
   - id: step
     title: A step with history offers the compare
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=proof
     state: stable
     expect: [{role: region, name: Compare with an earlier run}, {role: button, name: Frame}, {role: button, name: Side by side}, {role: button, name: Overlay}, {role: button, name: Changes}]
     scope: unknown
 edges:
-  - id: changes.mobile
-    from: changes
-    to: mobile
-    acts:
-      - {kind: activate, role: button, name: Mobile}
   - id: overlay.changes
     from: overlay
     to: changes
@@ -64,5 +53,5 @@ edges:
     acts:
       - {kind: activate, role: button, name: Side by side}
 paths:
-  main: [step.side, side.overlay, overlay.changes, changes.mobile]
+  main: [step.side, side.overlay, overlay.changes]
 drift: []

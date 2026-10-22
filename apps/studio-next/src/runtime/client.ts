@@ -127,8 +127,15 @@ export interface JourneyRun {
   driverLog?: { tail?: string };
 }
 
-/** `GET /v1/journey-flows/{id}/history`: earlier finished runs, newest first. */
-export interface JourneyPastRun { run: string; ranAt?: string; result?: StepResult; kind?: "replay" | "preview" }
+/** `GET /v1/journey-flows/{id}/history`: earlier finished runs, newest first, each with the screens
+ * it kept a frame for. */
+export interface JourneyPastRun {
+  run: string;
+  ranAt?: string;
+  result?: StepResult;
+  kind?: "replay" | "preview";
+  screens?: Record<string, { frame?: boolean; width?: number; height?: number; result?: StepResult }>;
+}
 
 interface Envelope<T> {
   ok: boolean;
@@ -204,12 +211,22 @@ export class Runtime {
     return Array.isArray(view.runs) ? view.runs : [];
   }
 
-  /** One screen's captured frame, fetched with the bearer header (never a token in a URL). `null`
-   * when the Runtime has none yet (204, 304, 404). */
+  /** One screen's captured frame in the current run. `null` when the Runtime has none yet. */
   async journeyFrame(flowId: string, screenId: string): Promise<Blob | null> {
+    return this.#image(`/v1/journey-flows/${encodeURIComponent(flowId)}/screens/${encodeURIComponent(screenId)}/frame`);
+  }
+
+  /** One screen's frame as an earlier run kept it:
+   * `GET /v1/journey-flows/{id}/history/{run}/screens/{screen}/frame`. `null` when that run kept none. */
+  async journeyPastFrame(flowId: string, run: string, screenId: string): Promise<Blob | null> {
+    return this.#image(`/v1/journey-flows/${encodeURIComponent(flowId)}/history/${encodeURIComponent(run)}/screens/${encodeURIComponent(screenId)}/frame`);
+  }
+
+  /** A frame fetched with the bearer header (never a token in a URL). `null` for 204, 304, 404. */
+  async #image(path: string): Promise<Blob | null> {
     let response: Response;
     try {
-      response = await fetch(`${this.#base}/v1/journey-flows/${encodeURIComponent(flowId)}/screens/${encodeURIComponent(screenId)}/frame`, {
+      response = await fetch(`${this.#base}${path}`, {
         headers: { Authorization: `Bearer ${this.#token}` },
         signal: AbortSignal.timeout(30_000),
       });

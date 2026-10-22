@@ -96,9 +96,9 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   const idle = all.filter((agent) => agent.idleMinutes === null || agent.idleMinutes >= 30);
   const working = all.filter((agent) => agent.task !== null && agent.questions.length === 0 && agent.idleMinutes !== null && agent.idleMinutes < 30);
   const pickedRequest = requests?.find((row) => row.requestId === request) ?? null;
-  const forRequest = pickedRequest === null ? null : new Set(agentsFor(pickedRequest, all).map((agent) => agent.lane));
+  const forRequest = pickedRequest === null ? null : new Set(agentsFor(pickedRequest, all, board.tasks).map((agent) => agent.lane));
   const shown = (filter === "reply" ? asking : filter === "idle" ? idle : all).filter((agent) => forRequest === null || forRequest.has(agent.lane));
-  const asked = askedCards(requests ?? [], all);
+  const asked = askedCards(requests ?? [], all, board.tasks);
   const gone = picked !== null && shownAgent.current?.lane === picked ? { ...shownAgent.current, questions: [], moreQuestions: 0 } : null;
   const selected = all.find((agent) => agent.lane === picked) ?? gone ?? asking[0] ?? all[0] ?? null;
   shownAgent.current = selected;

@@ -1,4 +1,5 @@
 import type { OwnerRequest } from "../graph/requests";
+import type { BoardTask } from "../runtime/client";
 import type { Agent } from "./board";
 
 /** The colour of one agent's square and chip in WHAT I ASKED (Lanes.dc.html): it asks a question,
@@ -33,16 +34,18 @@ function tone(agent: Agent): AskedTone {
   return agent.column === "merge" ? "merge" : "on";
 }
 
-/** The agents working one request: the lanes whose card's slice is on one of its issues. */
-export function agentsFor(request: OwnerRequest, all: readonly Agent[]): Agent[] {
+/** The agents working one request: the lanes holding a slice (not released) on one of its issues,
+ * whichever slice their card shows. */
+export function agentsFor(request: OwnerRequest, all: readonly Agent[], tasks: readonly BoardTask[]): Agent[] {
   const issues = new Set(request.issues.map((row) => row.issue));
-  return all.filter((agent) => agent.task?.issue != null && issues.has(agent.task.issue));
+  const lanes = new Set(tasks.filter((task) => task.releasedBy === undefined && task.issue !== null && issues.has(task.issue)).map((task) => task.lane));
+  return all.filter((agent) => lanes.has(agent.lane));
 }
 
 /** Every request, newest first (the Runtime serves them oldest first), as the column draws it. */
-export function askedCards(requests: readonly OwnerRequest[], all: readonly Agent[]): AskedCard[] {
+export function askedCards(requests: readonly OwnerRequest[], all: readonly Agent[], tasks: readonly BoardTask[]): AskedCard[] {
   return [...requests].reverse().map((request) => {
-    const working = agentsFor(request, all);
+    const working = agentsFor(request, all, tasks);
     const asks = working.some((agent) => agent.questions.length > 0);
     return {
       requestId: request.requestId,

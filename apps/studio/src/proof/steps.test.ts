@@ -102,7 +102,8 @@ describe("step counts and journey score", () => {
       screens: { list: { frame: true, result: "pass" }, item: { frame: false, reason: "not_reached" } },
       edges: { "list.item": { result: "skipped", reason: "confirm_needed" }, "item.done": { result: null, reason: "not_reached" } },
     });
-    expect(countSteps(steps)).toEqual({ passed: 1, waits: 1, failed: 0, notRun: 1 });
+    expect(countSteps(steps)).toEqual({ passed: 1, waits: 2, failed: 0, notRun: 0 });
+    expect(steps.map((step) => step.status)).toEqual(["passed", "waiting", "waiting"]);
     expect(steps[1]!.reason).toBe("confirm_needed");
   });
 

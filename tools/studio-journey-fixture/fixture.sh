@@ -182,6 +182,47 @@ paths:
 drift: []
 FLOW
   git -C "$dir/project" add -f -- .graphhelm/journeys/runtime-health.journey.yaml
+  # #1909: the confirm flows need a draft whose step runs a command, so its preview holds on
+  # confirm_needed until the owner confirms. FIXTURE-ONLY, and only for those flows, so no other
+  # flow's journey count changes. The command only prints Node's version.
+  case "${GRAPHHELM_JOURNEY_FLOW:-}" in studio2-proof-confirm|studio2-proof-confirm-mobile)
+    cat > "$dir/project/.graphhelm/journeys/cli-hello.journey.yaml" <<'FLOW'
+schema: graphhelm.journey-flow/1
+id: cli-hello
+title: Print the Node version
+name: Print the Node version
+purpose: "The fixture's draft with one command step, which waits for the owner's confirmation."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: []
+screens:
+  - id: printed
+    title: Node printed its version
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: v}]
+    scope: unknown
+  - id: start
+    title: A shell is ready
+    url: /
+    state: stable
+    expect: [{role: exit, name: "0"}]
+    scope: unknown
+edges:
+  - id: start.print
+    from: start
+    to: printed
+    acts:
+      - {kind: cli, role: exec, name: node --version}
+paths:
+  main: [start.print]
+drift: []
+FLOW
+    git -C "$dir/project" add -f -- .graphhelm/journeys/cli-hello.journey.yaml ;;
+  esac
   git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: observer seed flow'
   # #1901: the Studio opens a project's team run by itself, so a project with no run at all needs a
   # fixture that starts none: GRAPHHELM_FIXTURE_EMPTY=1, or the studio2-no-run flow, skips both the

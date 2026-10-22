@@ -163,6 +163,8 @@ export interface JourneyViewportRun {
 
 export type StepResult = "pass" | "fail" | "drift";
 
+export interface CliConfirm { argv: string[]; confirmed: boolean; digest: string }
+
 /** `GET|POST /v1/journey-flows/{id}/preview` (#519): the journey's run. While `running`, `screens`
  * holds only the screens reached so far; `observerSetup` reports the browser being prepared (#1763). */
 export interface JourneyRun {
@@ -182,6 +184,8 @@ export interface JourneyRun {
   viewport?: "web" | "mobile";
   viewports?: Partial<Record<"web" | "mobile", JourneyViewportRun>>;
   observerSetup?: { state: "installing" | "ready" | "failed"; message: string; error?: string };
+  /** #1662/#1909: a draft's `cli` commands and the digest the owner confirms them by. */
+  cliConfirm?: CliConfirm;
   launchLog?: { tail?: string };
   driverLog?: { tail?: string };
 }
@@ -277,6 +281,15 @@ export class Runtime {
   async startJourneyRun(flowId: string, executionId: string | null): Promise<JourneyRun> {
     return this.#request<JourneyRun>("POST", `/v1/journey-flows/${encodeURIComponent(flowId)}/preview`, {
       force: true, ...(executionId === null ? {} : { executionId }),
+    });
+  }
+
+  /** #1909: the owner's "Run these commands?" Confirm: the same `POST /v1/journey-flows/{id}/preview`
+   * with `{confirm, confirmDigest}` that `graphhelm journey preview --confirm --confirm-digest` sends.
+   * Owner credential only; a flow edited since `digest` was shown is refused (`preview.confirm_stale`). */
+  async confirmJourneyRun(flowId: string, digest: string, executionId: string | null): Promise<JourneyRun> {
+    return this.#request<JourneyRun>("POST", `/v1/journey-flows/${encodeURIComponent(flowId)}/preview`, {
+      confirm: true, confirmDigest: digest, ...(executionId === null ? {} : { executionId }),
     });
   }
 

@@ -4,7 +4,8 @@ import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
 import { CompareFrame } from "./CompareFrame";
 import { decisionOf, offersDecision, rejectNote } from "./decision";
-import { countSteps, failsOnlyOn, journeyScore, journeySteps, lastRunChip, preparingStatus, type Step, type Viewport } from "./steps";
+import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
+import { countSteps, failsOnlyOn, isHeld, journeyScore, journeySteps, lastRunChip, preparingStatus, STATUS_TEXT, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 
 interface ProofViewProps {
@@ -19,8 +20,6 @@ interface ProofViewProps {
   initial?: string | null;
 }
 
-/** How often Run all reads a started journey again to learn it finished. */
-const RUN_ALL_POLL_MS = 1_000;
 
 function message(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
@@ -97,10 +96,9 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
       for (const [index, flow] of journeys.entries()) {
         setBusy(`Running all · ${index + 1}/${journeys.length}`);
         await runOne(flow);
-        for (;;) {
-          const run = await runtime.journeyRun(flow.id);
-          if (run.state !== "running") break;
-          await new Promise((resolve) => setTimeout(resolve, RUN_ALL_POLL_MS));
+        if (await runAllUntil(() => runtime.journeyRun(flow.id)) === "timeout") {
+          setRefusal(`Run all stopped: ${nameOf(flow)} was still running after ${RUN_ALL_TIMEOUT_MS / 60_000} minutes.`);
+          return;
         }
       }
     } catch (cause) {
@@ -181,7 +179,7 @@ function JourneyCard({ flow, selected, disabled, onPick, onRun }: { flow: Journe
   );
 }
 
-const MARK: Record<Step["status"], string> = { passed: "✓", failed: "✕", drift: "≈", skipped: "–", running: "…", "not run": "○" };
+const MARK: Record<Step["status"], string> = { passed: "✓", failed: "✕", drift: "≈", skipped: "–", running: "…", waiting: "⏸", "not run": "○" };
 
 function runStatus(run: JourneyRun | null, starting: boolean): { name: string; text: string } | null {
   if (starting) return { name: "Starting the run", text: "Starting the run" };
@@ -197,6 +195,7 @@ function runStatus(run: JourneyRun | null, starting: boolean): { name: string; t
 function verdict(run: JourneyRun | null): string | null {
   if (run === null || run.state === "none") return "Not run yet";
   if (run.state === "running") return null;
+  if (isHeld(run)) return "Waits for your confirmation";
   if (run.state === "failed") return run.reason ? `The run could not finish: ${run.reason}` : "The run could not finish";
   return `${run.result === "pass" ? "Passed" : run.result === "drift" ? "Drifted" : "Failed"}${run.ranAt ? ` · ${run.ranAt}` : ""}`;
 }
@@ -251,7 +250,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
           )}
           {busy && <span id="proof-stop-note" className="run-note">The Runtime has no route to stop a run.</span>}
           {status !== null && <span role="status" aria-label={status.name} className="run-status"><span className="pulse" aria-hidden="true" />{status.text}</span>}
-          {said !== null && <span className="run-verdict">{said}</span>}
+          {said !== null && <span role="status" aria-label={said.split(" · ")[0]} className="run-verdict">{said}</span>}
           {(busy || log.length > 0) && (
             <button type="button" className="b ghost" aria-expanded={showLog} onClick={() => setShowLog(!showLog)}>{showLog ? "Hide log" : "Show log"}</button>
           )}
@@ -272,6 +271,18 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
         )}
       </section>
       {error !== null && <p className="error">{error}</p>}
+      {isHeld(run) && run?.cliConfirm != null && !busy && (
+        // #1909: the commands the draft would run and the digest they are confirmed under. Confirm
+        // sends exactly this digest; the Runtime refuses it when the flow changed since, and
+        // refuses anyone but the owner.
+        <section aria-label="Run these commands?" className="cli-confirm">
+          <strong>Run these commands?</strong>
+          <span className="muted">This draft runs commands on this machine. They run only once you confirm this exact list.</span>
+          <ol aria-label="Commands" className="cli-argv">{run.cliConfirm.argv.map((line, index) => <li key={index} className="mono">{line}</li>)}</ol>
+          <span className="mono cli-digest" aria-label="Digest">{run.cliConfirm.digest}</span>
+          <button type="button" className="b act" onClick={() => { setPicked(null); start(run.cliConfirm!.digest); }}>Confirm and run</button>
+        </section>
+      )}
       <DecisionBar runtime={runtime} flow={flow} runFinished={finished} onDecided={onRan} />
       <div className="steps-card">
         <ol className="steps" aria-label="Steps">
@@ -280,7 +291,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
               <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
                 <span className="step-thumb">{thumb(step.screen) ? <img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /> : <span>{step.frame ? "loading" : "no frame"}</span>}</span>
                 <span className="step-text">
-                  <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{step.status}</span></span>
+                  <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{STATUS_TEXT[step.status]}</span></span>
                   <span className="step-label">{step.label}</span>
                   {viewportLine(step)}
                 </span>

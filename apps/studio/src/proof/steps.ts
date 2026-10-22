@@ -1,7 +1,20 @@
 import type { JourneyEdge, JourneyFlow, JourneyLastRun, JourneyRun } from "../runtime/client";
 
 /** How one step stands in the open run. `running` is the screen the Runtime is playing now. */
-export type StepStatus = "passed" | "failed" | "drift" | "skipped" | "running" | "not run";
+export type StepStatus = "passed" | "failed" | "drift" | "skipped" | "running" | "waiting" | "not run";
+
+/** #1909: what a step's status says on its card. */
+export const STATUS_TEXT: Record<StepStatus, string> = {
+  passed: "passed", failed: "failed", drift: "drift", skipped: "skipped", running: "running",
+  waiting: "waits for your confirmation", "not run": "not run",
+};
+
+/** #1909: the run stopped before a draft's commands: the owner has not confirmed this digest yet. */
+export function isHeld(run: JourneyRun | null): boolean {
+  if (run === null || run.state === "running") return false;
+  if (run.cliConfirm !== undefined && run.cliConfirm !== null && run.cliConfirm.confirmed) return false;
+  return Object.values(run.edges ?? {}).some((edge) => edge.reason === "confirm_needed");
+}
 
 export type Viewport = "web" | "mobile";
 
@@ -94,6 +107,9 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
   const order: { screen: string; edge: JourneyEdge | null }[] = path.length > 0
     ? [{ screen: path[0]!.from, edge: null }, ...path.map((edge) => ({ screen: edge.to, edge }))]
     : [...screens.keys()].map((screen) => ({ screen, edge: null }));
+  // #1909: a draft held on `confirm_needed` waits for the owner's confirmation; every step it did
+  // not play waits with it, never reads `not run` or skipped.
+  const held = isHeld(run);
   const statusIn = (
     seen: { result?: string } | undefined,
     walked: { result?: string | null } | undefined,
@@ -102,10 +118,10 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
     const results = [seen?.result, walked?.result];
     if (results.includes("fail")) return "failed";
     if (results.includes("drift")) return "drift";
-    if (walked?.result === "skipped") return "skipped";
+    if (walked?.result === "skipped") return held ? "waiting" : "skipped";
     if (seen?.result === "pass") return "passed";
     if (current) return "running";
-    return "not run";
+    return held ? "waiting" : "not run";
   };
   return order.map(({ screen, edge }, index) => {
     const seen = run?.screens?.[screen];
@@ -162,7 +178,7 @@ export function countSteps(steps: Step[]): StepCounts {
   for (const step of steps) {
     if (step.status === "passed") counts.passed += 1;
     else if (step.status === "failed" || step.status === "drift") counts.failed += 1;
-    else if (step.status === "skipped" && step.reason !== null && WAITS.has(step.reason)) counts.waits += 1;
+    else if (step.status === "waiting" || (step.status === "skipped" && step.reason !== null && WAITS.has(step.reason))) counts.waits += 1;
     else counts.notRun += 1;
   }
   return counts;

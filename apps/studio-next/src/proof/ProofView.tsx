@@ -4,7 +4,7 @@ import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
 import { CompareFrame } from "./CompareFrame";
 import { decisionOf, offersDecision, rejectNote } from "./decision";
-import { journeySteps, lastRunChip, preparingStatus, type Step, type Viewport } from "./steps";
+import { failsOnlyOn, journeySteps, lastRunChip, preparingStatus, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 
 interface ProofViewProps {
@@ -91,13 +91,20 @@ function verdict(run: JourneyRun | null): string | null {
   return `${run.result === "pass" ? "Passed" : run.result === "drift" ? "Drifted" : "Failed"}${run.ranAt ? ` · ${run.ranAt}` : ""}${proof}`;
 }
 
+/** #1777: each viewport's mark on a step card, and the line that says a break is mobile-only. */
 function viewportLine(step: Step) {
-  const mark = (viewport: Viewport) => (step.viewport === viewport ? MARK[step.status] : step.viewport === null && step.status !== "not run" ? "?" : "not run");
-  return <span className="step-viewports">web <b>{mark("web")}</b> · mobile <b>{mark("mobile")}</b></span>;
+  const mark = (viewport: Viewport) => (step.viewports[viewport] === "not run" ? "not run" : MARK[step.viewports[viewport]]);
+  const only = failsOnlyOn(step);
+  return (
+    <>
+      <span className="step-viewports">web <b>{mark("web")}</b> · mobile <b>{mark("mobile")}</b></span>
+      {only !== null && <span className="fails-only">Fails only on {only}</span>}
+    </>
+  );
 }
 
 function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runtime; flow: JourneyFlow; executionId: string | null; onRan: () => void }) {
-  const { run, frames, log, history, error, starting, start } = useJourneyRun(runtime, flow.id, executionId, onRan);
+  const { run, frames, mobileFrames, log, history, error, starting, start } = useJourneyRun(runtime, flow.id, executionId, onRan);
   const [showLog, setShowLog] = useState(false);
   const [picked, setPicked] = useState<number | null>(null);
   const steps = journeySteps(flow, run);
@@ -145,7 +152,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
       </ol>
       {selected !== null && (
         <figure className="step-frame">
-          <CompareFrame runtime={runtime} flowId={flow.id} step={selected} steps={steps.length} now={frame} earlier={earlierRun(history, run, selected.screen)} />
+          <CompareFrame runtime={runtime} flowId={flow.id} step={selected} steps={steps.length} now={frame} mobileNow={mobileFrames[selected.screen]} earlier={earlierRun(history, run, selected.screen)} />
           <figcaption><span className="mono">ACTION {selected.n} · DOES</span> {selected.label}</figcaption>
         </figure>
       )}

@@ -14,6 +14,11 @@ describe("the Graph review screen", () => {
   it("fetches only the Runtime's own journey frame routes", () => {
     expect(isFrameUrl("/v1/journey-flows/checkout/screens/cart/frame")).toBe(true);
     expect(isFrameUrl("/v1/journey-flows/checkout/history/00000001760000000000/screens/cart/frame")).toBe(true);
+    // #1777: a viewport's own frame, named only by the closed pair the Runtime serves.
+    expect(isFrameUrl("/v1/journey-flows/checkout/screens/cart/frame?viewport=mobile")).toBe(true);
+    expect(isFrameUrl("/v1/journey-flows/checkout/history/00000001760000000000/screens/cart/frame?viewport=web")).toBe(true);
+    expect(isFrameUrl("/v1/journey-flows/checkout/screens/cart/frame?viewport=tablet")).toBe(false);
+    expect(isFrameUrl("/v1/journey-flows/checkout/screens/cart/frame?viewport=mobile&x=1")).toBe(false);
     for (const url of ["https://example.com/v1/journey-flows/a/screens/b/frame", "//evil/v1/journey-flows/a/screens/b/frame",
       "/v1/journey-flows/../screens/b/frame", "/v1/journey-flows/a/history/123/screens/b/frame", "/v1/executions/x/events"]) {
       expect(isFrameUrl(url)).toBe(false);

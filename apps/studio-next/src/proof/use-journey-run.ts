@@ -9,8 +9,10 @@ const LOG_LINES = 200;
 
 export interface JourneyRunState {
   run: JourneyRun | null;
-  /** Object URLs of the frames this run captured, by screen id. */
+  /** Object URLs of the frames this run captured, by screen id: the run's first viewport. */
   frames: Record<string, string>;
+  /** #1777: the mobile frames, by screen id, when the run also played mobile. */
+  mobileFrames: Record<string, string>;
   /** What the Runtime printed while preparing and running, oldest first. */
   log: string[];
   history: JourneyPastRun[];
@@ -76,20 +78,27 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
   useEffect(() => {
     if (run === null) return;
     const stamp = `${attempt}:${run.startedAt ?? ""}:${run.ranAt ?? ""}`;
-    for (const [screen, seen] of Object.entries(run.screens ?? {})) {
+    // #1777: the first viewport's frames are the top level (today's URLs); a mobile pass that came
+    // after it is fetched with `?viewport=mobile` and kept under `mobile:<screen>`.
+    const wanted: [string, string, { frame: boolean; result?: string }, "mobile" | undefined][] =
+      Object.entries(run.screens ?? {}).map(([screen, seen]) => [screen, screen, seen, undefined]);
+    if (run.viewportsPlanned?.[0] !== "mobile") {
+      for (const [screen, seen] of Object.entries(run.viewports?.mobile?.screens ?? {})) wanted.push([`mobile:${screen}`, screen, seen, "mobile"]);
+    }
+    for (const [slot, screen, seen, viewport] of wanted) {
       if (!seen.frame) continue;
       const key = `${stamp}:${seen.result ?? ""}`;
-      const held = urls.current.get(screen);
+      const held = urls.current.get(slot);
       if (held?.key === key) continue;
-      urls.current.set(screen, { key, url: held?.url ?? null });
-      runtime.journeyFrame(flowId, screen).then((blob) => {
-        const entry = urls.current.get(screen);
+      urls.current.set(slot, { key, url: held?.url ?? null });
+      runtime.journeyFrame(flowId, screen, viewport).then((blob) => {
+        const entry = urls.current.get(slot);
         if (blob === null || entry === undefined || entry.key !== key) return;
         const url = URL.createObjectURL(blob);
         if (entry.url !== null) URL.revokeObjectURL(entry.url);
         entry.url = url;
-        setFrames((before) => ({ ...before, [screen]: url }));
-      }, () => { urls.current.delete(screen); });
+        setFrames((before) => ({ ...before, [slot]: url }));
+      }, () => { urls.current.delete(slot); });
     }
   }, [run, runtime, flowId, attempt]);
 
@@ -109,5 +118,13 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     setAttempt((n) => n + 1);
   }, [drop]);
 
-  return { run, frames, log, history, error, starting, start };
+  const web: Record<string, string> = {};
+  const mobile: Record<string, string> = {};
+  for (const [slot, url] of Object.entries(frames)) {
+    if (slot.startsWith("mobile:")) mobile[slot.slice("mobile:".length)] = url;
+    else web[slot] = url;
+  }
+  // A run that played mobile alone keeps its mobile frames at the top level.
+  const mobileFrames = run?.viewportsPlanned?.[0] === "mobile" ? web : mobile;
+  return { run, frames: web, mobileFrames, log, history, error, starting, start };
 }

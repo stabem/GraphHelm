@@ -2397,7 +2397,11 @@ mod tests {
         assert!(
             refused.iter().any(|f| f.code == "flow.text_with_absent"
                 && f.pointer == format!("/screens/0/expect/{last}/text")),
-            "{refused:?}"
+            "{:?}",
+            refused
+                .iter()
+                .map(|f| (f.code, &f.pointer))
+                .collect::<Vec<_>>()
         );
         assert!(
             !semantic(file, &with, Path::new("."))

@@ -9,5 +9,5 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "dev-session.ts"]
+  "include": ["vite.config.ts", "dev-session.ts", "dev-session.test.ts"]
 }

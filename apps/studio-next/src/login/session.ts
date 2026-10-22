@@ -16,6 +16,10 @@ export interface Session {
   project: string | null;
   /** Where this project's Runtime is reached: `""` for `/v1`, `/p/<id>` for a joined project. */
   base: string;
+  /** #1833: the project's folder for display (`~` for home), or null when the dev server cannot say. */
+  folder: string | null;
+  /** This project's stable key, in memory: it proves the owner to `/__studio/add`. */
+  sessionKey: string | null;
 }
 
 export const SESSION_KEYS_STORAGE = "graphhelm.studio-next.sessionKeys";
@@ -60,20 +64,23 @@ function ask(nonce: string, project: string | null): Promise<unknown> {
   return request;
 }
 
-type Reply = { token?: unknown; project?: unknown; projectId?: unknown; base?: unknown; sessionKey?: unknown } | null;
+type Reply = { token?: unknown; folder?: unknown; project?: unknown; projectId?: unknown; base?: unknown; sessionKey?: unknown } | null;
 
 function sessionOf(payload: Reply): { session: Session; sessionKey: string | null } | null {
   if (!payload || typeof payload.token !== "string" || payload.token.trim().length === 0 || payload.token.length > 512) return null;
   const key = typeof payload.projectId === "string" && /^[0-9a-f]{64}$/.test(payload.projectId) ? payload.projectId : "first";
   const base = typeof payload.base === "string" && /^(?:\/p\/[0-9a-f]{64})?$/.test(payload.base) ? payload.base : "";
+  const sessionKey = typeof payload.sessionKey === "string" && SESSION_KEY.test(payload.sessionKey) ? payload.sessionKey : null;
   return {
     session: {
       key,
       token: payload.token.trim(),
       project: typeof payload.project === "string" && payload.project.length <= 120 ? payload.project : null,
       base,
+      folder: typeof payload.folder === "string" && payload.folder.length <= 4096 ? payload.folder : null,
+      sessionKey,
     },
-    sessionKey: typeof payload.sessionKey === "string" && SESSION_KEY.test(payload.sessionKey) ? payload.sessionKey : null,
+    sessionKey,
   };
 }
 
@@ -110,4 +117,29 @@ export async function login(search: string, store: KeyStore = browserStore()): P
   }
   try { store?.setItem(SESSION_KEYS_STORAGE, JSON.stringify(kept)); } catch { /* a reload will ask again */ }
   return sessions.length === 0 ? null : sessions;
+}
+
+/** Why `/__studio/add` refused a folder, in the dev server's closed list. */
+export type AddRefusal = "not_a_project" | "runtime_not_running" | "refused";
+
+/** #1833 "Add project folder": registers a folder on this Studio port, proved by the stable key of a
+ * project this tab already holds. On success the new project's key joins this tab's keys (session
+ * storage, as at login: it dies with the tab) so the next login opens it. */
+export async function addFolder(path: string, ownerKey: string, store: KeyStore = browserStore()): Promise<{ projectId: string } | { refused: AddRefusal }> {
+  type AddReply = { ok?: unknown; reason?: unknown; projectId?: unknown; sessionKey?: unknown } | null;
+  let reply = null as AddReply;
+  try {
+    const response = await fetch("/__studio/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-GraphHelm-Studio-Key": ownerKey },
+      body: JSON.stringify({ path }),
+    });
+    reply = (await response.json()) as AddReply;
+  } catch { /* answered below as refused */ }
+  if (reply?.ok === true && typeof reply.projectId === "string" && /^[0-9a-f]{64}$/.test(reply.projectId)
+    && typeof reply.sessionKey === "string" && SESSION_KEY.test(reply.sessionKey)) {
+    try { store?.setItem(SESSION_KEYS_STORAGE, JSON.stringify({ ...readKeys(store), [reply.projectId]: reply.sessionKey })); } catch { /* a ticket can still open it */ }
+    return { projectId: reply.projectId };
+  }
+  return { refused: reply?.reason === "not_a_project" || reply?.reason === "runtime_not_running" ? reply.reason : "refused" };
 }

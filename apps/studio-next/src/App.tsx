@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { login, servedProjects, type Session } from "./login/session";
+import { addFolder, login, servedProjects, type Session } from "./login/session";
 import { parseRoute, routeSearch, type Route, type View } from "./routing/route";
 import { Runtime, type JourneyFlow, type RunSummary } from "./runtime/client";
-import { Sidebar } from "./sidebar/Sidebar";
+import { Sidebar, type ProjectEntry } from "./sidebar/Sidebar";
+import { useSummaries } from "./sidebar/use-summaries";
 import { StartRun } from "./start-run/StartRun";
 import { Topbar } from "./topbar/Topbar";
 import { GraphView, LanesView, ProofView } from "./views/Views";
 
 /** How often the run list is read again: one page of at most 50 rows per poll. */
 const POLL_MS = 5_000;
+
+const NO_SESSIONS: Session[] = [];
 
 type Login = { state: "pending" } | { state: "refused" } | { state: "in"; sessions: Session[]; closed: string[] };
 
@@ -55,6 +58,9 @@ export function App() {
     history.pushState(null, "", `${location.pathname}${routeSearch(next)}`);
   }, []);
 
+  const sessions = auth.state === "in" ? auth.sessions : NO_SESSIONS;
+  const summaries = useSummaries(sessions);
+
   if (auth.state === "pending") return <main className="gate"><p>Logging in…</p></main>;
   if (auth.state === "refused") {
     return (
@@ -65,14 +71,16 @@ export function App() {
     );
   }
   const session = auth.sessions.find((known) => known.key === route.project) ?? auth.sessions[0]!;
-  const projects = auth.sessions.map((known) => ({ key: known.key, name: known.project ?? "this project" }));
+  const projects: ProjectEntry[] = auth.sessions.map((known) => ({
+    key: known.key, name: known.project ?? "this project", folder: known.folder, summary: summaries[known.key] ?? null,
+  }));
   // Keyed by project: switching starts that project's own reads from empty, never the last one's rows.
   return <Shell key={session.key} session={session} projects={projects} closed={auth.closed} route={{ ...route, project: session.key }} go={go} />;
 }
 
 interface ShellProps {
   session: Session;
-  projects: { key: string; name: string }[];
+  projects: ProjectEntry[];
   closed: string[];
   route: Route;
   go: (route: Route) => void;
@@ -123,6 +131,13 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
         live={live}
         onProject={(key) => go({ project: key, run: null, view: route.view })}
         onSelect={(id) => go({ ...route, run: id })}
+        onAdd={session.sessionKey === null ? null : async (path) => {
+          const added = await addFolder(path, session.sessionKey!);
+          if ("refused" in added) return added.refused;
+          // The new project's key is in this tab's keys now; a fresh login opens it.
+          location.assign(`${location.pathname}${routeSearch({ project: added.projectId, run: null, view: route.view })}`);
+          return null;
+        }}
       />
       <div className="main">
         <Topbar

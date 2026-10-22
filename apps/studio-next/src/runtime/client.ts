@@ -8,11 +8,18 @@ export interface RunSummary {
   lastEventAt: string | null;
 }
 
+/** `GET /v1/executions/{id}/tasks` (#1149, #1234): only the Runtime's lane liveness verdicts are read. */
+export interface LaneLiveness {
+  lane: string;
+  free: boolean;
+}
+
 export interface JourneyFlow {
   id: string;
   title: string | null;
   name?: string | null;
   status: string;
+  findings?: { severity?: string }[];
 }
 
 interface Envelope<T> {
@@ -70,6 +77,11 @@ export class Runtime {
   async journeys(): Promise<JourneyFlow[]> {
     const view = await this.#request<{ flows: JourneyFlow[] }>("GET", "/v1/journey-flows");
     return view.flows;
+  }
+
+  async lanes(executionId: string): Promise<LaneLiveness[]> {
+    const reply = await this.#request<{ liveness?: { lanes?: LaneLiveness[] } }>("GET", `/v1/executions/${encodeURIComponent(executionId)}/tasks`);
+    return Array.isArray(reply.liveness?.lanes) ? reply.liveness.lanes : [];
   }
 
   /** `POST /v1/executions/{id}/start`. The idempotency key derives from the run id, so a resend of

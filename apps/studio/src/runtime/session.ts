@@ -32,6 +32,11 @@ export interface DevSession {
   /** The absolute source folder, when the local launcher can identify it. */
   projectPath?: string | null;
   onDemandLanes?: string[];
+  /** #1767: the project this tab opened when the Studio serves several (`?project=<id>`), and the
+   * same-origin prefix its Runtime calls go through (`/p/<id>`). Absent for the project the Studio
+   * was started for, whose Runtime the dev server proxies at the root as before. */
+  projectId?: string;
+  baseUrl?: string;
 }
 
 /** #1264: where the TAB keeps the dev server's stable session key between loads. It is not the
@@ -41,6 +46,21 @@ export interface DevSession {
 export const SESSION_KEY_STORAGE = "graphhelm.studio.sessionKey";
 
 /** The small slice of `Storage` the session key needs; `null` when the browser refuses storage. */
+/** #1767: a project id as the dev server names it (a SHA-256 of the canonical folder). */
+export const PROJECT_ID = /^[0-9a-f]{64}$/;
+
+/** The project this page was opened for (`?project=<id>`), or `null` for the Studio's own. */
+export function requestedProject(search: string = globalThis.location?.search ?? ""): string | null {
+  const id = new URLSearchParams(search).get("project");
+  return id !== null && PROJECT_ID.test(id) ? id : null;
+}
+
+/** #1767: each project keeps its own remembered key, so switching projects in one tab never
+ * presents one project's key for another. The Studio's own project keeps the original name. */
+export function sessionKeyStorage(project: string | null): string {
+  return project === null ? SESSION_KEY_STORAGE : `${SESSION_KEY_STORAGE}.${project}`;
+}
+
 export type KeyStore = Pick<Storage, "getItem" | "setItem" | "removeItem"> | null;
 
 function browserStore(): KeyStore {
@@ -56,12 +76,13 @@ function browserStore(): KeyStore {
  * answer instead of spending a dead ticket and showing the gate. Cleared when the ask settles. */
 const inFlight = new Map<string, Promise<unknown>>();
 
-function ask(fetchImpl: typeof fetch, nonce: string): Promise<unknown> {
-  const pending = inFlight.get(nonce);
+function ask(fetchImpl: typeof fetch, nonce: string, project: string | null): Promise<unknown> {
+  const query = `nonce=${encodeURIComponent(nonce)}${project === null ? "" : `&project=${project}`}`;
+  const pending = inFlight.get(query);
   if (pending !== undefined) return pending;
   const request = (async () => {
     try {
-      const response = await fetchImpl(`${SESSION_PATH}?nonce=${encodeURIComponent(nonce)}`, {
+      const response = await fetchImpl(`${SESSION_PATH}?${query}`, {
         headers: { Accept: "application/json" },
       });
       if (!response.ok) return null;
@@ -69,8 +90,8 @@ function ask(fetchImpl: typeof fetch, nonce: string): Promise<unknown> {
     } catch {
       return null;
     }
-  })().finally(() => inFlight.delete(nonce));
-  inFlight.set(nonce, request);
+  })().finally(() => inFlight.delete(query));
+  inFlight.set(query, request);
   return request;
 }
 
@@ -86,9 +107,11 @@ export async function devSession(
   // With neither there is nothing to present, and the connect gate is the answer: the endpoint
   // refuses a bare request precisely so that a request another local user can forge earns nothing.
   const presented = new URLSearchParams(search).get("session");
+  const project = requestedProject(search);
+  const storageKey = sessionKeyStorage(project);
   let remembered: string | null = null;
   try {
-    remembered = store?.getItem(SESSION_KEY_STORAGE) ?? null;
+    remembered = store?.getItem(storageKey) ?? null;
   } catch {
     remembered = null;
   }
@@ -97,12 +120,12 @@ export async function devSession(
   );
   let payload: unknown = null;
   for (const nonce of candidates) {
-    payload = await ask(fetchImpl, nonce);
+    payload = await ask(fetchImpl, nonce, project);
     if (payload !== null) break;
     // A remembered key the server now refuses belongs to an old token; keeping it only adds a
     // doomed request to every load.
     if (nonce === remembered) {
-      try { store?.removeItem(SESSION_KEY_STORAGE); } catch { /* storage refused: nothing kept */ }
+      try { store?.removeItem(storageKey); } catch { /* storage refused: nothing kept */ }
     }
   }
   if (payload === null || typeof payload !== "object") return null;
@@ -112,14 +135,17 @@ export async function devSession(
   const trimmed = token.trim();
   if (trimmed.length === 0 || trimmed.length > MAX_TOKEN_LENGTH) return null;
 
-  const project = (payload as { project?: unknown }).project;
-  const named = typeof project === "string" ? project.trim() : "";
+  // A joined project's answer must name the project that was asked for; anything else is a
+  // session for another project and is never used.
+  if (project !== null && (payload as { projectId?: unknown }).projectId !== project) return null;
+  const label = (payload as { project?: unknown }).project;
+  const named = typeof label === "string" ? label.trim() : "";
   const projectPath = (payload as { projectPath?: unknown }).projectPath;
   const folder = typeof projectPath === "string" ? projectPath.trim() : "";
   const roster = (payload as { onDemandLanes?: unknown }).onDemandLanes;
   const key = (payload as { sessionKey?: unknown }).sessionKey;
   if (typeof key === "string" && /^[0-9a-f]{32,128}$/.test(key)) {
-    try { store?.setItem(SESSION_KEY_STORAGE, key); } catch { /* storage refused: F5 asks again */ }
+    try { store?.setItem(storageKey, key); } catch { /* storage refused: F5 asks again */ }
   }
   return {
     token: trimmed,
@@ -127,6 +153,7 @@ export async function devSession(
     // reaches the DOM and nothing else validates it.
     project: named.length > 0 && named.length <= 120 ? named : null,
     projectPath: folder.length > 0 && folder.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(folder) ? folder : null,
+    ...(project === null ? {} : { projectId: project, baseUrl: `/p/${project}` }),
     ...(Array.isArray(roster) ? { onDemandLanes: roster.filter((name): name is string => typeof name === "string" && name.length > 0 && name.length <= 80).slice(0, 100) } : {}),
   };
 }

@@ -72,9 +72,9 @@ export function AddProject({ onClose }: { onClose: () => void }) {
 
       <div className="composer">
         <p className="panel-foot" style={{ padding: 0 }}>
-          This Studio shows one project at a time. To open another folder, stop this Studio (Ctrl+C in
-          the terminal that started it), then run this. The folder gets its own Runtime on port 8792;
-          if that port is taken, change both numbers to a free one.
+          Run this in the other folder. It starts that folder's Runtime on port 8792 and joins this
+          Studio, which then lists both projects in the rail; this one keeps running. If that port is
+          taken, change both numbers to a free one.
         </p>
 
         <label className="lbl" htmlFor="add-project-folder">

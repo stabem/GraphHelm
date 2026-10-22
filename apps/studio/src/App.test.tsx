@@ -336,6 +336,23 @@ describe("Studio organization and responsive navigation", () => {
     expect(client.getStatus).not.toHaveBeenCalledWith("demo-deploy");
   });
 
+  it("reaches a joined project's Runtime through its own prefix, and the Studio's own at the root (#1767)", async () => {
+    const joined = "b".repeat(64);
+    window.history.replaceState(null, "", `/?project=${joined}`);
+    try {
+      const createClient = vi.fn(() => stubClient() as unknown as RuntimeClient);
+      render(<App createClient={createClient} modelContext={null} session={async () => ({ token: "joined-token", project: "zuvemo" })} />);
+      await screen.findByRole("navigation", { name: "Projects" });
+      await waitFor(() => expect(createClient).toHaveBeenCalledWith("joined-token", { baseUrl: `/p/${joined}` }));
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+    cleanup();
+    const createClient = vi.fn(() => stubClient() as unknown as RuntimeClient);
+    render(<App createClient={createClient} modelContext={null} session={async () => ({ token: "own-token", project: "GraphHelm" })} />);
+    await waitFor(() => expect(createClient).toHaveBeenCalledWith("own-token", {}));
+  });
+
   it.each(["local-token", "another-token"])("scopes preferences on manual reconnect with %s", async (token) => {
     saveProjectName(`${location.origin}:dale-api-base`, "My workspace");
     saveRemovedRuns(`${location.origin}:dale-api-base`, ["demo-deploy"]);

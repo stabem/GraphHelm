@@ -75,6 +75,7 @@ export interface Project {
 
 export function ProjectRail({
   projects,
+  otherProjects = [],
   selected,
   connected,
   stale = false,
@@ -100,6 +101,8 @@ export function ProjectRail({
   onClose,
 }: {
   projects: Project[];
+  /** #1767: the other projects this Studio serves. Each opens in its own page, with its own key. */
+  otherProjects?: { id: string; name: string; href: string }[];
   selected: string;
   connected: boolean;
   previousExit?: RuntimePreviousExit | null;
@@ -265,6 +268,20 @@ export function ProjectRail({
                 </button>
               );
             })()}
+          </div>
+        ))}
+        {otherProjects.map((other) => (
+          <div key={other.id}>
+            <div className="project-head">
+              <Folder aria-hidden="true" />
+              <span className="project-name">{other.name}</span>
+            </div>
+            <a className="project-card" href={other.href} aria-label={`Switch to project ${other.name}`} title="Open this project">
+              <span className="run-lines">
+                <span className="run-id">{other.name}</span>
+                <span className="run-when">switch to this project</span>
+              </span>
+            </a>
           </div>
         ))}
       </div>

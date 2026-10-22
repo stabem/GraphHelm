@@ -78,3 +78,13 @@ describe("one card per project", () => {
     expect(onAddProject).not.toHaveBeenCalled();
   });
 });
+
+// #1767: the other projects this Studio serves open in their own page, never through this one's client.
+describe("other projects in one Studio", () => {
+  it("lists each other project as a link to its own page", () => {
+    const { rail } = mount(runs, { otherProjects: [{ id: "b".repeat(64), name: "zuvemo", href: `/?project=${"b".repeat(64)}` }] });
+    const link = within(rail).getByRole("link", { name: "Switch to project zuvemo" });
+    expect(link).toHaveAttribute("href", `/?project=${"b".repeat(64)}`);
+    expect(within(rail).getAllByRole("button", { name: /^Open project / })).toHaveLength(1);
+  });
+});

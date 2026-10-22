@@ -27,7 +27,8 @@ import {
   OPERATOR_ACTOR,
   newIdempotencyKey,
 } from "./runtime/client";
-import { devSession, type DevSession } from "./runtime/session";
+import { devSession, requestedProject, type DevSession } from "./runtime/session";
+import { otherStudioProjects, type StudioProjectEntry } from "./runtime/projects";
 import type { NativeChatRequest } from "./runtime/types";
 import { workConversation } from "./runtime/work-conversation";
 import { isSubagentLifecycleSignal } from "./runtime/subagents";
@@ -149,7 +150,7 @@ type Focus =
 
 export interface AppProps {
   /** Injected in tests. In the browser the client is built from the session token. */
-  createClient?: (token: string) => RuntimeClient;
+  createClient?: (token: string, options?: { baseUrl?: string }) => RuntimeClient;
   /** Injected in tests so both the "WebMCP present" and "WebMCP absent" paths are reachable
    * without a browser that has either. `undefined` means "probe the real browser". */
   modelContext?: ModelContextLike | null;
@@ -227,6 +228,8 @@ export default function App({
   const [projectsOpen, setProjectsOpen] = useState(() => typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 901px)").matches);
 
   const [executions, setExecutions] = useState<ExecutionSummary[]>([]);
+  /** #1767: the other projects this Studio serves; each opens in its own page with its own key. */
+  const [otherProjects, setOtherProjects] = useState<StudioProjectEntry[]>([]);
   /** The rows currently on the rail, readable from the poll timer without joining its
    * dependency list - the refresh reads as many pages as the operator has loaded. */
   const executionsRef = useRef<ExecutionSummary[]>([]);
@@ -1206,7 +1209,10 @@ export default function App({
       runtimeDetailsRefreshClient.current = null;
       setConnecting(true);
       setError("");
-      const client = createClient ? createClient(token) : new RuntimeClient(token);
+      // #1767: a project the Studio joined is reached through its own same-origin prefix.
+      const joined = requestedProject();
+      const clientOptions = joined === null ? {} : { baseUrl: `/p/${joined}` };
+      const client = createClient ? createClient(token, clientOptions) : new RuntimeClient(token, clientOptions);
       try {
         const health = await client.health();
         if (connectionGeneration.current !== generation) { client.dispose(); return; }
@@ -1226,6 +1232,9 @@ export default function App({
         }
         if (connectionGeneration.current !== generation) { client.dispose(); return; }
         openProject(identity, folder, roster);
+        void otherStudioProjects(joined, identity ?? null).then((others) => {
+          if (connectionGeneration.current === generation) setOtherProjects(others ?? []);
+        }, () => undefined);
         await openWith(client);
       } catch (reason) {
         if (connectionGeneration.current !== generation) { client.dispose(); return; }
@@ -1286,6 +1295,7 @@ export default function App({
     clientRef.current?.dispose();
     clientRef.current = null;
     clearBoards();
+    setOtherProjects([]);
     // The button PROMISES erasure — and the module maps (drafts, opened sealed words) were
     // surviving it, restoring a half-typed draft from the "erased" session and able to serve
     // one store's words as another's (three round-4 reviewers).
@@ -2257,6 +2267,7 @@ export default function App({
     <div className={`app ${projectsOpen ? "projects-open" : ""} ${conversationVisible ? "conversation-open" : ""}`} data-document-open={openDocument !== null} style={{ "--rail": `${railWidth}px` } as CSSProperties}>
       <ProjectRail
         projects={[railProject]}
+        otherProjects={otherProjects}
         selectedPresentation={recordedWorkBehindGraphWait ? { key: "calm", status: "agent work recorded · graph step waiting" } : null}
         onClose={() => setProjectsOpen(false)}
         selected={selected}

@@ -13205,6 +13205,278 @@ fn a_corrected_merged_or_closed_record_is_a_distinct_admitted_event() {
     assert_eq!(stored, 4, "both records of each kind are kept, append-only");
 }
 
+/// #1798: the owner's lane controls. `stop` retires one lane and `retired: false` restores it;
+/// `wake` records one owner note; `reassign` releases one of the lane's live slices by key and
+/// records one note for the new lane. A retry with the same `Idempotency-Key` appends nothing; the
+/// same key with another body is refused; the owner token declaring `agent` is refused; a foreign
+/// or unknown slice, and `to` naming the same lane, are refused at their pointers. Catches: a
+/// control an agent can drive, a retry that appends twice, a reassign that releases another lane's
+/// work, and a stop the fold does not read. Through the HTTP door and the tasks route. Cost: one
+/// served Runtime, ~20 requests.
+#[test]
+fn the_owner_wakes_stops_and_reassigns_a_lane_through_its_routes() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-lane-control";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let claim = |id: &str, lane: &str, issue: u64| {
+        let document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": format!("issue-{issue}"), "revision": 1, "at": "2026-10-22T02:00:00Z",
+            "lane": lane, "issue": issue,
+            "branch": format!("issue-{issue}-work"), "repo": "stabem/GraphHelm"});
+        let body = serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": lane},
+            "type": "task.claimed", "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-22T02:00:00Z"}});
+        let (status, reply) = post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", lane),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &body,
+        );
+        assert_eq!(status, 200, "{id}: {reply}");
+    };
+    let control = |lane: &str, action: &str, key: &str, actor_type: &str, body: Value| {
+        post_json(
+            &format!("{base}/v1/executions/{execution}/lanes/{lane}/{action}"),
+            &token,
+            &[
+                ("Idempotency-Key", key),
+                ("X-GraphHelm-Actor", "orchestrator"),
+                ("X-GraphHelm-Actor-Type", actor_type),
+            ],
+            &body,
+        )
+    };
+    let tasks = || {
+        get_json(
+            &format!("{base}/v1/executions/{execution}/tasks?full=1"),
+            Some(&token),
+        )["data"]
+            .clone()
+    };
+    let head = || head_sequence(&base, &token, execution);
+    // The owner's recorded signals: what each control appended, counted.
+    let owner_signals = || {
+        get_json(
+            &format!("{base}/v1/executions/{execution}/events?limit=1000"),
+            Some(&token),
+        )["data"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"]["type"] == "signal_recorded")
+            .filter(|event| event["actor"]["id"] == "orchestrator")
+            .count()
+    };
+    claim("a-41", "lane-a", 41);
+    claim("a-42", "lane-a", 42);
+    claim("b-43", "lane-b", 43);
+    let wake = |key: &str, actor_type: &str, reason: &str| {
+        control(
+            "lane-a",
+            "wake",
+            key,
+            actor_type,
+            serde_json::json!({"reason": reason, "at": "2026-10-22T02:30:00Z"}),
+        )
+    };
+
+    // Only the owner: the owner token declaring an agent is refused, and nothing is appended.
+    let before = head();
+    let (status, reply) = wake("wake-1", "agent", "your review is due");
+    assert_eq!(status, 403, "agent wake: {reply}");
+    assert_eq!(head(), before, "a refusal appends nothing");
+
+    // Wake: one owner note; the retry answers the same and appends nothing.
+    let (status, first) = wake("wake-1", "owner", "your review is due");
+    assert_eq!(status, 200, "wake: {first}");
+    assert_eq!(owner_signals(), 1, "one note: {first}");
+    let after_wake = head();
+    let (status, again) = wake("wake-1", "owner", "your review is due");
+    assert_eq!(status, 200, "wake retry: {again}");
+    assert_eq!(head(), after_wake, "a retry appends nothing: {again}");
+    assert_eq!(
+        again["data"]["signalId"], first["data"]["signalId"],
+        "{again}"
+    );
+    let (status, reply) = wake("wake-1", "owner", "another reason");
+    assert_eq!(status, 409, "same key, other body: {reply}");
+    assert_eq!(head(), after_wake);
+
+    // Reassign: refused for a slice lane-a does not hold, an unknown one, and `to` naming lane-a.
+    let data = tasks();
+    let key_of = |task: &str| {
+        data["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|slice| slice["taskId"] == task)
+            .map(|slice| slice["key"].as_str().unwrap().to_owned())
+            .unwrap_or_else(|| panic!("{task}: {data}"))
+    };
+    let held = key_of("issue-41");
+    let foreign = key_of("issue-43");
+    let reassign = |key: &str, slice: &str, to: &str| {
+        control(
+            "lane-a",
+            "reassign",
+            key,
+            "owner",
+            serde_json::json!({"sliceKey": slice, "to": to, "reason": "lane-a is busy",
+                "at": "2026-10-22T03:00:00Z"}),
+        )
+    };
+    let before = head();
+    for (key, slice, to, pointer) in [
+        ("r-foreign", foreign.as_str(), "lane-c", "/sliceKey"),
+        ("r-unknown", "issue-41#claim-9", "lane-c", "/sliceKey"),
+        ("r-self", held.as_str(), "lane-a", "/to"),
+    ] {
+        let (status, reply) = reassign(key, slice, to);
+        assert_eq!(status, 400, "{key}: {reply}");
+        assert_eq!(reply["diagnostics"][0]["path"], pointer, "{key}: {reply}");
+    }
+    assert_eq!(head(), before, "refusals append nothing");
+    let (status, reply) = reassign("r-1", &held, "lane-c");
+    assert_eq!(status, 200, "reassign: {reply}");
+    assert_eq!(owner_signals(), 3, "the release and the note: {reply}");
+    let released = tasks()["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|slice| slice["key"] == held.as_str())
+        .unwrap()["releasedBy"]
+        .clone();
+    assert_eq!(released, "orchestrator", "the slice is released");
+    let other = tasks()["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|slice| slice["taskId"] == "issue-42")
+        .unwrap()
+        .clone();
+    assert!(
+        other.get("releasedBy").is_none(),
+        "only that slice: {other}"
+    );
+    let after_reassign = head();
+    let (status, reply) = reassign("r-1", &held, "lane-c");
+    assert_eq!(status, 200, "reassign retry: {reply}");
+    assert_eq!(head(), after_reassign, "a retry appends nothing: {reply}");
+
+    // Stop retires the lane in the fold; `retired: false` restores it.
+    let in_liveness = |data: &Value| {
+        data["liveness"]["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["lane"] == "lane-a")
+    };
+    assert!(in_liveness(&tasks()), "lane-a is live before the stop");
+    let (status, reply) = control(
+        "lane-a",
+        "stop",
+        "stop-1",
+        "owner",
+        serde_json::json!({"reason": "subscription ended"}),
+    );
+    assert_eq!(status, 200, "stop: {reply}");
+    assert!(!in_liveness(&tasks()), "a stopped lane leaves liveness");
+    let (status, reply) = control(
+        "lane-a",
+        "stop",
+        "stop-2",
+        "owner",
+        serde_json::json!({"reason": "back on", "retired": false}),
+    );
+    assert_eq!(status, 200, "restore: {reply}");
+    claim("a-44", "lane-a", 44);
+    assert!(in_liveness(&tasks()), "a restored lane records again");
+}
+
+/// #1837: a signal that leaves `id`, `emittedAt` and `source` for the Runtime to fill (#1284) is
+/// retried like any other: the same `Idempotency-Key` and body answer the same signal and append
+/// nothing, and another body under that key is still a 409. Before: the retry matcher compared the
+/// request's own (absent) `id` and the envelope digest of a body whose instant the Runtime had
+/// filled, so every identical retry was refused as divergent. Catches: an identical retry refused,
+/// a retry that appends twice, and a divergent reuse accepted. Cost: one served Runtime, five POSTs.
+#[test]
+fn a_signal_left_for_the_runtime_to_fill_is_retried_as_a_replay() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-filled-retry";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let send = |key: &str, description: &str, with_source: bool| {
+        let mut signal = serde_json::json!({"type": "operator_note", "severity": "low",
+            "to": "lane-a", "description": description, "evidence": ["probe"]});
+        if with_source {
+            signal["source"] = serde_json::json!({"type": "user", "id": "orchestrator"});
+        }
+        post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", key),
+                ("X-GraphHelm-Actor", "orchestrator"),
+                ("X-GraphHelm-Actor-Type", "owner"),
+            ],
+            &serde_json::json!({"signal": signal}),
+        )
+    };
+    for (key, with_source) in [("filled-all", false), ("filled-id-and-instant", true)] {
+        let (status, first) = send(key, "probe", with_source);
+        assert_eq!(status, 200, "{key}: {first}");
+        let after = head_sequence(&base, &token, execution);
+        let (status, again) = send(key, "probe", with_source);
+        assert_eq!(status, 200, "{key} retry: {again}");
+        assert_eq!(
+            again["data"]["signalId"], first["data"]["signalId"],
+            "{key}: {again}"
+        );
+        assert_eq!(
+            head_sequence(&base, &token, execution),
+            after,
+            "{key}: a retry appends nothing"
+        );
+        let (status, reply) = send(key, "another body", with_source);
+        assert_eq!(
+            status, 409,
+            "{key}: the same key with another body: {reply}"
+        );
+        assert_eq!(head_sequence(&base, &token, execution), after);
+    }
+}
+
 /// #1797: the Studio's file-collision list. A path is listed when two or more open tasks name it
 /// in their `task.planned` paths, with each holder's lane and issue; a path one task names is
 /// absent; a released task stops counting; a plan naming more than 64 paths is refused at the

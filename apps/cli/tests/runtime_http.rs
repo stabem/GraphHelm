@@ -5811,6 +5811,8 @@ fn the_tasks_board_shows_a_lanes_open_question_until_a_reply_names_it() {
             .iter()
             .map(|row| {
                 assert!(row["since"].is_string(), "{row}");
+                // #1827: one open ask per lane here, so each lane's total is its one row.
+                assert_eq!(row["laneTotal"], 1, "{row}");
                 (
                     row["lane"].as_str().unwrap().to_owned(),
                     row["waitsOn"].as_str().unwrap().to_owned(),
@@ -5867,4 +5869,319 @@ fn the_tasks_board_shows_a_lanes_open_question_until_a_reply_names_it() {
         "evidence": [run], "emittedAt": "2026-10-22T00:02:00Z"}),
     );
     assert_eq!(waiting(""), vec![row("lane-c", "studio-operator", &open)]);
+}
+
+fn request_document(actor: &str, kind: &str, request: &str, extra: Value) -> Value {
+    let mut document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+        "taskId": format!("request-{request}"), "revision": 1, "at": "2026-10-22T12:00:00Z",
+        "requestId": request});
+    for (key, value) in extra.as_object().unwrap() {
+        document[key] = value.clone();
+    }
+    document[if kind == "task.request_recorded" {
+        "recordedBy"
+    } else {
+        "linkedBy"
+    }] = serde_json::json!(actor);
+    document
+}
+
+/// #1792 (Studio v2 R1): the owner's request, the issues opened for it, and what became of them,
+/// served by `GET /v1/executions/{id}/requests` from the task fold. Observer: the real `serve`
+/// binary over HTTP with a keyring the test makes. Contracts: a link to a request never recorded
+/// is refused at admission (nothing is appended); a request moves open → in_progress → delivered
+/// as its issues get PRs that merge; the `/tasks` board does not grow a slice for a request.
+#[test]
+fn a_recorded_request_lists_its_linked_issues_their_prs_and_its_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let extra = throwaway_keyring(dir.path());
+    let run = "requests-run";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 3);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let lead = "orchestrator";
+    let record = |id: &str, actor: &str, kind: &str, document: &Value| {
+        task_record(&base, &token, run, actor, kind, id, document)
+    };
+    let requests = || {
+        get_json(
+            &format!("{base}/v1/executions/{run}/requests"),
+            Some(&token),
+        )
+    };
+
+    let (status, reply, _) = record(
+        "link-ghost",
+        lead,
+        "task.request_linked",
+        &request_document(
+            lead,
+            "task.request_linked",
+            "ghost",
+            serde_json::json!({"issue": 9}),
+        ),
+    );
+    assert_ne!(
+        status, 200,
+        "a link to an unrecorded request is refused: {reply}"
+    );
+    assert_eq!(
+        reply["diagnostics"][0]["path"], "/signal/description/requestId",
+        "{reply}"
+    );
+
+    let (status, reply, _) = record(
+        "rec-1",
+        lead,
+        "task.request_recorded",
+        &request_document(
+            lead,
+            "task.request_recorded",
+            "one-header",
+            serde_json::json!({"ask": "Make the Studio show one header", "title": "One header"}),
+        ),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let view = requests();
+    let first = &view["data"]["requests"][0];
+    assert_eq!(first["requestId"], "one-header", "{view}");
+    assert_eq!(first["ask"], "Make the Studio show one header");
+    assert_eq!(first["recordedBy"], lead);
+    assert_eq!(first["status"], "open");
+
+    // #1792 review: no other recorder may rewrite the ask, and its recorder must raise the revision.
+    let (status, reply, _) = record(
+        "rec-lane",
+        "lane-a",
+        "task.request_recorded",
+        &request_document(
+            "lane-a",
+            "task.request_recorded",
+            "one-header",
+            serde_json::json!({"ask": "rewritten by a lane", "revision": 2}),
+        ),
+    );
+    assert_ne!(status, 200, "another recorder is refused: {reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["path"], "/signal/description/recordedBy",
+        "{reply}"
+    );
+    let (status, reply, _) = record(
+        "rec-same",
+        lead,
+        "task.request_recorded",
+        &request_document(
+            lead,
+            "task.request_recorded",
+            "one-header",
+            serde_json::json!({"ask": "same revision again"}),
+        ),
+    );
+    assert_ne!(
+        status, 200,
+        "a superseding record must raise the revision: {reply}"
+    );
+    assert_eq!(
+        reply["diagnostics"][0]["path"], "/signal/description/revision",
+        "{reply}"
+    );
+    let (status, reply, _) = record(
+        "rec-2",
+        lead,
+        "task.request_recorded",
+        &request_document(
+            lead,
+            "task.request_recorded",
+            "one-header",
+            serde_json::json!({"ask": "Make the Studio show one header, with Start a team run in it", "revision": 2}),
+        ),
+    );
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        requests()["data"]["requests"][0]["ask"],
+        "Make the Studio show one header, with Start a team run in it"
+    );
+
+    for (id, issue) in [
+        ("link-1", 1770_u64),
+        ("link-1-again", 1770),
+        ("link-2", 1771),
+    ] {
+        let (status, reply, _) = record(
+            id,
+            lead,
+            "task.request_linked",
+            &request_document(
+                lead,
+                "task.request_linked",
+                "one-header",
+                serde_json::json!({"issue": issue}),
+            ),
+        );
+        assert_eq!(status, 200, "{id}: {reply}");
+    }
+    let (status, reply, _) = record(
+        "claim-1770",
+        "lane-a",
+        "task.claimed",
+        &claim_document("lane-a", 1770),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let (status, reply, _) = record(
+        "pr-1770",
+        "lane-a",
+        "task.pr_opened",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1770", "revision": 1,
+            "at": "2026-10-22T12:00:00Z", "pr": 1771, "headSha": "0123456789abcdef", "journeys": [],
+            "lane": "lane-a", "repo": "stabem/GraphHelm"}),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let view = requests();
+    let first = &view["data"]["requests"][0];
+    assert_eq!(first["status"], "in_progress", "{view}");
+    let issues: Vec<u64> = first["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["issue"].as_u64().unwrap())
+        .collect();
+    assert_eq!(issues, [1770, 1771], "a repeated link counts once: {view}");
+    assert_eq!(first["issues"][0]["slices"][0]["pr"], 1771, "{view}");
+    assert_eq!(
+        first["issues"][1]["slices"],
+        serde_json::json!([]),
+        "{view}"
+    );
+
+    let tasks = get_json(
+        &format!("{base}/v1/executions/{run}/tasks?full=1"),
+        Some(&token),
+    );
+    assert_eq!(tasks["data"]["rejected"], 0, "every record folds: {tasks}");
+    assert!(
+        tasks["data"]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|task| task["taskId"] != "request-one-header"),
+        "a request opens no task slice: {tasks}"
+    );
+}
+
+/// #1795 (R4a): the issue view asks which journeys an issue's tasks named and, for each, the
+/// newest finished run kept for it, the "before" picture. Observer: the real `serve` binary over
+/// HTTP with a project whose preview store the test seeds. Credible regressions: journeys from
+/// another issue leak in, an unfinished run is offered as "before", a journey never run gets an
+/// invented run, and a frame URL that does not serve the frame it names.
+#[test]
+fn an_issues_journeys_name_their_newest_finished_run_and_its_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let project = dir.path().join("project");
+    let previews = project.join(".graphhelm/journey-previews");
+    let archived = previews.join("checkout/history/00000001792058400000");
+    std::fs::create_dir_all(&archived).unwrap();
+    std::fs::write(
+        archived.join("state.json"),
+        serde_json::json!({"preview": true, "state": "ready", "result": "pass", "commit": "c1",
+            "ranAt": "2026-10-17T10:00:09+00:00",
+            "screens": {"cart": {"result": "pass", "frame": true, "file": "cart.png"},
+                "pay": {"result": "pass", "frame": false}}})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(archived.join("frames")).unwrap();
+    std::fs::write(archived.join("frames/cart.png"), b"cart-frame-bytes").unwrap();
+    // A newer run still in flight is not a finished "before".
+    std::fs::write(
+        previews.join("checkout/state.json"),
+        serde_json::json!({"preview": true, "state": "running", "commit": "c2", "screens": {}})
+            .to_string(),
+    )
+    .unwrap();
+    let mut extra = throwaway_keyring(dir.path());
+    extra.args.push("--project".into());
+    extra.args.push(project.to_str().unwrap().into());
+    let run = "issue-journeys";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 1);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let lane = "lane-a";
+    let mut claim = claim_document(lane, 9);
+    claim["journeys"] = serde_json::json!(["checkout", "basket"]);
+    let mut other = claim_document(lane, 10);
+    other["journeys"] = serde_json::json!(["refund"]);
+    for (id, document) in [("claim-9", claim), ("claim-10", other)] {
+        let (status, reply, _) =
+            task_record(&base, &token, run, lane, "task.claimed", id, &document);
+        assert_eq!(status, 200, "{id}: {reply}");
+    }
+
+    let view = get_json(
+        &format!("{base}/v1/executions/{run}/issues/9/journeys"),
+        Some(&token),
+    );
+    let journeys = &view["data"]["journeys"];
+    assert_eq!(
+        journeys
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|j| j["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["checkout", "basket"],
+        "only issue 9's journeys, in claim order: {view}"
+    );
+    let before = &journeys[0]["before"];
+    assert_eq!(before["run"], "00000001792058400000", "{view}");
+    assert_eq!(before["current"], false, "{view}");
+    assert_eq!(before["commit"], "c1", "{view}");
+    assert_eq!(before["result"], "pass", "{view}");
+    assert_eq!(
+        before["screens"],
+        serde_json::json!([{"screen": "cart",
+            "frameUrl": "/v1/journey-flows/checkout/history/00000001792058400000/screens/cart/frame"}]),
+        "only screens with a kept frame: {view}"
+    );
+    assert_eq!(journeys[1]["before"], Value::Null, "never run: {view}");
+    let frame = raw_request(
+        &format!(
+            "{base}{}",
+            before["screens"][0]["frameUrl"].as_str().unwrap()
+        ),
+        Some(&token),
+    )
+    .unwrap();
+    assert_eq!(frame.status, 200);
+    assert_eq!(
+        frame.body, "cart-frame-bytes",
+        "the URL serves the frame it names"
+    );
+
+    let none = get_json(
+        &format!("{base}/v1/executions/{run}/issues/11/journeys"),
+        Some(&token),
+    );
+    assert_eq!(none["data"]["journeys"], serde_json::json!([]), "{none}");
+    let bad = raw_request(
+        &format!("{base}/v1/executions/{run}/issues/0/journeys"),
+        Some(&token),
+    )
+    .unwrap();
+    assert_eq!(bad.status, 400, "{}", bad.body);
 }

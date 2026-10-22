@@ -57,6 +57,12 @@ pub enum TaskEventKind {
     /// The owner (or the orchestrator, holding the owner token) retires or restores lanes.
     #[serde(rename = "task.lane_retired")]
     LaneRetired,
+    /// #1792: an owner request, the ask in the owner's words. It opens no slice; `requests` reads it.
+    #[serde(rename = "task.request_recorded")]
+    RequestRecorded,
+    /// #1792: an issue opened for a recorded request. It opens no slice; `requests` reads it.
+    #[serde(rename = "task.request_linked")]
+    RequestLinked,
 }
 
 impl TaskEventKind {
@@ -77,6 +83,8 @@ impl TaskEventKind {
             "task.critic_verdict" => Self::CriticVerdict,
             "task.queued" => Self::Queued,
             "task.lane_retired" => Self::LaneRetired,
+            "task.request_recorded" => Self::RequestRecorded,
+            "task.request_linked" => Self::RequestLinked,
             _ => return None,
         })
     }
@@ -98,6 +106,8 @@ impl TaskEventKind {
             Self::CriticVerdict => "task.critic_verdict",
             Self::Queued => "task.queued",
             Self::LaneRetired => "task.lane_retired",
+            Self::RequestRecorded => "task.request_recorded",
+            Self::RequestLinked => "task.request_linked",
         }
     }
 }
@@ -275,6 +285,12 @@ pub struct TaskEventRecord {
     /// #1797: the repository paths a `task.planned` names as its card's scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<String>>,
+    /// #1792: the request a `task.request_recorded` or `task.request_linked` names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    /// #1792: the owner's ask, from `task.request_recorded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<String>,
 }
 
 /// #1469: one open wave issue as a `task.queued` record lists it.
@@ -359,6 +375,8 @@ impl TaskEventRecord {
             plan: None,
             queued: None,
             paths: None,
+            request_id: None,
+            ask: None,
         }
     }
 }
@@ -696,6 +714,48 @@ pub fn parse_task_event(
             record.reason = Some(text(field("reason"), 1000)?);
             record.slice_key = Some(slice_key);
             record.released_by = Some(actor_id.to_owned());
+        }
+        TaskEventKind::RequestRecorded => {
+            if !document.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "schema"
+                        | "taskId"
+                        | "revision"
+                        | "at"
+                        | "requestId"
+                        | "ask"
+                        | "title"
+                        | "recordedBy"
+                )
+            }) || !is_actor("recordedBy")
+            {
+                return None;
+            }
+            let ask = field("ask").as_str()?;
+            if ask.trim().is_empty() || ask.chars().count() > 2000 {
+                return None;
+            }
+            let (title, _) = words(document).ok()?;
+            record.request_id = Some(task_identity(field("requestId"))?);
+            record.ask = Some(ask.to_owned());
+            record.title = title;
+            // #1792: a later record supersedes ask and title only from the same recorder with a
+            // higher revision; the fold and the Runtime's admission compare it.
+            record.revision = Some(count(field("revision"))?);
+        }
+        TaskEventKind::RequestLinked => {
+            if !document.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "schema" | "taskId" | "revision" | "at" | "requestId" | "issue" | "linkedBy"
+                )
+            }) || !is_actor("linkedBy")
+            {
+                return None;
+            }
+            record.request_id = Some(task_identity(field("requestId"))?);
+            record.issue = Some(count(field("issue"))?);
         }
         TaskEventKind::LaneRetired => {
             let lanes = field("lanes")
@@ -1628,8 +1688,11 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
         if event.kind != TaskEventKind::ReviewActivity {
             review_index_dirty = true;
         }
-        // #1469: the issue list belongs to no slice; `backlog` reads it.
-        if event.kind == TaskEventKind::Queued {
+        // #1469: the issue list belongs to no slice; `backlog` reads it. #1792: nor do requests.
+        if matches!(
+            event.kind,
+            TaskEventKind::Queued | TaskEventKind::RequestRecorded | TaskEventKind::RequestLinked
+        ) {
             continue;
         }
         if event.kind == TaskEventKind::LaneRetired {
@@ -2198,6 +2261,8 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             | TaskEventKind::Released
             | TaskEventKind::Queued
             | TaskEventKind::LaneRetired
+            | TaskEventKind::RequestRecorded
+            | TaskEventKind::RequestLinked
             | TaskEventKind::ReviewActivity => {
                 unreachable!("handled above")
             }

@@ -7,7 +7,10 @@ import { Sidebar, type ProjectEntry } from "./sidebar/Sidebar";
 import { useSummaries } from "./sidebar/use-summaries";
 import { StartRun } from "./start-run/StartRun";
 import { Topbar } from "./topbar/Topbar";
-import { GraphView, LanesView, ProofView } from "./views/Views";
+import { ProofView } from "./proof/ProofView";
+import { LanesView } from "./lanes/LanesView";
+import { GraphView } from "./views/Views";
+import { RequestsView } from "./graph/RequestsView";
 
 /** How often the run list is read again: one page of at most 50 rows per poll. */
 const POLL_MS = 5_000;
@@ -111,10 +114,15 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
     return () => clearInterval(timer);
   }, [readRuns]);
 
+  const readJourneys = useCallback(() => {
+    runtime.journeys().then((flows) => { setJourneys(flows); setJourneysError(null); }, (error: unknown) => setJourneysError(error instanceof Error ? error.message : "The journeys could not be read."));
+  }, [runtime]);
+
   useEffect(() => {
-    if (route.view !== "proof" || journeys !== null) return;
-    runtime.journeys().then(setJourneys, (error: unknown) => setJourneysError(error instanceof Error ? error.message : "The journeys could not be read."));
-  }, [route.view, runtime, journeys]);
+    // Proof lists the journeys; Lanes and Graph read their last result beside a slice's journeys.
+    if (journeys !== null) return;
+    readJourneys();
+  }, [route.view, journeys, readJourneys]);
 
   const project = session.project ?? "this project";
   const run = runs.find((row) => row.executionId === route.run) ?? null;
@@ -131,8 +139,8 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
         live={live}
         onProject={(key) => go({ project: key, run: null, view: route.view })}
         onSelect={(id) => go({ ...route, run: id })}
-        onAdd={session.sessionKey === null ? null : async (path) => {
-          const added = await addFolder(path, session.sessionKey!);
+        onAdd={session.sessionKey === null ? null : async (path, ticket) => {
+          const added = await addFolder(path, session.sessionKey!, ticket);
           if ("refused" in added) return added.refused;
           // The new project's key is in this tab's keys now; a fresh login opens it.
           location.assign(`${location.pathname}${routeSearch({ project: added.projectId, run: null, view: route.view })}`);
@@ -149,7 +157,7 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
           onStart={route.run === null && !(composing && route.view === "graph") ? () => { setComposing(true); go({ ...route, view: "graph" }); } : null}
         />
         {route.view === "graph" && (
-          <GraphView run={run} runId={route.run}>
+          <GraphView run={run} runId={route.run} requests={route.run === null ? undefined : <RequestsView runtime={runtime} executionId={route.run} journeys={journeys} />}>
             {composing && route.run === null && (
               <StartRun
                 runtime={runtime}
@@ -163,8 +171,8 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
             )}
           </GraphView>
         )}
-        {route.view === "lanes" && <LanesView />}
-        {route.view === "proof" && <ProofView journeys={journeys} error={journeysError} />}
+        {route.view === "lanes" && <LanesView runtime={runtime} executionId={route.run} journeys={journeys} />}
+        {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={route.run} onRan={readJourneys} />}
       </div>
     </div>
   );

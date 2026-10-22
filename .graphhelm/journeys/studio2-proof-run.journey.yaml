@@ -14,25 +14,25 @@ viewport: {width: 1440, height: 900}
 screens:
   - id: journeys
     title: A journey is selected
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=proof
     state: stable
     expect: [{role: list, name: Journeys}, {role: button, name: Run}]
     scope: unknown
   - id: log
     title: The run console is open
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=proof
     state: loading
     expect: [{role: log, name: Run console, text: Chromium}, {role: button, name: Hide log}]
     scope: unknown
   - id: preparing
     title: The browser is being prepared
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=proof
     state: loading
     expect: [{role: status, name: Preparing the browser}, {role: button, name: Show log}]
     scope: unknown
   - id: ran
     title: Step cards hold frames and verdicts per viewport
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=proof
     state: success
     expect: [{role: list, name: Steps}, {role: img, name: Step 1 frame}, {role: listitem, name: Step 1, text: web}, {role: listitem, name: Step 1, text: mobile}]
     scope: unknown

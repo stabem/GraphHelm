@@ -16,7 +16,7 @@ export interface ProjectEntry {
 const REFUSALS: Record<AddRefusal, string> = {
   not_a_project: "That folder is not a GraphHelm project.",
   runtime_not_running: "That project's Runtime is not running. Run graphhelm studio open there first.",
-  refused: "The Studio refused to add that folder.",
+  refused: "The Studio refused to add that folder. The ticket may be missing or already used: run graphhelm studio open --project there for a new one.",
 };
 
 /** The two subtitle lines under a project: folder, then run and journeys. */
@@ -35,10 +35,11 @@ function Subtitles({ project }: { project: ProjectEntry }) {
   );
 }
 
-/** "Add project folder": one absolute path, answered by the dev server's closed list of refusals. */
-function AddFolder({ onAdd }: { onAdd: (path: string) => Promise<AddRefusal | null> }) {
+/** "Add project folder": one absolute path plus that project's own ticket, answered by the dev server's closed list of refusals. */
+function AddFolder({ onAdd }: { onAdd: (path: string, ticket: string) => Promise<AddRefusal | null> }) {
   const [open, setOpen] = useState(false);
   const [path, setPath] = useState("");
+  const [ticket, setTicket] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   if (!open) return <button type="button" className="add-folder" aria-label="Add project folder" onClick={() => setOpen(true)}>+</button>;
@@ -48,15 +49,17 @@ function AddFolder({ onAdd }: { onAdd: (path: string) => Promise<AddRefusal | nu
       aria-label="Add project folder"
       onSubmit={(event) => {
         event.preventDefault();
-        if (path.trim().length === 0 || busy) return;
+        if (path.trim().length === 0 || ticket.trim().length === 0 || busy) return;
         setBusy(true);
-        void onAdd(path.trim()).then((refusal) => {
+        void onAdd(path.trim(), ticket.trim()).then((refusal) => {
           setBusy(false);
+          setTicket("");
           setError(refusal === null ? null : REFUSALS[refusal]);
         });
       }}
     >
       <input aria-label="Project folder" className="mono" placeholder="absolute folder path" value={path} onChange={(event) => setPath(event.target.value)} autoFocus />
+      <input aria-label="Ticket from graphhelm studio open --project" type="password" autoComplete="off" className="mono" placeholder="ticket" value={ticket} onChange={(event) => setTicket(event.target.value)} />
       <button type="submit" disabled={busy}>Add</button>
       <button type="button" onClick={() => { setOpen(false); setError(null); }}>Cancel</button>
       {error !== null && <span role="alert" className="add-folder-error">{error}</span>}
@@ -76,7 +79,7 @@ interface Props {
   onProject: (project: string) => void;
   onSelect: (run: string) => void;
   /** Null when this tab holds no key that proves the owner. */
-  onAdd: ((path: string) => Promise<AddRefusal | null>) | null;
+  onAdd: ((path: string, ticket: string) => Promise<AddRefusal | null>) | null;
 }
 
 function Folder({ stroke }: { stroke: string }) {

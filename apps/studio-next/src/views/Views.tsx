@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 
-import type { JourneyFlow, RunSummary } from "../runtime/client";
+import type { RunSummary } from "../runtime/client";
 
-/** The Graph region. Here it says which run is open and how it stands, from the run index; the
- * requests flowchart and Kanban arrive with #1801 (S3). */
-export function GraphView({ run, runId, children }: { run: RunSummary | null; runId: string | null; children?: ReactNode }) {
+/** The Graph region: which run is open and how it stands (the run index), then `requests`, the
+ * run's owner requests as a flowchart or Kanban (#1801). */
+export function GraphView({ run, runId, children, requests }: { run: RunSummary | null; runId: string | null; children?: ReactNode; requests?: ReactNode }) {
   return (
     <section id="panel-graph" aria-label="Graph" className="view">
       {children}
@@ -21,35 +21,8 @@ export function GraphView({ run, runId, children }: { run: RunSummary | null; ru
             <dt>Started</dt><dd className="mono">{run.startedAt ?? "not recorded"}</dd>
             <dt>Last event</dt><dd className="mono">{run.lastEventAt ?? "none"}</dd>
           </dl>
+          {requests}
         </>
-      )}
-    </section>
-  );
-}
-
-/** The Lanes region; the board and agent panel are #1803 (S5). */
-export function LanesView() {
-  return (
-    <section id="panel-lanes" aria-label="Lanes" className="view">
-      <p>The lanes board is not in this Studio yet (#1803).</p>
-    </section>
-  );
-}
-
-/** The Proof region: the project's journeys from `GET /v1/journey-flows`. Run, compare and
- * approve are #1805-#1807 (S7-S9). */
-export function ProofView({ journeys, error }: { journeys: JourneyFlow[] | null; error: string | null }) {
-  return (
-    <section id="panel-proof" aria-label="Proof" className="view">
-      {error !== null ? <p className="error">{error}</p> : journeys === null ? <p>Reading the journeys…</p> : (
-        <ul className="journeys" aria-label="Journeys">
-          {journeys.length === 0 ? <li><span>This project has no journeys yet.</span></li> : journeys.map((flow) => (
-            <li key={flow.id}>
-              <span>{flow.name || flow.title || flow.id}</span>
-              <span className="mono">{flow.status}</span>
-            </li>
-          ))}
-        </ul>
       )}
     </section>
   );

@@ -1,7 +1,7 @@
 {
-  "extensions/builtin/graphhelm-development-contracts/.claude-plugin/plugin.json": "842ad04febf8e63debda99cfaf095dd069c216f85719cf721173dd1504415fc5",
-  "extensions/builtin/graphhelm-development-contracts/.codex-plugin/plugin.json": "11da7f279ed6ec75152b625eea7d0a31c05da73cb149fab37d89debb4a6b97d3",
-  "extensions/builtin/graphhelm-development-contracts/extension.json": "71bf9e012ce16d05f225e2c181bb6cd90d72f8f9b1a09129e9f7fc0edd29b38e",
+  "extensions/builtin/graphhelm-development-contracts/.claude-plugin/plugin.json": "9c150a945fa063c0c6488f9b39c4f51da2ad08081ca2de1742098f555d99b24c",
+  "extensions/builtin/graphhelm-development-contracts/.codex-plugin/plugin.json": "2eb514a86b7b721e880a53e0a75b93ae87c6aeb8eb3b69322b8680d98b05ce31",
+  "extensions/builtin/graphhelm-development-contracts/extension.json": "09f4650c3e6ec385bd2fa140dd9753c87562522d089ca40bbd72c02eae4a9fa4",
   "extensions/builtin/graphhelm-development-contracts/fixtures/context/citation-belongs-to-another-capsule.json": "69876ac7ea400d83a2f8b694c428d0bace3770c8cecb8e9df22c41730d58fd88",
   "extensions/builtin/graphhelm-development-contracts/fixtures/context/citation-resolves-to-no-item.json": "2e74b7e3d365b9542cc2f9b9fe3a2cbe4976f3880f2d9b7fd4d0f40e3dd7fd27",
   "extensions/builtin/graphhelm-development-contracts/fixtures/context/required-citation-missing.json": "3d3cbf29c2dcd85df94c36e1c247346e0295b5325e3551efe2b9d4dc33860dfe",
@@ -65,7 +65,7 @@
   "extensions/builtin/graphhelm-development-contracts/schemas/owner-output-policy.schema.json": "e280ef2bb858bcd77c980ec6dcc814f71c3c3f7c8248b0308a861470956b2229",
   "extensions/builtin/graphhelm-development-contracts/schemas/retrieval-admission-policy.schema.json": "b3ac428af3da243efba1203675c23705cd8307d91eb920c59d05a6049ca16aff",
   "extensions/builtin/graphhelm-development-contracts/schemas/retrieval-coverage-receipt.schema.json": "dcee0f731b18a6a99d47723cf85cfe8c2494c6d9a1476d32e48cafa31779a2cb",
-  "extensions/builtin/graphhelm-development-contracts/schemas/task-event.schema.json": "ba3e322a008814a56a840a8081748b07a84afdc0628268b2b1bc7520422ff584",
+  "extensions/builtin/graphhelm-development-contracts/schemas/task-event.schema.json": "8091fe12636a869c25cf2782f3aea6517a0545dc4105d10b0ae9a8d71c380f1e",
   "extensions/builtin/graphhelm-development-contracts/schemas/task-plan.schema.json": "0115d9b18bd1148d1f9054d419662767bbf32e3cbc1a8fd98f9e4a3a365f4ba3",
   "extensions/builtin/graphhelm-development-contracts/schemas/token-efficiency-evaluator.schema.json": "1bde4790162d21917b754785541a1e08ff770c7e1d663dd4e239cbd934f22b05"
 }

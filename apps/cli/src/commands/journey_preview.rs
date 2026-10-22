@@ -1681,6 +1681,70 @@ pub(crate) fn history(project: &Path, id: &str) -> Outcome {
     answer(json!({"id": id, "runs": runs}), None)
 }
 
+/// #1795 (R4a): the journey's newest finished run on this Runtime's checkout (the "Before = main"
+/// side of a compare), as `{run, current, commit, ranAt, result, screens: [{screen, frameUrl}]}`:
+/// the current run when it finished, else the newest run in `history/`. `None` when the journey is
+/// unknown or never finished a run. Frame URLs are the existing frame routes, relative to the
+/// Runtime: no host path leaves this function.
+pub(crate) fn newest_finished(project: &Path, id: &str) -> Option<Value> {
+    if !plain_id(id) {
+        return None;
+    }
+    let dir = dir_of(project, id);
+    let finished = |state: &Value| matches!(state["state"].as_str(), Some("ready" | "failed"));
+    let (state, run, current) = match read_state(&dir).filter(finished) {
+        Some(state) => {
+            let run = history_id(&state)?;
+            (state, run, true)
+        }
+        None => {
+            let history = dir.join("history");
+            let run = history_ids(&history).into_iter().next_back()?;
+            (
+                read_state(&history.join(&run)).filter(finished)?,
+                run,
+                false,
+            )
+        }
+    };
+    let mut screens: Vec<Value> = state["screens"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(screen, entry)| {
+            plain_id(screen)
+                && entry["frame"] == true
+                && entry["file"] == format!("{screen}.png").as_str()
+        })
+        .map(|(screen, _)| {
+            let url = if current {
+                format!("/v1/journey-flows/{id}/screens/{screen}/frame")
+            } else {
+                format!("/v1/journey-flows/{id}/history/{run}/screens/{screen}/frame")
+            };
+            json!({"screen": screen, "frameUrl": url})
+        })
+        .collect();
+    screens.sort_by(|a, b| a["screen"].as_str().cmp(&b["screen"].as_str()));
+    let text = |key: &str| state[key].as_str().map(str::to_owned);
+    Some(json!({
+        "run": run,
+        "current": current,
+        "commit": text("commit"),
+        "ranAt": text("ranAt"),
+        "result": text("result"),
+        "screens": screens,
+    }))
+}
+
+/// #1795: a journey's title as its flow names it, or the id when the flow cannot be read.
+pub(crate) fn journey_title(project: &Path, id: &str) -> String {
+    flow_and_key(project, id)
+        .ok()
+        .and_then(|(flow, _, _)| flow["title"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| id.to_owned())
+}
+
 /// `GET /v1/journey-flows/{id}/history/{run}/screens/{screen}/frame`: one screen's frame as an
 /// earlier run kept it. The run's id never changes, so its bytes never do.
 pub(crate) fn history_frame(project: &Path, id: &str, run: &str, screen: &str) -> Option<Vec<u8>> {
@@ -1704,6 +1768,85 @@ pub(crate) fn history_frame(project: &Path, id: &str, run: &str, screen: &str) -
     std::fs::read(file).ok()
 }
 
+/// #1835: the journey's last finished run, as `journey flows` lists it. Read only from what the
+/// runner recorded: the kept `state.json` when it finished, else (a run in flight replaced it) the
+/// newest archived run. At most two state files are read and nothing is written, probed or
+/// reaped. No finished run is `not_run`, never a guessed verdict. `status` is `passed` only for
+/// a finished run whose result is `pass`; a `fail`, a `drift` or a run that stopped is `failed`.
+/// `failingStep` is the first step that did not pass in path order (each path's entry screen,
+/// then each edge and the screen it reaches), else in the run's own sorted keys; `null` when a
+/// run stopped before any step (its `reason` says why). `flowChanged` says the flow's approval
+/// digest moved since that run. The viewport is not here: runs do not record one yet (#1777).
+pub(crate) fn last_run(project: &Path, id: &str, flow: Option<&Value>) -> Value {
+    let not_run = json!({"status":"not_run","ranAt":null,"kind":null,"reason":null,
+        "failingStep":null,"flowChanged":null});
+    if !plain_id(id) {
+        return not_run;
+    }
+    let dir = dir_of(project, id);
+    let finished = |state: &Value| matches!(state["state"].as_str(), Some("ready" | "failed"));
+    let state = read_state(&dir).filter(finished).or_else(|| {
+        let history = dir.join("history");
+        let newest = history_ids(&history).pop()?;
+        read_state(&history.join(newest)).filter(finished)
+    });
+    let Some(state) = state else { return not_run };
+    let passed = state["state"] == "ready" && state["result"] == "pass";
+    let text = |key: &str| state[key].as_str().map_or(Value::Null, Value::from);
+    json!({"status": if passed { "passed" } else { "failed" },
+    "ranAt": text("ranAt"), "kind": text("kind"), "reason": text("reason"),
+    "failingStep": if passed { Value::Null } else { first_failing(&state, flow) },
+    "flowChanged": flow.map_or(Value::Null, |flow| {
+        (state["digest"] != super::journey_flow::approval_digest(flow).as_str()).into()
+    })})
+}
+
+/// The first recorded step whose result is `fail` or `drift`: in the flow's path order when the
+/// flow is readable, then in the run's own sorted screen and edge keys.
+fn first_failing(state: &Value, flow: Option<&Value>) -> Value {
+    let mut order: Vec<(&str, String)> = Vec::new();
+    if let Some(flow) = flow {
+        let edges = flow["edges"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        for path in flow["paths"]
+            .as_object()
+            .into_iter()
+            .flat_map(|p| p.values())
+        {
+            for (index, step) in path.as_array().into_iter().flatten().enumerate() {
+                let Some(edge) = edges.iter().find(|edge| edge["id"] == *step) else {
+                    continue;
+                };
+                if index == 0
+                    && let Some(from) = edge["from"].as_str()
+                {
+                    order.push(("screen", from.to_owned()));
+                }
+                if let Some(id) = edge["id"].as_str() {
+                    order.push(("edge", id.to_owned()));
+                }
+                if let Some(to) = edge["to"].as_str() {
+                    order.push(("screen", to.to_owned()));
+                }
+            }
+        }
+    }
+    for (kind, key) in [("screen", "screens"), ("edge", "edges")] {
+        for id in state[key].as_object().into_iter().flat_map(|m| m.keys()) {
+            order.push((kind, id.clone()));
+        }
+    }
+    order
+        .into_iter()
+        .find_map(|(kind, id)| {
+            let entry = &state[if kind == "screen" { "screens" } else { "edges" }][&id];
+            matches!(entry["result"].as_str(), Some("fail" | "drift")).then(|| {
+                json!({"kind": kind, "id": id, "result": entry["result"],
+                    "reason": entry["reason"].as_str().map_or(Value::Null, Value::from)})
+            })
+        })
+        .unwrap_or(Value::Null)
+}
+
 fn sha_of(text: &str) -> String {
     graphhelm_protocols::hash::sha256_hex(text.as_bytes())
 }
@@ -1712,10 +1855,56 @@ fn sha_of(text: &str) -> String {
 mod tests {
     use super::{
         Guard, HISTORY_KEEP, JourneyPreviewArgs, RUNNER_LOG, archive, body, dir_of, failed_reason,
-        history_frame, history_id, history_ids, plain_id, proof_args, read_state, reap_lost,
-        reap_lost_from, reap_lost_from_with, runner_liveness, runner_liveness_with, save_state,
-        severity, step_reason, unsealed_proof, watch_budget, with_checks,
+        history_frame, history_id, history_ids, newest_finished, plain_id, proof_args, read_state,
+        reap_lost, reap_lost_from, reap_lost_from_with, runner_liveness, runner_liveness_with,
+        save_state, severity, step_reason, unsealed_proof, watch_budget, with_checks,
     };
+
+    /// #1795: the "Before = main" run is the newest FINISHED one: a run still in progress is
+    /// skipped for the newest archived run, and a finished current run is served at the current
+    /// frame route. Frame URLs are route-relative; a screen without a kept frame is left out.
+    #[test]
+    fn the_before_run_is_the_newest_finished_one() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = dir_of(project.path(), "checkout");
+        let older = dir.join("history").join("00000001760000000000");
+        std::fs::create_dir_all(&older).unwrap();
+        save_state(
+            &older,
+            &serde_json::json!({"state":"ready","result":"pass","commit":"c0ffee",
+            "startedAt":"2025-10-09T08:53:20Z","ranAt":"2025-10-09T08:54:00Z",
+            "screens":{"cart":{"frame":true,"file":"cart.png","result":"pass"},"pay":{"result":"pass"}}}),
+        );
+        save_state(
+            &dir,
+            &serde_json::json!({"state":"running","startedAt":"2026-10-22T00:00:00Z"}),
+        );
+        let before = newest_finished(project.path(), "checkout").unwrap();
+        assert_eq!(before["run"], "00000001760000000000");
+        assert_eq!(before["current"], false);
+        assert_eq!(before["commit"], "c0ffee");
+        assert_eq!(
+            before["screens"],
+            serde_json::json!([{"screen":"cart","frameUrl":"/v1/journey-flows/checkout/history/00000001760000000000/screens/cart/frame"}])
+        );
+        save_state(
+            &dir,
+            &serde_json::json!({"state":"failed","result":"fail","commit":"beef01",
+            "startedAt":"2026-10-22T00:00:00Z","ranAt":"2026-10-22T00:01:00Z",
+            "screens":{"cart":{"frame":true,"file":"cart.png","result":"fail"}}}),
+        );
+        let before = newest_finished(project.path(), "checkout").unwrap();
+        assert_eq!(
+            (before["current"].clone(), before["result"].clone()),
+            (serde_json::json!(true), serde_json::json!("fail"))
+        );
+        assert_eq!(
+            before["screens"][0]["frameUrl"],
+            "/v1/journey-flows/checkout/screens/cart/frame"
+        );
+        assert!(newest_finished(project.path(), "never-run").is_none());
+        assert!(newest_finished(project.path(), "../escape").is_none());
+    }
 
     /// #1286: a screen keeps its frame fields and gains `checks`; without checks nothing changes.
     /// Cost: microseconds, in-memory JSON.

@@ -5713,3 +5713,162 @@ fn only_the_pr_author_may_heartbeat_a_task_at_the_pr_step() {
     );
     assert_eq!(status, 200, "the PR author is admitted: {admitted}");
 }
+
+fn lane_signal(base: &str, token: &str, run: &str, lane: &str, signal: Value) -> Value {
+    let id = signal["id"].as_str().unwrap().to_owned();
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{run}/signal"),
+        token,
+        &[
+            ("Idempotency-Key", id.as_str()),
+            ("X-GraphHelm-Actor", lane),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ],
+        &serde_json::json!({"signal": signal}),
+    );
+    assert_eq!(status, 200, "{lane} {id}: {reply}");
+    reply
+}
+
+fn recorded_signal_id(reply: &Value) -> String {
+    reply["data"]["signalId"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a recorded signal names its id: {reply}"))
+        .to_owned()
+}
+
+/// #1794 (Studio v2 R3): the tasks board serves each lane's open question, who it waits on and
+/// since when, and drops it once a reply names it. Observer: the real `serve` binary over HTTP.
+/// A question to the owner is answered by the owner's operator_note; a question to another lane
+/// by that lane's operator_note; an unanswered one stays. On the parent commit the board has no
+/// `waiting` field, so this fails there.
+#[test]
+fn the_tasks_board_shows_a_lanes_open_question_until_a_reply_names_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let extra = throwaway_keyring(dir.path());
+    let run = "waiting-run";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 3);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let ask = |lane: &str, id: &str, kind: &str, to: &str, text: &str| {
+        recorded_signal_id(&lane_signal(
+            &base,
+            &token,
+            run,
+            lane,
+            serde_json::json!({
+            "id": id, "source": {"type": "user", "id": lane}, "type": kind, "to": to,
+            "severity": "medium", "description": text, "evidence": [run],
+            "emittedAt": "2026-10-22T00:00:00Z"}),
+        ))
+    };
+    let to_owner = ask(
+        "lane-a",
+        "q-owner",
+        "operator_note",
+        "studio-operator",
+        "Merge #1 or wait?",
+    );
+    let to_lead = ask(
+        "lane-b",
+        "q-lead",
+        "question",
+        "lane-lead",
+        "Which reviewer for #2?",
+    );
+    let open = ask(
+        "lane-c",
+        "q-open",
+        "question",
+        "studio-operator",
+        "Is the slot free?",
+    );
+    // A note to another lane that is not a question is not waiting.
+    ask(
+        "lane-c",
+        "fyi",
+        "operator_note",
+        "lane-lead",
+        "PR #3 opened",
+    );
+
+    let waiting = |query: &str| -> Vec<(String, String, String)> {
+        let tasks = get_json(
+            &format!("{base}/v1/executions/{run}/tasks{query}"),
+            Some(&token),
+        );
+        tasks["data"]["waiting"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the board serves `waiting`: {tasks}"))
+            .iter()
+            .map(|row| {
+                assert!(row["since"].is_string(), "{row}");
+                (
+                    row["lane"].as_str().unwrap().to_owned(),
+                    row["waitsOn"].as_str().unwrap().to_owned(),
+                    row["signalId"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    };
+    let row = |lane: &str, on: &str, id: &str| (lane.to_owned(), on.to_owned(), id.to_owned());
+    assert_eq!(
+        waiting(""),
+        vec![
+            row("lane-a", "owner", &to_owner),
+            row("lane-b", "orchestrator", &to_lead),
+            row("lane-c", "owner", &open),
+        ]
+    );
+    let full = get_json(
+        &format!("{base}/v1/executions/{run}/tasks?view=full"),
+        Some(&token),
+    );
+    assert_eq!(
+        full["data"]["waiting"][1]["question"], "Which reviewer for #2?",
+        "{full}"
+    );
+    assert_eq!(
+        full["data"]["waiting"][1]["addressedTo"], "lane-lead",
+        "{full}"
+    );
+    assert_eq!(
+        waiting("?lane=lane-b"),
+        vec![row("lane-b", "orchestrator", &to_lead)]
+    );
+
+    // The owner answers lane-a; the lead lane answers lane-b.
+    let (status, reply) = post_json(
+        &format!("{base}/v1/executions/{run}/signal"),
+        &token,
+        &[
+            ("Idempotency-Key", "answer-a"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+        ],
+        &serde_json::json!({"signal": {"id": "answer-a", "to": "lane-a", "replyTo": to_owner,
+            "source": {"type": "user", "id": "studio-operator"}, "type": "operator_note",
+            "severity": "low", "description": "Merge it.", "evidence": [run],
+            "emittedAt": "2026-10-22T00:01:00Z"}}),
+    );
+    assert_eq!(status, 200, "{reply}");
+    lane_signal(
+        &base,
+        &token,
+        run,
+        "lane-lead",
+        serde_json::json!({
+        "id": "answer-b", "source": {"type": "user", "id": "lane-lead"}, "type": "operator_note",
+        "to": "lane-b", "replyTo": to_lead, "severity": "low", "description": "lane-d reviews.",
+        "evidence": [run], "emittedAt": "2026-10-22T00:02:00Z"}),
+    );
+    assert_eq!(waiting(""), vec![row("lane-c", "owner", &open)]);
+}

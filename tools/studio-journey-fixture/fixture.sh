@@ -125,6 +125,9 @@ up)
   # runner every GRAPHHELM_SECRET_* it holds. Set for serve only, never printed.
   # #1556: the fixture's own build-slot root, so the Lanes board can show a real slot holder.
   mkdir -p "$dir/slots"
+  # #1808: studio2-lanes-needs-action needs silent lanes; this Runtime counts a lane silent after
+  # one minute instead of thirty, so the fixture comes up within the launcher's budget.
+  if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-lanes-needs-action ]; then export GRAPHHELM_FIXTURE_SILENT_AFTER_SECONDS=60; fi
   GRAPHHELM_SECRET_STUDIO_TOKEN="$(head -1 "$rt/events.token")" \
   nohup "$bin" serve --events "$rt/events" --bind "127.0.0.1:$rport" --project "$dir/project" \
     --keyring "$rt/keyring" --key-id studio --gateway-manifest "$rt/routes.json" --slot-root "$dir/slots" \
@@ -230,7 +233,7 @@ FLOW
   fi
   flow=${GRAPHHELM_JOURNEY_FLOW:-}
   # #1808: studio2-lanes-needs-action's quiet lanes are recorded first; `fresh` below waits for
-  # them to turn silent (30 minutes by the Runtime's clock) before the fixture reports up.
+  # them to turn silent (one minute: the budget this Runtime was started with) before the fixture reports up.
   if [ "$flow" = studio2-lanes-needs-action ]; then
     node "$repo/tools/studio-journey-fixture/seed_needs.mjs" silent "$dir" "http://127.0.0.1:$rport" "$rt/events.token"
   fi

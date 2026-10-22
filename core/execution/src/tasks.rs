@@ -272,6 +272,9 @@ pub struct TaskEventRecord {
     /// #1469: the issues a `task.queued` lists.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queued: Option<Vec<QueuedIssue>>,
+    /// #1797: the repository paths a `task.planned` names as its card's scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<String>>,
 }
 
 /// #1469: one open wave issue as a `task.queued` record lists it.
@@ -355,6 +358,7 @@ impl TaskEventRecord {
             critic: None,
             plan: None,
             queued: None,
+            paths: None,
         }
     }
 }
@@ -404,6 +408,45 @@ fn task_identity(value: &serde_json::Value) -> Option<String> {
             .iter()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-')))
     .then(|| s.to_owned())
+}
+
+/// #1797: the most paths one `task.planned` names (the schema's `maxItems`), and the longest path.
+pub const MAX_PLANNED_PATHS: usize = 64;
+pub const MAX_PLANNED_PATH_CHARS: usize = 256;
+
+/// #1797: one repository-relative path as `task-event.schema.json` `$defs.path` admits it:
+/// `/`-separated segments of `[A-Za-z0-9._@+-]`, none empty, `.` or `..`, so no absolute path,
+/// drive, backslash or traversal reaches the read model.
+#[must_use]
+pub fn planned_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= MAX_PLANNED_PATH_CHARS
+        && path.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && segment
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._@+-".contains(&b))
+        })
+}
+
+/// #1797: a `paths` list: 1 to [`MAX_PLANNED_PATHS`] distinct [`planned_path`]s, else `None`.
+#[must_use]
+pub fn planned_paths(value: &serde_json::Value) -> Option<Vec<String>> {
+    let items = value.as_array()?;
+    if items.is_empty() || items.len() > MAX_PLANNED_PATHS {
+        return None;
+    }
+    let mut paths: Vec<String> = Vec::with_capacity(items.len());
+    for item in items {
+        let path = item.as_str().filter(|path| planned_path(path))?;
+        if paths.iter().any(|seen| seen == path) {
+            return None;
+        }
+        paths.push(path.to_owned());
+    }
+    Some(paths)
 }
 
 fn journey_ids(value: &serde_json::Value) -> Option<Vec<String>> {
@@ -633,6 +676,8 @@ pub fn parse_task_event(
             }
             record.lane = Some(actor_id.to_owned());
             record.plan = Some(plan);
+            // #1797: the card's paths; the Runtime refuses a malformed list, an old log drops it.
+            record.paths = document.get("paths").and_then(planned_paths);
         }
         TaskEventKind::Released if document.contains_key("sliceKey") => {
             // An owner release by slice key: the signer is the releaser and names itself in
@@ -1154,6 +1199,10 @@ pub struct TaskState {
     pub claimed_at: Option<PersistedTimestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_seconds: Option<u64>,
+    /// #1797: the paths the newest `task.planned` of this slice named (its card's scope), the
+    /// input of the file-collision read model. Omitted while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
 }
 
 /// #562: a design critic round whose task nobody has claimed: no issue, PR or branch.
@@ -1265,6 +1314,7 @@ fn new_state(event: &TaskEventRecord) -> TaskState {
         orphaned: false,
         claimed_at: None,
         lease_seconds: None,
+        paths: Vec::new(),
     }
 }
 
@@ -1935,6 +1985,9 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 }
                 if event.plan.is_some() {
                     state.plan = event.plan.clone();
+                }
+                if let Some(paths) = &event.paths {
+                    state.paths.clone_from(paths);
                 }
                 // A plan recorded late (after the PR) informs the graph without moving it back.
                 if matches!(state.step, TaskStep::Plan | TaskStep::Critic) {

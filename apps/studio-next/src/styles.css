@@ -114,6 +114,8 @@ button { font: inherit; }
 .proof-main p { margin: 0; color: var(--muted); line-height: 1.5; }
 .run-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .run-bar .act[disabled] { opacity: .6; cursor: default; }
+.decision-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.decision-bar .b[disabled] { opacity: .6; cursor: default; }
 .run-status { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font: 11px var(--mono); }
 .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1s ease-in-out infinite alternate; }
 @keyframes pulse { from { opacity: .3; } to { opacity: 1; } }

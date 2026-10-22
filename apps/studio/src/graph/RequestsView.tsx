@@ -70,7 +70,7 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
     <div className="gv">
       <aside aria-label="Journeys with work" className="gv-journeys">
         <span className="mono gv-label">JOURNEYS WITH WORK · {withWork.length} of {Math.max(flows.length, withWork.length)}</span>
-        <button type="button" className="b gv-journey gv-all" aria-pressed={journey === null} onClick={() => setJourney(null)}>
+        <button type="button" className="b gv-journey gv-all" aria-label="All journeys" aria-pressed={journey === null} onClick={() => setJourney(null)}>
           <span className="gv-grow">All journeys</span><span className="mono gv-muted">{allIssues} issue{allIssues === 1 ? "" : "s"}</span>
         </button>
         {withWork.map((card) => (

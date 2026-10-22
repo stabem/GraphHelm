@@ -27,8 +27,8 @@ One operator question, answered end to end:
    the events appended, and who they are attributed to.
 9. Reload the page and find the Runtime untouched and the token forgotten.
 
-An agent holding the page's WebMCP site tools performs the read and write steps through the same
-client, and the human view moves with it.
+An agent performs the read and write steps through the GraphHelm MCP server, and the human view
+moves with it. (The page's WebMCP site tools are retired; see below.)
 
 ## 2. Architectural position
 
@@ -109,7 +109,7 @@ would make the single state an operator has to act on look exactly like the stat
 | Who acted | `X-GraphHelm-Actor-Type` | `X-GraphHelm-Actor` |
 |---|---|---|
 | The person, via a button | `owner` | `studio-operator` |
-| An agent, via a site tool | `agent` | `studio-webmcp-adapter` |
+| An agent, via the MCP server | `agent` | the MCP session's actor (WebMCP adapter retired, #1808) |
 
 A browser's confirmation prompt for a site tool is **consent**, not authorship. The person agreed
 to an action the agent chose; recording it as `owner` would destroy the only distinction the audit
@@ -125,8 +125,8 @@ as a claim the evidence repeats.
 
 ## 6. Deliberate omissions
 
-- `cancel` was not a site tool in the MVP. Phase 2 (#105) makes it one, behind two confirmations
-  (the page asks; the WebMCP host prompts) and a DESTRUCTIVE-first description — the contract change
+- `cancel` was not a site tool in the MVP. Phase 2 (#105) made it one, behind two confirmations
+  (the page asks; the WebMCP host prompted; WebMCP is now retired) and a DESTRUCTIVE-first description — the contract change
   is recorded as ADR-036 in `docs/reference/REFERENCE_STACK_AND_ADRS.md` §41.
 - No Graph DSL editor and no graph creation. The board DRAWS a run's graph and lets the operator
   arrange, annotate and draw on it; it never edits the graph itself. Editing one is a Graph Draft,
@@ -143,10 +143,7 @@ as a claim the evidence repeats.
   it, which is the correct security posture and also means the operator must know the Runtime's
   working directory. There is no server-side "resume from the graph you started with" verb to
   call instead.
-- **WebMCP is a proposal in flight.** The adapter probes `document.modelContext` and
-  `navigator.modelContext` and removes its tools through an `AbortController` signal. A host that
-  changes either shape will report `unavailable` until the adapter is updated — the page keeps
-  working.
+- **WebMCP is retired.** The adapter and its page tools were removed with the old Studio (#1808).
 - **`GET /v1/executions` replays every listed stream** to decide each row's attention. That is
   what makes the index answer the operator's real question, and it bounds the page at 100 rows;
   it is not a design for a store with tens of thousands of streams.

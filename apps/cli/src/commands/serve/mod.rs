@@ -3695,10 +3695,8 @@ fn current_head_on(store: &LocalEventRepository, execution: &str) -> Option<u64>
 /// telling it that about its OWN committed pause is the opposite of what the code means.
 ///
 /// The whole history is the population because the append-only log is the record: an event that
-/// committed does not stop having committed when a later one lands on top of it. The Studio's
-/// client half reads the same way and for the same reason — it accepts a pause as proof of its
-/// own request only when the event carries its derived key prefix AND its actor, never merely
-/// because an `execution_paused` exists (`apps/studio/src/runtime/client.ts`, PR #662).
+/// committed does not stop having committed when a later one lands on top of it. (The first Studio's
+/// client half read the same way, PR #662; the Studio v2 client no longer carries that check.)
 ///
 /// #681, Codex P1's second finding: the immediate branch's success condition was "the execution
 /// is paused", which two concurrently racing immediate-pause requests against the same live

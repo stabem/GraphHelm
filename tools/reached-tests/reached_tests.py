@@ -56,7 +56,7 @@ RUNTIME_READERS = {
                     ("graphhelm-protocols", "canonical_golden")],
     # The committed journey flows: the scope guard reads them, and `journey validate --all` checks them.
     ".graphhelm/journeys/": [("graphhelm-cli", "journey_scope_guard")],
-    # The MCP tool catalog: the stdio tests serve it, and the Studio's WebMCP adapter imports it.
+    # The MCP tool catalog: the stdio tests serve it, and `schemas/mcp-tools.json` is emitted from it.
     "schemas/mcp-tools.json": [("graphhelm-cli", "mcp_stdio")],
     # #1608: a schema change can move the canonical form the golden pins (#1403 turned main red
     # unseen); the golden is one cheap target, so every schema path reaches it.

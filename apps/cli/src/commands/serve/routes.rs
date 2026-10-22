@@ -2219,7 +2219,8 @@ pub(super) async fn issue_journeys(
 /// #1839: the frames a lane recorded running `journey` at the current head of the issue's newest
 /// open PR that names it (`task.journey_frames`), or `None` when that head has none. A capture at
 /// an older head is never Now. A run with more than four screens arrives as several records at the
-/// same head; their screens are merged, the newest record winning a screen and stating the result.
+/// same head sharing one `ranAt`; only the newest run's records are served (#1879), the newest
+/// record winning a screen and stating the result.
 fn head_capture(
     records: &[graphhelm_execution::tasks::TaskEventRecord],
     slices: &[&graphhelm_execution::tasks::TaskState],
@@ -2255,7 +2256,17 @@ fn head_capture(
     runs.sort_by_key(|(record, _)| record.sequence);
     let (newest, last) = *runs.last()?;
     let mut screens: std::collections::BTreeMap<&str, String> = std::collections::BTreeMap::new();
-    for (_, run) in &runs {
+    // #1879: one run is the records that share the newest record's `ranAt` (a run longer than four
+    // screens arrives as several); a record without `ranAt` is a run of its own. A re-run at the same
+    // head replaces the earlier run's frames instead of merging beside them.
+    let same_run = |record: &graphhelm_execution::tasks::TaskEventRecord,
+                    run: &graphhelm_execution::tasks::JourneyFrames| {
+        match (&last.ran_at, &run.ran_at) {
+            (Some(newest_at), Some(at)) => newest_at == at,
+            _ => record.sequence == newest.sequence,
+        }
+    };
+    for (_, run) in runs.iter().filter(|(record, run)| same_run(record, run)) {
         for (screen, evidence) in run.screens.iter().zip(&run.evidence) {
             screens.insert(
                 screen,

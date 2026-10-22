@@ -6613,3 +6613,103 @@ fn a_pr_heads_journey_frames_are_now_beside_before() {
     );
     assert_eq!(view["data"]["journeys"][0]["now"], Value::Null, "{view}");
 }
+
+/// #1879: a lane that re-runs a journey at the same PR head replaces the earlier run's frames; a
+/// run longer than four screens (several records sharing one `ranAt`) is still served whole.
+/// Credible regression: the earlier run's screens served beside the newer run's result.
+#[test]
+fn a_rerun_at_the_same_head_replaces_the_earlier_runs_frames() {
+    const CART: &str = "iVBORw0KGgpmcmFtZS1jYXJ0"; // PNG magic + "frame-cart"
+    const PAY: &str = "iVBORw0KGgpmcmFtZS1wYXk="; // PNG magic + "frame-pay"
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let project = dir.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    let mut extra = throwaway_keyring(dir.path());
+    extra.args.push("--project".into());
+    extra.args.push(project.to_str().unwrap().into());
+    let run = "rerun-frames";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 1);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let lane = "lane-a";
+    let pr = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-9",
+        "revision": 2, "at": "2026-10-13T12:00:00Z", "pr": 90, "headSha": "aaaaaaa",
+        "journeys": ["checkout"], "lane": lane, "repo": "stabem/GraphHelm"});
+    for (kind, id, document) in [
+        ("task.claimed", "claim-9", claim_document(lane, 9)),
+        ("task.pr_opened", "pr-9", pr),
+    ] {
+        let (status, reply, _) = task_record(&base, &token, run, lane, kind, id, &document);
+        assert_eq!(status, 200, "{id}: {reply}");
+    }
+    let frames = |ran_at: &str, result: &str, screens: &[&str]| {
+        serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-9",
+            "revision": 3, "at": "2026-10-13T12:00:00Z", "pr": 90, "headSha": "aaaaaaa",
+            "journey": "checkout", "result": result, "ranAt": ran_at, "screens": screens,
+            "lane": lane})
+    };
+    let now = || {
+        get_json(
+            &format!("{base}/v1/executions/{run}/issues/9/journeys"),
+            Some(&token),
+        )["data"]["journeys"][0]["now"]
+            .clone()
+    };
+    let screens = |now: &Value| {
+        now["screens"]
+            .as_array()
+            .unwrap_or_else(|| panic!("screens: {now}"))
+            .iter()
+            .map(|s| s["screen"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    // The first run arrives in two records sharing one ranAt: both are served.
+    for (id, screen, png) in [("r1-cart", "cart", CART), ("r1-pay", "pay", PAY)] {
+        let (status, reply) = frames_record(
+            &base,
+            &token,
+            run,
+            lane,
+            id,
+            &frames("2026-10-13T11:00:00Z", "pass", &[screen]),
+            &[("image/png", png)],
+        );
+        assert_eq!(status, 200, "{id}: {reply}");
+    }
+    let first = now();
+    assert_eq!(screens(&first), ["cart", "pay"], "{first}");
+    // A re-run at the same head, with fewer screens and another result: only its frames are Now.
+    let (status, reply) = frames_record(
+        &base,
+        &token,
+        run,
+        lane,
+        "r2-cart",
+        &frames("2026-10-13T11:30:00Z", "fail", &["cart"]),
+        &[("image/png", CART)],
+    );
+    assert_eq!(status, 200, "{reply}");
+    let second = now();
+    assert_eq!(
+        screens(&second),
+        ["cart"],
+        "the earlier run's pay frame is not Now: {second}"
+    );
+    assert_eq!(second["result"], "fail", "{second}");
+    assert_eq!(second["ranAt"], "2026-10-13T11:30:00Z", "{second}");
+    assert!(
+        second["screens"][0]["frameUrl"]
+            .as_str()
+            .unwrap()
+            .ends_with("signal-r2-cart-image-1"),
+        "the newest run's own frame: {second}"
+    );
+}

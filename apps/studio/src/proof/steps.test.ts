@@ -1,3 +1,4 @@
+import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow } from "../runtime/client";
@@ -79,5 +80,16 @@ describe("preparing status", () => {
     expect(preparingStatus("npx playwright install chromium 62%")).toBe("Preparing the browser · Downloading Chromium 62%");
     expect(preparingStatus("npm install --save-dev @playwright/test@1.56.0")).toBe("Preparing the browser · Installing test tools");
     expect(preparingStatus("something else 140%")).toBe("Preparing the browser");
+  });
+});
+
+// #1878: a mobile-only run never shows its frames as web; a web-first run keeps both apart.
+describe("splitFrames", () => {
+  it("keeps a mobile-only run off the web view", () => {
+    expect(splitFrames({ cart: "blob:m" }, "mobile")).toEqual({ web: {}, mobile: { cart: "blob:m" } });
+  });
+  it("keeps web at the top level and mobile under its slot", () => {
+    expect(splitFrames({ cart: "blob:w", "mobile:cart": "blob:m" }, "web")).toEqual({ web: { cart: "blob:w" }, mobile: { cart: "blob:m" } });
+    expect(splitFrames({ cart: "blob:w" }, undefined)).toEqual({ web: { cart: "blob:w" }, mobile: {} });
   });
 });

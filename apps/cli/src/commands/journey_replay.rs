@@ -1380,12 +1380,17 @@ fn persist(
     code: &str,
     seen: &str,
     repair: Option<&[Value]>,
+    viewport: Option<&str>,
 ) -> Result<()> {
     let at = super::journey::head(project)
         .map_err(|_| failure("replay.drift_unpersisted", "/drift", 1))?;
     let mut entry = json!({"edge":edge,"act":act,"code":code,"seen":seen,"at":at});
     if repair.is_some() {
         entry["healed"] = true.into();
+    }
+    // #1878: a drift seen while replaying one viewport says which one.
+    if let Some(viewport) = viewport {
+        entry["viewport"] = viewport.into();
     }
     *disk = super::journey_flow::record_drift(project, file, disk, entry.clone(), repair).map_err(
         |code| {
@@ -1737,6 +1742,7 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                                             code,
                                             &seen,
                                             Some(&healed),
+                                            args.viewport.as_deref(),
                                         )?;
                                         healer
                                             .as_mut()
@@ -1750,8 +1756,16 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                                 }
                             }
                             persist(
-                                data, &project, &file, &mut disk, edge_id, act_index, code, &seen,
+                                data,
+                                &project,
+                                &file,
+                                &mut disk,
+                                edge_id,
+                                act_index,
+                                code,
+                                &seen,
                                 None,
+                                args.viewport.as_deref(),
                             )?;
                             return Err(failure(
                                 code,
@@ -1824,6 +1838,7 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                                         code,
                                         &seen,
                                         Some(&healed),
+                                        args.viewport.as_deref(),
                                     )?;
                                     healer
                                         .as_mut()
@@ -1845,8 +1860,16 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                             Some(value) => value,
                             None => {
                                 persist(
-                                    data, &project, &file, &mut disk, edge_id, last, code, &seen,
+                                    data,
+                                    &project,
+                                    &file,
+                                    &mut disk,
+                                    edge_id,
+                                    last,
+                                    code,
+                                    &seen,
                                     None,
+                                    args.viewport.as_deref(),
                                 )?;
                                 return Err(failure(
                                     code,
@@ -1995,12 +2018,24 @@ pub(crate) fn run(args: &JourneyReplayArgs) -> Outcome {
     // that does not keeps replaying exactly as it was approved (one browser, its declared or
     // cached size), until the owner re-approves it with `viewports`.
     let views = replay_views(args);
-    let mut outcomes = Vec::new();
-    for view in &views {
+    let outcomes = play_views(args, &views, |one| supervised(one, data.clone()));
+    combine_replays(outcomes, views.len())
+}
+
+/// #1878: plays each viewport and decides which run may record proof. Only the first viewport
+/// records and heals, and it plays last: every other viewport replays first without recording.
+/// When one of them fails, the first replays without recording too, so no proof is left on
+/// record that a failed viewport contradicts; it still plays, so the outcome can name the
+/// viewport that alone failed. The outcomes are returned in `views` order.
+fn play_views(
+    args: &JourneyReplayArgs,
+    views: &[Option<&'static str>],
+    mut run: impl FnMut(&JourneyReplayArgs) -> Outcome,
+) -> Vec<(&'static str, Outcome)> {
+    let at = |view: Option<&str>, recorded: bool| {
         let mut one = args.clone();
         one.viewport = view.map(str::to_owned);
-        if !outcomes.is_empty() {
-            // Only the first viewport records proof and heals, so the records do not change.
+        if !recorded {
             one.record = crate::args::OptionalRecordArgs {
                 events: None,
                 execution: None,
@@ -2009,14 +2044,34 @@ pub(crate) fn run(args: &JourneyReplayArgs) -> Outcome {
             };
             one.heal = false;
         }
-        let outcome = supervised(&one, data.clone());
+        one
+    };
+    let Some((first, others)) = views.split_first() else {
+        return Vec::new();
+    };
+    let mut outcomes = Vec::new();
+    let mut withheld = None;
+    for view in others {
+        let outcome = run(&at(*view, false));
         let failed = !outcome.output.ok;
         outcomes.push((view.unwrap_or("web"), outcome));
         if failed {
+            withheld = *view;
             break;
         }
     }
-    combine_replays(outcomes, views.len())
+    outcomes.insert(
+        0,
+        (first.unwrap_or("web"), run(&at(*first, withheld.is_none()))),
+    );
+    if let Some(by) = withheld {
+        for (_, outcome) in &mut outcomes {
+            if let Some(data) = outcome.output.data.as_mut() {
+                data["proofWithheldBy"] = by.into();
+            }
+        }
+    }
+    outcomes
 }
 
 /// #1777: the viewports a replay plays: `None` alone for a flow that names no `viewports` (the
@@ -2059,6 +2114,16 @@ fn combine_replays(mut outcomes: Vec<(&'static str, Outcome)>, planned: usize) -
         );
     }
     let ran = outcomes.len();
+    // #1878: the one viewport that failed while every other one played and passed.
+    let failed: Vec<&str> = outcomes
+        .iter()
+        .filter(|(_, outcome)| !outcome.output.ok)
+        .map(|(name, _)| *name)
+        .collect();
+    let fails_only_on = match failed.as_slice() {
+        [one] if ran == planned => Value::from(*one),
+        _ => Value::Null,
+    };
     let index = outcomes
         .iter()
         .position(|(_, outcome)| !outcome.output.ok)
@@ -2066,6 +2131,7 @@ fn combine_replays(mut outcomes: Vec<(&'static str, Outcome)>, planned: usize) -
     let mut result = outcomes.swap_remove(index).1;
     if let Some(data) = result.output.data.as_mut() {
         data["viewports"] = views.into();
+        data["failsOnlyOn"] = fails_only_on;
         if ran < planned {
             data["viewportsNotRun"] = (planned - ran).into();
         }
@@ -2309,6 +2375,75 @@ mod tests {
         let stopped = combine_replays(vec![("web", failed())], 2);
         assert!(!stopped.output.ok);
         assert_eq!(stopped.output.data.unwrap()["viewportsNotRun"], 1);
+    }
+
+    /// #1878: a web replay that passes leaves no proof on record when the mobile replay fails:
+    /// mobile plays first without recording, web then plays unrecorded too, and the outcome fails
+    /// and names mobile as the one viewport that failed. When every viewport passes, web plays
+    /// last and is the one run that records and heals. Defects named: the false proof (web
+    /// recorded although mobile failed), a non-first viewport recording, or the failing viewport
+    /// unnamed. Cost: none (the worker is a closure).
+    #[test]
+    fn a_failed_mobile_replay_leaves_no_web_proof_and_is_named() {
+        use super::*;
+        let args = JourneyReplayArgs {
+            id: "checkout".to_owned(),
+            project: None,
+            record: crate::args::OptionalRecordArgs {
+                events: Some(PathBuf::from("events")),
+                execution: Some("run".to_owned()),
+                keyring: Some(PathBuf::from("keys")),
+                key_id: Some("k".to_owned()),
+            },
+            allow_origin: Vec::new(),
+            replay_worker: false,
+            viewport: None,
+            heal: true,
+            model: Default::default(),
+            allow_act: Vec::new(),
+        };
+        let views = [Some("web"), Some("mobile")];
+        let play = |mobile_passes: bool| {
+            let mut runs = Vec::new();
+            let outcomes = play_views(&args, &views, |one| {
+                let view = one.viewport.clone().unwrap();
+                runs.push((view.clone(), one.record.events.is_some(), one.heal));
+                let passes = view == "web" || mobile_passes;
+                report(
+                    json!({"paths": [{"name": "main", "outcome": if passes { "passed" } else { "failed" }}]}),
+                    (!passes).then(|| failure("driver.expectation_failed", "/paths/main", 1)),
+                )
+            });
+            (runs, combine_replays(outcomes, views.len()))
+        };
+        let (runs, outcome) = play(false);
+        assert_eq!(
+            runs,
+            [
+                ("mobile".to_owned(), false, false),
+                ("web".to_owned(), false, false)
+            ],
+            "web is not recorded once mobile failed"
+        );
+        assert!(!outcome.output.ok);
+        let data = outcome.output.data.unwrap();
+        assert_eq!(data["failsOnlyOn"], "mobile");
+        assert_eq!(data["proofWithheldBy"], "mobile");
+        assert_eq!(data["viewports"]["web"]["ok"], true);
+
+        let (runs, outcome) = play(true);
+        assert_eq!(
+            runs,
+            [
+                ("mobile".to_owned(), false, false),
+                ("web".to_owned(), true, true)
+            ],
+            "web records and heals, last"
+        );
+        assert!(outcome.output.ok);
+        let data = outcome.output.data.unwrap();
+        assert_eq!(data["failsOnlyOn"], Value::Null);
+        assert!(data.get("proofWithheldBy").is_none());
     }
 
     /// #1722: the binary ships its observer files byte for byte, so it must ship the same bytes

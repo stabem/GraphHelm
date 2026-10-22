@@ -1,5 +1,12 @@
 # Schema Changelog
 
+## journey-flow 1.12.0 - drift names its viewport (#1878)
+
+A `drift` entry may carry `viewport` (`web` or `mobile`): the viewport whose replay saw the drift.
+The replay writes it when the flow names `viewports`; a flow that names none writes no viewport,
+as before. Additive: every 1.11.0 flow stays valid with the same bytes and digest. The catalog
+digest is updated from canonical JSON.
+
 ## journey-flow 1.11.0 - `viewports` a Run proves (#1777)
 
 A flow may declare a top-level `viewports`: a non-empty, unique list of `web` (1280x800) and

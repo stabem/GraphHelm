@@ -204,6 +204,21 @@ interface Envelope<T> {
 
 export class RuntimeError extends Error {}
 
+const listOf = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+
+/** #1899: a tasks reply as the board reads it. A Runtime older than a field (`waiting` came with
+ * #1794) leaves it out; a missing list reads as empty, never as a crash of the whole Studio. */
+export function boardOf(reply: Partial<TasksBoard>): TasksBoard {
+  return {
+    ...reply,
+    now: typeof reply.now === "string" ? reply.now : new Date().toISOString(),
+    tasks: listOf<BoardTask>(reply.tasks),
+    liveness: { ...reply.liveness, lanes: listOf<BoardLaneLiveness>(reply.liveness?.lanes) },
+    stalls: listOf<TasksBoard["stalls"][number]>(reply.stalls),
+    waiting: listOf<LaneWaiting>(reply.waiting),
+  };
+}
+
 export const OWNER = { id: "studio-operator", type: "owner" };
 
 export class Runtime {
@@ -333,7 +348,7 @@ export class Runtime {
 
   /** #1803: the open board of a run (tasks, liveness, stalls and open questions). */
   async board(executionId: string): Promise<TasksBoard> {
-    return this.#request<TasksBoard>("GET", `/v1/executions/${encodeURIComponent(executionId)}/tasks`);
+    return boardOf(await this.#request<Partial<TasksBoard>>("GET", `/v1/executions/${encodeURIComponent(executionId)}/tasks`));
   }
 
   /** #1804: the paths two or more open slices of a run name (#1824). */

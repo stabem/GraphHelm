@@ -11,6 +11,7 @@ import { ProofView } from "./proof/ProofView";
 import { LanesView } from "./lanes/LanesView";
 import { GraphView } from "./views/Views";
 import { RequestsView } from "./graph/RequestsView";
+import { ViewBoundary } from "./views/ViewBoundary";
 
 /** How often the run list is read again: one page of at most 50 rows per poll. */
 const POLL_MS = 5_000;
@@ -156,6 +157,7 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
           onView={(view: View) => go({ ...route, view })}
           onStart={route.run === null && !(composing && route.view === "graph") ? () => { setComposing(true); go({ ...route, view: "graph" }); } : null}
         />
+        <ViewBoundary key={`${route.view}:${route.run ?? ""}`} name={route.view}>
         {route.view === "graph" && (
           <GraphView run={run} runId={route.run} requests={route.run === null ? undefined : <RequestsView runtime={runtime} executionId={route.run} journeys={journeys} />}>
             {composing && route.run === null && (
@@ -173,6 +175,7 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
         )}
         {route.view === "lanes" && <LanesView runtime={runtime} executionId={route.run} journeys={journeys} />}
         {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={route.run} onRan={readJourneys} initial={route.journey ?? null} />}
+        </ViewBoundary>
       </div>
     </div>
   );

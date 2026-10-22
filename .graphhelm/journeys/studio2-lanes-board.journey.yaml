@@ -16,13 +16,13 @@ screens:
     title: An asking agent shows its question
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: region, name: Question}, {role: button, name: Reply}]
+    expect: [{role: region, name: Question, text: "?"}, {role: button, name: Reply}]
     scope: unknown
   - id: lanes
     title: "One card per agent, in its column"
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: tab, name: Lanes}, {role: list, name: Agent board}, {role: group, name: Idle time}, {role: group, name: Last action}]
+    expect: [{role: tab, name: Lanes}, {role: list, name: Agent board}, {role: group, name: Idle time}, {role: group, name: Request, text: "#"}, {role: group, name: Progress}, {role: group, name: Last action}]
     scope: unknown
 edges:
   - id: lanes.asking

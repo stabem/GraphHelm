@@ -16,7 +16,7 @@ screens:
     title: The journey shows as approved
     url: /?session=studio-fixture&run=demo
     state: success
-    expect: [{role: status, name: Approved}]
+    expect: [{role: status, name: Approved}, {role: list, name: Journeys, text: approved}]
     scope: unknown
   - id: ran
     title: A fully run journey offers the decision
@@ -28,7 +28,7 @@ screens:
     title: A rejected journey shows as rejected
     url: /?session=studio-fixture&run=demo
     state: success
-    expect: [{role: status, name: Rejected}]
+    expect: [{role: status, name: Rejected}, {role: list, name: Journeys, text: rejected}]
     scope: unknown
 edges:
   - id: ran.approved

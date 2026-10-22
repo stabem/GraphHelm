@@ -1663,6 +1663,32 @@ class StudioInstallCheck(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "npm ci in apps/studio failed"):
                     rr._resolve_argv(Path(root), studio, ["npx", "vitest", "run"])
 
+    def test_studio_next_installs_and_resolves_in_its_own_folder(self):
+        # #1829: preparation was keyed to apps/studio, so studio-next steps ran without their deps.
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / ".git").write_text("gitdir: elsewhere", encoding="utf-8")
+            app = Path(root) / "apps/studio-next"
+            app.mkdir(parents=True)
+            (app / "package-lock.json").write_text("{}", encoding="utf-8")
+            self.assertTrue(rr._needs_studio_preparation(Path(root), app))
+            with patch.object(rr.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "boom")) as run:
+                with self.assertRaisesRegex(RuntimeError, "npm ci in apps/studio-next failed"):
+                    rr._resolve_argv(Path(root), app, ["npx", "vitest", "run"])
+            self.assertEqual(run.call_args.kwargs["cwd"], app)
+            self.assertEqual(run.call_args.kwargs["creationflags"], rr.NO_WINDOW)
+            (app / "node_modules/vitest").mkdir(parents=True)
+            (app / "node_modules/vitest/vitest.mjs").write_text("", encoding="utf-8")
+            (app / "node_modules/.bin").mkdir()
+            (app / "node_modules/.package-lock.json").write_text("{}", encoding="utf-8")
+            command = rr._resolve_argv(Path(root), app, ["npx", "vitest", "run"])
+            self.assertEqual(command[:2], ["node", str(app / "node_modules/vitest/vitest.mjs")])
+            self.assertTrue(rr._vitest_step({"cwd": "apps/studio-next", "argv": ["npx", "vitest", "run"]}))
+            # Any other folder stays refused.
+            other = Path(root) / "apps/other"
+            other.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "local Studio tool"):
+                rr._resolve_argv(Path(root), other, ["npx", "vitest", "run"])
+
     def test_main_checkout_never_installs(self):
         with tempfile.TemporaryDirectory() as root:
             studio = self._absent(root, linked=False)

@@ -27,11 +27,11 @@ screens:
     expect: [{role: region, name: Graph}, {role: dialog, name: Review, absent: true}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: mobile
-    title: The same overlay at mobile width
+    title: Mobile shows the main run's mobile frame (a PR head capture is web only)
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: slider, name: Now opacity}, {role: region, name: Review frame, text: "390"}]
+    expect: [{role: region, name: Review frame, text: "390"}, {role: button, name: Frame}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: modal
     title: The review modal compares the screens

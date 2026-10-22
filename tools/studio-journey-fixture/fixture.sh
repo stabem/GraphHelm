@@ -236,13 +236,14 @@ if (runtime.protocol !== 'http:' || runtime.hostname !== '127.0.0.1' || !runtime
 const common = { schema: 'graphhelm-task-event-v1', revision: 1, at };
 const journey = [process.env.GRAPHHELM_JOURNEY_FLOW || 'studio2-graph-requests'];
 const records = [
-  ['open-claimed', 'task.claimed', { taskId: 'issue-721-open', issue: 721, lane: 'planner', branch: 'issue-721-open-fixture', journeys: journey, title: 'Observe issue graph and work kanban' }],
-  ['open-planned', 'task.planned', { taskId: 'issue-721-open', lane: 'planner', classes: ['user_visible'], reviews: 1, proof: 'journey', critic: { mode: 'none', passScore: 7, maxRounds: 1 }, summary: 'Fixture plan' }],
-  ['open-pr', 'task.pr_opened', { taskId: 'issue-721-open', pr: 721, lane: 'planner', headSha: '721abcde', journeys: journey, title: 'Observe issue graph and work kanban' }],
   ['merged-claimed', 'task.claimed', { taskId: 'issue-721-merged', issue: 721, lane: 'planner', branch: 'issue-721-merged-fixture', journeys: journey, title: 'Merged fixture row' }],
   ['merged-pr', 'task.pr_opened', { taskId: 'issue-721-merged', pr: 722, lane: 'planner', headSha: '722abcde', journeys: journey, title: 'Merged fixture row' }],
   ['merged-review', 'task.review_verdict', { taskId: 'issue-721-merged', pr: 722, headSha: '722abcde', reviewer: 'planner', verdict: 'APPROVE', commentUrl: 'https://github.com/stabem/GraphHelm/pull/722#review' }],
   ['merged-done', 'task.merged', { taskId: 'issue-721-merged', pr: 722, mergeSha: '722fedcb', closes: [], merger: 'planner' }],
+  // The open slice is recorded last: an issue's Now reads its newest slice that has a PR (#1839).
+  ['open-claimed', 'task.claimed', { taskId: 'issue-721-open', issue: 721, lane: 'planner', branch: 'issue-721-open-fixture', journeys: journey, title: 'Observe issue graph and work kanban' }],
+  ['open-planned', 'task.planned', { taskId: 'issue-721-open', lane: 'planner', classes: ['user_visible'], reviews: 1, proof: 'journey', critic: { mode: 'none', passScore: 7, maxRounds: 1 }, summary: 'Fixture plan' }],
+  ['open-pr', 'task.pr_opened', { taskId: 'issue-721-open', pr: 721, lane: 'planner', headSha: '721abcde', journeys: journey, title: 'Observe issue graph and work kanban' }],
   // #1808: the Graph draws owner requests (#1792); one request linked to the fixture issue.
   ['request', 'task.request_recorded', { taskId: 'request-fixture', requestId: 'fixture', ask: 'Show the work graph for the fixture run', recordedBy: 'planner' }],
   ['request-link', 'task.request_linked', { taskId: 'request-fixture', requestId: 'fixture', issue: 721, linkedBy: 'planner' }],

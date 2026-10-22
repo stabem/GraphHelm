@@ -1,6 +1,8 @@
 import { useState } from "react";
 
 import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
+import { earlierRun } from "./compare";
+import { CompareFrame } from "./CompareFrame";
 import { decisionOf, offersDecision, rejectNote } from "./decision";
 import { journeySteps, lastRunChip, preparingStatus, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
@@ -143,7 +145,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
       </ol>
       {selected !== null && (
         <figure className="step-frame">
-          {frame ? <img src={frame} alt={`Step ${selected.n} captured`} /> : <p>No frame captured for step {selected.n} in this run.</p>}
+          <CompareFrame runtime={runtime} flowId={flow.id} step={selected} steps={steps.length} now={frame} earlier={earlierRun(history, run, selected.screen)} />
           <figcaption><span className="mono">ACTION {selected.n} · DOES</span> {selected.label}</figcaption>
         </figure>
       )}

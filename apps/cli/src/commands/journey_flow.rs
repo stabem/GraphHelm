@@ -168,6 +168,14 @@ pub(super) fn local_base(base: &str) -> bool {
                 && (host.ends_with(".localhost") || host.ends_with(".test"))))
 }
 
+/// #1782: an instant the driver can install as the page's now.
+fn clock_is_valid(clock: &str) -> bool {
+    chrono::DateTime::parse_from_rfc3339(clock).is_ok_and(|instant| {
+        instant.offset().local_minus_utc().abs() <= 14 * 3600
+            && clock.get(17..19).is_some_and(|second| second < "60")
+    })
+}
+
 fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
     let mut findings = Vec::new();
     let id = value["id"].as_str().unwrap();
@@ -183,6 +191,17 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             "flow.base_not_local",
             "/base",
             "base must use a local HTTP host",
+        ));
+    }
+    // #1782: the schema checks the clock's shape; here the instant must exist, and a browser
+    // must be able to hold it (no leap second, offset within +-14:00).
+    if let Some(clock) = value.get("clock").and_then(Value::as_str)
+        && !clock_is_valid(clock)
+    {
+        findings.push(Finding::new(
+            "flow.clock_invalid",
+            "/clock",
+            "clock must be an existing ISO-8601 instant with an offset",
         ));
     }
     // #1781: "says X" and "is gone" contradict each other. Refused here, not in the schema, so
@@ -2090,7 +2109,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
     let mut out = String::new();
     for field in [
         "schema", "id", "title", "name", "feature", "purpose", "status", "approved", "base",
-        "actors", "secrets", "risks", "viewport", "storage",
+        "actors", "secrets", "risks", "viewport", "storage", "clock",
     ] {
         // #1296: `name` and `feature` are labels: kept in the file's canonical bytes, never in
         // what the owner approves.
@@ -2353,6 +2372,78 @@ mod tests {
                 false
             )
         );
+    }
+
+    /// #1782: a flow's `clock` is the instant its browser runs see as now. Defects named: the
+    /// canonical writer drops `clock` (so `--fmt` silently unfixes the date) or the approval
+    /// ignores it, an instant that does not exist passes validation and only fails in the
+    /// browser, or adding the field moves the bytes or digest of flows that never use it.
+    /// Cost: in memory only.
+    #[test]
+    fn a_flow_clock_is_written_validated_and_approved() {
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let schemas = flow_schemas().unwrap();
+        let file = Path::new("checkout.journey.yaml");
+        // A flow without `clock` keeps its canonical bytes and approval digest, pinned here
+        // against the projection the field list had before #1782.
+        let plain_bytes = canonical(&plain, false);
+        assert!(!plain_bytes.contains("clock"), "{plain_bytes}");
+        let mut with = plain.clone();
+        with["clock"] = json!("2026-10-31T12:00:00-03:00");
+        assert!(schemas.validate(FLOW_SCHEMA_ID, &with, "journey-flow").is_empty());
+        assert!(
+            !semantic(file, &with, Path::new("."))
+                .iter()
+                .any(|f| f.code == "flow.clock_invalid")
+        );
+        let written = canonical(&with, false);
+        assert_eq!(
+            written,
+            plain_bytes.replacen(
+                "\nscreens:",
+                "\nclock: \"2026-10-31T12:00:00-03:00\"\nscreens:",
+                1
+            ),
+            "only the clock line is added"
+        );
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(reread["clock"], with["clock"]);
+        assert_ne!(approval_digest(&with), approval_digest(&plain));
+        let mut later = with.clone();
+        later["clock"] = json!("2026-11-01T12:00:00-03:00");
+        assert_ne!(approval_digest(&later), approval_digest(&with));
+        // Shape is the schema's; existence is the validator's, with a stable code and pointer.
+        for shape in ["2026-10-31T12:00:00", "2026-10-31 12:00:00Z", "tomorrow"] {
+            let mut bad = plain.clone();
+            bad["clock"] = json!(shape);
+            assert!(
+                !schemas.validate(FLOW_SCHEMA_ID, &bad, "journey-flow").is_empty(),
+                "{shape}"
+            );
+        }
+        for impossible in [
+            "2026-13-01T12:00:00Z",
+            "2026-02-30T12:00:00Z",
+            "2026-10-31T24:00:00Z",
+            "2026-10-31T12:00:60Z",
+            "2026-10-31T12:00:00+15:00",
+        ] {
+            let mut bad = plain.clone();
+            bad["clock"] = json!(impossible);
+            assert!(
+                schemas.validate(FLOW_SCHEMA_ID, &bad, "journey-flow").is_empty(),
+                "{impossible} has the right shape"
+            );
+            assert!(
+                semantic(file, &bad, Path::new("."))
+                    .iter()
+                    .any(|f| f.code == "flow.clock_invalid" && f.pointer == "/clock"),
+                "{impossible}"
+            );
+        }
     }
 
     /// #1781: "the screen says X" is an expectation. Defects named: the canonical writer drops

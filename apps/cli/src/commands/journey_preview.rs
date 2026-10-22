@@ -24,7 +24,7 @@ use super::journey_live::{
 };
 use super::journey_replay::{
     Driver, Failure, Result, SURVIVABLE, TemporaryOutput, declared_browser, failure, observe,
-    preflight, record, safe_directory, safe_node, walked, with_storage,
+    preflight, record, safe_directory, safe_node, walked, with_declared,
 };
 use crate::args::{JourneyPreviewArgs, JourneyReplayArgs};
 use crate::output::{CommandOutput, Outcome};
@@ -752,9 +752,10 @@ struct Run {
     last: Option<(String, String)>,
     /// The owner clicked "Run it?" for this run: an approved flow's destructive acts are played.
     confirmed: bool,
-    /// #585: the page size and seeded localStorage the flow declares (else the preview's size).
+    /// #585: the page size the flow declares (else the preview's size), and the fields `open` adds
+    /// for it: seeded localStorage and, #1782, the fixed clock.
     viewport: Value,
-    storage: Option<Value>,
+    declared: Option<Value>,
     /// Validation owns a separate result tree and asks the driver for JS coverage per path.
     validation: bool,
     flow_id: String,
@@ -917,11 +918,11 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         last: None,
         confirmed: args.confirm && args.validation_dir.is_none(),
         viewport: Value::Null,
-        storage: None,
+        declared: None,
         validation: args.validation_dir.is_some(),
         flow_id: args.id.clone(),
     };
-    (run.viewport, run.storage) = declared_browser(&flow, json!({"width":WIDTH,"height":HEIGHT}));
+    (run.viewport, run.declared) = declared_browser(&flow, json!({"width":WIDTH,"height":HEIGHT}));
     if run.validation {
         run.state["validationPaths"] = json!({});
         for name in flow["paths"].as_object().unwrap().keys() {
@@ -1290,9 +1291,9 @@ fn play_path(
             base.trim_end_matches('/'),
             screens[first]["url"].as_str().unwrap()
         );
-        let mut request = with_storage(
+        let mut request = with_declared(
             json!({"base":entry,"viewport":run.viewport,"allowOrigins":[],"survive":true}),
-            run.storage.as_ref(),
+            run.declared.as_ref(),
         );
         if run.validation {
             request["coverage"] = true.into();
@@ -2628,7 +2629,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             last: None,
             confirmed: false,
             viewport: Value::Null,
-            storage: None,
+            declared: None,
             validation: false,
             flow_id: "checkout".to_owned(),
         };
@@ -2665,7 +2666,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 last: None,
                 confirmed: false,
                 viewport: Value::Null,
-                storage: None,
+                declared: None,
                 validation: false,
                 flow_id: String::new(),
             };

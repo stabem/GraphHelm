@@ -1936,6 +1936,7 @@ pub(super) async fn tasks(
     State(state): State<ServeState>,
     UrlPath(execution_id): UrlPath<String>,
     RawQuery(query): RawQuery,
+    headers: HeaderMap,
 ) -> Response {
     const COMMAND: &str = "execution.tasks";
     let depth = if query
@@ -1971,6 +1972,11 @@ pub(super) async fn tasks(
             execution::execution_state("the task projection requires a sealed keyring", "/keyring"),
         );
     };
+    // #1851: the lanes' kind and model are the owner's; the auth layer stamps an agent
+    // credential's request with this header, which the agent cannot remove.
+    let agent = headers
+        .get("x-graphhelm-actor-type")
+        .is_some_and(|value| value.as_bytes() == b"agent");
     let events = state.events.clone();
     let Some(result) = off_reactor(move || {
         // #1202/#1220: read with what this process remembers of the run (the memory claim
@@ -1980,6 +1986,13 @@ pub(super) async fn tasks(
         execution::timing::request("executions.tasks", || {
             execution::tasks::with_shared_cache(&key, |cache| {
                 execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
+            })
+            .map(|view| {
+                if agent {
+                    view.without_lane_identity()
+                } else {
+                    view
+                }
             })
             .map(|view| view.filtered(&filter).at_depth(depth, since.as_ref()))
         })

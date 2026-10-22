@@ -5714,6 +5714,121 @@ fn only_the_pr_author_may_heartbeat_a_task_at_the_pr_step() {
     assert_eq!(status, 200, "the PR author is admitted: {admitted}");
 }
 
+/// #1851: each lane records its kind and model on its claim and the tasks view serves them per
+/// lane to the owner, never guessed from the lane's name. Observer: the real `serve` binary over
+/// HTTP. Two lanes claim with different kinds and models; a third claims with none and is served
+/// none; a claim whose kind breaks the rule is refused at the signal door with nothing appended;
+/// an agent credential reads the same view without them (they are the owner's). On the parent
+/// commit the claims carrying `agentKind` are refused, so this fails there.
+#[test]
+fn the_tasks_view_serves_each_lanes_reported_kind_and_model_to_the_owner_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let extra = throwaway_keyring(dir.path());
+    let run = "lane-identity";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 1);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let claim = |lane: &str, issue: u64, kind: Option<&str>, model: Option<&str>| {
+        let mut document = claim_document(lane, issue);
+        if let Some(kind) = kind {
+            document["agentKind"] = serde_json::json!(kind);
+        }
+        if let Some(model) = model {
+            document["agentModel"] = serde_json::json!(model);
+        }
+        task_record(
+            &base,
+            &token,
+            run,
+            lane,
+            "task.claimed",
+            &format!("claim-{lane}-{issue}"),
+            &document,
+        )
+    };
+    for (lane, issue, kind, model) in [
+        ("lane-c", 1, Some("claude"), Some("opus")),
+        ("lane-x", 2, Some("codex"), Some("gpt-5.1-codex")),
+        ("lane-n", 3, None, None),
+    ] {
+        let (status, reply, _) = claim(lane, issue, kind, model);
+        assert_eq!(status, 200, "{lane}: {reply}");
+    }
+    let head = || {
+        get_json(
+            &format!("{base}/v1/executions/{run}/events?after=0&limit=1000"),
+            Some(&token),
+        )["data"]["head"]
+            .clone()
+    };
+    let before = head();
+    let (status, refused, _) = claim("lane-c", 4, Some("Claude!"), None);
+    assert_eq!(status, 400, "a kind outside the rule is refused: {refused}");
+    assert_eq!(head(), before, "a refused claim appends nothing");
+    let identity = |view: &Value, lane: &str| {
+        let row = view["data"]["liveness"]["lanes"]
+            .as_array()
+            .unwrap_or_else(|| panic!("liveness rows: {view}"))
+            .iter()
+            .find(|row| row["lane"] == lane)
+            .unwrap_or_else(|| panic!("{lane} has a liveness row: {view}"))
+            .clone();
+        (
+            row.get("agentKind").cloned(),
+            row.get("agentModel").cloned(),
+        )
+    };
+    let owner = get_json(&format!("{base}/v1/executions/{run}/tasks"), Some(&token));
+    assert_eq!(
+        identity(&owner, "lane-c"),
+        (
+            Some(serde_json::json!("claude")),
+            Some(serde_json::json!("opus"))
+        ),
+        "{owner}"
+    );
+    assert_eq!(
+        identity(&owner, "lane-x"),
+        (
+            Some(serde_json::json!("codex")),
+            Some(serde_json::json!("gpt-5.1-codex"))
+        ),
+        "{owner}"
+    );
+    assert_eq!(identity(&owner, "lane-n"), (None, None), "{owner}");
+    let agent_token = std::fs::read_to_string(dir.path().join("events.agent.token"))
+        .unwrap()
+        .trim()
+        .to_owned();
+    for query in ["", "?full=1"] {
+        let agent = get_json(
+            &format!("{base}/v1/executions/{run}/tasks{query}"),
+            Some(&agent_token),
+        );
+        assert_eq!(agent["ok"], true, "an agent reads the tasks view: {agent}");
+        for lane in ["lane-c", "lane-x", "lane-n"] {
+            assert_eq!(
+                identity(&agent, lane),
+                (None, None),
+                "{lane}{query}: {agent}"
+            );
+        }
+        let text = agent.to_string();
+        assert!(
+            !text.contains("agentKind") && !text.contains("agentModel"),
+            "no record carries them to an agent{query}: {text}"
+        );
+    }
+}
+
 fn lane_signal(base: &str, token: &str, run: &str, lane: &str, signal: Value) -> Value {
     let id = signal["id"].as_str().unwrap().to_owned();
     let (status, reply) = post_json(

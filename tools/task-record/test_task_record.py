@@ -507,6 +507,26 @@ class TaskRecordTest(unittest.TestCase):
         self.assertIn("--lease-seconds", str(refused.exception.code))
         self.assertEqual(len(FakeRuntime.seen), sent)
 
+    # #1851: a claim carries the lane's kind and model when given, nothing when not, and a value
+    # outside the Runtime's rule is refused before anything is sent.
+    def test_a_claim_carries_the_lanes_kind_and_model_and_a_bad_kind_is_refused(self):
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "12", "--branch", "b", "--no-github",
+                                  "--agent-kind", "codex", "--agent-model", "gpt-5.1-codex")
+        self.assertEqual(code, 0, out)
+        doc = json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])
+        self.assertEqual((doc["agentKind"], doc["agentModel"]), ("codex", "gpt-5.1-codex"))
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "13", "--branch", "b", "--no-github")
+        self.assertEqual(code, 0, out)
+        doc = json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])
+        self.assertNotIn("agentKind", doc)
+        self.assertNotIn("agentModel", doc)
+        sent = len(FakeRuntime.seen)
+        with self.assertRaises(SystemExit) as refused:
+            self.run_step("--lane", "lane-a", "claimed", "--issue", "14", "--branch", "b", "--no-github",
+                          "--agent-kind", "Claude")
+        self.assertIn("--agent-kind", str(refused.exception.code))
+        self.assertEqual(len(FakeRuntime.seen), sent)
+
     def test_a_runtime_older_than_leases_still_records_a_default_claim_but_not_a_given_lease(self):
         # #1223: a Runtime built before #1194 refuses `leaseSeconds` (GHCLI003). A claim that carried
         # only the DEFAULT lease is sent once more without it and lands; one whose lease the lane gave

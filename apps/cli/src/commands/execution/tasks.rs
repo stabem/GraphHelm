@@ -250,6 +250,21 @@ impl TasksView {
 }
 
 impl TasksView {
+    /// #1851: the view an agent credential reads: the lanes' reported kind and model are the
+    /// owner's (the Lanes card), so they leave both the liveness rows and the records.
+    #[must_use]
+    pub fn without_lane_identity(mut self) -> Self {
+        for row in &mut self.liveness.lanes {
+            row.agent_kind = None;
+            row.agent_model = None;
+        }
+        for record in &mut self.records {
+            record.agent_kind = None;
+            record.agent_model = None;
+        }
+        self
+    }
+
     /// #1449: keep only the tasks `filter` names, and the leases and stalls of those tasks. The
     /// header fields, records and slices are untouched; an empty filter returns `self` as is.
     pub fn filtered(mut self, filter: &TasksFilter) -> Self {
@@ -350,6 +365,12 @@ pub struct LaneLiveness {
     pub owes_since: Option<PersistedTimestamp>,
     pub silent: bool,
     pub free: bool,
+    /// #1851: the kind and model the lane reported on its newest `task.claimed` that names them;
+    /// absent when it never did (never guessed from the name). Served to owner credentials only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -412,6 +433,8 @@ pub fn lane_liveness(
         silent: owes && quiet.is_none_or(|seconds| seconds >= SILENT_AFTER_SECONDS),
         // #1281: a lane that owes a step is busy with it, never free for new work.
         free: !owes && record_quiet.is_some_and(|seconds| seconds < FREE_AFTER_SECONDS),
+        agent_kind: None,
+        agent_model: None,
     }
 }
 
@@ -902,6 +925,14 @@ pub(crate) fn read_history(
     liveness
         .lanes
         .retain(|row| !fold.retired_lanes.contains(&row.lane));
+    // #1851: each lane's reported kind and model, from its newest claim that names them.
+    let identities = graphhelm_execution::tasks::lane_identities(&records);
+    for row in &mut liveness.lanes {
+        if let Some((kind, model)) = identities.get(&row.lane) {
+            row.agent_kind.clone_from(kind);
+            row.agent_model.clone_from(model);
+        }
+    }
     let stalls = stalled_tasks(&fold.tasks, &now);
     let backlog = backlog(&records, &fold.tasks);
     let waiting = open_questions(history, &fold.retired_lanes, |event, record| {

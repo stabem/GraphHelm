@@ -256,3 +256,13 @@ button { font: inherit; }
 @media (max-width: 720px) {
   .request-row { grid-template-columns: 1fr; }
 }
+
+/* #1802: the Graph review modal. */
+.review-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+.review-modal { width: min(96vw, 1400px); height: min(94vh, 960px); overflow: auto; background: var(--bg); border: 1px solid var(--edge-strong); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.review-head { display: flex; align-items: center; gap: 12px; }
+.review-head strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.review-pickers { display: flex; flex-wrap: wrap; gap: 12px; }
+.review-frame { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.review-frame img { max-width: 100%; height: auto; border: 1px solid var(--edge); }
+.review-url { flex: 1; min-width: 0; overflow-wrap: anywhere; }

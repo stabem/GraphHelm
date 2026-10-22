@@ -1113,6 +1113,10 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/briefing", get(routes::briefing))
         .route("/v1/executions/{id}/journeys", get(routes::journeys))
         .route("/v1/executions/{id}/tasks", get(routes::tasks))
+        .route(
+            "/v1/executions/{id}/lanes/{lane}/activity",
+            get(routes::lane_activity),
+        )
         .route("/v1/journeys", get(routes::project_journeys))
         .route("/v1/keel/plan", post(routes::keel_plan))
         .route("/v1/workspaces", get(routes::workspaces))

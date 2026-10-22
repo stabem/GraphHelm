@@ -117,20 +117,7 @@ impl TasksFilter {
         let mut filter = Self::default();
         for pair in query.split('&') {
             if let Some(raw) = pair.strip_prefix("lane=") {
-                // The MCP door percent-encodes the value (`:` is `%3A`); decode before judging.
-                let lane = &super::super::serve::percent_decode(raw).unwrap_or_default();
-                let valid = !lane.is_empty()
-                    && lane.len() <= 128
-                    && lane
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c));
-                if !valid {
-                    return Err(super::signal_invalid(
-                        "lane must be 1 to 128 characters of [A-Za-z0-9._:-]",
-                        "/lane",
-                    ));
-                }
-                filter.lane = Some(lane.clone());
+                filter.lane = Some(parse_lane(raw)?);
             } else if let Some(issue) = pair.strip_prefix("issue=") {
                 let issue = super::super::serve::percent_decode(issue).unwrap_or_default();
                 filter.issue = Some(
@@ -149,6 +136,81 @@ impl TasksFilter {
                 || task.current_reviewer.as_deref() == Some(lane)
                 || task.assigned_reviewers.iter().any(|name| name == lane)
         }) && self.issue.is_none_or(|issue| task.issue == Some(issue))
+    }
+}
+
+/// A lane named in a query or a path. The MCP door percent-encodes the value (`:` is `%3A`), so
+/// it is decoded before it is judged; outside the bounded id alphabet it is a failure at `/lane`.
+pub fn parse_lane(raw: &str) -> Result<String, Failure> {
+    let lane = super::super::serve::percent_decode(raw).unwrap_or_default();
+    let valid = !lane.is_empty()
+        && lane.len() <= 128
+        && lane
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c));
+    if !valid {
+        return Err(super::signal_invalid(
+            "lane must be 1 to 128 characters of [A-Za-z0-9._:-]",
+            "/lane",
+        ));
+    }
+    Ok(lane)
+}
+
+/// #1793: how many actions the activity log answers when the query names no `limit`, and the
+/// most it ever answers, so one read stays small whatever the run's history holds.
+pub const ACTIVITY_DEFAULT_LIMIT: usize = 10;
+pub const ACTIVITY_MAX_LIMIT: usize = 50;
+
+/// #1793: `GET /v1/executions/{id}/lanes/{lane}/activity`: the lane's last `limit` actions,
+/// newest first (by event sequence). An action is a verified `task.*` record the lane itself
+/// recorded; a heartbeat counts only when it carries a reason (the #1556 rule), since a
+/// reasonless one only renews a lease. The records are the ones `tasks?full=1` already serves.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaneActivity {
+    pub execution_id: String,
+    pub lane: String,
+    pub limit: usize,
+    pub actions: Vec<TaskEventRecord>,
+}
+
+/// `limit=` from a raw query: absent is the default; anything but 1..=max is a failure at `/limit`.
+pub fn parse_activity_limit(query: &str) -> Result<usize, Failure> {
+    let Some(raw) = query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("limit="))
+    else {
+        return Ok(ACTIVITY_DEFAULT_LIMIT);
+    };
+    raw.parse::<usize>()
+        .ok()
+        .filter(|limit| (1..=ACTIVITY_MAX_LIMIT).contains(limit))
+        .ok_or_else(|| super::signal_invalid("limit must be a number from 1 to 50", "/limit"))
+}
+
+impl TasksView {
+    /// #1793: the lane's activity log over this view's records (see [`LaneActivity`]).
+    pub fn lane_activity(&self, lane: &str, limit: usize) -> serde_json::Value {
+        let mut actions: Vec<TaskEventRecord> = self
+            .records
+            .iter()
+            .filter(|record| record.actor_id == lane)
+            .filter(|record| {
+                record.kind != graphhelm_execution::tasks::TaskEventKind::Heartbeat
+                    || record.reason.is_some()
+            })
+            .cloned()
+            .collect();
+        actions.sort_by_key(|record| std::cmp::Reverse(record.sequence));
+        actions.truncate(limit);
+        serde_json::to_value(LaneActivity {
+            execution_id: self.execution_id.clone(),
+            lane: lane.to_owned(),
+            limit,
+            actions,
+        })
+        .expect("an activity log of serializable task records")
     }
 }
 

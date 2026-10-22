@@ -2883,6 +2883,146 @@ fn graphhelm_ends_an_older_open_claim_it_names_and_a_lane_still_releases_only_it
     assert_eq!(leases(), vec![latest], "only the named claim ended");
 }
 
+/// #1793: the Studio's per-lane "last actions" list. The route answers one lane's own task
+/// records newest first, a heartbeat only when it says why, never another lane's records, at most
+/// `limit` of them, and refuses a limit outside 1..=50 at `/limit`. Catches: oldest-first order,
+/// another lane's records leaking in, a reasonless heartbeat counted as an action, and an
+/// unbounded read. Cost: one served Runtime, six POSTs, five GETs.
+#[test]
+fn a_lanes_activity_log_answers_its_last_actions_newest_first_and_bounds_the_count() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-lane-activity";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let lane = |id: &str, actor: &str, kind: &str, document: Value| {
+        let body = serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": actor},
+            "type": kind, "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-21T02:00:00Z"}});
+        let (status, reply) = post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", actor),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &body,
+        );
+        assert_eq!(status, 200, "{id}: {reply}");
+    };
+    let record = |task: &str, revision: u64, lane: &str, fields: Value| {
+        let mut document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": task, "revision": revision, "at": "2026-10-21T02:00:00Z", "lane": lane});
+        for (key, value) in fields.as_object().unwrap() {
+            document[key] = value.clone();
+        }
+        document
+    };
+    let claim = |issue: u64| {
+        serde_json::json!({"issue": issue, "branch": format!("issue-{issue}-work"),
+            "repo": "stabem/GraphHelm"})
+    };
+    lane(
+        "a-claim",
+        "lane-a",
+        "task.claimed",
+        record("issue-1", 1, "lane-a", claim(1)),
+    );
+    lane(
+        "b-claim",
+        "lane-b",
+        "task.claimed",
+        record("issue-2", 1, "lane-b", claim(2)),
+    );
+    // One heartbeat per claim per 300 s: the reasonless one renews a second claim.
+    lane(
+        "a-claim-3",
+        "lane-a",
+        "task.claimed",
+        record("issue-3", 1, "lane-a", claim(3)),
+    );
+    lane(
+        "a-quiet",
+        "lane-a",
+        "task.heartbeat",
+        record("issue-3", 2, "lane-a", serde_json::json!({})),
+    );
+    lane(
+        "a-tests",
+        "lane-a",
+        "task.heartbeat",
+        record(
+            "issue-1",
+            3,
+            "lane-a",
+            serde_json::json!({"reason": "running the tests"}),
+        ),
+    );
+    lane(
+        "a-pr",
+        "lane-a",
+        "task.pr_opened",
+        record(
+            "issue-1",
+            4,
+            "lane-a",
+            serde_json::json!({"pr": 11, "headSha": "abcdef01", "journeys": []}),
+        ),
+    );
+    let activity = |query: &str| {
+        get_json(
+            &format!("{base}/v1/executions/{execution}/lanes/lane-a/activity{query}"),
+            Some(&token),
+        )
+    };
+    let kinds = |reply: &Value| -> Vec<String> {
+        reply["data"]["actions"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{reply}"))
+            .iter()
+            .map(|action| action["kind"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let all = activity("");
+    assert_eq!(all["data"]["lane"], "lane-a", "{all}");
+    assert_eq!(all["data"]["limit"], 10, "the default limit: {all}");
+    assert_eq!(
+        kinds(&all),
+        [
+            "task.pr_opened",
+            "task.heartbeat",
+            "task.claimed",
+            "task.claimed"
+        ],
+        "newest first, lane-a only, the reasonless heartbeat left out: {all}"
+    );
+    assert_eq!(all["data"]["actions"][1]["reason"], "running the tests");
+    assert_eq!(all["data"]["actions"][2]["taskId"], "issue-3", "{all}");
+    let two = activity("?limit=2");
+    assert_eq!(kinds(&two), ["task.pr_opened", "task.heartbeat"], "{two}");
+    for refused in ["?limit=0", "?limit=51", "?limit=many"] {
+        let reply = activity(refused);
+        assert_eq!(reply["ok"], false, "{refused}: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["path"], "/limit",
+            "{refused}: {reply}"
+        );
+    }
+}
+
 /// #1424: the owner (or the orchestrator, which holds the owner token) clears a stopped fleet.
 /// A leaseless slice (a plan with no claim, so no claim sequence a lane release could name) is
 /// released by its slice key; a retired lane's pre-PR, review and merge slices all read orphaned

@@ -1178,14 +1178,7 @@ fn the_runtime_reports_capacity_to_the_owner_without_host_paths() {
     // Nothing of the host: the temp directory, the worktrees, the pids, the ticket names.
     let temp = serde_json::to_string(&dir.path().to_string_lossy()).unwrap();
     let temp = temp.trim_matches('"');
-    for leak in [
-        temp,
-        "worktree",
-        "4242",
-        "4343",
-        ".ticket",
-        "\"root\"",
-    ] {
+    for leak in [temp, "worktree", "4242", "4343", ".ticket", "\"root\""] {
         assert!(
             !reply.body.contains(leak),
             "the reply leaks {leak:?}: {}",

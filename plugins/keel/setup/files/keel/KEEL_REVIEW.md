@@ -34,6 +34,27 @@ expected verdict, you are not blind: say so and do not review.
    `rm -rf`, `Remove-Item -Recurse` or `git worktree remove --force` a tree that may hold a
    junction: they follow `apps/studio/node_modules` into the owner checkout and delete it.
 
+## What the screen says (`keel.semantic`)
+
+For every screen the diff touches, and every screen that shows a value the diff changes, answer
+each line from what you read on the rendered screen, not from what the code intends. Write a line
+you could not observe as unobserved, with what is missing.
+
+1. **Declared unit is the used unit.** A field labelled "unit price", "total" or "per m²" is
+   stored and summed the way its label says; the visible label and the accessible name say the
+   same thing.
+2. **Same value, same text.** The same amount shows the same string, cents included, on every
+   screen, bar label, receipt and message. One formatter, not one per page.
+3. **Visibility follows state.** Name each state the subject can be in and what each screen shows
+   for it: a finished item leaves "upcoming" lists; a record the user entered stays visible in every
+   later state.
+4. **Honest label.** No adjective the data does not carry (with two prices, the dearer one is not
+   "top of the range"); a capped bar still says the real percentage.
+5. **Exact copy at the boundaries.** Relative dates and plurals are read at 0, 1, 2, 6, 7 and 14,
+   under a fixed clock.
+6. **The rule before the failure.** A limit, minimum or required field is said before submit, and
+   the failure names the rule, never a generic "could not save".
+
 ## Verdict
 
 `APPROVE`, `APPROVE-WITH-RISK` (name each risk and what is still unobserved) or `BLOCK` (name the

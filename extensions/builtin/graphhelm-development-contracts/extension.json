@@ -3,7 +3,7 @@
   "kind": "Extension",
   "metadata": {
     "id": "graphhelm-development-contracts",
-    "version": "0.1.14",
+    "version": "0.1.15",
     "publisher": "GraphHelm",
     "source": {
       "repository": "https://github.com/stabem/GraphHelm"
@@ -611,7 +611,7 @@
           "id": "host/claude",
           "kind": "host-adapter",
           "path": ".claude-plugin/plugin.json",
-      "sha256": "sha256:957b66f8566067312473e81c38853fff745c8ce13117f5c8a4f0607333833ba4",
+      "sha256": "sha256:927f5c161f4dcfd64f2ca536b1fe36164693d095a7a224164a668393304625f5",
           "effects": [
             "host.discover"
           ],
@@ -627,7 +627,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-      "sha256": "sha256:4b46a69e429287a089a0d61cb5160110c7cf3e663c127fdc88a64fbe6b4000ce",
+      "sha256": "sha256:b293f0712c3683011e3e390bd07f2826267f63bc386ed02d7a54522ef9f0d6a8",
           "effects": [
             "host.discover"
           ],
@@ -877,7 +877,7 @@
           "id": "skill/keel",
           "kind": "skill",
           "path": "skills/keel/SKILL.md",
-          "sha256": "sha256:a1f1f45807e6e900149ce1b6cd09b68323dbfa2e105408accdb2f003ad4d8ae7",
+          "sha256": "sha256:4aae3e6ddd37d1a3d581f459561eafde7c20e96ec457d871844560f32bf0b26b",
           "effects": [
             "artifact.propose",
             "runtime.connect",

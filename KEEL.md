@@ -65,6 +65,10 @@ and listed as `to build` until its check exists.
 | `keel.cause` | No programming by coincidence | A fix names the root cause, with the evidence, before the change. Trying edits until the tests go green is refused. | a `Cause:` line in the pull request | to build |
 | `keel.scope` | Write surface | A change touches only the paths its card lists. | `graphhelm keel check --card` | blocks |
 | `keel.test.e2e_first` | Proof | Prefer the observer closest to the user-visible promise when it is affordable; see `KEEL_EXEC.md`. | proof kind in the plan record | to build |
+| `keel.semantic` | Correct behaviour for the user | What a screen says is true and agrees with every other screen that shows the same thing; the checklist is in `KEEL_REVIEW.md`. | journey `text` checks (#1781), review | review |
+| `keel.proof.reads_screen` | Proof | A journey over a screen asserts the text and value the user reads, not only that the flow runs; see `KEEL_EXEC.md`. | review | review |
+| `keel.test.intent` | Proof | A test's expected value comes from the intent (issue, copy, user report), never copied from the code's current output. | review | review |
+| `keel.audit.sha` | Proof | An audit, review or live run names the commit it observed; a run during which that commit changed is not evidence. | review | review |
 | `keel.flow.self_report` | Proof | A delivery-flow step that should have run on its own and did not (workaround, stale record, uncaught check, failed tool) gets its own issue at once, after a search for a duplicate; see `KEEL_EXEC.md`. | review | review |
 
 ## Talking to GraphHelm

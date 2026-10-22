@@ -243,6 +243,9 @@ const records = [
   ['merged-pr', 'task.pr_opened', { taskId: 'issue-721-merged', pr: 722, lane: 'planner', headSha: '722abcde', journeys: journey, title: 'Merged fixture row' }],
   ['merged-review', 'task.review_verdict', { taskId: 'issue-721-merged', pr: 722, headSha: '722abcde', reviewer: 'planner', verdict: 'APPROVE', commentUrl: 'https://github.com/stabem/GraphHelm/pull/722#review' }],
   ['merged-done', 'task.merged', { taskId: 'issue-721-merged', pr: 722, mergeSha: '722fedcb', closes: [], merger: 'planner' }],
+  // #1808: the Graph draws owner requests (#1792); one request linked to the fixture issue.
+  ['request', 'task.request_recorded', { taskId: 'request-fixture', requestId: 'fixture', ask: 'Show the work graph for the fixture run', recordedBy: 'planner' }],
+  ['request-link', 'task.request_linked', { taskId: 'request-fixture', requestId: 'fixture', issue: 721, linkedBy: 'planner' }],
 ];
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
 (async () => {

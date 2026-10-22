@@ -10,29 +10,33 @@ base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux, irreversible_effect]
-viewport: {width: 1440, height: 900}
+viewports: [web, mobile]
 screens:
   - id: agent
     title: The agent panel offers its controls
     url: /?session=studio-fixture&run=demo&view=lanes
+    ignoreQuery: [session]
     state: stable
     expect: [{role: button, name: Wake}, {role: button, name: Reassign}, {role: button, name: Stop}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]
   - id: reassigned
     title: Reassign moves the agent's work
     url: /?session=studio-fixture&run=demo&view=lanes
+    ignoreQuery: [session]
     state: success
     expect: [{role: status, name: Work reassigned}, {role: list, name: Agent board, text: reassigned}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]
   - id: stopped
     title: The stopped agent shows as stopped
     url: /?session=studio-fixture&run=demo&view=lanes
+    ignoreQuery: [session]
     state: success
     expect: [{role: status, name: Agent stopped}, {role: list, name: Agent board, text: stopped}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]
   - id: woken
     title: Wake shows on the board
     url: /?session=studio-fixture&run=demo&view=lanes
+    ignoreQuery: [session]
     state: success
     expect: [{role: status, name: Wake sent}, {role: list, name: Agent board, text: woken}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]

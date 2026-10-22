@@ -10,35 +10,40 @@ base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux, accessibility]
-viewport: {width: 1440, height: 900}
+viewports: [web, mobile]
 screens:
   - id: board
     title: A card is in review
     url: /?session=studio-fixture&run=demo
+    ignoreQuery: [session]
     state: stable
     expect: [{role: region, name: Graph}, {role: button, name: Open review}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: closed
     title: Close shuts the modal
     url: /?session=studio-fixture&run=demo
+    ignoreQuery: [session]
     state: stable
     expect: [{role: region, name: Graph}, {role: dialog, name: Review, absent: true}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: mobile
     title: The same overlay at mobile width
     url: /?session=studio-fixture&run=demo
+    ignoreQuery: [session]
     state: stable
     expect: [{role: slider, name: Now opacity}, {role: region, name: Review frame, text: "390"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: modal
     title: The review modal compares the screens
     url: /?session=studio-fixture&run=demo
+    ignoreQuery: [session]
     state: stable
     expect: [{role: dialog, name: Review}, {role: button, name: Frame}, {role: button, name: Side by side}, {role: button, name: Overlay}, {role: button, name: Changes}, {role: button, name: Web}, {role: button, name: Mobile}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: overlay
     title: Overlay shows the opacity slider at web width
     url: /?session=studio-fixture&run=demo
+    ignoreQuery: [session]
     state: stable
     expect: [{role: slider, name: Now opacity}, {role: region, name: Review frame, text: "1280"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]

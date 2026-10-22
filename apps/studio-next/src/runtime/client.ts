@@ -28,6 +28,12 @@ export interface JourneyFlow {
   /** #1835: the last finished run as its runner recorded it. Absent from older Runtimes: unknown,
    * never read as `not_run`. */
   lastRun?: JourneyLastRun;
+  /** The owner's approval block, `null` while none is recorded. */
+  approved?: unknown;
+  /** Whether the Runtime would accept Approve now (#353): no blocking findings, a passing preview. */
+  approvable?: boolean;
+  /** #1588: the owner's latest rejection of this exact content, with its reason. */
+  rejected?: { note?: string } | null;
 }
 
 export interface JourneyScreen { id: string; url: string; title?: string }
@@ -154,6 +160,18 @@ export class Runtime {
     if (!response.ok) throw new RuntimeError(`The Runtime refused the frame (${response.status}).`);
     if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith("image/")) throw new RuntimeError("The Runtime did not return an image for this step.");
     return response.blob();
+  }
+
+  /** Approve: `POST /v1/journey-flows/{id}/approve` (#353), exactly `graphhelm journey approve`.
+   * Owner credential only; a flow with findings or no passing preview is refused. */
+  async approveJourney(flowId: string): Promise<void> {
+    await this.#request("POST", `/v1/journey-flows/${encodeURIComponent(flowId)}/approve`);
+  }
+
+  /** Reject: `POST /v1/journey-flows/{id}/reject` with `{"note"}` (#1588). The Runtime refuses a
+   * blank note; owner credential only. */
+  async rejectJourney(flowId: string, note: string): Promise<void> {
+    await this.#request("POST", `/v1/journey-flows/${encodeURIComponent(flowId)}/reject`, { note });
   }
 
   async lanes(executionId: string): Promise<LaneLiveness[]> {

@@ -40,6 +40,7 @@ edges:
     from: ran
     to: rejected
     acts:
+      - {kind: enter_text, role: textbox, name: Reason for rejecting, text: wrong page}
       - {kind: activate, role: button, name: Reject}
 paths:
   main: [ran.approved]

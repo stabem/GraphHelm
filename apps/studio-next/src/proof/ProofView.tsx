@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
+import { decisionOf, offersDecision, rejectNote } from "./decision";
 import { journeySteps, lastRunChip, preparingStatus, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 
@@ -58,6 +59,7 @@ function JourneysColumn({ journeys, selected, onPick }: { journeys: JourneyFlow[
                       <strong>{flow.name || flow.title || flow.id}</strong>
                       {flow.purpose && <span className="journey-purpose">{flow.purpose}</span>}
                       <span className={`chip ${chip.tone}`}>{chip.text}</span>
+                      {decisionOf(flow) !== "undecided" && <span className={`chip ${decisionOf(flow) === "approved" ? "pass" : "fail"}`}>{decisionOf(flow)}</span>}
                     </button>
                   </li>
                 );
@@ -123,6 +125,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
         )}
       </div>
       {error !== null && <p className="error">{error}</p>}
+      <DecisionBar runtime={runtime} flow={flow} runFinished={run?.state === "ready"} onDecided={onRan} />
       {showLog && (
         <pre role="log" aria-label="Run console" className="run-log">{log.length === 0 ? "Waiting for the Runtime's first line…" : log.join("\n")}</pre>
       )}
@@ -144,6 +147,41 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
           <figcaption><span className="mono">ACTION {selected.n} · DOES</span> {selected.label}</figcaption>
         </figure>
       )}
+    </div>
+  );
+}
+
+/** The owner's Approve and Reject on a run journey. Each act goes to its public route with the
+ * session's owner token; the journeys are read again after it, so the status shown is the
+ * Runtime's, and a refusal is shown as its text. */
+function DecisionBar({ runtime, flow, runFinished, onDecided }: { runtime: Runtime; flow: JourneyFlow; runFinished: boolean; onDecided: () => void }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const decision = decisionOf(flow);
+  const act = (send: () => Promise<void>) => {
+    setBusy(true);
+    setRefusal(null);
+    send().then(() => { setReason(""); onDecided(); }, (cause: unknown) => setRefusal(cause instanceof Error ? cause.message : "The Runtime refused."))
+      .finally(() => setBusy(false));
+  };
+  const reject = () => {
+    const checked = rejectNote(reason);
+    if ("refusal" in checked) { setRefusal(checked.refusal); return; }
+    act(() => runtime.rejectJourney(flow.id, checked.note));
+  };
+  return (
+    <div className="decision-bar">
+      {decision === "approved" && <span role="status" aria-label="Approved" className="chip pass">Approved</span>}
+      {decision === "rejected" && <span role="status" aria-label="Rejected" className="chip fail">Rejected{flow.rejected?.note ? ` · ${flow.rejected.note}` : ""}</span>}
+      {offersDecision(flow, runFinished) && (
+        <>
+          <button type="button" className="b act" disabled={busy} onClick={() => act(() => runtime.approveJourney(flow.id))}>Approve</button>
+          <input aria-label="Reason for rejecting" placeholder="Why reject?" value={reason} disabled={busy} onChange={(event) => setReason(event.target.value)} />
+          <button type="button" className="b ghost" disabled={busy} onClick={reject}>Reject</button>
+        </>
+      )}
+      {refusal !== null && <p className="error">{refusal}</p>}
     </div>
   );
 }

@@ -7,7 +7,8 @@ import { Sidebar, type ProjectEntry } from "./sidebar/Sidebar";
 import { useSummaries } from "./sidebar/use-summaries";
 import { StartRun } from "./start-run/StartRun";
 import { Topbar } from "./topbar/Topbar";
-import { GraphView, LanesView, ProofView } from "./views/Views";
+import { ProofView } from "./proof/ProofView";
+import { GraphView, LanesView } from "./views/Views";
 
 /** How often the run list is read again: one page of at most 50 rows per poll. */
 const POLL_MS = 5_000;
@@ -111,10 +112,14 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
     return () => clearInterval(timer);
   }, [readRuns]);
 
+  const readJourneys = useCallback(() => {
+    runtime.journeys().then((flows) => { setJourneys(flows); setJourneysError(null); }, (error: unknown) => setJourneysError(error instanceof Error ? error.message : "The journeys could not be read."));
+  }, [runtime]);
+
   useEffect(() => {
     if (route.view !== "proof" || journeys !== null) return;
-    runtime.journeys().then(setJourneys, (error: unknown) => setJourneysError(error instanceof Error ? error.message : "The journeys could not be read."));
-  }, [route.view, runtime, journeys]);
+    readJourneys();
+  }, [route.view, journeys, readJourneys]);
 
   const project = session.project ?? "this project";
   const run = runs.find((row) => row.executionId === route.run) ?? null;
@@ -164,7 +169,7 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
           </GraphView>
         )}
         {route.view === "lanes" && <LanesView />}
-        {route.view === "proof" && <ProofView journeys={journeys} error={journeysError} />}
+        {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={route.run} onRan={readJourneys} />}
       </div>
     </div>
   );

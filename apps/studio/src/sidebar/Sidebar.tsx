@@ -59,7 +59,8 @@ function AddFolder({ onAdd }: { onAdd: (path: string, ticket: string) => Promise
       }}
     >
       <input aria-label="Project folder" className="mono" placeholder="absolute folder path" value={path} onChange={(event) => setPath(event.target.value)} autoFocus />
-      <input aria-label="Ticket from graphhelm studio open --project" type="password" autoComplete="off" className="mono" placeholder="ticket" value={ticket} onChange={(event) => setTicket(event.target.value)} />
+      {/* #1808: a masked text field, not type=password, so it keeps the textbox role an agent or a screen reader addresses it by. */}
+      <input aria-label="Ticket from graphhelm studio open --project" type="text" autoComplete="off" spellCheck={false} className="mono masked" placeholder="ticket" value={ticket} onChange={(event) => setTicket(event.target.value)} />
       <button type="submit" disabled={busy}>Add</button>
       <button type="button" onClick={() => { setOpen(false); setError(null); }}>Cancel</button>
       {error !== null && <span role="alert" className="add-folder-error">{error}</span>}

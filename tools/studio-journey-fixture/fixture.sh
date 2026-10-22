@@ -428,9 +428,26 @@ NODE
     (umask 077; "$bin" --json studio open --project "$second" --port "$sport" --no-browser > "$dir/.graphhelm/second-open.json")
     grep -q '"ok":true' "$dir/.graphhelm/second-open.json" \
       || { echo "fixture: the second project was not registered (see $dir/.graphhelm/second-open.json)" >&2; exit 1; }
+    # The owner adds proj-two in the sidebar with its folder and the ticket `studio open` minted,
+    # as the real Studio does. Every viewport of a replay opens a fresh browser that spends a
+    # ticket, so a FIXTURE-ONLY keeper puts the same ticket back once it is spent. Both values go
+    # to the private secrets file the replay reads; neither is printed.
+    ticket=$(cat "$rt2/events.studio-ticket")
+    [ -n "$ticket" ] || { echo 'fixture: studio open left no ticket' >&2; exit 1; }
+    folder2=$(cd "$second" && pwd -W 2> /dev/null || pwd)
+    (umask 077; printf 'GRAPHHELM_SECRET_proj_two_folder=%s\nGRAPHHELM_SECRET_proj_two_ticket=%s\n' "$folder2" "$ticket" > "$dir/.graphhelm/secrets-second.env")
+    (umask 077; printf '%s' "$ticket" > "$dir/.graphhelm/second.ticket")
+    nohup node -e '
+      const fs = require("fs"); const [file, saved] = process.argv.slice(1);
+      const keep = fs.readFileSync(saved, "utf8");
+      setInterval(() => { let now = ""; try { now = fs.readFileSync(file, "utf8").trim(); } catch {} if (now === "") fs.writeFileSync(file, keep, { mode: 0o600 }); }, 250);
+      setTimeout(() => process.exit(0), 3600000);
+    ' "$rt2/events.studio-ticket" "$dir/.graphhelm/second.ticket" > /dev/null 2>&1 &
+    echo "ticket-keeper $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
   fi
   # R6: the launcher reads this private data file after up; never echo the minted token.
-  (umask 077; printf 'GRAPHHELM_SECRET_STUDIO_TOKEN=%s\n' "$(head -1 "$rt/events.token")" > "$dir/.graphhelm/secrets.env")
+  (umask 077; printf 'GRAPHHELM_SECRET_STUDIO_TOKEN=%s\n' "$(head -1 "$rt/events.token")" > "$dir/.graphhelm/secrets.env"
+    if [ -f "$dir/.graphhelm/secrets-second.env" ]; then cat "$dir/.graphhelm/secrets-second.env" >> "$dir/.graphhelm/secrets.env"; fi)
   chmod 600 "$dir/.graphhelm/secrets.env"
   echo "fixture up: runtime http://127.0.0.1:$rport, studio http://127.0.0.1:$sport/?session=studio-fixture"
   ;;

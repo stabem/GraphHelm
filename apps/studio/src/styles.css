@@ -326,3 +326,6 @@ button { font: inherit; }
 .review-frame { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .review-frame img { max-width: 100%; height: auto; border: 1px solid var(--edge); }
 .review-url { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+/* #1808: the add-folder ticket is masked without type=password, so it stays a textbox. */
+.masked { -webkit-text-security: disc; }

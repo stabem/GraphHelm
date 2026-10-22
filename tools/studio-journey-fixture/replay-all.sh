@@ -12,8 +12,10 @@ bin=${GRAPHHELM_BIN:-graphhelm}
 dir=${1:-}; out=${2:-}; shift 2 || { sed -n 2,9p "$0"; exit 2; }
 [ -n "$dir" ] && [ -n "$out" ] || { sed -n 2,9p "$0"; exit 2; }
 dir=$(cd "$dir" && pwd); mkdir -p "$out"
-export GRAPHHELM_EVENTS_KEY="$(cat "$dir/.graphhelm/serve.key")"
-export GRAPHHELM_SECRET_STUDIO_TOKEN="$(head -1 "$dir/.graphhelm/events.token")"
+# The fixture's Runtime keeps its key and token under <fixture dir>/project/.graphhelm; the
+# private secrets file holds the token and, for studio2-two-projects, proj-two's folder and ticket.
+export GRAPHHELM_EVENTS_KEY="$(cat "$dir/project/.graphhelm/serve.key")"
+set -a; . "$dir/.graphhelm/secrets.env"; set +a
 ids=("$@")
 # Default order respects the fixture's state: flows that only read, then flows that record,
 # then flows that change the run's state. A flow
@@ -27,8 +29,8 @@ if [ ${#ids[@]} -eq 0 ]; then
 fi
 green=0; red=0
 for id in "${ids[@]}"; do
-  "$bin" --json journey replay "$id" --project "$repo" --events "$dir/.graphhelm/events" --execution demo \
-    --keyring "$dir/.graphhelm/keyring" --key-id studio > "$out/$id.json" 2> "$out/$id.err"
+  "$bin" --json journey replay "$id" --project "$repo" --events "$dir/project/.graphhelm/events" --execution demo \
+    --keyring "$dir/project/.graphhelm/keyring" --key-id studio > "$out/$id.json" 2> "$out/$id.err"
   rc=$?
   summary=$(node -e '
     const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));

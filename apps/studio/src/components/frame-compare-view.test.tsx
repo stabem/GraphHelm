@@ -43,6 +43,15 @@ describe("FrameCompareView (#1776)", () => {
     expect(screen.getByRole("slider", { name: "Now opacity" })).toHaveValue("50");
   });
 
+  it("takes focus when it opens, so Escape and its controls work from the keyboard", async () => {
+    const { onBack } = mount();
+    expect(screen.getByRole("group", { name: "Compare Before and Now" })).toHaveFocus();
+    await userEvent.tab();
+    expect(screen.getByRole("button", { name: "Side by side" })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
   it("opens in the mode it was asked for", () => {
     mount({ initialMode: "changes" });
     expect(screen.getByRole("button", { name: "Changes" })).toHaveAttribute("aria-pressed", "true");
@@ -58,7 +67,7 @@ describe("FrameCompareView (#1776)", () => {
     const { onBack } = mount();
     await userEvent.click(screen.getByRole("button", { name: "Back to frame" }));
     expect(onBack).toHaveBeenCalledTimes(1);
-    fireEvent.keyDown(screen.getByRole("group", { name: "Compare Before and Now" }), { key: "Escape" });
+    await userEvent.keyboard("{Escape}");
     expect(onBack).toHaveBeenCalledTimes(2);
   });
 });

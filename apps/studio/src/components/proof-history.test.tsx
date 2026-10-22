@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { fastUserEvent } from "../test/user-event";
 import { ProofRun } from "./proof-run";
 import { diffPixels, pastVerdict } from "./proof-history";
 import type { JourneyRunSource } from "./journey-flows";
@@ -80,11 +81,12 @@ describe("Proof history (#history)", () => {
     await act(async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); });
     const browser = screen.getByRole("region", { name: "Emulated browser" });
     expect(browser.querySelector(".fcv")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Compare Before and Now in the frame" }));
+    const user = fastUserEvent();
+    await user.click(screen.getByRole("button", { name: "Compare Before and Now in the frame" }));
     const view = screen.getByRole("group", { name: "Compare Before and Now" });
     expect(browser).toContainElement(view);
     expect(screen.getByRole("button", { name: "Overlay" })).toHaveAttribute("aria-pressed", "true");
-    fireEvent.keyDown(view, { key: "Escape" });
+    await user.keyboard("{Escape}");
     expect(screen.queryByRole("group", { name: "Compare Before and Now" })).toBeNull();
     expect(screen.getByRole("img", { name: "Frame 2: Cart" })).toBeInTheDocument();
   });

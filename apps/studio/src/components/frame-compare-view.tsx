@@ -7,7 +7,7 @@
  * figure; offered only when that diff exists). Escape or "Back to frame" returns to the frame.
  */
 import "./frame-compare-view.css";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type CompareMode = "side" | "overlay" | "changes";
 
@@ -32,9 +32,20 @@ export function FrameCompareView({ beforeUrl, nowUrl, diffUrl, beforeLabel, init
   const [mode, setMode] = useState<CompareMode>(initialMode === "changes" && !diffUrl ? "overlay" : initialMode);
   const [opacity, setOpacity] = useState(50);
   const modes = MODES.filter((m) => m.mode !== "changes" || diffUrl !== null);
+  const root = useRef<HTMLDivElement>(null);
+  const back = useRef(onBack);
+  back.current = onBack;
+  // #1776 review: Escape must close the compare wherever focus is (the side-panel button that
+  // opened it keeps focus after a click), so it listens on the document while open, and focus
+  // moves into the compare so its controls are the next stops for the keyboard.
+  useEffect(() => {
+    root.current?.focus();
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") back.current(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   return (
-    <div className="fcv" role="group" aria-label="Compare Before and Now" tabIndex={-1}
-      onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onBack(); } }}>
+    <div className="fcv" role="group" aria-label="Compare Before and Now" tabIndex={-1} ref={root}>
       <div className="fcv-bar">
         <div className="fcv-modes" role="group" aria-label="Compare mode">
           {modes.map((m) => (

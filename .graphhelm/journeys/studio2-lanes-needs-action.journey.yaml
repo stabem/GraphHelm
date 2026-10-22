@@ -14,37 +14,37 @@ viewport: {width: 1440, height: 900}
 screens:
   - id: answered
     title: Answer acts on its item
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=lanes
     state: success
-    expect: [{role: status, name: Last action, text: Answered}]
+    expect: [{role: status, name: Last action, text: Answering}]
     scope: unknown
   - id: archived
     title: Archive acts on its item
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=lanes
     state: success
     expect: [{role: status, name: Last action, text: Archived}]
     scope: unknown
   - id: assigned
     title: Assign acts on its item
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=lanes
     state: success
     expect: [{role: status, name: Last action, text: Assigned}]
     scope: unknown
   - id: list
     title: Needs action lists items oldest first
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=lanes
     state: stable
-    expect: [{role: region, name: Needs action}, {role: list, name: Needs action items}, {role: listitem, name: Needs action item 1, text: oldest}]
+    expect: [{role: region, name: Needs action, text: oldest first}, {role: list, name: Needs action items}, {role: listitem, name: Needs action item 1}]
     scope: unknown
   - id: merged
     title: Merge acts on its item
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=lanes
     state: success
-    expect: [{role: status, name: Last action, text: Merged}]
+    expect: [{role: status, name: Last action, text: Merge requested}]
     scope: unknown
   - id: reassigned
     title: Reassign acts on its item
-    url: /?session=studio-fixture&run=demo
+    url: /?session=studio-fixture&run=demo&view=lanes
     state: success
     expect: [{role: status, name: Last action, text: Reassigned}]
     scope: unknown

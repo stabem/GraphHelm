@@ -40,3 +40,11 @@ export function controlBody(control: LaneControl, reason: string, now: Date, rea
   }
   return control === "stop" ? { reason, retired: true, at } : { reason, at };
 }
+
+/** A new idempotency key: `randomUUID` where the browser has it, else 128 random bits. */
+export function newId(prefix: string): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `${prefix}-${uuid}`;
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  return `${prefix}-${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}

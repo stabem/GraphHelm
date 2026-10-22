@@ -24,7 +24,8 @@ export interface TasksBoard {
   now: string;
   tasks: BoardTask[];
   liveness: { lanes: BoardLaneLiveness[] };
-  stalls: { key: string; owner: string | null }[];
+  /** #1235: open PR slices idle past the stall threshold, with who owes the next step. */
+  stalls: { key: string; owner: string | null; pr?: number; reason?: "block_unanswered" | "awaiting_verdict" | "awaiting_merge"; idleSince?: string }[];
   waiting: LaneWaiting[];
 }
 
@@ -67,6 +68,29 @@ export interface LaneWaiting {
   signalId: string;
   sequence: number;
   laneTotal: number;
+}
+
+/** #1824: `GET /v1/executions/{id}/collisions`, every path two or more open slices name. */
+export interface FileCollisions {
+  collisions: { path: string; holders: CollisionHolder[] }[];
+  truncated: boolean;
+}
+
+export interface CollisionHolder {
+  key: string;
+  taskId: string;
+  issue?: number;
+  pr?: number;
+  lane?: string;
+  branch?: string;
+  step: string;
+}
+
+/** #1864: `GET /v1/capacity` (apps/cli/src/commands/capacity.rs), owner only. */
+export interface Capacity {
+  providers: { configured: boolean; reason?: string; list: { provider: string; routes: number; enabledRoutes: number; quotaLeft: number | null; quotaLeftReason?: string }[] };
+  buildSlots: { configured: number; unreadable: number; busy: number; queued: number };
+  memory: { availableBytes: number | null; totalBytes: number | null; reason: string | null };
 }
 
 /** #1793: one verified `task.*` record a lane recorded, from its activity log. */
@@ -308,6 +332,17 @@ export class Runtime {
   /** #1803: the open board of a run (tasks, liveness, stalls and open questions). */
   async board(executionId: string): Promise<TasksBoard> {
     return this.#request<TasksBoard>("GET", `/v1/executions/${encodeURIComponent(executionId)}/tasks`);
+  }
+
+  /** #1804: the paths two or more open slices of a run name (#1824). */
+  async collisions(executionId: string): Promise<FileCollisions> {
+    const view = await this.#request<Partial<FileCollisions>>("GET", `/v1/executions/${encodeURIComponent(executionId)}/collisions`);
+    return { collisions: Array.isArray(view.collisions) ? view.collisions : [], truncated: view.truncated === true };
+  }
+
+  /** #1804: what the providers, build slots and memory have left (#1864, owner credentials). */
+  async capacity(): Promise<Capacity> {
+    return this.#request<Capacity>("GET", "/v1/capacity");
   }
 
   /** #1801: the owner's requests with their issues, PR slices and status (#1792 R1,

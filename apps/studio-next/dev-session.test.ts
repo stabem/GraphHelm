@@ -10,6 +10,10 @@ import { devSession, displayFolder, stableKey } from "./dev-session";
 type Handler = (request: PassThrough & { method: string; url: string; headers: Record<string, string> }, response: FakeResponse, next: () => void) => void;
 interface FakeResponse { statusCode: number; body: string; setHeader: () => void; end: (body?: string) => void; done: Promise<void> }
 
+function ticketFor(folder: string, ticket: string) {
+  writeFileSync(join(folder, ".graphhelm", "events.studio-ticket"), ticket);
+}
+
 function project(root: string, name: string, token: string): string {
   const folder = join(root, name);
   mkdirSync(join(folder, ".graphhelm"), { recursive: true });
@@ -57,20 +61,54 @@ describe("dev server add-folder (#1833)", () => {
     return { status: response.statusCode, body: JSON.parse(response.body) as Record<string, unknown> };
   }
 
-  it("adds a folder once for the owner, and never logs or echoes it", async () => {
+  it("adds a folder once for the owner with its ticket, and never logs or echoes it", async () => {
     const second = project(root, "second", "second-token");
+    ticketFor(second, "second-ticket");
     const owner = { "x-graphhelm-studio-key": stableKey("first-token") };
-    const first = await call("/__studio/add", "POST", owner, { path: second });
-    const again = await call("/__studio/add", "POST", owner, { path: second });
+    const first = await call("/__studio/add", "POST", owner, { path: second, ticket: "second-ticket" });
     expect(first.status).toBe(200);
+    ticketFor(second, "second-ticket-2");
+    const again = await call("/__studio/add", "POST", owner, { path: second, ticket: "second-ticket-2" });
     expect(again.body.projectId).toBe(first.body.projectId);
     expect(first.body.sessionKey).toBe(stableKey("second-token"));
     const identity = await call("/__studio/identity", "GET", {});
     expect((identity.body.projectIds as string[]).filter((id) => id === first.body.projectId)).toHaveLength(1);
-    const missing = await call("/__studio/add", "POST", owner, { path: join(root, "nowhere") });
+    const missing = await call("/__studio/add", "POST", owner, { path: join(root, "nowhere"), ticket: "x" });
     expect(missing).toEqual({ status: 422, body: { ok: false, reason: "not_a_project" } });
-    expect(logged.join("\n")).not.toContain("second");
-    expect(logged.join("\n")).not.toContain("nowhere");
+    expect(logged.join(" ")).not.toContain("second");
+    expect(logged.join(" ")).not.toContain("nowhere");
+  });
+
+  it("refuses the owner's key alone for another project: its own ticket is the proof (#1840)", async () => {
+    const second = project(root, "second", "second-token");
+    ticketFor(second, "second-ticket");
+    const owner = { "x-graphhelm-studio-key": stableKey("first-token") };
+    const refused = { status: 404, body: { ok: false } };
+    expect(await call("/__studio/add", "POST", owner, { path: second })).toEqual(refused);
+    expect(await call("/__studio/add", "POST", owner, { path: second, ticket: "" })).toEqual(refused);
+    expect(await call("/__studio/add", "POST", owner, { path: second, ticket: "wrong-ticket" })).toEqual(refused);
+    expect(await call("/__studio/add", "POST", owner, { path: second, ticket: 7 })).toEqual(refused);
+    expect((await call("/__studio/identity", "GET", {})).body.projectIds).toHaveLength(1);
+    const added = await call("/__studio/add", "POST", owner, { path: second, ticket: "second-ticket" });
+    expect(added.status).toBe(200);
+    expect(added.body.sessionKey).toBe(stableKey("second-token"));
+    expect(added.body.projectId).toMatch(/^[0-9a-f]{64}$/);
+    expect(await call("/__studio/add", "POST", owner, { path: second, ticket: "second-ticket" })).toEqual(refused);
+    expect(logged.join(" ")).not.toContain("second-ticket");
+  });
+
+  it("keeps the ticket when the project's Runtime is not running (#1840)", async () => {
+    const second = project(root, "second", "second-token");
+    ticketFor(second, "second-ticket");
+    const lifecycle = join(second, ".graphhelm", "events.runtime-lifecycle.json");
+    writeFileSync(lifecycle, JSON.stringify({ state: "stopped", address: "127.0.0.1:1" }));
+    const owner = { "x-graphhelm-studio-key": stableKey("first-token") };
+    expect(await call("/__studio/add", "POST", owner, { path: second, ticket: "second-ticket" })).toEqual({ status: 409, body: { ok: false, reason: "runtime_not_running" } });
+    expect((await call("/__studio/identity", "GET", {})).body.projectIds).toHaveLength(1);
+    writeFileSync(lifecycle, JSON.stringify({ state: "running", address: "127.0.0.1:1" }));
+    const added = await call("/__studio/add", "POST", owner, { path: second, ticket: "second-ticket" });
+    expect(added.status).toBe(200);
+    expect(added.body.sessionKey).toBe(stableKey("second-token"));
   });
 
   it("refuses a caller without an owner key, before reading the folder", async () => {

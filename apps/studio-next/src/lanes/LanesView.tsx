@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 
 import { OWNER, type JourneyFlow, type LaneAction, type Runtime, type TasksBoard } from "../runtime/client";
 import { controlBody, draftFor, messageBody, type Draft, type LaneControl } from "./drafts";
-import { agents, blocks, COLUMNS, idleText, idleTone, OWNER_ADDRESS, type Agent, type Column } from "./board";
+import { agents, blocks, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
 /** How often the board is read again: one tasks read, plus one activity read per lane whose last
  * record moved since the previous read. */
@@ -181,8 +181,9 @@ function Card({ agent, selected, last, onPick }: { agent: Agent; selected: boole
   const task = agent.task;
   const tone = idleTone(agent.idleMinutes);
   const asking = agent.questions[0];
+  const aged = stepAged(agent.stepMinutes);
   return (
-    <li className={`agent-card${selected ? " selected" : ""}${asking ? " asking" : ""}`}>
+    <li className={`agent-card${selected ? " selected" : ""}${asking ? " asking" : ""}${aged ? " aged" : ""}`}>
       <button type="button" className="b agent-name" aria-pressed={selected} onClick={() => onPick(agent.lane)}>
         <span className={`agent-dot ${asking ? "asks" : tone === "late" ? "quiet" : "on"}`} />
         <strong>{agent.lane}</strong>
@@ -191,6 +192,9 @@ function Card({ agent, selected, last, onPick }: { agent: Agent; selected: boole
         <span role="group" aria-label="Agent kind" className="mono agent-kind">{[agent.kind, agent.model].filter((part) => part !== null).join(" · ")}</span>
       )}
       <span role="group" aria-label="Idle time" className={`mono idle ${tone}`}>{idleText(agent.idleMinutes)}</span>
+      {task !== null && agent.stepMinutes !== null && (
+        <span role="group" aria-label="Time in step" className={`mono step-age${aged ? " aged" : ""}`}>{task.step} {idleText(agent.stepMinutes)}</span>
+      )}
       <span role="group" aria-label="Request" className="request">
         {task === null ? "no task" : <><span className="mono">#{task.issue ?? "—"}</span> {task.prTitle ?? task.title ?? task.key}{task.pr !== null && <span className="mono"> · PR #{task.pr}</span>}</>}
       </span>

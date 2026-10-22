@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { BoardTask, LaneWaiting, TasksBoard } from "../runtime/client";
-import { agents, blocks, column, idleText, idleTone } from "./board";
+import { agents, blocks, column, idleText, idleTone, stepAged } from "./board";
 
 const task = (key: string, lane: string, step: BoardTask["step"], extra: Partial<BoardTask> = {}): BoardTask => ({
   key, issue: 7, pr: null, lane, currentReviewer: null, step, blockedBy: null, title: "Work", prTitle: null, journeys: [], lastSequence: 1, ...extra,
@@ -52,6 +52,25 @@ describe("lanes board", () => {
       ["lane-b", "silent", "b#1", 105, 0],
       ["lane-q", "blocked", null, null, 5],
       ["lane-r", "review", "b#1", null, 0],
+    ]);
+  });
+
+  it("ages each card from the record that moved its slice into its step, red from one hour", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [
+        task("a#1", "lane-a", "review", { clock: { since: "2026-10-22T10:00:00Z" } }),
+        task("b#1", "lane-b", "implement", { clock: { since: "2026-10-22T11:01:00Z" } }),
+        task("c#1", "lane-c", "implement", { clock: { since: null } }),
+      ],
+      liveness: { lanes: [] },
+      stalls: [],
+      waiting: [],
+    };
+    expect(agents(board).map((agent) => [agent.lane, agent.stepMinutes, stepAged(agent.stepMinutes)])).toEqual([
+      ["lane-a", 120, true],
+      ["lane-b", 59, false],
+      ["lane-c", null, false],
     ]);
   });
 });

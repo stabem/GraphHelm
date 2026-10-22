@@ -302,6 +302,8 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | a PR closed without a merge (the Stop reconciler records it as the lane; by hand only to repair) | `task.closed` | `pr`, `reason` (`superseded` or `abandoned`), `by` (the superseding PR, or the PR itself when abandoned) |
 | grade the design, once per round, when the plan says `critic: design` | `task.critic_verdict` | `round`, `score`, `passScore`, `maxRounds`, `verdict`, `designRef`, `lane`, `reasons` |
 | refresh the Lanes Backlog (the coordinator; #1469): the open `current-wave` issues no open PR closes, at most 25; `taskId` is `backlog` and the newest record replaces the earlier ones | `task.queued` | `issues` (each `issue`, `title`, `openedAt`), `repo` |
+| record an owner request (#1792): the ask in the owner's words; `taskId` is `request-<requestId>`, and a later record with the same `requestId` replaces `ask` and `title` | `task.request_recorded` | `requestId`, `ask` (1-2000 characters), optional `title`, `recordedBy` (the recorder). Opens no slice; `GET /v1/executions/{id}/requests` serves it |
+| link an issue opened for a request; refused unless the request was recorded | `task.request_linked` | `requestId`, `issue`, `linkedBy` (the recorder). Counted once per issue; the requests route joins it with the issue's PR slices |
 
 `taskId` is `issue-<N>` for the whole life of the task. An issue worked in several PRs is one
 task with one slice per PR: record `task.claimed` with the new slice's own branch before its

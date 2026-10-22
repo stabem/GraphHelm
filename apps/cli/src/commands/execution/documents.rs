@@ -184,6 +184,8 @@ pub(crate) fn validate_task_event(
         | "task.critic_verdict" => Some("lane"),
         "task.review_verdict" | "task.review_activity" => Some("reviewer"),
         "task.merged" => Some("merger"),
+        "task.request_recorded" => Some("recordedBy"),
+        "task.request_linked" => Some("linkedBy"),
         _ => None,
     };
     if let Some(field) = identity
@@ -542,6 +544,26 @@ pub(crate) fn validate_task_event(
                 }),
             &["repo", "issues"],
         ),
+        // #1792: an owner request and the issues opened for it; neither opens a slice.
+        "task.request_recorded" => (
+            document["requestId"]
+                .as_str()
+                .is_some_and(|id| OpaqueId::parse(id).is_ok())
+                && document["ask"]
+                    .as_str()
+                    .is_some_and(|ask| !ask.trim().is_empty() && ask.chars().count() <= 2000)
+                && words()
+                && is_actor("recordedBy"),
+            &["requestId", "ask", "title", "recordedBy"],
+        ),
+        "task.request_linked" => (
+            document["requestId"]
+                .as_str()
+                .is_some_and(|id| OpaqueId::parse(id).is_ok())
+                && count("issue")
+                && is_actor("linkedBy"),
+            &["requestId", "issue", "linkedBy"],
+        ),
         _ => (false, &[]),
     };
     let known = document.as_object().is_some_and(|object| {
@@ -564,6 +586,12 @@ pub(crate) fn validate_task_event(
         }
         if kind == "task.heartbeat" {
             validate_heartbeat(&document, actor_id, history, evidence, chrono::Utc::now())?;
+        }
+        if kind == "task.request_linked" {
+            validate_request_known(&document, history, evidence)?;
+        }
+        if kind == "task.request_recorded" {
+            validate_request_supersede(&document, actor_id, history, evidence)?;
         }
         if kind == "task.released" {
             let claim_sequence = document["claimSequence"].as_u64().expect("shape checked");
@@ -779,6 +807,87 @@ fn validate_claim_holder(
                 pointer,
             ));
         }
+    }
+    Ok(())
+}
+
+/// #1792: a link names a request some earlier `task.request_recorded` recorded, read from the
+/// same shared fold the tasks route serves, so admission and the requests route agree.
+fn validate_request_known(
+    document: &serde_json::Value,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+) -> Result<(), Failure> {
+    let pointer = "/signal/description/requestId";
+    let request_id = document["requestId"].as_str().unwrap_or_default();
+    let view = task_view(history, evidence, "request link", pointer)?;
+    if view.records.iter().any(|record| {
+        record.kind == graphhelm_execution::tasks::TaskEventKind::RequestRecorded
+            && record.request_id.as_deref() == Some(request_id)
+    }) {
+        return Ok(());
+    }
+    Err(super::signal_invalid(
+        &format!(
+            "request {request_id} was never recorded; record it with task.request_recorded first"
+        ),
+        pointer,
+    ))
+}
+
+/// #1792 review: a request is superseded only by its first recorder with a higher revision; a
+/// record from anyone else, or one that does not raise the revision, is refused so the ask the
+/// owner gave cannot be rewritten while `recordedBy` still names them.
+fn validate_request_supersede(
+    document: &serde_json::Value,
+    actor_id: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+) -> Result<(), Failure> {
+    let request_id = document["requestId"].as_str().unwrap_or_default();
+    let any_task_record = history.iter().any(|event| {
+        matches!(&event.kind, EventKind::SignalRecorded(recorded) if recorded.kind == "task.request_recorded")
+    });
+    if !any_task_record {
+        return Ok(());
+    }
+    let view = task_view(
+        history,
+        evidence,
+        "request record",
+        "/signal/description/requestId",
+    )?;
+    let current = graphhelm_execution::requests::requests(&view.records, &view.tasks)
+        .into_iter()
+        .find(|request| request.request_id == request_id);
+    let Some(current) = current else {
+        return Ok(());
+    };
+    if current.recorded_by != actor_id {
+        return Err(super::signal_invalid(
+            &format!(
+                "request {request_id} was recorded by {}; only its recorder may supersede it",
+                current.recorded_by
+            ),
+            "/signal/description/recordedBy",
+        ));
+    }
+    if document["revision"].as_u64().unwrap_or(0) <= current.revision {
+        return Err(super::signal_invalid(
+            &format!(
+                "request {request_id} is at revision {}; a superseding record needs a higher revision",
+                current.revision
+            ),
+            "/signal/description/revision",
+        ));
     }
     Ok(())
 }

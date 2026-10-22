@@ -2042,6 +2042,54 @@ pub(super) async fn lane_activity(
     }
 }
 
+/// `GET /v1/executions/{id}/requests` (#1792, Studio v2 R1): every owner request recorded on the
+/// run (`task.request_recorded`), the issues linked to it (`task.request_linked`), each issue's PR
+/// slices and steps from the task fold, and one status (`open`, `in_progress`, `delivered`). The
+/// same cached read and access as `/tasks`; the fold is pure, so the Studio never folds raw events.
+pub(super) async fn requests(
+    State(state): State<ServeState>,
+    UrlPath(execution_id): UrlPath<String>,
+) -> Response {
+    const COMMAND: &str = "execution.requests";
+    let Some(keyring) = state.sealing.clone() else {
+        return respond_failure(
+            COMMAND,
+            execution::execution_state(
+                "the request projection requires a sealed keyring",
+                "/keyring",
+            ),
+        );
+    };
+    let events = state.events.clone();
+    let Some(result) = off_reactor(move || {
+        let budget = crate::commands::tasks_read_budget();
+        let key = execution::tasks::cache_key(&events, &execution_id);
+        execution::timing::request("executions.requests", || {
+            execution::tasks::with_shared_cache(&key, |cache| {
+                execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
+            })
+            .map(|view| {
+                serde_json::json!({
+                    "executionId": view.execution_id,
+                    "headSequence": view.head_sequence,
+                    "requests": graphhelm_execution::requests::requests(&view.records, &view.tasks),
+                })
+            })
+        })
+    })
+    .await
+    else {
+        return respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "the requests task failed").output,
+        );
+    };
+    match result {
+        Ok(value) => respond(StatusCode::OK, Outcome::success(COMMAND, value).output),
+        Err(failure) => respond_failure(COMMAND, failure),
+    }
+}
+
 /// `POST /v1/keel/plan` (#382 phase B): exactly `graphhelm keel plan` (without recording) over
 /// the Runtime's `--project`; the body names the task, its paths and promise, never a directory.
 /// Owner credentials only (`agent_route_allowed` admits no `/v1/keel`).

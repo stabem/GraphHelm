@@ -5957,6 +5957,59 @@ fn a_recorded_request_lists_its_linked_issues_their_prs_and_its_status() {
     assert_eq!(first["recordedBy"], lead);
     assert_eq!(first["status"], "open");
 
+    // #1792 review: no other recorder may rewrite the ask, and its recorder must raise the revision.
+    let (status, reply, _) = record(
+        "rec-lane",
+        "lane-a",
+        "task.request_recorded",
+        &request_document(
+            "lane-a",
+            "task.request_recorded",
+            "one-header",
+            serde_json::json!({"ask": "rewritten by a lane", "revision": 2}),
+        ),
+    );
+    assert_ne!(status, 200, "another recorder is refused: {reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["path"], "/signal/description/recordedBy",
+        "{reply}"
+    );
+    let (status, reply, _) = record(
+        "rec-same",
+        lead,
+        "task.request_recorded",
+        &request_document(
+            lead,
+            "task.request_recorded",
+            "one-header",
+            serde_json::json!({"ask": "same revision again"}),
+        ),
+    );
+    assert_ne!(
+        status, 200,
+        "a superseding record must raise the revision: {reply}"
+    );
+    assert_eq!(
+        reply["diagnostics"][0]["path"], "/signal/description/revision",
+        "{reply}"
+    );
+    let (status, reply, _) = record(
+        "rec-2",
+        lead,
+        "task.request_recorded",
+        &request_document(
+            lead,
+            "task.request_recorded",
+            "one-header",
+            serde_json::json!({"ask": "Make the Studio show one header, with Start a team run in it", "revision": 2}),
+        ),
+    );
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        requests()["data"]["requests"][0]["ask"],
+        "Make the Studio show one header, with Start a team run in it"
+    );
+
     for (id, issue) in [
         ("link-1", 1770_u64),
         ("link-1-again", 1770),

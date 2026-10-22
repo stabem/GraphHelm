@@ -590,6 +590,9 @@ pub(crate) fn validate_task_event(
         if kind == "task.request_linked" {
             validate_request_known(&document, history, evidence)?;
         }
+        if kind == "task.request_recorded" {
+            validate_request_supersede(&document, actor_id, history, evidence)?;
+        }
         if kind == "task.released" {
             let claim_sequence = document["claimSequence"].as_u64().expect("shape checked");
             let lane = document["lane"].as_str().expect("shape checked");
@@ -834,6 +837,59 @@ fn validate_request_known(
         ),
         pointer,
     ))
+}
+
+/// #1792 review: a request is superseded only by its first recorder with a higher revision; a
+/// record from anyone else, or one that does not raise the revision, is refused so the ask the
+/// owner gave cannot be rewritten while `recordedBy` still names them.
+fn validate_request_supersede(
+    document: &serde_json::Value,
+    actor_id: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+) -> Result<(), Failure> {
+    let request_id = document["requestId"].as_str().unwrap_or_default();
+    let any_task_record = history.iter().any(|event| {
+        matches!(&event.kind, EventKind::SignalRecorded(recorded) if recorded.kind == "task.request_recorded")
+    });
+    if !any_task_record {
+        return Ok(());
+    }
+    let view = task_view(
+        history,
+        evidence,
+        "request record",
+        "/signal/description/requestId",
+    )?;
+    let current = graphhelm_execution::requests::requests(&view.records, &view.tasks)
+        .into_iter()
+        .find(|request| request.request_id == request_id);
+    let Some(current) = current else {
+        return Ok(());
+    };
+    if current.recorded_by != actor_id {
+        return Err(super::signal_invalid(
+            &format!(
+                "request {request_id} was recorded by {}; only its recorder may supersede it",
+                current.recorded_by
+            ),
+            "/signal/description/recordedBy",
+        ));
+    }
+    if document["revision"].as_u64().unwrap_or(0) <= current.revision {
+        return Err(super::signal_invalid(
+            &format!(
+                "request {request_id} is at revision {}; a superseding record needs a higher revision",
+                current.revision
+            ),
+            "/signal/description/revision",
+        ));
+    }
+    Ok(())
 }
 
 /// The tasks route's fold over `history`, read through the process's shared record cache, so

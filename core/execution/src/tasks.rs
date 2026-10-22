@@ -695,6 +695,9 @@ pub fn parse_task_event(
             record.request_id = Some(task_identity(field("requestId"))?);
             record.ask = Some(ask.to_owned());
             record.title = title;
+            // #1792: a later record supersedes ask and title only from the same recorder with a
+            // higher revision; the fold and the Runtime's admission compare it.
+            record.revision = Some(count(field("revision"))?);
         }
         TaskEventKind::RequestLinked => {
             if !document.keys().all(|key| {

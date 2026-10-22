@@ -49,6 +49,8 @@ pub struct RequestView {
     pub ask: String,
     pub title: Option<String>,
     pub recorded_by: String,
+    /// The revision of the record whose `ask` and `title` are shown.
+    pub revision: u64,
     /// The sequence of the first record of this request, so readers can order requests.
     pub sequence: u64,
     pub status: RequestStatus,
@@ -79,17 +81,24 @@ pub fn requests(records: &[TaskEventRecord], tasks: &[TaskState]) -> Vec<Request
         match record.kind {
             TaskEventKind::RequestRecorded => {
                 let ask = record.ask.clone().unwrap_or_default();
+                let revision = record.revision.unwrap_or(1);
                 views
                     .entry(request_id)
                     .and_modify(|view| {
-                        view.ask.clone_from(&ask);
-                        view.title.clone_from(&record.title);
+                        // Only the first recorder supersedes, and only with a higher revision; any
+                        // other record for this request leaves the ask as recorded.
+                        if view.recorded_by == record.actor_id && revision > view.revision {
+                            view.ask.clone_from(&ask);
+                            view.title.clone_from(&record.title);
+                            view.revision = revision;
+                        }
                     })
                     .or_insert_with(|| RequestView {
                         request_id: request_id.to_owned(),
                         ask: ask.clone(),
                         title: record.title.clone(),
                         recorded_by: record.actor_id.clone(),
+                        revision,
                         sequence: record.sequence,
                         status: RequestStatus::Open,
                         issues: Vec::new(),
@@ -177,12 +186,22 @@ mod tests {
     }
 
     fn recorded(sequence: u64, id: &str, ask: &str) -> TaskEventRecord {
+        recorded_by(sequence, "owner", 1, id, ask)
+    }
+
+    fn recorded_by(
+        sequence: u64,
+        actor: &str,
+        revision: u64,
+        id: &str,
+        ask: &str,
+    ) -> TaskEventRecord {
         record(
             "task.request_recorded",
-            "owner",
+            actor,
             sequence,
             &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": format!("request-{id}"),
-                "revision": 1, "at": "2026-10-22T00:00:00Z", "requestId": id, "ask": ask, "recordedBy": "owner"}),
+                "revision": revision, "at": "2026-10-22T00:00:00Z", "requestId": id, "ask": ask, "recordedBy": actor}),
         )
     }
 
@@ -211,7 +230,13 @@ mod tests {
             linked(2, "r1", 1770),
             linked(3, "r1", 1770),
             linked(4, "r1", 1771),
-            recorded(5, "r1", "One header, and Start a team run in it"),
+            recorded_by(
+                5,
+                "owner",
+                2,
+                "r1",
+                "One header, and Start a team run in it",
+            ),
             linked(6, "ghost", 9),
         ];
         // Real slices from the task fold: issue 1770 merged, issue 1771 open in review.
@@ -283,6 +308,31 @@ mod tests {
         assert_eq!(
             requests(&records, &work(true))[0].status,
             RequestStatus::Delivered
+        );
+    }
+
+    /// #1792 review: only the first recorder supersedes an ask, and only with a higher revision.
+    /// Defect named: any lane's later record rewrote the owner's ask while `recordedBy` still
+    /// named the owner.
+    #[test]
+    fn only_the_first_recorder_with_a_higher_revision_supersedes_the_ask() {
+        let records = [
+            recorded_by(1, "owner", 1, "r1", "The owner's words"),
+            recorded_by(2, "lane-a", 9, "r1", "rewritten by a lane"),
+            recorded_by(3, "owner", 1, "r1", "same revision again"),
+        ];
+        let view = &requests(&records, &[])[0];
+        assert_eq!(
+            (view.ask.as_str(), view.recorded_by.as_str(), view.revision),
+            ("The owner's words", "owner", 1)
+        );
+        let records = [
+            recorded_by(1, "owner", 1, "r1", "The owner's words"),
+            recorded_by(4, "owner", 2, "r1", "The owner's corrected words"),
+        ];
+        assert_eq!(
+            requests(&records, &[])[0].ask,
+            "The owner's corrected words"
         );
     }
 

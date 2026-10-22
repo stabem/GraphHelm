@@ -16,8 +16,14 @@ const SNAPSHOT = 32768, SNAPSHOT_DISCOVER = 6144;
 // The supervisor gives each request 30 s (Rust OP_BUDGET). A screen wait that used the whole
 // TIMEOUT raced that deadline and surfaced as replay.timeout instead of expectation_failed (#398).
 const SCREEN_WAIT = TIMEOUT - 5000;
+// #1777: the one mobile profile a Run proves, pinned here and nowhere else: no device list is read
+// and nothing is fetched. A request names it only as `device: "mobile"`, with its 390x844 size.
+const MOBILE = Object.freeze({
+  width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 3,
+  userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
+});
 const fields = {
-  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast', 'storage', 'coverage', 'clock'], snapshot: ['expect','discover'],
+  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast', 'storage', 'coverage', 'clock', 'device'], snapshot: ['expect','discover'],
   show: ['caption', 'role', 'name'],
   act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
   capture: ['path', 'maskSecrets'], coverage: [], close: [],
@@ -90,6 +96,8 @@ function validate(r) {
     url(r.base,true); for (const origin of r.allowOrigins) url(origin,false,true);
     // #585: localStorage the flow declares for the base origin, seeded once when the browser opens.
     if (Object.hasOwn(r,'storage') && (!Array.isArray(r.storage) || r.storage.length > 16 || !r.storage.every(e => exactKeys(e,['key','value']) && string(e.key,256) && typeof e.value === 'string' && e.value.length <= 1024))) fail('driver.protocol_invalid');
+    // #1777: `device` is one closed value; its size must be the pinned mobile size.
+    if (Object.hasOwn(r,'device') && (r.device !== 'mobile' || r.viewport.width !== MOBILE.width || r.viewport.height !== MOBILE.height || r.headed === true)) fail('driver.protocol_invalid');
     // #1782: the instant the page sees as now, an ISO-8601 date-time with an explicit offset.
     if (Object.hasOwn(r,'clock') && (typeof r.clock !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/.test(r.clock) || !Number.isFinite(Date.parse(r.clock)))) fail('driver.protocol_invalid');
   } else if (r.op === 'snapshot') {
@@ -377,7 +385,8 @@ async function run(r) {
       // #585: declared storage is the context's starting state, so it survives every reload of the
       // run and the app's own writes replace it.
       const storageState=r.storage?.length ? {cookies:[],origins:[{origin:baseOrigin,localStorage:r.storage.map(e=>({name:e.key,value:e.value}))}]} : undefined;
-      context=await browser.newContext({viewport:window ? null : r.viewport,serviceWorkers:'block',acceptDownloads:false,storageState});
+      const device=r.device === 'mobile' ? {isMobile:MOBILE.isMobile,hasTouch:MOBILE.hasTouch,deviceScaleFactor:MOBILE.deviceScaleFactor,userAgent:MOBILE.userAgent} : {};
+      context=await browser.newContext({viewport:window ? null : r.viewport,serviceWorkers:'block',acceptDownloads:false,storageState,...device});
       context.setDefaultTimeout(TIMEOUT); context.setDefaultNavigationTimeout(TIMEOUT);
       if (typeof context.routeWebSocket !== 'function') fail('driver.observer_missing');
       await context.route('**/*',async route => {

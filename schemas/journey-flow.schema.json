@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/journey-flow.schema.json",
-  "x-graphhelm-schema-version": "1.10.0",
+  "x-graphhelm-schema-version": "1.11.0",
   "title": "GraphHelm Journey Flow",
   "type": "object",
   "properties": {
@@ -116,6 +116,14 @@
         "height"
       ],
       "additionalProperties": false
+    },
+    "viewports": {
+      "description": "The viewports every Run of this flow proves (#1777): `web` is 1280x800, `mobile` is 390x844 with touch and a mobile user agent. Absent with no `viewport`: both. A flow that keeps only some names them here; a flow with a fixed `viewport` runs at that size alone and may not also name `viewports`.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": { "enum": ["web", "mobile"] }
     },
     "clock": {
       "description": "The instant every browser run of this flow sees as now (#1782): an ISO-8601 date and time with an explicit offset, e.g. 2026-10-31T12:00:00-03:00. The page's clock starts there and runs normally, so relative dates such as 'tomorrow' are reproducible. Absent: the real time.",

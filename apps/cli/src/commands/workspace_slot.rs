@@ -158,6 +158,12 @@ fn read_grants(admission: &Path) -> Result<Vec<Grant>, String> {
         .ok_or_else(|| "the build admission ledger is malformed".to_owned())
 }
 
+/// #1796: the jobs the admission ledger has granted, as recorded (a run that died without
+/// releasing still counts until the next admission reaps it).
+pub(crate) fn granted_jobs(admission: &Path) -> Result<u32, String> {
+    Ok(read_grants(admission)?.iter().map(|grant| grant.jobs).sum())
+}
+
 fn write_grants(admission: &Path, grants: &[Grant]) -> Result<(), String> {
     let text: String = grants
         .iter()

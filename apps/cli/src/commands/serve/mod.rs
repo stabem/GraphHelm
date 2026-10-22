@@ -1136,6 +1136,7 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/workspaces", get(routes::workspaces))
         .route("/v1/workspaces/sweep", post(routes::sweep_workspaces))
         .route("/v1/workspaces/slots", get(routes::slot_queues))
+        .route("/v1/capacity", get(routes::capacity))
         .route("/v1/journey-flows", get(routes::journey_flows))
         .route(
             "/v1/journey-flows/{id}/approve",

@@ -466,20 +466,23 @@ fn flows_serve_each_journeys_last_recorded_run_and_not_run_when_none() {
     assert_eq!(
         flow(&cli, "checkout")["lastRun"],
         json!({"status":"passed","ranAt":"2026-10-17T10:00:09+00:00","kind":"replay",
-            "reason":null,"failingStep":null,"flowChanged":false}),
+            "reason":null,"failingStep":null,"flowChanged":false,
+            // #1777: a run recorded before viewports proved web only.
+            "viewports":{"web":"passed","mobile":"not_run"},"failsOnlyOn":null}),
         "{cli}"
     );
     assert_eq!(
         flow(&cli, "basket")["lastRun"],
         json!({"status":"failed","ranAt":"2026-10-17T11:00:07+00:00","kind":"replay",
             "reason":null,"failingStep":{"kind":"edge","id":"pay.submit","result":"fail",
-                "reason":"act_failed"},"flowChanged":true}),
+                "reason":"act_failed","viewport":null},"flowChanged":true,
+            "viewports":{"web":"failed","mobile":"not_run"},"failsOnlyOn":null}),
         "{cli}"
     );
     assert_eq!(
         flow(&cli, "broken")["lastRun"],
         json!({"status":"not_run","ranAt":null,"kind":null,"reason":null,"failingStep":null,
-            "flowChanged":null}),
+            "flowChanged":null,"viewports":{"web":"not_run","mobile":"not_run"},"failsOnlyOn":null}),
         "{cli}"
     );
 

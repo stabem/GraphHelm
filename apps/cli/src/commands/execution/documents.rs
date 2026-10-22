@@ -300,6 +300,17 @@ pub(crate) fn validate_task_event(
                 // #1193: the lease, 60 s to a day; absent means the fold's default (1800 s).
                 && document.get("leaseSeconds").is_none_or(|value| {
                     value.as_u64().is_some_and(|n| (300..=86400).contains(&n))
+                })
+                // #1851: the lane's own kind and model, the fold's rule.
+                && document.get("agentKind").is_none_or(|value| {
+                    value
+                        .as_str()
+                        .is_some_and(graphhelm_execution::tasks::is_agent_kind)
+                })
+                && document.get("agentModel").is_none_or(|value| {
+                    value
+                        .as_str()
+                        .is_some_and(graphhelm_execution::tasks::is_agent_model)
                 }),
             &[
                 "issue",
@@ -313,6 +324,8 @@ pub(crate) fn validate_task_event(
                 "journeys",
                 "assignedBy",
                 "leaseSeconds",
+                "agentKind",
+                "agentModel",
             ],
         ),
         "task.released" if key_release => (

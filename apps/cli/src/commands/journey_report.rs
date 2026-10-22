@@ -34,7 +34,7 @@ pub(crate) fn run(args: &JourneyReportArgs) -> Outcome {
         );
     }
     let (page, frames) = render(&flow, &kept, &|screen| {
-        super::journey_preview::screen_frame(&project, &args.id, screen).map(|frame| frame.0)
+        super::journey_preview::screen_frame(&project, &args.id, screen, None).map(|frame| frame.0)
     });
     if super::atomic::atomic_write(&args.html, page.as_bytes()).is_err() {
         return refuse("report.write_failed", "the report file cannot be written");

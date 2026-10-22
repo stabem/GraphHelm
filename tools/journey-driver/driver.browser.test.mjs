@@ -275,6 +275,21 @@ test('a declared clock is the page now from the first load and timers still run'
   assert.equal(s.ok,true,JSON.stringify(s).slice(0,600));
 });
 
+// #1777: `device: "mobile"` opens the page as the pinned phone: 390 wide, touch, a mobile user agent;
+// without it the same page is a desktop. Catches the device ignored, or only the size applied.
+test('the mobile device opens a 390-wide touch page with a mobile user agent',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const c=await client(t);
+  const r=await c.send('open',{base:f.base+'/device',viewport:{width:390,height:844},allowOrigins:[],device:'mobile'});
+  assert.equal(r.ok,true,JSON.stringify(r));
+  const s=await c.send('snapshot',{expect:[{role:'heading',name:'Width 390'},{role:'heading',name:'Touch true'},{role:'heading',name:'Mobile true'}]});
+  assert.equal(s.ok,true,JSON.stringify(s).slice(0,600));
+  const d=await client(t);
+  await open(d,f.base+'/device');
+  const w=await d.send('snapshot',{expect:[{role:'heading',name:'Width 1280'},{role:'heading',name:'Touch false'},{role:'heading',name:'Mobile false'}]});
+  assert.equal(w.ok,true,JSON.stringify(w).slice(0,600));
+});
+
 // Coverage is an explicit observer: the initial page calls one named function while another stays
 // untouched. This catches a missing start-before-navigation,
 // an accidental zero-success artifact, or loss of function ranges/counts in serialization.

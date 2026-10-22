@@ -193,6 +193,15 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             "base must use a local HTTP host",
         ));
     }
+    // #1777: a fixed `viewport` is one size, run alone; naming `viewports` beside it would leave
+    // the Run unable to say which size it proved.
+    if value.get("viewport").is_some() && value.get("viewports").is_some() {
+        findings.push(Finding::new(
+            "flow.viewport_and_viewports",
+            "/viewports",
+            "a flow declares either a fixed viewport or the viewports it proves, not both",
+        ));
+    }
     // #1782: the schema checks the clock's shape; here the instant must exist, and a browser
     // must be able to hold it (no leap second, offset within +-14:00).
     if let Some(clock) = value.get("clock").and_then(Value::as_str)
@@ -2111,8 +2120,22 @@ fn inline(value: &Value, fields: &[&str]) -> String {
 fn canonical(value: &Value, approval_projection: bool) -> String {
     let mut out = String::new();
     for field in [
-        "schema", "id", "title", "name", "feature", "purpose", "status", "approved", "base",
-        "actors", "secrets", "risks", "viewport", "storage", "clock",
+        "schema",
+        "id",
+        "title",
+        "name",
+        "feature",
+        "purpose",
+        "status",
+        "approved",
+        "base",
+        "actors",
+        "secrets",
+        "risks",
+        "viewport",
+        "viewports",
+        "storage",
+        "clock",
     ] {
         // #1296: `name` and `feature` are labels: kept in the file's canonical bytes, never in
         // what the owner approves.
@@ -2374,6 +2397,78 @@ mod tests {
                 &serde_yaml_ng::from_str(&canonical(&plain, false)).unwrap(),
                 false
             )
+        );
+    }
+
+    /// #1777: a flow names the viewports its Run proves. Defects named: the writer drops
+    /// `viewports` or the approval ignores it, a fixed `viewport` beside it is accepted (the Run
+    /// could not say which size it proved), or adding the field moves the bytes or digest of flows
+    /// that never use it. Cost: in memory only.
+    #[test]
+    fn a_flow_viewports_list_is_written_approved_and_exclusive_with_a_fixed_viewport() {
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let schemas = flow_schemas().unwrap();
+        let file = Path::new("checkout.journey.yaml");
+        assert_eq!(
+            approval_digest(&plain),
+            "sha256:5054a765f2c89d119d54c233a2d8ea00354559708fe5919d8b4130b889ff7935",
+            "a flow without viewports keeps the digest origin/main computes"
+        );
+        let mut web = plain.clone();
+        web["viewports"] = json!(["web"]);
+        assert!(
+            schemas
+                .validate(FLOW_SCHEMA_ID, &web, "journey-flow")
+                .is_empty()
+        );
+        assert!(
+            !semantic(file, &web, Path::new("."))
+                .iter()
+                .any(|f| f.code == "flow.viewport_and_viewports"),
+            "web alone is a valid opt-out"
+        );
+        let written = canonical(&web, false);
+        assert!(
+            written.contains(
+                "
+viewports: [web]
+"
+            ),
+            "{written}"
+        );
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(reread["viewports"], web["viewports"]);
+        assert_ne!(approval_digest(&web), approval_digest(&plain));
+        for shape in [
+            json!([]),
+            json!(["tablet"]),
+            json!(["web", "web"]),
+            json!("web"),
+        ] {
+            let mut bad = plain.clone();
+            bad["viewports"] = shape.clone();
+            assert!(
+                !schemas
+                    .validate(FLOW_SCHEMA_ID, &bad, "journey-flow")
+                    .is_empty(),
+                "{shape}"
+            );
+        }
+        let mut both = web.clone();
+        both["viewport"] = json!({"width": 390, "height": 844});
+        assert!(
+            schemas
+                .validate(FLOW_SCHEMA_ID, &both, "journey-flow")
+                .is_empty(),
+            "the schema stays additive"
+        );
+        assert!(
+            semantic(file, &both, Path::new("."))
+                .iter()
+                .any(|f| f.code == "flow.viewport_and_viewports" && f.pointer == "/viewports")
         );
     }
 

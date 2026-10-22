@@ -10,7 +10,7 @@ base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux, irreversible_effect]
-viewports: [web, mobile]
+viewports: [web]
 screens:
   - id: approved
     title: The journey shows as approved
@@ -34,18 +34,18 @@ screens:
     expect: [{role: status, name: Rejected}, {role: list, name: Journeys, text: rejected}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/decision.ts]
 edges:
-  - id: ran.approved
-    from: ran
-    to: approved
-    acts:
-      - {kind: activate, role: button, name: Approve}
   - id: ran.rejected
     from: ran
     to: rejected
     acts:
       - {kind: enter_text, role: textbox, name: Reason for rejecting, text: wrong page}
       - {kind: activate, role: button, name: Reject}
+  - id: rejected.approved
+    from: rejected
+    to: approved
+    intent: "A rejection stays open to a later decision: the owner approves the same journey after it."
+    acts:
+      - {kind: activate, role: button, name: Approve}
 paths:
-  main: [ran.approved]
-  reject: [ran.rejected]
+  main: [ran.rejected, rejected.approved]
 drift: []

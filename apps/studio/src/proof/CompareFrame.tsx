@@ -147,7 +147,6 @@ function useChanges(before: string | null, now: string | null): { url: string | 
     setState({ url: null, message: null, sentence: null });
     if (before === null || now === null) return;
     let live = true;
-    let url: string | null = null;
     Promise.all([decode(before), decode(now)]).then(([a, b]) => {
       if (!live) return;
       const diff = diffPixels(a, b);
@@ -156,13 +155,11 @@ function useChanges(before: string | null, now: string | null): { url: string | 
       canvas.width = diff.width;
       canvas.height = diff.height;
       canvas.getContext("2d")?.putImageData(new ImageData(diff.data, diff.width, diff.height), 0, 0);
-      canvas.toBlob((blob) => {
-        if (!live || blob === null) return;
-        url = URL.createObjectURL(blob);
-        setState({ url, message: null, sentence: changedSentence(diff.changed, diff.percent) });
-      }, "image/png");
+      // #1808: synchronous, so the picture never waits on a toBlob callback a hidden or headless
+      // page may hold back (the mobile switch stayed on "Comparing the two frames…").
+      setState({ url: canvas.toDataURL("image/png"), message: null, sentence: changedSentence(diff.changed, diff.percent) });
     }, (cause: unknown) => { if (live) setState({ url: null, message: cause instanceof Error ? cause.message : "A frame could not be decoded.", sentence: null }); });
-    return () => { live = false; if (url !== null) URL.revokeObjectURL(url); };
+    return () => { live = false; };
   }, [before, now]);
   return state;
 }

@@ -153,7 +153,7 @@ screens:
     title: The health answer read again
     url: /health
     state: success
-    expect: [{role: status, name: "200"}, {role: json, name: ok=true}]
+    expect: [{role: status, name: "200"}, {role: json, name: ok=true}, {role: json, name: command=serve.health}]
     scope: unknown
   - id: start
     title: The Runtime answers its health check

@@ -291,6 +291,71 @@ pub struct TaskEventRecord {
     /// #1792: the owner's ask, from `task.request_recorded`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask: Option<String>,
+    /// #1851: what kind of agent the claiming lane is (`claude`, `codex`), as it reported it on
+    /// `task.claimed`; absent means unknown. Never guessed from the lane's name. Never
+    /// serialized: every door that serves records (the full tasks view, a lane's activity,
+    /// requests, status) would otherwise hand it to agent credentials. The one projection that
+    /// serves it is the tasks route's liveness rows, which strip it for agents.
+    #[serde(default, skip_serializing)]
+    pub agent_kind: Option<String>,
+    /// #1851: the model the claiming lane runs on (`opus`, `sonnet`, `fast`), as reported; never
+    /// serialized, as `agent_kind`.
+    #[serde(default, skip_serializing)]
+    pub agent_model: Option<String>,
+}
+
+/// #1851: `^[a-z][a-z0-9-]{0,31}$`, the `agentKind` a lane reports on `task.claimed`.
+#[must_use]
+pub fn is_agent_kind(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.first().is_some_and(u8::is_ascii_lowercase)
+        && bytes.len() <= 32
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+}
+
+/// #1851: `^[a-z0-9][a-z0-9._-]{0,63}$`, the `agentModel` a lane reports on `task.claimed`.
+#[must_use]
+pub fn is_agent_model(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes
+        .first()
+        .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && bytes.len() <= 64
+        && bytes.iter().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+        })
+}
+
+/// #1851: each lane's newest reported `agentKind` and `agentModel`, each field from the newest
+/// `task.claimed` that carries it (records in sequence order). A lane that never reported one
+/// has no entry for it.
+#[must_use]
+pub fn lane_identities(
+    records: &[TaskEventRecord],
+) -> std::collections::BTreeMap<String, (Option<String>, Option<String>)> {
+    let mut out: std::collections::BTreeMap<String, (Option<String>, Option<String>)> =
+        std::collections::BTreeMap::new();
+    let mut ordered: Vec<&TaskEventRecord> = records
+        .iter()
+        .filter(|r| r.kind == TaskEventKind::Claimed)
+        .collect();
+    ordered.sort_by_key(|r| r.sequence);
+    for record in ordered {
+        let Some(lane) = &record.lane else { continue };
+        if record.agent_kind.is_none() && record.agent_model.is_none() {
+            continue;
+        }
+        let entry = out.entry(lane.clone()).or_default();
+        if record.agent_kind.is_some() {
+            entry.0.clone_from(&record.agent_kind);
+        }
+        if record.agent_model.is_some() {
+            entry.1.clone_from(&record.agent_model);
+        }
+    }
+    out
 }
 
 /// #1469: one open wave issue as a `task.queued` record lists it.
@@ -374,6 +439,8 @@ impl TaskEventRecord {
             critic: None,
             plan: None,
             queued: None,
+            agent_kind: None,
+            agent_model: None,
             paths: None,
             request_id: None,
             ask: None,
@@ -672,6 +739,17 @@ pub fn parse_task_event(
             if lane.as_deref() != Some(actor_id) {
                 return None;
             }
+            // #1851: the lane's own kind and model; a malformed one refuses the claim, as the
+            // Runtime's admission does.
+            let reported = |key: &str, valid: fn(&str) -> bool| match document.get(key) {
+                None => Some(None),
+                Some(value) => value
+                    .as_str()
+                    .filter(|s| valid(s))
+                    .map(|s| Some(s.to_owned())),
+            };
+            record.agent_kind = reported("agentKind", is_agent_kind)?;
+            record.agent_model = reported("agentModel", is_agent_model)?;
             record.issue = Some(issue);
             record.lane = lane;
             record.branch = Some(branch);

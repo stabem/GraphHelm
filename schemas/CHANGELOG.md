@@ -1,5 +1,17 @@
 # Schema Changelog
 
+## journey-flow 1.11.0 - `viewports` a Run proves (#1777)
+
+A flow may declare a top-level `viewports`: a non-empty, unique list of `web` (1280x800) and
+`mobile` (390x844, touch, a mobile user agent). A Run proves every listed viewport, and a step
+passes only when it passes at each. A flow that declares neither `viewports` nor the fixed
+`viewport` (#585) is proven at both. A flow with a fixed `viewport` keeps running at that size
+alone, and naming `viewports` beside it is refused by the flow validator
+(`flow.viewport_and_viewports`), not by the schema, so this version stays purely additive. The
+canonical writer and the approval digest include `viewports` only when present. Additive: every
+1.10.0 flow stays valid with the same bytes and digest. The catalog digest is updated from
+canonical JSON.
+
 ## journey-flow 1.10.0 - a fixed `clock` (#1782)
 
 A flow may declare a top-level `clock`: an ISO-8601 date and time with an explicit offset (for

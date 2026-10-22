@@ -3,7 +3,7 @@
   "kind": "Extension",
   "metadata": {
     "id": "graphhelm-development-contracts",
-    "version": "0.1.17",
+    "version": "0.1.18",
     "publisher": "GraphHelm",
     "source": {
       "repository": "https://github.com/stabem/GraphHelm"
@@ -611,7 +611,7 @@
           "id": "host/claude",
           "kind": "host-adapter",
           "path": ".claude-plugin/plugin.json",
-      "sha256": "sha256:67e06dea9094b7f2b0e8573ff4bf434fd8f131fae283dda27739c77bf3fd8ea2",
+      "sha256": "sha256:9f5e1b861a828a38232c843b3515a88841df02fc5da52b9b7d91b1aa7d1277c1",
           "effects": [
             "host.discover"
           ],
@@ -627,7 +627,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-      "sha256": "sha256:9a95f4c46ed5d8eac56069e76e86e0d55bc8227fdc2cf0f11363ee60b285bb92",
+      "sha256": "sha256:f451e89483fe89f2af535465b9562bbed17411a489561accefc988667882de81",
           "effects": [
             "host.discover"
           ],
@@ -1025,7 +1025,7 @@
           "id": "schema/task-event",
           "kind": "schema",
           "path": "schemas/task-event.schema.json",
-          "sha256": "sha256:f9632b1c6f488bc32a544e159a22a0825e51011ae48db862cf283e195ca70583",
+          "sha256": "sha256:3a4ff745e8651ee35d6b67dfa39eb6dbf475c4d8f0bfb728c2d8d20e75577c81",
           "effects": [],
           "permissions": [],
           "requires": {

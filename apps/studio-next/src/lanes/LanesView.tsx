@@ -187,6 +187,9 @@ function Card({ agent, selected, last, onPick }: { agent: Agent; selected: boole
         <span className={`agent-dot ${asking ? "asks" : tone === "late" ? "quiet" : "on"}`} />
         <strong>{agent.lane}</strong>
       </button>
+      {(agent.kind !== null || agent.model !== null) && (
+        <span role="group" aria-label="Agent kind" className="mono agent-kind">{[agent.kind, agent.model].filter((part) => part !== null).join(" · ")}</span>
+      )}
       <span role="group" aria-label="Idle time" className={`mono idle ${tone}`}>{idleText(agent.idleMinutes)}</span>
       <span role="group" aria-label="Request" className="request">
         {task === null ? "no task" : <><span className="mono">#{task.issue ?? "—"}</span> {task.prTitle ?? task.title ?? task.key}{task.pr !== null && <span className="mono"> · PR #{task.pr}</span>}</>}

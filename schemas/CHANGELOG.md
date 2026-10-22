@@ -1,5 +1,15 @@
 # Schema Changelog
 
+## journey-flow 1.13.0 - a screen may ignore named query keys (#1890)
+
+A screen may carry `ignoreQuery`: 1 to 8 distinct query keys (`[A-Za-z0-9_.-]`, up to 64
+characters) that its URL match leaves out, in the observed URL and in the screen's own `url`, before
+comparing. It is for a key the app adds or strips on its own, such as a session id removed after
+login. Every other key still matches exactly, so an unlisted extra parameter is still a different
+screen; absent, the match is exact as before. The canonical writer and the approval digest include
+`ignoreQuery` only when present. Additive: every 1.12.0 flow stays valid with the same bytes and
+digest. The catalog digest is updated from canonical JSON.
+
 ## journey-flow 1.12.0 - drift names its viewport (#1878)
 
 A `drift` entry may carry `viewport` (`web` or `mobile`): the viewport whose replay saw the drift.

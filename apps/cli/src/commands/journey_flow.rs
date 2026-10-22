@@ -2155,7 +2155,16 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
     for (group, fields) in [
         (
             "screens",
-            &["id", "title", "intent", "url", "state", "expect", "scope"][..],
+            &[
+                "id",
+                "title",
+                "intent",
+                "url",
+                "ignoreQuery",
+                "state",
+                "expect",
+                "scope",
+            ][..],
         ),
         ("edges", &["id", "from", "to", "intent", "acts", "safe"][..]),
     ] {
@@ -2337,6 +2346,40 @@ mod tests {
             ),
             canonical(&plain, false)
         );
+    }
+
+    /// #1890: a screen may name query keys its URL match ignores. Defects named: the schema
+    /// refuses the field (or takes an empty or duplicated list), the canonical writer drops it,
+    /// or the approval ignores it (so widening what a screen accepts leaves an approval valid).
+    /// A flow without the field keeps its exact bytes. Cost: in memory only.
+    #[test]
+    fn a_screen_ignore_query_is_written_validated_and_approved() {
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let mut with = plain.clone();
+        with["screens"][0]["ignoreQuery"] = json!(["session", "project"]);
+        let schemas = flow_schemas().unwrap();
+        let accepted = schemas.validate(FLOW_SCHEMA_ID, &with, "journey-flow");
+        assert!(accepted.is_empty(), "{accepted:?}");
+        for bad in [json!([]), json!(["session", "session"]), json!(["a b"])] {
+            let mut refused = plain.clone();
+            refused["screens"][0]["ignoreQuery"] = bad.clone();
+            assert!(
+                !schemas
+                    .validate(FLOW_SCHEMA_ID, &refused, "journey-flow")
+                    .is_empty(),
+                "{bad}"
+            );
+        }
+        let written = canonical(&with, false);
+        let line = format!("{}ignoreQuery: [session, project]\n", " ".repeat(4));
+        assert!(written.contains(&line), "{written}");
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(canonical(&reread, false), written);
+        assert_ne!(approval_digest(&with), approval_digest(&plain));
+        assert_eq!(written.replacen(&line, "", 1), canonical(&plain, false));
     }
 
     /// #1041: "this thing is gone" is an expectation. Defects named: the canonical writer drops

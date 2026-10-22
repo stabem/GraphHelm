@@ -1049,7 +1049,39 @@ pub(super) fn preflight(
     Ok(secrets)
 }
 
-pub(super) fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
+/// #1890: the query keys a screen's `ignoreQuery` lets its URL match skip; none when absent.
+pub(super) fn ignored_query(screen: &Value) -> Vec<&str> {
+    screen["ignoreQuery"]
+        .as_array()
+        .map(|keys| keys.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default()
+}
+
+/// `path_and_query` without the query pairs whose key `ignore` names (#1890); the `?` goes when
+/// no pair is left. Every other pair keeps its place and its exact spelling.
+fn without_ignored(path_and_query: &str, ignore: &[&str]) -> String {
+    if ignore.is_empty() {
+        return path_and_query.to_owned();
+    }
+    let Some((path, query)) = path_and_query.split_once('?') else {
+        return path_and_query.to_owned();
+    };
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|pair| !ignore.contains(&pair.split('=').next().unwrap_or_default()))
+        .collect();
+    if kept.is_empty() {
+        path.to_owned()
+    } else {
+        format!("{path}?{}", kept.join("&"))
+    }
+}
+
+/// Whether `observed` is the screen `pattern` names under `base`: same origin, and the same path
+/// and query segment by segment (`:name` matches any non-empty segment). The query keys in
+/// `ignore` (a screen's `ignoreQuery`, #1890) are left out of both sides first; every other key
+/// still has to match exactly, so an unlisted extra parameter is a different screen.
+pub(super) fn url_matches(base: &str, pattern: &str, observed: &str, ignore: &[&str]) -> bool {
     let Ok(expected_url) =
         format!("{}{}", base.trim_end_matches('/'), pattern).parse::<axum::http::Uri>()
     else {
@@ -1091,8 +1123,8 @@ pub(super) fn url_matches(base: &str, pattern: &str, observed: &str) -> bool {
             .map(str::to_owned)
             .collect::<Vec<_>>()
     };
-    let expected = parts(pattern);
-    let actual = parts(actual);
+    let expected = parts(&without_ignored(pattern, ignore));
+    let actual = parts(&without_ignored(actual, ignore));
     expected.len() == actual.len()
         && expected.iter().zip(actual).all(|(want, have)| {
             if want.starts_with(':') {
@@ -1247,9 +1279,14 @@ pub(super) fn observe(
     // The driver ends its session on any refusal, so read the URL before expectations can fail.
     // A late client-side route change still passes when its expectations do.
     let early = driver.call("snapshot", json!({"expect":[]}), path)?;
-    let elsewhere = !early["url"]
-        .as_str()
-        .is_some_and(|url| url_matches(base, screen["url"].as_str().unwrap(), url));
+    let elsewhere = !early["url"].as_str().is_some_and(|url| {
+        url_matches(
+            base,
+            screen["url"].as_str().unwrap(),
+            url,
+            &ignored_query(screen),
+        )
+    });
     let snapshot = match driver.call("snapshot", json!({"expect":screen["expect"]}), path) {
         Err(refusal) if elsewhere && refusal.0 == "driver.expectation_failed" => {
             return Err(failure("replay.wrong_screen", path, 1));
@@ -1259,7 +1296,12 @@ pub(super) fn observe(
     let url = snapshot["url"]
         .as_str()
         .ok_or_else(|| failure("replay.driver_frame_invalid", path, 1))?;
-    if !url_matches(base, screen["url"].as_str().unwrap(), url) {
+    if !url_matches(
+        base,
+        screen["url"].as_str().unwrap(),
+        url,
+        &ignored_query(screen),
+    ) {
         return Err(failure("replay.wrong_screen", path, 1));
     }
     let aria = snapshot["ariaYaml"]
@@ -1427,7 +1469,7 @@ fn arrived(driver: &mut Driver, to: &Value, base: &str) -> Result<bool> {
     let page = driver.call("snapshot", json!({"expect":[]}), "/heal/destination")?;
     if !page["url"]
         .as_str()
-        .is_some_and(|url| url_matches(base, to["url"].as_str().unwrap(), url))
+        .is_some_and(|url| url_matches(base, to["url"].as_str().unwrap(), url, &ignored_query(to)))
     {
         return Ok(false);
     }
@@ -3072,28 +3114,112 @@ mod tests {
         assert!(url_matches(
             "http://APP.test:80",
             "/orders/:id?tab=:v",
-            "http://app.test/orders/42?tab=paid#section"
+            "http://app.test/orders/42?tab=paid#section",
+            &[]
         ));
         assert!(url_matches(
             "https://localhost:443",
             "/orders/:id",
-            "https://localhost/orders/42"
+            "https://localhost/orders/42",
+            &[]
         ));
         assert!(!url_matches(
             "http://localhost",
             "/orders/:id",
-            "http://localhost:3000/orders/42"
+            "http://localhost:3000/orders/42",
+            &[]
         ));
         assert!(!url_matches(
             "http://localhost",
             "/orders/:id",
-            "http://localhost/orders/"
+            "http://localhost/orders/",
+            &[]
         ));
         assert!(!url_matches(
             "http://localhost",
             "/orders/:id",
-            "http://localhost/other/42"
+            "http://localhost/other/42",
+            &[]
         ));
+    }
+
+    /// #1890: a screen's `ignoreQuery` skips only the query keys it names, on both sides.
+    /// Regression: the Studio strips `?session=` after login, so an exact match fails the first
+    /// screen of every studio2 preview; the opposite regression is ignoring a key nobody named.
+    #[test]
+    fn ignore_query_skips_only_the_named_keys() {
+        let base = "http://localhost:5183";
+        let skip = ["session", "project"];
+        // The URL the browser lands on after the Studio dropped the session key.
+        assert!(url_matches(
+            base,
+            "/?session=:s",
+            "http://localhost:5183/",
+            &skip
+        ));
+        assert!(url_matches(
+            base,
+            "/",
+            "http://localhost:5183/?session=abc&project=p1",
+            &skip
+        ));
+        assert!(url_matches(
+            base,
+            "/runs?view=:v",
+            "http://localhost:5183/runs?session=x&view=lanes",
+            &skip
+        ));
+        // An unlisted extra parameter is still a different screen.
+        assert!(!url_matches(
+            base,
+            "/",
+            "http://localhost:5183/?session=abc&debug=1",
+            &skip
+        ));
+        assert!(!url_matches(
+            base,
+            "/runs?view=:v",
+            "http://localhost:5183/runs?view=lanes&tab=2",
+            &skip
+        ));
+        // A named key is skipped by its exact key, not by a prefix or a value.
+        assert!(!url_matches(
+            base,
+            "/",
+            "http://localhost:5183/?sessions=abc",
+            &skip
+        ));
+        // Without the field the match stays exact.
+        assert!(!url_matches(
+            base,
+            "/",
+            "http://localhost:5183/?session=abc",
+            &[]
+        ));
+        assert!(!url_matches(
+            base,
+            "/?session=:s",
+            "http://localhost:5183/",
+            &[]
+        ));
+        // The origin and the path are never ignored.
+        assert!(!url_matches(
+            base,
+            "/",
+            "http://localhost:5184/?session=abc",
+            &skip
+        ));
+        assert!(!url_matches(
+            base,
+            "/runs",
+            "http://localhost:5183/other?session=abc",
+            &skip
+        ));
+        assert_eq!(
+            ignored_query(&json!({"ignoreQuery": ["session", "project"]})),
+            ["session", "project"]
+        );
+        assert!(ignored_query(&json!({"url": "/"})).is_empty());
     }
 
     fn fault_command(mode: &str, marker: &Path, lock: Option<&Path>) -> Command {

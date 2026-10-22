@@ -1,5 +1,6 @@
 /** The public Runtime routes the shell reads, through the same-origin proxy: `/v1` for the first
  * project, `/p/<id>/v1` for a project that joined this Studio's port (#1800). */
+import type { OwnerRequest } from "../graph/requests";
 import type { Draft, LaneControl } from "../lanes/drafts";
 
 export interface RunSummary {
@@ -261,6 +262,13 @@ export class Runtime {
   /** #1803: the open board of a run (tasks, liveness, stalls and open questions). */
   async board(executionId: string): Promise<TasksBoard> {
     return this.#request<TasksBoard>("GET", `/v1/executions/${encodeURIComponent(executionId)}/tasks`);
+  }
+
+  /** #1801: the owner's requests with their issues, PR slices and status (#1792 R1,
+   * `GET /v1/executions/{id}/requests`). */
+  async requests(executionId: string): Promise<OwnerRequest[]> {
+    const view = await this.#request<{ requests?: OwnerRequest[] }>("GET", `/v1/executions/${encodeURIComponent(executionId)}/requests`);
+    return Array.isArray(view.requests) ? view.requests : [];
   }
 
   /** #1793: a lane's last `limit` actions, newest first (owner credentials). */

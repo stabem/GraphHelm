@@ -10,6 +10,7 @@ import { Topbar } from "./topbar/Topbar";
 import { ProofView } from "./proof/ProofView";
 import { LanesView } from "./lanes/LanesView";
 import { GraphView } from "./views/Views";
+import { RequestsView } from "./graph/RequestsView";
 
 /** How often the run list is read again: one page of at most 50 rows per poll. */
 const POLL_MS = 5_000;
@@ -118,8 +119,8 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
   }, [runtime]);
 
   useEffect(() => {
-    // Proof lists the journeys; Lanes reads their last result beside a slice's journeys.
-    if (route.view === "graph" || journeys !== null) return;
+    // Proof lists the journeys; Lanes and Graph read their last result beside a slice's journeys.
+    if (journeys !== null) return;
     readJourneys();
   }, [route.view, journeys, readJourneys]);
 
@@ -156,7 +157,7 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
           onStart={route.run === null && !(composing && route.view === "graph") ? () => { setComposing(true); go({ ...route, view: "graph" }); } : null}
         />
         {route.view === "graph" && (
-          <GraphView run={run} runId={route.run}>
+          <GraphView run={run} runId={route.run} requests={route.run === null ? undefined : <RequestsView runtime={runtime} executionId={route.run} journeys={journeys} />}>
             {composing && route.run === null && (
               <StartRun
                 runtime={runtime}

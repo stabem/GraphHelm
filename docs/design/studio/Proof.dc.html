@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proof compare</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0a0a0b}
+a{color:#ff8a3d}a:hover{color:#ffb27f}
+.crop{position:relative;width:100%;aspect-ratio:1694/946;overflow:hidden;background:#f0efe9}
+.crop img{display:block;width:118.06%;margin-left:-0.94%;margin-top:-6.02%}
+.seg{all:unset;cursor:pointer;padding:6px 12px;border-radius:6px;font-size:12px;color:#a2a2ad}
+.seg:focus-visible{outline:2px solid #ff8a3d}
+.on{background:#2a2a30;color:#f5f5f6}
+</style>
+</helmet>
+<div style="display: flex; min-height: 900px; background: #0a0a0b">
+<dc-import name="Sidebar" hint-size="232px,900px"></dc-import>
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+<dc-import name="Topbar" active="proof" hint-size="100%,52px"></dc-import>
+
+<div style="display: flex; flex: 1; min-height: 0; flex-wrap: wrap">
+<aside aria-label="Journeys" style="flex: 0 0 250px; border-right: 1px solid #2a2a30; padding: 14px 12px; box-sizing: border-box; font-family: 'Space Grotesk', system-ui, sans-serif; color: #f5f5f6; font-size: 12px; display: flex; flex-direction: column; gap: 10px">
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">JOURNEYS · 24</span>
+<div style="display: flex; gap: 6px">
+<button class="seg" style="border: 1px solid #34343c; color: #f5f5f6">Approve 1</button>
+<button class="seg" style="border: 1px solid #34343c; color: #f5f5f6">▶ Run all</button>
+</div>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">1 passed · 1 failed · 0 stale · 18 not run</span>
+<sc-for list="{{groups}}" as="g">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; align-items: center; gap: 6px"><span style="color: #8a8a96">▾</span><strong>{{g.name}}</strong><span style="flex: 1"></span><span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: {{g.c}}">{{g.score}}</span></div>
+<sc-for list="{{g.items}}" as="j">
+<button class="seg" onClick="{{j.pick}}" style="padding: 10px; border-radius: 10px; border: 1px solid {{j.edge}}; background: {{j.bg}}; color: #f5f5f6; display: flex; flex-direction: column; gap: 6px; text-align: left">
+<strong style="font-size: 12px">{{j.title}}</strong>
+<span style="color: #8a8a96; font-size: 11px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden">{{j.desc}}</span>
+<div style="display: flex; align-items: center; gap: 6px">
+<span style="padding: 2px 6px; border-radius: 4px; border: 1px solid {{j.chipEdge}}; color: {{j.chipC}}; font-family: 'JetBrains Mono', monospace; font-size: 10px">{{j.chip}}</span>
+<span style="flex: 1"></span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">{{j.score}}</span>
+<span style="padding: 3px 8px; border-radius: 6px; border: 1px solid #34343c; font-size: 11px">▶ Run</span>
+</div>
+<div style="display: flex; gap: 2px"><sc-for list="{{j.bar}}" as="q"><span style="flex: 1; height: 3px; border-radius: 2px; background: {{q}}"></span></sc-for></div>
+</button>
+</sc-for>
+</div>
+</sc-for>
+</aside>
+<div style="font-family: 'Space Grotesk', system-ui, sans-serif; color: #f5f5f6; background: #0a0a0b; padding: 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; min-height: 980px; flex: 999 1 640px; min-width: 0">
+
+<section aria-label="Journey run" style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap">
+<h1 style="margin: 0; font-size: 15px; font-weight: 600; color: #f5f5f6">Submits “Salvar compra”</h1>
+<span style="flex: 1"></span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 11px"><span style="color: #3ddc97">6 passed</span>  <span style="color: #ff8a3d">0 waits for you</span>  <span style="color: #ff6b6b">1 failed</span>  <span style="color: #8b7cff">8 not run</span></span>
+</div>
+<p style="margin: 0; font-size: 12px; color: #a2a2ad"><span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">PROVES</span>  O dono escolhe uma opção do item, informa o valor pago e o número do pedido, e o item fica marcado como comprado.</p>
+<div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px">
+<span>6 passed · 1 failed</span>
+<span style="padding: 2px 6px; border-radius: 4px; background: #fff3c4; color: #5a4300; font-size: 11px">Preview — not proof</span>
+<button class="seg" onClick="{{toggleRun}}" style="border: 1px solid #34343c; color: #f5f5f6; padding: 6px 12px">{{runLabel}}</button>
+<sc-if value="{{running}}" hint-placeholder-val="{{ true }}">
+<span style="display: flex; align-items: center; gap: 8px; color: #ff8a3d"><span style="width: 8px; height: 8px; border-radius: 50%; background: #ff8a3d"></span>Preparing the browser · Downloading Chromium 62%</span>
+<button class="seg" onClick="{{toggleLog}}" style="color: #8ab4ff; padding: 0">{{logLabel}}</button>
+</sc-if>
+</div>
+<sc-if value="{{showLog}}" hint-placeholder-val="{{ true }}">
+<pre aria-label="Run console" style="margin: 0; max-height: 132px; overflow: auto; padding: 10px 12px; border-radius: 8px; border: 1px solid #34343c; background: #0a0a0b; font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.6; color: #a2a2ad">$ npm install --save-dev @playwright/test@1.56.0
+added 3 packages in 11s                                   <span style="color: #3ddc97">✓ test tools</span>
+$ npx playwright install chromium
+Downloading Chromium 141.0 (playwright build v1194) — 101.2 MiB / 163.4 MiB  <span style="color: #ff8a3d">62%</span>
+<span style="color: #8a8a96">next: write .graphhelm/observers/journey_driver.mjs, then run step 1</span></pre>
+</sc-if>
+<div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap">
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">HISTORY</span>
+<span style="padding: 2px 8px; border-radius: 999px; border: 1px solid #3ddc97; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #f5f5f6">✓ 15 Oct 19:04</span>
+<span style="padding: 2px 8px; border-radius: 999px; border: 1px solid #34343c; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #a2a2ad">✓ 15 Oct 18:45</span>
+<span style="padding: 2px 8px; border-radius: 999px; border: 1px solid #34343c; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #a2a2ad">✓ 15 Oct 11:23</span>
+<span style="padding: 2px 8px; border-radius: 999px; border: 1px solid #34343c; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #a2a2ad"><span style="color: #ff6b6b">✕</span> 15 Oct 11:18</span>
+<span style="padding: 2px 8px; border-radius: 999px; border: 1px solid #34343c; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #a2a2ad">✓ 14 Oct 20:24</span>
+</div>
+<div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px">
+<div style="height: 4px; border-radius: 2px; background: #1f6b4a"></div><div style="height: 4px; border-radius: 2px; background: #1f6b4a"></div><div style="height: 4px; border-radius: 2px; background: #1f6b4a"></div><div style="height: 4px; border-radius: 2px; background: #1f6b4a"></div><div style="height: 4px; border-radius: 2px; background: #1f6b4a"></div><div style="height: 4px; border-radius: 2px; background: #1f6b4a"></div><div style="height: 4px; border-radius: 2px; background: #ff6b6b"></div>
+</div>
+</section>
+
+<div style="border: 1px solid #34343c; border-radius: 12px; background: #151517; padding: 10px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px">
+<sc-for list="{{steps}}" as="s" hint-placeholder-count="7">
+<button class="seg" style="padding: 0; border-radius: 8px; border: 1px solid {{s.edge}}; background: #1e1e22; overflow: hidden; display: flex; flex-direction: column" onClick="{{s.pick}}">
+<div class="crop" style="border-bottom: 2px solid {{s.bar}}"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Frame of step {{s.n}}" style="filter: {{s.filter}}"></div>
+<div style="padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; text-align: left">
+<div style="display: flex; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96"><span>{{s.n}} DOES</span><span style="flex: 1"></span><span style="color: {{s.bar}}">{{s.status}}</span></div>
+<span style="font-size: 11px; color: #f5f5f6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{s.label}}</span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">web <span style="color: {{s.webC}}">{{s.webM}}</span> · mobile <span style="color: {{s.mobC}}">{{s.mobM}}</span></span>
+</div>
+</button>
+</sc-for>
+</div>
+
+<div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start">
+<div style="flex: 999 1 640px; min-width: 0; border: 1px solid #34343c; border-radius: 12px; background: #151517; overflow: hidden">
+<div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #34343c; flex-wrap: wrap">
+<span aria-hidden="true" style="display: flex; gap: 5px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #45454e"></span><span style="width: 8px; height: 8px; border-radius: 50%; background: #45454e"></span><span style="width: 8px; height: 8px; border-radius: 50%; background: #45454e"></span></span>
+<span aria-hidden="true" style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #8a8a96; display: flex; gap: 12px; padding: 0 4px"><span>&lt;</span><span>&gt;</span></span>
+<div style="flex: 1 1 240px; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 6px; background: #0a0a0b; border: 1px solid #2a2a30">
+<svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#8a8a96" stroke-width="2.5"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #f5f5f6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">Submits “Salvar compra”</span>
+</div>
+<div role="group" aria-label="Viewport" style="display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: #1e1e22">
+<button class="seg {{webOn}}" onClick="{{toWeb}}">Web 1280 <span style="color: #3ddc97">✓</span></button>
+<button class="seg {{mobOn}}" onClick="{{toMob}}">Mobile 390 <span style="color: #ff6b6b">✕</span></button>
+</div>
+<div role="group" aria-label="Compare mode" style="display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: #1e1e22">
+<button class="seg {{frameOn}}" onClick="{{toFrame}}">Frame</button>
+<button class="seg {{sideOn}}" onClick="{{toSide}}">Side by side</button>
+<button class="seg {{overOn}}" onClick="{{toOver}}">Overlay</button>
+<button class="seg {{diffOn}}" onClick="{{toDiff}}">Changes</button>
+</div>
+<sc-if value="{{isOverW}}" hint-placeholder-val="{{ true }}">
+<label style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #a2a2ad">Before
+<input type="range" min="0" max="100" value="{{opacity}}" onChange="{{setOpacity}}" onInput="{{setOpacity}}" style="width: 140px; accent-color: #ff8a3d">
+Now</label>
+</sc-if>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #8a8a96">emulated · frame 7/7</span>
+</div>
+
+<sc-if value="{{isMob}}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px; background: #0a0a0b">
+<span style="padding: 4px 10px; border-radius: 6px; background: #241010; color: #ff9b9b; font-size: 12px">Fails only on mobile · step 5: button “Escolher esta” is covered by the sticky footer</span>
+<div style="width: 300px; height: 560px; border: 8px solid #2a2a30; border-radius: 28px; overflow: hidden; background: #f0efe9">
+<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Mobile frame" style="width: 100%; height: 100%; object-fit: cover; object-position: 30% 60%; display: block">
+</div>
+</div>
+</sc-if>
+<sc-if value="{{isFrameWeb}}" hint-placeholder-val="{{ false }}">
+<div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now"></div>
+</sc-if>
+<sc-if value="{{isSideW}}" hint-placeholder-val="{{ false }}">
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; background: #34343c">
+<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Before · 15 Oct</div><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)"></div></div>
+<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Now · 21 Oct</div><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now"></div></div>
+</div>
+</sc-if>
+<sc-if value="{{isOverW}}" hint-placeholder-val="{{ true }}">
+<div class="crop">
+<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)">
+<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now" style="position: absolute; left: 0; top: 0; opacity: {{alpha}}">
+</div>
+</sc-if>
+<sc-if value="{{isDiffW}}" hint-placeholder-val="{{ false }}">
+<div class="crop">
+<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now with changes marked" style="filter: grayscale(1) brightness(1.1)">
+<div style="position: absolute; left: 40.3%; top: 85.2%; width: 26%; height: 5.4%; border: 2px solid #ff6b6b; background: rgb(255 107 107 / 22%); border-radius: 4px"></div>
+<span style="position: absolute; left: 40.3%; top: 79.5%; padding: 2px 6px; border-radius: 4px; background: #ff6b6b; color: #241010; font-size: 11px">changed</span>
+</div>
+</sc-if>
+</div>
+
+<aside style="flex: 1 1 260px; border: 1px solid #34343c; border-radius: 12px; background: #151517; padding: 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px">
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">ACTION 7 · DOES</span>
+<strong style="font-size: 13px">Submits “Salvar compra”</strong>
+<span style="color: #f5f5f6">Prova que o item ficou marcado como comprado com o valor pago e o número do pedido</span>
+<pre style="margin: 0; padding: 8px 10px; border-radius: 6px; background: #0a0a0b; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #f5f5f6">step comprado
+does Submits “Salvar compra”</pre>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">COMPARE WITH 15 OCT 19:04</span>
+<span style="color: #ff8a3d">4% of the screen changed (in red).</span>
+<span style="color: #ff8a3d">This step drift then, failed now.</span>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px">
+<button class="seg" onClick="{{toSide}}" style="padding: 0; border: 1px solid #34343c; border-radius: 6px; overflow: hidden"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before thumbnail" style="filter: hue-rotate(160deg) saturate(.4)"></div></button>
+<button class="seg" onClick="{{toSide}}" style="padding: 0; border: 1px solid #34343c; border-radius: 6px; overflow: hidden"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now thumbnail"></div></button>
+</div>
+<button class="seg" onClick="{{toDiff}}" style="align-self: flex-end; color: #8ab4ff; padding: 0">show changes</button>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96; margin-top: 6px">WHAT IT DID</span>
+<span>O dono informa valor pago e número do pedido e salva — o item fica como comprado</span>
+<span>Types “2390” into “Valor pago”</span>
+<span>Types “PED-123” into “Número do pedido”</span>
+<span>Submits “Salvar compra”</span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96; margin-top: 6px">ASSERTIONS</span>
+<span><span style="color: #3ddc97">✓</span> shows status “Comprado”</span>
+<span><span style="color: #ff6b6b">✕</span> shows status “/Pago R\$\s.+pedido PED-123/”</span>
+<span><span style="color: #3ddc97">✓</span> shows button “Informar entrega”</span>
+<span><span style="color: #ff6b6b">✕</span> state is success</span>
+<span>Expected status ‘/Pago R\$\s.+pedido PED-123/’ — the screen shows status ‘Comprado’</span>
+<span>page_error</span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96; margin-top: 6px">CONSOLE</span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #a2a2ad">No console captured</span>
+</aside>
+</div>
+
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+constructor(p){ super(p); this.state = { mode: 'over', opacity: 50, sel: 7, vp: 'web', running: true, log: true }; }
+renderVals() {
+const m = this.state.mode;
+const labels = ['Opens /obras','Clicks “Apartamento Pinheiros”','Clicks “Sala”','Clicks “Sofá 3 lugares”','Clicks “Escolher esta”','Clicks “Marcar como comprado”','Submits “Salvar compra”'];
+const steps = labels.map((label, i) => {
+const n = i + 1;
+const failed = n === 7; const mobFail = n === 5 || n === 7;
+return { n, label, status: failed ? 'failed' : 'passed', bar: failed ? '#ff6b6b' : '#3ddc97',
+edge: this.state.sel === n ? '#8ab4ff' : '#34343c', filter: 'none',
+webM: failed ? '✕' : '✓', webC: failed ? '#ff6b6b' : '#3ddc97', mobM: mobFail ? '✕' : '✓', mobC: mobFail ? '#ff6b6b' : '#3ddc97',
+pick: () => this.setState({ sel: n }) };
+});
+const set = (mode) => () => this.setState({ mode });
+const G='#3ddc97', R='#ff6b6b', N='#2a2a30';
+const JD = [
+['Admin', [['Configurar afiliados','O admin salva a tag de afiliado da Amazon para uma loja e vê a confirmação de que ela foi salva.',3,3,'passed']]],
+['Arquiteto', [['Convidar cliente','O arquiteto convida um cliente para uma obra nova, e o cliente entra pelo convite e vê a obra.',0,4,'not run'],['Montar espaço do arquiteto','Um arquiteto monta o espaço dele com nome e endereço, e chega no painel com a marca dele.',0,3,'not run']]],
+['Compras e entregas', [['Comprar opção','O dono escolhe uma opção do item, informa o valor pago e o número do pedido, e o item fica comprado.',6,7,'failed'],['Marcar entrega','O dono informa o dia da entrega e quem vai receber, depois confirma que chegou e o item fica entregue.',0,7,'not run'],['Ver agenda de entregas','O dono abre a agenda da obra, vê as entregas do dia e copia a mensagem pronta.',0,4,'not run']]],
+['Conta', [['Baixar dados e apagar conta','A pessoa pede para apagar a conta, confirma com o próprio e-mail e a conta é apagada.',0,3,'not run'],['Entrar com link','A pessoa pede um link de acesso pelo e-mail, abre o link e chega na lista das suas obras.',0,3,'not run']]]
+];
+let idx = 0;
+const groups = JD.map(([name, items]) => { const its = items.map(([title, desc, ok, total, st]) => { const id = idx++;
+const sel = (this.state.jsel ?? 3) === id;
+return { title, desc, score: ok + '/' + total, chip: (st === 'passed' ? '✓ ' : (st === 'failed' ? '✕ ' : '○ ')) + st,
+chipC: st === 'passed' ? G : (st === 'failed' ? R : '#8a8a96'), chipEdge: st === 'passed' ? '#1f4a37' : (st === 'failed' ? '#5a2a2a' : '#34343c'),
+bar: Array.from({ length: total }, (_, i) => i < ok ? G : (st === 'failed' && i === ok ? R : N)),
+edge: sel ? '#ff8a3d' : '#2a2a30', bg: sel ? '#1e1e22' : '#151517', pick: () => this.setState({ jsel: id }) }; });
+const ok = items.filter(x => x[4] === 'passed').length;
+return { name, items: its, score: ok + '/' + items.length, c: items.some(x => x[4] === 'failed') ? R : (ok ? G : '#8a8a96') }; });
+return {
+steps, groups,
+running: this.state.running, showLog: this.state.running && this.state.log,
+runLabel: this.state.running ? 'Stop' : 'Run again',
+logLabel: this.state.log ? 'Hide log' : 'Show log',
+toggleRun: () => this.setState({ running: !this.state.running }),
+toggleLog: () => this.setState({ log: !this.state.log }),
+isFrame: m === 'frame', isMob: this.state.vp === 'mob', isFrameWeb: this.state.vp === 'web' && m === 'frame', isSideW: this.state.vp === 'web' && m === 'side', isOverW: this.state.vp === 'web' && m === 'over', isDiffW: this.state.vp === 'web' && m === 'diff',
+webOn: this.state.vp === 'web' ? 'on' : '', mobOn: this.state.vp === 'mob' ? 'on' : '', toWeb: () => this.setState({ vp: 'web' }), toMob: () => this.setState({ vp: 'mob' }), isSide: m === 'side', isOver: m === 'over', isDiff: m === 'diff',
+frameOn: m === 'frame' ? 'on' : '', sideOn: m === 'side' ? 'on' : '', overOn: m === 'over' ? 'on' : '', diffOn: m === 'diff' ? 'on' : '',
+toFrame: set('frame'), toSide: set('side'), toOver: set('over'), toDiff: set('diff'),
+opacity: this.state.opacity, alpha: this.state.opacity / 100,
+setOpacity: (e) => this.setState({ opacity: Number(e.target.value) })
+};
+}
+}
+</script>
+</body>
+</html>

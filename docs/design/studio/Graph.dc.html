@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Work by journey</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0a0a0b}
+.crop{position:relative;width:100%;aspect-ratio:1694/946;overflow:hidden;background:#f0efe9}
+.crop img{display:block;width:118.06%;margin-left:-0.94%;margin-top:-6.02%}
+a{color:#ff8a3d}a:hover{color:#ffb27f}
+.b{all:unset;cursor:pointer;box-sizing:border-box}
+.b:focus-visible{outline:2px solid #ff8a3d;outline-offset:2px}
+.mono{font-family:'JetBrains Mono',monospace}
+</style>
+</helmet>
+<div style="display: flex; min-height: 900px; background: #0a0a0b">
+<dc-import name="Sidebar" hint-size="232px,900px"></dc-import>
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+<dc-import name="Topbar" active="graph" hint-size="100%,52px"></dc-import>
+
+<div style="font-family: 'Space Grotesk', system-ui, sans-serif; color: #f5f5f6; background: #0a0a0b; display: flex; flex-wrap: wrap; min-height: 900px; font-size: 12px">
+
+<aside aria-label="Journeys with work" style="flex: 0 0 250px; border-right: 1px solid #2a2a30; padding: 14px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; align-items: center; gap: 8px"><span class="mono" style="font-size: 10px; color: #8a8a96">JOURNEYS WITH WORK · 4 of 24</span></div>
+<button class="b" onClick="{{allJ}}" style="padding: 8px 10px; border-radius: 8px; border: 1px solid {{allEdge}}; background: {{allBg}}; display: flex; gap: 8px"><span style="flex: 1; font-weight: 500">All journeys</span><span class="mono" style="color: #a2a2ad">7 issues</span></button>
+<sc-for list="{{journeys}}" as="j" hint-placeholder-count="4">
+<button class="b" onClick="{{j.pick}}" style="padding: 10px; border-radius: 8px; border: 1px solid {{j.edge}}; background: {{j.bg}}; display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; gap: 8px; align-items: flex-start"><span style="width: 10px; height: 10px; border-radius: 3px; background: {{j.c}}; margin-top: 3px; flex: none"></span><span style="flex: 1; font-weight: 500">{{j.title}}</span></div>
+<span class="mono" style="font-size: 10px; color: #a2a2ad">{{j.meta}}</span>
+<span style="font-size: 11px; color: #8a8a96">{{j.agents}}</span>
+</button>
+</sc-for>
+<span style="color: #8a8a96; font-size: 11px; margin-top: 6px">20 journeys have no work in flight. <a href="Proof.dc.html">See them in Proof</a></span>
+</aside>
+
+<main style="flex: 999 1 700px; min-width: 0; padding: 16px; display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+<h1 style="margin: 0; font-size: 15px; font-weight: 600">{{heading}}</h1>
+<span class="mono" style="font-size: 11px"><span style="color: #ff8a3d">3 implementing</span>  <span style="color: #8ab4ff">2 in review</span>  <span style="color: #8b7cff">1 merged, waits proof</span>  <span style="color: #ff6b6b">1 stalled</span></span>
+<span style="flex: 1"></span>
+<div role="tablist" aria-label="View" style="display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: #1e1e22">
+<button class="b" role="tab" aria-selected="{{isKanban}}" onClick="{{toKanban}}" style="padding: 6px 12px; border-radius: 6px; background: {{kBg}}; color: {{kFg}}">Kanban</button>
+<button class="b" role="tab" aria-selected="{{isGraph}}" onClick="{{toGraph}}" style="padding: 6px 12px; border-radius: 6px; background: {{gBg}}; color: {{gFg}}">Graph</button>
+</div>
+</div>
+
+<sc-if value="{{isKanban}}" hint-placeholder-val="{{ true }}">
+<div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; min-height: 640px">
+<sc-for list="{{cols}}" as="col" hint-placeholder-count="5">
+<section style="border: 1px solid #2a2a30; border-radius: 12px; background: #111113; padding: 10px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 6px; align-items: center"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{col.c}}"></span><strong style="font-size: 12px">{{col.name}}</strong><span style="flex: 1"></span><span class="mono" style="color: #8a8a96">{{col.n}}</span></div>
+<sc-for list="{{col.cards}}" as="k">
+<button class="b" onClick="{{k.pick}}" style="padding: 10px; border-radius: 10px; border: 1px solid {{k.edge}}; background: #1e1e22; display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; gap: 6px; align-items: center"><span class="mono" style="color: #a2a2ad">#{{k.issue}}</span><sc-if value="{{k.hasPr}}" hint-placeholder-val="{{ true }}"><span class="mono" style="color: #8ab4ff">PR #{{k.pr}}</span></sc-if><span style="flex: 1"></span><span class="mono" style="font-size: 10px; color: {{k.ageC}}">{{k.age}}</span></div>
+<span style="font-weight: 500; line-height: 1.35">{{k.title}}</span>
+<sc-if value="{{k.canView}}" hint-placeholder-val="{{ false }}"><span style="align-self: flex-start; padding: 3px 8px; border-radius: 6px; border: 1px solid #2a3b5c; color: #8ab4ff; font-size: 11px">View screen · before / now</span></sc-if>
+<div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap">
+<span style="display: inline-flex; gap: 5px; align-items: center; padding: 2px 6px; border-radius: 999px; background: #151517; font-size: 10px; color: #a2a2ad"><span style="width: 7px; height: 7px; border-radius: 2px; background: {{k.jc}}"></span>{{k.journey}}</span>
+<span class="mono" style="font-size: 10px; color: #8a8a96">{{k.agent}}</span>
+</div>
+<div aria-label="Progress {{k.stageName}}" style="display: flex; gap: 3px; align-items: center"><sc-for list="{{k.blocks}}" as="q"><span title="{{q.t}}" style="width: 10px; height: 10px; border-radius: 2px; background: {{q.c}}"></span></sc-for><span class="mono" style="font-size: 10px; color: #a2a2ad; margin-left: 4px">{{k.stageName}}</span></div>
+<div style="display: flex; flex-direction: column; gap: 2px; padding-top: 6px; border-top: 1px solid #2a2a30">
+<sc-for list="{{k.log}}" as="l"><span class="mono" style="font-size: 10px; color: {{l.c}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{l.t}}  {{l.m}}</span></sc-for>
+</div>
+</button>
+</sc-for>
+</section>
+</sc-for>
+</div>
+</sc-if>
+
+<sc-if value="{{isGraph}}" hint-placeholder-val="{{ false }}">
+<div style="min-height: 640px; border: 1px solid #2a2a30; border-radius: 12px; background-color: #111113; background-image: radial-gradient(#26262c 1px, transparent 1px); background-size: 18px 18px; padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; overflow: auto">
+<div class="mono" style="position: relative; width: 1040px; height: 14px; font-size: 10px; color: #8a8a96">
+<span style="position: absolute; left: 0">ASKED</span><span style="position: absolute; left: 300px">ISSUES THE ORCHESTRATOR OPENED</span><span style="position: absolute; left: 600px">PULL REQUESTS</span><span style="position: absolute; left: 840px">RESULT</span>
+</div>
+<sc-for list="{{reqs}}" as="r" hint-placeholder-count="3">
+<section aria-label="{{r.ask}}" style="position: relative; width: 1040px; height: {{r.h}}px; flex: none">
+<svg aria-hidden="true" width="1040" height="{{r.h}}" style="position: absolute; left: 0; top: 0">
+<sc-for list="{{r.links}}" as="l"><path d="{{l.d}}" fill="none" stroke="{{l.c}}" stroke-width="1.5" stroke-dasharray="{{l.dash}}"></path></sc-for>
+</svg>
+<div style="position: absolute; left: 0; top: {{r.ry}}px; width: 240px; padding: 12px; box-sizing: border-box; border-radius: 12px; border: 1px solid #ff8a3d; background: #1e1e22; display: flex; flex-direction: column; gap: 6px">
+<span class="mono" style="font-size: 10px; color: #ff8a3d">YOU ASKED · {{r.when}}</span>
+<span style="font-size: 13px; font-weight: 500; line-height: 1.35">{{r.ask}}</span>
+<div style="display: flex; gap: 3px">
+<sc-for list="{{r.bar}}" as="q"><span style="width: 10px; height: 10px; border-radius: 2px; background: {{q}}"></span></sc-for>
+</div>
+<span class="mono" style="font-size: 10px; color: #a2a2ad">{{r.summary}}</span>
+</div>
+<sc-for list="{{r.items}}" as="it">
+<button class="b" onClick="{{it.open}}" aria-label="Open the screen for #{{it.issue}}" style="position: absolute; left: 300px; top: {{it.y}}px; width: 250px; height: 84px; padding: 8px 10px; box-sizing: border-box; border-radius: 10px; border: 1px solid #34343c; background: #1e1e22; display: flex; flex-direction: column; gap: 4px">
+<div style="display: flex; gap: 6px"><span class="mono" style="color: #a2a2ad">#{{it.issue}}</span><span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{it.title}}</span></div>
+<div style="display: flex; gap: 3px; align-items: center"><sc-for list="{{it.blocks}}" as="q"><span style="width: 8px; height: 8px; border-radius: 2px; background: {{q.c}}"></span></sc-for><span class="mono" style="font-size: 10px; color: #8a8a96; margin-left: 4px">{{it.agent}}</span></div>
+<span class="mono" style="font-size: 10px; color: #a2a2ad; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{it.lastMsg}}</span>
+<span style="display: inline-flex; gap: 5px; align-items: center; font-size: 10px; color: #8a8a96"><span style="width: 7px; height: 7px; border-radius: 2px; background: {{it.jc}}"></span>{{it.journey}}</span>
+</button>
+<div style="position: absolute; left: 600px; top: {{it.py}}px; width: 180px; height: 52px; padding: 8px 10px; box-sizing: border-box; border-radius: 10px; border: 1px {{it.prBorder}} {{it.prEdge}}; background: #151517; display: flex; flex-direction: column; gap: 2px">
+<span class="mono" style="color: {{it.prC}}">{{it.prLabel}}</span>
+<span class="mono" style="font-size: 10px; color: #8a8a96; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{it.reviewerLine}}</span>
+</div>
+<div style="position: absolute; left: 840px; top: {{it.py}}px; width: 190px; height: 52px; padding: 8px 10px; box-sizing: border-box; border-radius: 10px; border: 1px solid {{it.resEdge}}; background: #151517; display: flex; flex-direction: column; gap: 2px">
+<span style="color: {{it.resC}}; font-size: 12px">{{it.res}}</span>
+<span class="mono" style="font-size: 10px; color: #8a8a96">{{it.resSub}}</span>
+</div>
+</sc-for>
+</section>
+</sc-for>
+</div>
+</sc-if>
+
+<div style="display: flex; gap: 14px; flex-wrap: wrap; color: #a2a2ad; font-size: 11px">
+<span>Cards older than 1 h in a column turn red.</span><span style="flex: 1"></span><span>Merged is not done. Done = the journey replay proves it.</span>
+</div>
+</main>
+
+<aside aria-label="Selected work" style="flex: 1 1 260px; max-width: 320px; border-left: 1px solid #2a2a30; padding: 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px">
+<span class="mono" style="font-size: 10px; color: #8a8a96">ISSUE #{{sel.issue}}</span>
+<strong style="font-size: 14px">{{sel.title}}</strong>
+<span style="display: inline-flex; gap: 6px; align-items: center; color: #a2a2ad"><span style="width: 8px; height: 8px; border-radius: 2px; background: {{sel.jc}}"></span>{{sel.journey}}</span>
+<span class="mono" style="font-size: 10px; color: #8a8a96; margin-top: 8px">NOW</span>
+<span>{{sel.col}} · {{sel.age}} in this column</span>
+<span>Author {{sel.agent}}</span>
+<span>{{sel.prLine}}</span>
+<span class="mono" style="font-size: 10px; color: #8a8a96; margin-top: 8px">HISTORY</span>
+<span class="mono" style="font-size: 11px; color: #a2a2ad; white-space: pre-line">{{sel.hist}}</span>
+<a href="Proof.dc.html" style="margin-top: 8px">Open the journey in Proof</a>
+</aside>
+</div>
+
+<sc-if value="{{modalOpen}}" hint-placeholder-val="{{ false }}">
+<div style="font-family: 'Space Grotesk', system-ui, sans-serif; color: #f5f5f6; font-size: 12px; position: fixed; inset: 0; background: rgb(0 0 0 / 70%); display: flex; align-items: center; justify-content: center; padding: 12px; box-sizing: border-box; z-index: 10">
+<div role="dialog" aria-modal="true" aria-label="Screen for #{{m.issue}}" style="width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #34343c; border-radius: 14px; background: #151517; box-shadow: 0 24px 70px rgb(0 0 0 / 55%)">
+<div style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #34343c; flex-wrap: wrap">
+<span aria-hidden="true" style="display: flex; gap: 5px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #45454e"></span><span style="width: 8px; height: 8px; border-radius: 50%; background: #45454e"></span><span style="width: 8px; height: 8px; border-radius: 50%; background: #45454e"></span></span>
+<span aria-hidden="true" class="mono" style="font-size: 12px; color: #8a8a96; display: flex; gap: 12px; padding: 0 4px"><span>&lt;</span><span>&gt;</span></span>
+<div style="flex: 1 1 240px; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-radius: 6px; background: #0a0a0b; border: 1px solid #2a2a30">
+<svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#8a8a96" stroke-width="2.5"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+<span class="mono" style="font-size: 11px; color: #f5f5f6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{m.url}}</span>
+</div>
+<div role="group" aria-label="Viewport" style="display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: #1e1e22">
+<button class="b" style="padding: 6px 12px; border-radius: 6px; background: #2a2a30">Web 1280 <span style="color: #3ddc97">✓</span></button>
+<button class="b" style="padding: 6px 12px; color: #a2a2ad">Mobile 390</button>
+</div>
+<div role="group" aria-label="Compare mode" style="display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: #1e1e22">
+<button class="b" onClick="{{mFrame}}" style="padding: 6px 12px; border-radius: 6px; background: {{mFrameBg}}">Frame</button>
+<button class="b" onClick="{{mSide}}" style="padding: 6px 12px; border-radius: 6px; background: {{mSideBg}}">Side by side</button>
+<button class="b" onClick="{{mOver}}" style="padding: 6px 12px; border-radius: 6px; background: {{mOverBg}}">Overlay</button>
+<button class="b" onClick="{{mDiff}}" style="padding: 6px 12px; border-radius: 6px; background: {{mDiffBg}}">Changes</button>
+</div>
+<sc-if value="{{mIsOver}}" hint-placeholder-val="{{ true }}">
+<label style="display: flex; align-items: center; gap: 8px; color: #a2a2ad">Before <input type="range" min="0" max="100" value="{{mOpacity}}" onInput="{{mSetOpacity}}" onChange="{{mSetOpacity}}" style="width: 120px; accent-color: #ff8a3d"> Now</label>
+</sc-if>
+<button class="b" onClick="{{closeModal}}" aria-label="Close" style="width: 32px; height: 32px; border-radius: 8px; border: 1px solid #34343c; display: inline-flex; align-items: center; justify-content: center; color: #a2a2ad">✕</button>
+</div>
+<div style="display: flex; flex-wrap: wrap; flex: 1; min-height: 0; overflow: auto">
+<div style="flex: 999 1 560px; min-width: 0; overflow: auto; background: #0a0a0b">
+<sc-if value="{{mIsFrame}}" hint-placeholder-val="{{ false }}"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now"></div></sc-if>
+<sc-if value="{{mIsSide}}" hint-placeholder-val="{{ false }}"><div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; background: #34343c">
+<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Before · main</div><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)"></div></div>
+<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Now · {{m.prLabel}}</div><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now"></div></div>
+</div></sc-if>
+<sc-if value="{{mIsOver}}" hint-placeholder-val="{{ true }}"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now" style="position: absolute; left: 0; top: 0; opacity: {{mAlpha}}"></div></sc-if>
+<sc-if value="{{mIsDiff}}" hint-placeholder-val="{{ false }}"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now with changes marked" style="filter: grayscale(1) brightness(1.1)"><div style="position: absolute; left: 40.3%; top: 85.2%; width: 26%; height: 5.4%; border: 2px solid #ff6b6b; background: rgb(255 107 107 / 22%); border-radius: 4px"></div></div></sc-if>
+</div>
+<div style="flex: 0 1 260px; padding: 14px; display: flex; flex-direction: column; gap: 8px; border-left: 1px solid #2a2a30; overflow: auto">
+<span class="mono" style="font-size: 10px; color: #8a8a96">ISSUE #{{m.issue}} · {{m.agent}}</span>
+<strong style="font-size: 14px">{{m.title}}</strong>
+<span style="display: inline-flex; gap: 6px; align-items: center; color: #a2a2ad"><span style="width: 8px; height: 8px; border-radius: 2px; background: {{m.jc}}"></span>{{m.journey}}</span>
+<span class="mono" style="font-size: 10px; color: #8a8a96; margin-top: 6px">THIS FRAME</span>
+<span>{{m.frameLine}}</span>
+<span style="color: #ff8a3d">{{m.change}}</span>
+<span class="mono" style="font-size: 10px; color: #8a8a96; margin-top: 6px">LAST ACTIONS</span>
+<sc-for list="{{m.log}}" as="l"><span class="mono" style="font-size: 10px; color: {{l.c}}">{{l.t}}  {{l.m}}</span></sc-for>
+<a href="Proof.dc.html" style="margin-top: 8px">Open the journey in Proof</a>
+</div>
+</div>
+</div>
+</div>
+</sc-if>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+constructor(p){ super(p); this.state = { view: 'graph', j: -1, sel: '1767', modal: null, mm: 'over', mo: 50 }; }
+renderVals() {
+const JC = ['#ff8a3d', '#8b7cff', '#3ddc97', '#8ab4ff'];
+const J = [
+{ title: 'Admin configura tag de afiliado por loja', meta: '2 issues · 1 PR', agents: 'gh-claude-18, codex-1781' },
+{ title: 'Dono escolhe opção e marca comprado', meta: '2 issues · 2 PRs', agents: 'gh-claude-17, gh-claude-20' },
+{ title: 'Studio: abrir vários projetos', meta: '2 issues · 1 PR', agents: 'gh-claude-23' },
+{ title: 'Dono vê as entregas por dia', meta: '1 issue · stalled', agents: 'codex-1752' }
+];
+const W = [
+{ issue: '1781', ex: 'r-0421', stage: 2, last: ['21:14','editing src/admin/nav.tsx'], prev: [['21:09','read docs/journeys/admin.yaml'],['21:04','planned · Keel card']], title: 'Admin nav shows link “Lojas”', j: 0, col: 1, agent: 'codex-1781', age: '12m', hist: 'claimed 21:02\nplanned 21:04' },
+{ issue: '1779', ex: 'r-0421', stage: 6, last: ['20:50','merged by gh-claude-17'], prev: [['20:41','review APPROVE'],['20:12','PR opened']], title: 'Lojas tag form saves per store', j: 0, col: 4, agent: 'gh-claude-18', pr: '1780', reviewer: 'gh-claude-17 approved', age: '40m', hist: 'claimed 19:40\nPR 20:12\nmerged 20:50' },
+{ issue: '1776', ex: 'r-0430', stage: 2, last: ['21:16','editing apps/studio/src/proof/compare.tsx'], prev: [['21:11','vitest compare.test.tsx · 3 red'],['21:00','claimed']], title: 'Before/Now compare in the frame', j: 1, col: 1, agent: 'gh-claude-17', age: '25m', hist: 'claimed 21:00' },
+{ issue: '1775', ex: 'r-0430', stage: 5, last: ['21:20','PR #1778 opened'], prev: [['21:18','vitest 97 files · 1452 passed'],['21:02','editing StepStrip.tsx']], title: 'Frame thumbnails on step cards', j: 1, col: 2, agent: 'gh-claude-18', pr: '1778', reviewer: 'gh-claude-17 reviewing', age: '8m', hist: 'claimed 20:30\nPR 21:20' },
+{ issue: '1767', ex: 'r-0436', stage: 1, last: ['21:05','planned · two PRs'], prev: [['20:58','reading vite.config.ts'],['20:52','claimed']], title: 'One Studio serves several projects', j: 2, col: 1, agent: 'gh-claude-23', age: '35m', hist: 'claimed 20:52\nplanned 21:05' },
+{ issue: '1770', ex: 'r-0436', stage: 5, last: ['21:10','rebase needed: conflict in mission-view.tsx'], prev: [['20:40','PR #1771 opened'],['20:31','tsc -b ok']], title: 'Retire the duplicate top strip', j: 2, col: 2, agent: 'gh-claude-20', pr: '1771', reviewer: 'gh-claude-17 · needs rebase', age: '1h 10m', hist: 'claimed 20:05\nPR 20:40\nconflict 21:10' },
+{ issue: '1752', ex: 'r-0399', stage: 1, last: ['19:12','planned'], prev: [['19:10','claimed']], title: 'Delivery list copies the message', j: 3, col: 0, agent: 'codex-1752', age: '2h 5m', hist: 'claimed 19:10\nno record since 19:12' }
+];
+const C = [['Ready / stalled', '#ff6b6b'], ['Implementing', '#ff8a3d'], ['In review', '#8ab4ff'], ['Merged, waits proof', '#8b7cff'], ['Proven', '#3ddc97']];
+const shown = W.filter(w => this.state.j < 0 || w.j === this.state.j);
+const SN = ['claimed','planned','implementing','tests green','PR open','in review','merged','proven'];
+const blocks = (w) => SN.map((t, i) => ({ t, c: i < w.stage ? '#3ddc97' : (i === w.stage ? (w.col === 0 ? '#ff6b6b' : '#ff8a3d') : '#2a2a30') }));
+const card = (w) => ({ ...w, blocks: blocks(w), stageName: SN[w.stage], log: [{ t: w.last[0], m: w.last[1], c: '#f5f5f6' }].concat(w.prev.map(p => ({ t: p[0], m: p[1], c: '#8a8a96' }))), jc: JC[w.j], journey: J[w.j].title, hasPr: !!w.pr, noPr: !w.pr,
+ageC: /h/.test(w.age) ? '#ff6b6b' : '#8a8a96', edge: this.state.sel === w.issue ? '#ff8a3d' : '#34343c',
+canView: w.col >= 2 && !!w.pr, pick: () => this.setState({ sel: w.issue, modal: (w.col >= 2 && w.pr) ? w.issue : null }) });
+const W2 = W.map((w) => w.issue === '1779' ? { ...w, col: 3 } : w);
+const cols = C.map((c, i) => { const cards = W2.filter(w => (this.state.j < 0 || w.j === this.state.j) && w.col === i).map(card); return { name: c[0], c: c[1], n: cards.length, cards }; });
+const stateName = ['stalled', 'implementing', 'in review', 'merged', 'proven'];
+const stateC = ['#ff6b6b', '#ff8a3d', '#8ab4ff', '#8b7cff', '#3ddc97'];
+const rows = J.map((x, i) => ({ journey: x.title, c: JC[i], items: W2.filter(w => w.j === i).map(w => ({ ...w, hasPr: !!w.pr, noPr: !w.pr, state: stateName[w.col], sc: stateC[w.col], lineC: w.pr ? '#45454e' : 'transparent' })) }))
+.filter((r, i) => this.state.j < 0 || i === this.state.j);
+const flows = J.map((x, i) => { const ws = W2.filter(w => w.j === i); const ids = [...new Set(ws.map(w => w.ex))];
+return { journey: x.title, c: JC[i], execs: ids.map(id => { const its = ws.filter(w => w.ex === id);
+return { id, n: its.length, items: its.map((w, k) => ({ ...w, blocks: blocks(w), lastMsg: w.last[1], blocksNext: k < its.length - 1,
+lineC: w.pr ? '#8ab4ff' : '#45454e', prLabel: w.pr ? 'PR #' + w.pr : 'no PR yet', prC: w.pr ? '#8ab4ff' : '#8a8a96',
+prEdge: w.pr ? '#2a3b5c' : '#34343c', prBorder: w.pr ? 'solid' : 'dashed', reviewerLine: w.pr ? w.reviewer : 'author working' })) }; }) }; })
+.filter((f, i) => (this.state.j < 0 || i === this.state.j) && f.execs.length);
+const RQ = [
+{ ask: 'I want a working Studio with no leftover junk', when: '21 Oct 19:40', issues: ['1770', '1775', '1776'] },
+{ ask: 'studio open must log in by itself, one Studio for both projects', when: '21 Oct 19:05', issues: ['1767'] },
+{ ask: 'Admin sets the affiliate tag per store and sees clicks', when: '21 Oct 18:30', issues: ['1781', '1779'] },
+{ ask: 'Delivery list copies the message for whoever receives', when: '21 Oct 17:50', issues: ['1752'] }
+];
+const ROW = 96;
+const reqs = RQ.map((r) => {
+const its = r.issues.map(id => W2.find(w => w.issue === id)).filter(w => w && (this.state.j < 0 || w.j === this.state.j));
+const h = Math.max(its.length, 1) * ROW + 8;
+const ry = Math.max(0, (h - 130) / 2);
+const items = its.map((w, k) => { const y = k * ROW; const merged = w.col >= 3; const stalled = w.col === 0;
+return { ...w, open: () => this.setState({ sel: w.issue, modal: (w.col >= 2 && w.pr) ? w.issue : null }), y, py: y + 16, blocks: blocks(w), lastMsg: w.last[0] + '  ' + w.last[1], jc: JC[w.j], journey: J[w.j].title,
+prLabel: w.pr ? 'PR #' + w.pr : 'no PR yet', prC: w.pr ? '#8ab4ff' : '#8a8a96', prEdge: w.pr ? '#2a3b5c' : '#34343c', prBorder: w.pr ? 'solid' : 'dashed', reviewerLine: w.pr ? w.reviewer : 'author still working',
+res: merged ? 'Merged · waits proof' : (stalled ? 'Stalled' : 'Not merged'), resC: merged ? '#8b7cff' : (stalled ? '#ff6b6b' : '#8a8a96'), resEdge: merged ? '#3a3466' : '#2a2a30',
+resSub: merged ? 'replay will prove it' : (stalled ? 'no record for 2 h' : '—') }; });
+const cy = ry + 60;
+const links = [];
+items.forEach((it) => { const iy = it.y + 42;
+links.push({ d: 'M240 ' + cy + ' C 270 ' + cy + ', 270 ' + iy + ', 300 ' + iy, c: '#ff8a3d', dash: '' });
+links.push({ d: 'M550 ' + iy + ' L 600 ' + iy, c: it.pr ? '#8ab4ff' : '#45454e', dash: it.pr ? '' : '4 4' });
+links.push({ d: 'M780 ' + iy + ' L 840 ' + iy, c: it.col >= 3 ? '#8b7cff' : '#45454e', dash: it.col >= 3 ? '' : '4 4' }); });
+const done = its.filter(w => w.col >= 3).length;
+const bar = its.map(w => w.col >= 4 ? '#3ddc97' : (w.col >= 3 ? '#8b7cff' : (w.col === 0 ? '#ff6b6b' : '#ff8a3d')));
+return { ...r, h, ry, items, links, bar, summary: its.length + ' issues · ' + its.filter(w => w.pr).length + ' PRs · ' + done + ' merged' };
+}).filter(r => r.items.length);
+const s = W2.find(w => w.issue === this.state.sel) || W2[0];
+const sel = { ...s, jc: JC[s.j], journey: J[s.j].title, col: C[s.col][0], prLine: s.pr ? ('PR #' + s.pr + ' · ' + s.reviewer) : 'No PR yet' };
+const journeys = J.map((x, i) => ({ ...x, c: JC[i], edge: this.state.j === i ? '#ff8a3d' : '#2a2a30', bg: this.state.j === i ? '#1e1e22' : 'transparent', pick: () => this.setState({ j: i }) }));
+const k = this.state.view === 'kanban';
+const mw = W2.find(w => w.issue === this.state.modal);
+const m = mw ? { ...mw, jc: JC[mw.j], journey: J[mw.j].title, url: mw.issue === '1775' ? 'Proof · step cards' : (mw.issue === '1770' ? 'Mission graph · no run' : 'Lojas · tag form'), prLabel: 'PR #' + mw.pr, change: mw.col >= 3 ? 'Replay after merge: 3% of the screen changed' : 'Preview on the PR head: 4% of the screen changed',
+frameLine: mw.col >= 3 ? 'Replay after merge vs main before it' : 'Journey preview on the PR head vs main',
+log: [{ t: mw.last[0], m: mw.last[1], c: '#f5f5f6' }].concat(mw.prev.map(p => ({ t: p[0], m: p[1], c: '#8a8a96' }))) } : { issue: '', log: [] };
+return { journeys, cols, reqs, sel, m, modalOpen: !!mw, closeModal: () => this.setState({ modal: null }),
+mIsFrame: this.state.mm === 'frame', mIsSide: this.state.mm === 'side', mIsOver: this.state.mm === 'over', mIsDiff: this.state.mm === 'diff',
+mFrameBg: this.state.mm === 'frame' ? '#2a2a30' : 'transparent', mSideBg: this.state.mm === 'side' ? '#2a2a30' : 'transparent', mOverBg: this.state.mm === 'over' ? '#2a2a30' : 'transparent', mDiffBg: this.state.mm === 'diff' ? '#2a2a30' : 'transparent',
+mFrame: () => this.setState({ mm: 'frame' }), mSide: () => this.setState({ mm: 'side' }), mOver: () => this.setState({ mm: 'over' }), mDiff: () => this.setState({ mm: 'diff' }),
+mOpacity: this.state.mo, mAlpha: this.state.mo / 100, mSetOpacity: (e) => this.setState({ mo: Number(e.target.value) }),
+heading: this.state.j < 0 ? 'Work in flight, all journeys' : J[this.state.j].title,
+allJ: () => this.setState({ j: -1 }), allEdge: this.state.j < 0 ? '#ff8a3d' : '#2a2a30', allBg: this.state.j < 0 ? '#1e1e22' : 'transparent',
+isKanban: k, isGraph: !k, toKanban: () => this.setState({ view: 'kanban' }), toGraph: () => this.setState({ view: 'graph' }),
+kBg: k ? '#2a2a30' : 'transparent', kFg: k ? '#f5f5f6' : '#a2a2ad', gBg: k ? 'transparent' : '#2a2a30', gFg: k ? '#a2a2ad' : '#f5f5f6' };
+}
+}
+</script>
+</body>
+</html>

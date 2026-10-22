@@ -134,6 +134,8 @@ export interface IssueJourney {
   id: string;
   title: string | null;
   before: { run: string; current: boolean; commit: string | null; ranAt: string | null; result: string | null; screens: { screen: string; frameUrl: string; viewports?: Partial<Record<"web" | "mobile", string>> }[] } | null;
+  /** #1839/#1867: the PR head's newest captured run of this journey, or `null` (absent before #1839). */
+  now?: { pr: number; headSha: string; result: string; ranAt: string | null; recordedAt: string | null; screens: { screen: string; frameUrl: string }[] } | null;
 }
 
 export interface JourneyScreen { id: string; url: string; title?: string }
@@ -288,8 +290,8 @@ export class Runtime {
 
   /** #1802: a frame at a route-relative URL the Runtime handed out. Only its own journey-flow frame
    * routes are fetched, so a crafted URL cannot send the bearer anywhere else. */
-  async frameAt(url: string): Promise<Blob | null> {
-    if (!isFrameUrl(url)) {
+  async frameAt(url: string, executionId?: string): Promise<Blob | null> {
+    if (!isFrameUrl(url, executionId)) {
       throw new RuntimeError("The Runtime named a frame outside its journey frames.");
     }
     return this.#image(url);

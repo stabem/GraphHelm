@@ -25,6 +25,25 @@ describe("the Graph review screen", () => {
     }
   });
 
+  it("fetches a PR head's sealed frame only on the open run's own evidence route (#1867)", () => {
+    const now = "/v1/executions/studio-v2/evidence/signal-gh-claude-20-issue-9-journey_frames-abc-image-1";
+    expect(isFrameUrl(now, "studio-v2")).toBe(true);
+    expect(isFrameUrl(now)).toBe(false); // no run named: never fetched
+    expect(isFrameUrl(now, "other-run")).toBe(false); // another run's evidence
+    for (const url of [
+      "/v1/executions/studio-v2/evidence/signal-x-image-5", // a signal carries at most 4 images
+      "/v1/executions/studio-v2/evidence/signal-x", // the sealed envelope, not a frame
+      "/v1/executions/studio-v2/evidence/some-other-evidence",
+      "/v1/executions/studio-v2/evidence/signal-x-image-1/../../events",
+      "/v1/executions/studio-v2/evidence/signal-x-image-1?y=1",
+      "https://example.com/v1/executions/studio-v2/evidence/signal-x-image-1",
+      "/v1/executions/studio-v2/events",
+    ]) {
+      expect(isFrameUrl(url, "studio-v2")).toBe(false);
+    }
+    expect(isFrameUrl("/v1/executions/../evidence/signal-x-image-1", "..")).toBe(false); // the run id is checked too
+  });
+
   it("shows Before alone until a Now frame exists, never a compare against nothing", () => {
     expect(modesOn(true, false)).toEqual({ frame: true, side: false, overlay: false, changes: false });
     expect(modesOn(false, false).frame).toBe(false);

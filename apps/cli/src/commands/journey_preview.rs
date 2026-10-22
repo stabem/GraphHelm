@@ -40,6 +40,56 @@ const RUNNER_LOG_TAIL: usize = 4096;
 /// shows are this size.
 const WIDTH: u32 = 1280;
 const HEIGHT: u32 = 800;
+/// #1777: the mobile viewport a Run proves; the driver pins the matching device profile.
+const MOBILE_WIDTH: u32 = 390;
+const MOBILE_HEIGHT: u32 = 844;
+
+/// #1777: one viewport a Run plays: its name, page size and the driver device it asks for.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct View {
+    pub(crate) name: &'static str,
+    pub(crate) viewport: Value,
+    pub(crate) device: Option<&'static str>,
+}
+
+/// #1777: the viewports a flow's Run proves, in play order. A fixed `viewport` (#585) is one size,
+/// played alone and named by its width; `viewports` names the ones kept; neither is both.
+pub(crate) fn views_of(flow: &Value) -> Vec<View> {
+    let web = View {
+        name: "web",
+        viewport: json!({"width":WIDTH,"height":HEIGHT}),
+        device: None,
+    };
+    let mobile = View {
+        name: "mobile",
+        viewport: json!({"width":MOBILE_WIDTH,"height":MOBILE_HEIGHT}),
+        device: Some("mobile"),
+    };
+    if let Some(fixed) = flow.get("viewport").filter(|v| v.is_object()) {
+        let narrow = fixed["width"].as_u64().is_some_and(|width| width < 768);
+        return vec![View {
+            name: if narrow { "mobile" } else { "web" },
+            viewport: fixed.clone(),
+            device: None,
+        }];
+    }
+    match flow.get("viewports").and_then(Value::as_array) {
+        Some(names) => [web, mobile]
+            .into_iter()
+            .filter(|view| names.iter().any(|name| name == view.name))
+            .collect(),
+        None => vec![web, mobile],
+    }
+}
+
+/// #1777: a run's budget is the preview budget for each viewport it plays.
+fn budget_of(state: &Value) -> Duration {
+    let views = state["viewportsPlanned"]
+        .as_array()
+        .map_or(1, Vec::len)
+        .clamp(1, 2);
+    PREVIEW_BUDGET * u32::try_from(views).unwrap_or(1)
+}
 /// No path of a preview BEGINS after this from its start; the path in flight is bounded by the
 /// driver's own per-call timeouts. A `running` state older than this plus `RUNNER_GRACE` has no
 /// live runner, whatever its pid now names.
@@ -170,7 +220,7 @@ fn runner_liveness_with(state: &Value, probe: impl FnOnce(u64) -> Liveness) -> L
 
 /// Whether a run started less than its budget plus the grace ago.
 fn within_budget(state: &Value) -> bool {
-    younger_than(state, PREVIEW_BUDGET + RUNNER_GRACE)
+    younger_than(state, budget_of(state) + RUNNER_GRACE)
 }
 
 fn younger_than(state: &Value, limit: Duration) -> bool {
@@ -678,6 +728,93 @@ fn step_reason(code: &str) -> &'static str {
 /// `fail` with the reason `preview.incomplete`, and records no proof. A path's entry screen is
 /// reached when an edge leaving it passed: a backend flow observes no screen before its first act,
 /// so its start screen carries no result of its own. No other screen is excused.
+/// Every screen and edge no path reached says so, in the top-level view and in each viewport's.
+fn fill_not_reached(flow: &Value, state: &mut Value) {
+    let fill = |group: &mut Value, steps: &str, empty: Value| {
+        if !group.is_object() {
+            *group = json!({});
+        }
+        for step in flow[steps].as_array().unwrap() {
+            let id = step["id"].as_str().unwrap();
+            if group[id].is_null() {
+                group[id] = empty.clone();
+            }
+        }
+    };
+    let screen = json!({"frame":false,"reason":"not_reached"});
+    let edge = json!({"result":null,"reason":"not_reached"});
+    fill(&mut state["screens"], "screens", screen.clone());
+    fill(&mut state["edges"], "edges", edge.clone());
+    if let Some(views) = state["viewports"].as_object_mut() {
+        for view in views.values_mut() {
+            fill(&mut view["screens"], "screens", screen.clone());
+            fill(&mut view["edges"], "edges", edge.clone());
+        }
+    }
+}
+
+/// #1777: keeps what one viewport recorded under `viewports.<name>` before the next one plays.
+fn stash_view(flow: &Value, state: &mut Value, name: &str) {
+    if !state["viewports"].is_object() {
+        state["viewports"] = json!({});
+    }
+    let mut view = json!({"screens": state["screens"].clone(), "edges": state["edges"].clone()});
+    fill_not_reached(flow, &mut view);
+    let (result, _) = run_verdict(flow, &view["screens"], &view["edges"]);
+    view["result"] = result.into();
+    state["viewports"][name] = view;
+}
+
+/// #1777: the top-level `screens` and `edges` are the first viewport's, so every older reader
+/// sees today's shape and frames; each step's `result` is its worst at any viewport, and a step
+/// that failed at some viewports but not all names them in `failedAt`.
+fn combine_views(state: &mut Value) {
+    let Some(views) = state["viewports"].as_object().cloned() else {
+        return;
+    };
+    let order: Vec<String> = state["viewportsPlanned"]
+        .as_array()
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(|name| name.as_str().map(str::to_owned))
+                .filter(|name| views.contains_key(name))
+                .collect()
+        })
+        .unwrap_or_default();
+    let Some(first) = order.first().and_then(|name| views.get(name)) else {
+        return;
+    };
+    let mut combined =
+        json!({"screens": first["screens"].clone(), "edges": first["edges"].clone()});
+    for group in ["screens", "edges"] {
+        let Some(entries) = combined[group].as_object_mut() else {
+            continue;
+        };
+        for (id, entry) in entries.iter_mut() {
+            let mut failed_at = Vec::new();
+            for name in &order {
+                let other = &views[name][group][id];
+                let result = other["result"].as_str();
+                if result.is_some_and(|result| result != "pass") {
+                    failed_at.push(name.clone());
+                }
+                if result.map_or(0, severity) > entry["result"].as_str().map_or(0, severity) {
+                    entry["result"] = other["result"].clone();
+                    if !other["reason"].is_null() {
+                        entry["reason"] = other["reason"].clone();
+                    }
+                }
+            }
+            if !failed_at.is_empty() && failed_at.len() < order.len() {
+                entry["failedAt"] = failed_at.into();
+            }
+        }
+    }
+    state["screens"] = combined["screens"].take();
+    state["edges"] = combined["edges"].take();
+}
+
 fn run_verdict(flow: &Value, screens: &Value, edges: &Value) -> (String, Option<&'static str>) {
     let edge_of = |id: &Value| {
         flow["edges"]
@@ -756,6 +893,11 @@ struct Run {
     /// for it: seeded localStorage and, #1782, the fixed clock.
     viewport: Value,
     declared: Option<Value>,
+    /// #1777: the viewport being played: the driver device it asks for, where its frames go
+    /// (`frames` for the first, `frames/<name>` after), and whether it records the proof.
+    device: Option<&'static str>,
+    frames_sub: PathBuf,
+    first_view: bool,
     /// Validation owns a separate result tree and asks the driver for JS coverage per path.
     validation: bool,
     flow_id: String,
@@ -801,7 +943,7 @@ impl Run {
     /// frame, and the arrow from the previous one on this path as walked (replay's order: the
     /// capture commits before the walk).
     fn prove(&mut self, screen: &str, frame: Option<&Value>) -> Result<()> {
-        let Some(args) = self.proof.as_ref() else {
+        let Some(args) = self.proof.as_ref().filter(|_| self.first_view) else {
             return Ok(());
         };
         let Some(file) = frame.and_then(|frame| frame["file"].as_str()) else {
@@ -836,7 +978,7 @@ impl Run {
                 &format!("/screens/{screen}/capture"),
             )
             .ok()?;
-        let frames = self.dir.join("frames");
+        let frames = self.dir.join(&self.frames_sub);
         std::fs::create_dir_all(&frames).ok()?;
         let file = format!("{screen}.png");
         std::fs::copy(output.join(&name), frames.join(&file)).ok()?;
@@ -919,10 +1061,27 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         confirmed: args.confirm && args.validation_dir.is_none(),
         viewport: Value::Null,
         declared: None,
+        device: None,
+        frames_sub: PathBuf::from("frames"),
+        first_view: true,
         validation: args.validation_dir.is_some(),
         flow_id: args.id.clone(),
     };
     (run.viewport, run.declared) = declared_browser(&flow, json!({"width":WIDTH,"height":HEIGHT}));
+    let views = if super::journey_backend::is_backend(&flow) {
+        vec![View {
+            name: "web",
+            viewport: run.viewport.clone(),
+            device: None,
+        }]
+    } else {
+        views_of(&flow)
+    };
+    run.state["viewportsPlanned"] = views
+        .iter()
+        .map(|view| view.name)
+        .collect::<Vec<_>>()
+        .into();
     if run.validation {
         run.state["validationPaths"] = json!({});
         for name in flow["paths"].as_object().unwrap().keys() {
@@ -931,7 +1090,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         }
     }
     run.save();
-    let deadline = Instant::now() + PREVIEW_BUDGET;
+    let deadline = Instant::now() + budget_of(&run.state);
     let launched = std::sync::Arc::new(std::sync::Mutex::new(None));
     watch_budget(
         run.dir.clone(),
@@ -940,20 +1099,11 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         launched.clone(),
         || std::process::exit(3),
     );
-    let outcome = play(&project, &flow, &mut run, deadline, &launched);
-    // Every screen and edge no path reached says so; the run's result is its worst step.
-    for screen in flow["screens"].as_array().unwrap() {
-        let id = screen["id"].as_str().unwrap();
-        if run.state["screens"][id].is_null() {
-            run.state["screens"][id] = json!({"frame":false,"reason":"not_reached"});
-        }
-    }
-    for edge in flow["edges"].as_array().unwrap() {
-        let id = edge["id"].as_str().unwrap();
-        if run.state["edges"][id].is_null() {
-            run.state["edges"][id] = json!({"result":null,"reason":"not_reached"});
-        }
-    }
+    let outcome = play(&project, &flow, &mut run, deadline, &launched, &views);
+    // Every screen and edge no path reached says so; the run's result is its worst step at any
+    // viewport (#1777).
+    fill_not_reached(&flow, &mut run.state);
+    combine_views(&mut run.state);
     let (worst, incomplete) = run_verdict(&flow, &run.state["screens"], &run.state["edges"]);
     run.state["current"] = Value::Null;
     run.state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
@@ -1083,6 +1233,7 @@ fn play(
     run: &mut Run,
     deadline: Instant,
     stopper: &std::sync::Arc<std::sync::Mutex<Option<LaunchedStop>>>,
+    views: &[View],
 ) -> Result<Option<Launched>> {
     // #927: a backend flow needs no browser, and an app only when it sends requests.
     let backend = super::journey_backend::is_backend(flow);
@@ -1194,7 +1345,55 @@ fn play(
         .collect();
     let mut paths: Vec<_> = flow["paths"].as_object().unwrap().iter().collect();
     paths.sort_by(|(a, _), (b, _)| (a.as_str() != "main", a).cmp(&(b.as_str() != "main", b)));
+    // #1777: every viewport plays every path in its own browser, against the one app, with its
+    // own share of the budget.
+    for (index, view) in views.iter().enumerate() {
+        if index > 0 {
+            stash_view(flow, &mut run.state, views[index - 1].name);
+            run.state["screens"] = json!({});
+            run.state["edges"] = json!({});
+        }
+        run.first_view = index == 0;
+        run.viewport = view.viewport.clone();
+        run.device = view.device;
+        run.frames_sub = if index == 0 {
+            PathBuf::from("frames")
+        } else {
+            Path::new("frames").join(view.name)
+        };
+        run.state["viewport"] = view.name.into();
+        run.save();
+        let deadline = deadline.min(Instant::now() + PREVIEW_BUDGET);
+        if play_paths(
+            project, &base, &secrets, &screens, &edges, &paths, backend, guard, deadline, run,
+        )? {
+            break;
+        }
+    }
+    if let Some(last) = views.last() {
+        stash_view(flow, &mut run.state, last.name);
+    }
+    // The runner retains ownership until the completed result is stored.
+    Ok(launched)
+}
+
+/// #1777: one viewport's pass over every path. `true` when a path is held for the owner's click,
+/// so nothing after it is played.
+#[allow(clippy::too_many_arguments)]
+fn play_paths(
+    project: &Path,
+    base: &str,
+    secrets: &std::collections::BTreeMap<String, String>,
+    screens: &std::collections::BTreeMap<&str, &Value>,
+    edges: &std::collections::BTreeMap<&str, &Value>,
+    paths: &[(&String, &Value)],
+    backend: bool,
+    guard: Guard,
+    deadline: Instant,
+    run: &mut Run,
+) -> Result<bool> {
     for (name, path_edges) in paths {
+        let name = name.as_str();
         // Replay's contract id: the flow for `main`, `<flow>.<path>` for any other path.
         let id = run.proof.as_ref().map_or("", |proof| proof.id.as_str());
         run.contract = if name == "main" {
@@ -1213,19 +1412,18 @@ fn play(
             .map(|id| id.as_str().unwrap())
             .collect();
         if backend {
-            play_backend_path(project, &base, &screens, &edges, &ids, name, guard, run);
+            play_backend_path(project, base, screens, edges, &ids, name, guard, run);
         } else {
             play_path(
-                project, &base, &secrets, &screens, &edges, &ids, name, guard, run,
+                project, base, secrets, screens, edges, &ids, name, guard, run,
             )?;
         }
         if !run.state["held"].is_null() {
             // Waiting for the owner's click: nothing after the held act is played.
-            break;
+            return Ok(true);
         }
     }
-    // The runner retains ownership until the completed result is stored.
-    Ok(launched)
+    Ok(false)
 }
 
 /// Which acts a run plays. A draft keeps #515's rule: an act that would destroy something is not
@@ -1295,6 +1493,9 @@ fn play_path(
             json!({"base":entry,"viewport":run.viewport,"allowOrigins":[],"survive":true}),
             run.declared.as_ref(),
         );
+        if let Some(device) = run.device {
+            request["device"] = device.into();
+        }
         if run.validation {
             request["coverage"] = true.into();
         }
@@ -1553,10 +1754,38 @@ fn finalize_coverage(
 /// `GET /v1/journey-flows/{id}/screens/{screen}/frame`: one screen's frame from the current
 /// preview, with the tag it is served under (the flow digest's first twelve hex digits plus the
 /// commit's, so a new run of the same flow and commit keeps the tag only when nothing changed).
+/// #1777: the recorded entry and file of one screen's frame at `viewport` in a run's `dir`. No
+/// viewport, or the run's first one, is the top-level entry in `frames/` (what every run before
+/// #1777 recorded); any other viewport is its own entry in `frames/<viewport>/`.
+fn viewport_frame(
+    dir: &Path,
+    state: &Value,
+    screen: &str,
+    viewport: Option<&str>,
+) -> Option<(Value, PathBuf)> {
+    let first = state["viewportsPlanned"][0].as_str().unwrap_or("web");
+    let (entry, folder) = match viewport {
+        None => (state["screens"][screen].clone(), dir.join("frames")),
+        Some(name) if name == first => (state["screens"][screen].clone(), dir.join("frames")),
+        Some(name @ ("web" | "mobile")) => (
+            state["viewports"][name]["screens"][screen].clone(),
+            dir.join("frames").join(name),
+        ),
+        Some(_) => return None,
+    };
+    if entry["frame"] != true || entry["file"] != format!("{screen}.png").as_str() {
+        return None;
+    }
+    let file = folder.join(format!("{screen}.png"));
+    (safe_node(&file) && std::fs::metadata(&file).ok()?.len() <= FRAME_LIMIT)
+        .then_some((entry, file))
+}
+
 pub(crate) fn screen_frame(
     project: &Path,
     id: &str,
     screen: &str,
+    viewport: Option<&str>,
 ) -> Option<(Vec<u8>, String, u64, u64)> {
     if !plain_id(id) || !plain_id(screen) {
         return None;
@@ -1567,21 +1796,15 @@ pub(crate) fn screen_frame(
     if state["digest"] != digest.as_str() || state["commit"] != commit.as_str() {
         return None;
     }
-    let entry = &state["screens"][screen];
-    if entry["frame"] != true || entry["file"] != format!("{screen}.png").as_str() {
-        return None;
-    }
-    let file = dir.join("frames").join(format!("{screen}.png"));
-    if !safe_node(&file) || std::fs::metadata(&file).ok()?.len() > FRAME_LIMIT {
-        return None;
-    }
+    let (entry, file) = viewport_frame(&dir, &state, screen, viewport)?;
     let bytes = std::fs::read(file).ok()?;
     let started = state["startedAt"].as_str().unwrap_or_default();
     let digest_hex = digest.trim_start_matches("sha256:");
     let tag = format!(
-        "{}-{}",
+        "{}-{}{}",
         &digest_hex[..12.min(digest_hex.len())],
-        &sha_of(started)[..8]
+        &sha_of(started)[..8],
+        viewport.map_or(String::new(), |name| format!("-{name}"))
     );
     Some((
         bytes,
@@ -1722,7 +1945,18 @@ pub(crate) fn newest_finished(project: &Path, id: &str) -> Option<Value> {
             } else {
                 format!("/v1/journey-flows/{id}/history/{run}/screens/{screen}/frame")
             };
-            json!({"screen": screen, "frameUrl": url})
+            // #1777: each viewport that kept a frame of this screen, by its own URL.
+            let mut viewports = serde_json::Map::new();
+            for (name, view) in state["viewports"].as_object().into_iter().flatten() {
+                if view["screens"][screen.as_str()]["frame"] == true {
+                    viewports.insert(name.clone(), format!("{url}?viewport={name}").into());
+                }
+            }
+            let mut entry = json!({"screen": screen, "frameUrl": url});
+            if !viewports.is_empty() {
+                entry["viewports"] = viewports.into();
+            }
+            entry
         })
         .collect();
     screens.sort_by(|a, b| a["screen"].as_str().cmp(&b["screen"].as_str()));
@@ -1747,7 +1981,13 @@ pub(crate) fn journey_title(project: &Path, id: &str) -> String {
 
 /// `GET /v1/journey-flows/{id}/history/{run}/screens/{screen}/frame`: one screen's frame as an
 /// earlier run kept it. The run's id never changes, so its bytes never do.
-pub(crate) fn history_frame(project: &Path, id: &str, run: &str, screen: &str) -> Option<Vec<u8>> {
+pub(crate) fn history_frame(
+    project: &Path,
+    id: &str,
+    run: &str,
+    screen: &str,
+    viewport: Option<&str>,
+) -> Option<Vec<u8>> {
     if !plain_id(id)
         || !plain_id(screen)
         || run.len() != 20
@@ -1757,14 +1997,7 @@ pub(crate) fn history_frame(project: &Path, id: &str, run: &str, screen: &str) -
     }
     let dir = dir_of(project, id).join("history").join(run);
     let state = read_state(&dir)?;
-    let entry = &state["screens"][screen];
-    if entry["frame"] != true || entry["file"] != format!("{screen}.png").as_str() {
-        return None;
-    }
-    let file = dir.join("frames").join(format!("{screen}.png"));
-    if !safe_node(&file) || std::fs::metadata(&file).ok()?.len() > FRAME_LIMIT {
-        return None;
-    }
+    let (_, file) = viewport_frame(&dir, &state, screen, viewport)?;
     std::fs::read(file).ok()
 }
 
@@ -1776,10 +2009,14 @@ pub(crate) fn history_frame(project: &Path, id: &str, run: &str, screen: &str) -
 /// `failingStep` is the first step that did not pass in path order (each path's entry screen,
 /// then each edge and the screen it reaches), else in the run's own sorted keys; `null` when a
 /// run stopped before any step (its `reason` says why). `flowChanged` says the flow's approval
-/// digest moved since that run. The viewport is not here: runs do not record one yet (#1777).
+/// digest moved since that run. #1777: `viewports` is each viewport's status (a run recorded
+/// before #1777 is `web` alone, `mobile` `not_run`), `failsOnlyOn` names the one viewport that
+/// failed while every other one passed (else `null`), and `failingStep.viewport` the viewport its
+/// step failed at when that is one.
 pub(crate) fn last_run(project: &Path, id: &str, flow: Option<&Value>) -> Value {
     let not_run = json!({"status":"not_run","ranAt":null,"kind":null,"reason":null,
-        "failingStep":null,"flowChanged":null});
+        "failingStep":null,"viewports":{"web":"not_run","mobile":"not_run"},"failsOnlyOn":null,
+        "flowChanged":null});
     if !plain_id(id) {
         return not_run;
     }
@@ -1793,12 +2030,65 @@ pub(crate) fn last_run(project: &Path, id: &str, flow: Option<&Value>) -> Value 
     let Some(state) = state else { return not_run };
     let passed = state["state"] == "ready" && state["result"] == "pass";
     let text = |key: &str| state[key].as_str().map_or(Value::Null, Value::from);
+    let (viewports, fails_only_on) = viewport_statuses(&state, passed);
+    let mut failing = if passed {
+        Value::Null
+    } else {
+        first_failing(&state, flow)
+    };
+    if failing.is_object() {
+        let at = &state[if failing["kind"] == "screen" {
+            "screens"
+        } else {
+            "edges"
+        }][failing["id"].as_str().unwrap_or_default()]["failedAt"];
+        failing["viewport"] = match at.as_array().map(Vec::as_slice) {
+            Some([one]) => one.clone(),
+            _ => Value::Null,
+        };
+    }
     json!({"status": if passed { "passed" } else { "failed" },
     "ranAt": text("ranAt"), "kind": text("kind"), "reason": text("reason"),
-    "failingStep": if passed { Value::Null } else { first_failing(&state, flow) },
+    "failingStep": failing, "viewports": viewports, "failsOnlyOn": fails_only_on,
     "flowChanged": flow.map_or(Value::Null, |flow| {
         (state["digest"] != super::journey_flow::approval_digest(flow).as_str()).into()
     })})
+}
+
+/// #1777: each viewport's status in a finished run, and the one viewport that alone failed. A run
+/// recorded before #1777 has no `viewports`: it proved web only, so mobile is `not_run` and no
+/// viewport is named as the only one that failed.
+fn viewport_statuses(state: &Value, passed: bool) -> (Value, Value) {
+    let Some(views) = state["viewports"].as_object() else {
+        let web = if passed { "passed" } else { "failed" };
+        return (json!({"web": web, "mobile": "not_run"}), Value::Null);
+    };
+    let finished = state["state"] == "ready";
+    let mut statuses = json!({"web": "not_run", "mobile": "not_run"});
+    for (name, view) in views {
+        if name == "web" || name == "mobile" {
+            statuses[name] = if finished && view["result"] == "pass" {
+                "passed"
+            } else {
+                "failed"
+            }
+            .into();
+        }
+    }
+    let ran: Vec<&str> = ["web", "mobile"]
+        .into_iter()
+        .filter(|name| statuses[*name] != "not_run")
+        .collect();
+    let failed: Vec<&str> = ran
+        .iter()
+        .copied()
+        .filter(|name| statuses[*name] == "failed")
+        .collect();
+    let only = match (finished, ran.len(), failed.as_slice()) {
+        (true, 2, [one]) => Value::from(*one),
+        _ => Value::Null,
+    };
+    (statuses, only)
 }
 
 /// The first recorded step whose result is `fail` or `drift`: in the flow's path order when the
@@ -1863,6 +2153,144 @@ mod tests {
     /// #1795: the "Before = main" run is the newest FINISHED one: a run still in progress is
     /// skipped for the newest archived run, and a finished current run is served at the current
     /// frame route. Frame URLs are route-relative; a screen without a kept frame is left out.
+    /// #1777: which viewports a Run plays. Defects named: a flow with no viewport field proves only
+    /// web, `viewports` is ignored, a fixed `viewport` (#585) gains a second size, or mobile is
+    /// played without the driver's mobile device.
+    #[test]
+    fn a_run_plays_web_and_mobile_unless_the_flow_keeps_fewer() {
+        use super::*;
+        let names = |flow: Value| {
+            views_of(&flow)
+                .into_iter()
+                .map(|v| v.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(json!({})), ["web", "mobile"]);
+        assert_eq!(names(json!({"viewports": ["mobile"]})), ["mobile"]);
+        assert_eq!(
+            names(json!({"viewports": ["mobile", "web"]})),
+            ["web", "mobile"]
+        );
+        let both = views_of(&json!({}));
+        assert_eq!(both[0].viewport, json!({"width": 1280, "height": 800}));
+        assert_eq!(both[0].device, None);
+        assert_eq!(both[1].viewport, json!({"width": 390, "height": 844}));
+        assert_eq!(both[1].device, Some("mobile"));
+        // A fixed size is that size alone, named by its width, with no device emulation added.
+        let fixed = views_of(&json!({"viewport": {"width": 390, "height": 844}}));
+        assert_eq!(fixed.len(), 1);
+        assert_eq!((fixed[0].name, fixed[0].device), ("mobile", None));
+        assert_eq!(
+            views_of(&json!({"viewport": {"width": 1440, "height": 900}}))[0].name,
+            "web"
+        );
+        // Each viewport gets the whole preview budget; an older state is one viewport.
+        assert_eq!(budget_of(&json!({})), PREVIEW_BUDGET);
+        assert_eq!(
+            budget_of(&json!({"viewportsPlanned": ["web", "mobile"]})),
+            PREVIEW_BUDGET * 2
+        );
+    }
+
+    /// #1777: a step that passes at web and fails at mobile fails the run, and the run says it
+    /// fails only on mobile, on which step; a run recorded before #1777 reads as web only with
+    /// mobile not run and names no viewport. Defects named: the viewports combined with OR, the
+    /// top-level shape changed for older readers, or an old run read as passing on mobile.
+    #[test]
+    fn a_break_seen_only_at_mobile_fails_the_run_and_is_named() {
+        use super::*;
+        let flow = json!({"screens": [{"id": "cart"}, {"id": "pay"}], "edges": [{"id": "cart.pay", "from": "cart", "to": "pay"}],
+            "paths": {"main": ["cart.pay"]}});
+        let pass = json!({"frame": true, "file": "cart.png", "result": "pass", "width": 1280, "height": 800});
+        let mut state = json!({"state": "running", "viewportsPlanned": ["web", "mobile"],
+            "screens": {"cart": pass, "pay": {"frame": true, "file": "pay.png", "result": "pass"}},
+            "edges": {"cart.pay": {"result": "pass"}}});
+        stash_view(&flow, &mut state, "web");
+        state["screens"] = json!({"cart": {"frame": true, "file": "cart.png", "result": "pass"},
+            "pay": {"frame": true, "file": "pay.png", "result": "fail", "reason": "expectation_failed"}});
+        state["edges"] = json!({"cart.pay": {"result": "pass"}});
+        stash_view(&flow, &mut state, "mobile");
+        fill_not_reached(&flow, &mut state);
+        combine_views(&mut state);
+        // The top level keeps the first viewport's frame, with the worst result at any viewport.
+        assert_eq!(state["screens"]["cart"]["width"], 1280);
+        assert_eq!(state["screens"]["cart"]["result"], "pass");
+        assert_eq!(state["screens"]["pay"]["result"], "fail");
+        assert_eq!(state["screens"]["pay"]["failedAt"], json!(["mobile"]));
+        assert_eq!(
+            run_verdict(&flow, &state["screens"], &state["edges"]).0,
+            "fail"
+        );
+        assert_eq!(state["viewports"]["web"]["result"], "pass");
+        assert_eq!(state["viewports"]["mobile"]["result"], "fail");
+
+        let project = tempfile::tempdir().unwrap();
+        let dir = dir_of(project.path(), "checkout");
+        std::fs::create_dir_all(&dir).unwrap();
+        state["state"] = "ready".into();
+        state["result"] = "fail".into();
+        save_state(&dir, &state);
+        let last = last_run(project.path(), "checkout", Some(&flow));
+        assert_eq!(last["status"], "failed");
+        assert_eq!(
+            last["viewports"],
+            json!({"web": "passed", "mobile": "failed"})
+        );
+        assert_eq!(last["failsOnlyOn"], "mobile");
+        assert_eq!(last["failingStep"]["id"], "pay");
+        assert_eq!(last["failingStep"]["viewport"], "mobile");
+
+        // A state written before #1777: web alone, mobile not run, no viewport named.
+        save_state(
+            &dir,
+            &json!({"state": "ready", "result": "fail",
+            "screens": {"pay": {"frame": false, "result": "fail"}}, "edges": {}}),
+        );
+        let old = last_run(project.path(), "checkout", Some(&flow));
+        assert_eq!(
+            old["viewports"],
+            json!({"web": "failed", "mobile": "not_run"})
+        );
+        assert_eq!(old["failsOnlyOn"], Value::Null);
+        assert_eq!(old["failingStep"]["viewport"], Value::Null);
+        save_state(
+            &dir,
+            &json!({"state": "ready", "result": "pass", "screens": {}, "edges": {}}),
+        );
+        let old = last_run(project.path(), "checkout", Some(&flow));
+        assert_eq!(
+            old["viewports"],
+            json!({"web": "passed", "mobile": "not_run"})
+        );
+    }
+
+    /// #1777: each viewport's frame is served from its own file; no viewport is the first one's,
+    /// exactly the file every run before #1777 kept. Defects named: mobile served the web frame,
+    /// an old run answers a mobile frame it never took, or a crafted viewport reads another file.
+    #[test]
+    fn each_viewport_serves_its_own_frame_and_an_old_run_has_only_web() {
+        use super::*;
+        let dir = tempfile::tempdir().unwrap();
+        let frames = dir.path().join("frames");
+        std::fs::create_dir_all(frames.join("mobile")).unwrap();
+        std::fs::write(frames.join("cart.png"), b"web").unwrap();
+        std::fs::write(frames.join("mobile").join("cart.png"), b"mobile").unwrap();
+        let entry = json!({"frame": true, "file": "cart.png"});
+        let state = json!({"viewportsPlanned": ["web", "mobile"], "screens": {"cart": entry},
+            "viewports": {"web": {"screens": {"cart": entry}}, "mobile": {"screens": {"cart": entry}}}});
+        let read = |viewport| {
+            viewport_frame(dir.path(), &state, "cart", viewport)
+                .map(|(_, file)| std::fs::read(file).unwrap())
+        };
+        assert_eq!(read(None).unwrap(), b"web");
+        assert_eq!(read(Some("web")).unwrap(), b"web");
+        assert_eq!(read(Some("mobile")).unwrap(), b"mobile");
+        assert!(read(Some("tablet")).is_none());
+        let old = json!({"screens": {"cart": entry}});
+        assert!(viewport_frame(dir.path(), &old, "cart", Some("mobile")).is_none());
+        assert!(viewport_frame(dir.path(), &old, "cart", None).is_some());
+    }
+
     #[test]
     fn the_before_run_is_the_newest_finished_one() {
         let project = tempfile::tempdir().unwrap();
@@ -2210,10 +2638,10 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let runs = history_ids(&dir.join("history"));
         assert_eq!(runs.len(), 1);
         assert_eq!(
-            history_frame(project.path(), "checkout", &runs[0], "cart").unwrap(),
+            history_frame(project.path(), "checkout", &runs[0], "cart", None).unwrap(),
             b"old cart"
         );
-        assert!(history_frame(project.path(), "checkout", "../../x", "cart").is_none());
+        assert!(history_frame(project.path(), "checkout", "../../x", "cart", None).is_none());
         for minute in 0..25 {
             archive(&dir, &finished(&format!("2026-10-14T11:{minute:02}:00Z")));
         }
@@ -2819,6 +3247,9 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             confirmed: false,
             viewport: Value::Null,
             declared: None,
+            device: None,
+            frames_sub: std::path::PathBuf::from("frames"),
+            first_view: true,
             validation: false,
             flow_id: "checkout".to_owned(),
         };
@@ -2856,6 +3287,9 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 confirmed: false,
                 viewport: Value::Null,
                 declared: None,
+                device: None,
+                frames_sub: std::path::PathBuf::from("frames"),
+                first_view: true,
                 validation: false,
                 flow_id: String::new(),
             };
@@ -2866,6 +3300,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 &mut run,
                 Instant::now() + Duration::from_secs(30),
                 &Arc::new(Mutex::new(None)),
+                &super::views_of(&json!({})),
             );
             return;
         }

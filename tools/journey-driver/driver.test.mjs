@@ -73,6 +73,11 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: [{key:'',value:'1'}] }, 'driver.protocol_invalid'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: [{key:'seen',value:7}] }, 'driver.protocol_invalid'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], storage: Array.from({length:17},(_,i)=>({key:`k${i}`,value:''})) }, 'driver.protocol_invalid'],
+    // #1777: `device` is the one pinned mobile profile, at its own size, never headed.
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:390,height:844}, allowOrigins: [], device: 'mobile' }, 'driver.observer_missing'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:800}, allowOrigins: [], device: 'mobile' }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:390,height:844}, allowOrigins: [], device: 'tablet' }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:390,height:844}, allowOrigins: [], device: {userAgent: 'x'} }, 'driver.protocol_invalid'],
     // #1782: `clock` is an ISO-8601 instant with an explicit offset that Date can hold.
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], clock: '2026-10-31T12:00:00-03:00' }, 'driver.observer_missing'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], clock: '2026-10-31T12:00:00' }, 'driver.protocol_invalid'],

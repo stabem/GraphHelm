@@ -6185,3 +6185,81 @@ fn an_issues_journeys_name_their_newest_finished_run_and_its_frames() {
     .unwrap();
     assert_eq!(bad.status, 400, "{}", bad.body);
 }
+
+/// #1777: a run that proved web and mobile serves each viewport's frame by its own URL, the issue
+/// view names both, the bare URL still serves the web frame it always did, and any other viewport
+/// is refused at `/viewport`. Catches: mobile served the web bytes, an old URL changed meaning, or
+/// a crafted viewport read another file. Cost: one served Runtime, two POSTs, five GETs.
+#[test]
+fn a_run_serves_each_viewports_frame_by_its_own_url() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let project = dir.path().join("project");
+    let archived =
+        project.join(".graphhelm/journey-previews/checkout/history/00000001792058400000");
+    std::fs::create_dir_all(archived.join("frames/mobile")).unwrap();
+    let entry = serde_json::json!({"result": "pass", "frame": true, "file": "cart.png"});
+    std::fs::write(
+        archived.join("state.json"),
+        serde_json::json!({"preview": true, "state": "ready", "result": "fail", "commit": "c1",
+            "ranAt": "2026-10-17T10:00:09+00:00", "viewportsPlanned": ["web", "mobile"],
+            "screens": {"cart": entry},
+            "viewports": {"web": {"result": "pass", "screens": {"cart": entry}},
+                "mobile": {"result": "fail", "screens": {"cart": entry}}}})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(archived.join("frames/cart.png"), b"web-cart").unwrap();
+    std::fs::write(archived.join("frames/mobile/cart.png"), b"mobile-cart").unwrap();
+    let mut extra = throwaway_keyring(dir.path());
+    extra.args.push("--project".into());
+    extra.args.push(project.to_str().unwrap().into());
+    let run = "viewport-frames";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 1);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let mut claim = claim_document("lane-a", 9);
+    claim["journeys"] = serde_json::json!(["checkout"]);
+    let (status, reply, _) = task_record(
+        &base,
+        &token,
+        run,
+        "lane-a",
+        "task.claimed",
+        "claim-9",
+        &claim,
+    );
+    assert_eq!(status, 200, "{reply}");
+
+    let view = get_json(
+        &format!("{base}/v1/executions/{run}/issues/9/journeys"),
+        Some(&token),
+    );
+    let url = "/v1/journey-flows/checkout/history/00000001792058400000/screens/cart/frame";
+    assert_eq!(
+        view["data"]["journeys"][0]["before"]["screens"],
+        serde_json::json!([{"screen": "cart", "frameUrl": url,
+            "viewports": {"web": format!("{url}?viewport=web"), "mobile": format!("{url}?viewport=mobile")}}]),
+        "{view}"
+    );
+    let get = |path: &str| raw_request(&format!("{base}{path}"), Some(&token)).unwrap();
+    assert_eq!(get(url).body, "web-cart", "the bare URL keeps serving web");
+    assert_eq!(get(&format!("{url}?viewport=web")).body, "web-cart");
+    assert_eq!(get(&format!("{url}?viewport=mobile")).body, "mobile-cart");
+    for bad in ["viewport=tablet", "viewport=../mobile", "size=390"] {
+        let refused = get(&format!("{url}?{bad}"));
+        assert_eq!(refused.status, 400, "{bad}: {}", refused.body);
+        assert!(
+            refused.body.contains("/viewport"),
+            "{bad}: {}",
+            refused.body
+        );
+    }
+}

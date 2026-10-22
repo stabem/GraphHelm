@@ -159,7 +159,7 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
 
 const VIEWPORT_MARK: Record<Step["status"], { text: string; tone: string }> = {
   passed: { text: "✓", tone: "pass" }, failed: { text: "✕", tone: "fail" }, drift: { text: "≈", tone: "fail" },
-  skipped: { text: "–", tone: "idle" }, running: { text: "…", tone: "wait" }, "not run": { text: "○", tone: "idle" },
+  skipped: { text: "–", tone: "idle" }, running: { text: "…", tone: "wait" }, waiting: { text: "⏸", tone: "wait" }, "not run": { text: "○", tone: "idle" },
 };
 
 function ViewportMark({ status }: { status: Step["status"] }) {

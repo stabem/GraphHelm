@@ -18,7 +18,8 @@ export interface JourneyRunState {
   history: JourneyPastRun[];
   error: string | null;
   starting: boolean;
-  start: () => void;
+  /** Run; with a digest, the owner's Confirm of the commands shown under that digest (#1909). */
+  start: (confirmDigest?: string) => void;
 }
 
 function message(error: unknown): string {
@@ -35,6 +36,7 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const confirming = useRef<string | null>(null);
   const urls = useRef(new Map<string, { key: string; url: string | null }>());
   const finished = useRef(onFinished);
   finished.current = onFinished;
@@ -70,6 +72,8 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
       setError(message(cause));
     };
     if (attempt === 0) runtime.journeyRun(flowId).then((first) => take(first, false), fail);
+    // #1909: a Confirm reruns with the digest the owner was shown; a plain Run never confirms.
+    else if (confirming.current !== null) runtime.confirmJourneyRun(flowId, confirming.current, executionId).then((first) => take(first, true), fail);
     else runtime.startJourneyRun(flowId, executionId).then((first) => take(first, true), fail);
     return () => { live = false; if (timer !== undefined) clearTimeout(timer); };
     // executionId is read when Run is pressed; a change to it alone does not read the run again.
@@ -108,8 +112,9 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
   }, []);
   useEffect(() => drop, [drop]);
 
-  const start = useCallback(() => {
+  const start = useCallback((confirmDigest?: string) => {
     // A new run's steps start without frames: an earlier run's picture is never shown as this one's.
+    confirming.current = confirmDigest ?? null;
     drop();
     setFrames({});
     setStarting(true);

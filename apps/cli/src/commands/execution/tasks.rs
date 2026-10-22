@@ -251,16 +251,13 @@ impl TasksView {
 
 impl TasksView {
     /// #1851: the view an agent credential reads: the lanes' reported kind and model are the
-    /// owner's (the Lanes card), so they leave both the liveness rows and the records.
+    /// owner's (the Lanes card), so they leave the liveness rows, their only serialized home
+    /// (`TaskEventRecord` never serializes them, so no door that serves records carries them).
     #[must_use]
     pub fn without_lane_identity(mut self) -> Self {
         for row in &mut self.liveness.lanes {
             row.agent_kind = None;
             row.agent_model = None;
-        }
-        for record in &mut self.records {
-            record.agent_kind = None;
-            record.agent_model = None;
         }
         self
     }

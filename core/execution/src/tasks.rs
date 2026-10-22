@@ -289,11 +289,15 @@ pub struct TaskEventRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask: Option<String>,
     /// #1851: what kind of agent the claiming lane is (`claude`, `codex`), as it reported it on
-    /// `task.claimed`; absent means unknown. Never guessed from the lane's name.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `task.claimed`; absent means unknown. Never guessed from the lane's name. Never
+    /// serialized: every door that serves records (the full tasks view, a lane's activity,
+    /// requests, status) would otherwise hand it to agent credentials. The one projection that
+    /// serves it is the tasks route's liveness rows, which strip it for agents.
+    #[serde(default, skip_serializing)]
     pub agent_kind: Option<String>,
-    /// #1851: the model the claiming lane runs on (`opus`, `sonnet`, `fast`), as reported.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// #1851: the model the claiming lane runs on (`opus`, `sonnet`, `fast`), as reported; never
+    /// serialized, as `agent_kind`.
+    #[serde(default, skip_serializing)]
     pub agent_model: Option<String>,
 }
 

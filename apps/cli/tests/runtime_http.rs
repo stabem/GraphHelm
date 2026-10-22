@@ -5827,6 +5827,57 @@ fn the_tasks_view_serves_each_lanes_reported_kind_and_model_to_the_owner_only() 
             "no record carries them to an agent{query}: {text}"
         );
     }
+    // Every other door that serializes the fold's records serves neither field to anyone: the
+    // records never carry them; the tasks route's liveness rows are their one projection.
+    for path in ["lanes/lane-c/activity", "requests", "tasks?full=1"] {
+        for (who, bearer) in [("owner", &token), ("agent", &agent_token)] {
+            let reply = get_json(&format!("{base}/v1/executions/{run}/{path}"), Some(bearer));
+            assert_eq!(reply["ok"], true, "{who} reads {path}: {reply}");
+            let records = if path == "tasks?full=1" {
+                reply["data"]["records"].to_string()
+            } else {
+                reply.to_string()
+            };
+            assert!(
+                !records.contains("agentKind") && !records.contains("agentModel"),
+                "{who} {path} carries no record identity: {records}"
+            );
+            if path != "requests" {
+                assert!(
+                    records.contains("issue-1"),
+                    "{who} {path} serves lane-c's claim record: {records}"
+                );
+            }
+        }
+    }
+    // The raw evidence door is the lane's existing read of sealed envelopes (task_record.py
+    // reads its own task.* envelopes there for heartbeat admission), so a claim opened there
+    // still carries the self-reported labels: they are not secrets, the strip is a view rule.
+    let history = get_json(
+        &format!("{base}/v1/executions/{run}/events?after=0&limit=1000"),
+        Some(&token),
+    );
+    let evidence_id = history["data"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| {
+            event["actor"]["id"] == "lane-c" && event["kind"]["data"]["kind"] == "task.claimed"
+        })
+        .and_then(|event| event["evidenceRefs"][0]["evidenceId"].as_str())
+        .unwrap_or_else(|| panic!("lane-c's claim names its envelope: {history}"))
+        .to_owned();
+    let opened = get_json(
+        &format!("{base}/v1/executions/{run}/evidence/{evidence_id}"),
+        Some(&agent_token),
+    );
+    assert_eq!(opened["ok"], true, "{opened}");
+    assert!(
+        opened["data"]["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("agentKind")),
+        "the raw envelope is unchanged: {opened}"
+    );
 }
 
 fn lane_signal(base: &str, token: &str, run: &str, lane: &str, signal: Value) -> Value {

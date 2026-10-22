@@ -1,6 +1,7 @@
 mod adoption;
 pub(crate) mod architect;
 mod atomic;
+mod capacity;
 mod development;
 mod development_index;
 mod draft;

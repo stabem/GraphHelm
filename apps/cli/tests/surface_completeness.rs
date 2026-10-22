@@ -194,7 +194,12 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 27] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 28] = [
+    (
+        "GET",
+        "/v1/capacity",
+        "the owner's capacity panel in the Studio (#1796): provider routes, build slots and free memory of the Runtime's machine; owner credentials only, and an agent has no decision it would take from the host's free memory",
+    ),
     (
         "GET",
         "/v1/executions/{id}/issues/{issue}/journeys",

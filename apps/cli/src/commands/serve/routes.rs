@@ -2343,6 +2343,23 @@ pub(super) async fn slot_queues(State(state): State<ServeState>) -> Response {
     }
 }
 
+/// `GET /v1/capacity` (#1796): provider routes with their quota left (always unknown, with the
+/// reason), every `--slot-root`'s holder and waiters without host paths, process ids or tickets,
+/// the machine's Cargo jobs budget, and the OS's free memory. Read-only; nothing in the request
+/// names a path. Owner credentials only (the agent allow-list refuses this route).
+pub(super) async fn capacity(State(state): State<ServeState>) -> Response {
+    const COMMAND: &str = "runtime.capacity";
+    let roots = state.slot_roots.clone();
+    let manifest = effective_manifest(&state, None);
+    match off_reactor(move || crate::commands::capacity::read(manifest.as_deref(), &roots)).await {
+        Some(value) => respond_outcome(Outcome::success(COMMAND, value)),
+        None => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(COMMAND, "the capacity read failed").output,
+        ),
+    }
+}
+
 /// `GET /v1/journey-flows` (#353): `graphhelm journey flows`'s own envelope for the Runtime's
 /// `--project`; nothing from the request names a path. Owner credentials only
 /// (`agent_route_allowed` admits no `/v1/journey-flows`).

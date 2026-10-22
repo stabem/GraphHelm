@@ -1111,3 +1111,94 @@ fn sizes_count_files_and_recorded_targets_without_following_links_with_http_pari
     assert_eq!(redirected["targets"][0]["sizeError"], "target_outside_root");
     assert!(redirected["lanes"]["lane"].is_null());
 }
+
+/// #1796 (Studio v2 R5): `GET /v1/capacity` tells the owner what is left, measured or marked
+/// unknown. One temp slot root with a holder and a waiter, and a missing root: busy 1, queued 1,
+/// the lanes named, and nothing of the host in the reply (no root path, worktree, pid or ticket).
+/// With no gateway manifest the providers part says so. Memory is a number, or null with the
+/// reason. Owner only: the agent token is refused. Credible regression: no route (the Studio
+/// cannot show capacity), a reply that leaks the slot root's path, or one an agent can read.
+#[test]
+fn the_runtime_reports_capacity_to_the_owner_without_host_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("slot-a");
+    let missing = dir.path().join("slot-missing");
+    let slot_dir = root.join(".graphhelm-workspaces").join("slot");
+    std::fs::create_dir_all(&slot_dir).unwrap();
+    let holder_path = slot_dir.join("000000000000000000000001-lane-a-1.ticket");
+    let holder = std::fs::File::create(&holder_path).unwrap();
+    holder.lock().unwrap();
+    let waiter_path = slot_dir.join("000000000000000000000002-lane-b-2.ticket");
+    let waiter = std::fs::File::create(&waiter_path).unwrap();
+    waiter.lock().unwrap();
+    std::fs::write(
+        holder_path.with_extension("info"),
+        serde_json::json!({"lane":"lane-a","label":"hold","pid":4242,"worktree":root.join("wt-a"),"arrivedNanos":"1"}).to_string(),
+    ).unwrap();
+    std::fs::write(
+        waiter_path.with_extension("info"),
+        serde_json::json!({"lane":"lane-b","label":"wait","pid":4343,"worktree":root.join("wt-b"),"arrivedNanos":"2","stage":"review"}).to_string(),
+    ).unwrap();
+    std::fs::write(
+        slot_dir.join("holder.json"),
+        serde_json::json!({"lane":"lane-a","label":"hold","pid":4242,"worktree":root.join("wt-a"),"sinceNanos":"1","ticket":holder_path.file_name().unwrap().to_string_lossy()}).to_string(),
+    ).unwrap();
+    let slot_lock = std::fs::File::create(slot_dir.join("slot.lock")).unwrap();
+    slot_lock.lock().unwrap();
+    let (_server, base, owner) = serve(
+        dir.path(),
+        &[
+            "--slot-root",
+            root.to_str().unwrap(),
+            "--slot-root",
+            missing.to_str().unwrap(),
+        ],
+    );
+    let owner = std::fs::read_to_string(owner).unwrap();
+    let reply = support::raw_request(&format!("{base}/v1/capacity"), Some(owner.trim())).unwrap();
+    let agent = std::fs::read_to_string(dir.path().join("events.agent.token")).unwrap();
+    let refused = support::raw_request(&format!("{base}/v1/capacity"), Some(agent.trim())).unwrap();
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(refused.status, 403, "{}", refused.body);
+    let body: Value = serde_json::from_str(&reply.body).unwrap();
+    let data = &body["data"];
+    let slots = &data["buildSlots"];
+    assert_eq!(slots["configured"], 2, "{body}");
+    assert_eq!(slots["unreadable"], 1, "{body}");
+    assert_eq!(slots["busy"], 1, "{body}");
+    assert_eq!(slots["queued"], 1, "{body}");
+    assert_eq!(slots["holders"][0]["lane"], "lane-a", "{body}");
+    assert_eq!(slots["waiting"][0]["lane"], "lane-b", "{body}");
+    assert_eq!(slots["waiting"][0]["stage"], "review", "{body}");
+    assert!(
+        slots["jobsBudget"].as_u64().is_some_and(|jobs| jobs > 0)
+            || slots["jobsReason"].is_string(),
+        "{body}"
+    );
+    // Nothing of the host: the temp directory, the worktrees, the pids, the ticket names.
+    let temp = serde_json::to_string(&dir.path().to_string_lossy()).unwrap();
+    let temp = temp.trim_matches('"');
+    for leak in [
+        temp,
+        "worktree",
+        "4242",
+        "4343",
+        ".ticket",
+        "\"root\"",
+    ] {
+        assert!(
+            !reply.body.contains(leak),
+            "the reply leaks {leak:?}: {}",
+            reply.body
+        );
+    }
+    assert_eq!(data["providers"]["configured"], false, "{body}");
+    let memory = &data["memory"];
+    if memory["reason"].is_null() {
+        let total = memory["totalBytes"].as_u64().expect("a total");
+        let available = memory["availableBytes"].as_u64().expect("an available");
+        assert!(total > 0 && available <= total, "{body}");
+    } else {
+        assert!(memory["availableBytes"].is_null(), "{body}");
+    }
+}

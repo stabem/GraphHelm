@@ -5823,9 +5823,9 @@ fn the_tasks_board_shows_a_lanes_open_question_until_a_reply_names_it() {
     assert_eq!(
         waiting(""),
         vec![
-            row("lane-a", "owner", &to_owner),
-            row("lane-b", "orchestrator", &to_lead),
-            row("lane-c", "owner", &open),
+            row("lane-a", "studio-operator", &to_owner),
+            row("lane-b", "lane-lead", &to_lead),
+            row("lane-c", "studio-operator", &open),
         ]
     );
     let full = get_json(
@@ -5837,12 +5837,8 @@ fn the_tasks_board_shows_a_lanes_open_question_until_a_reply_names_it() {
         "{full}"
     );
     assert_eq!(
-        full["data"]["waiting"][1]["addressedTo"], "lane-lead",
-        "{full}"
-    );
-    assert_eq!(
         waiting("?lane=lane-b"),
-        vec![row("lane-b", "orchestrator", &to_lead)]
+        vec![row("lane-b", "lane-lead", &to_lead)]
     );
 
     // The owner answers lane-a; the lead lane answers lane-b.
@@ -5870,5 +5866,5 @@ fn the_tasks_board_shows_a_lanes_open_question_until_a_reply_names_it() {
         "to": "lane-b", "replyTo": to_lead, "severity": "low", "description": "lane-d reviews.",
         "evidence": [run], "emittedAt": "2026-10-22T00:02:00Z"}),
     );
-    assert_eq!(waiting(""), vec![row("lane-c", "owner", &open)]);
+    assert_eq!(waiting(""), vec![row("lane-c", "studio-operator", &open)]);
 }

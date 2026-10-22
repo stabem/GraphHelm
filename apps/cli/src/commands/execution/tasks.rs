@@ -70,10 +70,10 @@ pub struct TasksView {
 pub struct LaneWaiting {
     pub lane: String,
     pub question: String,
-    /// `owner` when addressed to `studio-operator`, otherwise `orchestrator`.
-    pub waits_on: &'static str,
-    /// The addressed actor id as the asker wrote it.
-    pub addressed_to: String,
+    /// The actor the question is addressed to (its `to`), as the asker wrote it: the owner's
+    /// `studio-operator` or a lane id. No role is inferred here; a reader labels it from the
+    /// roster.
+    pub waits_on: String,
     pub since: PersistedTimestamp,
     pub signal_id: String,
     pub sequence: u64,
@@ -938,12 +938,7 @@ where
         waiting.push(LaneWaiting {
             lane: lane.to_owned(),
             question: question.to_owned(),
-            waits_on: if to == OWNER_ADDRESS {
-                "owner"
-            } else {
-                "orchestrator"
-            },
-            addressed_to: to.to_owned(),
+            waits_on: to.to_owned(),
             since: event.occurred_at.clone(),
             signal_id: record.signal_id.as_str().to_owned(),
             sequence: event.sequence,

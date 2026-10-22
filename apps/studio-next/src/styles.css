@@ -236,3 +236,23 @@ button { font: inherit; }
   .board { grid-template-columns: 1fr; overflow-x: visible; }
   .agent-panel { max-width: none; border-left: 0; border-top: 1px solid var(--edge); }
 }
+
+/* #1801: the Graph region's owner requests and Kanban. */
+.requests { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.requests-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.seg { display: inline-flex; gap: 4px; }
+.seg .b.on { border-color: var(--accent); }
+.request-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.request-row { display: grid; grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(140px, 1fr)); gap: 12px; padding: 10px; border: 1px solid var(--edge); border-radius: 8px; }
+.request-ask, .request-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.result-proven strong { color: #3ddc97; }
+.result-merged strong { color: #8b7cff; }
+.result-in-progress strong { color: #ff8a3d; }
+.kanban { display: flex; gap: 10px; overflow-x: auto; }
+.kanban-col { flex: 1 1 180px; min-width: 160px; display: flex; flex-direction: column; gap: 6px; }
+.kanban-col h2 { margin: 0; font-size: 12px; font-weight: 600; }
+.kanban-col ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.kanban-card { display: flex; flex-direction: column; gap: 2px; padding: 8px; border: 1px solid var(--edge); border-radius: 6px; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .request-row { grid-template-columns: 1fr; }
+}

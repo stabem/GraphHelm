@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 
 import type { RunSummary } from "../runtime/client";
 
-/** The Graph region. Here it says which run is open and how it stands, from the run index; the
- * requests flowchart and Kanban arrive with #1801 (S3). */
-export function GraphView({ run, runId, children }: { run: RunSummary | null; runId: string | null; children?: ReactNode }) {
+/** The Graph region: which run is open and how it stands (the run index), then `requests`, the
+ * run's owner requests as a flowchart or Kanban (#1801). */
+export function GraphView({ run, runId, children, requests }: { run: RunSummary | null; runId: string | null; children?: ReactNode; requests?: ReactNode }) {
   return (
     <section id="panel-graph" aria-label="Graph" className="view">
       {children}
@@ -21,6 +21,7 @@ export function GraphView({ run, runId, children }: { run: RunSummary | null; ru
             <dt>Started</dt><dd className="mono">{run.startedAt ?? "not recorded"}</dd>
             <dt>Last event</dt><dd className="mono">{run.lastEventAt ?? "none"}</dd>
           </dl>
+          {requests}
         </>
       )}
     </section>

@@ -187,9 +187,7 @@ FLOW
     if [ -r /proc/$$/winpid ]; then echo "serve-listener 0 $pid"; else echo "serve-listener $pid"; fi >> "$pids"
   done
   # The seeded run: the manual-override example, one blocked node, one ready node.
-  # #1901: the Studio opens a project's team run by itself, so studio2-no-run gets a project with
-  # no run at all.
-  if [ "${GRAPHHELM_JOURNEY_FLOW:-}" != studio2-no-run ] && ! grep -q '"executionId":"demo"' "$dir/.graphhelm/seed.json" 2>/dev/null; then
+  if ! grep -q '"executionId":"demo"' "$dir/.graphhelm/seed.json" 2>/dev/null; then
     echo '{"nodeOutcomes":{"implementation":"failure"}}' > "$dir/.graphhelm/fixtures.json"
     "$bin" --json execution start --file "$repo/examples/graphs/manual-override-deploy.yaml" \
       --events "$rt/events" --fixtures "$dir/.graphhelm/fixtures.json" --mode supervised --execution demo \

@@ -1,0 +1,49 @@
+schema: graphhelm.journey-flow/1
+id: studio2-no-run
+title: See journeys in a project with no team run
+name: Start from no run
+feature: Studio
+purpose: A project with no team run still shows its journeys in Proof and a working Start a team run button in the top bar.
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, recovery]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: empty
+    title: The project has no team run
+    url: /?session=studio-fixture
+    state: empty
+    expect: [{role: button, name: Start a team run}, {role: tab, name: Proof}]
+    scope: unknown
+  - id: proof
+    title: Proof lists the project's journeys
+    url: /?session=studio-fixture
+    state: empty
+    expect: [{role: list, name: Journeys}]
+    scope: unknown
+  - id: started
+    title: A team run has started
+    url: /?session=studio-fixture
+    state: stable
+    expect: [{role: region, name: Graph}, {role: button, name: Start a team run, absent: true}]
+    scope: unknown
+edges:
+  - id: empty.proof
+    from: empty
+    to: proof
+    acts:
+      - {kind: activate, role: tab, name: Proof}
+  - id: proof.started
+    from: proof
+    to: started
+    intent: "Opens the new-run form, writes the objective and starts the run."
+    acts:
+      - {kind: activate, role: button, name: Start a team run}
+      - {kind: enter_text, role: textbox, name: What should the team do?, text: Check the journeys.}
+      - {kind: activate, role: button, name: Start}
+paths:
+  main: [empty.proof, proof.started]
+drift: []

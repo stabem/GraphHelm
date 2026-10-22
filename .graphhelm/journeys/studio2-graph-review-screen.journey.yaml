@@ -1,0 +1,58 @@
+schema: graphhelm.journey-flow/1
+id: studio2-graph-review-screen
+title: Review a card's screens in the large modal
+name: Review a screen
+feature: Studio
+purpose: "Clicking a card in review or merged opens the large modal with Frame, Side by side, Overlay with a slider, Changes, and Web/Mobile; Esc closes it."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, accessibility]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: board
+    title: A card is in review
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: region, name: Graph}, {role: button, name: Open review}]
+    scope: unknown
+  - id: closed
+    title: Esc closes the modal
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: region, name: Graph}, {role: dialog, name: Review, absent: true}]
+    scope: unknown
+  - id: modal
+    title: The review modal compares the screens
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: dialog, name: Review}, {role: button, name: Frame}, {role: button, name: Side by side}, {role: button, name: Overlay}, {role: button, name: Changes}, {role: button, name: Web}, {role: button, name: Mobile}]
+    scope: unknown
+  - id: overlay
+    title: Overlay shows the opacity slider
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: slider, name: Now opacity}, {role: button, name: Mobile}]
+    scope: unknown
+edges:
+  - id: board.modal
+    from: board
+    to: modal
+    acts:
+      - {kind: activate, role: button, name: Open review}
+  - id: modal.overlay
+    from: modal
+    to: overlay
+    acts:
+      - {kind: activate, role: button, name: Overlay}
+  - id: overlay.closed
+    from: overlay
+    to: closed
+    intent: Closes the modal; Escape does the same.
+    acts:
+      - {kind: activate, role: button, name: Close review}
+paths:
+  main: [board.modal, modal.overlay, overlay.closed]
+drift: []

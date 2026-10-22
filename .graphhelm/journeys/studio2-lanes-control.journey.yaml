@@ -1,0 +1,57 @@
+schema: graphhelm.journey-flow/1
+id: studio2-lanes-control
+title: "Wake, reassign or stop an agent"
+name: Control an agent
+feature: Studio
+purpose: "Wake, Reassign and Stop on an agent change its state, and the change shows on the board."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, irreversible_effect]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: agent
+    title: The agent panel offers its controls
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: button, name: Wake}, {role: button, name: Reassign}, {role: button, name: Stop}]
+    scope: unknown
+  - id: reassigned
+    title: Reassign moves the agent's work
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: status, name: Work reassigned}]
+    scope: unknown
+  - id: stopped
+    title: The stopped agent leaves its column
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: status, name: Agent stopped}]
+    scope: unknown
+  - id: woken
+    title: Wake shows on the board
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: status, name: Wake sent}]
+    scope: unknown
+edges:
+  - id: agent.woken
+    from: agent
+    to: woken
+    acts:
+      - {kind: activate, role: button, name: Wake}
+  - id: reassigned.stopped
+    from: reassigned
+    to: stopped
+    acts:
+      - {kind: activate, role: button, name: Stop}
+  - id: woken.reassigned
+    from: woken
+    to: reassigned
+    acts:
+      - {kind: activate, role: button, name: Reassign}
+paths:
+  main: [agent.woken, woken.reassigned, reassigned.stopped]
+drift: []

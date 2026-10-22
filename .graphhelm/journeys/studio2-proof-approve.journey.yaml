@@ -1,0 +1,47 @@
+schema: graphhelm.journey-flow/1
+id: studio2-proof-approve
+title: Approve or reject a run journey
+name: Approve a journey
+feature: Studio
+purpose: Approve and Reject on a fully run journey record the decision and update the journey's status.
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, irreversible_effect]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: approved
+    title: The journey shows as approved
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: status, name: Approved}]
+    scope: unknown
+  - id: ran
+    title: A fully run journey offers the decision
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: button, name: Approve}, {role: button, name: Reject}]
+    scope: unknown
+  - id: rejected
+    title: A rejected journey shows as rejected
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: status, name: Rejected}]
+    scope: unknown
+edges:
+  - id: ran.approved
+    from: ran
+    to: approved
+    acts:
+      - {kind: approve, role: button, name: Approve}
+  - id: ran.rejected
+    from: ran
+    to: rejected
+    acts:
+      - {kind: activate, role: button, name: Reject}
+paths:
+  main: [ran.approved]
+  reject: [ran.rejected]
+drift: []

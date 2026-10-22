@@ -1,0 +1,35 @@
+schema: graphhelm.journey-flow/1
+id: studio2-lanes-needs-action
+title: Clear the Needs action list
+name: Clear needs action
+feature: Studio
+purpose: "Needs action orders items oldest first, and each item's button does its action: Answer, Assign, Merge, Archive or Reassign."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+viewport: {width: 1440, height: 900}
+screens:
+  - id: done
+    title: The acted item leaves the list
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: status, name: Done}, {role: region, name: Needs action}]
+    scope: unknown
+  - id: list
+    title: Needs action lists items oldest first
+    url: /?session=studio-fixture&run=demo
+    state: stable
+    expect: [{role: region, name: Needs action}, {role: list, name: Needs action items}]
+    scope: unknown
+edges:
+  - id: list.done
+    from: list
+    to: done
+    acts:
+      - {kind: activate, role: button, name: Answer}
+paths:
+  main: [list.done]
+drift: []

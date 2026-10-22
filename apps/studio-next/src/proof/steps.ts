@@ -13,9 +13,20 @@ export interface Step {
   edge: string | null;
   label: string;
   status: StepStatus;
-  /** Which viewport the run measured this step at, or `null` when the run did not say. */
-  viewport: Viewport | null;
+  /** #1777: how the step stands at each viewport. A run recorded before viewports measured one
+   * size, so the viewport it did not play is `not run`. */
+  viewports: Record<Viewport, StepStatus>;
   frame: boolean;
+}
+
+export const VIEWPORTS: readonly Viewport[] = ["web", "mobile"];
+
+/** #1777: the one viewport a step failed at while it passed at the other, else `null`. */
+export function failsOnlyOn(step: Pick<Step, "viewports">): Viewport | null {
+  const failed = VIEWPORTS.filter((viewport) => step.viewports[viewport] === "failed" || step.viewports[viewport] === "drift");
+  if (failed.length !== 1) return null;
+  const other = VIEWPORTS.find((viewport) => viewport !== failed[0])!;
+  return step.viewports[other] === "passed" ? failed[0]! : null;
 }
 
 /** The design's break between the web and the mobile layout (web 1280, mobile 390). */
@@ -45,17 +56,36 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
   const order: { screen: string; edge: JourneyEdge | null }[] = path.length > 0
     ? [{ screen: path[0]!.from, edge: null }, ...path.map((edge) => ({ screen: edge.to, edge }))]
     : [...screens.keys()].map((screen) => ({ screen, edge: null }));
+  const statusIn = (
+    seen: { result?: string } | undefined,
+    walked: { result?: string | null } | undefined,
+    current: boolean,
+  ): StepStatus => {
+    const results = [seen?.result, walked?.result];
+    if (results.includes("fail")) return "failed";
+    if (results.includes("drift")) return "drift";
+    if (walked?.result === "skipped") return "skipped";
+    if (seen?.result === "pass") return "passed";
+    if (current) return "running";
+    return "not run";
+  };
   return order.map(({ screen, edge }, index) => {
     const seen = run?.screens?.[screen];
     const walked = edge === null ? undefined : run?.edges?.[edge.id];
-    const results = [seen?.result, walked?.result];
-    let status: StepStatus;
-    if (results.includes("fail")) status = "failed";
-    else if (results.includes("drift")) status = "drift";
-    else if (walked?.result === "skipped") status = "skipped";
-    else if (seen?.result === "pass") status = "passed";
-    else if (run?.state === "running" && run.current === screen) status = "running";
-    else status = "not run";
+    const playing = run?.state === "running" && run.current === screen;
+    const status = statusIn(seen, walked, playing);
+    const viewports: Record<Viewport, StepStatus> = { web: "not run", mobile: "not run" };
+    if (run?.viewports !== undefined && Object.keys(run.viewports).length > 0) {
+      for (const viewport of VIEWPORTS) {
+        const view = run.viewports[viewport];
+        if (view !== undefined) viewports[viewport] = statusIn(view.screens?.[screen], edge === null ? undefined : view.edges?.[edge.id], false);
+      }
+      // The viewport playing now is the top level until it is kept under its name.
+      const now = run.viewport;
+      if (run.state === "running" && now !== undefined && run.viewports[now] === undefined) viewports[now] = status;
+    } else if (seen !== undefined || walked !== undefined || playing) {
+      viewports[viewportOf(seen?.width) ?? "web"] = status;
+    }
     const url = screens.get(screen)?.url ?? screen;
     return {
       n: index + 1,
@@ -63,7 +93,7 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
       edge: edge?.id ?? null,
       label: edge === null ? `Opens ${url}` : does(edge),
       status,
-      viewport: seen === undefined ? null : viewportOf(seen.width),
+      viewports,
       frame: seen?.frame === true,
     };
   });

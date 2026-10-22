@@ -20,6 +20,8 @@ interface CompareFrameProps {
   steps: number;
   /** Object URL of this step's frame in the run on screen. */
   now: string | undefined;
+  /** #1777: the same step's mobile frame, when the run played mobile. */
+  mobileNow?: string | undefined;
   /** The earlier run this step is compared with, or `null` when none kept its frame. */
   earlier: JourneyPastRun | null;
 }
@@ -28,10 +30,15 @@ interface CompareFrameProps {
  * alone, Before and Now side by side, Now over Before with an opacity slider, or Now with every
  * pixel that changed since Before painted red. Before is the earlier run's frame, fetched with the
  * session's bearer header into an object URL. */
-export function CompareFrame({ runtime, flowId, step, steps, now, earlier }: CompareFrameProps) {
+export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobileNow, earlier }: CompareFrameProps) {
   const [mode, setMode] = useState<CompareMode>("frame");
   const [opacity, setOpacity] = useState(50);
-  const before = usePastFrame(runtime, flowId, earlier?.run ?? null, step.screen);
+  const [viewport, setViewport] = useState<"web" | "mobile">("web");
+  // #1777: Mobile is on when this run kept a mobile frame of this step; Before pairs the same viewport.
+  const mobileOn = mobileNow !== undefined;
+  const shownViewport = viewport === "mobile" && mobileOn ? "mobile" : "web";
+  const now = shownViewport === "mobile" ? mobileNow : webNow;
+  const before = usePastFrame(runtime, flowId, earlier?.run ?? null, step.screen, shownViewport === "mobile" ? "mobile" : undefined);
   const changes = useChanges(mode === "changes" ? before.url : null, mode === "changes" ? now ?? null : null);
   const comparable = now !== undefined && before.url !== null;
   const shown = comparable ? mode : "frame";
@@ -48,8 +55,9 @@ export function CompareFrame({ runtime, flowId, step, steps, now, earlier }: Com
         <div className="compare-bar">
           <span className="mono compare-step">step {step.n} · {step.label}</span>
           <div role="group" aria-label="Viewport" className="seg-group">
-            <button type="button" className="seg on" aria-pressed="true">Web 1280</button>
-            <button type="button" className="seg" aria-pressed="false" disabled aria-describedby="compare-mobile-note">Mobile 390</button>
+            <button type="button" className={`seg${shownViewport === "web" ? " on" : ""}`} aria-pressed={shownViewport === "web"} onClick={() => setViewport("web")}>Web</button>
+            <button type="button" className={`seg${shownViewport === "mobile" ? " on" : ""}`} aria-pressed={shownViewport === "mobile"} disabled={!mobileOn} aria-describedby={mobileOn ? undefined : "compare-mobile-note"} onClick={() => setViewport("mobile")}>Mobile</button>
+            <span className="mono compare-size">{shownViewport === "mobile" ? "390 × 844" : "1280 × 800"}</span>
           </div>
           <div role="group" aria-label="Compare mode" className="seg-group">
             {MODES.map(({ mode: each, label }) => (
@@ -64,7 +72,7 @@ export function CompareFrame({ runtime, flowId, step, steps, now, earlier }: Com
           )}
           <span className="mono compare-count">frame {step.n}/{steps}</span>
         </div>
-        <p id="compare-mobile-note" className="compare-note">Mobile frames are not captured yet; only the web frame can be shown.</p>
+        {!mobileOn && <p id="compare-mobile-note" className="compare-note">This run kept no mobile frame of this step (a flow can name only web in `viewports`, and runs before #1777 played web alone).</p>}
         {shown === "frame" && (now ? <img src={now} alt={`Step ${step.n} captured`} /> : <p>No frame captured for step {step.n} in this run.</p>)}
         {shown === "side" && before.url !== null && now && (
           <div role="group" aria-label="Before and Now side by side" className="compare-side">
@@ -93,21 +101,21 @@ export function CompareFrame({ runtime, flowId, step, steps, now, earlier }: Com
 }
 
 /** An earlier run's frame of one screen, as an object URL revoked when it is replaced or left. */
-function usePastFrame(runtime: Runtime, flowId: string, run: string | null, screen: string): { url: string | null; error: string | null } {
+function usePastFrame(runtime: Runtime, flowId: string, run: string | null, screen: string, viewport?: "mobile"): { url: string | null; error: string | null } {
   const [state, setState] = useState<{ url: string | null; error: string | null }>({ url: null, error: null });
   useEffect(() => {
     setState({ url: null, error: null });
     if (run === null) return;
     let live = true;
     let url: string | null = null;
-    runtime.journeyPastFrame(flowId, run, screen).then((blob) => {
+    runtime.journeyPastFrame(flowId, run, screen, viewport).then((blob) => {
       if (!live) return;
       if (blob === null) { setState({ url: null, error: "The earlier run kept no frame for this step." }); return; }
       url = URL.createObjectURL(blob);
       setState({ url, error: null });
     }, (cause: unknown) => { if (live) setState({ url: null, error: cause instanceof Error ? cause.message : "The Runtime refused the frame." }); });
     return () => { live = false; if (url !== null) URL.revokeObjectURL(url); };
-  }, [runtime, flowId, run, screen]);
+  }, [runtime, flowId, run, screen, viewport]);
   return state;
 }
 

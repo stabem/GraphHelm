@@ -8,7 +8,7 @@ export function reviewable(column: KanbanColumn, pr: number | null): boolean {
 /** The frame routes the Runtime hands out (#1795): a journey's current or kept run frame. Only
  * these are fetched with the bearer, so a crafted URL cannot send it anywhere else. */
 export function isFrameUrl(url: string): boolean {
-  return /^\/v1\/journey-flows\/[A-Za-z0-9][A-Za-z0-9._:-]*\/(?:history\/\d{20}\/)?screens\/[A-Za-z0-9][A-Za-z0-9._:-]*\/frame$/.test(url);
+  return /^\/v1\/journey-flows\/[A-Za-z0-9][A-Za-z0-9._:-]*\/(?:history\/\d{20}\/)?screens\/[A-Za-z0-9][A-Za-z0-9._:-]*\/frame(?:\?viewport=(?:web|mobile))?$/.test(url);
 }
 
 export type ReviewMode = "frame" | "side" | "overlay" | "changes";

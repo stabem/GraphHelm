@@ -38,8 +38,8 @@ function useFrame(runtime: Runtime, url: string | null): { src: string | null; e
  * #1802 (S4): the review screen of an In review or Merged card (docs/design/studio/Graph.dc.html):
  * a near-full-screen dialog with a browser bar, the compare modes and the viewport switch. Before is
  * the journey's newest finished run on main (#1795 R4a). Now is the PR head's frame, which no route
- * serves until #1839, so Side by side, Overlay and Changes stay off and say why. Mobile waits for
- * #1777. Escape and Close review shut it.
+ * serves until #1839, so Side by side, Overlay and Changes stay off and say why. Mobile shows the
+ * main run's mobile frame when it kept one (#1777). Escape and Close review shut it.
  */
 export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
   const [journeys, setJourneys] = useState<IssueJourney[] | null>(null);
@@ -48,6 +48,7 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
   const [screen, setScreen] = useState<string | null>(null);
   const [mode, setMode] = useState<ReviewMode>("frame");
   const [opacity, setOpacity] = useState(50);
+  const [viewport, setViewport] = useState<"web" | "mobile">("web");
   const closeRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
@@ -71,7 +72,10 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
 
   const journey = journeys?.find((row) => row.id === journeyId) ?? null;
   const shot = journey?.before?.screens.find((row) => row.screen === screen) ?? null;
-  const before = useFrame(runtime, shot?.frameUrl ?? null);
+  // #1777: Mobile is on when the main run kept a mobile frame of this screen.
+  const mobileUrl = shot?.viewports?.mobile ?? null;
+  const shownViewport = viewport === "mobile" && mobileUrl !== null ? "mobile" : "web";
+  const before = useFrame(runtime, shownViewport === "mobile" ? mobileUrl : shot?.frameUrl ?? null);
   const on = modesOn(before.src !== null, false);
   const shown: ReviewMode = on[mode] ? mode : "frame";
 
@@ -108,10 +112,11 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
             </div>
             <section aria-label="Review frame" className="review-frame">
               <div className="compare-bar">
-                <span className="mono small review-url">{shot?.frameUrl ?? "no frame"}</span>
+                <span className="mono small review-url">{(shownViewport === "mobile" ? mobileUrl : shot?.frameUrl) ?? "no frame"}</span>
                 <div role="group" aria-label="Viewport" className="seg-group">
-                  <button type="button" className="seg on" aria-pressed="true">Web 1280</button>
-                  <button type="button" className="seg" aria-pressed="false" disabled aria-describedby="review-mobile-note">Mobile 390</button>
+                  <button type="button" className={`seg${shownViewport === "web" ? " on" : ""}`} aria-pressed={shownViewport === "web"} onClick={() => setViewport("web")}>Web</button>
+                  <button type="button" className={`seg${shownViewport === "mobile" ? " on" : ""}`} aria-pressed={shownViewport === "mobile"} disabled={mobileUrl === null} aria-describedby={mobileUrl === null ? "review-mobile-note" : undefined} onClick={() => setViewport("mobile")}>Mobile</button>
+                  <span className="mono compare-size">{shownViewport === "mobile" ? "390 × 844" : "1280 × 800"}</span>
                 </div>
                 <div role="group" aria-label="Compare mode" className="seg-group">
                   {MODES.map(({ mode: each, label }) => (
@@ -121,7 +126,7 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
                 </div>
                 {shown === "overlay" && <input type="range" min={0} max={100} value={opacity} aria-label="Now opacity" onChange={(event) => setOpacity(Number(event.target.value))} />}
               </div>
-              <p id="review-mobile-note" className="compare-note">Mobile frames are not captured yet (#1777); only the web frame can be shown.</p>
+              {mobileUrl === null && <p id="review-mobile-note" className="compare-note">The main run kept no mobile frame of this screen (the flow names only web, or the run is from before #1777).</p>}
               <p className="compare-note">Now (the PR head's frame) is not recorded yet (#1839), so Side by side, Overlay and Changes are off. Shown: Before, from main.</p>
               {journey?.before === null
                 ? <p>This journey has not finished a run on main yet, so there is no Before frame.</p>

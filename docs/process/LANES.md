@@ -321,6 +321,8 @@ records"). From a lane worktree the token path must be absolute:
 | Grade a design round when the plan says `critic: design` | `$T --issue N critic_verdict --round R --score 0-10 --design-ref <path> --reason "<why>"` |
 | As coordinator, to refresh the Lanes Backlog (#1469): the open `current-wave` issues no open PR closes, read with `gh` | `$T queued` (no `--issue`) |
 | As owner, to retire or restore lanes (signs with the owner token; `--token-file <events.token>`) | `$T lane_retired --lanes a,b --retired true\|false --reason "<why>"` (no `--issue`) |
+| As orchestrator, to record an owner request in the owner's words (#1792) | `$T request_recorded --request-id <id> --ask "<the ask>" [--title "<short>"]` (no `--issue`) |
+| As orchestrator, to link an issue opened for that request | `$T --issue N request_linked --request-id <id>` |
 
 `--closes` is recorded exactly as given: name every issue the squash closed, and pass none for a
 `Refs` PR. Every lane merges under one GitHub account, so `mergedBy` cannot tell whose merge it

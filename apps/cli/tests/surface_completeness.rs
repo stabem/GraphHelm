@@ -194,11 +194,31 @@ fn read_rust_string(text: &str) -> String {
 /// AN EXCEPTION LIST IS THE HONEST HALF OF A COMPLETENESS GUARD, and it earns its keep only if
 /// adding a row is harder than adding the tool. Each entry names WHY, so a future author who wants
 /// to silence this guard has to write a false sentence rather than paste a path.
-const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 22] = [
+const NOT_A_RUNTIME_VERB: [(&str, &str, &str); 26] = [
+    (
+        "GET",
+        "/v1/executions/{id}/requests",
+        "the owner's requests joined with their issues and PRs, the read model of the Studio's Graph (#1792); an agent records requests with task.request_recorded / task.request_linked and reads the same records from tasks (full=1), so no separate agent verb is needed",
+    ),
     (
         "GET",
         "/v1/executions/{id}/lanes/{lane}/activity",
         "one lane's last actions for the owner's Studio lanes board (#1793); owner credentials only, and agent credentials are refused, so it is not an agent verb. A lane reads its own records through tasks (lane= filter)",
+    ),
+    (
+        "POST",
+        "/v1/executions/{id}/lanes/{lane}/wake",
+        "the owner's lane control (#1798): it speaks for the owner to a lane, and only the owner credential reaches it. An agent that wants another lane's attention already sends its own note through the signal tool, signed as itself",
+    ),
+    (
+        "POST",
+        "/v1/executions/{id}/lanes/{lane}/stop",
+        "the owner's lane control (#1798): retiring a lane is the owner's decision, refused to every agent credential; an MCP tool would hand an agent a way to stop its peers",
+    ),
+    (
+        "POST",
+        "/v1/executions/{id}/lanes/{lane}/reassign",
+        "the owner's lane control (#1798): releasing one lane's work to another is the owner's decision, refused to every agent credential; a lane releases only its own claim, through its own task record",
     ),
     (
         "GET",

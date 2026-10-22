@@ -1,5 +1,7 @@
 /** The public Runtime routes the shell reads, through the same-origin proxy: `/v1` for the first
  * project, `/p/<id>/v1` for a project that joined this Studio's port (#1800). */
+import type { Draft, LaneControl } from "../lanes/drafts";
+
 export interface RunSummary {
   executionId: string;
   status: string;
@@ -127,8 +129,15 @@ export interface JourneyRun {
   driverLog?: { tail?: string };
 }
 
-/** `GET /v1/journey-flows/{id}/history`: earlier finished runs, newest first. */
-export interface JourneyPastRun { run: string; ranAt?: string; result?: StepResult; kind?: "replay" | "preview" }
+/** `GET /v1/journey-flows/{id}/history`: earlier finished runs, newest first, each with the screens
+ * it kept a frame for. */
+export interface JourneyPastRun {
+  run: string;
+  ranAt?: string;
+  result?: StepResult;
+  kind?: "replay" | "preview";
+  screens?: Record<string, { frame?: boolean; width?: number; height?: number; result?: StepResult }>;
+}
 
 interface Envelope<T> {
   ok: boolean;
@@ -138,7 +147,7 @@ interface Envelope<T> {
 
 export class RuntimeError extends Error {}
 
-const OWNER = { id: "studio-operator", type: "owner" };
+export const OWNER = { id: "studio-operator", type: "owner" };
 
 export class Runtime {
   readonly #token: string;
@@ -204,12 +213,22 @@ export class Runtime {
     return Array.isArray(view.runs) ? view.runs : [];
   }
 
-  /** One screen's captured frame, fetched with the bearer header (never a token in a URL). `null`
-   * when the Runtime has none yet (204, 304, 404). */
+  /** One screen's captured frame in the current run. `null` when the Runtime has none yet. */
   async journeyFrame(flowId: string, screenId: string): Promise<Blob | null> {
+    return this.#image(`/v1/journey-flows/${encodeURIComponent(flowId)}/screens/${encodeURIComponent(screenId)}/frame`);
+  }
+
+  /** One screen's frame as an earlier run kept it:
+   * `GET /v1/journey-flows/{id}/history/{run}/screens/{screen}/frame`. `null` when that run kept none. */
+  async journeyPastFrame(flowId: string, run: string, screenId: string): Promise<Blob | null> {
+    return this.#image(`/v1/journey-flows/${encodeURIComponent(flowId)}/history/${encodeURIComponent(run)}/screens/${encodeURIComponent(screenId)}/frame`);
+  }
+
+  /** A frame fetched with the bearer header (never a token in a URL). `null` for 204, 304, 404. */
+  async #image(path: string): Promise<Blob | null> {
     let response: Response;
     try {
-      response = await fetch(`${this.#base}/v1/journey-flows/${encodeURIComponent(flowId)}/screens/${encodeURIComponent(screenId)}/frame`, {
+      response = await fetch(`${this.#base}${path}`, {
         headers: { Authorization: `Bearer ${this.#token}` },
         signal: AbortSignal.timeout(30_000),
       });
@@ -250,22 +269,23 @@ export class Runtime {
     return Array.isArray(log.actions) ? log.actions : [];
   }
 
-  /** #1803: the owner's message to a lane, `POST /v1/executions/{id}/signal`: an `operator_note`
-   * addressed (`to`) to the lane, naming the question it answers in `replyTo` when there is one,
-   * which is what takes that question off the board. `id` is both the signal id and the
-   * idempotency key, so a resend of one message is reconciled instead of recorded twice. */
-  async messageLane(executionId: string, id: string, lane: string, text: string, replyTo: string | null): Promise<void> {
-    await this.#request("POST", `/v1/executions/${encodeURIComponent(executionId)}/signal`, {
-      signal: {
-        id, to: lane, ...(replyTo === null ? {} : { replyTo }),
-        source: { type: "user", id: OWNER.id }, type: "operator_note", severity: "low",
-        description: text, evidence: [executionId], emittedAt: new Date().toISOString(),
-      },
-    }, {
-      "Idempotency-Key": id,
-      "X-GraphHelm-Actor": OWNER.id,
-      "X-GraphHelm-Actor-Type": OWNER.type,
-    });
+  /** #1803: the owner's message to a lane, `POST /v1/executions/{id}/signal`, sent as the draft
+   * holds it (lanes/drafts.ts `messageBody`). The draft id is both the signal id and the
+   * idempotency key, and a resend carries the same body byte for byte, so the Runtime reconciles
+   * it instead of refusing it (#1837). */
+  async messageLane(executionId: string, draft: Draft): Promise<void> {
+    await this.#request("POST", `/v1/executions/${encodeURIComponent(executionId)}/signal`, draft.body, this.#owner(draft.id));
+  }
+
+  /** #1847: the owner's Wake, Reassign or Stop of one lane,
+   * `POST /v1/executions/{id}/lanes/{lane}/{wake|reassign|stop}`, owner credential only. The
+   * draft's id is the `Idempotency-Key` and its body carries `at`, so a resend is a replay. */
+  async controlLane(executionId: string, lane: string, control: LaneControl, draft: Draft): Promise<void> {
+    await this.#request("POST", `/v1/executions/${encodeURIComponent(executionId)}/lanes/${encodeURIComponent(lane)}/${control}`, draft.body, this.#owner(draft.id));
+  }
+
+  #owner(key: string): Record<string, string> {
+    return { "Idempotency-Key": key, "X-GraphHelm-Actor": OWNER.id, "X-GraphHelm-Actor-Type": OWNER.type };
   }
 
   /** `POST /v1/executions/{id}/start`. The idempotency key derives from the run id, so a resend of

@@ -2,6 +2,7 @@ pub(crate) mod alloc_guard;
 mod documents;
 mod handover;
 mod journey_credentials;
+mod lanes;
 mod lifecycle;
 pub(super) mod monitor;
 mod native_chats;
@@ -1113,9 +1114,17 @@ fn build_router(state: ServeState) -> Router {
         .route("/v1/executions/{id}/briefing", get(routes::briefing))
         .route("/v1/executions/{id}/journeys", get(routes::journeys))
         .route("/v1/executions/{id}/tasks", get(routes::tasks))
+        .route("/v1/executions/{id}/requests", get(routes::requests))
         .route(
             "/v1/executions/{id}/lanes/{lane}/activity",
             get(routes::lane_activity),
+        )
+        // #1798: the owner's lane controls.
+        .route("/v1/executions/{id}/lanes/{lane}/wake", post(lanes::wake))
+        .route("/v1/executions/{id}/lanes/{lane}/stop", post(lanes::stop))
+        .route(
+            "/v1/executions/{id}/lanes/{lane}/reassign",
+            post(lanes::reassign),
         )
         .route("/v1/journeys", get(routes::project_journeys))
         .route("/v1/keel/plan", post(routes::keel_plan))
@@ -1643,7 +1652,8 @@ fn journey_review_route(request: &Request) -> bool {
 }
 
 /// The routes a scoped agent credential reaches: reads of its own execution (status, briefing,
-/// events and, since #1149, the task projection `tasks`, which the lanes' MCP tool reads) and the
+/// events and, since #1149, the task projection `tasks`, which the lanes' MCP tool reads, and its
+/// requests view, #1792) and the
 /// signal route. Everything else is the owner's or the shared session token's.
 fn agent_route_allowed(request: &Request) -> bool {
     let path = request.uri().path();
@@ -1654,7 +1664,7 @@ fn agent_route_allowed(request: &Request) -> bool {
             && segments.get(2) == Some(&"executions")
             && (segments.len() == 4
                 || (segments.len() == 5
-                    && matches!(segments[4], "briefing" | "events" | "tasks")));
+                    && matches!(segments[4], "briefing" | "events" | "tasks" | "requests")));
     }
     let segments: Vec<_> = path.split('/').collect();
     method == axum::http::Method::POST

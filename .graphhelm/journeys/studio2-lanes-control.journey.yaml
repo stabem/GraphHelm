@@ -47,6 +47,7 @@ edges:
     to: stopped
     acts:
       - {kind: activate, role: button, name: Stop}
+      - {kind: activate, role: button, name: Confirm stop}
   - id: woken.reassigned
     from: woken
     to: reassigned

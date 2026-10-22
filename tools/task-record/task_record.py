@@ -44,14 +44,14 @@ LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # #1851: the Runtime's `agentKind` / `agentModel` rule on task.claimed (task-event.schema.json).
 AGENT_KIND = re.compile(r"[a-z][a-z0-9-]{0,31}", re.ASCII)
 AGENT_MODEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}", re.ASCII)
-KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "review_activity", "merged", "closed", "critic_verdict", "queued", "lane_retired")
+KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "review_activity", "merged", "closed", "critic_verdict", "queued", "lane_retired", "request_recorded", "request_linked")
 # #1469: `queued` records the open issues carrying this label that no open PR closes, oldest
 # first, at most QUEUED_MAX (the schema's maxItems), as the Lanes Backlog reads them.
 WAVE_LABEL = "current-wave"
 QUEUED_MAX = 25
 # The default revision is the step's position in the delivery. `planned` (#480) came later and is
 # the claim's companion, so the older steps keep their numbers (and their records' keys).
-REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "review_activity": 1, "merged": 5, "closed": 6, "critic_verdict": 1, "queued": 1, "lane_retired": 1}
+REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "review_activity": 1, "merged": 5, "closed": 6, "critic_verdict": 1, "queued": 1, "lane_retired": 1, "request_recorded": 1, "request_linked": 1}
 CLASSES = ("docs", "code", "user_visible", "invariant")
 PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
@@ -288,15 +288,18 @@ def parse(argv):
                         "at <events>.agent.<lane>.token (#1148), and the shared token's value is never sent")
     p.add_argument("--allow-shared-token", action="store_true",
                    help="send the shared agent token when the lane has no credential file (default: refuse)")
-    p.add_argument("--title", help="claimed/pr_opened: the issue's or PR's title; default: read with gh")
+    p.add_argument("--title", help="claimed/pr_opened: the issue's or PR's title; default: read with gh."
+                   " request_recorded: an optional short title for the request")
+    p.add_argument("--request-id", help="request_recorded/request_linked (#1792): the request's id, e.g. one-header")
+    p.add_argument("--ask", help="request_recorded: the owner's ask in their own words (at most 2000 characters)")
     p.add_argument("--summary", help="claimed/pr_opened: one sentence; default: the body's 'Summary:' line, read with gh."
                    " planned: the plan in one line (at most 300 characters), required")
     p.add_argument("--no-github", action="store_true", help="do not call gh for the title and summary")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
-    if args.kind not in ("queued", "lane_retired") and args.issue is None:
+    if args.kind not in ("queued", "lane_retired", "request_recorded") and args.issue is None:
         p.error("the following arguments are required: --issue")
-    if args.kind in ("queued", "lane_retired") and args.issue is not None:
+    if args.kind in ("queued", "lane_retired", "request_recorded") and args.issue is not None:
         p.error(f"{args.kind} is not about one issue; it takes no --issue")
     return args
 
@@ -435,7 +438,8 @@ def planned_fields(args):
 
 
 def document(args, now):
-    doc = {"schema": "graphhelm-task-event-v1", "taskId": {"queued": "backlog", "lane_retired": "lanes"}.get(args.kind, f"issue-{args.issue}"),
+    doc = {"schema": "graphhelm-task-event-v1", "taskId": {"queued": "backlog", "lane_retired": "lanes"}.get(
+               args.kind, f"request-{args.request_id}" if args.kind.startswith("request_") else f"issue-{args.issue}"),
            "revision": args.revision or REVISIONS[args.kind], "at": now}
     if args.kind == "queued":
         if args.no_github:
@@ -444,6 +448,17 @@ def document(args, now):
         # The Runtime admits a description of at most 8 KiB: the newest issues give way first.
         while len(json.dumps(doc, separators=(",", ":")).encode()) > 8000:
             doc["issues"].pop()
+    elif args.kind == "request_recorded":
+        # #1792: the owner's request in their own words; the recorder names itself.
+        need(args, "request-id", "ask")
+        if not args.ask.strip() or len(args.ask) > 2000:
+            sys.exit("task_record: --ask is the owner's request, nonblank and at most 2000 characters")
+        doc.update(requestId=args.request_id, ask=args.ask, recordedBy=args.lane)
+        if args.title:
+            doc["title"] = args.title
+    elif args.kind == "request_linked":
+        need(args, "request-id")
+        doc.update(requestId=args.request_id, issue=args.issue, linkedBy=args.lane)
     elif args.kind == "lane_retired":
         need(args, "lanes", "retired", "reason")
         lanes = [name.strip() for name in args.lanes.split(",")]

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/task-event.schema.json",
   "title": "Task Event",
-  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.released, task.heartbeat, task.pr_opened, task.review_assigned, task.review_verdict, task.review_activity, task.merged, task.closed, task.critic_verdict, task.queued, and the owner's task.lane_retired); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
+  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.released, task.heartbeat, task.pr_opened, task.review_assigned, task.review_verdict, task.review_activity, task.merged, task.closed, task.critic_verdict, task.queued, task.request_recorded, task.request_linked, and the owner's task.lane_retired); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
   "oneOf": [
     {
       "title": "task.review_activity",
@@ -337,6 +337,39 @@
             }
           }
         }
+      }
+    },
+    {
+      "title": "task.request_recorded",
+      "description": "#1792: an owner request, the ask in the owner's words. It opens no slice. A later record with the same requestId and a higher revision supersedes ask and title; recordedBy is the actor that records it (often the orchestrator relaying the owner).",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "requestId", "ask", "recordedBy"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "requestId": {"$ref": "#/$defs/taskId"},
+        "ask": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "title": {"$ref": "#/$defs/title"},
+        "recordedBy": {"$ref": "#/$defs/actor"}
+      }
+    },
+    {
+      "title": "task.request_linked",
+      "description": "#1792: an issue opened for a recorded request. Idempotent per (requestId, issue); a link to a request that was never recorded is refused. linkedBy is the actor that records it.",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "requestId", "issue", "linkedBy"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "requestId": {"$ref": "#/$defs/taskId"},
+        "issue": {"$ref": "#/$defs/positive"},
+        "linkedBy": {"$ref": "#/$defs/actor"}
       }
     }
   ],

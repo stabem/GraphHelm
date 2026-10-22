@@ -26,12 +26,3 @@ export function GraphView({ run, runId, children }: { run: RunSummary | null; ru
     </section>
   );
 }
-
-/** The Lanes region; the board and agent panel are #1803 (S5). */
-export function LanesView() {
-  return (
-    <section id="panel-lanes" aria-label="Lanes" className="view">
-      <p>The lanes board is not in this Studio yet (#1803).</p>
-    </section>
-  );
-}

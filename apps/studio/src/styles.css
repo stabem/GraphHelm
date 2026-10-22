@@ -43,10 +43,23 @@ button { font: inherit; }
 .b { all: unset; cursor: pointer; box-sizing: border-box; }
 .b:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.shell { display: flex; min-height: 100vh; }
+/* #1904: the shell fills the viewport; --fit is the wide-screen zoom, so a zoomed shell still
+   measures exactly one screen (Chromium multiplies vh inside a zoomed element). */
+.shell { --fit: 1; display: flex; min-height: calc(100vh / var(--fit)); }
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
-.sidebar { width: 232px; flex: none; background: var(--rail); border-right: 1px solid var(--edge); padding: 14px 12px; display: flex; flex-direction: column; gap: 14px; }
+.sidebar { width: 232px; flex: none; background: var(--rail); border-right: 1px solid var(--edge); padding: 14px 12px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 0; height: calc(100vh / var(--fit)); overflow-y: auto; }
+/* Sidebar.dc.html: the restart notice and the footer pinned to the bottom of the rail. */
+.restart { border: 1px solid #3a2414; border-radius: 10px; background: #1a120c; padding: 8px 10px; }
+.restart summary { cursor: pointer; color: var(--accent); font-size: 11px; list-style: none; }
+.restart summary::-webkit-details-marker { display: none; }
+.restart p { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--edge); padding-top: 10px; }
+.foot-link { padding: 6px 8px; border-radius: 6px; color: var(--muted); }
+.foot-link:hover { background: var(--card); color: var(--text); }
+/* #1904: the owner's wide-screen step ("muito apertado" at ~2000px): type and spacing grow together. */
+@media (min-width: 1800px) { .shell { --fit: 1.15; zoom: 1.15; } }
+@media (min-width: 2400px) { .shell { --fit: 1.3; zoom: 1.3; } }
 .brand { display: flex; align-items: center; gap: 8px; }
 .brand-mark { width: 26px; height: 26px; border-radius: 7px; display: block; }
 .brand strong { font-size: 14px; }
@@ -89,7 +102,7 @@ button { font: inherit; }
 
 @media (max-width: 760px) {
   .shell { flex-direction: column; }
-  .sidebar { width: auto; border-right: 0; border-bottom: 1px solid var(--edge); }
+  .sidebar { width: auto; border-right: 0; border-bottom: 1px solid var(--edge); position: static; height: auto; overflow: visible; }
   .views { margin-left: 0; }
 }
 .crumb-project { margin: 0; font-size: inherit; font-weight: 700; }
@@ -194,7 +207,7 @@ button { font: inherit; }
 .filter.reply { background: #241010; color: #ff9b9b; }
 .filter.idle { background: #24170e; color: var(--accent); }
 .filter.working { background: #10201a; color: var(--live); border-color: transparent; }
-.board { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: 10px; overflow-x: auto; }
+.board { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: 10px; overflow-x: auto; flex: 1 0 auto; min-height: 360px; }
 .board-column { border: 1px solid var(--edge); border-radius: 12px; background: #111113; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .board-column h3 { margin: 0; display: flex; align-items: center; gap: 6px; font: 600 11px var(--mono); text-transform: uppercase; }
 .board-column h3 .count { margin-left: auto; color: var(--faint); font-weight: 400; }
@@ -253,7 +266,9 @@ button { font: inherit; }
 .more { font-size: 10px; color: var(--faint); }
 .small { font-size: 11px; }
 .ghost.small { align-self: flex-start; padding: 4px 10px; }
-.agent-panel { flex: 1 1 300px; max-width: 360px; border-left: 1px solid var(--edge); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.serves { font-size: 10px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* #1904: no 360px cap; the panel widens with the screen. */
+.agent-panel { flex: 1 1 clamp(300px, 18vw, 520px); max-width: none; border-left: 1px solid var(--edge); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .panel-head { display: flex; align-items: center; gap: 8px; font-size: 15px; }
 .muted { color: var(--muted); }
 .panel-journeys { display: flex; flex-direction: column; gap: 4px; font-size: 10px; color: var(--muted); }
@@ -273,7 +288,7 @@ button { font: inherit; }
 .sent { color: var(--live); }
 @media (max-width: 760px) {
   .lanes-main { padding: 12px 16px; }
-  .board, .board.with-asked { grid-template-columns: 1fr; overflow-x: visible; }
+  .board, .board.with-asked { grid-template-columns: 1fr; overflow-x: visible; min-height: 0; }
   .agent-panel { max-width: none; border-left: 0; border-top: 1px solid var(--edge); }
 }
 

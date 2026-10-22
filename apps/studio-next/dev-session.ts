@@ -25,10 +25,12 @@
  *   owner's home). It reaches only a caller already holding that project's token; the folder is
  *   never written to a log line, an error body or the Runtime;
  * - `POST /__studio/add` with header `X-GraphHelm-Studio-Key: <stable key of a project this tab
- *   holds>` and `{"path": <folder>}` registers the folder exactly as `/__studio/register` does (a
- *   GraphHelm project whose Runtime is running at loopback), proved by the owner's key instead of
- *   the new project's ticket, and answers that project's id and stable key. Registration is keyed by
- *   the canonical folder's id, so the same folder twice is one project.
+ *   holds>` and `{"path": <folder>, "ticket": <ticket>}` registers the folder exactly as
+ *   `/__studio/register` does (a GraphHelm project whose Runtime is running at loopback) and answers
+ *   that project's id and stable key. It needs BOTH proofs: the owner's key, and the new project's
+ *   own one-shot ticket (`graphhelm studio open --project <folder>`), spent by the add. Holding one
+ *   project's key is never proof of access to another. Registration is keyed by the canonical
+ *   folder's id, so the same folder twice is one project.
  *
  * `apply: "serve"` keeps every route out of any production bundle: a built page has no way to
  * obtain a token.
@@ -282,14 +284,22 @@ export function devSession(env: Record<string, string>): Plugin {
         void readBody(request, 8 * 1024).then((raw) => {
           if (!owner) return json(response, 404, { ok: false });
           let path: unknown = null;
+          let ticket: unknown = null;
           try {
-            path = raw === null ? null : (JSON.parse(raw) as { path?: unknown }).path;
+            const body = raw === null ? null : (JSON.parse(raw) as { path?: unknown; ticket?: unknown });
+            path = body?.path;
+            ticket = body?.ticket;
           } catch { /* an unreadable body names no folder */ }
           const project = projectAt(path);
           const token = project === null ? null : readToken(project.tokenFile);
           // The reason codes never repeat the folder the caller sent.
           if (project === null || token === null) return json(response, 422, { ok: false, reason: "not_a_project" });
+          // The owner's key does not reach another project: that project's own ticket is the proof.
+          // It is checked (read, not spent) before anything else is told, and spent only on success,
+          // so a 409 for a stopped Runtime leaves it usable for the next attempt.
+          if (typeof ticket !== "string" || !holdsTicket(project, ticket)) return json(response, 404, { ok: false });
           if (runtimeOf(project.folder) === null) return json(response, 409, { ok: false, reason: "runtime_not_running" });
+          if (!consumeTicket(project.ticketFile, ticket)) return json(response, 404, { ok: false });
           if (project.id !== firstProjectId(env)) joined.set(project.id, project);
           json(response, 200, { ok: true, projectId: project.id, sessionKey: stableKey(token) });
         });

@@ -28,12 +28,15 @@ export interface JourneyFlow {
   /** #1835: the last finished run as its runner recorded it. Absent from older Runtimes: unknown,
    * never read as `not_run`. */
   lastRun?: JourneyLastRun;
+<<<<<<< HEAD
   /** The owner's approval block, `null` while none is recorded. */
   approved?: unknown;
   /** Whether the Runtime would accept Approve now (#353): no blocking findings, a passing preview. */
   approvable?: boolean;
   /** #1588: the owner's latest rejection of this exact content, with its reason. */
   rejected?: { note?: string } | null;
+=======
+>>>>>>> origin/main
 }
 
 export interface JourneyScreen { id: string; url: string; title?: string }
@@ -162,6 +165,7 @@ export class Runtime {
     return response.blob();
   }
 
+<<<<<<< HEAD
   /** Approve: `POST /v1/journey-flows/{id}/approve` (#353), exactly `graphhelm journey approve`.
    * Owner credential only; a flow with findings or no passing preview is refused. */
   async approveJourney(flowId: string): Promise<void> {
@@ -174,6 +178,8 @@ export class Runtime {
     await this.#request("POST", `/v1/journey-flows/${encodeURIComponent(flowId)}/reject`, { note });
   }
 
+=======
+>>>>>>> origin/main
   async lanes(executionId: string): Promise<LaneLiveness[]> {
     const reply = await this.#request<{ liveness?: { lanes?: LaneLiveness[] } }>("GET", `/v1/executions/${encodeURIComponent(executionId)}/tasks`);
     return Array.isArray(reply.liveness?.lanes) ? reply.liveness.lanes : [];

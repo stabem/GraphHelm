@@ -136,8 +136,8 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
         live={live}
         onProject={(key) => go({ project: key, run: null, view: route.view })}
         onSelect={(id) => go({ ...route, run: id })}
-        onAdd={session.sessionKey === null ? null : async (path) => {
-          const added = await addFolder(path, session.sessionKey!);
+        onAdd={session.sessionKey === null ? null : async (path, ticket) => {
+          const added = await addFolder(path, session.sessionKey!, ticket);
           if ("refused" in added) return added.refused;
           // The new project's key is in this tab's keys now; a fresh login opens it.
           location.assign(`${location.pathname}${routeSearch({ project: added.projectId, run: null, view: route.view })}`);

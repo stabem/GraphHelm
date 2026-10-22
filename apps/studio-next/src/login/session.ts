@@ -123,16 +123,16 @@ export async function login(search: string, store: KeyStore = browserStore()): P
 export type AddRefusal = "not_a_project" | "runtime_not_running" | "refused";
 
 /** #1833 "Add project folder": registers a folder on this Studio port, proved by the stable key of a
- * project this tab already holds. On success the new project's key joins this tab's keys (session
+ * project this tab already holds AND the new project's own one-shot ticket. On success the new project's key joins this tab's keys (session
  * storage, as at login: it dies with the tab) so the next login opens it. */
-export async function addFolder(path: string, ownerKey: string, store: KeyStore = browserStore()): Promise<{ projectId: string } | { refused: AddRefusal }> {
+export async function addFolder(path: string, ownerKey: string, ticket: string, store: KeyStore = browserStore()): Promise<{ projectId: string } | { refused: AddRefusal }> {
   type AddReply = { ok?: unknown; reason?: unknown; projectId?: unknown; sessionKey?: unknown } | null;
   let reply = null as AddReply;
   try {
     const response = await fetch("/__studio/add", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-GraphHelm-Studio-Key": ownerKey },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, ticket }),
     });
     reply = (await response.json()) as AddReply;
   } catch { /* answered below as refused */ }

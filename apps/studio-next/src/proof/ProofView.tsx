@@ -1,7 +1,10 @@
 import { useState } from "react";
 
 import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
+<<<<<<< HEAD
 import { decisionOf, offersDecision, rejectNote } from "./decision";
+=======
+>>>>>>> origin/main
 import { journeySteps, lastRunChip, preparingStatus, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 
@@ -59,7 +62,10 @@ function JourneysColumn({ journeys, selected, onPick }: { journeys: JourneyFlow[
                       <strong>{flow.name || flow.title || flow.id}</strong>
                       {flow.purpose && <span className="journey-purpose">{flow.purpose}</span>}
                       <span className={`chip ${chip.tone}`}>{chip.text}</span>
+<<<<<<< HEAD
                       {decisionOf(flow) !== "undecided" && <span className={`chip ${decisionOf(flow) === "approved" ? "pass" : "fail"}`}>{decisionOf(flow)}</span>}
+=======
+>>>>>>> origin/main
                     </button>
                   </li>
                 );
@@ -125,7 +131,10 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
         )}
       </div>
       {error !== null && <p className="error">{error}</p>}
+<<<<<<< HEAD
       <DecisionBar runtime={runtime} flow={flow} runFinished={run?.state === "ready"} onDecided={onRan} />
+=======
+>>>>>>> origin/main
       {showLog && (
         <pre role="log" aria-label="Run console" className="run-log">{log.length === 0 ? "Waiting for the Runtime's first line…" : log.join("\n")}</pre>
       )}
@@ -150,6 +159,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
     </div>
   );
 }
+<<<<<<< HEAD
 
 /** The owner's Approve and Reject on a run journey. Each act goes to its public route with the
  * session's owner token; the journeys are read again after it, so the status shown is the
@@ -185,3 +195,5 @@ function DecisionBar({ runtime, flow, runFinished, onDecided }: { runtime: Runti
     </div>
   );
 }
+=======
+>>>>>>> origin/main

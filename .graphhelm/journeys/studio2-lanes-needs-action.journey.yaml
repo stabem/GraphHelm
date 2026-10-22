@@ -12,24 +12,68 @@ secrets: []
 risks: [critical_ux]
 viewport: {width: 1440, height: 900}
 screens:
-  - id: done
-    title: The acted item leaves the list
+  - id: answered
+    title: Answer acts on its item
     url: /?session=studio-fixture&run=demo
     state: success
-    expect: [{role: status, name: Done}, {role: region, name: Needs action}]
+    expect: [{role: status, name: Last action, text: Answered}]
+    scope: unknown
+  - id: archived
+    title: Archive acts on its item
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: status, name: Last action, text: Archived}]
+    scope: unknown
+  - id: assigned
+    title: Assign acts on its item
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: status, name: Last action, text: Assigned}]
     scope: unknown
   - id: list
     title: Needs action lists items oldest first
     url: /?session=studio-fixture&run=demo
     state: stable
-    expect: [{role: region, name: Needs action}, {role: list, name: Needs action items}]
+    expect: [{role: region, name: Needs action}, {role: list, name: Needs action items}, {role: listitem, name: Needs action item 1, text: oldest}]
+    scope: unknown
+  - id: merged
+    title: Merge acts on its item
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: status, name: Last action, text: Merged}]
+    scope: unknown
+  - id: reassigned
+    title: Reassign acts on its item
+    url: /?session=studio-fixture&run=demo
+    state: success
+    expect: [{role: status, name: Last action, text: Reassigned}]
     scope: unknown
 edges:
-  - id: list.done
+  - id: answered.assigned
+    from: answered
+    to: assigned
+    acts:
+      - {kind: activate, role: button, name: Assign}
+  - id: archived.reassigned
+    from: archived
+    to: reassigned
+    acts:
+      - {kind: activate, role: button, name: Reassign}
+  - id: assigned.merged
+    from: assigned
+    to: merged
+    acts:
+      - {kind: activate, role: button, name: Merge}
+  - id: list.answered
     from: list
-    to: done
+    to: answered
     acts:
       - {kind: activate, role: button, name: Answer}
+  - id: merged.archived
+    from: merged
+    to: archived
+    acts:
+      - {kind: activate, role: button, name: Archive}
 paths:
-  main: [list.done]
+  main: [list.answered, answered.assigned, assigned.merged, merged.archived, archived.reassigned]
 drift: []

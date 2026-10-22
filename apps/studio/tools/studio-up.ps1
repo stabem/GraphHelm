@@ -38,7 +38,10 @@ param(
     [string] $Manifest = "",
     [string] $Broker = "",
     [string] $Route = "",
-    [switch] $NoBrowser
+    [switch] $NoBrowser,
+    # #1767: start (or reuse) this project's Runtime and stop there, for a project that joins a
+    # Studio already serving another one; that Studio keeps its port, so it is not probed here.
+    [switch] $RuntimeOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,14 +52,14 @@ $studio = Split-Path -Parent $PSScriptRoot  # this file lives in apps/studio/too
 # frontend port or open the first project's page with a nonce minted for this launch.
 $studioPortOccupied = $false
 $studioSocket = $null
-try {
+if (-not $RuntimeOnly) { try {
     $studioSocket = New-Object System.Net.Sockets.TcpClient("127.0.0.1", $StudioPort)
     $studioPortOccupied = $true
 } catch [System.Net.Sockets.SocketException] {
     # No listener: Vite's strictPort check remains the final guard against a startup race.
 } finally {
     if ($studioSocket) { $studioSocket.Dispose() }
-}
+} }
 if ($studioPortOccupied) {
     # #1267: a Studio dev server of THIS checkout left over from an earlier start is replaced, like
     # a stale Runtime (#287); anything else on the port still refuses.
@@ -247,6 +250,11 @@ if (-not $alive) {
         # graphhelm_send_message - the boards and threads still read fine.
         Write-Warning "[up] no -Keyring given: the Studio opens read-and-drive only - SENDING MESSAGES WILL BE REFUSED. Create one with 'graphhelm gateway keyring init' and pass -Keyring/-KeyId."
     }
+}
+
+if ($RuntimeOnly) {
+    Write-Host "[up] Runtime ready at $runtimeUrl (runtime only: no Studio started)"
+    return
 }
 
 # 2 - dependencies, on a cold tree OR a stale one. A tree installed before the lock file moved

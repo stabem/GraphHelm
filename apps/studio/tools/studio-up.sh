@@ -11,7 +11,7 @@
 set -eu
 
 events="" bind="127.0.0.1:8791" studio_port=5183 project="" project_path="" graphhelm="graphhelm"
-keyring="" key_id="" manifest="" broker="" route="" no_browser=0
+keyring="" key_id="" manifest="" broker="" route="" no_browser=0 runtime_only=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -27,6 +27,7 @@ while [ $# -gt 0 ]; do
     --broker) broker=$2; shift 2 ;;
     --route) route=$2; shift 2 ;;
     --no-browser) no_browser=1; shift ;;
+    --runtime-only) runtime_only=1; shift ;;
     *) echo "[up] unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -37,7 +38,9 @@ runtime_url="http://$bind"
 
 answers() { curl -fsS --max-time 2 -o /dev/null "$1" 2>/dev/null; }
 
-if answers "http://127.0.0.1:$studio_port/"; then
+# #1767: --runtime-only starts (or reuses) this project's Runtime and stops there, for a project that
+# joins a Studio already serving another one; that Studio keeps its port, so it is not probed here.
+if [ "$runtime_only" -eq 0 ] && answers "http://127.0.0.1:$studio_port/"; then
   echo "[up] Studio address http://127.0.0.1:$studio_port is already in use. Stop that Studio explicitly before starting this project; no other port was selected." >&2
   exit 1
 fi
@@ -101,6 +104,11 @@ else
   done
   echo "[up] Runtime up at $runtime_url"
   [ -n "$keyring" ] || echo "[up] WARNING: no --keyring given: the Studio opens read-and-drive only - SENDING MESSAGES WILL BE REFUSED." >&2
+fi
+
+if [ "$runtime_only" -eq 1 ]; then
+  echo "[up] Runtime ready at $runtime_url (runtime only: no Studio started)"
+  exit 0
 fi
 
 # 2 - dependencies, on a cold tree or one older than the lock file.

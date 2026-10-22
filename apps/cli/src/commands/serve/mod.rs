@@ -843,7 +843,8 @@ async fn serve_forever(
         u64::try_from(journal_started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let lifecycle_started = std::time::Instant::now();
     let (lifecycle, previous_exit, current_run) = loop {
-        match lifecycle::Lifecycle::start(&state.events, &state.instance) {
+        match lifecycle::Lifecycle::start(&state.events, &state.instance, Some(&bound.to_string()))
+        {
             Err(_) if successor && takeover.elapsed() < handover::TAKEOVER_DEADLINE => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }

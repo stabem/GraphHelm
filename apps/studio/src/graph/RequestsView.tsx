@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 
 import type { BoardTask, JourneyFlow, Runtime, TasksBoard } from "../runtime/client";
 import { ReviewModal } from "./ReviewModal";
 import { reviewable } from "./review";
 import { idleText, stepAged } from "../lanes/board";
-import { cards, journeysWithWork, KANBAN, KANBAN_NAME, requestsFor, result, type OwnerRequest } from "./requests";
+import { cards, KANBAN, KANBAN_NAME, type OwnerRequest } from "./requests";
+import { COLUMN_COLOR, counts, detail, graphRequests, journeyCards, journeyMeta } from "./layout";
 
 /** The board and the requests are read again this often. */
 const POLL_MS = 5_000;
@@ -15,21 +16,24 @@ interface Props {
   runtime: Runtime;
   executionId: string;
   journeys: JourneyFlow[] | null;
+  /** Opens Proof on a journey ("Open the journey in Proof"). */
+  onOpenProof?: (journey: string) => void;
 }
 
 /**
- * #1801 (S3): the Graph region of a run. Each owner request is drawn as a row from what was asked to
- * the issues opened for it, their pull requests and the result (`/requests`, #1792), or the same
- * slices as Kanban columns (`/tasks`). A journey filter narrows both. "Merged" is not done: a card
- * and a request read Proven only when their journeys passed their last run (`/journey-flows`).
+ * #1801 (S3), redrawn to the approved design by #1903 (docs/design/studio/Graph.dc.html): the
+ * JOURNEYS WITH WORK column, the header with its counts and the Kanban | Graph toggle, the graph
+ * from what was asked to the issues, their pull requests and the result, and the panel of the
+ * selected issue. "Merged" is not done: a card reads Proven only when its journeys passed.
  */
-export function RequestsView({ runtime, executionId, journeys }: Props) {
+export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Props) {
   const [mode, setMode] = useState<Mode>("graph");
   const [journey, setJourney] = useState<string | null>(null);
   const [board, setBoard] = useState<TasksBoard | null>(null);
   const [requests, setRequests] = useState<OwnerRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<BoardTask | null>(null);
+  const [selected, setSelected] = useState<number | null>(null);
 
   const read = useCallback(async () => {
     try {
@@ -52,90 +56,157 @@ export function RequestsView({ runtime, executionId, journeys }: Props) {
   if (board === null || requests === null) return <p>Reading the run's requests.</p>;
 
   const flows = journeys ?? [];
-  const withWork = journeysWithWork(board, flows);
-  const shown = requestsFor(requests, board, journey);
-  const titleOf = (issue: number) => board.tasks.find((task) => task.issue === issue)?.title ?? null;
-  const laneOf = (issue: number) => board.tasks.find((task) => task.issue === issue)?.lane ?? null;
+  const withWork = journeyCards(board, flows);
+  const picked = withWork.find((card) => card.id === journey) ?? null;
+  const graph = graphRequests(requests, board, flows, journey);
+  const tally = counts(board, flows, journey);
+  const allIssues = new Set(board.tasks.filter((task) => task.releasedBy === undefined).map((task) => task.issue ?? task.key)).size;
+  const flat = graph.flatMap((row) => row.items.map((item) => ({ item, row })));
+  const chosen = flat.find((entry) => entry.item.issue === selected) ?? flat[0] ?? null;
+  const panel = chosen === null ? null : detail(chosen.item, chosen.row, board);
+  const idle = flows.length - withWork.filter((card) => flows.some((flow) => flow.id === card.id)).length;
 
   return (
-    <div className="requests">
-      <div className="requests-bar">
-        <label>
-          <span className="muted small">Work by journey</span>{" "}
-          <select aria-label="Journey filter" value={journey ?? ""} onChange={(event) => setJourney(event.target.value === "" ? null : event.target.value)}>
-            <option value="">All journeys</option>
-            {withWork.map((row) => <option key={row.id} value={row.id}>{row.title} · {row.slices}</option>)}
-          </select>
-        </label>
-        <div role="group" aria-label="Graph mode" className="seg">
-          <button type="button" className={mode === "kanban" ? "b on" : "b"} aria-pressed={mode === "kanban"} onClick={() => setMode("kanban")}>Kanban</button>
-          <button type="button" className={mode === "graph" ? "b on" : "b"} aria-pressed={mode === "graph"} onClick={() => setMode("graph")}>Graph</button>
-        </div>
-        {error !== null && <span role="status" className="muted small">Last read failed: {error}</span>}
-      </div>
+    <div className="gv">
+      <aside aria-label="Journeys with work" className="gv-journeys">
+        <span className="mono gv-label">JOURNEYS WITH WORK · {withWork.length} of {Math.max(flows.length, withWork.length)}</span>
+        <button type="button" className="b gv-journey gv-all" aria-label="All journeys" aria-pressed={journey === null} onClick={() => setJourney(null)}>
+          <span className="gv-grow">All journeys</span><span className="mono gv-muted">{allIssues} issue{allIssues === 1 ? "" : "s"}</span>
+        </button>
+        {withWork.map((card) => (
+          <button key={card.id} type="button" className="b gv-journey" aria-pressed={journey === card.id} onClick={() => setJourney(card.id)}>
+            <span className="gv-row"><span className="gv-swatch" style={{ background: card.color }} /><span className="gv-grow gv-strong">{card.title}</span></span>
+            <span className="mono gv-meta">{journeyMeta(card)}</span>
+            <span className="gv-lanes">{card.lanes.join(", ") || "no lane"}</span>
+          </button>
+        ))}
+        {idle > 0 && <span className="gv-note">{idle} journey{idle === 1 ? " has" : "s have"} no work in flight. <a href={`?view=proof`} onClick={(event) => { if (onOpenProof && flows[0]) { event.preventDefault(); onOpenProof(flows[0].id); } }}>See them in Proof</a></span>}
+      </aside>
 
-      {mode === "graph" ? (
-        shown.length === 0 ? (
-          <p>{requests.length === 0 ? "No owner request is recorded on this run yet." : "No request has work in this journey."}</p>
-        ) : (
-          <ul aria-label="Owner requests" className="request-rows">
-            {shown.map((request) => {
-              const outcome = result(request, board, flows);
-              return (
-                <li key={request.requestId} className="request-row">
-                  <div className="request-ask">
-                    <span className="muted small">You asked · {request.recordedBy}</span>
-                    <strong>{request.title ?? request.ask}</strong>
-                    {request.title !== null && <span className="small">{request.ask}</span>}
-                  </div>
-                  <div role="group" aria-label="Request issues" className="request-col">
-                    {request.issues.length === 0 ? <span className="muted small">no issue yet</span> : request.issues.map((row) => (
-                      <span key={row.issue} className="request-item">
-                        <span className="mono">#{row.issue}</span> {titleOf(row.issue) ?? ""} <span className="muted small">{laneOf(row.issue) ?? ""}</span>
-                      </span>
-                    ))}
-                  </div>
-                  <div role="group" aria-label="Request pull requests" className="request-col">
-                    {request.issues.flatMap((row) => row.slices).filter((slice) => slice.pr !== null).length === 0
-                      ? <span className="muted small">no PR yet</span>
-                      : request.issues.flatMap((row) => row.slices.filter((slice) => slice.pr !== null).map((slice) => (
-                        <span key={`${row.issue}-${slice.pr}`} className="request-item"><span className="mono">PR #{slice.pr}</span> <span className="muted small">{slice.step}</span></span>
-                      )))}
-                  </div>
-                  <div role="group" aria-label="Request result" className={`request-col result-${outcome.word.replace(" ", "-")}`}>
-                    <strong>{outcome.word}</strong>
-                    <span className="muted small">{outcome.detail}</span>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )
-      ) : (
-        <section aria-label="Kanban" className="kanban">
-          {KANBAN.map((column) => {
-            const inColumn = cards(board, flows, journey).filter((card) => card.column === column);
-            return (
-              <div key={column} className="kanban-col">
-                <h2>{KANBAN_NAME[column]} <span className="muted">{inColumn.length}</span></h2>
-                <ul aria-label={KANBAN_NAME[column]}>
-                  {inColumn.map(({ task, column: at, stepMinutes }) => (
-                    <li key={task.key} className={`kanban-card${stepAged(stepMinutes) ? " aged" : ""}`}>
-                      <span className="mono small">{task.issue === null ? task.key : `#${task.issue}`}{task.pr === null ? "" : ` · PR #${task.pr}`}</span>
-                      <span>{task.prTitle ?? task.title ?? ""}</span>
-                      <span className="muted small">{task.lane ?? "no lane"} · {task.step}{stepMinutes === null ? "" : " "}{stepMinutes !== null && <span role="group" aria-label="Time in step" className={`mono step-age${stepAged(stepMinutes) ? " aged" : ""}`}>{idleText(stepMinutes)}</span>}</span>
-                      {reviewable(at, task.pr) && (
-                        <button type="button" className="b ghost small" onClick={() => setReviewing(task)}>Open review</button>
-                      )}
+      <div className="gv-main">
+        <div className="gv-head">
+          <h2 className="gv-title">{picked === null ? "Work in flight, all journeys" : picked.title}</h2>
+          <span className="mono gv-counts">
+            <span style={{ color: COLUMN_COLOR.implementing }}>{tally.implementing} implementing</span>{"  "}
+            <span style={{ color: COLUMN_COLOR.review }}>{tally.review} in review</span>{"  "}
+            <span style={{ color: COLUMN_COLOR.merged }}>{tally.merged} merged, waits proof</span>{"  "}
+            <span style={{ color: COLUMN_COLOR.ready }}>{tally.ready} stalled</span>
+          </span>
+          <span className="gv-grow" />
+          <div role="tablist" aria-label="View" className="gv-tabs">
+            <button type="button" role="tab" className="b gv-tab" aria-label="Kanban view" aria-selected={mode === "kanban"} onClick={() => setMode("kanban")}>Kanban</button>
+            <button type="button" role="tab" className="b gv-tab" aria-label="Graph view" aria-selected={mode === "graph"} onClick={() => setMode("graph")}>Graph</button>
+          </div>
+          {error !== null && <span role="status" className="muted small">Last read failed: {error}</span>}
+        </div>
+
+        {mode === "graph" ? (
+          <section aria-label="Request graph" className="gv-canvas">
+            {graph.length === 0 ? (
+              <p>{requests.length === 0 ? "No owner request is recorded on this run yet." : "No request has work in this journey."}</p>
+            ) : (
+              <>
+                <div className="mono gv-cols" aria-hidden="true">
+                  <span style={{ left: 0 }}>ASKED</span><span style={{ left: 300 }}>ISSUES THE ORCHESTRATOR OPENED</span><span style={{ left: 600 }}>PULL REQUESTS</span><span style={{ left: 840 }}>RESULT</span>
+                </div>
+                <ul aria-label="Owner requests" className="gv-requests">
+                  {graph.map((row) => (
+                    <li key={row.request.requestId} aria-label={row.request.title ?? row.request.ask} className="gv-request" style={{ "--h": `${row.height}px` } as CSSProperties}>
+                      <svg aria-hidden="true" className="gv-links" width="1040" height={row.height}>
+                        {row.links.map((link, index) => <path key={index} d={link.d} fill="none" stroke={link.color} strokeWidth="1.5" strokeDasharray={link.dashed ? "4 4" : undefined} />)}
+                      </svg>
+                      <div className="gv-ask gv-node" style={{ "--x": "0px", "--y": `${row.askY}px` } as CSSProperties}>
+                        <span className="mono gv-ask-when">YOU ASKED · {row.when}</span>
+                        <span className="gv-ask-text">{row.request.title ?? row.request.ask}</span>
+                        <span className="gv-bar">{row.bar.map((color, index) => <span key={index} className="gv-sq" style={{ background: color }} />)}</span>
+                        <span className="mono gv-meta">{row.items.length === 0 ? "no issue opened yet" : row.summary}</span>
+                      </div>
+                      {row.items.map((item) => (
+                        <div key={item.issue} className="gv-lane-row">
+                          <button
+                            type="button"
+                            className="b gv-issue gv-node"
+                            aria-pressed={chosen?.item.issue === item.issue}
+                            aria-label={`Issue #${item.issue}`}
+                            style={{ "--x": "300px", "--y": `${item.y}px` } as CSSProperties}
+                            onClick={() => {
+                              setSelected(item.issue);
+                              if (item.task !== null && item.column !== null && reviewable(item.column, item.pr)) setReviewing(item.task);
+                            }}
+                          >
+                            <span className="gv-row"><span className="mono gv-muted">#{item.issue}</span><span className="gv-grow gv-ellipsis">{item.title}</span></span>
+                            <span className="gv-row" aria-label={`Steps ${item.blocks.filter((b) => b.color === "#3ddc97").length} of ${item.blocks.length}`}>
+                              {item.blocks.map((block) => <span key={block.step} title={block.step} className="gv-sq small" style={{ background: block.color }} />)}
+                              <span className="mono gv-meta gv-agent">{item.lane ?? "no lane"}</span>
+                            </span>
+                            <span className="mono gv-meta gv-ellipsis">{item.last}</span>
+                            <span className="gv-row gv-jname"><span className="gv-swatch small" style={{ background: item.journey?.color ?? "#45454e" }} />{item.journey?.title ?? "no journey"}</span>
+                          </button>
+                          <div role="group" aria-label={`Pull request of #${item.issue}`} className={`gv-pr gv-node${item.pr === null ? " none" : ""}`} style={{ "--x": "600px", "--y": `${item.y + 16}px` } as CSSProperties}>
+                            <span className="mono" style={{ color: item.pr === null ? "#8a8a96" : "#8ab4ff" }}>{item.pr === null ? "no PR yet" : `PR #${item.pr}`}</span>
+                            <span className="mono gv-meta gv-ellipsis">{item.prLine}</span>
+                          </div>
+                          <div role="group" aria-label={`Result of #${item.issue}`} className="gv-res gv-node" style={{ "--x": "840px", "--y": `${item.y + 16}px`, borderColor: item.result.color === "#8b7cff" ? "#3a3466" : undefined } as CSSProperties}>
+                            <span style={{ color: item.result.color }}>{item.result.word}</span>
+                            <span className="mono gv-meta">{item.result.detail}</span>
+                          </div>
+                        </div>
+                      ))}
                     </li>
                   ))}
                 </ul>
-              </div>
-            );
-          })}
-        </section>
-      )}
-      <p className="muted small">Merged is not done. Done is the journey replay proving it.</p>
+              </>
+            )}
+          </section>
+        ) : (
+          <section aria-label="Kanban" className="kanban">
+            {KANBAN.map((column) => {
+              const inColumn = cards(board, flows, journey).filter((card) => card.column === column);
+              return (
+                <div key={column} className="kanban-col">
+                  <h2><span className="gv-dot" style={{ background: COLUMN_COLOR[column] }} />{KANBAN_NAME[column]} <span className="muted">{inColumn.length}</span></h2>
+                  <ul aria-label={KANBAN_NAME[column]}>
+                    {inColumn.map(({ task, column: at, stepMinutes }) => (
+                      <li key={task.key} className={`kanban-card${stepAged(stepMinutes) ? " aged" : ""}`}>
+                        <span className="mono small">{task.issue === null ? task.key : `#${task.issue}`}{task.pr === null ? "" : ` · PR #${task.pr}`}</span>
+                        <span>{task.prTitle ?? task.title ?? ""}</span>
+                        <span className="muted small">{task.lane ?? "no lane"} · {task.step}{stepMinutes === null ? "" : " "}{stepMinutes !== null && <span role="group" aria-label="Time in step" className={`mono step-age${stepAged(stepMinutes) ? " aged" : ""}`}>{idleText(stepMinutes)}</span>}</span>
+                        {reviewable(at, task.pr) && (
+                          <button type="button" className="b ghost small" onClick={() => setReviewing(task)}>Open review</button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </section>
+        )}
+        <div className="gv-foot"><span>Cards older than 1 h in a column turn red.</span><span className="gv-grow" /><span>Merged is not done. Done = the journey replay proves it.</span></div>
+      </div>
+
+      <aside aria-label="Selected work" className="gv-detail">
+        {chosen === null || panel === null ? (
+          <span className="gv-muted">Pick an issue in the graph.</span>
+        ) : (
+          <>
+            <span className="mono gv-label">ISSUE #{chosen.item.issue}</span>
+            <strong className="gv-detail-title">{chosen.item.title}</strong>
+            <span className="gv-row gv-muted"><span className="gv-swatch" style={{ background: chosen.item.journey?.color ?? "#45454e" }} />{chosen.item.journey?.title ?? "no journey"}</span>
+            <span className="mono gv-label gv-gap">NOW</span>
+            {panel.now.map((line) => <span key={line}>{line}</span>)}
+            <span className="mono gv-label gv-gap">HISTORY</span>
+            <span className="mono gv-history">{panel.history.join("\n")}</span>
+            {chosen.item.journey !== null && (
+              <a
+                className="gv-gap"
+                href={`?view=proof&journey=${encodeURIComponent(chosen.item.journey.id)}`}
+                onClick={(event) => { if (onOpenProof && chosen.item.journey) { event.preventDefault(); onOpenProof(chosen.item.journey.id); } }}
+              >Open the journey in Proof</a>
+            )}
+          </>
+        )}
+      </aside>
       {reviewing !== null && <ReviewModal runtime={runtime} executionId={executionId} task={reviewing} onClose={() => setReviewing(null)} />}
     </div>
   );

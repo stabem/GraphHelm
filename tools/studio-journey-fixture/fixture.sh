@@ -98,6 +98,13 @@ up)
   "$bin" --json init --project "$dir/project" --bind "127.0.0.1:$rport" --harness codex > "$dir/.graphhelm/init.json"
   export GRAPHHELM_FIXTURE_RUNTIME_PORT="$rport" GRAPHHELM_EVENTS_KEY="$(cat "$rt/serve.key")"
   cp -R "$repo/.graphhelm/journeys" "$dir/project/.graphhelm/"
+  # #1905: the Run flows press Run inside this fixture's Studio, which plays the copied flow at its
+  # `base`. An isolated fixture answers on its own port, not the flows' 5184, so the copy names
+  # this fixture's Studio; at 5184 nothing answers and the inner run ends watch.app_down.
+  for f in "$dir/project/.graphhelm/journeys"/studio2-proof-run*.journey.yaml; do
+    [ -f "$f" ] || continue
+    sed "s#^base: http://127.0.0.1:5184\$#base: http://127.0.0.1:$sport#" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  done
   # #1041: the files the flows name in `scope`, so a fixture preview is not refused flow.scope_path_missing.
   node "$(dirname "$0")/copy_scope.mjs" "$repo" "$dir/project" > /dev/null
   # #1635: an owner approval needs a preview recorded at the flow's scope commit, the last commit

@@ -270,7 +270,7 @@ def parse(argv):
     p.add_argument("--reason", action="append", default=[], help="critic_verdict: one reason; repeat for more (1 to 8)")
     # planned (#480): the keel plan's fields, from `graphhelm keel plan` on --paths, from a saved
     # `keel plan --json` reply (--plan-file), or given one by one.
-    p.add_argument("--paths", nargs="*", default=[], help="planned: the task's paths (its card scope); runs `graphhelm keel plan`")
+    p.add_argument("--paths", nargs="*", default=[], help="planned: the task's paths (its card scope); runs `graphhelm keel plan` and is recorded on task.planned (<=64 valid relative paths)")
     p.add_argument("--promise", default="", help="planned: the task's promise, passed to `keel plan`")
     p.add_argument("--plan-file", help="planned: a saved `graphhelm --json keel plan` reply to copy the fields from")
     p.add_argument("--graphhelm", default="graphhelm", help="planned: the graphhelm binary that runs `keel plan`")
@@ -415,6 +415,36 @@ def keel_plan(args):
     return plan
 
 
+# #1825: the Runtime's `planned_path` / `planned_paths` rule (core/execution/src/tasks.rs): 1..=256
+# ASCII characters, `/`-separated segments of [A-Za-z0-9._@+-], none empty, `.` or `..`.
+MAX_PLANNED_PATHS = 64
+MAX_PLANNED_PATH_CHARS = 256
+PLANNED_SEGMENT = re.compile(r"[A-Za-z0-9._@+-]+", re.ASCII)
+
+
+def planned_path(path):
+    return (0 < len(path) <= MAX_PLANNED_PATH_CHARS
+            and all(PLANNED_SEGMENT.fullmatch(segment) and segment not in (".", "..")
+                    for segment in path.split("/")))
+
+
+def record_paths(args):
+    """#1825: the `paths` a `task.planned` carries (the Team tab's file-collision read model): the
+    given `--paths`, else the git-derived list; backslashes become `/`, then deduplicated, sorted,
+    cut to what the Runtime refuses none of, and capped. Said on stderr when entries are dropped."""
+    given = args.paths or git_paths(args.plan_repo)
+    seen = dict.fromkeys(path.replace("\\", "/") for path in given)
+    valid = sorted(path for path in seen if planned_path(path))
+    dropped = [path for path in seen if not planned_path(path)]
+    if dropped:
+        print(f"task_record: planned: not recording {len(dropped)} path(s) the Runtime would refuse: "
+              + ", ".join(repr(path[:80]) for path in dropped[:5]), file=sys.stderr)
+    if len(valid) > MAX_PLANNED_PATHS:
+        print(f"task_record: planned: recording the first {MAX_PLANNED_PATHS} of {len(valid)} paths", file=sys.stderr)
+        valid = valid[:MAX_PLANNED_PATHS]
+    return valid
+
+
 def planned_fields(args):
     # Explicit fields win, each replacing only its own part (#604 review): a partial set still plans
     # the rest. Only when all four are given is there nothing left to plan.
@@ -434,6 +464,9 @@ def planned_fields(args):
         fields["proof"] = args.proof
     if args.critic_mode:
         fields["critic"] = {"mode": args.critic_mode, "passScore": args.pass_score, "maxRounds": args.max_rounds}
+    paths = record_paths(args)
+    if paths:
+        fields["paths"] = paths
     return fields
 
 
@@ -507,6 +540,17 @@ def document(args, now):
         if len(args.summary) > 300 or not args.summary.isprintable():
             sys.exit("task_record: --summary is one line of at most 300 characters")
         doc.update(lane=args.lane, **planned_fields(args), summary=args.summary)
+        # #1861: the Runtime admits a description of at most 8 KiB (as for `queued`): 64 long paths
+        # can pass that, and then the whole plan is refused. The last paths in order give way first.
+        fit = doc.get("paths", [])
+        kept = len(fit)
+        while fit and len(json.dumps(doc, separators=(",", ":")).encode()) > 8000:
+            fit.pop()
+        if len(fit) < kept:
+            print(f"task_record: planned: recording {len(fit)} of {kept} paths to fit the Runtime's "
+                  "8 KiB record; the last ones in order were dropped", file=sys.stderr)
+        if not fit:
+            doc.pop("paths", None)
     elif args.kind == "pr_opened":
         # #508: the reviewer is part of opening the PR, so the Review step is never drawn unnamed.
         need(args, "pr", "head", "reviewer")

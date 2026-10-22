@@ -502,6 +502,17 @@ pub(crate) struct SlotRequest<'a> {
     pub command: &'a [String],
 }
 
+/// #1842: `cargo` by its file name. Windows file names ignore case, and a resolved path comes back
+/// as `cargo.EXE` (PATHEXT's spelling), so there the name is compared without case; elsewhere a
+/// file name is case-sensitive and only `cargo` or `cargo.exe` names Cargo.
+fn is_cargo_program(basename: &str) -> bool {
+    if cfg!(windows) {
+        basename.eq_ignore_ascii_case("cargo") || basename.eq_ignore_ascii_case("cargo.exe")
+    } else {
+        matches!(basename, "cargo" | "cargo.exe")
+    }
+}
+
 /// The slot is a Cargo build resource, not a general purpose process queue. Keep this check pure
 /// and before target discovery, ticket creation, or any filesystem effect. Callers that need a
 /// script must split it into direct, reached steps and acquire the slot for each Cargo step.
@@ -510,7 +521,7 @@ fn admit_command(command: &[String]) -> Result<(), String> {
         return Err("a direct Cargo command is required after --".into());
     };
     let basename = program.rsplit(['/', '\\']).next().unwrap_or(program);
-    if !matches!(basename, "cargo" | "cargo.exe") {
+    if !is_cargo_program(basename) {
         return Err("workspace slot accepts direct cargo commands only; run the outer script outside the slot".into());
     }
     let mut cursor = 1;
@@ -871,6 +882,24 @@ mod admission_tests {
         ] {
             assert!(admit_command(&argv(&args)).is_err(), "{args:?}");
         }
+    }
+
+    /// #1842: `run_reached.py` resolves `cargo` to its full path, which Windows spells
+    /// `cargo.EXE`; the slot refused every such step (GHCLI037) and no reached test ran.
+    #[test]
+    fn admits_cargo_by_its_resolved_windows_path_spelling() {
+        let resolved = argv(&[
+            r"C:\Users\lane\.cargo\bin\cargo.EXE",
+            "+1.97.1",
+            "test",
+            "--locked",
+            "-p",
+            "graphhelm-cli",
+            "--test",
+            "workspace_cli",
+        ]);
+        assert_eq!(admit_command(&resolved).is_ok(), cfg!(windows));
+        assert!(admit_command(&argv(&["cargo.EXE.bat", "+1.97.1", "test"])).is_err());
     }
 
     #[test]

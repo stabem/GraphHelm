@@ -14,35 +14,35 @@ viewports: [web, mobile]
 screens:
   - id: changes
     title: "Now with the changed regions highlighted, at web width"
-    url: /?session=studio-fixture&run=demo&view=proof
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-compare
     ignoreQuery: [session, project]
     state: stable
     expect: [{role: img, name: "Now, changed regions highlighted"}, {role: region, name: Compare frame, text: "1280"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
   - id: mobile
     title: The same compare at mobile width
-    url: /?session=studio-fixture&run=demo&view=proof
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-compare
     ignoreQuery: [session, project]
     state: stable
     expect: [{role: img, name: "Now, changed regions highlighted"}, {role: region, name: Compare frame, text: "390"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
   - id: overlay
     title: Now over Before with a slider
-    url: /?session=studio-fixture&run=demo&view=proof
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-compare
     ignoreQuery: [session, project]
     state: stable
     expect: [{role: slider, name: Now opacity}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
   - id: side
     title: Before and Now side by side
-    url: /?session=studio-fixture&run=demo&view=proof
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-compare
     ignoreQuery: [session, project]
     state: stable
     expect: [{role: group, name: Before and Now side by side}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
   - id: step
     title: A step with history offers the compare
-    url: /?session=studio-fixture&run=demo&view=proof
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-compare
     ignoreQuery: [session, project]
     state: stable
     expect: [{role: region, name: Compare with an earlier run}, {role: button, name: Frame}, {role: button, name: Side by side}, {role: button, name: Overlay}, {role: button, name: Changes}]

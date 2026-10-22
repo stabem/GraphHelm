@@ -247,16 +247,22 @@ const records = [
   ['request', 'task.request_recorded', { taskId: 'request-fixture', requestId: 'fixture', ask: 'Show the work graph for the fixture run', recordedBy: 'planner' }],
   ['request-link', 'task.request_linked', { taskId: 'request-fixture', requestId: 'fixture', issue: 721, linkedBy: 'planner' }],
 ];
+// #1808: the review's Now is the PR head's captured frame (#1839); one for the first screen.
+if (journey[0] === 'studio2-graph-review-screen') {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  records.push(['now-frames', 'task.journey_frames', { taskId: 'issue-721-open', pr: 721, headSha: '721abcde', journey: journey[0],
+    result: 'pass', ranAt: at, screens: ['board'], lane: 'planner' }, [{ mediaType: 'image/png', base64: png }]]);
+}
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
 (async () => {
-  for (const [id, type, fields] of records) {
+  for (const [id, type, fields, attachments] of records) {
     const document = { ...common, ...fields };
     const signal = { id: `fixture-721-${id}`, type, source: { type: 'user', id: 'planner' }, severity: 'low',
       emittedAt: at, evidence: ['demo'], description: JSON.stringify(document) };
     const response = await fetch(new URL('/v1/executions/demo/signal', runtime), {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
         'Idempotency-Key': `fixture-721-${id}`, 'X-GraphHelm-Actor': 'planner', 'X-GraphHelm-Actor-Type': 'agent' },
-      body: JSON.stringify({ signal }), signal: AbortSignal.timeout(10000),
+      body: JSON.stringify(attachments ? { signal, attachments } : { signal }), signal: AbortSignal.timeout(10000),
     });
     const result = await response.json();
     fs.writeFileSync(`${dir}/.graphhelm/task-${id}.out`, JSON.stringify(result));
@@ -264,6 +270,15 @@ const token = fs.readFileSync(tokenFile, 'utf8').trim();
   }
 })().catch(() => { console.error('fixture: task record refused; stop without widening permissions'); process.exit(1); });
 NODE
+  fi
+  # #1808: the Proof compare, the decision bar and the review's Before read a finished run of the
+  # flow kept in the project; seed_run.mjs writes one (current + one earlier), bound to the flow's
+  # digest and commit as the preview route reports them.
+  if [ "$flow" = studio2-graph-review-screen ] || [ "$flow" = studio2-proof-compare ] || [ "$flow" = studio2-proof-approve ]; then
+    "$bin" --json journey preview "$flow" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
+    key=$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).data||{}; if(d.digest&&d.commit) console.log(d.digest+" "+d.commit)' "$dir/.graphhelm/preview-key.json")
+    [ -n "$key" ] || { echo "fixture: no preview key for $flow" >&2; exit 1; }
+    node "$repo/tools/studio-journey-fixture/seed_run.mjs" "$dir/project" "$flow" $key > /dev/null
   fi
   # #137: the async Runtime driver records delegation; no model executor is wired. No studio2 flow
   # reads it yet; kept for a lanes flow that names a delegated worker.
@@ -322,13 +337,13 @@ const records = [
 ];
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
 (async () => {
-  for (const [id, type, fields] of records) {
+  for (const [id, type, fields, attachments] of records) {
     const signal = { id: `fixture-1556-${id}`, type, source: { type: 'user', id: 'planner' }, severity: 'low',
       emittedAt: at, evidence: ['demo'], description: JSON.stringify({ ...common, ...fields }) };
     const response = await fetch(new URL('/v1/executions/demo/signal', runtime), {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
         'Idempotency-Key': `fixture-1556-${id}`, 'X-GraphHelm-Actor': 'planner', 'X-GraphHelm-Actor-Type': 'agent' },
-      body: JSON.stringify({ signal }), signal: AbortSignal.timeout(10000),
+      body: JSON.stringify(attachments ? { signal, attachments } : { signal }), signal: AbortSignal.timeout(10000),
     });
     const result = await response.json();
     fs.writeFileSync(`${dir}/.graphhelm/task-${id}.out`, JSON.stringify(result));

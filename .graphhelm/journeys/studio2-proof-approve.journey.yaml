@@ -14,21 +14,21 @@ viewports: [web, mobile]
 screens:
   - id: approved
     title: The journey shows as approved
-    url: /?session=studio-fixture&run=demo&view=proof
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-approve
     ignoreQuery: [session, project]
     state: success
     expect: [{role: status, name: Approved}, {role: list, name: Journeys, text: approved}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/decision.ts]
   - id: ran
     title: A fully run journey offers the decision
-    url: /?session=studio-fixture&run=demo&view=proof
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-approve
     ignoreQuery: [session, project]
     state: stable
     expect: [{role: button, name: Approve}, {role: button, name: Reject}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/decision.ts]
   - id: rejected
     title: A rejected journey shows as rejected
-    url: /?session=studio-fixture&run=demo&view=proof
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-approve
     ignoreQuery: [session, project]
     state: success
     expect: [{role: status, name: Rejected}, {role: list, name: Journeys, text: rejected}]

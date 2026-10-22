@@ -227,6 +227,8 @@ button { font: inherit; }
 .reply textarea { resize: vertical; padding: 8px; border-radius: 8px; border: 1px solid var(--edge-strong); background: var(--bg); color: var(--text); font: inherit; }
 .panel-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .panel-actions [disabled] { opacity: .5; cursor: default; }
+.reassign-to { display: flex; flex-direction: column; gap: 4px; }
+.reassign-to select { background: var(--bg); color: var(--text); border: 1px solid var(--edge); border-radius: 6px; padding: 6px 8px; }
 .ghost.stop { border-color: #5a2a2a; color: #ff9b9b; }
 .sent { color: var(--live); }
 @media (max-width: 760px) {

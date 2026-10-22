@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
-import type { JourneyFlow, LaneAction, Runtime, TasksBoard } from "../runtime/client";
+import { OWNER, type JourneyFlow, type LaneAction, type Runtime, type TasksBoard } from "../runtime/client";
+import { controlBody, draftFor, messageBody, type Draft, type LaneControl } from "./drafts";
 import { agents, blocks, COLUMNS, idleText, idleTone, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
 /** How often the board is read again: one tasks read, plus one activity read per lane whose last
@@ -39,6 +40,21 @@ function actionLine(action: LaneAction): string {
   return `${clock(action.occurredAt)} ${what[action.kind] ?? action.kind}`;
 }
 
+/** What a control did, as the status and the board print it. */
+const DONE: Record<LaneControl, { status: string; word: string }> = {
+  wake: { status: "Wake sent", word: "woken" },
+  reassign: { status: "Work reassigned", word: "reassigned" },
+  stop: { status: "Agent stopped", word: "stopped" },
+};
+
+/** A new idempotency key: `randomUUID` where the browser has it, else 128 random bits. */
+function newId(prefix: string): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `${prefix}-${uuid}`;
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  return `${prefix}-${[...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 const askedTo = (waitsOn: string) => (waitsOn === OWNER_ADDRESS ? "you" : waitsOn);
 
 interface Props {
@@ -57,6 +73,11 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   const [actions, setActions] = useState<Record<string, { at: string | null; rows: LaneAction[] }>>({});
   const seen = useRef<Record<string, string | null>>({});
   const replyBox = useRef<HTMLTextAreaElement>(null);
+  // #1837: the request each lane has in flight or that last failed, kept across panel switches so
+  // a resend reuses its id and bytes.
+  const drafts = useRef(new Map<string, Draft>());
+  // The controls this Studio sent, so the board shows what each one did.
+  const [done, setDone] = useState<{ lane: string; word: string; at: string }[]>([]);
 
   const read = useCallback(async () => {
     if (executionId === null) return;
@@ -129,6 +150,12 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
               </li>
             );
           })}
+          {done.length > 0 && (
+            <li className="board-column controls" aria-label="Recent controls">
+              <h3>Recent controls</h3>
+              <ul>{done.slice(-5).reverse().map((row, index) => <li key={index} className="mono">{clock(row.at)} {row.lane} {row.word}</li>)}</ul>
+            </li>
+          )}
         </ul>
       </div>
       {selected !== null && (
@@ -140,7 +167,10 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
           actions={actions[selected.lane]?.rows ?? null}
           journeys={journeys}
           replyBox={replyBox}
+          drafts={drafts.current}
+          lanes={all.map((agent) => agent.lane)}
           onSent={read}
+          onControl={(lane, control) => setDone((prior) => [...prior.slice(-19), { lane, word: DONE[control].word, at: new Date().toISOString() }])}
         />
       )}
     </section>
@@ -184,35 +214,77 @@ interface PanelProps {
   actions: LaneAction[] | null;
   journeys: JourneyFlow[] | null;
   replyBox: RefObject<HTMLTextAreaElement | null>;
+  drafts: Map<string, Draft>;
+  lanes: string[];
   onSent: () => Promise<void>;
+  onControl: (lane: string, control: LaneControl) => void;
 }
 
-function AgentPanel({ runtime, executionId, agent, actions, journeys, replyBox, onSent }: PanelProps) {
+function AgentPanel({ runtime, executionId, agent, actions, journeys, replyBox, drafts, lanes, onSent, onControl }: PanelProps) {
   const [text, setText] = useState("");
-  const [sending, setSending] = useState<{ id: string } | null>(null);
+  const [sending, setSending] = useState<string | null>(null);
+  const others = lanes.filter((lane) => lane !== agent.lane);
+  const [target, setTarget] = useState<string>(others[0] ?? "");
+  const [confirmStop, setConfirmStop] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   // The question a reply answers: the lane's oldest open one shown.
   const answering = agent.questions[0] ?? null;
   const task = agent.task;
 
-  const send = async () => {
-    const body = text.trim();
-    if (body === "" || sending !== null) return;
-    // One id per message: a retry of the same message reuses it and the Runtime reconciles it.
-    const id = `studio-reply-${crypto.randomUUID()}`;
-    setSending({ id });
+  // The slice Reassign hands over: the lane's own newest open slice, not one it only reviews.
+  const slice = task !== null && task.lane === agent.lane ? task : null;
+  const to = others.includes(target) ? target : (others[0] ?? "");
+
+  /** Sends the pending draft for `slot`, or a new one when the intent changed. The draft is
+   * dropped only once the Runtime accepted it, so a failed request is resent unchanged (#1837). */
+  const submit = async (slot: string, intent: string, make: () => { id: string; body: Record<string, unknown> }, post: (draft: Draft) => Promise<void>, done: string) => {
+    if (sending !== null) return false;
+    const key = `${slot}:${agent.lane}`;
+    const draft = draftFor(drafts.get(key), intent, make);
+    drafts.set(key, draft);
+    setSending(slot);
     setFailure(null);
     setStatus(null);
     try {
-      await runtime.messageLane(executionId, id, agent.lane, body, answering?.signalId ?? null);
-      setText("");
-      setStatus(answering ? "Reply sent" : "Message sent");
-      await onSent();
+      await post(draft);
+      drafts.delete(key);
+      setStatus(done);
+      return true;
     } catch (error) {
-      setFailure(error instanceof Error ? error.message : "The reply was not recorded.");
+      setFailure(error instanceof Error ? error.message : "The Runtime did not record it.");
+      return false;
     } finally {
       setSending(null);
+    }
+  };
+
+  const send = async () => {
+    const body = text.trim();
+    if (body === "") return;
+    const replyTo = answering?.signalId ?? null;
+    const sent = await submit("message", JSON.stringify([body, replyTo]), () => {
+      const id = newId("studio-reply");
+      return { id, body: messageBody(executionId, id, agent.lane, body, replyTo, new Date(), OWNER.id) };
+    }, (draft) => runtime.messageLane(executionId, draft), answering ? "Reply sent" : "Message sent");
+    if (sent) {
+      setText("");
+      await onSent();
+    }
+  };
+
+  const control = async (which: LaneControl) => {
+    setConfirmStop(false);
+    const reassign = which === "reassign" && slice !== null ? { sliceKey: slice.key, to } : undefined;
+    const reason = which === "wake" ? "The owner woke this lane from the Studio."
+      : which === "stop" ? "The owner stopped this lane from the Studio."
+      : `The owner reassigned ${reassign?.sliceKey ?? "its slice"} to ${to} from the Studio.`;
+    const sent = await submit(which, JSON.stringify([which, reassign ?? null]), () => ({
+      id: newId(`studio-${which}`), body: controlBody(which, reason, new Date(), reassign),
+    }), (draft) => runtime.controlLane(executionId, agent.lane, which, draft), DONE[which].status);
+    if (sent) {
+      onControl(agent.lane, which);
+      await onSent();
     }
   };
 
@@ -246,11 +318,25 @@ function AgentPanel({ runtime, executionId, agent, actions, journeys, replyBox, 
       </label>
       <div className="panel-actions">
         <button type="button" className="b act" disabled={sending !== null || text.trim() === ""} onClick={() => void send()}>{answering ? "Send reply" : "Send"}</button>
-        <button type="button" className="b ghost" disabled>Wake</button>
-        <button type="button" className="b ghost" disabled>Reassign</button>
-        <button type="button" className="b ghost stop" disabled>Stop</button>
+        <button type="button" className="b ghost" disabled={sending !== null} onClick={() => void control("wake")}>Wake</button>
+        <button type="button" className="b ghost" disabled={sending !== null || slice === null || to === ""} onClick={() => void control("reassign")}>Reassign</button>
+        {confirmStop
+          ? <>
+              <button type="button" className="b ghost stop" disabled={sending !== null} onClick={() => void control("stop")}>Confirm stop</button>
+              <button type="button" className="b ghost" onClick={() => setConfirmStop(false)}>Keep running</button>
+            </>
+          : <button type="button" className="b ghost stop" disabled={sending !== null} onClick={() => setConfirmStop(true)}>Stop</button>}
       </div>
-      <span className="muted small">Wake, Reassign and Stop are available once lane controls land (#1847).</span>
+      {slice !== null && others.length > 0 && (
+        <label className="reassign-to">
+          <span className="section-label">REASSIGN #{slice.issue ?? slice.key} TO</span>
+          <select aria-label="Reassign to" value={to} onChange={(event) => setTarget(event.target.value)}>
+            {others.map((lane) => <option key={lane} value={lane}>{lane}</option>)}
+          </select>
+        </label>
+      )}
+      {slice === null && <span className="muted small">Reassign needs a slice this agent holds.</span>}
+      {confirmStop && <span className="muted small">Stop retires {agent.lane}: it stops counting as live until it is restored.</span>}
       {status !== null && <span role="status" aria-label={status} className="sent">{status}</span>}
       {failure !== null && <span role="alert" className="error">{failure}</span>}
       <span className="section-label">LAST ACTIONS</span>

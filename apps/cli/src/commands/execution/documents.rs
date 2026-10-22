@@ -849,8 +849,6 @@ fn validate_claim_holder(
     Ok(())
 }
 
-/// #1792: a link names a request some earlier `task.request_recorded` recorded, read from the
-/// same shared fold the tasks route serves, so admission and the requests route agree.
 /// #1839: the screens of a `task.journey_frames` record: 1 to 4 distinct ids, each a frame file
 /// name the preview store would use (`[A-Za-z0-9._-]`, 1 to 128, no leading dot).
 pub(crate) fn journey_screens(value: &serde_json::Value) -> Option<Vec<&str>> {
@@ -922,6 +920,8 @@ fn validate_journey_frames(
     Ok(())
 }
 
+/// #1792: a link names a request some earlier `task.request_recorded` recorded, read from the
+/// same shared fold the tasks route serves, so admission and the requests route agree.
 fn validate_request_known(
     document: &serde_json::Value,
     history: &[graphhelm_protocols::EventEnvelope],

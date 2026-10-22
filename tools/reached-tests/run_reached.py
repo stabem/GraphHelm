@@ -113,7 +113,7 @@ def _steps(plan: dict[str, Any]) -> tuple[list[dict[str, Any]], str | None]:
         ):
             return [], f"shell syntax is forbidden in selector step {index}; use argv entries"
         cwd = step.get("cwd", ".")
-        if cwd not in (".", "apps/studio"):
+        if cwd != "." and cwd not in STUDIO_APPS:
             return [], f"invalid cwd in selector step {index}: {cwd!r}"
         if type(step.get("slot")) is not bool:
             return [], f"slot must be boolean in selector step {index}"
@@ -167,6 +167,15 @@ def _slot_telemetry(path: Path, command: list[str]) -> tuple[float | None, float
     return float(waited), float(held)
 
 
+# #1829: the Studio app folders whose local Node tools a step may run; each has its own lockfile.
+STUDIO_APPS = ("apps/studio", "apps/studio-next")
+
+
+def _studio_app(repo: Path, cwd: Path) -> str | None:
+    """The Studio app folder `cwd` is, relative to the repo, or None."""
+    return next((app for app in STUDIO_APPS if cwd == repo / app), None)
+
+
 def studio_install_problem(studio: Path) -> str | None:
     """Return why apps/studio/node_modules is not whole, or None. Reads files only; never repairs."""
     modules = studio / "node_modules"
@@ -201,38 +210,40 @@ def _install_absent_studio(repo: Path, studio: Path) -> None:
     if (studio / "node_modules").exists() or not _is_lane_worktree(repo):
         return
     npm = shutil.which("npm") or "npm"
-    print(f"[reached-tests] apps/studio/node_modules is absent: npm ci in {studio}", file=sys.stderr, flush=True)
+    app = studio.relative_to(repo).as_posix()
+    print(f"[reached-tests] {app}/node_modules is absent: npm ci in {studio}", file=sys.stderr, flush=True)
     try:
         proc = subprocess.run([npm, "ci"], cwd=studio, capture_output=True, text=True,
                               timeout=STUDIO_INSTALL_TIMEOUT, creationflags=NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(f"npm ci in apps/studio failed ({type(exc).__name__})") from exc
+        raise RuntimeError(f"npm ci in {app} failed ({type(exc).__name__})") from exc
     if proc.returncode != 0:
-        raise RuntimeError(f"npm ci in apps/studio failed (exit {proc.returncode}): {(proc.stderr or '')[-400:]}")
+        raise RuntimeError(f"npm ci in {app} failed (exit {proc.returncode}): {(proc.stderr or '')[-400:]}")
 
 
 def _resolve_argv(repo: Path, cwd: Path, argv: list[str]) -> list[str]:
     """Resolve local Node package entrypoints without npx downloading anything."""
     if not argv or argv[0] != "npx":
         return argv
-    if len(argv) < 2 or cwd != repo / "apps/studio":
+    app = _studio_app(repo, cwd)
+    if len(argv) < 2 or app is None:
         raise RuntimeError("npx is allowed only for a local Studio tool")
     package = argv[1]
-    _install_absent_studio(repo, repo / "apps/studio")
-    problem = studio_install_problem(repo / "apps/studio")
+    _install_absent_studio(repo, cwd)
+    problem = studio_install_problem(cwd)
     if problem:
         raise RuntimeError(
-            f"apps/studio install is not whole ({problem}); run `npm ci` in apps/studio. "
+            f"{app} install is not whole ({problem}); run `npm ci` in {app}. "
             "A running Studio may lock files in node_modules (EPERM): stop it first, or rename the locked .node file aside. "
             "Not repaired automatically.")
     command = _effective_argv(repo, cwd, argv, graphhelm=None)
     if not Path(command[1]).is_file():
-        raise RuntimeError(f"local Studio tool missing: {package}; run npm ci in apps/studio")
+        raise RuntimeError(f"local Studio tool missing: {package}; run npm ci in {app}")
     return command
 
 
 def _vitest_step(step: dict[str, Any]) -> bool:
-    return step["cwd"] == "apps/studio" and step["argv"][:2] == ["npx", "vitest"]
+    return step["cwd"] in STUDIO_APPS and step["argv"][:2] == ["npx", "vitest"]
 
 
 def _vitest_evidence(path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -391,7 +402,7 @@ def _effective_argv(repo: Path, cwd: Path, argv: list[str], graphhelm: Path | No
     command = list(argv)
     if command[0] == "npx":
         entries = {"vitest": "vitest/vitest.mjs", "tsc": "typescript/bin/tsc"}
-        if cwd != repo / "apps/studio" or len(command) < 2 or command[1] not in entries:
+        if _studio_app(repo, cwd) is None or len(command) < 2 or command[1] not in entries:
             raise RuntimeError("unsupported local Studio command identity")
         command = ["node", str(cwd / "node_modules" / entries[command[1]]), *command[2:]]
     if command[0] in ("python", "python3"):
@@ -402,7 +413,7 @@ def _effective_argv(repo: Path, cwd: Path, argv: list[str], graphhelm: Path | No
 
 
 def _needs_studio_preparation(repo: Path, cwd: Path) -> bool:
-    return cwd == repo / "apps/studio" and _is_lane_worktree(repo) and not (cwd / "node_modules").exists()
+    return _studio_app(repo, cwd) is not None and _is_lane_worktree(repo) and not (cwd / "node_modules").exists()
 
 
 def _discovery_output(argv: list[str], cwd: Path, env: dict[str, str], timeout: float) -> str:

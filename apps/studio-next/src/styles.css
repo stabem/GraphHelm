@@ -83,3 +83,20 @@ button { font: inherit; }
   .sidebar { width: auto; border-right: 0; border-bottom: 1px solid var(--edge); }
   .views { margin-left: 0; }
 }
+.crumb-project { margin: 0; font-size: inherit; font-weight: 700; }
+.projects { display: flex; flex-direction: column; gap: 6px; }
+.project.other { background: none; border-color: transparent; padding: 0; }
+.project.other a { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 10px; color: var(--muted); text-decoration: none; }
+.project.other a:hover, .project.other a:focus-visible { background: var(--card); color: var(--text); }
+.project.other.closed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; color: var(--muted); }
+.project.other.closed .closed-hint { flex-basis: 100%; font-size: 11px; }
+
+/* #1833: project subtitles and "Add project folder". */
+.section-head { display: flex; align-items: center; }
+.section-head .section-label { flex: 1; }
+.add-folder { all: unset; cursor: pointer; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--edge); text-align: center; line-height: 20px; color: var(--muted); }
+.add-folder-form { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; width: 100%; }
+.add-folder-form input { flex: 1 1 100%; min-width: 0; background: var(--card); color: inherit; border: 1px solid var(--edge-strong); border-radius: 6px; padding: 4px 6px; font-size: 11px; }
+.add-folder-error { flex: 1 1 100%; color: var(--muted); font-size: 11px; }
+.project-folder { font-size: 10px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-counts { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }

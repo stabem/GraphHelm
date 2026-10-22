@@ -3,7 +3,7 @@ id: studio2-graph-requests
 title: Follow each owner request to its result
 name: Follow a request
 feature: Studio
-purpose: "Graph lists each owner request with lines to its issues, their PRs and the result; a journey filter narrows it, and Kanban and Graph toggle."
+purpose: "Graph is the approved design (docs/design/studio/Graph.dc.html): the JOURNEYS WITH WORK column, the header counts with the Kanban | Graph tabs, each owner request drawn with lines to its issues, their PRs and the result, and the selected issue's NOW and HISTORY panel."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -13,49 +13,49 @@ risks: [critical_ux]
 viewports: [web, mobile]
 screens:
   - id: filtered
-    title: The journey filter is offered beside the requests
+    title: All journeys is picked in the JOURNEYS WITH WORK column
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: combobox, name: Journey filter}, {role: list, name: Owner requests}]
-    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/views/Views.tsx]
+    expect: [{role: complementary, name: Journeys with work, text: JOURNEYS WITH WORK}, {role: button, name: All journeys}, {role: list, name: Owner requests}]
+    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: graph
     title: "Requests are drawn with their issues, PRs and result"
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: list, name: Owner requests}, {role: group, name: Request issues, text: "#"}, {role: group, name: Request pull requests, text: "#"}, {role: group, name: Request result}]
-    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/views/Views.tsx]
+    expect: [{role: region, name: Request graph, text: YOU ASKED}, {role: list, name: Owner requests}, {role: tab, name: Graph view}, {role: complementary, name: Selected work, text: HISTORY}, {role: link, name: Open the journey in Proof}]
+    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: graph-again
     title: Graph again shows the requests
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: list, name: Owner requests}, {role: region, name: Kanban, absent: true}]
-    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/views/Views.tsx]
+    expect: [{role: region, name: Request graph}, {role: list, name: Owner requests}, {role: region, name: Kanban, absent: true}]
+    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: kanban
     title: The same work as Kanban columns
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Kanban}, {role: button, name: Graph}, {role: list, name: Owner requests, absent: true}]
-    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/views/Views.tsx]
+    expect: [{role: region, name: Kanban}, {role: tab, name: Graph view}, {role: list, name: Owner requests, absent: true}]
+    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
 edges:
   - id: filtered.kanban
     from: filtered
     to: kanban
     acts:
-      - {kind: activate, role: button, name: Kanban}
+      - {kind: activate, role: tab, name: Kanban view}
   - id: graph.filtered
     from: graph
     to: filtered
     acts:
-      - {kind: inspect, role: combobox, name: Journey filter}
+      - {kind: activate, role: button, name: All journeys}
   - id: kanban.graph-again
     from: kanban
     to: graph-again
     acts:
-      - {kind: activate, role: button, name: Graph}
+      - {kind: activate, role: tab, name: Graph view}
 paths:
   main: [graph.filtered, filtered.kanban, kanban.graph-again]
 drift: []

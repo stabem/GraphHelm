@@ -161,7 +161,7 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
         <ViewBoundary key={`${route.view}:${runId ?? ""}`} name={route.view}>
         {runs === null && route.run === null ? <section className="view" aria-label="Reading"><p>Reading the project's team run…</p></section> : <>
         {route.view === "graph" && (
-          <GraphView run={run} runId={runId} requests={runId === null ? undefined : <RequestsView runtime={runtime} executionId={runId} journeys={journeys} />}>
+          <GraphView run={run} runId={runId} requests={runId === null ? undefined : <RequestsView runtime={runtime} executionId={runId} journeys={journeys} onOpenProof={(journey) => go({ project: route.project, run: route.run, view: "proof", journey })} />}>
             {composing && runId === null && (
               <StartRun
                 runtime={runtime}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Replays every approved `studio-*` flow against the fixture started by fixture.sh and records
+# Replays every approved `studio2-*` flow against the fixture started by fixture.sh and records
 # the captures into the fixture's own run (#381).
 #
 #   tools/studio-journey-fixture/replay-all.sh <fixture dir> <output dir> [flow id ...]

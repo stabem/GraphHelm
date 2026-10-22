@@ -185,6 +185,24 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             "base must use a local HTTP host",
         ));
     }
+    // #1781: "says X" and "is gone" contradict each other. Refused here, not in the schema, so
+    // journey-flow 1.9.0 stays a purely additive change for the schema-evolution baseline.
+    for (s, screen) in value["screens"].as_array().unwrap().iter().enumerate() {
+        for (e, expect) in screen["expect"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            if expect["absent"] == true && expect.get("text").is_some() {
+                findings.push(Finding::new(
+                    "flow.text_with_absent",
+                    format!("/screens/{s}/expect/{e}/text"),
+                    "an absent expectation cannot also require text",
+                ));
+            }
+        }
+    }
     for group in ["screens", "edges"] {
         let mut seen = BTreeSet::new();
         for (i, entry) in value[group].as_array().unwrap().iter().enumerate() {
@@ -498,7 +516,7 @@ fn weak_journey(value: &Value, strict: bool) -> Vec<Finding> {
         let Some(&&(i, last)) = path.last() else {
             continue;
         };
-        let expects = |id: &Value| -> BTreeSet<(String, String, bool)> {
+        let expects = |id: &Value| -> BTreeSet<(String, String, bool, String)> {
             screens
                 .get(id.as_str().unwrap_or_default())
                 .and_then(|s| s["expect"].as_array())
@@ -510,6 +528,8 @@ fn weak_journey(value: &Value, strict: bool) -> Vec<Finding> {
                         e["role"].to_string(),
                         e["name"].to_string(),
                         e["absent"] == true,
+                        // #1781: "says X" and "says Y" are different outcomes too.
+                        e["text"].to_string(),
                     )
                 })
                 .collect()
@@ -855,10 +875,13 @@ fn compile(flow: &Value) -> Result<Vec<(String, Value)>, Finding> {
                     .unwrap()
                     .iter()
                     .map(|e| format!(
-                        "{}{} {:?}",
+                        "{}{} {:?}{}",
                         if e["absent"] == true { "no " } else { "" },
                         e["role"].as_str().unwrap(),
-                        e["name"].as_str().unwrap()
+                        e["name"].as_str().unwrap(),
+                        e["text"]
+                            .as_str()
+                            .map_or(String::new(), |text| format!(" saying {text:?}"))
                     ))
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -2113,7 +2136,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
                 } else {
                     out.push_str(&format!(
                         "{prefix}{field}: {}\n",
-                        inline(v, &["role", "name", "absent", "digest"])
+                        inline(v, &["role", "name", "absent", "text", "digest"])
                     ));
                 }
             }
@@ -2330,6 +2353,71 @@ mod tests {
                 false
             )
         );
+    }
+
+    /// #1781: "the screen says X" is an expectation. Defects named: the canonical writer drops
+    /// `text` (so `--fmt` silently turns "says R$ 246,90" into "has a status"), the approval
+    /// ignores it, the schema takes `text` beside `absent` (a contradiction), or adding the field
+    /// moves the digest of flows that never use it. Cost: in memory only.
+    #[test]
+    fn a_text_expectation_is_written_validated_and_approved() {
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let schemas = flow_schemas().unwrap();
+        let plain_digest = approval_digest(&plain);
+        let mut with = plain.clone();
+        with["screens"][0]["expect"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"role":"status","name":"Total","text":"R$ 246,90"}));
+        let accepted = schemas.validate(FLOW_SCHEMA_ID, &with, "journey-flow");
+        assert!(accepted.is_empty(), "{accepted:?}");
+        let written = canonical(&with, false);
+        assert!(
+            written.contains("{role: status, name: Total, text: \"R$ 246,90\"}"),
+            "{written}"
+        );
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(
+            reread["screens"], with["screens"],
+            "text survives the round trip"
+        );
+        assert_ne!(approval_digest(&with), plain_digest);
+        let last = with["screens"][0]["expect"].as_array().unwrap().len() - 1;
+        let mut other = with.clone();
+        other["screens"][0]["expect"][last]["text"] = json!("R$ 24,69");
+        assert_ne!(approval_digest(&other), approval_digest(&with));
+        let mut both = with.clone();
+        both["screens"][0]["expect"][last]["absent"] = json!(true);
+        // Text beside absent passes the additive schema but is refused with a stable code.
+        let file = Path::new("checkout.journey.yaml");
+        let refused = semantic(file, &both, Path::new("."));
+        assert!(
+            refused.iter().any(|f| f.code == "flow.text_with_absent"
+                && f.pointer == format!("/screens/0/expect/{last}/text")),
+            "{:?}",
+            refused
+                .iter()
+                .map(|f| (f.code, &f.pointer))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !semantic(file, &with, Path::new("."))
+                .iter()
+                .any(|f| f.code == "flow.text_with_absent")
+        );
+        let mut empty = with.clone();
+        empty["screens"][0]["expect"][last]["text"] = json!("");
+        assert!(
+            !schemas
+                .validate(FLOW_SCHEMA_ID, &empty, "journey-flow")
+                .is_empty(),
+            "{empty}"
+        );
+        // A flow without `text` keeps its digest.
+        assert_eq!(approval_digest(&plain), plain_digest);
     }
 
     /// #1296: `name` and `feature` only label a journey for the Studio rail. Defect named: adding

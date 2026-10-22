@@ -429,7 +429,7 @@ export interface JourneyFlowScreen {
   /** #1286: what this screen is for, in the owner's words (journey-flow schema 1.7.0). */
   intent?: string;
   /** What the screen must show (role + accessible name), from the flow source. */
-  expect?: Array<{ role: string; name: string; absent?: true }>;
+  expect?: Array<{ role: string; name: string; absent?: true; text?: string }>;
 }
 
 export interface JourneyFlowEdge {
@@ -476,7 +476,7 @@ export interface JourneyFlowsView {
 export type JourneyStepResult = "pass" | "fail" | "drift";
 /** One assertion as the observer judged it (#1286): seen on its own, and the nearest accessible
  * name of the same role when it was not. Names are the flow's and the page's, already redacted. */
-export interface JourneyRunCheck { role: string; name: string; seen: boolean; closest: { role: string; name: string } | null }
+export interface JourneyRunCheck { role: string; name: string; text?: string; actual?: string | null; seen: boolean; closest: { role: string; name: string } | null }
 export interface JourneyRunScreen { frame: boolean; width?: number; height?: number; result?: JourneyStepResult; reason?: string; detail?: { code: string; pointer: string }; seen?: string; checks?: JourneyRunCheck[] }
 /** An edge the destructive guard stopped reads `skipped` (it does not turn the run red); an edge the
  * run never got to reads `null`. */

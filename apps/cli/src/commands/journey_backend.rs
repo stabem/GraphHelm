@@ -295,6 +295,13 @@ fn json_field<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     })
 }
 
+fn normal(text: &str) -> String {
+    text.split(|c: char| c.is_whitespace() || c == '\u{a0}')
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// The first expectation of `screen` the observation does not meet, as `role name`.
 pub(super) fn unmet(screen: &Value, seen: &Observation) -> Option<String> {
     screen["expect"]
@@ -327,6 +334,12 @@ pub(super) fn unmet(screen: &Value, seen: &Observation) -> Option<String> {
             };
             // #1041: a backend observation is a whole, finished response, so absence is judged
             // on it directly: an `absent` expectation is unmet exactly when it is present.
+            // #1781: a `text` expectation also needs the finished body to contain that text,
+            // whitespace collapsed and NBSP read as a space, as the browser driver compares.
+            let met = met
+                && expect["text"]
+                    .as_str()
+                    .is_none_or(|text| normal(&seen.body).contains(&normal(text)));
             if expect["absent"] == true { met } else { !met }
         })
         .map(|expect| {
@@ -363,6 +376,24 @@ mod tests {
         assert_eq!(
             unmet(&screen, &seen("an error")),
             Some("no text error".to_owned())
+        );
+    }
+
+    /// #1781: a backend `text` expectation is met only when the finished body contains the
+    /// text, whitespace collapsed and NBSP read as a space. Cost: in memory.
+    #[test]
+    fn a_backend_text_expectation_needs_the_text_in_the_body() {
+        let screen = json!({"expect":[{"role":"status","name":"200","text":"R$ 246,90"}]});
+        let seen = |body: &str| Observation {
+            status: Some(200),
+            exit: None,
+            body: body.to_owned(),
+            stderr: String::new(),
+        };
+        assert_eq!(unmet(&screen, &seen("total:\n R$\u{a0}246,90")), None);
+        assert_eq!(
+            unmet(&screen, &seen("total: R$ 24,69")),
+            Some("status 200".to_owned())
         );
     }
 

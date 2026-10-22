@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/journey-flow.schema.json",
-  "x-graphhelm-schema-version": "1.8.0",
+  "x-graphhelm-schema-version": "1.9.0",
   "title": "GraphHelm Journey Flow",
   "type": "object",
   "properties": {
@@ -226,6 +226,12 @@
         "absent": {
           "description": "The element must NOT be visible once the screen has settled (#1041). Only true is written; omitted means present.",
           "const": true
+        },
+        "text": {
+          "description": "Text the element found by role and name must contain once the screen has settled, compared with whitespace collapsed and NBSP read as a space (#1781). Never with absent.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "required": [

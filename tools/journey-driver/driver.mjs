@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { resolve, relative, isAbsolute, dirname } from 'node:path';
 import { lstat, mkdir, rename, writeFile } from 'node:fs/promises';
-import { judgeExpectations } from './judge.mjs';
+import { judgeExpectations, containsText, normalText } from './judge.mjs';
 
 const PROTOCOL = 'graphhelm-journey-driver/1';
 const FRAME = 65536, TIMEOUT = 30000;
@@ -46,6 +46,12 @@ function redacted(text) {
   for (const [name,value] of secrets.toSorted((a,b) => b[1].length-a[1].length)) if (value) text = text.replaceAll(value, `«secret:${name.slice(17)}»`);
   return text;
 }
+// #1781: what an element held, normalised and cut to 256 bytes so a failure stays bounded.
+function boundedText(text) {
+  let out=normalText(text);
+  while (Buffer.byteLength(out)>256) out=out.slice(0,-1);
+  return out;
+}
 function clean(value) {
   const bytes = JSON.stringify(value);
   if (secrets.some(([,v]) => v && bytes.includes(v))) fail('driver.redaction_failed');
@@ -62,7 +68,12 @@ function url(raw, local = false, originOnly = false) {
 }
 function pair(v, empty = false) { return exactKeys(v,['role','name']) && string(v.role,64) && string(v.name,256,empty); }
 // #1041: an expectation is a pair, or a pair marked `absent: true` (never false: one spelling).
-function expectation(v) { return Object.hasOwn(v ?? {},'absent') ? exactKeys(v,['role','name','absent']) && v.absent === true && string(v.role,64) && string(v.name,256) : pair(v); }
+// #1781: or a pair with `text` the element must contain; text never goes with absent.
+function expectation(v) {
+  if (Object.hasOwn(v ?? {},'absent')) return exactKeys(v,['role','name','absent']) && v.absent === true && string(v.role,64) && string(v.name,256);
+  if (Object.hasOwn(v ?? {},'text')) return exactKeys(v,['role','name','text']) && string(v.text,256) && string(v.role,64) && string(v.name,256);
+  return pair(v);
+}
 function validate(r) {
   if (!plain(r) || r.protocol !== PROTOCOL || !Number.isSafeInteger(r.requestId) || r.requestId !== requestId + 1 || !Object.hasOwn(fields,r.op)) fail('driver.protocol_invalid');
   if (!exactKeys(r,['protocol','requestId','op'],fields[r.op])) fail('driver.protocol_invalid');
@@ -437,6 +448,22 @@ async function run(r) {
       try { await target.first().waitFor({state:'visible',timeout:SCREEN_WAIT}); }
       catch (err) { if (err.code || err.name!=='TimeoutError') throw err; }
     }));
+    // #1781: a present expectation with `text` also waits, on the same budget, until its element
+    // contains that text (whitespace collapsed, NBSP as space); `actual` is what it last held.
+    const actual=new Map();
+    await Promise.all(r.expect.filter(expected => typeof expected.text === 'string').map(async expected => {
+      const target=page.getByRole(expected.role,{name:expected.name,exact:true}).first();
+      const deadline=Date.now()+SCREEN_WAIT;
+      for (;;) {
+        let held=null;
+        try { held=await target.evaluate(el => el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement ? el.value : el.innerText,undefined,{timeout:1000}); }
+        catch (err) { if (err.code || (err.name!=='TimeoutError' && !/Target closed|detached|not attached/.test(String(err.message)))) throw err; }
+        actual.set(JSON.stringify([expected.role,expected.name]),typeof held === 'string' ? held : null);
+        if (typeof held === 'string' && containsText(held,expected.text)) break;
+        if (Date.now()>=deadline) break;
+        await new Promise(done=>setTimeout(done,100));
+      }
+    }));
     // #1041: only once the present expectations settled, give each absent one the same budget
     // to go away (a banner still closing), so absence is never judged before the page rendered.
     await Promise.all(r.expect.filter(expected => expected.absent === true).map(async expected => {
@@ -460,10 +487,11 @@ async function run(r) {
       const locator=page.getByRole(expected.role,{name:expected.name,exact:true});
       const count=await locator.count();
       const visible=count>0 && await locator.first().isVisible();
-      observed.set(JSON.stringify([expected.role,expected.name]),{...expected,count,visible});
+      const key=JSON.stringify([expected.role,expected.name]);
+      observed.set(key,{...expected,count,visible,...(actual.has(key)?{actual:actual.get(key)}:{})});
     }
     const checks=judgeExpectations(r.expect,[...observed.values()]).map(check=>({
-      ...check,name:redacted(check.name),closest:check.closest && {...check.closest,name:redacted(check.closest.name)},
+      ...check,name:redacted(check.name),...(Object.hasOwn(check,'text')?{text:redacted(check.text),actual:check.actual===null?null:boundedText(redacted(check.actual))}:{}),closest:check.closest && {...check.closest,name:redacted(check.closest.name)},
     }));
     let ariaYaml=mainAria;
     const expectations=[];

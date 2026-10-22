@@ -1,5 +1,16 @@
 # Schema Changelog
 
+## journey-flow 1.9.0 - `text` expectations (#1781)
+
+An expectation may carry `text` (1..256 characters): the element found by its role and name must
+contain that text once the screen has settled, compared with whitespace collapsed and NBSP read as
+a space, so a flow can prove what the screen says ("daqui a 2 dias", "R$ 246,90"), not only that a
+control exists. `text` beside `absent` is refused by the flow validator (`flow.text_with_absent`)
+and the driver protocol, not by the schema, so this version stays purely additive. A failed
+check names the expectation and the element's bounded, redacted text as `actual`. Backend screens
+judge it on the finished response body. Additive: every 1.8.0 flow stays valid with the same bytes
+and digest. The catalog digest is updated from canonical JSON.
+
 ## journey-flow 1.8.0 - `absent` expectations (#1041)
 
 An expectation may carry `absent: true`: that role and name must NOT be visible once the screen

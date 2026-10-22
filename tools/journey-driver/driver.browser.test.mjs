@@ -59,6 +59,27 @@ test('snapshot wire reports each check after a missing heading and redacts diagn
   assert.ok(!JSON.stringify(failed).includes(secret));assert.ok(!JSON.stringify(success).includes(secret));
 });
 
+// #1781: the Zuvemo defect class. A heading whose date phrase is a <span>, and a total rendered
+// late with an NBSP: role+name alone stays green while the screen says the wrong thing.
+test('a text expectation proves what the element says, waits for it, and names what it held',async t=>{
+  const secret='CANARY_driver_text_1781';
+  const server=createServer((_,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<h2>Agenda de entregas <span>daqui a 1 semana</span></h2><output aria-label="Total"></output><p aria-label="Nota" role="status">token ${secret}</p><script>setTimeout(()=>{document.querySelector('output').innerHTML='Total:\\n   R$\\u00a0246,90'},400)</script>`);});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const c=await client(t,{GRAPHHELM_SECRET_TEXT:secret});
+  await open(c,`http://127.0.0.1:${server.address().port}/`,[],{survive:true});
+  const ok=await c.send('snapshot',{expect:[{role:'status',name:'Total',text:'R$ 246,90'},{role:'heading',name:'Agenda de entregas daqui a 1 semana',text:'daqui a  1 semana'}]});
+  assert.equal(ok.ok,true,JSON.stringify(ok));
+  assert.deepEqual(ok.result.checks[0],{role:'status',name:'Total',text:'R$ 246,90',actual:'Total: R$ 246,90',seen:true,closest:null});
+  const wrong=await c.send('snapshot',{expect:[{role:'heading',name:'Agenda de entregas daqui a 1 semana',text:'daqui a 2 dias'},{role:'status',name:'Nota',text:'nada'}]});
+  assert.equal(wrong.ok,false);assert.equal(wrong.code,'driver.expectation_failed');
+  assert.deepEqual(wrong.details.checks[0],{role:'heading',name:'Agenda de entregas daqui a 1 semana',text:'daqui a 2 dias',actual:'Agenda de entregas daqui a 1 semana',seen:false,closest:null});
+  assert.equal(wrong.details.checks[1].actual,'token «secret:TEXT»');
+  assert.ok(!JSON.stringify(wrong).includes(secret));
+  const both=await c.send('snapshot',{expect:[{role:'status',name:'Total',text:'R$',absent:true}]});
+  assert.equal(both.code,'driver.protocol_invalid');
+});
+
 test('exact names, ambiguity, contextual cache and actual supported actions',async t=>{
   const f=await startFixture();t.after(()=>f.close());
   const c=await client(t);await open(c,f.base+'/controls');

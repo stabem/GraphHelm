@@ -255,7 +255,7 @@ fn render(flow: &Value, kept: &Value, frame: &dyn Fn(&str) -> Option<Vec<u8>>) -
                 .iter()
                 .map(|c| {
                     format!(
-                        "<li>{} {}{} \"{}\"</li>",
+                        "<li>{} {}{} \"{}\"{}</li>",
                         if c["seen"] == true {
                             "&#10003;"
                         } else {
@@ -263,7 +263,17 @@ fn render(flow: &Value, kept: &Value, frame: &dyn Fn(&str) -> Option<Vec<u8>>) -
                         },
                         if c["absent"] == true { "no " } else { "" },
                         escape(text(&c["role"])),
-                        escape(text(&c["name"]))
+                        escape(text(&c["name"])),
+                        // #1781: a text check says what it wanted and what the element held.
+                        if c["text"].is_string() {
+                            format!(
+                                " saying \"{}\" (held \"{}\")",
+                                escape(text(&c["text"])),
+                                escape(text(&c["actual"]))
+                            )
+                        } else {
+                            String::new()
+                        }
                     )
                 })
                 .collect(),

@@ -2382,3 +2382,38 @@ fn review_activity_replay_scales_with_history_at_fixed_slice_count() {
         );
     }
 }
+
+/// #1851: a lane's reported kind and model come from its newest claim that names each, out of
+/// sequence order or not; a claim naming neither keeps what an older one said. Reading the oldest
+/// claim instead, or letting a bare claim erase the identity, would serve a stale or empty card.
+#[test]
+fn a_lanes_identity_is_its_newest_claims_kind_and_model() {
+    let with = |sequence: u64, issue: u64, extra: Value| {
+        let mut document = json!({"taskId": format!("issue-{issue}"), "issue": issue,
+            "lane": "lane-a", "branch": "b"});
+        for (key, value) in extra.as_object().unwrap() {
+            document[key] = value.clone();
+        }
+        record(sequence, "task.claimed", "lane-a", document)
+    };
+    let records = vec![
+        with(5, 2, json!({"agentModel": "sonnet"})),
+        with(1, 1, json!({"agentKind": "claude", "agentModel": "opus"})),
+        with(7, 3, json!({})),
+    ];
+    let identities = graphhelm_execution::tasks::lane_identities(&records);
+    assert_eq!(
+        identities.get("lane-a"),
+        Some(&(Some("claude".to_owned()), Some("sonnet".to_owned())))
+    );
+    assert!(
+        parse(
+            "task.claimed",
+            "lane-a",
+            json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-4", "revision": 1,
+            "at": "2026-10-07T20:00:00Z", "issue": 4, "lane": "lane-a", "branch": "b",
+            "agentModel": "Opus 5"})
+        )
+        .is_none()
+    );
+}

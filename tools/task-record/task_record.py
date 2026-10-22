@@ -41,6 +41,9 @@ import os
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
+# #1851: the Runtime's `agentKind` / `agentModel` rule on task.claimed (task-event.schema.json).
+AGENT_KIND = re.compile(r"[a-z][a-z0-9-]{0,31}", re.ASCII)
+AGENT_MODEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}", re.ASCII)
 KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "review_activity", "merged", "closed", "critic_verdict", "queued", "lane_retired", "request_recorded", "request_linked")
 # #1469: `queued` records the open issues carrying this label that no open PR closes, oldest
 # first, at most QUEUED_MAX (the schema's maxItems), as the Lanes Backlog reads them.
@@ -239,6 +242,8 @@ def parse(argv):
                    help="claimed: how long the claim stays live without a heartbeat (300..86400, never below the heartbeat cooldown; #1193). "
                         "Default 1800 (#1223); a Runtime older than #1194 that refuses the field gets the claim again without "
                         "the DEFAULT lease, never without one you gave")
+    p.add_argument("--agent-kind", help="claimed: what kind of agent this lane is, e.g. claude or codex (#1851; ^[a-z][a-z0-9-]{0,31}$)")
+    p.add_argument("--agent-model", help="claimed: the model this lane runs on, e.g. opus, sonnet or fast (#1851; ^[a-z0-9][a-z0-9._-]{0,63}$)")
     p.add_argument("--lanes", help="lane_retired: comma-separated lane names, 1 to 64")
     p.add_argument("--retired", choices=("true", "false"), help="lane_retired: true retires the lanes, false restores them")
     p.add_argument("--pr", type=int)
@@ -513,6 +518,13 @@ def document(args, now):
             doc["assignedBy"] = args.assigned_by
         if args.parent:
             doc["parent"] = args.parent
+        # #1851: the lane's own kind and model, under the Runtime's rule; refused before sending.
+        for flag, key, pattern in (("agent_kind", "agentKind", AGENT_KIND), ("agent_model", "agentModel", AGENT_MODEL)):
+            value = getattr(args, flag)
+            if value is not None:
+                if not pattern.fullmatch(value):
+                    sys.exit(f"task_record: --{flag.replace('_', '-')} must match {pattern.pattern}")
+                doc[key] = value
         journeys = known_journeys(args)
         if journeys:
             doc["journeys"] = journeys

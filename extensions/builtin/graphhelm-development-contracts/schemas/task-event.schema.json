@@ -107,7 +107,9 @@
         "summary": {"$ref": "#/$defs/summary"},
         "parent": {"description": "The issue whose work turned this task up (#514); the Studio draws this task inside that issue's card.", "$ref": "#/$defs/positive"},
         "journeys": {"description": "The journey contract ids the issue serves (#577); the Studio Graph tab links the task to them from the claim on.", "type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/taskId"}},
-        "leaseSeconds": {"description": "#1193: how long the claim stays live without a heartbeat, in seconds, never below the 300 s heartbeat cooldown (a shorter lease could not be kept alive). The tasks fold reads the claim as overdue once the later of the claim and its last heartbeat plus this lease has passed; absent means 1800.", "type": "integer", "minimum": 300, "maximum": 86400}
+        "leaseSeconds": {"description": "#1193: how long the claim stays live without a heartbeat, in seconds, never below the 300 s heartbeat cooldown (a shorter lease could not be kept alive). The tasks fold reads the claim as overdue once the later of the claim and its last heartbeat plus this lease has passed; absent means 1800.", "type": "integer", "minimum": 300, "maximum": 86400},
+        "agentKind": {"description": "#1851: what kind of agent the claiming lane is (claude, codex), as it reports it; absent means unknown. The tasks view serves the newest per lane to owner credentials.", "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+        "agentModel": {"description": "#1851: the model the claiming lane runs on (opus, sonnet, fast), as it reports it; absent means unknown.", "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}
       }
     },
     {

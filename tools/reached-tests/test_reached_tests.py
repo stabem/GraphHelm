@@ -1655,6 +1655,13 @@ class CoreModules(unittest.TestCase):
                  "core/k/src/n.rs": "pub struct T;\n",
                  "apps/cli/src/commands/a.rs": "fn h(t: graphhelm_k::n::T) { t.x() }\n"}, None),
             "C a blanket trait impl": ({"core/k/src/m.rs": "pub trait Q {}\nimpl<X> Q for X {}\n"}, None),
+            "V a path impl while the module declares a same-named type": (
+                {"core/k/src/m.rs": "pub struct T;\nimpl crate::n::T { pub fn x(&self) {} }\n",
+                 "core/k/src/n.rs": "pub struct T;\n"}, None),
+            "W a blanket impl with a where clause naming a declared trait": (
+                {"core/k/src/m.rs": "pub trait Q {}\npub trait Tr {}\nimpl<X> Tr for X where X: Q {}\n"}, None),
+            "a generic parameter shadows a declared name": (
+                {"core/k/src/m.rs": "pub struct T;\npub trait Tr {}\nimpl<T> Tr for T {}\n"}, None),
             "D a brace re-export in lib.rs": (
                 {"core/k/src/lib.rs": "pub mod m;\npub mod n;\npub use self::{m::f};\n",
                  "apps/cli/src/commands/a.rs": "fn h() { graphhelm_k::f() }\n"}, None),

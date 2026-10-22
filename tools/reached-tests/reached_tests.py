@@ -532,10 +532,28 @@ def core_module_cli(packages, p, rel, root):
         if top(path) not in affected:
             continue
         for header in re.findall(r"\bimpl\b([^{;]*)\{", text):
-            target = header.split(" for ", 1)[-1] if " for " in header else header
-            target = re.sub(r"^\s*<.*?>\s*", "", target) if " for " not in header else target
-            names_in = re.findall(r"[A-Za-z_]\w*", re.sub(r"<.*", "", target).replace("dyn", " ").replace("&", " "))
-            if not names_in or names_in[-1] not in declared:
+            # #1877 review (cases V, W): narrow only for `impl [<params>] [Trait for] Name[<args>]`
+            # where Name is one bare identifier the affected modules declare and not a generic
+            # parameter of the impl; a path (`crate::n::T`), a `where` clause, a reference, a
+            # trait object or anything else is the whole package.
+            header = header.strip()
+            params = set()
+            if header.startswith("<"):
+                depth, end = 0, None
+                for i, ch in enumerate(header):
+                    depth += {"<": 1, ">": -1}.get(ch, 0)
+                    if depth == 0:
+                        end = i
+                        break
+                if end is None:
+                    return None
+                params = set(re.findall(r"(?:^|[<,])\s*(?:const\s+)?([A-Za-z_]\w*)", header[:end + 1]))
+                header = header[end + 1:].strip()
+            if re.search(r"\bwhere\b", header):
+                return None
+            target = re.split(r"\s+for\s+", header)[-1].strip()
+            shape = re.fullmatch(r"([A-Za-z_]\w*)\s*(?:<[^:{}]*>)?", target)
+            if shape is None or shape.group(1) not in declared or shape.group(1) in params:
                 return None
     ident = p["name"].replace("-", "_")
     path_use = re.compile(r"\b" + ident + r"::(?:" + "|".join(re.escape(m) for m in sorted(affected)) + r")\b")

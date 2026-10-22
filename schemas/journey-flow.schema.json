@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/journey-flow.schema.json",
-  "x-graphhelm-schema-version": "1.11.0",
+  "x-graphhelm-schema-version": "1.12.0",
   "title": "GraphHelm Journey Flow",
   "type": "object",
   "properties": {
@@ -563,6 +563,12 @@
         },
         "healed": {
           "type": "boolean"
+        },
+        "viewport": {
+          "enum": [
+            "web",
+            "mobile"
+          ]
         }
       },
       "required": [

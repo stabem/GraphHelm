@@ -32,7 +32,7 @@ Using GraphHelm in your own project:
 
 1. **Request.** You ask for a change in your agent host (for example "let users reset their password"). The work is recorded as one request.
 2. **Agents work.** Agents open issues and pull requests for it. Each runs as a lane you can follow; a question an agent asks waits for your answer instead of being guessed.
-3. **Journeys define the promise.** The user-visible promise is written as a journey: `.graphhelm/journeys/<id>.journey.yaml`, a small graph of screens (observable states) and edges (the acts between them), with explicit checks on each screen. A journey is a draft until you, the owner, approve it.
+3. **Journeys define the promise.** The user-visible promise is written as a journey: `.graphhelm/journeys/<id>.journey.yaml`, a small graph of screens (observable states) and edges (the acts between them), with explicit checks on each screen. A journey is a draft until it passes a preview and you, the owner, approve it.
 4. **Journeys run.** An approved journey is replayed at the committed head without a model call: in a real browser through the Playwright observer, or as `cli`/`http` acts for backends.
 5. **You inspect the evidence.** Each step shows its result, the checks it made, the captured frame (browser journeys) and how it compares with an earlier run.
 6. **You review the result.** For a PR, the review screen compares the journey's frames on `main` with the PR head's. The request moves to Proven only when its journeys passed.
@@ -111,11 +111,13 @@ graphhelm studio open    # opens it in the browser, already logged in
 
 ```bash
 graphhelm journey compile <id> --fmt --include-draft --project .   # check and format
+graphhelm journey preview <id> --project .          # play the draft in the background (never proof)
+graphhelm journey preview <id> --project . --read   # read the result; it must pass
 graphhelm journey approve <id> --token-file .graphhelm/events.token --project .   # owner approves
 graphhelm keel test validation --repo .   # runs every journey path at committed HEAD
 ```
 
-You can also approve and run the journey from Proof. Step-by-step with real output: [docs/guides/journeys.md](docs/guides/journeys.md).
+Approval is refused with `flow.preview_not_passed` until a preview of that exact flow, at its scope commit, has passed. A draft's `cli` acts wait at `confirm_needed` until the owner confirms them (see [docs/jpd/README.md](docs/jpd/README.md#safety-drafts-approval-and-destructive-acts)). In the Studio, Proof runs the preview and shows Approve once it passed. Step-by-step with real output: [docs/guides/journeys.md](docs/guides/journeys.md).
 
 <a id="try-it-locally"></a>
 <a id="try-a-local-run"></a>
@@ -159,7 +161,7 @@ A successful `execution status` can exit `0` while reporting `needs_you`, so aut
 
 **Available:** CLI, Runtime, MCP server, Claude Code and Codex plugins, the Studio (Graph, Lanes, Proof), browser journeys with the Playwright observer, backend (`http`/`cli`) journeys, owner approval, validation and sabotage tests, Keel checks. A [v0.1.1 CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.1) has Windows x86-64 and Ubuntu x86-64 binaries; otherwise build from source. `graphhelm update` reinstalls from `origin/main`.
 
-**Experimental:** journey explore, drift and heal ([journeys guide §10](docs/guides/journeys.md#10-explore-drift-and-heal-phase-3)); the optional agent-driven `e2e` observer (needs a model key); agent approval of journeys through scoped credentials.
+**Experimental:** journey explore, drift and heal ([journeys guide §10](docs/guides/journeys.md#10-explore-drift-and-heal-phase-3)); the optional agent-driven `e2e` observer (needs a model key); scoped agent review of draft journeys (an agent can record a blind review, but the journey stays a draft; approval is owner-only).
 
 **Planned, not shipped:** a visual graph editor, embedded AI chat, the full Context Compiler and Dreams Engine. The [roadmap](docs/product/ROADMAP_AND_ACCEPTANCE.md) lists targets, not shipped features.
 

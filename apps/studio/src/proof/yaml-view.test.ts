@@ -27,4 +27,13 @@ describe("stdout as YAML-like lines (#1914)", () => {
     expect(yamlLines("{oops")).toBeNull();
     expect(yamlLines("")).toBeNull();
   });
+
+  it("caps the depth and never throws on a 10000-deep input", () => {
+    const deep = "[".repeat(10000) + "]".repeat(10000);
+    const lines = yamlLines(deep);
+    expect(lines === null || lines.length < 200).toBe(true);
+    const nested = '{"a":'.repeat(10000) + "1" + "}".repeat(10000);
+    const keyed = yamlLines(nested);
+    expect(keyed === null || keyed.some((line) => line.scalar?.text === "…")).toBe(true);
+  });
 });

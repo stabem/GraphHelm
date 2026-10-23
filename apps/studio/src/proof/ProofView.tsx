@@ -5,7 +5,7 @@ import { earlierRun } from "./compare";
 import { CompareFrame } from "./CompareFrame";
 import { decisionOf, offersDecision, rejectNote } from "./decision";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
-import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, withoutLive, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 
 interface ProofViewProps {
@@ -49,7 +49,7 @@ export function ProofView({ runtime, journeys, error, executionId, onRan, initia
       <JourneysColumn runtime={runtime} journeys={journeys} selected={selected?.id ?? null} executionId={executionId} onPick={setPicked} onStarted={started} onRan={onRan} live={live} />
       {selected === null
         ? <div className="proof-main"><p>This project has no journeys yet.</p></div>
-        : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} executionId={executionId} onRan={onRan} onRun={(run) => setLive((before) => ({ ...before, [selected.id]: run }))} />}
+        : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} executionId={executionId} onRan={onRan} onRun={(run) => setLive((before) => ({ ...before, [selected.id]: run }))} onGone={() => setLive((before) => withoutLive(before, selected.id))} />}
     </section>
   );
 }
@@ -276,9 +276,11 @@ function viewportLine(step: Step) {
   );
 }
 
-function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun }: { runtime: Runtime; flow: JourneyFlow; executionId: string | null; onRan: () => void; onRun: (run: JourneyRun) => void }) {
+function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: { runtime: Runtime; flow: JourneyFlow; executionId: string | null; onRan: () => void; onRun: (run: JourneyRun) => void; onGone: () => void }) {
   const { run, frames, mobileFrames, log, history, error, starting, start } = useJourneyRun(runtime, flow.id, executionId, onRan, onRun);
   const [showLog, setShowLog] = useState(false);
+  // #1914: a panel that goes away (another journey picked) stops reporting; its card must not stay "running".
+  useEffect(() => onGone, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [picked, setPicked] = useState<number | null>(null);
   const steps = journeySteps(flow, run);
   const counts = countSteps(steps);

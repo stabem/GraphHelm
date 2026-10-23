@@ -255,6 +255,11 @@ export function journeyScore(flow: JourneyFlow): { passed: number | null; total:
   return { passed: index, total, bar: steps.map((_, i): BarCell => (i < index ? "pass" : i === index ? "fail" : "none")) };
 }
 
+/** #1914: the live runs without the one of a panel that went away, so its card reads the list again. */
+export function withoutLive<T>(live: Record<string, T>, id: string): Record<string, T> {
+  return Object.fromEntries(Object.entries(live).filter(([key]) => key !== id));
+}
+
 /** #1914: a card's chip, score and bar from the run the open panel is following, so the card
  * reads `running` with its live step count while the run plays and the result the moment it ends,
  * before the journey list is read again. `null` when the run says nothing yet (state `none`). */

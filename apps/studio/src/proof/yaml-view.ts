@@ -18,8 +18,12 @@ function scalarOf(value: unknown): { kind: ScalarKind; text: string } | null {
   return null;
 }
 
+const MAX_DEPTH = 64;
+
 function walk(value: unknown, indent: number, key: string | null, bullet: boolean, out: YamlLine[]): void {
   const scalar = scalarOf(value);
+  // Past the cap a deeper level reads "…": the walk is recursive and the input is a command's output.
+  if (indent > MAX_DEPTH) { out.push({ indent, bullet, key, scalar: { kind: "null", text: "…" } }); return; }
   if (scalar !== null) { out.push({ indent, bullet, key, scalar }); return; }
   const isArray = Array.isArray(value);
   const entries: [string | null, unknown][] = isArray ? (value as unknown[]).map((item) => [null, item]) : Object.entries(value as object);
@@ -45,7 +49,7 @@ export function yamlLines(text: string): YamlLine[] | null {
   try { parsed = JSON.parse(trimmed); } catch { return null; }
   if (typeof parsed !== "object" || parsed === null) return null;
   const out: YamlLine[] = [];
-  walk(parsed, 0, null, false, out);
+  try { walk(parsed, 0, null, false, out); } catch { return null; }
   return out;
 }
 

@@ -402,21 +402,86 @@ pub struct LaneSilence {
     pub last_record_at: Option<PersistedTimestamp>,
 }
 
+/// #1935: what a lane's signals (not its task records) say for the silence policy: the newest
+/// signal each agent lane sent, and the lanes with a question to the owner nothing answers yet.
+/// Task records (`task.*` kinds) are left to [`last_step_by_actor`], which drops the reasonless
+/// heartbeat, so that heartbeat stays excluded here too.
+#[derive(Debug, Default)]
+pub struct LaneSignals {
+    pub last_signal_at: BTreeMap<String, PersistedTimestamp>,
+    pub asking: std::collections::BTreeSet<String>,
+}
+
+/// #1794/#1935: an agent signal that asks the owner: a `question`, or an `operator_note` to them.
+fn asks_owner(record: &graphhelm_protocols::SignalRecorded) -> bool {
+    record.kind == "question"
+        || (record.kind == "operator_note"
+            && record
+                .to
+                .as_ref()
+                .is_some_and(|to| to.as_str() == OWNER_ADDRESS))
+}
+
+/// #1935: read [`LaneSignals`] from the journal's plaintext; no envelope is opened.
+pub fn lane_signals(history: &[graphhelm_protocols::EventEnvelope]) -> LaneSignals {
+    let answered: std::collections::BTreeSet<&str> = history
+        .iter()
+        .filter_map(|event| match &event.kind {
+            EventKind::SignalRecorded(record) => record.reply_to.as_ref().map(|id| id.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut facts = LaneSignals::default();
+    for event in history {
+        let EventKind::SignalRecorded(record) = &event.kind else {
+            continue;
+        };
+        if event.actor.actor_type() != graphhelm_protocols::PersistedActorType::Agent
+            || record.kind.starts_with("task.")
+        {
+            continue;
+        }
+        let lane = event.actor.id().as_str();
+        if asks_owner(record) && !answered.contains(record.signal_id.as_str()) {
+            facts.asking.insert(lane.to_owned());
+        }
+        let newer = facts
+            .last_signal_at
+            .get(lane)
+            .is_none_or(|current| event.occurred_at.as_datetime() > current.as_datetime());
+        if newer {
+            facts
+                .last_signal_at
+                .insert(lane.to_owned(), event.occurred_at.clone());
+        }
+    }
+    facts
+}
+
 /// #1920: split the judged lanes by the silence policy at `now`. Lanes silent for `window` with no
 /// obligation leave `lanes` and are returned as retired; silent lanes that owe stay and are
 /// returned as flagged. Pure, so the three cases are unit cells.
+///
+/// #1935: silence is measured from the later of the lane's last task record and its last signal,
+/// and a lane with an unanswered question to the owner is only flagged, never retired, so its
+/// question stays in `waiting`.
 pub fn apply_lane_silence(
     lanes: &mut Vec<LaneLiveness>,
+    signals: &LaneSignals,
     window: i64,
     now: &PersistedTimestamp,
 ) -> (Vec<LaneSilence>, Vec<LaneSilence>) {
     let mut retired = Vec::new();
     let mut flagged = Vec::new();
     lanes.retain(|row| {
-        let quiet = row
-            .last_record_at
-            .as_ref()
-            .map(|at| (*now.as_datetime() - *at.as_datetime()).num_seconds());
+        let quiet = [
+            row.last_record_at.as_ref(),
+            signals.last_signal_at.get(&row.lane),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|at| (*now.as_datetime() - *at.as_datetime()).num_seconds())
+        .min();
         if quiet.is_some_and(|seconds| seconds < window) {
             return true;
         }
@@ -427,7 +492,7 @@ pub fn apply_lane_silence(
             window_seconds: window,
             last_record_at: row.last_record_at.clone(),
         };
-        if row.owes {
+        if row.owes || signals.asking.contains(&row.lane) {
             flagged.push(verdict);
             true
         } else {
@@ -1048,7 +1113,8 @@ pub(crate) fn read_history(
     // #1920: the Runtime retires a lane silent past the policy window with nothing open, and only
     // flags one that still owes work. Judged here, at read time: a new record restores it.
     let window = liveness.budgets.retire_after_seconds;
-    let (auto_retired, flagged) = apply_lane_silence(&mut liveness.lanes, window, &now);
+    let signals = lane_signals(history);
+    let (auto_retired, flagged) = apply_lane_silence(&mut liveness.lanes, &signals, window, &now);
     liveness.retired = auto_retired;
     liveness.flagged = flagged;
     let mut hidden_lanes = fold.retired_lanes.clone();
@@ -1139,12 +1205,7 @@ where
         if event.actor.actor_type() != graphhelm_protocols::PersistedActorType::Agent {
             continue;
         }
-        let asks = record.kind == "question"
-            || (record.kind == "operator_note"
-                && record
-                    .to
-                    .as_ref()
-                    .is_some_and(|to| to.as_str() == OWNER_ADDRESS));
+        let asks = asks_owner(record);
         let lane = event.actor.id().as_str();
         if !asks
             || answered.contains(record.signal_id.as_str())
@@ -1471,7 +1532,8 @@ mod lease_tests {
             lane_liveness("holder", Some(&old), Some(&old), true, &now),
             lane_liveness("live", Some(&fresh), None, false, &now),
         ];
-        let (retired, flagged) = super::apply_lane_silence(&mut lanes, window, &now);
+        let (retired, flagged) =
+            super::apply_lane_silence(&mut lanes, &super::LaneSignals::default(), window, &now);
         assert_eq!(retired.len(), 1, "{retired:?}");
         assert_eq!(retired[0].lane, "idle");
         assert_eq!(retired[0].by, "graphhelm");
@@ -1488,14 +1550,15 @@ mod lease_tests {
         );
         // Restored: the idle lane records again, and the next read keeps it.
         let mut back = vec![lane_liveness("idle", Some(&fresh), None, false, &now)];
-        let (retired, flagged) = super::apply_lane_silence(&mut back, window, &now);
+        let (retired, flagged) =
+            super::apply_lane_silence(&mut back, &super::LaneSignals::default(), window, &now);
         assert!(retired.is_empty() && flagged.is_empty());
         assert_eq!(back.len(), 1);
         // The window edge is exact, and the policy window only takes a positive number.
         let edge = at("2026-10-23T00:00:00Z");
         let mut at_edge = vec![lane_liveness("e", Some(&edge), None, false, &now)];
         assert_eq!(
-            super::apply_lane_silence(&mut at_edge, window, &now)
+            super::apply_lane_silence(&mut at_edge, &super::LaneSignals::default(), window, &now)
                 .0
                 .len(),
             1
@@ -1775,6 +1838,16 @@ mod waiting_tests {
     };
 
     fn ask(sequence: u64, lane: &str, reply_to: Option<&str>) -> EventEnvelope {
+        signal(sequence, lane, reply_to, "question", "2026-10-21T00:00:00Z")
+    }
+
+    fn signal(
+        sequence: u64,
+        lane: &str,
+        reply_to: Option<&str>,
+        kind: &str,
+        occurred_at: &str,
+    ) -> EventEnvelope {
         let hash = EventHash::parse(format!("sha256:{}", "0".repeat(64))).unwrap();
         EventEnvelope::new(
             OpaqueId::parse(format!("event-{sequence}")).unwrap(),
@@ -1785,7 +1858,7 @@ mod waiting_tests {
             ),
             OpaqueId::parse("run-waiting").unwrap(),
             sequence,
-            PersistedTimestamp::parse("2026-10-21T00:00:00Z").unwrap(),
+            PersistedTimestamp::parse(occurred_at).unwrap(),
             NewEvent::new(
                 OpaqueId::parse(format!("key-{sequence}")).unwrap(),
                 PersistedActor::new(PersistedActorType::Agent, ActorId::parse(lane).unwrap()),
@@ -1798,7 +1871,7 @@ mod waiting_tests {
                     signal_id: OpaqueId::parse(format!("signal-{sequence}")).unwrap(),
                     source_kind: SignalSourceKind::Node,
                     source_id: OpaqueId::parse(lane).unwrap(),
-                    kind: "question".to_owned(),
+                    kind: kind.to_owned(),
                     severity: SignalSeverity::Medium,
                     envelope_sha256: RawSha256::parse("a".repeat(64)).unwrap(),
                 }),
@@ -1859,6 +1932,53 @@ mod waiting_tests {
             "a retired lane is left out"
         );
         assert_eq!(rows.len(), 3);
+    }
+
+    /// #1935: a lane silent past the window with nothing open but an unanswered question to the
+    /// owner is flagged, not retired, and its question stays in `waiting`; a lane whose task
+    /// records are old but which signalled inside the window is kept; a `task.heartbeat` signal
+    /// is not activity here, and an answered question no longer protects its lane. Credible
+    /// regression: #1930 counting only task records, which retired a waiting lane and hid its
+    /// question. Cost: pure calls.
+    #[test]
+    fn a_lane_with_an_open_question_is_flagged_and_a_signalling_lane_is_kept() {
+        let now = PersistedTimestamp::parse("2026-10-23T12:00:00Z").unwrap();
+        let old = PersistedTimestamp::parse("2026-10-20T00:00:00Z").unwrap();
+        let window = RETIRE_AFTER_SECONDS;
+        let history = vec![
+            ask(1, "asker", None),
+            signal(2, "talker", None, "progress", "2026-10-23T11:00:00Z"),
+            signal(3, "beater", None, "task.heartbeat", "2026-10-23T11:00:00Z"),
+            ask(4, "answered", None),
+            signal(
+                5,
+                "owner",
+                Some("signal-4"),
+                "reply",
+                "2026-10-21T01:00:00Z",
+            ),
+        ];
+        let signals = lane_signals(&history);
+        let mut lanes: Vec<LaneLiveness> = ["answered", "asker", "beater", "talker"]
+            .into_iter()
+            .map(|lane| lane_liveness(lane, Some(&old), None, false, &now))
+            .collect();
+        let (retired, flagged) = apply_lane_silence(&mut lanes, &signals, window, &now);
+        let names =
+            |rows: &[LaneSilence]| -> Vec<String> { rows.iter().map(|r| r.lane.clone()).collect() };
+        assert_eq!(names(&flagged), ["asker"], "{flagged:?}");
+        assert_eq!(names(&retired), ["answered", "beater"], "{retired:?}");
+        let left: Vec<&str> = lanes.iter().map(|row| row.lane.as_str()).collect();
+        assert_eq!(left, ["asker", "talker"]);
+        let rows = open_questions(&history, &names(&retired), |event, _| {
+            Some(std::sync::Arc::new(serde_json::json!({
+                "source": {"id": event.actor.id().as_str()},
+                "to": OWNER_ADDRESS,
+                "description": "may I merge?",
+            })))
+        });
+        let lanes_waiting: Vec<&str> = rows.iter().map(|row| row.lane.as_str()).collect();
+        assert_eq!(lanes_waiting, ["asker"], "the question stays in waiting");
     }
 
     /// #1827 (`keel.bigo.scale`): at N and 10N unanswered asks per lane the read opens the same

@@ -624,9 +624,19 @@ fn unexplained(value: &Value, strict: bool) -> Vec<Finding> {
             backend.insert(to);
         }
     }
-    for (i, screen) in value["screens"].as_array().into_iter().flatten().enumerate() {
+    for (i, screen) in value["screens"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
         let on_backend = screen["id"].as_str().is_some_and(|id| backend.contains(id));
-        for (j, expect) in screen["expect"].as_array().into_iter().flatten().enumerate() {
+        for (j, expect) in screen["expect"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
             let opaque = on_backend
                 || expect["role"]
                     .as_str()
@@ -2253,7 +2263,10 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
                 "scope",
             ][..],
         ),
-        ("edges", &["id", "from", "to", "intent", "why", "acts", "safe"][..]),
+        (
+            "edges",
+            &["id", "from", "to", "intent", "why", "acts", "safe"][..],
+        ),
     ] {
         out.push_str(&format!("{group}:\n"));
         let mut entries = value[group].as_array().unwrap().iter().collect::<Vec<_>>();
@@ -2476,10 +2489,12 @@ mod tests {
     /// flow without them is broken instead of warned. Cost: in memory only.
     #[test]
     fn a_step_why_and_a_check_because_are_written_required_and_approved() {
-        let plain: Value = serde_yaml_ng::from_str(include_str!(
+        let mut plain: Value = serde_yaml_ng::from_str(include_str!(
             "../../tests/fixtures/journey_flow/checkout.journey.yaml"
         ))
         .unwrap();
+        plain["edges"][0]["why"] = json!("The shopper reaches the payment step");
+        plain["edges"][1]["why"] = json!("Paying places the order");
         let schemas = flow_schemas().unwrap();
         let mut bare = plain.clone();
         for edge in bare["edges"].as_array_mut().unwrap() {
@@ -2498,9 +2513,16 @@ mod tests {
         );
         // Not strict (an approved flow, preview, watch): the same gaps, as warnings.
         let warned = unexplained(&bare, false);
-        assert!(warned.iter().all(|f| f.code == "flow.unexplained" && f.is_warning()));
+        assert!(
+            warned
+                .iter()
+                .all(|f| f.code == "flow.unexplained" && f.is_warning())
+        );
         assert_eq!(warned.len(), 2);
-        assert!(unexplained(&plain, true).is_empty(), "the fixture explains itself");
+        assert!(
+            unexplained(&plain, true).is_empty(),
+            "the fixture explains itself"
+        );
 
         // A command step: every expectation on the screen it leads to needs its because.
         let mut command = plain.clone();
@@ -2511,10 +2533,20 @@ mod tests {
         ]);
         assert_eq!(
             codes(unexplained(&command, true)),
-            vec![("flow.expect_because_missing", "/screens/1/expect/1/because".to_owned())]
+            vec![(
+                "flow.expect_because_missing",
+                "/screens/1/expect/1/because".to_owned()
+            )]
         );
-        assert!(schemas.validate(FLOW_SCHEMA_ID, &command, "journey-flow").is_empty());
-        for (field, at) in [("why", "/edges/0/why"), ("because", "/screens/1/expect/0/because")] {
+        assert!(
+            schemas
+                .validate(FLOW_SCHEMA_ID, &command, "journey-flow")
+                .is_empty()
+        );
+        for (field, at) in [
+            ("why", "/edges/0/why"),
+            ("because", "/screens/1/expect/0/because"),
+        ] {
             let mut empty = command.clone();
             let target = if field == "why" {
                 &mut empty["edges"][0]

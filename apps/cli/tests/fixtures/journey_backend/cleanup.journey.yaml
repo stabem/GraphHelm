@@ -13,18 +13,19 @@ screens:
     title: The confirmation that the items are gone
     url: /
     state: success
-    expect: [{role: status, name: "204"}]
+    expect: [{role: status, name: "204", because: a delete that removed the items answers with no content}]
     scope: unknown
   - id: start
     title: The service status before any request
     url: /status.json
     state: stable
-    expect: [{role: status, name: "200"}]
+    expect: [{role: status, name: "200", because: a running service answers its status route with HTTP 200}]
     scope: unknown
 edges:
   - id: wipe
     from: start
     to: deleted
+    why: Deleting the items removes them and the service confirms it.
     acts:
       - {kind: http, role: DELETE, name: /items.json}
 paths:

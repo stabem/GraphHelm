@@ -31,11 +31,13 @@ edges:
   - id: cart.checkout
     from: cart
     to: pay
+    why: The shopper can leave the cart and reach the payment step.
     acts:
       - {kind: activate, role: button, name: Checkout}
   - id: pay.submit
     from: pay
     to: done
+    why: Paying with the password places the order and the shopper sees it confirmed.
     acts:
       - {kind: enter_text, role: textbox, name: Password, secret: shopper_password}
       - {kind: submit, role: button, name: Pay now}

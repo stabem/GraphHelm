@@ -33,14 +33,14 @@ edges:
   - id: entrar.sign-in
     from: entrar
     to: onboarding
-    why: The sign-in button takes a first-time seller into store setup, not to an error.
+    why: "The sign-in button takes a first-time seller into store setup, not to an error."
     acts:
       - {kind: activate, role: button, name: Entrar com Mercado Livre}
   - id: onboarding.finish
     from: onboarding
     to: dashboard
     intent: Finish setup with the defaults the store already has; nothing is typed
-    why: Finishing setup with the defaults lands the seller on the dashboard, so setup completes.
+    why: "Finishing setup with the defaults lands the seller on the dashboard, so setup completes."
     acts:
       - {kind: submit, role: button, name: Finish}
 paths:

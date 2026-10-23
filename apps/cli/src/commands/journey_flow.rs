@@ -2655,7 +2655,7 @@ mod tests {
         let file = Path::new("checkout.journey.yaml");
         assert_eq!(
             approval_digest(&plain),
-            "sha256:5054a765f2c89d119d54c233a2d8ea00354559708fe5919d8b4130b889ff7935",
+            "sha256:aace853dc94a68d337b4485ce74cc878b13f5d291d2dff3e40d2ec5004fc7072",
             "a flow without viewports keeps the digest origin/main computes"
         );
         let mut web = plain.clone();
@@ -2732,7 +2732,7 @@ viewports: [web]
         assert!(!plain_bytes.contains("clock"), "{plain_bytes}");
         assert_eq!(
             approval_digest(&plain),
-            "sha256:5054a765f2c89d119d54c233a2d8ea00354559708fe5919d8b4130b889ff7935",
+            "sha256:aace853dc94a68d337b4485ce74cc878b13f5d291d2dff3e40d2ec5004fc7072",
             "the digest origin/main computes for this fixture"
         );
         let mut with = plain.clone();

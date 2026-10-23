@@ -81,6 +81,7 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
 
   return (
     <div className="compare">
+      {step.cli ? <Terminal step={step} /> : (
       <section aria-label="Compare frame" className="compare-frame">
         <div className="compare-bar">
           <span aria-hidden="true" className="chrome-dots"><span /><span /><span /></span>
@@ -116,6 +117,7 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
           )
           : body}
       </section>
+      )}
       <aside aria-label={`Action ${step.n}`} className="compare-side-panel">
         <span className="section-label">ACTION {step.n} · DOES</span>
         <strong className="action-title">{step.label}</strong>
@@ -157,9 +159,38 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
   );
 }
 
+/** #1912: a command step has no screen. In place of the frame it shows each command the run ran
+ * into this step, its exit code and what it printed, as the Runtime recorded them (masked, capped). */
+function Terminal({ step }: { step: Step }) {
+  return (
+    <section aria-label="Terminal" className="compare-frame terminal">
+      <div className="compare-bar">
+        <span aria-hidden="true" className="chrome-dots"><span /><span /><span /></span>
+        <span className="mono">terminal · step {step.n}</span>
+      </div>
+      {step.outputs.length === 0
+        ? <p className="terminal-empty">This run recorded no command output for this step.</p>
+        : step.outputs.map((output, index) => (
+          <div key={index} role="group" aria-label={`Command ${index + 1}`} className="terminal-run">
+            <pre aria-label="Command" className="terminal-cmd">$ {output.argv}</pre>
+            <span role="status" aria-label={`Exit code ${output.exit ?? "unknown"}`} className={`terminal-exit ${output.exit === 0 ? "pass" : "fail"}`}>exit {output.exit ?? "unknown"}</span>
+            <span className="section-label">STDOUT</span>
+            <pre aria-label="stdout" className="terminal-out">{output.stdout || "(empty)"}</pre>
+            {output.stderr !== "" && (
+              <>
+                <span className="section-label">STDERR</span>
+                <pre aria-label="stderr" className="terminal-out terminal-err">{output.stderr}</pre>
+              </>
+            )}
+          </div>
+        ))}
+    </section>
+  );
+}
+
 const VIEWPORT_MARK: Record<Step["status"], { text: string; tone: string }> = {
   passed: { text: "✓", tone: "pass" }, failed: { text: "✕", tone: "fail" }, drift: { text: "≈", tone: "fail" },
-  skipped: { text: "–", tone: "idle" }, running: { text: "…", tone: "wait" }, waiting: { text: "⏸", tone: "wait" }, "not run": { text: "○", tone: "idle" },
+  skipped: { text: "–", tone: "idle" }, running: { text: "…", tone: "wait" }, waiting: { text: "⏸", tone: "wait" }, precondition: { text: "·", tone: "idle" }, "not run": { text: "○", tone: "idle" },
 };
 
 function ViewportMark({ status }: { status: Step["status"] }) {

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { JourneyPastRun, JourneyRun, Runtime } from "../runtime/client";
+import { followRun } from "./run-all";
+import { outputLines } from "./steps";
 
 /** How often a running journey is read again. */
 const POLL_MS = 1_000;
@@ -49,33 +51,47 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
 
   useEffect(() => {
     let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const take = (next: JourneyRun, ran: boolean) => {
-      if (!live) return;
+    const ran = attempt > 0;
+    const show = (next: JourneyRun) => {
       setRun(next);
       setError(null);
       setStarting(false);
       note(next.observerSetup?.message);
       note(next.observerSetup?.error);
-      if (next.state === "running") {
-        timer = setTimeout(() => runtime.journeyRun(flowId).then((again) => take(again, true), fail), POLL_MS);
-        return;
-      }
-      note(next.launchLog?.tail);
-      note(next.driverLog?.tail);
-      runtime.journeyHistory(flowId).then((runs) => { if (live) setHistory(runs.slice(0, 8)); }, () => undefined);
-      if (ran) finished.current();
+      // #1912: a command run's console is what its commands printed, as the Runtime keeps it.
+      for (const line of outputLines(next)) note(line);
     };
     const fail = (cause: unknown) => {
       if (!live) return;
       setStarting(false);
       setError(message(cause));
     };
-    if (attempt === 0) runtime.journeyRun(flowId).then((first) => take(first, false), fail);
-    // #1909: a Confirm reruns with the digest the owner was shown; a plain Run never confirms.
-    else if (confirming.current !== null) runtime.confirmJourneyRun(flowId, confirming.current, executionId).then((first) => take(first, true), fail);
-    else runtime.startJourneyRun(flowId, executionId).then((first) => take(first, true), fail);
-    return () => { live = false; if (timer !== undefined) clearTimeout(timer); };
+    // #1912: the answer to Run or Confirm is followed to the run's recorded result. A read that
+    // fails on the way is read again; it no longer leaves the panel on "Running" for good.
+    const follow = (first: JourneyRun) => followRun(first, () => runtime.journeyRun(flowId), {
+      live: () => live,
+      pollMs: POLL_MS,
+      onRun: show,
+      onError: (cause, failures, final) => {
+        setError(final
+          ? `Lost the run: ${message(cause)} Reload to read it again.`
+          : `Reading the run again (${failures}): ${message(cause)}`);
+      },
+    }).then((last) => {
+      if (!live || last === null) return;
+      note(last.launchLog?.tail);
+      note(last.driverLog?.tail);
+      runtime.journeyHistory(flowId).then((runs) => { if (live) setHistory(runs.slice(0, 8)); }, () => undefined);
+      if (ran) finished.current();
+    });
+    const begin = attempt === 0
+      ? runtime.journeyRun(flowId)
+      // #1909: a Confirm reruns with the digest the owner was shown; a plain Run never confirms.
+      : confirming.current !== null
+        ? runtime.confirmJourneyRun(flowId, confirming.current, executionId)
+        : runtime.startJourneyRun(flowId, executionId);
+    begin.then((first) => { if (live) void follow(first); }, fail);
+    return () => { live = false; };
     // executionId is read when Run is pressed; a change to it alone does not read the run again.
   }, [runtime, flowId, attempt, note]);
 

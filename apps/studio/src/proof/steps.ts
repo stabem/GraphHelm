@@ -1,12 +1,12 @@
-import type { JourneyEdge, JourneyFlow, JourneyLastRun, JourneyRun } from "../runtime/client";
+import type { CliOutput, JourneyEdge, JourneyFlow, JourneyLastRun, JourneyRun } from "../runtime/client";
 
 /** How one step stands in the open run. `running` is the screen the Runtime is playing now. */
-export type StepStatus = "passed" | "failed" | "drift" | "skipped" | "running" | "waiting" | "not run";
+export type StepStatus = "passed" | "failed" | "drift" | "skipped" | "running" | "waiting" | "precondition" | "not run";
 
 /** #1909: what a step's status says on its card. */
 export const STATUS_TEXT: Record<StepStatus, string> = {
   passed: "passed", failed: "failed", drift: "drift", skipped: "skipped", running: "running",
-  waiting: "waits for your confirmation", "not run": "not run",
+  waiting: "waits for your confirmation", precondition: "precondition", "not run": "not run",
 };
 
 /** #1909: the run stopped before a draft's commands: the owner has not confirmed this digest yet. */
@@ -43,6 +43,10 @@ export interface Step {
   reason: string | null;
   /** #1905: the reason each viewport recorded for this step, when it recorded one. */
   viewportReasons: Partial<Record<Viewport, string>>;
+  /** #1912: the edge into this step runs a command (`cli`): it has no screen, so no frame. */
+  cli: boolean;
+  /** #1912: what the edge's commands printed in this run, each distinct output once. */
+  outputs: CliOutput[];
 }
 
 export const VIEWPORTS: readonly Viewport[] = ["web", "mobile"];
@@ -110,6 +114,10 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
   // #1909: a draft held on `confirm_needed` waits for the owner's confirmation; every step it did
   // not play waits with it, never reads `not run` or skipped.
   const held = isHeld(run);
+  // #1912: a flow whose acts are all commands never observes its entry screen: the Runtime records
+  // it `not_reached` because it is the commands' precondition, not a step that failed to run.
+  const allEdges = flow.edges ?? [];
+  const commandsOnly = allEdges.length > 0 && allEdges.every((edge) => (edge.acts ?? []).length > 0 && (edge.acts ?? []).every((act) => act.kind === "cli"));
   const statusIn = (
     seen: { result?: string } | undefined,
     walked: { result?: string | null } | undefined,
@@ -127,13 +135,14 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
     const seen = run?.screens?.[screen];
     const walked = edge === null ? undefined : run?.edges?.[edge.id];
     const playing = run?.state === "running" && run.current === screen;
-    const status = statusIn(seen, walked, playing);
+    const precondition = commandsOnly && edge === null && index === 0 && run?.state === "ready" && seen?.result === undefined && !held;
+    const status = precondition ? "precondition" : statusIn(seen, walked, playing);
     const viewports: Record<Viewport, StepStatus> = { web: "not run", mobile: "not run" };
     // A Runtime may serve `viewports: null` while a run is still playing; null is no viewport, never a crash.
     if (run?.viewports != null && Object.keys(run.viewports).length > 0) {
       for (const viewport of VIEWPORTS) {
         const view = run.viewports[viewport];
-        if (view !== undefined) viewports[viewport] = statusIn(view.screens?.[screen], edge === null ? undefined : view.edges?.[edge.id], false);
+        if (view !== undefined) viewports[viewport] = precondition ? "precondition" : statusIn(view.screens?.[screen], edge === null ? undefined : view.edges?.[edge.id], false);
       }
       // The viewport playing now is the top level until it is kept under its name.
       const now = run.viewport;
@@ -161,10 +170,41 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
       acts: (edge?.acts ?? []).map(sayAct),
       expects: expectsOf(screens.get(screen)),
       checks: checksOf(seen),
-      reason: (walked?.result === "skipped" ? walked.reason : undefined) ?? seen?.reason ?? walked?.reason ?? null,
+      reason: precondition ? "The commands' starting point: a command flow does not observe it." : (walked?.result === "skipped" ? walked.reason : undefined) ?? seen?.reason ?? walked?.reason ?? null,
       viewportReasons,
+      cli: (edge?.acts ?? []).some((act) => act.kind === "cli"),
+      outputs: edge === null ? [] : distinctOutputs(run?.outputs?.[edge.id]),
     };
   });
+}
+
+/** #1912: a run walks an edge once per path, so the same command can be kept more than once; each
+ * distinct output (command, exit, and the digests of what it printed) is shown once. */
+export function distinctOutputs(list: CliOutput[] | undefined): CliOutput[] {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  return list.filter((output) => {
+    if (typeof output !== "object" || output === null || typeof output.argv !== "string") return false;
+    const key = [output.argv, output.exit, output.stdoutSha256 ?? output.stdout, output.stderrSha256 ?? output.stderr].join("\u0000");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** #1912: the console lines a command run gives: each command, what it printed, and its exit code,
+ * in the order the run walked its edges. */
+export function outputLines(run: JourneyRun | null): string[] {
+  const lines: string[] = [];
+  for (const list of Object.values(run?.outputs ?? {})) {
+    for (const output of distinctOutputs(list)) {
+      lines.push(`$ ${output.argv}`);
+      if (output.stdout.trim()) lines.push(output.stdout.trimEnd());
+      if (output.stderr.trim()) lines.push(output.stderr.trimEnd());
+      lines.push(`exit ${output.exit ?? "unknown"}`);
+    }
+  }
+  return lines;
 }
 
 /** #1905: the run bar's counts. A step skipped because the run waits for the owner's confirmation
@@ -178,6 +218,7 @@ export function countSteps(steps: Step[]): StepCounts {
   for (const step of steps) {
     if (step.status === "passed") counts.passed += 1;
     else if (step.status === "failed" || step.status === "drift") counts.failed += 1;
+    else if (step.status === "precondition") continue;
     else if (step.status === "waiting" || (step.status === "skipped" && step.reason !== null && WAITS.has(step.reason))) counts.waits += 1;
     else counts.notRun += 1;
   }

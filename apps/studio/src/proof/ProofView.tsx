@@ -179,7 +179,7 @@ function JourneyCard({ flow, selected, disabled, onPick, onRun }: { flow: Journe
   );
 }
 
-const MARK: Record<Step["status"], string> = { passed: "✓", failed: "✕", drift: "≈", skipped: "–", running: "…", waiting: "⏸", "not run": "○" };
+const MARK: Record<Step["status"], string> = { passed: "✓", failed: "✕", drift: "≈", skipped: "–", running: "…", waiting: "⏸", precondition: "·", "not run": "○" };
 
 function runStatus(run: JourneyRun | null, starting: boolean): { name: string; text: string } | null {
   if (starting) return { name: "Starting the run", text: "Starting the run" };
@@ -190,6 +190,15 @@ function runStatus(run: JourneyRun | null, starting: boolean): { name: string; t
   // reached: until then the observer is checked, Chromium launched and the app opened.
   if (Object.keys(run.screens ?? {}).length === 0) return { name: "Preparing the browser", text: "Preparing the browser" };
   return { name: "Running", text: run.current ? `Running · ${run.current}` : "Running" };
+}
+
+/** #1912: said in the console when a finished run kept no line for it. */
+const NO_LOG = "This run kept no log lines: the Runtime keeps the browser's and the app's tail only when one of them failed, and a command run's output shows on each step.";
+
+/** #1912: a command step's card shows its last exit code, not an empty frame. */
+function CliThumb({ step }: { step: Step }) {
+  const last = step.outputs[step.outputs.length - 1];
+  return <span className="mono cli-thumb">{last === undefined ? "$ command" : `$ exit ${last.exit ?? "?"}`}</span>;
 }
 
 function verdict(run: JourneyRun | null): string | null {
@@ -222,7 +231,9 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
   const busy = starting || run?.state === "running";
   const status = runStatus(run, starting);
   const said = verdict(run);
-  const selected = steps.find((step) => step.n === picked) ?? steps.find((step) => step.status === "failed") ?? steps[0] ?? null;
+  const selected = steps.find((step) => step.n === picked) ?? steps.find((step) => step.status === "failed")
+    // #1912: a command flow opens on its first command, not on the start screen it never observes.
+    ?? steps.find((step) => step.status !== "precondition") ?? steps[0] ?? null;
   const frame = selected === null ? undefined : frames[selected.screen];
   // #1878: a mobile-only run has no web frame; its step thumbnail is the mobile one.
   const thumb = (screen: string): string | undefined => frames[screen] ?? mobileFrames[screen];
@@ -256,7 +267,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
           )}
         </div>
         {showLog && (
-          <pre role="log" aria-label="Run console" className="run-log">{log.length === 0 ? "Waiting for the Runtime's first line…" : log.join("\n")}</pre>
+          <pre role="log" aria-label="Run console" className="run-log">{log.length > 0 ? log.join("\n") : busy ? "Waiting for the Runtime's first line…" : NO_LOG}</pre>
         )}
         {history.length > 0 && (
           <span className="run-history" aria-label="History">
@@ -289,7 +300,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
           {steps.map((step) => (
             <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${step.status.replace(" ", "-")}`}>
               <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
-                <span className="step-thumb">{thumb(step.screen) ? <img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /> : <span>{step.frame ? "loading" : "no frame"}</span>}</span>
+                <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
                 <span className="step-text">
                   <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{STATUS_TEXT[step.status]}</span></span>
                   <span className="step-label">{step.label}</span>

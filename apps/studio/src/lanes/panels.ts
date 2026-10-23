@@ -1,10 +1,11 @@
+import type { OwnerRequest } from "../graph/requests";
 import type { BoardTask, Capacity, LaneAction, TasksBoard } from "../runtime/client";
 import { OWNER_ADDRESS } from "./board";
 
 /** What a Needs action item's button does. Answer opens the lane's reply box; Assign and Merge
  * message the lane that should act (the Studio never calls GitHub); Archive, Reassign and Wake are
  * the lane controls of #1847. */
-export type NeedVerb = "Answer" | "Assign" | "Merge" | "Archive" | "Reassign" | "Wake";
+export type NeedVerb = "Answer" | "Assign" | "Merge" | "Archive" | "Reassign" | "Wake" | "Hand off";
 /** The design's dot colours: red waits on the owner, orange on another lane, blue a review, green a merge. */
 export type NeedTone = "red" | "orange" | "blue" | "green";
 
@@ -22,6 +23,8 @@ export interface Need {
    * `null` when no lane can take it, and the button is disabled. */
   to: string | null;
   slice: BoardTask | null;
+  /** #1919 Hand off: the owner request no issue was opened for yet. */
+  request?: OwnerRequest;
 }
 
 const open = (task: BoardTask) => task.step !== "merged" && task.releasedBy === undefined;
@@ -35,8 +38,19 @@ function freeLane(board: TasksBoard, except: (string | null)[]): string | null {
 }
 
 /** Everything on the board that waits on the owner, oldest first (an item with no time last). */
-export function needsAction(board: TasksBoard): Need[] {
+export function needsAction(board: TasksBoard, requests: readonly OwnerRequest[] = []): Need[] {
   const needs: Need[] = [];
+  // #1919: an owner request (a Proof "Send to fix" among them) that no issue was opened for yet
+  // waits for the owner to hand it to a free lane.
+  for (const request of requests) {
+    if (request.status !== "open" || request.issues.length > 0) continue;
+    const to = freeLane(board, []);
+    needs.push({
+      id: `handoff:${request.requestId}`, verb: "Hand off", tone: "red",
+      what: `Your request waits for a lane: ${request.title ?? request.ask.split("\n")[0]}`,
+      since: request.recordedAt ?? null, lane: to ?? "a free lane", to, slice: null, request,
+    });
+  }
   for (const row of board.waiting) {
     const owner = row.waitsOn === OWNER_ADDRESS;
     needs.push({

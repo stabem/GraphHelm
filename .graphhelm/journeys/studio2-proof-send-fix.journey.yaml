@@ -1,0 +1,65 @@
+schema: graphhelm.journey-flow/1
+id: studio2-proof-send-fix
+title: Send a failed journey to be fixed
+name: Send to fix
+feature: Studio
+purpose: "A journey that fails offers Send to fix with an optional note; pressing it records the owner's request on the team run, the button turns into Sent with its time, and the request shows in WHAT I ASKED and as a Hand off item in Needs action (#1919) (web; studio2-proof-send-fix-mobile is the same flow at mobile: a request is kept, so each width gets its own fresh fixture)."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, irreversible_effect]
+viewports: [web]
+screens:
+  - id: asked
+    title: The request shows in WHAT I ASKED and Needs action
+    url: /?session=studio-fixture&run=demo&view=lanes&journey=health-broken
+    ignoreQuery: [session, project]
+    state: success
+    expect: [{role: list, name: Owner requests, text: Fix Broken health check}, {role: region, name: Needs action, text: Your request waits for a lane}]
+    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/asked.ts]
+  - id: failed
+    title: The run drifted and offers Send to fix with a note
+    url: /?session=studio-fixture&run=demo&view=proof&journey=health-broken
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: status, name: Drifted}, {role: textbox, name: Note for the fix}, {role: button, name: Send to fix}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/send-fix.ts, apps/studio/src/proof/steps.ts]
+  - id: journeys
+    title: The failing journey is selected
+    url: /?session=studio-fixture&run=demo&view=proof&journey=health-broken
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: list, name: Journeys}, {role: button, name: Run Broken health check}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/send-fix.ts, apps/studio/src/proof/steps.ts]
+  - id: sent
+    title: The button says Sent with its time
+    url: /?session=studio-fixture&run=demo&view=proof&journey=health-broken
+    ignoreQuery: [session, project]
+    state: success
+    expect: [{role: status, name: Sent to fix, text: Sent}, {role: button, name: Send to fix, absent: true}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/send-fix.ts, apps/studio/src/runtime/client.ts]
+edges:
+  - id: failed.sent
+    from: failed
+    to: sent
+    acts:
+      - {kind: enter_text, role: textbox, name: Note for the fix, text: The health check expects the wrong answer.}
+      - {kind: activate, role: button, name: Send to fix}
+      - {kind: wait_for, role: status, name: Sent to fix}
+  - id: journeys.failed
+    from: journeys
+    to: failed
+    acts:
+      - {kind: activate, role: button, name: Run Broken health check}
+      - {kind: wait_for, role: button, name: Send to fix}
+  - id: sent.asked
+    from: sent
+    to: asked
+    acts:
+      - {kind: activate, role: tab, name: Lanes}
+      - {kind: wait_for, role: list, name: Owner requests}
+paths:
+  main: [journeys.failed, failed.sent, sent.asked]
+drift: []

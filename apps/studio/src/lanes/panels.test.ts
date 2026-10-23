@@ -9,6 +9,18 @@ const task = (key: string, lane: string, step: BoardTask["step"], extra: Partial
 const live = (lane: string, extra: Partial<TasksBoard["liveness"]["lanes"][number]> = {}) => ({ lane, owes: false, silent: false, free: false, ...extra });
 
 describe("lanes panels", () => {
+  it("#1919: an open request no issue was opened for waits to be handed to a free lane", () => {
+    const board: TasksBoard = { now: "2026-10-23T12:00:00Z", tasks: [], liveness: { lanes: [live("lane-free", { free: true })] }, stalls: [], waiting: [] };
+    const request = (requestId: string, status: "open" | "in_progress", issues: number[]) => ({
+      requestId, ask: "Fix the journey buy", title: `Fix ${requestId}`, recordedBy: "studio-operator", sequence: 1,
+      recordedAt: "2026-10-23T11:00:00Z", status, issues: issues.map((issue) => ({ issue, slices: [] })),
+    });
+    const needs = needsAction(board, [request("fix-a", "open", []), request("fix-b", "open", [9]), request("fix-c", "in_progress", [])]);
+    expect(needs.map((need) => [need.verb, need.lane, need.to, need.what, need.request?.requestId])).toEqual([
+      ["Hand off", "lane-free", "lane-free", "Your request waits for a lane: Fix fix-a", "fix-a"],
+    ]);
+  });
+
   it("lists what waits on the owner oldest first, each with the verb and the lane it acts on", () => {
     const board: TasksBoard = {
       now: "2026-10-22T12:00:00Z",

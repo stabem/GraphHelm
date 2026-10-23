@@ -4,6 +4,9 @@ import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
 import { CompareFrame } from "./CompareFrame";
 import { decisionOf, offersDecision, rejectNote } from "./decision";
+import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./send-fix";
+import { askedWhen } from "../lanes/asked";
+import { OWNER } from "../runtime/client";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
 import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, withoutLive, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
@@ -171,7 +174,8 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
 function JourneyCard({ flow, selected, disabled, onPick, onRun, run, playing }: { flow: JourneyFlow; selected: boolean; disabled: boolean; onPick: (id: string) => void; onRun: (flow: JourneyFlow) => void; run: JourneyRun | null; playing: boolean }) {
   // #1914: the run the open panel follows beats the list's last result until the list is read again.
   const now = liveCard(flow, run) ?? (playing ? liveCard(flow, { state: "running" }) : null);
-  const chip = now !== null ? { text: now.text, tone: now.tone === "wait" ? "idle" as const : now.tone } : lastRunChip(flow.lastRun);
+  // #1919: a playing run's chip blinks blue (static under reduced motion), as in the header.
+  const chip: { text: string; tone: string } = now !== null ? { text: now.text, tone: now.tone === "wait" ? "running" : now.tone } : lastRunChip(flow.lastRun);
   const base = journeyScore(flow);
   const score = now !== null ? { passed: now.passed, total: now.total, bar: now.bar } : base;
   const decision = decisionOf(flow);
@@ -300,6 +304,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
         <div className="run-head">
           <h1>{nameOf(flow)}</h1>
           <KindBadge flow={flow} />
+          {busy && <span className="chip running" aria-label="Journey running">● running</span>}
           <span className="mono run-counts" aria-label="Step counts">
             <span className="pass">{counts.passed} passed</span> <span className="wait">{counts.waits} waits for you</span> <span className="fail">{counts.failed} failed</span> <span className="idle">{counts.notRun} not run</span>
           </span>
@@ -317,6 +322,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
             <button type="button" className="b ghost" disabled aria-describedby="proof-stop-note">Stop</button>
           )}
           {busy && <span id="proof-stop-note" className="run-note">The Runtime has no route to stop a run.</span>}
+          {run !== null && offersFix(run) && <SendToFix key={fixRequestId(flow.id, run)} runtime={runtime} flow={flow} run={run} steps={steps} executionId={executionId} />}
           {status !== null && <span role="status" aria-label={status.name} className="run-status"><span className="pulse" aria-hidden="true" />{status.text}</span>}
           {said !== null && <span role="status" aria-label={said.split(" · ")[0]} className="run-verdict">{said}</span>}
           {(busy || log.length > 0) && (
@@ -372,6 +378,49 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
         <CompareFrame runtime={runtime} flowId={flow.id} step={selected} steps={steps.length} now={frame} mobileNow={mobileFrames[selected.screen]} earlier={earlierRun(history, run, selected.screen)} />
       )}
     </div>
+  );
+}
+
+/** #1919: Send to fix on a failed or drifted run. It records the owner's request on the team run
+ * (`task.request_recorded`, the existing signal route) with the journey, its flow file, the failing
+ * step, the run time and the note. The request id is the run's, so a run already sent reads
+ * "Sent · <time>" (from the Runtime's requests) and is never sent twice. */
+function SendToFix({ runtime, flow, run, steps, executionId }: { runtime: Runtime; flow: JourneyFlow; run: JourneyRun; steps: Step[]; executionId: string | null }) {
+  const id = fixRequestId(flow.id, run);
+  const [note, setNote] = useState("");
+  const [sent, setSent] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  // A resend after a lost answer carries the first press's instant, so its bytes are the same.
+  const [at] = useState(() => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"));
+  const find = async (): Promise<boolean> => {
+    if (executionId === null) return false;
+    const found = (await runtime.requests(executionId)).find((request) => request.requestId === id);
+    if (found !== undefined) setSent(found.recordedAt ?? at);
+    return found !== undefined;
+  };
+  useEffect(() => { find().catch(() => undefined); }, [id, executionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (executionId === null) return <span className="run-note">Open a team run to send this to fix.</span>;
+  if (sent !== null) return <span role="status" aria-label="Sent to fix" className="chip pass">Sent · {askedWhen(sent) ?? "recorded"}</span>;
+  const send = async () => {
+    setBusy(true);
+    setRefusal(null);
+    try {
+      await runtime.recordRequest(executionId, id, fixBody(executionId, id, fixTitle(flow), fixAsk(flow, run, steps, note), at, OWNER.id));
+      if (!(await find().catch(() => false))) setSent(at);
+    } catch (cause) {
+      // The first press may have landed and only its answer been lost: then it is sent.
+      if (!(await find().catch(() => false))) setRefusal(message(cause, "The Runtime did not record the request."));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="send-fix">
+      <input aria-label="Note for the fix" placeholder="Note (optional)" maxLength={NOTE_MAX} value={note} disabled={busy} onChange={(event) => setNote(event.target.value)} />
+      <button type="button" className="b ghost" disabled={busy} onClick={() => { void send(); }}>{busy ? "Sending…" : "Send to fix"}</button>
+      {refusal !== null && <span role="alert" className="error">{refusal}</span>}
+    </span>
   );
 }
 

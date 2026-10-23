@@ -1,6 +1,6 @@
 import type { BoardTask, JourneyFlow, TasksBoard } from "../runtime/client";
 import { minutesInStep } from "../lanes/board";
-import { cards, kanbanColumn, KANBAN_NAME, type KanbanColumn, type OwnerRequest } from "./requests";
+import { cards, kanbanColumn, KANBAN_NAME, type KanbanColumn, type OwnerRequest, arrangeRequests, requestActivity, requestProgress, type Arranged, type RequestProgress } from "./requests";
 
 /** #1903: the Graph view of the approved design (docs/design/studio/Graph.dc.html), as pure data. */
 
@@ -102,6 +102,14 @@ export interface GraphRequest {
   links: { d: string; color: string; dashed: boolean }[];
   bar: string[];
   summary: string;
+  chip: RequestProgress["chip"];
+  progress: RequestProgress;
+  at: number;
+}
+
+/** The Graph order of #1922: working, not started, delivered apart. */
+export function arrangeGraph(rows: readonly GraphRequest[], now: number): Arranged<GraphRequest> {
+  return arrangeRequests(rows, (row) => ({ key: row.chip.key, at: row.at }), now);
 }
 
 const two = (value: number) => String(value).padStart(2, "0");
@@ -191,9 +199,13 @@ export function graphRequests(
       links.push({ d: `M550 ${iy} L 600 ${iy}`, color: item.pr !== null ? "#8ab4ff" : "#45454e", dashed: item.pr === null });
       links.push({ d: `M780 ${iy} L 840 ${iy}`, color: done(item) ? "#8b7cff" : "#45454e", dashed: !done(item) });
     }
+    const progress = requestProgress(request, board.tasks, flows, stalled);
     const prCount = items.filter((item) => item.pr !== null).length;
     return {
       request,
+      chip: progress.chip,
+      progress,
+      at: requestActivity(request, board.tasks),
       when: when(request.recordedAt) ?? request.recordedBy,
       height,
       askY,

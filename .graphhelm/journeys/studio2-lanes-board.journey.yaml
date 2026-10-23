@@ -24,7 +24,7 @@ screens:
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: tab, name: Lanes}, {role: list, name: Agent board}, {role: region, name: What I asked, text: Show the work graph for the fixture run}, {role: list, name: Owner requests}, {role: group, name: Idle time}, {role: group, name: Request, text: "#"}, {role: group, name: Progress}, {role: group, name: Last action}]
+    expect: [{role: tab, name: Lanes}, {role: list, name: Agent board}, {role: region, name: What I asked, text: Show the work graph for the fixture run In progress}, {role: list, name: Owner requests}, {role: group, name: Idle time}, {role: group, name: Request, text: "#"}, {role: group, name: Progress}, {role: group, name: Last action}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/asked.ts, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
 edges:
   - id: lanes.asking

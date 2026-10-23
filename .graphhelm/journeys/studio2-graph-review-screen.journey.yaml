@@ -24,14 +24,14 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Graph}, {role: dialog, name: Review, absent: true}]
+    expect: [{role: region, name: Graph}, {role: dialog, name: Review, absent: true, because: after Close the review dialog must be gone}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: mobile
     title: Mobile shows the main run's mobile frame (a PR head capture is web only)
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Review frame, text: "390"}, {role: button, name: Frame}]
+    expect: [{role: region, name: Review frame, text: "390", because: "the mobile frame is 390 pixels wide, and the frame label says so"}, {role: button, name: Frame}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: modal
     title: The review modal compares the screens
@@ -45,28 +45,32 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: slider, name: Now opacity}, {role: region, name: Review frame, text: "1280"}]
+    expect: [{role: slider, name: Now opacity}, {role: region, name: Review frame, text: "1280", because: "the web frame is 1280 pixels wide, and the frame label says so"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
 edges:
   - id: board.modal
     from: board
     to: modal
+    why: "Opening a card in review shows the large review modal, so the owner can compare its screens."
     acts:
       - {kind: activate, role: tab, name: Kanban view}
       - {kind: activate, role: button, name: Open review}
   - id: mobile.closed
     from: mobile
     to: closed
+    why: Close shuts the modal and returns to the board.
     acts:
       - {kind: activate, role: button, name: Close review}
   - id: modal.overlay
     from: modal
     to: overlay
+    why: "Overlay lays Now over Before with a slider, so the owner sees what moved."
     acts:
       - {kind: activate, role: button, name: Overlay}
   - id: overlay.mobile
     from: overlay
     to: mobile
+    why: "Mobile shows the same review at phone width, so a change is checked on both sizes."
     acts:
       - {kind: activate, role: button, name: Mobile}
 paths:

@@ -31,18 +31,20 @@ screens:
     url: /?session=studio-fixture
     ignoreQuery: [session, project, run]
     state: stable
-    expect: [{role: region, name: Graph}, {role: button, name: Start a team run, absent: true}]
+    expect: [{role: region, name: Graph}, {role: button, name: Start a team run, absent: true, because: once a run has started the Start a team run button leaves the top bar}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/start-run/StartRun.tsx, apps/studio/src/proof/ProofView.tsx, apps/studio/src/views/Views.tsx]
 edges:
   - id: empty.proof
     from: empty
     to: proof
+    why: A project with no team run still lists its journeys in Proof.
     acts:
       - {kind: activate, role: tab, name: Proof}
   - id: proof.started
     from: proof
     to: started
     intent: "Opens the new-run form, writes the objective and starts the run."
+    why: "Start a team run in the top bar starts a run, so a new project can begin work."
     acts:
       - {kind: activate, role: button, name: Start a team run}
       - {kind: enter_text, role: textbox, name: What should the team do?, text: Check the journeys.}

@@ -13,18 +13,19 @@ screens:
     title: The specimen drops the first value
     url: /specimen
     state: stable
-    expect: [{role: stdout, name: "regression=parent-failed,head-passed,earned"}]
+    expect: [{role: stdout, name: "regression=parent-failed,head-passed,earned", because: "the scenario's specimen parent drops the first value, so the sum regression fails there and passes on the fix"}]
     scope: unknown
   - id: proof-report
     title: The CLI distinguishes an earned test from a vacuous test
     url: /report
     state: stable
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "regression=parent-failed,head-passed,earned"}, {role: stdout, name: "vacuous=parent-passed,head-passed,green_on_parent"}, {role: stdout, name: keel.test.green_on_parent}]
+    expect: [{role: exit, name: "0", because: scenario.py exits 0 only when both proofs match what it expects}, {role: stdout, name: "regression=parent-failed,head-passed,earned", because: "the sum regression fails on the defective parent and passes on the fixed head, which is what earned means"}, {role: stdout, name: "vacuous=parent-passed,head-passed,green_on_parent", because: "the vacuous test passes on the parent too, so it proves nothing about the fix"}, {role: stdout, name: keel.test.green_on_parent, because: keel.test.green_on_parent is the stable code for a new test that is already green on the parent}]
     scope: unknown
 edges:
   - id: prove-regression
     from: defective-parent
     to: proof-report
+    why: "keel check proves a new test against the parent commit: a test that fails on the parent and passes on the fix is earned, and one that passes on both is flagged as vacuous."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-red-first-proof/scenario.py}
 paths:

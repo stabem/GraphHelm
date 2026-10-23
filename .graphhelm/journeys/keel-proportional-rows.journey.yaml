@@ -13,40 +13,43 @@ screens:
     title: "Bounded code needs promise, scope, and proof"
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"kind\":\"bounded_code\""}, {role: stdout, name: "\"required\":[\"promise\",\"scope\",\"proof\"]"}]
+    expect: [{role: exit, name: "0", because: run.py exits 0 when keel answered for its disposable repository}, {role: stdout, name: "\"kind\":\"bounded_code\"", because: "run.py bounded-code adds a function to src/lib.rs, ordinary source code, which Keel sizes as bounded_code"}, {role: stdout, name: "\"required\":[\"promise\",\"scope\",\"proof\"]", because: "a bounded code change must name its promise, the paths in scope and the command that proves it"}]
     scope: unknown
   - id: docs
     title: Docs need only a summary
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"kind\":\"summary_only\""}, {role: stdout, name: "\"required\":[]"}]
+    expect: [{role: exit, name: "0", because: run.py exits 0 when keel answered for its disposable repository}, {role: stdout, name: "\"kind\":\"summary_only\"", because: "run.py docs changes only docs/notes.md, and Keel sizes a docs-only diff as summary_only"}, {role: stdout, name: "\"required\":[]", because: "a summary-only row asks for no card fields, so the required list is empty"}]
     scope: unknown
   - id: expanded
     title: An invariant change needs expanded proof
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"kind\":\"expanded\""}, {role: stdout, name: "\"required\":[\"full_card\",\"defect_naming_proof\",\"jpd\"]"}]
+    expect: [{role: exit, name: "0", because: run.py exits 0 when keel answered for its disposable repository}, {role: stdout, name: "\"kind\":\"expanded\"", because: "run.py expanded edits core/events/journal.rs, which the fixture keel.yaml maps to the persistence invariant, so Keel sizes it as expanded"}, {role: stdout, name: "\"required\":[\"full_card\",\"defect_naming_proof\",\"jpd\"]", because: "an expanded change needs the full card, a proof that names the defect it catches, and the JPD flow"}]
     scope: unknown
   - id: start
     title: Begin proportional guidance checks
     url: /
     state: stable
-    expect: [{role: exit, name: "0"}]
+    expect: [{role: exit, name: "0", because: "the fixture needs no setup command: the step only marks where the commands start, and exit 0 is the shell being ready"}]
     scope: unknown
 edges:
   - id: bounded-code.check
     from: docs
     to: bounded-code
+    why: "A bounded code change must name its promise, its paths and its proof, so the reviewer knows what to check."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-proportional-rows/run.py bounded-code}
   - id: docs.check
     from: start
     to: docs
+    why: "A docs-only change needs only a summary, so small changes are not slowed by a full card."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-proportional-rows/run.py docs}
   - id: expanded.check
     from: bounded-code
     to: expanded
+    why: "A change that touches an invariant needs the full card, a defect-naming proof and the JPD flow, so risky work gets the most proof."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-proportional-rows/run.py expanded}
 paths:

@@ -2,7 +2,7 @@ import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow } from "../runtime/client";
-import { CHANGED, countSteps, earlierVersion, failsOnlyOn, journeyScore, journeySteps, lastRunChip, pastAsRun, preparingStatus } from "./steps";
+import { becauseOf, CHANGED, countSteps, earlierVersion, failsOnlyOn, journeyScore, journeySteps, lastRunChip, pastAsRun, preparingStatus, readableName, reasonSentence } from "./steps";
 
 const flow: JourneyFlow = {
   id: "buy",
@@ -139,5 +139,45 @@ describe("step counts and journey score", () => {
     expect(journeyScore({ ...flow, lastRun: { ...last, status: "failed", failingStep: null } }).passed).toBeNull();
     expect(journeyScore({ ...flow, lastRun: { ...last, status: "passed", failingStep: null } }).passed).toBe(3);
     expect(journeyScore({ ...flow, lastRun: undefined }).passed).toBeNull();
+  });
+});
+
+// #1955: the Action panel reads each step's `why` and each assertion's `because` from the flow.
+// Regression: a reason shown under the wrong assertion (matched by role alone), or an empty reason
+// read as given so the panel never says none was written.
+describe("journey explanations", () => {
+  it("carries the edge's why and matches each check to its own because", () => {
+    const explained: JourneyFlow = {
+      ...flow,
+      screens: [{ id: "list", url: "/items" }, { id: "item", url: "/items/1" }, { id: "done", url: "/done", expect: [
+        { role: "stdout", name: "a", because: "only a was recorded" },
+        { role: "stdout", name: "b", because: "  " },
+      ] } as never],
+      edges: [{ ...flow.edges![0]!, why: "Saving keeps the sofa" }, { ...flow.edges![1]!, why: "" }],
+    };
+    const steps = journeySteps(explained, null);
+    expect(steps.map((step) => step.why)).toEqual([null, null, "Saving keeps the sofa"]);
+    const done = steps[2]!;
+    expect(becauseOf(done.expects, { role: "stdout", name: "a" })).toBe("only a was recorded");
+    expect(becauseOf(done.expects, { role: "stdout", name: "b" })).toBeNull();
+    expect(becauseOf(done.expects, { role: "stdout", name: "a", text: "x" })).toBeNull();
+  });
+});
+
+// #1955: a regex expectation reads as words. Regression: the owner sees “/Pago R\$\s.+pedido PED-123/”
+// and cannot tell what the screen must say; or a plain name is mangled by the humanizer.
+describe("readable expectation names", () => {
+  it("strips the slashes, unescapes and shows any text as …", () => {
+    expect(readableName("/Pago R\\$\\s.+pedido PED-123/")).toEqual({ text: "Pago R$ … pedido PED-123", pattern: true });
+    expect(readableName("/^Total: R\\$\\s\\d+,\\d+$/")).toEqual({ text: "Total: R$ 0,0", pattern: true });
+    expect(readableName("/Saved.*/i")).toEqual({ text: "Saved …", pattern: true });
+  });
+  it("leaves a plain name alone, slashes inside included", () => {
+    expect(readableName("Comprado")).toEqual({ text: "Comprado", pattern: false });
+    expect(readableName("a/b")).toEqual({ text: "a/b", pattern: false });
+  });
+  it("words a known reason code and leaves an unknown one to be shown as is", () => {
+    expect(reasonSentence("page_error")).toBe("The page reported an error during this step.");
+    expect(reasonSentence("something_new")).toBeNull();
   });
 });

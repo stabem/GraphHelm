@@ -17,7 +17,7 @@ screens:
     url: /?session=studio-fixture
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Project demo, text: journeys}, {role: list, name: Runs in demo, absent: true}, {role: banner, name: Top bar, text: demo}, {role: tab, name: Graph}, {role: region, name: Graph}, {role: heading, name: Open the Studio from your project, absent: true}]
+    expect: [{role: region, name: Project demo, text: journeys, because: the project card in the sidebar counts its journeys}, {role: list, name: Runs in demo, absent: true, because: "the sidebar shows the project as one card, with no run list under it"}, {role: banner, name: Top bar, text: demo, because: "the top bar names the open project, demo"}, {role: tab, name: Graph}, {role: region, name: Graph}, {role: heading, name: Open the Studio from your project, absent: true, because: the how-to-open help is shown only when no project is open}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/login/session.ts, apps/studio/src/views/Views.tsx]
   - id: login
     title: The Studio opens from its login ticket
@@ -31,6 +31,7 @@ edges:
     from: login
     to: graph
     intent: The owner arrived from the CLI; nothing to click.
+    why: graphhelm studio open logs the owner in and opens the project's team run in Graph by itself.
     acts:
       - {kind: wait_for, role: region, name: Graph}
 paths:

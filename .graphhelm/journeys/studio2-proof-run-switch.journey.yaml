@@ -17,14 +17,14 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project, journey]
     state: loading
-    expect: [{role: listitem, name: Read the Runtime health, text: running}]
+    expect: [{role: listitem, name: Read the Runtime health, text: running, because: the Runtime still reports the first journey's run as running}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
   - id: finished
     title: The first card shows the result the Runtime recorded
     url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project, journey]
     state: success
-    expect: [{role: listitem, name: Read the Runtime health, text: passed}]
+    expect: [{role: listitem, name: Read the Runtime health, text: passed, because: "the fixture's health journey always passes, so its card ends on passed"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
   - id: journeys
     title: The journey to run is selected
@@ -37,11 +37,13 @@ edges:
   - id: elsewhere.finished
     from: elsewhere
     to: finished
+    why: "When the Runtime says that run ended, the first card shows its result without being selected again."
     acts:
       - {kind: wait_for, role: list, name: Journeys}
   - id: journeys.elsewhere
     from: journeys
     to: elsewhere
+    why: "Running one journey and selecting another keeps the first card reading running, as the Runtime reports it."
     acts:
       - {kind: activate, role: button, name: Run Read the Runtime health}
       - {kind: activate, role: button, name: Select Run a journey}

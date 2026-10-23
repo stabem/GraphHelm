@@ -17,43 +17,46 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: complementary, name: Journeys with work, text: JOURNEYS WITH WORK}, {role: button, name: All journeys}, {role: list, name: Owner requests}]
+    expect: [{role: complementary, name: Journeys with work, text: JOURNEYS WITH WORK, because: the left column is headed JOURNEYS WITH WORK in the approved Graph design}, {role: button, name: All journeys}, {role: list, name: Owner requests}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: graph
     title: "Requests are drawn with their issues, PRs and result"
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Request graph, text: YOU ASKED}, {role: list, name: Owner requests, text: no issue opened yet}, {role: tab, name: Graph view}, {role: complementary, name: Selected work, text: HISTORY}, {role: link, name: Open the journey in Proof}]
+    expect: [{role: region, name: Request graph, text: YOU ASKED, because: each owner request is drawn as a YOU ASKED card in the approved Graph design}, {role: list, name: Owner requests, text: no issue opened yet, because: "the fixture records one request, Prove a regression test, with no issue linked, and the graph says so"}, {role: tab, name: Graph view}, {role: complementary, name: Selected work, text: HISTORY, because: the selected work panel has a HISTORY section in the approved design}, {role: link, name: Open the journey in Proof}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: graph-again
     title: Graph again shows the requests
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Request graph}, {role: list, name: Owner requests}, {role: region, name: Kanban, absent: true}]
+    expect: [{role: region, name: Request graph}, {role: list, name: Owner requests}, {role: region, name: Kanban, absent: true, because: "back in Graph view the Kanban board must be gone, or both views would show at once"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: kanban
     title: The same work as Kanban columns
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Kanban}, {role: tab, name: Graph view}, {role: list, name: Owner requests, absent: true}]
+    expect: [{role: region, name: Kanban}, {role: tab, name: Graph view}, {role: list, name: Owner requests, absent: true, because: in Kanban view the request graph's list is replaced by the columns}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
 edges:
   - id: filtered.kanban
     from: filtered
     to: kanban
+    why: "The Kanban tab shows the same work as columns, so the owner can switch how the work is drawn."
     acts:
       - {kind: activate, role: tab, name: Kanban view}
   - id: graph.filtered
     from: graph
     to: filtered
+    why: "Picking All journeys in the left column shows every request, so the owner can see all the work at once."
     acts:
       - {kind: activate, role: button, name: All journeys}
   - id: kanban.graph-again
     from: kanban
     to: graph-again
+    why: "The Graph tab brings the request graph back, so switching views loses nothing."
     acts:
       - {kind: activate, role: tab, name: Graph view}
 paths:

@@ -13,29 +13,31 @@ screens:
     title: The data the client fetched
     url: /
     state: success
-    expect: [{role: status, name: "200"}, {role: json, name: items.0.name=apple}]
+    expect: [{role: status, name: "200", because: the items route answers a GET with HTTP 200}, {role: json, name: items.0.name=apple, because: the fixture server holds one item named apple}]
     scope: unknown
   - id: greeted
     title: The greeting the service answered
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: hello}]
+    expect: [{role: exit, name: "0", because: greet.sh succeeds}, {role: stdout, name: hello, because: greet.sh prints hello}]
     scope: unknown
   - id: start
     title: The service status before any request
     url: /status.json
     state: stable
-    expect: [{role: status, name: "200"}, {role: json, name: status=ok}]
+    expect: [{role: status, name: "200", because: a running service answers its status route with HTTP 200}, {role: json, name: status=ok, because: the fixture server reports itself ok}]
     scope: unknown
 edges:
   - id: fetch
     from: greeted
     to: fetched
+    why: The client fetches the service's items over HTTP.
     acts:
       - {kind: http, role: GET, name: /items.json}
   - id: greet
     from: start
     to: greeted
+    why: The service greets the client from the command line.
     acts:
       - {kind: cli, role: exec, name: sh greet.sh}
 paths:

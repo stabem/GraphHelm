@@ -1287,7 +1287,11 @@ pub(super) fn observe(
             &ignored_query(screen),
         )
     });
-    let snapshot = match driver.call("snapshot", json!({"expect":screen["expect"]}), path) {
+    let snapshot = match driver.call(
+        "snapshot",
+        json!({"expect":driver_expect(&screen["expect"])}),
+        path,
+    ) {
         Err(refusal) if elsewhere && refusal.0 == "driver.expectation_failed" => {
             return Err(failure("replay.wrong_screen", path, 1));
         }
@@ -1475,7 +1479,7 @@ fn arrived(driver: &mut Driver, to: &Value, base: &str) -> Result<bool> {
     }
     match driver.call(
         "snapshot",
-        json!({"expect":to["expect"]}),
+        json!({"expect":driver_expect(&to["expect"])}),
         "/heal/destination",
     ) {
         Ok(_) => Ok(true),
@@ -2329,8 +2333,45 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
     }
 }
 
+/// #1955: the expectations the browser driver judges. `because` is the flow's explanation for a
+/// person, never part of what is checked, and the driver refuses keys it does not know, so it is
+/// left out of the request; every other field travels unchanged.
+fn driver_expect(expect: &Value) -> Value {
+    match expect.as_array() {
+        Some(list) => Value::Array(
+            list.iter()
+                .map(|want| {
+                    let mut want = want.clone();
+                    if let Some(object) = want.as_object_mut() {
+                        object.remove("because");
+                    }
+                    want
+                })
+                .collect(),
+        ),
+        None => expect.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// #1955: a flow's `because` never reaches the browser driver, which refuses unknown keys
+    /// (`replay.driver_frame_invalid` on the first explained screen); role, name, text and absent
+    /// still do. Cost: in memory only.
+    #[test]
+    fn the_driver_never_sees_a_because() {
+        let expect = json!([
+            {"role":"log","name":"Run console","text":"observer","because":"why"},
+            {"role":"button","name":"Hide log","absent":true}
+        ]);
+        assert_eq!(
+            driver_expect(&expect),
+            json!([
+                {"role":"log","name":"Run console","text":"observer"},
+                {"role":"button","name":"Hide log","absent":true}
+            ])
+        );
+    }
 
     /// #1777: which viewports a replay plays. An approved flow that names no `viewports` keeps
     /// replaying as approved, one browser, until the owner re-approves it with `viewports` (old

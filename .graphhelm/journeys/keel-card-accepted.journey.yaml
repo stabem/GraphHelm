@@ -13,29 +13,31 @@ screens:
     title: A change inside the card is accepted
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"ok\":true"}]
+    expect: [{role: exit, name: "0", because: "keel check exits 0 when every changed path is in the card; run.py inside only edits src/lib.rs, which the card lists"}, {role: stdout, name: "\"ok\":true", because: the check's JSON reply says ok true for a passing check}]
     scope: unknown
   - id: refused
     title: A change outside the card is refused with its path
     url: /
     state: success
-    expect: [{role: exit, name: "2"}, {role: stdout, name: keel.scope.path_outside_card}, {role: stdout, name: docs/notes.md}]
+    expect: [{role: exit, name: "2", because: "keel check exits 2 when it has a finding; run.py outside only adds docs/notes.md, which the card does not list"}, {role: stdout, name: keel.scope.path_outside_card, because: keel.scope.path_outside_card is the stable code for a changed path the card does not cover}, {role: stdout, name: docs/notes.md, because: "docs/notes.md is the one file run.py outside adds, so it is the path the refusal must name"}]
     scope: unknown
   - id: start
     title: A contributor change is ready for its scope check
     url: /
     state: stable
-    expect: [{role: exit, name: "0"}]
+    expect: [{role: exit, name: "0", because: "the fixture needs no setup command: the step only marks where the commands start, and exit 0 is the shell being ready"}]
     scope: unknown
 edges:
   - id: start.accept-in-scope
     from: start
     to: accepted
+    why: "A change that stays inside its Keel card's paths passes the scope check, so in-scope work is never blocked."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-card-accepted/run.py inside}
   - id: start.refuse-out-of-scope
     from: accepted
     to: refused
+    why: "A change that touches a file outside the card is refused and the stray file is named, so the contributor knows what to fix."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-card-accepted/run.py outside}
 paths:

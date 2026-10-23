@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/journey-flow.schema.json",
-  "x-graphhelm-schema-version": "1.13.0",
+  "x-graphhelm-schema-version": "1.14.0",
   "title": "GraphHelm Journey Flow",
   "type": "object",
   "properties": {
@@ -245,6 +245,12 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
+        },
+        "because": {
+          "description": "Why this expected value is the right one, in a plain sentence a person who did not write the flow can check (#1955). Required by the draft writer and approval for an expectation on an http or cli screen, with a backend role (exit, stdout, json), or with text or absent.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
         }
       },
       "required": [
@@ -491,6 +497,12 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256
+        },
+        "why": {
+          "description": "What this step proves for the user, in a plain sentence a person who did not write the flow can check (#1955). Required by the draft writer and approval.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
         },
         "acts": {
           "type": "array",

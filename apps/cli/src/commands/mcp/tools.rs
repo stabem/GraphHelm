@@ -97,8 +97,9 @@ const TOOLS: [ToolSpec; 49] = [
     ToolSpec {
         name: "journey_draft",
         description: "Write a journey-flow draft through the Runtime (POST \
-                      /v1/journey-flows/{id}/draft). The Runtime records the authenticated scoped \
-                      agent as writer; unscoped and owner-only credentials are refused.",
+                      /v1/journey-flows/{id}/draft) as the authenticated scoped agent; unscoped \
+                      and owner-only credentials are refused. Required: a `why` on every edge and \
+                      a `because` on every non-obvious expectation.",
         schema: journey_draft_schema,
     },
     ToolSpec {

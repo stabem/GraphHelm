@@ -13,18 +13,19 @@ screens:
     title: The receiver recovers the persisted handoff
     url: /result
     state: stable
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"verdict\": \"passed\""}, {role: stdout, name: "\"recoveredExecutionId\": \"keel-handoff-fixture\""}, {role: stdout, name: "\"kind\": \"resume_held\""}]
+    expect: [{role: exit, name: "0", because: scenario.py exits 0 only when every continuity check passes}, {role: stdout, name: "\"verdict\": \"passed\"", because: the scenario prints verdict passed only after the receiver recovered the same offer and receipt}, {role: stdout, name: "\"recoveredExecutionId\": \"keel-handoff-fixture\"", because: "keel-handoff-fixture is the execution the sender recorded the handoff in, so recovery must name that one"}, {role: stdout, name: "\"kind\": \"resume_held\"", because: "the recovered handoff is held for the receiver to resume, which the Runtime records as resume_held"}]
     scope: unknown
   - id: start
     title: The isolated handoff observer starts
     url: /start
     state: stable
-    expect: [{role: exit, name: "0"}]
+    expect: [{role: exit, name: "0", because: "the fixture needs no setup command: the step only marks where the commands start, and exit 0 is the shell being ready"}]
     scope: unknown
 edges:
   - id: observe.handoff
     from: start
     to: result
+    why: "A second agent session recovers a handoff from Runtime history after the Runtime restarts, with nothing lost."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-task-handoff/scenario.py}
 paths:

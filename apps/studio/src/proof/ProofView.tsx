@@ -409,7 +409,8 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
               <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
                 <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
                 <span className="step-text">
-                  <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{STATUS_TEXT[step.status]}</span>{stale && <span className="stale-mark" title="From the earlier version of this journey">stale</span>}</span>
+                  <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{STATUS_TEXT[step.status]}</span></span>
+                  {stale && <span className="stale-mark" title="From the earlier version of this journey">stale</span>}
                   <span className="step-label">{step.label}</span>
                   {viewportLine(step)}
                 </span>

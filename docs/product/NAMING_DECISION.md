@@ -10,33 +10,31 @@ This decision sets the working name for the framework, the Runtime, and the Stud
 
 - **Graph** represents the product's central abstraction: every request is compiled into an executable, adaptive, versioned, and editable graph.
 - **Helm** represents direction and sovereignty: the harness governs execution by default, while the user remains in command and can alter the flow.
-- The name works for software, research, automation, documents, operations, and other domains; it does not limit the system to coding agents.
+- The product focuses on coding agents, the software changes they make, and the user journeys that prove those changes.
 - It is short, pronounceable, technical, and suitable for a global open source framework.
 
 ## Positioning
 
-**Category:** open-source agent operating system and control plane.
+**Category:** open-source control plane for coding agents and journey evidence.
 
 **Main tagline:**
 
-> The open-source control plane for governed AI agents.
+> Orchestrate coding agents around the user journeys a change affects, and see the evidence that those journeys still work.
 
 **Short product line:**
 
-> Compose agents. Govern every run.
+> Keel guides the change. Journeys prove the result.
 
 **One-sentence description:**
 
-> GraphHelm dynamically compiles, executes, governs, and visualizes task-specific AI agent graphs on infrastructure controlled by the user.
+> GraphHelm connects software requests, coding-agent work, issues and pull requests with the journey evidence that proves the affected flows work.
 
 ## Brand architecture
 
 - `GraphHelm Core` — Graph Engine, Harness Compiler, Policy Engine, and protocols.
-- `GraphHelm Runtime` — daemon running on the user's VPS.
-- `GraphHelm Studio` — local interface for chat, graph, execution, and documentation.
+- `GraphHelm Runtime` — the project's execution and evidence service on infrastructure controlled by the user.
+- `GraphHelm Studio` — local Graph, Lanes and Proof views over the public Runtime API.
 - `GraphHelm CLI` — automatable interface for projects, graphs, and runtime.
-- `GraphHelm SDK` — TypeScript and Python SDKs.
-- `GraphHelm Registry` — open, replaceable catalog of extensions, skills, tools, and schemas.
 
 ## Proposed technical conventions
 

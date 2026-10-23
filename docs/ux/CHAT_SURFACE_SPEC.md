@@ -5,8 +5,7 @@
 D-039 made chat a first-class surface: a coding agent (Claude Code, Codex — anything that
 speaks MCP) operates GraphHelm from inside the conversation. This document specifies that
 surface as a product: the layering, the operator skill catalog, the multi-agent choreography,
-and the onboarding flows. The Milestone 05e plan implements the contract layer; the skills
-arrive with it and grow after it.
+and the onboarding flows. The shipped skill inventory is in the [skill catalog](../skills/README.md).
 
 The rule above every section: **the chat surface is never a second Runtime path.** Every Runtime
 read, mutation, or privileged capability used by a skill maps to public Runtime API calls the CLI
@@ -24,20 +23,13 @@ instructions; it creates no Runtime authority and is not a private operational c
 Wrappers are thin by construction. A capability that exists only in one host's wrapper is a
 defect; the test is deleting the wrapper and losing nothing but convenience.
 
-## 3. MCP tool vocabulary (the 05e base)
+## 3. MCP tool vocabulary
 
-> **This section records the 05e BASELINE, not the present surface.** The vocabulary has
-> grown since: #223 added the six development operations, #288 added `sweep`, and #105 added
-> `list`. The authoritative list is `TOOLS` in `apps/cli/src/commands/mcp/tools.rs`, pinned by
-> name in `apps/cli/tests/mcp_stdio.rs`; a count written in prose here cannot be guarded and
-> so is not maintained. What the paragraph below still states correctly is the SHAPE every
-> tool obeys, which has not changed.
+The authoritative tool inventory is `TOOLS` in `apps/cli/src/commands/mcp/tools.rs`,
+covered by `apps/cli/tests/mcp_stdio.rs`. Runtime operations adapt the public API;
+`wake_wait` is a bounded local helper with CLI parity.
 
-As of 05e the server exposed fourteen tools: `start`, `status`, `events` (paged tail), `signal`,
-`approve`, `pause` (graceful and immediate), `resume`, `cancel`, `routes`, `wake_arm`,
-`wake_status`, `amend_budget`, `wake_wait`, and `probe`. Thirteen adapt public Runtime API
-operations. `wake_wait` is the one bounded local helper and preserves CLI parity. Every mutating
-tool carries the three mutation headers (idempotency key, actor, actor type) and optional
+Every mutating tool carries the three mutation headers (idempotency key, actor, actor type) and optional
 `If-Match`; the MCP layer generates idempotency keys per logical act, never per retry. Future Living
 Documentation tools remain out of this current vocabulary until their public API exists.
 
@@ -111,18 +103,12 @@ executions (blocked nodes, ghosts, gate failures, waiver requests), show each it
 refs, act one by one. Refuses bulk-approve without per-item display — an empty approval
 without inspection fails the completion contract (§22.1), and the skill is not a bypass.
 
-### 4.8 `deploy-and-verify`
+### 4.8 Journey-Proven Development bundle
 
-The `QUALITY_GATES_AND_DEPLOYMENT.md` flow driven from chat: profile the change, name the gate
-set it selects, run the full tier on the VPS, deploy on green, run post-deploy verify, report
-— and on red, stop with the failing gate's evidence, never "deploy anyway" without the
-explicit waiver path (D-019, recorded).
-
-### 4.9 Journey-Proven Development bundle
-
-The optional built-in `graphhelm-jpd` data extension adds two entry skills: `journey-map` and
-`journey-contract`, with `journey-prove` arriving in #381 (#385 folded the earlier eight-skill set into them and into
-the development-contracts per-task skills).
+The optional built-in `graphhelm-jpd` data extension provides `journey-map`,
+`journey-contract`, and `journey-prove`. The [skill catalog](../skills/README.md) and
+the extension manifest define the shipped skills; the development-contracts extension
+provides the per-task planning, implementation, review, and merge skills.
 
 Runtime reads, mutations, and privileged capabilities obey the same deletion and parity rule as the
 operator skills. Local advisory artifacts are reproducible from the published package schemas and

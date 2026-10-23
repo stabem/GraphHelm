@@ -155,10 +155,10 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
                             <span className="gv-row gv-jname"><span className="gv-swatch small" style={{ background: item.journey?.color ?? "#45454e" }} />{item.journey?.title ?? "no journey"}</span>
                           </button>
                           <div role="group" aria-label={`Pull request of #${item.issue}`} className={`gv-pr gv-node${item.pr === null ? " none" : ""}`} style={{ "--x": "600px", "--y": `${item.y + 16}px` } as CSSProperties}>
-                            <span className="mono" style={{ color: item.pr === null ? "#8a8a96" : "#8ab4ff" }}>{item.pr === null ? "no PR yet" : `PR #${item.pr}`}</span>
+                            <span className="mono" style={{ color: item.pr === null ? "#8a8a96" : "#4ea1ff" }}>{item.pr === null ? "no PR yet" : `PR #${item.pr}`}</span>
                             <span className="mono gv-meta gv-ellipsis">{item.prLine}</span>
                           </div>
-                          <div role="group" aria-label={`Result of #${item.issue}`} className="gv-res gv-node" style={{ "--x": "840px", "--y": `${item.y + 16}px`, borderColor: item.result.color === "#8b7cff" ? "#3a3466" : undefined } as CSSProperties}>
+                          <div role="group" aria-label={`Result of #${item.issue}`} className="gv-res gv-node" style={{ "--x": "840px", "--y": `${item.y + 16}px`, borderColor: item.result.color === "#d08cff" ? "#5a3a6a" : undefined } as CSSProperties}>
                             <span style={{ color: item.result.color }}>{item.result.word}</span>
                             <span className="mono gv-meta">{item.result.detail}</span>
                           </div>

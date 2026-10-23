@@ -14,8 +14,8 @@ export const STEPS = ["claimed", "planned", "implementing", "tests green", "PR o
 export const COLUMN_COLOR: Record<KanbanColumn, string> = {
   ready: "#ff6b6b",
   implementing: "#ff8a3d",
-  review: "#8ab4ff",
-  merged: "#8b7cff",
+  review: "#4ea1ff",
+  merged: "#d08cff",
   proven: "#3ddc97",
 };
 
@@ -196,8 +196,8 @@ export function graphRequests(
     for (const item of items) {
       const iy = item.y + 42;
       links.push({ d: `M240 ${cy} C 270 ${cy}, 270 ${iy}, 300 ${iy}`, color: "#ff8a3d", dashed: false });
-      links.push({ d: `M550 ${iy} L 600 ${iy}`, color: item.pr !== null ? "#8ab4ff" : "#45454e", dashed: item.pr === null });
-      links.push({ d: `M780 ${iy} L 840 ${iy}`, color: done(item) ? "#8b7cff" : "#45454e", dashed: !done(item) });
+      links.push({ d: `M550 ${iy} L 600 ${iy}`, color: item.pr !== null ? "#4ea1ff" : "#45454e", dashed: item.pr === null });
+      links.push({ d: `M780 ${iy} L 840 ${iy}`, color: done(item) ? "#d08cff" : "#45454e", dashed: !done(item) });
     }
     const progress = requestProgress(request, board.tasks, flows, stalled);
     const prCount = items.filter((item) => item.pr !== null).length;

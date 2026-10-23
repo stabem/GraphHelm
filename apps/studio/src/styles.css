@@ -338,7 +338,7 @@ button { font: inherit; }
 .asked-dot.asked-on { background: var(--live); }
 .col-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .col-dot.implement { background: var(--accent); }
-.col-dot.review { background: #8ab4ff; }
+.col-dot.review { background: #4ea1ff; }
 .col-dot.blocked { background: #ff6b6b; }
 .col-dot.silent { background: var(--faint); }
 .col-dot.merge { background: var(--live); }

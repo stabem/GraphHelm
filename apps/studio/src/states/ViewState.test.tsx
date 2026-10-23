@@ -1,13 +1,31 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { countdown, Empty, Failure, failureKind, Loading, ReadFailure, RETRY_SECONDS } from "./ViewState";
+import { bounded, countdown, Empty, firstRead, Failure, failureKind, Loading, ReadFailure, RETRY_SECONDS } from "./ViewState";
 
 describe("view states (#1934)", () => {
   it("tells the Runtime not answering apart from a restart and from an answer it could not use", () => {
     expect(failureKind("The Runtime is not answering.")).toBe("offline");
     expect(failureKind("The Runtime is restarting on a new version.")).toBe("restarting");
     expect(failureKind("The Runtime replied 200 with a body the Studio could not read.")).toBe("error");
+  });
+
+  it("a first read that never answers ends as Runtime not answering, and a later answer is ready", async () => {
+    vi.useFakeTimers();
+    try {
+      const silent = bounded(new Promise<never>(() => undefined), 1_000);
+      const caught = silent.then(() => "answered", (error: Error) => error.message);
+      await vi.advanceTimersByTimeAsync(1_000);
+      const message = await caught;
+      expect(message).toBe("The Runtime is not answering.");
+      expect(failureKind(message)).toBe("offline");
+      expect(firstRead(null, message)).toBe("failed");
+      expect(firstRead(null, null)).toBe("loading");
+      expect(firstRead([], null)).toBe("ready");
+      await expect(bounded(Promise.resolve(7), 1_000)).resolves.toBe(7);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("counts the automatic retry down and fires it once at the end", () => {

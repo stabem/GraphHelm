@@ -16,6 +16,23 @@ export function failureKind(message: string): FailureKind {
   return "error";
 }
 
+/** How long a first read may take before the view says the Runtime is not answering. */
+export const FIRST_READ_MS = 8_000;
+
+/** `read`, bounded: a read that has not answered within `ms` fails as "not answering", so a view
+ * never waits on a silent Runtime with a spinner forever. */
+export function bounded<T>(read: Promise<T>, ms = FIRST_READ_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(NOT_ANSWERING)), ms);
+    read.then((value) => { clearTimeout(timer); resolve(value); }, (error: unknown) => { clearTimeout(timer); reject(error); });
+  });
+}
+
+/** What a view shows before its first answer: loading until it either answers or fails. */
+export function firstRead<T>(value: T | null, failure: string | null): "loading" | "failed" | "ready" {
+  return value !== null ? "ready" : failure !== null ? "failed" : "loading";
+}
+
 /** The next value of the retry countdown: one second less, and back to the top once it fires. */
 export function countdown(left: number, seconds = RETRY_SECONDS): { left: number; fire: boolean } {
   return left <= 1 ? { left: seconds, fire: true } : { left: left - 1, fire: false };

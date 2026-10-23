@@ -93,12 +93,11 @@ impl Fixture {
     fn serving_other_than(&self, not: Option<u64>, limit: Duration) -> Option<(u64, Value)> {
         let deadline = Instant::now() + limit;
         while Instant::now() < deadline {
-            if let Some(data) = self.health() {
-                if let Some(pid) = data["currentRun"]["pid"].as_u64() {
-                    if Some(pid) != not {
-                        return Some((pid, data));
-                    }
-                }
+            if let Some(data) = self.health()
+                && let Some(pid) = data["currentRun"]["pid"].as_u64()
+                && Some(pid) != not
+            {
+                return Some((pid, data));
             }
             std::thread::sleep(Duration::from_millis(100));
         }

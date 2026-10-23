@@ -4643,6 +4643,9 @@ Options:
       --handover-install <HANDOVER_INSTALL>
           The install root `graphhelm update` writes (`<root>/bin/graphhelm` and its `<root>/.graphhelm-installed-head` stamp; #1523, D-059). When the stamp changes, this Runtime starts that binary with its own arguments and inherited environment, and hands it the port and the events lock once it reports ready; a binary that fails to start leaves this Runtime serving
 
+      --supervise
+          Stay as a small hidden parent that runs the Runtime as its child with these same arguments and environment (the keys stay in memory) and starts it again, with backoff, when it exits unexpectedly. A clean stop does not restart; after a handover the parent watches the successor. Stopping this parent stops its Runtime (#1962)
+
       --sweep-interval <SWEEP_INTERVAL>
           Run the customs sweep automatically every N seconds, journalling each one as `SweepCaller::Tick`.
           

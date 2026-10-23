@@ -1413,10 +1413,10 @@ pub struct ServeArgs {
     /// this Runtime serving.
     #[arg(long)]
     pub handover_install: Option<PathBuf>,
-    /// #1962: stay as a small hidden parent that runs the Runtime as its child with these same
+    /// Stay as a small hidden parent that runs the Runtime as its child with these same
     /// arguments and environment (the keys stay in memory) and starts it again, with backoff,
     /// when it exits unexpectedly. A clean stop does not restart; after a handover the parent
-    /// watches the successor. Stopping this parent stops its Runtime.
+    /// watches the successor. Stopping this parent stops its Runtime (#1962).
     #[arg(long)]
     pub supervise: bool,
     /// Run the customs sweep automatically every N seconds, journalling each one as

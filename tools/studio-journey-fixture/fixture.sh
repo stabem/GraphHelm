@@ -188,7 +188,7 @@ FLOW
   # flow's journey count changes. The commands print Node's version and then,
   # in a second edge, a line after a wait, on two paths: a run long enough to be polled while it
   # plays, shaped like keel-card-accepted (#1912).
-  case "${GRAPHHELM_JOURNEY_FLOW:-}" in studio2-proof-confirm|studio2-proof-confirm-mobile)
+  case "${GRAPHHELM_JOURNEY_FLOW:-}" in studio2-proof-confirm)
     cat > "$dir/project/.graphhelm/journeys/cli-hello.journey.yaml" <<'FLOW'
 schema: graphhelm.journey-flow/1
 id: cli-hello
@@ -242,7 +242,7 @@ FLOW
   esac
   # #1919: the Send to fix flows need a journey that fails: a draft reading this fixture's Runtime
   # health and expecting ok=false, which it never is. FIXTURE-ONLY, and only for those flows.
-  case "${GRAPHHELM_JOURNEY_FLOW:-}" in studio2-proof-send-fix|studio2-proof-send-fix-mobile)
+  case "${GRAPHHELM_JOURNEY_FLOW:-}" in studio2-proof-send-fix)
     cat > "$dir/project/.graphhelm/journeys/health-broken.journey.yaml" <<FLOW
 schema: graphhelm.journey-flow/1
 id: health-broken
@@ -339,7 +339,7 @@ FLOW
   # fixture that starts none: GRAPHHELM_FIXTURE_EMPTY=1, or the studio2-no-run flow, skips both the
   # observer preview (its runner records into a run of its own) and the seeded demo run.
   empty=0
-  if [ "${GRAPHHELM_FIXTURE_EMPTY:-}" = 1 ] || [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-no-run ] || [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-no-run-mobile ]; then empty=1; fi
+  if [ "${GRAPHHELM_FIXTURE_EMPTY:-}" = 1 ] || [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-no-run ]; then empty=1; fi
   if [ "$empty" = 0 ]; then
   "$bin" --json journey preview runtime-health --force --project "$dir/project"     > "$dir/.graphhelm/observer-preview.out" 2>&1 || true
   for _ in $(seq 1 60); do

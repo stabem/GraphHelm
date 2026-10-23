@@ -3,14 +3,14 @@ id: studio2-proof-confirm
 title: Confirm a draft's commands in Proof
 name: Confirm a draft's commands
 feature: Studio
-purpose: "A draft whose step runs a command waits for the owner: its card's Run shows Run these commands? with the exact command and digest and steps that wait for your confirmation; Confirm and run plays it and it passes, with each command step showing its command, exit code and stdout in a terminal and Approve offered (#1912) (web; studio2-proof-confirm-mobile is the same flow at mobile: a confirm is kept, so each width gets its own fresh fixture)."
+purpose: "A draft whose step runs a command waits for the owner: its card's Run shows Run these commands? with the exact command and digest and steps that wait for your confirmation; Confirm and run plays it and it passes, with each command step showing its command, exit code and stdout in a terminal and Approve offered (#1912)."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux, irreversible_effect]
-viewports: [web]
+viewports: [web, mobile]
 screens:
   - id: held
     title: The run waits for the owner's confirmation of the shown commands

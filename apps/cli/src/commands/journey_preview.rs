@@ -1276,43 +1276,30 @@ fn play(
     let mut base = flow["base"].as_str().unwrap().to_owned();
     // The app under test is started when it is down, and stopped when the preview ends. An
     // isolated launcher always starts its own on free ports (#585), and the preview plays there.
-    let launched: Option<Launched> =
+    let mut launched: Option<Launched> =
         if !needs_app || (!launcher_isolated(project) && base_reachable(&base)) {
             None
         } else {
-            Some(launch(
-                project,
-                &base,
-                flow["id"].as_str().unwrap_or_default(),
-                |stop| {
-                    // A dead runner cannot clean up itself, even if it dies before up returns.
-                    run.state["launched"] = stop.record();
-                    super::atomic::atomic_write(
-                        &run.dir.join(STATE),
-                        &serde_json::to_vec_pretty(&run.state).unwrap(),
-                    )
-                    .map_err(|_| failure("watch.launch_failed", "/launcher", 1))?;
-                    if let Ok(mut slot) = stopper.lock() {
-                        *slot = Some(stop.clone());
-                    }
-                    Ok(())
-                },
-            )?)
+            Some(start_app(project, &base, flow, run, stopper)?)
         };
+    let flow_base = base.clone();
     if let Some(own) = launched.as_ref().and_then(|app| app.base.clone()) {
         base = own;
     }
-    let secrets = if backend {
-        Default::default()
-    } else {
-        preflight(
-            flow,
-            &launched
-                .as_ref()
-                .map(|app| app.secrets.clone())
-                .unwrap_or_default(),
-        )?
+    let secrets_of = |launched: &Option<Launched>| {
+        if backend {
+            Ok(Default::default())
+        } else {
+            preflight(
+                flow,
+                &launched
+                    .as_ref()
+                    .map(|app| app.secrets.clone())
+                    .unwrap_or_default(),
+            )
+        }
     };
+    let mut secrets = secrets_of(&launched)?;
     // #1662: a draft's commands run only when the owner's store confirms this exact content and
     // argv list; the held state names both, so the owner sees what a confirm would allow.
     let argv = super::journey_backend::cli_argv(flow);
@@ -1346,9 +1333,17 @@ fn play(
         .collect();
     let mut paths: Vec<_> = flow["paths"].as_object().unwrap().iter().collect();
     paths.sort_by(|(a, _), (b, _)| (a.as_str() != "main", a).cmp(&(b.as_str() != "main", b)));
-    // #1777: every viewport plays every path in its own browser, against the one app, with its
-    // own share of the budget.
+    // #1777: every viewport plays every path in its own browser, with its own share of the
+    // budget. #1896: a launched app is stopped and started afresh before every viewport after the
+    // first, so a flow that changes state finds the same starting state at each one.
     each_view(flow, views, run, |run, index, view| {
+        if index > 0 && launched.is_some() {
+            drop(launched.take());
+            let app = start_app(project, &flow_base, flow, run, stopper)?;
+            base = app.base.clone().unwrap_or_else(|| flow_base.clone());
+            launched = Some(app);
+            secrets = secrets_of(&launched)?;
+        }
         run.first_view = index == 0;
         run.viewport = view.viewport.clone();
         run.device = view.device;
@@ -1366,6 +1361,34 @@ fn play(
     })?;
     // The runner retains ownership until the completed result is stored.
     Ok(launched)
+}
+
+/// Starts the project's launcher for `flow`. How to stop it is recorded before `up` returns, since
+/// a dead runner cannot clean up itself, even if it dies before up returns.
+fn start_app(
+    project: &Path,
+    base: &str,
+    flow: &Value,
+    run: &mut Run,
+    stopper: &std::sync::Arc<std::sync::Mutex<Option<LaunchedStop>>>,
+) -> Result<Launched> {
+    launch(
+        project,
+        base,
+        flow["id"].as_str().unwrap_or_default(),
+        |stop| {
+            run.state["launched"] = stop.record();
+            super::atomic::atomic_write(
+                &run.dir.join(STATE),
+                &serde_json::to_vec_pretty(&run.state).unwrap(),
+            )
+            .map_err(|_| failure("watch.launch_failed", "/launcher", 1))?;
+            if let Ok(mut slot) = stopper.lock() {
+                *slot = Some(stop.clone());
+            }
+            Ok(())
+        },
+    )
 }
 
 /// #1777: plays `body` for each viewport in order and keeps what each recorded under

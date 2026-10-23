@@ -734,3 +734,62 @@ fn keel_sabotage_catches_a_patch_the_journey_observes_and_misses_one_it_does_not
         "sabotage must not touch the user's tree"
     );
 }
+
+/// #1896: a preview that plays web and mobile starts the isolated fixture once per viewport and
+/// stops each before the next starts, so a flow that changes state finds a fresh app at mobile.
+/// Defects named: both viewports sharing one fixture (one `up`), or a viewport's fixture left
+/// running after the preview ends (fewer `down`s than `up`s). Cost: two isolated Node launchers,
+/// one Chromium per viewport; ignored unless the observer toolchain is explicitly enabled.
+#[test]
+#[ignore = "requires an explicitly observer-enabled validation project"]
+fn a_two_viewport_preview_starts_a_fresh_fixture_for_each_viewport() {
+    let (_scratch, project, _owned_node_modules_link, _) = coverage_fixture();
+    std::fs::write(
+        project.join("fixture.sh"),
+        "#!/bin/sh\necho \"$1\" >>launches.log\nif [ \"$1\" = up ]; then\n  node fixture-server.mjs \"$@\" >/dev/null 2>&1 &\n  exit 0\nfi\nexec node fixture-server.mjs \"$@\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join(".gitignore"),
+        "node_modules/\n.graphhelm/journey-previews/\n.graphhelm/observers/\nlaunches.log\n",
+    )
+    .unwrap();
+    git(&project, &["add", "."]);
+    git(
+        &project,
+        &["commit", "--quiet", "--no-verify", "-m", "count launches"],
+    );
+
+    let (code, started) = cli(&project, &["journey", "preview", "coverage", "--force"]);
+    assert_eq!(code, 0, "{started}");
+    let deadline = Instant::now() + scaled(Duration::from_secs(300));
+    let result = loop {
+        let (code, value) = cli(&project, &["journey", "preview", "coverage", "--read"]);
+        assert_eq!(code, 0, "{value}");
+        if value["data"]["state"] != "running" && value["data"]["ranAt"].is_string() {
+            break value["data"].clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the preview never ended: {value}"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    };
+    for view in ["web", "mobile"] {
+        assert_eq!(
+            result["viewports"][view]["edges"]["run"]["result"], "pass",
+            "{view}: {result}"
+        );
+    }
+    // The last fixture is stopped once the result is stored, so its `down` may trail the read.
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
+    loop {
+        let launches = std::fs::read_to_string(project.join("launches.log")).unwrap();
+        let calls: Vec<&str> = launches.lines().collect();
+        if calls.len() >= 4 || Instant::now() >= deadline {
+            assert_eq!(calls, ["up", "down", "up", "down"], "{launches}");
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}

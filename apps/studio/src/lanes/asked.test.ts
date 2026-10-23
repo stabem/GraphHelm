@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { OwnerRequest } from "../graph/requests";
 import type { BoardTask } from "../runtime/client";
 import { arrangeRequests, requestChip, requestProgress, requestColor, REQUEST_COLORS } from "../graph/requests";
-import { arrangeAsked, askedCards, askedWhen, requestTitles } from "./asked";
+import { arrangeAsked, askedCards, askedWhen, requestTitles, unlinkedIssue } from "./asked";
 import type { Agent } from "./board";
 
 const request = (requestId: string, issues: number[], extra: Partial<OwnerRequest> = {}): OwnerRequest => ({
@@ -42,6 +42,14 @@ describe("what I asked", () => {
   it("leaves an absent or unreadable time undated", () => {
     expect(askedWhen(undefined)).toBeNull();
     expect(askedWhen("not a time")).toBeNull();
+  });
+  it("flags an issue that no recorded request links (#1921)", () => {
+    const requests = [request("r1", [7])];
+    expect(unlinkedIssue(requests, 7)).toBe(false);
+    expect(unlinkedIssue(requests, 8)).toBe(true);
+    expect(unlinkedIssue([], 8)).toBe(true);
+    expect(unlinkedIssue(null, 8)).toBe(false);
+    expect(unlinkedIssue(requests, null)).toBe(false);
   });
 });
 

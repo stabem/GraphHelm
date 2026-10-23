@@ -5,7 +5,7 @@ import { controlBody, draftFor, messageBody, newId, type Draft, type LaneControl
 import { actionLine, clock } from "./format";
 import { LanesPanels } from "./LanesPanels";
 import { RequestProgress } from "../graph/RequestProgress";
-import { agentsFor, arrangeAsked, askedCards, requestColors, requestTitles } from "./asked";
+import { agentsFor, arrangeAsked, askedCards, requestColors, requestTitles, unlinkedIssue } from "./asked";
 import type { OwnerRequest } from "../graph/requests";
 import { agents, blocks, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
@@ -162,7 +162,7 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
                 <h3><span className={`col-dot ${name}`} />{COLUMN_NAME[name]}<span className="mono count">{cards.length}</span></h3>
                 {cards.length === 0 ? <span className="none">none</span> : (
                   <ul aria-label={COLUMN_NAME[name]}>
-                    {cards.map((agent) => <Card key={agent.lane} agent={agent} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} stripe={stripes.get(agent.lane) ?? null} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
+                    {cards.map((agent) => <Card key={agent.lane} agent={agent} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} stripe={stripes.get(agent.lane) ?? null} unlinked={unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
                   </ul>
                 )}
               </li>
@@ -175,7 +175,7 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
             </li>
           )}
         </ul>
-        <LanesPanels runtime={runtime} executionId={executionId} board={board} actions={actions} onAnswer={(lane) => pick(lane, true)} onSent={read} />
+        <LanesPanels runtime={runtime} executionId={executionId} board={board} requests={requests ?? []} actions={actions} onAnswer={(lane) => pick(lane, true)} onSent={read} />
       </div>
       {selected !== null && (
         <AgentPanel
@@ -196,7 +196,7 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   );
 }
 
-function Card({ agent, selected, serves, stripe, last, onPick }: { agent: Agent; selected: boolean; serves: string | null; stripe: string | null; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
+function Card({ agent, selected, serves, stripe, unlinked, last, onPick }: { agent: Agent; selected: boolean; serves: string | null; stripe: string | null; unlinked: boolean; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
   const task = agent.task;
   const tone = idleTone(agent.idleMinutes);
   const asking = agent.questions[0];
@@ -218,6 +218,7 @@ function Card({ agent, selected, serves, stripe, last, onPick }: { agent: Agent;
         {task === null ? "no task" : <><span className="mono">#{task.issue ?? "—"}</span> {task.prTitle ?? task.title ?? task.key}{task.pr !== null && <span className="mono"> · PR #{task.pr}</span>}</>}
       </span>
       {serves !== null && <span role="group" aria-label="For request" className="serves">for: {serves}</span>}
+      {unlinked && <span role="group" aria-label="Not linked" className="serves unlinked">not linked to an ask</span>}
       <span role="group" aria-label="Progress" className="blocks">
         {blocks(task?.step ?? null, agent.column === "blocked").map((block, index) => <span key={index} className={`block ${block}`} />)}
       </span>

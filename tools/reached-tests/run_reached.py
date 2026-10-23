@@ -297,6 +297,53 @@ def _execution_order(steps: list[dict[str, Any]], batch_slot: bool) -> list[dict
     return rest[:first_cargo] + fmts + rest[first_cargo:]
 
 
+# #1892: libtest threads scale with the host instead of a fixed 2. One thread per ~1.5 GB of free
+# memory and per two logical cores, never below the old floor of 2 and never above 8:
+# at 16 threads with 2.3 GB free, a runtime_http test could not bind its port.
+TEST_THREADS_FLOOR = 2
+TEST_THREADS_CEILING = 8
+GB_PER_TEST_THREAD = 1.5
+
+
+def _free_memory_gb() -> float | None:
+    """Free physical memory in GB, or None when the host does not say."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class _Status(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            status = _Status()
+            status.dwLength = ctypes.sizeof(_Status)
+            if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return None
+            return status.ullAvailPhys / 1e9
+        return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 1e9
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _test_threads(free_gb: float | None, cores: int | None) -> int:
+    """Threads for every cargo test step: the floor when memory or cores are unknown or short."""
+    if free_gb is None or not cores:
+        return TEST_THREADS_FLOOR
+    wanted = min(int(free_gb // GB_PER_TEST_THREAD), cores // 2, TEST_THREADS_CEILING)
+    return max(TEST_THREADS_FLOOR, wanted)
+
+
+def _with_test_threads(argv: list[str], threads: int) -> list[str]:
+    """Rewrite the selector's pinned `--test-threads=N` in a cargo test command to `threads`."""
+    if not _cargo(argv) or "test" not in argv or "--" not in argv:
+        return list(argv)
+    split = argv.index("--")
+    return argv[:split] + [f"--test-threads={threads}" if arg.startswith("--test-threads=") else arg
+                           for arg in argv[split:]]
+
+
 def _batch_result(value: Any, count: int, cli_returncode: int) -> tuple[dict[str, Any] | None, str | None]:
     """Strictly validate the CLI batch envelope and return local indices."""
     if not isinstance(value, dict) or value.get("schema") != _BATCH_RESULT_SCHEMA:
@@ -880,6 +927,12 @@ def run(args: argparse.Namespace) -> int:
             child_env.update({"CARGO_BUILD_JOBS": jobs, "RUST_TEST_THREADS": "2"})
             identity_steps = [{**step, "identitySkipped": index in skip_browser} for index, step in enumerate(steps)]
             report["fingerprint"] = _fingerprint(repo, identity_steps, selected_graphhelm, child_env)
+            # #1892: the thread count is chosen after the fingerprint, so a pass proven at one thread
+            # count stays reusable at another; the report names the count that actually ran.
+            threads = getattr(args, "test_threads", None) or _test_threads(_free_memory_gb(), os.cpu_count())
+            child_env["RUST_TEST_THREADS"] = str(threads)
+            report["testThreads"] = threads
+            print(f"[reached-tests] test threads: {threads}", file=sys.stderr, flush=True)
             identities = report["fingerprint"].get("tools", {})
             identity_complete = identities.get("identityComplete", True)
             keys = [_proof_key(report["fingerprint"], step) if identity_complete else None for step in steps]
@@ -946,7 +999,7 @@ def run(args: argparse.Namespace) -> int:
                         artifact = logs / f"vitest-{item['index']}.json"
                         artifact.unlink(missing_ok=True)
                         command.extend(["--reporter=default", "--reporter=json", f"--outputFile.json={artifact}"])
-                    command = _effective_argv(repo, cwd, command, selected_graphhelm)
+                    command = _with_test_threads(_effective_argv(repo, cwd, command, selected_graphhelm), threads)
                     programs = identities.get("stepPrograms", [])
                     if identity_complete and programs:
                         command[0] = _slot_program(programs[item["index"]])
@@ -978,6 +1031,9 @@ def run(args: argparse.Namespace) -> int:
                     proc = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, text=True, env=env, creationflags=NO_WINDOW)
                 step_seconds = round(time.monotonic() - step_started, 3)
                 elapsed = time.monotonic() - started
+                # #1892: name the slow step as it finishes, not only in the JSON report.
+                print(f"[reached-tests] steps {indices}: {step_seconds:.1f}s (exit {proc.returncode}; "
+                      f"total {elapsed:.1f}s)", file=sys.stderr, flush=True)
                 if entry["slot"]:
                     if is_batch:
                         batch, q, h = _batch_envelope(logfile, proc.returncode)
@@ -997,6 +1053,8 @@ def run(args: argparse.Namespace) -> int:
                         completed_count = len(parsed["completed"])
                         for local, child in enumerate(parsed["completed"]):
                             index = indices[local]
+                            print(f"[reached-tests]   step {index}: {child['elapsedSeconds']}s (exit {child['exitCode']})",
+                                  file=sys.stderr, flush=True)
                             report["pending"].remove(index)
                             report["completed"].append({"index": index, "batchLocalIndex": local,
                                                          "argv": steps[index]["argv"], "cwd": steps[index]["cwd"], "slot": True,
@@ -1152,6 +1210,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--budget-seconds", type=float, default=900)
     ap.add_argument("--jobs", type=int, default=6,
                     help="cargo build jobs for every slot command (1..32; default 6; one root up to 16)")
+    ap.add_argument("--test-threads", type=int,
+                    help="libtest threads for every cargo test step (1..64; default: from free memory and cores, floor 2, ceiling 8)")
     ap.add_argument("--allow-whole-package")
     # #1470: a review or merge run is admitted to the build slot before waiting implement plans.
     ap.add_argument("--stage", choices=("implement", "review", "merge"), default="implement",
@@ -1177,6 +1237,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if not 1 <= args.jobs <= 32:
         ap.error("--jobs must be between 1 and 32")
+    if args.test_threads is not None and not 1 <= args.test_threads <= 64:
+        ap.error("--test-threads must be between 1 and 64")
     if not args.lane:
         args.lane = default_lane(Path(args.repo))
     if not args.output:

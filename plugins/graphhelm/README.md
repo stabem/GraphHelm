@@ -376,6 +376,11 @@ observed lifecycle events; a missing stop never means the child is still working
 `TaskCreated` and `TaskCompleted` hooks separately record the bounded task subject, native task
 id, optional teammate name, and observed task phase. They do not link that task to a subagent id
 or certify that its output was accepted. Task descriptions and transcripts are not uploaded.
+The `UserPromptSubmit` hook (`hooks/prompt_hook.py`, #1921) is off unless `.graphhelm/team.json`
+sets `"recordOwnerPrompts": true`. Then each prompt in a title-bound lane session is recorded on
+the team execution as a candidate ask (`task.request_recorded`, requestId `candidate-…`, title
+`candidate: …`), capped at 1000 characters, skipped when it looks like a secret, and sent only with
+that lane's own credential to a loopback Runtime. It never blocks the prompt and prints nothing.
 Installing updated source does not prove host activation; verify a fresh native session
 separately.
 

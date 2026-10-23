@@ -8,9 +8,9 @@ https://claude.ai/artifact/6zmUpDHeLfSo75ZRmVvSm5
 |---|---|
 | `Sidebar.dc.html` | Shared left menu: projects, their runs and journeys, runtime notices |
 | `Topbar.dc.html` | Shared top bar: project, run, Graph / Lanes / Proof, Start a team run |
-| `Graph.dc.html` | Work by request: owner requests, the issues and PRs opened for them, review modal with Before / Now |
+| `Graph.dc.html` | Work by request: owner requests, the issues and PRs opened for them, review modal with Before / Now, request status chips with the Delivered collapse |
 | `Lanes.dc.html` | Agent control: agents by state, idle time, questions waiting for a reply, needs-action queue, capacity, live feed |
-| `Proof.dc.html` | Journeys column, run bar with setup log, step frames, Before / Now compare, web and mobile |
+| `Proof.dc.html` | Journeys column, run bar with setup log, step frames, Before / Now compare, web and mobile; a Proof states section with live and result cards, Send to fix, the kind badge, Run these commands?, terminal tiles, the terminal panel with Structured / Raw, and the phone frame |
 | `canvas.json` | Layout of the canvas the files come from |
 | `frame-sample.webp` | Sample captured frame used by the mock-ups |
 

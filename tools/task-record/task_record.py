@@ -107,17 +107,22 @@ def read_credential(args):
     return token
 
 
+class GithubUnavailable(Exception):
+    """#1921: gh could not be run or did not answer with JSON."""
+
+
 def github_words(kind, number, repo):
     """The issue's (claimed) or the PR's (pr_opened) title and the body's `Summary:` line, read with
-    `gh`. Returns (title, summary); either is None when gh is missing or the field is absent."""
+    `gh`. Returns (title, summary); either is None when the field is absent. #1921: raises
+    GithubUnavailable when gh is missing or fails, so a record never loses its title silently."""
     command = ["gh", "issue" if kind == "claimed" else "pr", "view", str(number), "--json", "title,body"]
     if repo:
         command += ["--repo", repo]
     try:
         # gh writes UTF-8; the platform default (cp1252 on Windows) cannot decode every byte of it (#526).
         reply = json.loads(subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=60, check=True, creationflags=NO_WINDOW).stdout)
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None, None
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        raise GithubUnavailable(f"{' '.join(command)}: {type(error).__name__}") from error
     summary = next((line.split(":", 1)[1].strip() for line in (reply.get("body") or "").splitlines()
                     if line.strip().lower().startswith("summary:")), None)
     return (reply.get("title") or "").strip() or None, summary or None
@@ -213,7 +218,15 @@ def words(args):
     title, summary = args.title, args.summary
     if (title is None or summary is None) and not args.no_github:
         number = args.issue if args.kind == "claimed" else args.pr
-        fetched = github_words(args.kind, number, args.repo)
+        try:
+            fetched = github_words(args.kind, number, args.repo)
+        except GithubUnavailable as error:
+            if title is None:
+                # #1921: an omitted title is read from GitHub; without gh the record would land with
+                # no title and the Graph would show "title not recorded". Fail loudly instead.
+                sys.exit(f"task_record: --title was omitted and gh could not read it ({error}); "
+                         "pass --title, or --no-github to record without one")
+            fetched = (None, None)
         title = title if title is not None else fetched[0]
         summary = summary if summary is not None else fetched[1]
     out = {}
@@ -291,7 +304,8 @@ def parse(argv):
                    help="send the shared agent token when the lane has no credential file (default: refuse)")
     p.add_argument("--title", help="claimed/pr_opened: the issue's or PR's title; default: read with gh."
                    " request_recorded: an optional short title for the request")
-    p.add_argument("--request-id", help="request_recorded/request_linked (#1792): the request's id, e.g. one-header")
+    p.add_argument("--request-id", help="request_recorded/request_linked (#1792): the request's id, e.g. one-header."
+                   " claimed (#1921): also records request_linked for the claimed issue")
     p.add_argument("--ask", help="request_recorded: the owner's ask in their own words (at most 2000 characters)")
     p.add_argument("--summary", help="claimed/pr_opened: one sentence; default: the body's 'Summary:' line, read with gh."
                    " planned: the plan in one line (at most 300 characters), required")
@@ -692,6 +706,11 @@ def main(argv):
     if args.kind == "heartbeat" and args.dry_run:
         print("task_record: dry-run only; Runtime admission and append were not observed", file=sys.stderr)
     outcome = report(code, signal_id, reply)
+    if args.kind == "claimed" and args.request_id and outcome == 0:
+        # #1921: the link to the owner's ask rides on the claim, so it needs no extra step.
+        linked = argparse.Namespace(**{**vars(args), "kind": "request_linked", "revision": None})
+        code, signal_id, reply = send(linked, document(linked, now), now)
+        return report(code, signal_id, reply)
     if args.kind == "pr_opened" and outcome == 0:
         # #508: the assignment rides on the same call, the same head and PR, recorded as this lane.
         assigned = argparse.Namespace(**{**vars(args), "kind": "review_assigned", "revision": None})

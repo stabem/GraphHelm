@@ -158,6 +158,12 @@ button { font: inherit; }
 .chip { align-self: flex-start; font: 10px var(--mono); padding: 2px 6px; border-radius: 999px; border: 1px solid var(--edge-strong); color: var(--faint); }
 .chip.pass { color: var(--live); border-color: #1f4a37; }
 .chip.fail { color: #ff6b6b; border-color: #5a2a2a; }
+/* #1919: a running journey's chip blinks blue, on its card and in the header; static blue when motion is reduced. */
+.chip.running { color: #5ea8ff; border-color: #24456e; animation: chip-blink 1s ease-in-out infinite alternate; }
+@keyframes chip-blink { from { opacity: .35; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chip.running { animation: none; opacity: 1; } }
+.send-fix { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.send-fix input { min-width: 0; width: 180px; max-width: 100%; }
 .proof-main { flex: 1; min-width: 0; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .proof-main h1 { margin: 0; font-size: 15px; font-weight: 600; }
 .proof-main p { margin: 0; color: var(--muted); line-height: 1.5; }
@@ -371,6 +377,7 @@ button { font: inherit; }
 .small { font-size: 11px; }
 .ghost.small { align-self: flex-start; padding: 4px 10px; }
 .serves { font-size: 10px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.serves.unlinked { color: var(--muted); font-style: italic; }
 /* #1904: no 360px cap; the panel widens with the screen. */
 .agent-panel { flex: 1 1 clamp(300px, 18vw, 520px); max-width: none; border-left: 1px solid var(--edge); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .panel-head { display: flex; align-items: center; gap: 8px; font-size: 15px; }

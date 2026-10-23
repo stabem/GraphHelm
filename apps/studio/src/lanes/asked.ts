@@ -72,6 +72,13 @@ export function requestColors(requests: readonly OwnerRequest[], all: readonly A
   return colors;
 }
 
+/** #1921: whether the issue on a lane's card is linked to no recorded owner request. `false` while
+ * the requests are not loaded yet or when the card holds no issue, so nothing is flagged early. */
+export function unlinkedIssue(requests: readonly OwnerRequest[] | null, issue: number | null | undefined): boolean {
+  if (requests === null || issue === null || issue === undefined) return false;
+  return !requests.some((request) => request.issues.some((row) => row.issue === issue));
+}
+
 /** Every request, newest first (the Runtime serves them oldest first), as the column draws it. */
 export function askedCards(requests: readonly OwnerRequest[], all: readonly Agent[], tasks: readonly BoardTask[], flows: readonly JourneyFlow[] = [], stalled: ReadonlySet<string> = new Set()): AskedCard[] {
   const cards = [...requests].reverse().map((request) => {

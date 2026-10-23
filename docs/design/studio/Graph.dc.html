@@ -17,6 +17,13 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 .b{all:unset;cursor:pointer;box-sizing:border-box}
 .b:focus-visible{outline:2px solid #ff8a3d;outline-offset:2px}
 .mono{font-family:'JetBrains Mono',monospace}
+@keyframes dcpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.8)}}
+.curstep{animation:dcpulse 1.1s ease-in-out infinite}
+@media (prefers-reduced-motion: reduce){.curstep{animation:none}}
+.fillrun{opacity:.55}
+.fillrun::after{content:'';position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(255,255,255,.55);animation:dcfill 1.8s ease-in-out infinite}
+@keyframes dcfill{0%{width:0;opacity:1}85%{width:100%;opacity:1}100%{width:100%;opacity:0}}
+@media (prefers-reduced-motion: reduce){.fillrun::after{animation:none;width:60%}}
 </style>
 </helmet>
 <div style="display: flex; min-height: 900px; background: #0a0a0b">
@@ -64,7 +71,7 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 <span style="display: inline-flex; gap: 5px; align-items: center; padding: 2px 6px; border-radius: 999px; background: #151517; font-size: 10px; color: #a2a2ad"><span style="width: 7px; height: 7px; border-radius: 2px; background: {{k.jc}}"></span>{{k.journey}}</span>
 <span class="mono" style="font-size: 10px; color: #8a8a96">{{k.agent}}</span>
 </div>
-<div aria-label="Progress {{k.stageName}}" style="display: flex; gap: 3px; align-items: center"><sc-for list="{{k.blocks}}" as="q"><span title="{{q.t}}" style="width: 10px; height: 10px; border-radius: 2px; background: {{q.c}}"></span></sc-for><span class="mono" style="font-size: 10px; color: #a2a2ad; margin-left: 4px">{{k.stageName}}</span></div>
+<div aria-label="Progress {{k.stageName}}" style="display: flex; gap: 3px; align-items: center"><sc-for list="{{k.blocks}}" as="q"><span class="{{q.k}}" title="{{q.t}}" style="width: 10px; height: 10px; border-radius: 2px; background: {{q.c}}"></span></sc-for><span class="mono" style="font-size: 10px; color: #a2a2ad; margin-left: 4px">{{k.stageName}}</span></div>
 <div style="display: flex; flex-direction: column; gap: 2px; padding-top: 6px; border-top: 1px solid #2a2a30">
 <sc-for list="{{k.log}}" as="l"><span class="mono" style="font-size: 10px; color: {{l.c}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{l.t}}  {{l.m}}</span></sc-for>
 </div>
@@ -85,18 +92,17 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 <svg aria-hidden="true" width="1040" height="{{r.h}}" style="position: absolute; left: 0; top: 0">
 <sc-for list="{{r.links}}" as="l"><path d="{{l.d}}" fill="none" stroke="{{l.c}}" stroke-width="1.5" stroke-dasharray="{{l.dash}}"></path></sc-for>
 </svg>
-<div style="position: absolute; left: 0; top: {{r.ry}}px; width: 240px; padding: 12px; box-sizing: border-box; border-radius: 12px; border: 1px solid #ff8a3d; background: #1e1e22; display: flex; flex-direction: column; gap: 6px">
-<span class="mono" style="font-size: 10px; color: #ff8a3d">YOU ASKED · {{r.when}}</span>
+<div style="position: absolute; left: 0; top: {{r.ry}}px; width: 240px; padding: 12px; box-sizing: border-box; border-radius: 12px; border: 1px solid {{r.rc}}; background: #1e1e22; display: flex; flex-direction: column; gap: 6px">
+<span class="mono" style="font-size: 10px; color: {{r.rc}}">YOU ASKED · {{r.when}}</span>
 <span style="font-size: 13px; font-weight: 500; line-height: 1.35">{{r.ask}}</span>
-<div style="display: flex; gap: 3px">
-<sc-for list="{{r.bar}}" as="q"><span style="width: 10px; height: 10px; border-radius: 2px; background: {{q}}"></span></sc-for>
-</div>
-<span class="mono" style="font-size: 10px; color: #a2a2ad">{{r.summary}}</span>
+<div style="display: flex; align-items: center; gap: 8px"><span class="mono" style="padding: 2px 8px; border-radius: 999px; border: 1px solid {{r.chipEdge}}; color: {{r.chipC}}; font-size: 10px">{{r.chip}}</span><span style="flex: 1"></span><span class="mono" style="font-size: 10px; color: #f5f5f6">{{r.pct}}</span></div>
+<div aria-label="{{r.done}} of {{r.total}} issues delivered" style="display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: #2a2a30"><sc-for list="{{r.segs}}" as="q"><span class="{{q.k}}" title="#{{q.issue}} {{q.state}}" style="flex: 1; position: relative; overflow: hidden; background: {{q.c}}"></span></sc-for></div>
+<div style="display: flex; flex-wrap: wrap; gap: 4px 10px"><sc-for list="{{r.legend}}" as="g"><span class="mono" style="display: inline-flex; gap: 4px; align-items: center; font-size: 10px; color: #a2a2ad"><span style="width: 7px; height: 7px; border-radius: 2px; background: {{g.c}}"></span>{{g.n}} {{g.label}}</span></sc-for></div>
 </div>
 <sc-for list="{{r.items}}" as="it">
-<button class="b" onClick="{{it.open}}" aria-label="Open the screen for #{{it.issue}}" style="position: absolute; left: 300px; top: {{it.y}}px; width: 250px; height: 84px; padding: 8px 10px; box-sizing: border-box; border-radius: 10px; border: 1px solid #34343c; background: #1e1e22; display: flex; flex-direction: column; gap: 4px">
+<button class="b" onClick="{{it.open}}" aria-label="Open the screen for #{{it.issue}}" style="position: absolute; left: 300px; top: {{it.y}}px; width: 250px; height: 84px; padding: 8px 10px; box-sizing: border-box; border-radius: 10px; border: 1px solid {{it.rc}}; background: #1e1e22; display: flex; flex-direction: column; gap: 4px">
 <div style="display: flex; gap: 6px"><span class="mono" style="color: #a2a2ad">#{{it.issue}}</span><span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{it.title}}</span></div>
-<div style="display: flex; gap: 3px; align-items: center"><sc-for list="{{it.blocks}}" as="q"><span style="width: 8px; height: 8px; border-radius: 2px; background: {{q.c}}"></span></sc-for><span class="mono" style="font-size: 10px; color: #8a8a96; margin-left: 4px">{{it.agent}}</span></div>
+<div style="display: flex; gap: 3px; align-items: center"><sc-for list="{{it.blocks}}" as="q"><span class="{{q.k}}" style="width: 8px; height: 8px; border-radius: 2px; background: {{q.c}}"></span></sc-for><span class="mono" style="font-size: 10px; color: #8a8a96; margin-left: 4px">{{it.agent}}</span></div>
 <span class="mono" style="font-size: 10px; color: #a2a2ad; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{it.lastMsg}}</span>
 <span style="display: inline-flex; gap: 5px; align-items: center; font-size: 10px; color: #8a8a96"><span style="width: 7px; height: 7px; border-radius: 2px; background: {{it.jc}}"></span>{{it.journey}}</span>
 </button>
@@ -113,6 +119,24 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 </sc-for>
 </div>
 </sc-if>
+
+<section aria-label="Requests by status" style="border: 1px solid #2a2a30; border-radius: 12px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<style>
+@keyframes dcpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.8)}}
+.curstep{animation:dcpulse 1.1s ease-in-out infinite}
+@media (prefers-reduced-motion: reduce){.curstep{animation:none}}
+</style>
+<div style="display: flex; align-items: center; gap: 8px"><span class="mono" style="font-size: 10px; color: #8a8a96">REQUESTS · active work first, delivered last (#1922, in flight)</span></div>
+<div style="padding: 10px; border-radius: 10px; border: 1px solid #5c3a1d; background: #1e1e22; display: flex; flex-direction: column; gap: 6px">
+<div style="display: flex; gap: 8px; align-items: center"><span style="flex: 1; font-weight: 500">Proof shows a command's output</span><span class="mono" style="padding: 2px 8px; border-radius: 999px; border: 1px solid #5c3a1d; color: #ff8a3d; font-size: 10px">In progress 2 of 4</span></div>
+<div aria-label="Progress implementing" style="display: flex; gap: 3px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 2px; background: #3ddc97"></span><span style="width: 10px; height: 10px; border-radius: 2px; background: #3ddc97"></span><span class="curstep" style="width: 10px; height: 10px; border-radius: 2px; background: #ff8a3d"></span><span style="width: 10px; height: 10px; border-radius: 2px; background: #34343c"></span><span class="mono" style="font-size: 10px; color: #a2a2ad; margin-left: 4px">implementing · the current step pulses</span></div>
+</div>
+<div style="padding: 10px; border-radius: 10px; border: 1px solid #34343c; background: #1e1e22; display: flex; gap: 8px; align-items: center"><span style="flex: 1; font-weight: 500">Lanes shows the model per agent</span><span class="mono" style="padding: 2px 8px; border-radius: 999px; border: 1px solid #34343c; color: #a2a2ad; font-size: 10px">Not started</span></div>
+<div style="padding: 10px; border-radius: 10px; border: 1px solid #2a3b5c; background: #1e1e22; display: flex; gap: 8px; align-items: center"><span style="flex: 1; font-weight: 500">Sidebar footer links</span><span class="mono" style="padding: 2px 8px; border-radius: 999px; border: 1px solid #2a3b5c; color: #8ab4ff; font-size: 10px">Delivered</span></div>
+<div style="padding: 10px; border-radius: 10px; border: 1px solid #1d3a2c; background: #1e1e22; display: flex; gap: 8px; align-items: center"><span style="flex: 1; font-weight: 500">Run these commands card</span><span class="mono" style="padding: 2px 8px; border-radius: 999px; border: 1px solid #1d3a2c; color: #3ddc97; font-size: 10px">✓ Proven</span></div>
+<details style="border-radius: 8px; border: 1px solid #2a2a30; padding: 8px 10px"><summary style="cursor: pointer; color: #a2a2ad">▸ Delivered (12)</summary><span style="color: #8a8a96; font-size: 11px">Collapsed by default; opens to the delivered requests.</span></details>
+<span style="align-self: flex-start; color: #ff8a3d; font-size: 11px; cursor: pointer">show older</span>
+</section>
 
 <div style="display: flex; gap: 14px; flex-wrap: wrap; color: #a2a2ad; font-size: 11px">
 <span>Cards older than 1 h in a column turn red.</span><span style="flex: 1"></span><span>Merged is not done. Done = the journey replay proves it.</span>
@@ -160,13 +184,13 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 </div>
 <div style="display: flex; flex-wrap: wrap; flex: 1; min-height: 0; overflow: auto">
 <div style="flex: 999 1 560px; min-width: 0; overflow: auto; background: #0a0a0b">
-<sc-if value="{{mIsFrame}}" hint-placeholder-val="{{ false }}"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now"></div></sc-if>
+<sc-if value="{{mIsFrame}}" hint-placeholder-val="{{ false }}"><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now"></div></sc-if>
 <sc-if value="{{mIsSide}}" hint-placeholder-val="{{ false }}"><div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; background: #34343c">
-<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Before · main</div><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)"></div></div>
-<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Now · {{m.prLabel}}</div><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now"></div></div>
+<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Before · main</div><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)"></div></div>
+<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Now · {{m.prLabel}}</div><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now"></div></div>
 </div></sc-if>
-<sc-if value="{{mIsOver}}" hint-placeholder-val="{{ true }}"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now" style="position: absolute; left: 0; top: 0; opacity: {{mAlpha}}"></div></sc-if>
-<sc-if value="{{mIsDiff}}" hint-placeholder-val="{{ false }}"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now with changes marked" style="filter: grayscale(1) brightness(1.1)"><div style="position: absolute; left: 40.3%; top: 85.2%; width: 26%; height: 5.4%; border: 2px solid #ff6b6b; background: rgb(255 107 107 / 22%); border-radius: 4px"></div></div></sc-if>
+<sc-if value="{{mIsOver}}" hint-placeholder-val="{{ true }}"><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now" style="position: absolute; left: 0; top: 0; opacity: {{mAlpha}}"></div></sc-if>
+<sc-if value="{{mIsDiff}}" hint-placeholder-val="{{ false }}"><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now with changes marked" style="filter: grayscale(1) brightness(1.1)"><div style="position: absolute; left: 40.3%; top: 85.2%; width: 26%; height: 5.4%; border: 2px solid #ff6b6b; background: rgb(255 107 107 / 22%); border-radius: 4px"></div></div></sc-if>
 </div>
 <div style="flex: 0 1 260px; padding: 14px; display: flex; flex-direction: column; gap: 8px; border-left: 1px solid #2a2a30; overflow: auto">
 <span class="mono" style="font-size: 10px; color: #8a8a96">ISSUE #{{m.issue}} · {{m.agent}}</span>
@@ -209,9 +233,12 @@ const W = [
 const C = [['Ready / stalled', '#ff6b6b'], ['Implementing', '#ff8a3d'], ['In review', '#8ab4ff'], ['Merged, waits proof', '#8b7cff'], ['Proven', '#3ddc97']];
 const shown = W.filter(w => this.state.j < 0 || w.j === this.state.j);
 const SN = ['claimed','planned','implementing','tests green','PR open','in review','merged','proven'];
-const blocks = (w) => SN.map((t, i) => ({ t, c: i < w.stage ? '#3ddc97' : (i === w.stage ? (w.col === 0 ? '#ff6b6b' : '#ff8a3d') : '#2a2a30') }));
-const card = (w) => ({ ...w, blocks: blocks(w), stageName: SN[w.stage], log: [{ t: w.last[0], m: w.last[1], c: '#f5f5f6' }].concat(w.prev.map(p => ({ t: p[0], m: p[1], c: '#8a8a96' }))), jc: JC[w.j], journey: J[w.j].title, hasPr: !!w.pr, noPr: !w.pr,
-ageC: /h/.test(w.age) ? '#ff6b6b' : '#8a8a96', edge: this.state.sel === w.issue ? '#ff8a3d' : '#34343c',
+const blocks = (w) => SN.map((t, i) => ({ t, k: (i === w.stage && w.col > 0 && w.col < 3) ? 'curstep' : '', c: i < w.stage ? '#3ddc97' : (i === w.stage ? (w.col === 0 ? '#ff6b6b' : '#ff8a3d') : '#2a2a30') }));
+const RC = ['#e0a458', '#6ec6ff', '#c792ea', '#f78fb3']; // #1923: one stable colour per WHAT I ASKED request, shown only as a left stripe
+const RQI = [['1770', '1775', '1776'], ['1767'], ['1781', '1779'], ['1752']]; // issues per request, same order as RQ below
+const rcOf = (id) => { const i = RQI.findIndex(x => x.includes(id)); return i < 0 ? '#34343c' : RC[i % RC.length]; };
+const card = (w) => ({ ...w, rc: rcOf(w.issue), blocks: blocks(w), stageName: SN[w.stage], log: [{ t: w.last[0], m: w.last[1], c: '#f5f5f6' }].concat(w.prev.map(p => ({ t: p[0], m: p[1], c: '#8a8a96' }))), jc: JC[w.j], journey: J[w.j].title, hasPr: !!w.pr, noPr: !w.pr,
+ageC: /h/.test(w.age) ? '#ff6b6b' : '#8a8a96', edge: this.state.sel === w.issue ? '#f5f5f6' : rcOf(w.issue),
 canView: w.col >= 2 && !!w.pr, pick: () => this.setState({ sel: w.issue, modal: (w.col >= 2 && w.pr) ? w.issue : null }) });
 const W2 = W.map((w) => w.issue === '1779' ? { ...w, col: 3 } : w);
 const cols = C.map((c, i) => { const cards = W2.filter(w => (this.state.j < 0 || w.j === this.state.j) && w.col === i).map(card); return { name: c[0], c: c[1], n: cards.length, cards }; });
@@ -232,12 +259,12 @@ const RQ = [
 { ask: 'Delivery list copies the message for whoever receives', when: '21 Oct 17:50', issues: ['1752'] }
 ];
 const ROW = 96;
-const reqs = RQ.map((r) => {
+const reqs = RQ.map((r, ri) => { const rc = RC[ri % RC.length];
 const its = r.issues.map(id => W2.find(w => w.issue === id)).filter(w => w && (this.state.j < 0 || w.j === this.state.j));
-const h = Math.max(its.length, 1) * ROW + 8;
-const ry = Math.max(0, (h - 130) / 2);
+const h = Math.max(Math.max(its.length, 1) * ROW + 8, 190);
+const ry = Math.max(0, (h - 170) / 2);
 const items = its.map((w, k) => { const y = k * ROW; const merged = w.col >= 3; const stalled = w.col === 0;
-return { ...w, open: () => this.setState({ sel: w.issue, modal: (w.col >= 2 && w.pr) ? w.issue : null }), y, py: y + 16, blocks: blocks(w), lastMsg: w.last[0] + '  ' + w.last[1], jc: JC[w.j], journey: J[w.j].title,
+return { ...w, rc: rcOf(w.issue), open: () => this.setState({ sel: w.issue, modal: (w.col >= 2 && w.pr) ? w.issue : null }), y, py: y + 16, blocks: blocks(w), lastMsg: w.last[0] + '  ' + w.last[1], jc: JC[w.j], journey: J[w.j].title,
 prLabel: w.pr ? 'PR #' + w.pr : 'no PR yet', prC: w.pr ? '#8ab4ff' : '#8a8a96', prEdge: w.pr ? '#2a3b5c' : '#34343c', prBorder: w.pr ? 'solid' : 'dashed', reviewerLine: w.pr ? w.reviewer : 'author still working',
 res: merged ? 'Merged · waits proof' : (stalled ? 'Stalled' : 'Not merged'), resC: merged ? '#8b7cff' : (stalled ? '#ff6b6b' : '#8a8a96'), resEdge: merged ? '#3a3466' : '#2a2a30',
 resSub: merged ? 'replay will prove it' : (stalled ? 'no record for 2 h' : '—') }; });
@@ -249,7 +276,14 @@ links.push({ d: 'M550 ' + iy + ' L 600 ' + iy, c: it.pr ? '#8ab4ff' : '#45454e',
 links.push({ d: 'M780 ' + iy + ' L 840 ' + iy, c: it.col >= 3 ? '#8b7cff' : '#45454e', dash: it.col >= 3 ? '' : '4 4' }); });
 const done = its.filter(w => w.col >= 3).length;
 const bar = its.map(w => w.col >= 4 ? '#3ddc97' : (w.col >= 3 ? '#8b7cff' : (w.col === 0 ? '#ff6b6b' : '#ff8a3d')));
-return { ...r, h, ry, items, links, bar, summary: its.length + ' issues · ' + its.filter(w => w.pr).length + ' PRs · ' + done + ' merged' };
+const ST = [['stalled', '#ff6b6b'], ['implementing', '#ff8a3d'], ['in review', '#4ea1ff'], ['merged, waits proof', '#d08cff'], ['proven', '#3ddc97']];
+const ordered = its.slice().sort((a, b) => b.col - a.col);
+const segs = ordered.map(w => ({ issue: w.issue, state: ST[w.col][0], c: ST[w.col][1], k: '' }));
+const legend = [4, 3, 2, 1, 0].map(c => ({ n: its.filter(w => w.col === c).length, label: ST[c][0], c: ST[c][1] })).filter(g => g.n);
+const total = its.length; const pct = total ? Math.round(done / total * 100) + '%' : '0%';
+const chip = done === total && total ? (its.every(w => w.col >= 4) ? '✓ Proven' : 'Delivered') : (its.some(w => w.col >= 1 && w.col <= 2) ? 'In progress · ' + done + ' of ' + total : (its.some(w => w.col === 0) ? 'Stalled' : 'Not started'));
+const chipC = chip.startsWith('In progress') ? '#ff8a3d' : (chip === 'Stalled' ? '#ff6b6b' : (chip === 'Delivered' ? '#8ab4ff' : (chip === '✓ Proven' ? '#3ddc97' : '#a2a2ad')));
+return { ...r, rc, h, ry, items, links, bar, segs, legend, done, total, pct, chip, chipC, chipEdge: chipC };
 }).filter(r => r.items.length);
 const s = W2.find(w => w.issue === this.state.sel) || W2[0];
 const sel = { ...s, jc: JC[s.j], journey: J[s.j].title, col: C[s.col][0], prLine: s.pr ? ('PR #' + s.pr + ' · ' + s.reviewer) : 'No PR yet' };

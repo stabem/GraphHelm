@@ -154,9 +154,10 @@ pub fn run_bounded(
     timeout: std::time::Duration,
 ) -> Result<Option<BoundedOutput>, String> {
     configure(&mut command);
+    let program = command.get_program().to_string_lossy().into_owned();
     let mut child = command
         .spawn()
-        .map_err(|error| format!("cargo did not start: {error}"))?;
+        .map_err(|error| format!("{program} did not start: {error}"))?;
     let mut group = match create(&child) {
         Ok(group) => group,
         Err(error) => {

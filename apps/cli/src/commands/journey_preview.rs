@@ -2075,6 +2075,25 @@ pub(crate) fn last_run(project: &Path, id: &str, flow: Option<&Value>) -> Value 
     })})
 }
 
+/// #1953: the journey's run in flight, as `journey flows` lists it next to `lastRun`, so a Studio
+/// that reloads, or did not start the run, still shows it running. Read only from the kept
+/// `state.json`: nothing is written, probed or reaped. A `running` state past its budget plus the
+/// grace has no runner (`within_budget`), so it is `null` rather than running for ever; a runner
+/// that died inside the budget reads running until the next preview read reaps it. `current` is
+/// the step the runner is on, `null` before its first step.
+pub(crate) fn running(project: &Path, id: &str) -> Value {
+    if !plain_id(id) {
+        return Value::Null;
+    }
+    match read_state(&dir_of(project, id)) {
+        Some(state) if state["state"] == "running" && within_budget(&state) => {
+            let text = |key: &str| state[key].as_str().map_or(Value::Null, Value::from);
+            json!({"startedAt": text("startedAt"), "current": text("current"), "kind": text("kind")})
+        }
+        _ => Value::Null,
+    }
+}
+
 /// #1777: each viewport's status in a finished run, and the one viewport that alone failed. A run
 /// recorded before #1777 has no `viewports`: it proved web only, so mobile is `not_run` and no
 /// viewport is named as the only one that failed.

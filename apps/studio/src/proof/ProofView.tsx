@@ -8,7 +8,7 @@ import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./
 import { askedWhen } from "../lanes/asked";
 import { OWNER } from "../runtime/client";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
-import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, withoutLive, afterPanelGone, watchedIds, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 import { Empty, Loading, ReadFailure } from "../states/ViewState";
 import { When } from "../time/Stamp";
@@ -50,7 +50,8 @@ export function ProofView({ runtime, journeys, error, executionId, onRan, initia
   // #1914: the run the open panel follows, by journey, so its card reads it before the list is read again.
   const [live, setLive] = useState<Record<string, JourneyRun>>({});
   // A list read again carries the result; a run still playing stays until its next answer.
-  useEffect(() => { setLive((before) => Object.fromEntries(Object.entries(before).filter(([, run]) => run.state === "running"))); }, [journeys]);
+  // #1953: a journey the list says is running is seeded, so a reload still shows it running.
+  useEffect(() => { setLive((before) => liveAfterList(before, journeys)); }, [journeys]);
   const selectedId = journeys === null ? null : (journeys.find((flow) => flow.id === picked) ?? journeys[0] ?? null)?.id ?? null;
   // #1950: a running journey that no open panel follows is read from the Runtime here, so its card
   // keeps reading running after the owner selects another journey, and shows the result at its end.

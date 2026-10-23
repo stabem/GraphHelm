@@ -121,6 +121,8 @@ export interface JourneyFlow {
   /** #1835: the last finished run as its runner recorded it. Absent from older Runtimes: unknown,
    * never read as `not_run`. */
   lastRun?: JourneyLastRun;
+  /** #1953: the run in flight, `null` when none. Absent from older Runtimes: nothing is seeded. */
+  running?: { startedAt: string | null; current: string | null; kind: "replay" | "preview" | null } | null;
   /** The owner's approval block, `null` while none is recorded. */
   approved?: unknown;
   /** Whether the Runtime would accept Approve now (#353): no blocking findings, a passing preview. */

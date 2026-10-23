@@ -267,6 +267,18 @@ export function watchedIds(live: Record<string, { state: string }>, selected: st
   return Object.keys(live).filter((id) => id !== selected && live[id]?.state === "running").sort();
 }
 
+/** #1953: the live runs after the journey list is read again. A run the view still saw playing
+ * stays until its own next answer; a finished one gives way to the list's result; and a journey
+ * the list says is running (a reload, or a run started from another Studio or the CLI) is seeded
+ * as running, so the watch follows it to its result. */
+export function liveAfterList(live: Record<string, JourneyRun>, flows: readonly Pick<JourneyFlow, "id" | "running">[] | null): Record<string, JourneyRun> {
+  const kept: Record<string, JourneyRun> = Object.fromEntries(Object.entries(live).filter(([, run]) => run.state === "running"));
+  for (const flow of flows ?? []) {
+    if (flow.running != null && kept[flow.id] === undefined) kept[flow.id] = { state: "running" };
+  }
+  return kept;
+}
+
 /** #1950: a panel that went away keeps its journey's entry only while the Runtime said running:
  * the view then reads that run until it ends, so the card neither forgets it nor stays stuck. */
 export function afterPanelGone<T extends { state: string }>(live: Record<string, T>, id: string): Record<string, T> {

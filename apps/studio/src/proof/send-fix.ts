@@ -25,6 +25,28 @@ export function fixRequestId(flowId: string, run: JourneyRun): string {
   return `fix-${flow}-${when.slice(0, 24)}`;
 }
 
+/** Windows-1252 maps bytes 0x80-0x9F to these characters; every other byte keeps its code point. */
+const CP1252 = "€\u0081‚ƒ„…†‡ˆ‰Š‹Œ\u008dŽ\u008f\u0090‘’“”•–—˜™š›œ\u009džŸ";
+/** A UTF-8 lead byte read as Windows-1252 (Ã..ô), then one to three continuation bytes read the same way. */
+const MOJIBAKE = /[Â-ô][\u0080-¿ŒœŠšŸŽžƒˆ˜–-›€™]{1,3}/g;
+
+/** #1947: text whose UTF-8 bytes were read as Windows-1252 (a command's stderr, a flow read by a
+ * Windows tool) shows a curly quote as `â€œ`. Each such run is turned back when, and only when, its
+ * bytes are valid UTF-8; clean text, and a run that only looks like it, stay as they came. */
+export function cleanUtf8(text: string): string {
+  return text.replace(MOJIBAKE, (run) => {
+    const bytes: number[] = [];
+    for (const char of run) {
+      const code = char.codePointAt(0) ?? 0;
+      const at = CP1252.indexOf(char);
+      if (code < 0x80 || (code >= 0xa0 && code <= 0xff)) bytes.push(code);
+      else if (at >= 0) bytes.push(0x80 + at);
+      else return run;
+    }
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes)); } catch { return run; }
+  });
+}
+
 const tail = (text: string, max: number) => (text.length > max ? `…${text.slice(text.length - max)}` : text);
 
 /** The ask an agent starts from: the journey and its flow file, the run, the failing step with its
@@ -54,7 +76,7 @@ export function fixAsk(flow: JourneyFlow, run: JourneyRun, steps: readonly Step[
   }
   const owner = note.trim().slice(0, NOTE_MAX);
   if (owner) lines.push(`Owner's note: ${owner}`);
-  const ask = lines.join("\n");
+  const ask = cleanUtf8(lines.join("\n"));
   return ask.length > ASK_MAX ? `${ask.slice(0, ASK_MAX - 1)}…` : ask;
 }
 

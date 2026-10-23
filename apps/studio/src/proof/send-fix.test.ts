@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow, JourneyRun } from "../runtime/client";
-import { ASK_MAX, failingStep, fixAsk, fixBody, fixRequestId, offersFix } from "./send-fix";
+import { ASK_MAX, cleanUtf8, failingStep, fixAsk, fixBody, fixRequestId, offersFix } from "./send-fix";
 import { journeySteps } from "./steps";
 
 const flow: JourneyFlow = {
@@ -59,5 +59,27 @@ describe("send to fix", () => {
       schema: "graphhelm-task-event-v1", taskId: "request-fix-buy-1", revision: 1, at: "2026-10-23T10:16:00Z",
       requestId: "fix-buy-1", ask: "ask", title: "Fix Buy a sofa", recordedBy: "studio-operator",
     });
+  });
+
+  // #1947: the ask keeps its curly quotes as real characters, never as `â€œ…â€`.
+  it("keeps the step label's curly quotes and repairs a command's Windows-1252 reading", () => {
+    const quoted: JourneyFlow = { ...flow, edges: [{ id: "list.item", from: "list", to: "item", acts: [{ kind: "http", role: "GET", name: "/health" }] }, flow.edges![1]] };
+    const steps = journeySteps(quoted, failed);
+    const ask = fixAsk(quoted, failed, steps, "the “note”");
+    expect(ask).toContain("“");
+    expect(ask).not.toMatch(/â€/);
+    const cli: JourneyRun = { ...failed, outputs: { "item.done": [{ argv: "python -c â€œprint(1)â€", exit: 1, stdout: "", stderr: "bad â€œnameâ€" }] } };
+    const cliFlow: JourneyFlow = { ...flow, edges: [flow.edges![0], { id: "item.done", from: "item", to: "done", acts: [{ kind: "cli", role: "exec", name: "python" }] }] };
+    const text = fixAsk(cliFlow, cli, journeySteps(cliFlow, cli), "");
+    expect(text).toContain("python -c “print(1)”");
+    expect(text).toContain("bad “name”");
+    expect(text).not.toContain("â");
+  });
+
+  it("repairs only text that is Windows-1252 over valid UTF-8", () => {
+    expect(cleanUtf8("â€œpythonâ€")).toBe("“python”");
+    expect(cleanUtf8("cafÃ©")).toBe("café");
+    expect(cleanUtf8("“clean” and café")).toBe("“clean” and café");
+    expect(cleanUtf8("â€")).toBe("â€");
   });
 });

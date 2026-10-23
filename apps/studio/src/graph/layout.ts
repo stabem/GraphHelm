@@ -79,6 +79,22 @@ export function journeyMeta(card: JourneyCard): string {
 /** Row height of one issue in the graph (the design's `ROW`). */
 export const ROW = 96;
 
+/** The YOU ASKED card at its tallest without a legend: padding, the time line, a title clamped to
+ * three lines, the chip and percent, the bar and the "no issue" line (#1947). */
+export const ASK_MIN = 190;
+/** One legend row of the card, two states a row at the card's 240px (#1947). */
+export const LEGEND_ROW = 18;
+
+/** The least height a request row may have so its YOU ASKED card never reaches the next row. */
+export function askHeight(legendCount: number): number {
+  return ASK_MIN + Math.ceil(legendCount / 2) * LEGEND_ROW;
+}
+
+/** A request row's height: one ROW per issue, never less than its YOU ASKED card (#1947). */
+export function rowHeight(issues: number, legendCount: number): number {
+  return Math.max(Math.max(issues, 1) * ROW + 8, askHeight(legendCount) + 8);
+}
+
 export interface GraphItem {
   issue: number;
   title: string;
@@ -176,8 +192,9 @@ export function graphRequests(
         result: outcome(column, merged),
       };
     });
-    const height = Math.max(items.length, 1) * ROW + 8;
-    const askY = Math.max(0, (height - 130) / 2);
+    const progress = requestProgress(request, board.tasks, flows, stalled);
+    const height = rowHeight(items.length, progress.legend.length);
+    const askY = Math.max(0, (height - askHeight(progress.legend.length)) / 2);
     const cy = askY + 60;
     const links: GraphRequest["links"] = [];
     for (const item of items) {
@@ -186,7 +203,6 @@ export function graphRequests(
       links.push({ d: `M550 ${iy} L 600 ${iy}`, color: item.pr !== null ? "#4ea1ff" : "#45454e", dashed: item.pr === null });
       links.push({ d: `M780 ${iy} L 840 ${iy}`, color: done(item) ? "#d08cff" : "#45454e", dashed: !done(item) });
     }
-    const progress = requestProgress(request, board.tasks, flows, stalled);
     const prCount = items.filter((item) => item.pr !== null).length;
     return {
       request,

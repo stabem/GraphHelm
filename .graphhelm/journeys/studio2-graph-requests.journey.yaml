@@ -24,7 +24,7 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Request graph, text: YOU ASKED}, {role: list, name: Owner requests}, {role: tab, name: Graph view}, {role: complementary, name: Selected work, text: HISTORY}, {role: link, name: Open the journey in Proof}]
+    expect: [{role: region, name: Request graph, text: YOU ASKED}, {role: list, name: Owner requests, text: no issue opened yet}, {role: tab, name: Graph view}, {role: complementary, name: Selected work, text: HISTORY}, {role: link, name: Open the journey in Proof}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: graph-again
     title: Graph again shows the requests

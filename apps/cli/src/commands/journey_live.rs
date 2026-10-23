@@ -1250,19 +1250,9 @@ pub(super) fn base_reachable(base: &str) -> bool {
         .any(|address| TcpStream::connect_timeout(&address, Duration::from_millis(500)).is_ok())
 }
 
-/// A POSIX shell: `GRAPHHELM_POSIX_SHELL`, else Git for Windows' bash on Windows, else `sh`.
+/// A POSIX shell (see [`graphhelm_process::posix_shell`]).
 fn posix_shell() -> Command {
-    if let Some(shell) = std::env::var_os("GRAPHHELM_POSIX_SHELL") {
-        return graphhelm_process::command(shell);
-    }
-    #[cfg(windows)]
-    {
-        let git_bash = Path::new(r"C:\Program Files\Git\bin\bash.exe");
-        if git_bash.is_file() {
-            return graphhelm_process::command(git_bash);
-        }
-    }
-    graphhelm_process::command("sh")
+    graphhelm_process::posix_shell()
 }
 
 /// The most of a failed launcher's output the report keeps.

@@ -1,3 +1,4 @@
+import { When } from "../time/Stamp";
 import { VIEWS, type View } from "../routing/route";
 
 const LABEL: Record<View, string> = { graph: "Graph", lanes: "Lanes", proof: "Proof" };
@@ -6,7 +7,7 @@ interface Props {
   project: string;
   run: string | null;
   view: View;
-  updated: string | null;
+  updated: number | null;
   onView: (view: View) => void;
   onStart: (() => void) | null;
 }
@@ -35,7 +36,7 @@ export function Topbar({ project, run, view, updated, onView, onStart }: Props) 
         ))}
       </div>
       <span className="spacer" />
-      {updated !== null && <span className="updated">updated {updated} · live</span>}
+      {updated !== null && <span className="updated">updated <When at={updated} /> · live</span>}
       {onStart !== null && <button type="button" className="b act" onClick={onStart}>Start a team run</button>}
     </header>
   );

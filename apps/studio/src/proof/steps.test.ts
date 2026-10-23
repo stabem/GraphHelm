@@ -2,7 +2,7 @@ import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow } from "../runtime/client";
-import { becauseOf, countSteps, failsOnlyOn, journeyScore, journeySteps, lastRunChip, preparingStatus } from "./steps";
+import { becauseOf, readableName, reasonSentence, countSteps, failsOnlyOn, journeyScore, journeySteps, lastRunChip, preparingStatus } from "./steps";
 
 const flow: JourneyFlow = {
   id: "buy",
@@ -136,5 +136,23 @@ describe("journey explanations", () => {
     expect(becauseOf(done.expects, { role: "stdout", name: "a" })).toBe("only a was recorded");
     expect(becauseOf(done.expects, { role: "stdout", name: "b" })).toBeNull();
     expect(becauseOf(done.expects, { role: "stdout", name: "a", text: "x" })).toBeNull();
+  });
+});
+
+// #1955: a regex expectation reads as words. Regression: the owner sees “/Pago R\$\s.+pedido PED-123/”
+// and cannot tell what the screen must say; or a plain name is mangled by the humanizer.
+describe("readable expectation names", () => {
+  it("strips the slashes, unescapes and shows any text as …", () => {
+    expect(readableName("/Pago R\\$\\s.+pedido PED-123/")).toEqual({ text: "Pago R$ … pedido PED-123", pattern: true });
+    expect(readableName("/^Total: R\\$\\s\\d+,\\d+$/")).toEqual({ text: "Total: R$ 0,0", pattern: true });
+    expect(readableName("/Saved.*/i")).toEqual({ text: "Saved …", pattern: true });
+  });
+  it("leaves a plain name alone, slashes inside included", () => {
+    expect(readableName("Comprado")).toEqual({ text: "Comprado", pattern: false });
+    expect(readableName("a/b")).toEqual({ text: "a/b", pattern: false });
+  });
+  it("words a known reason code and leaves an unknown one to be shown as is", () => {
+    expect(reasonSentence("page_error")).toBe("The page reported an error during this step.");
+    expect(reasonSentence("something_new")).toBeNull();
   });
 });

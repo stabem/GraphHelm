@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 import type { JourneyPastRun, Runtime } from "../runtime/client";
 import { changedSentence, diffPixels, type CompareMode, type Pixels } from "./compare";
-import { becauseOf, failsOnlyOn, type Step } from "./steps";
+import { becauseOf, failsOnlyOn, readableName, reasonSentence, type Step } from "./steps";
 import { yamlLines } from "./yaml-view";
 
 const MODES: { mode: CompareMode; label: string }[] = [
@@ -151,20 +151,37 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
         <span className="section-label">ASSERTIONS</span>
         {step.checks !== null && step.checks.length > 0
           ? step.checks.map((check, index) => (
-            <span key={index} className="assertion"><span><b className={check.seen ? "pass" : "fail"}>{check.seen ? "✓" : "✕"}</b> shows {check.role} “{check.name}”{check.text ? ` with “${check.text}”` : ""}</span><Because said={becauseOf(step.expects, check)} /></span>
+            <span key={index} className="assertion"><span><b className={check.seen ? "pass" : "fail"}>{check.seen ? "✓" : "✕"}</b> <Shows role={check.role} name={check.name} text={check.text} /></span><Because said={becauseOf(step.expects, check)} /></span>
           ))
           : step.expects.length === 0
             ? <span className="muted">This screen declares no assertions.</span>
             : step.expects.map((want, index) => (
-              <span key={index} className="assertion"><span><b className={step.status === "passed" ? "pass" : "idle"}>{assertMark}</b> shows {want.role} “{want.name}”{want.text ? ` with “${want.text}”` : ""}</span><Because said={becauseOf([want], want)} /></span>
+              <span key={index} className="assertion"><span><b className={step.status === "passed" ? "pass" : "idle"}>{assertMark}</b> <Shows role={want.role} name={want.name} text={want.text} /></span><Because said={becauseOf([want], want)} /></span>
             ))}
         {step.checks === null && (step.status === "failed" || step.status === "drift") && <span className="muted">This run recorded no per-assertion checks for this step.</span>}
-        {step.reason !== null && step.status !== "passed" && <span className="action-reason">{step.reason}</span>}
+        {step.reason !== null && step.status !== "passed" && <Reason code={step.reason} />}
         <span className="section-label">CONSOLE</span>
         <span className="mono muted">No console captured</span>
       </aside>
     </div>
   );
+}
+
+/** #1955: an assertion in words; a regex name reads "like" its readable form, raw in the tooltip. */
+function Shows({ role, name, text }: { role: string; name: string; text?: string }) {
+  const shown = readableName(name);
+  return (
+    <span title={shown.pattern ? name : undefined}>
+      shows {shown.pattern ? `a ${role} like` : role} “{shown.text}”{text ? ` with “${text}”` : ""}
+    </span>
+  );
+}
+
+/** #1955: a run's reason code as a sentence, with the code kept small after it. */
+function Reason({ code }: { code: string }) {
+  const sentence = reasonSentence(code);
+  if (sentence === null) return <span className="action-reason">{code}</span>;
+  return <span className="action-reason">{sentence} <code className="reason-code">{code}</code></span>;
 }
 
 /** #1955: an assertion's reason, in muted text under it; said plainly when the flow gives none. */

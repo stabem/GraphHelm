@@ -316,6 +316,7 @@ button { font: inherit; }
 .action-why { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-left: 2px solid #ff8a3d; border-radius: 0 6px 6px 0; background: var(--bg); }
 .assertion { display: flex; flex-direction: column; gap: 2px; }
 .assertion-because { padding-left: 16px; font-size: 11px; }
+.reason-code { font: 10px var(--mono); color: var(--faint); }
 .compare-side-panel .muted { color: var(--faint); }
 .compare-changed { color: #ff8a3d; }
 @media (max-width: 760px) {

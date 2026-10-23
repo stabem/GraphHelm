@@ -8,7 +8,7 @@
   "extensions/builtin/graphhelm-jpd/agents/evidence-advocate.json": "b8838726de32b9669d9af7ea829ed501614bafcccfd61b8e57d73339954943f3",
   "extensions/builtin/graphhelm-jpd/agents/idea-generator.json": "b8198748dcaff234c5a19cbf8fe20d8d4dd628171cafe2de6b46955ab625117e",
   "extensions/builtin/graphhelm-jpd/agents/recovery-operator.json": "b56668619ca5a4fecc8ebf00bef75ed08c5bc5e0a5228d2ac268bb4973a241eb",
-  "extensions/builtin/graphhelm-jpd/extension.json": "45f0412cbec5c249720196da1d5a28e81ffe471b3d7edfdfd09e4ce749794c9c",
+  "extensions/builtin/graphhelm-jpd/extension.json": "6ef0bc34543bf3cc5a11e309db924d1b98d0246443c43c118230de75ecad69a9",
   "extensions/builtin/graphhelm-jpd/fixtures/negative/invalid-retry-lineage.json": "fd5ef17414f10ac104118b2fa24e0df157a218b52f9e2b1c9e3ca2df68c0d4fb",
   "extensions/builtin/graphhelm-jpd/fixtures/negative/journey-verification-missing-gate-claimed-success.json": "d43ffc3e8072f5875e5cb960678c6cbd7d6056ebe7d847a52174e6649b281667",
   "extensions/builtin/graphhelm-jpd/fixtures/positive/journey-verification-accepted-with-waiver.json": "8c4c7053219d15b6a2544d29409d6c4cf518065e9335868494e4f9b1da373fde",

@@ -115,6 +115,39 @@ export function becauseOf(expects: Expect[], check: { role: string; name: string
   return typeof said === "string" && said.trim() !== "" ? said : null;
 }
 
+/** #1955: an expectation's name as a person reads it. A `/pattern/` name is a regular expression:
+ * the slashes go, escapes such as `\s` and `\$` become their characters, and `.+` / `.*` read
+ * as "…". `pattern` is true for such a name, so the panel says "like" and keeps the raw pattern
+ * for a tooltip; a plain name is returned unchanged. */
+export function readableName(name: string): { text: string; pattern: boolean } {
+  const match = /^\/(.+)\/[a-z]*$/s.exec(name);
+  if (match === null) return { text: name, pattern: false };
+  const text = match[1]!
+    .replace(/^\^|\$$/g, "")
+    .replace(/\s*\.[+*]\??\s*/g, " … ")
+    .replace(/\\s[+*]?/g, " ")
+    .replace(/\\d[+*]?/g, "0")
+    .replace(/\\(.)/g, "$1")
+    .replace(/ {2,}/g, " ")
+    .trim();
+  return { text, pattern: true };
+}
+
+/** #1955: the sentence a run's reason code reads as; a code with no sentence reads as itself. */
+const REASONS: Record<string, string> = {
+  page_error: "The page reported an error during this step.",
+  act_failed: "An action of this step could not be done.",
+  not_reached: "The run stopped before this step.",
+  confirm_needed: "This step waits for your confirmation of its commands.",
+  cli_needs_approval: "This step waits for your approval of its commands.",
+  timeout: "The step took too long and was stopped.",
+  internal: "The run stopped on an internal error.",
+};
+
+export function reasonSentence(code: string): string | null {
+  return REASONS[code] ?? null;
+}
+
 /** #1955: the flow's reason for a step, when it gives one. */
 function whyOf(edge: JourneyEdge | null): string | null {
   const said = edge?.why;

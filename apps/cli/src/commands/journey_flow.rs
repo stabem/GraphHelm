@@ -2565,7 +2565,10 @@ mod tests {
 
         // Written, read back the same, and part of what the owner approves.
         let written = canonical(&command, false);
-        assert!(written.contains("    why: "), "{written}");
+        assert!(
+            written.contains(&format!("{}why: ", " ".repeat(4))),
+            "{written}"
+        );
         assert!(
             written.contains("{role: exit, name: \"0\", because: the payment script succeeds}"),
             "{written}"

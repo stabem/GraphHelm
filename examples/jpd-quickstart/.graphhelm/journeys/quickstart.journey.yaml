@@ -13,29 +13,31 @@ screens:
     title: The greeting the service answered
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: hello}]
+    expect: [{role: exit, name: "0", because: hello.sh promises to exit 0 after greeting}, {role: stdout, name: hello, because: hello.sh promises to greet the user with hello}]
     scope: unknown
   - id: listed
     title: The list of items the client asked for
     url: /
     state: success
-    expect: [{role: status, name: "200"}, {role: json, name: items.0.name=apple}]
+    expect: [{role: status, name: "200", because: the items route answers a GET with HTTP 200}, {role: json, name: items.0.name=apple, because: the service promises to list apple first}]
     scope: unknown
   - id: start
     title: The service status before any request
     url: /health.json
     state: stable
-    expect: [{role: status, name: "200"}, {role: json, name: status=ok}]
+    expect: [{role: status, name: "200", because: a running service answers its health route with HTTP 200}, {role: json, name: status=ok, because: the service reports itself ok before any request}]
     scope: unknown
 edges:
   - id: greet
     from: start
     to: greeted
+    why: The service greets the client from the command line.
     acts:
       - {kind: cli, role: exec, name: sh hello.sh}
   - id: list
     from: greeted
     to: listed
+    why: The client asks for its items and sees them listed with apple first.
     acts:
       - {kind: http, role: GET, name: /items.json}
 paths:

@@ -13,25 +13,25 @@ risks: [critical_ux]
 viewports: [web]
 screens:
   - id: changed
-    title: The card and the header read changed since the last run and offer Run
+    title: The header reads changed since the last run and the steps show the earlier frames marked stale
     url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-stale
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: listitem, name: Edited since its last run, text: Changed since last run}, {role: status, name: Changed since last run}, {role: region, name: Journey run, text: from the earlier version}, {role: button, name: Run}]
+    expect: [{role: status, name: Changed since last run}, {role: region, name: Journey run, text: from the earlier version}, {role: button, name: Run}, {role: img, name: Step 1 frame}, {role: img, name: Step 2 frame}, {role: list, name: Steps, text: stale}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
-  - id: frames
-    title: The steps show the earlier version's frames marked stale
+  - id: open
+    title: The journey's card reads changed since the last run
     url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-stale
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: img, name: Step 1 frame}, {role: img, name: Step 2 frame}, {role: list, name: Steps, text: stale}]
-    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/use-journey-run.ts]
+    expect: [{role: listitem, name: Edited since its last run, text: Changed since last run}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
 edges:
-  - id: changed.frames
-    from: changed
-    to: frames
+  - id: open.changed
+    from: open
+    to: changed
     acts:
       - {kind: wait_for, role: img, name: Step 1 frame}
 paths:
-  main: [changed.frames]
+  main: [open.changed]
 drift: []

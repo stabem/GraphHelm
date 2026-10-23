@@ -1578,6 +1578,30 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         self.assertNotIn('"schema"', text)
 
 
+
+class TestThreadsScaleWithTheHost(unittest.TestCase):
+    """#1892: libtest threads follow free memory and cores, with a floor of 2."""
+
+    def test_threads_floor_when_memory_or_cores_are_short_or_unknown(self):
+        self.assertEqual(rr._test_threads(None, 32), 2)
+        self.assertEqual(rr._test_threads(13.0, None), 2)
+        self.assertEqual(rr._test_threads(2.0, 32), 2)
+        self.assertEqual(rr._test_threads(40.0, 2), 2)
+
+    def test_threads_scale_and_stop_at_the_ceiling(self):
+        self.assertEqual(rr._test_threads(13.1, 32), 8)
+        self.assertEqual(rr._test_threads(13.1, 8), 4)
+        self.assertEqual(rr._test_threads(200.0, 64), 16)
+
+    def test_threads_rewrite_only_the_libtest_flag_of_a_cargo_test(self):
+        argv = ["cargo", "+1.97.1", "test", "--locked", "-p", "x", "--", "--test-threads=2", "a::"]
+        self.assertEqual(rr._with_test_threads(argv, 8)[-2:], ["--test-threads=8", "a::"])
+        self.assertEqual(argv[-2], "--test-threads=2")
+        clippy = ["cargo", "+1.97.1", "clippy", "--", "-D", "warnings"]
+        self.assertEqual(rr._with_test_threads(clippy, 8), clippy)
+        python = ["python", "-m", "pytest", "--", "--test-threads=2"]
+        self.assertEqual(rr._with_test_threads(python, 8), python)
+
 class HarnessFileAndOutputDefault(unittest.TestCase):
     """#1538: the harness's settings file must not make a lane worktree 'not clean'."""
 

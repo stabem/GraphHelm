@@ -327,11 +327,31 @@ def _free_memory_gb() -> float | None:
         return None
 
 
-def _test_threads(free_gb: float | None, cores: int | None) -> int:
-    """Threads for every cargo test step: the floor when memory or cores are unknown or short."""
+# #1962: a review's tests starved the owner's Runtime into an allocation abort. Free memory below
+# this reserve is never spent on test parallelism: threads drop to 1 and executables run one at a
+# time. GiB; `--memory-reserve-gib` or GRAPHHELM_MEMORY_RESERVE_GIB overrides it.
+MEMORY_RESERVE_GIB = 3.0
+
+
+def _reserve_gb(gib: float | None = None) -> float:
+    """The reserve in the GB unit `_free_memory_gb` reports."""
+    if gib is None:
+        try:
+            gib = float(os.environ.get("GRAPHHELM_MEMORY_RESERVE_GIB", MEMORY_RESERVE_GIB))
+        except ValueError:
+            gib = MEMORY_RESERVE_GIB
+    return max(0.0, gib) * (1 << 30) / 1e9
+
+
+def _test_threads(free_gb: float | None, cores: int | None, reserve_gb: float = 0.0) -> int:
+    """Threads for every cargo test step: the floor when memory or cores are unknown or short,
+    and 1 when free memory is at or under the reserve."""
     if free_gb is None or not cores:
         return TEST_THREADS_FLOOR
-    wanted = min(int(free_gb // GB_PER_TEST_THREAD), cores // 2, TEST_THREADS_CEILING)
+    usable = free_gb - reserve_gb
+    if usable <= 0:
+        return 1
+    wanted = min(int(usable // GB_PER_TEST_THREAD), cores // 2, TEST_THREADS_CEILING)
     return max(TEST_THREADS_FLOOR, wanted)
 
 
@@ -357,11 +377,12 @@ _CARGO_BOOL_FLAGS = {"--locked", "--offline", "--frozen", "--release", "-r", "--
 _LIB_KINDS = {"lib", "rlib", "dylib", "proc-macro", "cdylib", "staticlib"}
 
 
-def _parallel_limit(free_gb: float | None) -> int:
-    """How many test executables may run at once: 1 (serial) when memory is short or unknown."""
+def _parallel_limit(free_gb: float | None, reserve_gb: float = 0.0) -> int:
+    """How many test executables may run at once: 1 (serial) when memory above the reserve is
+    short or unknown."""
     if free_gb is None:
         return 1
-    return max(1, min(int(free_gb // GB_PER_PARALLEL_STEP), PARALLEL_STEPS_CEILING))
+    return max(1, min(int((free_gb - reserve_gb) // GB_PER_PARALLEL_STEP), PARALLEL_STEPS_CEILING))
 
 
 def _test_split(argv: list[str]) -> tuple[str, list[tuple[str, str]], list[str]] | None:
@@ -456,8 +477,12 @@ def _test_executables(log: Path, package: str, targets: list[tuple[str, str]]) -
     return [found[target] for target in targets]
 
 
-def _run_parallel(jobs: list[dict[str, Any]], limit: int, env: dict[str, str]) -> None:
-    """Run every job's executables, at most `limit` processes at once; fill returncode and seconds."""
+def _run_parallel(jobs: list[dict[str, Any]], limit: int, env: dict[str, str],
+                  reserve_gb: float = 0.0, free_gb: Any = None) -> None:
+    """Run every job's executables, at most `limit` processes at once; fill returncode and seconds.
+    #1962: a second or later process starts only while free memory stays above `reserve_gb`;
+    under it the rest wait for the running ones, so the run degrades to one at a time."""
+    free_gb = free_gb or _free_memory_gb
     pending = [(job, exe) for job in jobs for exe in job["executables"]]
     for job in jobs:
         job.update({"returncode": 0, "started": None, "running": 0, "seconds": 0.0})
@@ -465,6 +490,10 @@ def _run_parallel(jobs: list[dict[str, Any]], limit: int, env: dict[str, str]) -
     running: list[tuple[subprocess.Popen, dict[str, Any], Any]] = []
     while pending or running:
         while pending and len(running) < limit:
+            if running and reserve_gb > 0:
+                free = free_gb()
+                if free is None or free < reserve_gb + GB_PER_PARALLEL_STEP:
+                    break
             job, exe = pending.pop(0)
             child_env = dict(env)
             child_env.update({"CARGO_MANIFEST_DIR": exe["cwd"], "CARGO_PKG_NAME": job["package"]})
@@ -1087,7 +1116,8 @@ def run(args: argparse.Namespace) -> int:
             report["fingerprint"] = _fingerprint(repo, identity_steps, selected_graphhelm, child_env)
             # #1892: the thread count is chosen after the fingerprint, so a pass proven at one thread
             # count stays reusable at another; the report names the count that actually ran.
-            threads = getattr(args, "test_threads", None) or _test_threads(_free_memory_gb(), os.cpu_count())
+            reserve = _reserve_gb(getattr(args, "memory_reserve_gib", None))
+            threads = getattr(args, "test_threads", None) or _test_threads(_free_memory_gb(), os.cpu_count(), reserve)
             child_env["RUST_TEST_THREADS"] = str(threads)
             report["testThreads"] = threads
             print(f"[reached-tests] test threads: {threads}", file=sys.stderr, flush=True)
@@ -1166,7 +1196,7 @@ def run(args: argparse.Namespace) -> int:
                 # #1932: two or more plain cargo test steps in one batch are built there with
                 # --no-run and their executables run side by side after it, when memory allows.
                 side: dict[int, tuple[str, list[tuple[str, str]], list[str]]] = {}
-                limit = _parallel_limit(_free_memory_gb()) if getattr(args, "parallel_steps", True) else 1
+                limit = _parallel_limit(_free_memory_gb(), reserve) if getattr(args, "parallel_steps", True) else 1
                 if batch_mode and limit > 1 and len(group) > 1:
                     for local, item in enumerate(group):
                         split = None if item.get("serial") else _test_split(commands[local])
@@ -1266,7 +1296,7 @@ def run(args: argparse.Namespace) -> int:
                         if built and not (parsed["stopReason"] == "leaseBoundary" and parsed["remaining"]):
                             ready, built = built, []
                             parallel_started = time.monotonic()
-                            _run_parallel(ready, limit, child_env)
+                            _run_parallel(ready, limit, child_env, reserve)
                             print(f"[reached-tests] steps {[job['index'] for job in ready]}: side by side "
                                   f"{time.monotonic() - parallel_started:.1f}s (total {time.monotonic() - started:.1f}s)",
                                   file=sys.stderr, flush=True)
@@ -1441,6 +1471,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="cargo build jobs for every slot command (1..32; default 6; one root up to 16)")
     ap.add_argument("--test-threads", type=int,
                     help="libtest threads for every cargo test step (1..64; default: from free memory and cores, floor 2, ceiling 8)")
+    ap.add_argument("--memory-reserve-gib", type=float,
+                    help="free RAM kept for the Runtime and the owner: under it, tests run one thread and "
+                         "one executable at a time (default 3, or GRAPHHELM_MEMORY_RESERVE_GIB)")
     ap.add_argument("--no-parallel-steps", dest="parallel_steps", action="store_false",
                     help="run the cargo test steps of a batch one after another, as before #1932")
     ap.add_argument("--allow-whole-package")
@@ -1470,6 +1503,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--jobs must be between 1 and 32")
     if args.test_threads is not None and not 1 <= args.test_threads <= 64:
         ap.error("--test-threads must be between 1 and 64")
+    if args.memory_reserve_gib is not None and not 0 <= args.memory_reserve_gib <= 1024:
+        ap.error("--memory-reserve-gib must be between 0 and 1024")
     if not args.lane:
         args.lane = default_lane(Path(args.repo))
     if not args.output:

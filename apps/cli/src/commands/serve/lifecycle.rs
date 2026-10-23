@@ -46,6 +46,10 @@ struct Record {
     /// can reach each project's own Runtime. Non-secret; absent in records written before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     address: Option<String>,
+    /// #1962: this run ended by handing the port and the lock to a successor (#1523), so a
+    /// supervisor watches that successor instead of stopping or starting a second Runtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    handed_over: Option<bool>,
 }
 
 // The lifetime lock closes the read/replace race between two different listening ports.
@@ -203,6 +207,7 @@ impl Lifecycle {
             fatal: None,
             last_panic: None,
             address: address.map(str::to_owned),
+            handed_over: None,
         };
         let current_run = serde_json::json!({
             "instance": record.instance.as_deref(),
@@ -251,7 +256,7 @@ impl Lifecycle {
         ))
     }
 
-    pub(super) fn finish(&self, clean: bool) -> Result<(), super::Failure> {
+    pub(super) fn finish(&self, clean: bool, handed_over: bool) -> Result<(), super::Failure> {
         let mut writer = self
             .writer
             .lock()
@@ -269,9 +274,52 @@ impl Lifecycle {
             fatal: false,
         });
         record.fatal = None;
+        record.handed_over = (clean && handed_over).then_some(true);
         record.at = Some(now());
         write(path, record).map_err(|_| invalid())
     }
+}
+
+/// #1962: how the run recorded beside `events` ended, as a supervisor reads it once the lifetime
+/// lock is free: `None` while another process still owns the lock.
+pub(super) enum Ending {
+    /// Stopped cleanly by its owner (or its test seam): nothing to restart.
+    Clean,
+    /// Handed over to a successor (#1523); `pid` is the run that handed over.
+    HandedOver { pid: u32 },
+    /// Anything else: running when it died, panicked, serve error, out of memory, no record.
+    Unexpected,
+}
+
+/// Takes the lifetime lock for an instant to prove no Runtime owns `events`, reads the record
+/// and lets the lock go. A Runtime that is starting after a handover retries its own lock
+/// (the takeover loop), so this brief hold does not refuse it.
+pub(super) fn ending(events: &Path) -> Option<Ending> {
+    let mut name = events.file_name()?.to_os_string();
+    name.push(".runtime-lifecycle.json");
+    let path = events.with_file_name(name);
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path.with_extension("lock"))
+        .ok()?;
+    lock.try_lock_exclusive().ok()?;
+    let mut bytes = Vec::new();
+    let read = File::open(&path).and_then(|file| file.take(16 * 1024).read_to_end(&mut bytes));
+    drop(lock);
+    let Some(record) = read
+        .ok()
+        .and_then(|_| serde_json::from_slice::<Record>(&bytes).ok())
+    else {
+        return Some(Ending::Unexpected);
+    };
+    Some(match (record.state, record.handed_over) {
+        (State::Clean, Some(true)) => Ending::HandedOver { pid: record.pid },
+        (State::Clean, _) => Ending::Clean,
+        _ => Ending::Unexpected,
+    })
 }
 
 #[derive(Deserialize)]
@@ -339,7 +387,7 @@ mod tests {
             _lock: std::fs::File::create(dir.path().join("runtime-lifecycle.lock")).unwrap(),
             writer: std::sync::Arc::new(std::sync::Mutex::new((path.clone(), record))),
         };
-        assert!(lifecycle.finish(false).is_ok());
+        assert!(lifecycle.finish(false, false).is_ok());
         let written: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(written["state"], "serve_error");

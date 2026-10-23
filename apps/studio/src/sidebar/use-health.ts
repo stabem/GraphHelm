@@ -11,6 +11,8 @@ export interface Restart {
   state: string;
   /** Bytes of a torn journal tail recovered at start-up, if any. */
   recoveredBytes: number | null;
+  /** #1962: how many times `serve --supervise` has restarted the Runtime on its own; null when it did not. */
+  supervisorRestarts: number | null;
 }
 
 /** Reads the restart the running Runtime reports; null when it reports no previous exit. */
@@ -18,17 +20,19 @@ export function restartOf(data: unknown): Restart | null {
   if (typeof data !== "object" || data === null) return null;
   const { previousExit, currentRun } = data as { previousExit?: unknown; currentRun?: unknown };
   if (typeof previousExit !== "object" || previousExit === null) return null;
-  const exit = previousExit as { state?: unknown; journalTailRecovered?: { trimmedBytes?: unknown } | null };
+  const exit = previousExit as { state?: unknown; journalTailRecovered?: { trimmedBytes?: unknown } | null; supervisorRestart?: { count?: unknown } | null };
   const started = (currentRun as { startedAt?: unknown } | null | undefined)?.startedAt;
   if (typeof started !== "number") return null;
   const bytes = exit.journalTailRecovered?.trimmedBytes;
-  return { startedAt: started, state: typeof exit.state === "string" ? exit.state : "unknown", recoveredBytes: typeof bytes === "number" ? bytes : null };
+  const count = exit.supervisorRestart?.count;
+  return { startedAt: started, state: typeof exit.state === "string" ? exit.state : "unknown", recoveredBytes: typeof bytes === "number" ? bytes : null, supervisorRestarts: typeof count === "number" ? count : null };
 }
 
 /** The one sentence under "Runtime restarted": why the previous run ended, in the owner's words. */
 export function restartDetail(restart: Restart): string {
   const why = restart.state === "clean" ? "The previous run stopped cleanly." : "The previous run stopped without recording why. Its agents were released; nothing was lost.";
-  return restart.recoveredBytes === null ? why : `${why} ${restart.recoveredBytes} bytes of a torn last write were set aside.`;
+  const torn = restart.recoveredBytes === null ? why : `${why} ${restart.recoveredBytes} bytes of a torn last write were set aside.`;
+  return restart.supervisorRestarts === null ? torn : `${torn} It was started again on its own.`;
 }
 
 /** The running project's restart, read from its Runtime's `/health` through the Studio's own origin. */

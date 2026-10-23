@@ -260,6 +260,19 @@ export function withoutLive<T>(live: Record<string, T>, id: string): Record<stri
   return Object.fromEntries(Object.entries(live).filter(([key]) => key !== id));
 }
 
+/** #1950: the journeys whose run the Proof view reads from the Runtime itself: every one it last
+ * saw running, except the selected one, whose open panel already follows it. Sorted, so the list
+ * is a stable key for the polling effect. */
+export function watchedIds(live: Record<string, { state: string }>, selected: string | null): string[] {
+  return Object.keys(live).filter((id) => id !== selected && live[id]?.state === "running").sort();
+}
+
+/** #1950: a panel that went away keeps its journey's entry only while the Runtime said running:
+ * the view then reads that run until it ends, so the card neither forgets it nor stays stuck. */
+export function afterPanelGone<T extends { state: string }>(live: Record<string, T>, id: string): Record<string, T> {
+  return live[id]?.state === "running" ? live : withoutLive(live, id);
+}
+
 /** #1914: a card's chip, score and bar from the run the open panel is following, so the card
  * reads `running` with its live step count while the run plays and the result the moment it ends,
  * before the journey list is read again. `null` when the run says nothing yet (state `none`). */

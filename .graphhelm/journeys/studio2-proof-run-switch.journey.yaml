@@ -1,0 +1,50 @@
+schema: graphhelm.journey-flow/1
+id: studio2-proof-run-switch
+title: A journey's card keeps reading running after another is selected
+name: "Run, then select another journey"
+feature: Studio
+purpose: "Pressing Run on a journey's card and then selecting another journey leaves the first card reading running, as the Runtime reports it, and then its result once the Runtime says the run ended (#1950)."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, recovery]
+viewports: [web]
+screens:
+  - id: elsewhere
+    title: Another journey is selected and the first card still reads running
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
+    ignoreQuery: [session, project, journey]
+    state: loading
+    expect: [{role: listitem, name: Read the Runtime health, text: running}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
+  - id: finished
+    title: The first card shows the result the Runtime recorded
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
+    ignoreQuery: [session, project, journey]
+    state: success
+    expect: [{role: listitem, name: Read the Runtime health, text: passed}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
+  - id: journeys
+    title: The journey to run is selected
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: list, name: Journeys}, {role: button, name: Run Read the Runtime health}, {role: button, name: Select Run a journey}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
+edges:
+  - id: elsewhere.finished
+    from: elsewhere
+    to: finished
+    acts:
+      - {kind: wait_for, role: list, name: Journeys}
+  - id: journeys.elsewhere
+    from: journeys
+    to: elsewhere
+    acts:
+      - {kind: activate, role: button, name: Run Read the Runtime health}
+      - {kind: activate, role: button, name: Select Run a journey}
+paths:
+  main: [journeys.elsewhere, elsewhere.finished]
+drift: []

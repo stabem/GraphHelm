@@ -42,7 +42,7 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 <section aria-label="What I asked" style="border: 1px solid #5a3a22; border-radius: 12px; background: #151210; padding: 10px; display: flex; flex-direction: column; gap: 8px">
 <div style="display: flex; gap: 6px; align-items: center"><span style="width: 8px; height: 8px; border-radius: 50%; background: #ff8a3d"></span><strong class="mono" style="font-size: 11px">WHAT I ASKED</strong><span style="flex: 1"></span><span class="mono" style="color: #8a8a96">{{reqN}}</span></div>
 <sc-for list="{{reqs}}" as="r">
-<button class="b" onClick="{{r.pick}}" style="padding: 10px; border-radius: 10px; border: 1px solid {{r.edge}}; background: #1e1e22; display: flex; flex-direction: column; gap: 6px">
+<button class="b" onClick="{{r.pick}}" style="padding: 10px; border-radius: 10px; border: 1px solid {{r.edge}}; border-left: 3px solid {{r.rc}}; background: #1e1e22; display: flex; flex-direction: column; gap: 6px">
 <span class="mono" style="font-size: 10px; color: #ff8a3d">{{r.when}}</span>
 <span style="font-weight: 500; line-height: 1.35">{{r.ask}}</span>
 <div style="display: flex; gap: 3px"><sc-for list="{{r.bar}}" as="q"><span style="width: 9px; height: 9px; border-radius: 2px; background: {{q}}"></span></sc-for></div>
@@ -55,7 +55,7 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 <section aria-label="{{col.name}}" style="border: 1px solid #2a2a30; border-radius: 12px; background: #111113; padding: 10px; display: flex; flex-direction: column; gap: 8px">
 <div style="display: flex; gap: 6px; align-items: center"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{col.c}}"></span><strong class="mono" style="font-size: 11px">{{col.name}}</strong><span style="flex: 1"></span><span class="mono" style="color: #8a8a96">{{col.n}}</span></div>
 <sc-for list="{{col.cards}}" as="a">
-<button class="b" onClick="{{a.pick}}" style="padding: 10px; border-radius: 10px; border: 1px solid {{a.edge}}; background: #1e1e22; display: flex; flex-direction: column; gap: 6px">
+<button class="b" onClick="{{a.pick}}" style="padding: 10px; border-radius: 10px; border: 1px solid {{a.edge}}; border-left: 3px solid {{a.rc}}; background: #1e1e22; display: flex; flex-direction: column; gap: 6px">
 <div style="display: flex; gap: 6px; align-items: center">
 <span style="width: 8px; height: 8px; border-radius: 50%; background: {{a.dot}}"></span>
 <strong style="font-size: 13px">{{a.name}}</strong>
@@ -161,13 +161,14 @@ const RQ = [null,
 { ask: 'Delivery list copies the message', when: '21 Oct 17:50' }];
 const f = this.state.f;
 const keep = (a) => (this.state.r === 0 || a.req === this.state.r) && (f === 'all' || (f === 'reply' && a.asks) || (f === 'idle' && a.idleM >= 30));
-const card = (a) => ({ ...a, reqShort: a.req ? RQ[a.req].ask : 'no request', dot: a.asks ? R : (a.idleM >= 30 ? '#8a8a96' : G), idleC: a.idleM >= 30 ? R : (a.idleM >= 10 ? O : '#8a8a96'),
+const RC = ['#e0a458', '#6ec6ff', '#c792ea', '#f78fb3']; // #1923: one stable colour per WHAT I ASKED request, shown only as a left stripe
+const card = (a) => ({ ...a, rc: a.req ? RC[(a.req - 1) % RC.length] : '#34343c', reqShort: a.req ? RQ[a.req].ask : 'no request', dot: a.asks ? R : (a.idleM >= 30 ? '#8a8a96' : G), idleC: a.idleM >= 30 ? R : (a.idleM >= 10 ? O : '#8a8a96'),
 edge: this.state.sel === a.name ? '#ff8a3d' : (a.asks ? '#5a2a2a' : '#34343c'), pick: () => this.setState({ sel: a.name }) });
 const cols = COLS.map((c, i) => { const cards = A.filter(a => a.col === i && keep(a)).map(card); return { name: c[0], c: c[1], n: cards.length, cards, empty: cards.length === 0 }; });
 const s = card(A.find(a => a.name === this.state.sel));
 const sel = { ...s, colName: COLS[s.col][0].toLowerCase() };
 const reqs = RQ.slice(1).map((x, i) => { const id = i + 1; const ag = A.filter(a => a.req === id);
-return { ...x, edge: this.state.r === id ? '#ff8a3d' : '#34343c', pick: () => this.setState({ r: this.state.r === id ? 0 : id }),
+return { ...x, rc: RC[(id - 1) % RC.length], edge: this.state.r === id ? '#ff8a3d' : '#34343c', pick: () => this.setState({ r: this.state.r === id ? 0 : id }),
 bar: ag.map(a => a.asks ? R : (a.idleM >= 30 ? '#8a8a96' : (a.col === 5 ? G : O))),
 agents: ag.map(a => ({ n: a.name, c: a.asks ? R : (a.idleM >= 30 ? '#8a8a96' : G) })), summary: ag.length + (ag.length === 1 ? ' agent' : ' agents') + (ag.some(a => a.asks) ? ' · needs a reply' : '') }; });
 const todo = [

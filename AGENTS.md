@@ -121,6 +121,8 @@ Every visual Studio change is made first in the design artifact and implemented 
 owner approves it there; the approved files live in [`docs/design/studio/`](docs/design/studio/README.md)
 and are updated in the pull request that implements them.
 
+A visual Studio change updates docs/design/studio in the same PR.
+
 ## Delivery
 
 How a change gets from an issue to `main` is [docs/process/DELIVERY.md](docs/process/DELIVERY.md)

@@ -141,7 +141,7 @@ export interface IssueJourney {
 }
 
 export interface JourneyScreen { id: string; url: string; title?: string }
-export interface JourneyEdge { id: string; from: string; to: string; acts?: { kind: string; role?: string; name?: string; text?: string }[] }
+export interface JourneyEdge { id: string; from: string; to: string; /** #1955: what this step proves for the user. */ why?: string; acts?: { kind: string; role?: string; name?: string; text?: string }[] }
 
 export interface JourneyLastRun {
   status: "passed" | "failed" | "not_run";

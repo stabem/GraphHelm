@@ -17,67 +17,72 @@ screens:
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Answering}]
+    expect: [{role: status, name: Last action, text: Answering, because: the Studio records the Answer action as Answering}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: archived
     title: Archive acts on its item
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Archived}]
+    expect: [{role: status, name: Last action, text: Archived, because: the Studio records the Archive action as Archived}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: assigned
     title: Assign acts on its item
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Assigned}]
+    expect: [{role: status, name: Last action, text: Assigned, because: the Studio records the Assign action as Assigned}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: list
     title: Needs action lists items oldest first
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Needs action, text: oldest first}, {role: list, name: Needs action items}, {role: listitem, name: Needs action item 1}]
+    expect: [{role: region, name: Needs action, text: oldest first, because: "Needs action lists the oldest item first, and its header says so"}, {role: list, name: Needs action items}, {role: listitem, name: Needs action item 1}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: merged
     title: Merge acts on its item
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Merge requested}]
+    expect: [{role: status, name: Last action, text: Merge requested, because: "the Studio records the Merge action as Merge requested, since the merge itself is the lane's"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: reassigned
     title: Reassign acts on its item
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Reassigned}]
+    expect: [{role: status, name: Last action, text: Reassigned, because: the Studio records the Reassign action as Reassigned}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
 edges:
   - id: answered.assigned
     from: answered
     to: assigned
+    why: "Assign gives the waiting work to a lane, so it does not sit idle."
     acts:
       - {kind: activate, role: button, name: Assign lane-author}
   - id: archived.reassigned
     from: archived
     to: reassigned
+    why: Reassign moves a quiet lane's work to another lane.
     acts:
       - {kind: activate, role: button, name: Reassign lane-quiet}
   - id: assigned.merged
     from: assigned
     to: merged
+    why: Merge asks for the approved pull request to be merged.
     acts:
       - {kind: activate, role: button, name: Merge lane-author}
   - id: list.answered
     from: list
     to: answered
+    why: "Answer on the planner's question opens the reply, so a waiting question gets answered."
     acts:
       - {kind: activate, role: button, name: Answer planner}
   - id: merged.archived
     from: merged
     to: archived
+    why: Archive clears a lane that has gone silent from the list.
     acts:
       - {kind: activate, role: button, name: Archive lane-gone}
 paths:

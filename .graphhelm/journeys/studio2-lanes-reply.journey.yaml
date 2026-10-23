@@ -30,6 +30,7 @@ edges:
   - id: asking.answered
     from: asking
     to: answered
+    why: Typing a reply to an asking agent and sending it records the owner's answer for that agent.
     acts:
       - {kind: enter_text, role: textbox, name: Reply, text: Use the existing slot.}
       - {kind: submit, role: button, name: Send reply}

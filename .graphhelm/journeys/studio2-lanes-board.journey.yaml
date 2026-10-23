@@ -17,19 +17,20 @@ screens:
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Question, text: "?"}, {role: button, name: Reply}]
+    expect: [{role: region, name: Question, text: "?", because: "the fixture's planner asks a question, and a question ends with a question mark"}, {role: button, name: Reply}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/asked.ts, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
   - id: lanes
     title: "One card per agent, in its column"
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: tab, name: Lanes}, {role: list, name: Agent board}, {role: region, name: What I asked, text: Show the work graph for the fixture run In progress}, {role: list, name: Owner requests}, {role: group, name: Idle time}, {role: group, name: Request, text: "#"}, {role: group, name: Progress}, {role: group, name: Last action}]
+    expect: [{role: tab, name: Lanes}, {role: list, name: Agent board}, {role: region, name: What I asked, text: Show the work graph for the fixture run In progress, because: "the fixture records the request Show the work graph for the fixture run, and its linked issue is still in progress"}, {role: list, name: Owner requests}, {role: group, name: Idle time}, {role: group, name: Request, text: "#", because: "a card's request is shown with its issue number, which starts with #"}, {role: group, name: Progress}, {role: group, name: Last action}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/asked.ts, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
 edges:
   - id: lanes.asking
     from: lanes
     to: asking
+    why: "An agent that asks the owner something shows its question on its card, so the owner sees it without opening anything."
     acts:
       - {kind: inspect, role: region, name: Question}
 paths:

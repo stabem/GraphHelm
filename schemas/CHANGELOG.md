@@ -1,5 +1,19 @@
 # Schema Changelog
 
+## journey-flow 1.14.0 - a step says why, a check says because (#1955)
+
+An edge may carry `why` (1 to 512 characters): what the step proves for the user, in a plain
+sentence a person who did not write the flow can check. An `expect` entry may carry `because`
+(1 to 512 characters): why its value is the right one. The canonical writer and the approval
+digest include both only when present, so changing the text of an approved flow's `why` or
+`because` makes its approval stale and the owner approves it again. The agent's draft writer,
+approval and `journey validate` on a draft refuse an edge with no `why`
+(`flow.step_why_missing`) and a non-obvious expectation with no `because`
+(`flow.expect_because_missing`): one on a screen an `http` or `cli` act leads to, one with a
+backend role (`exit`, `stdout`, `json`), or one that checks `text` or `absent`. An approved flow
+keeps working and carries each gap as a `flow.unexplained` warning. Additive: every 1.13.0 flow
+stays valid with the same bytes and digest. The catalog digest is updated from canonical JSON.
+
 ## journey-flow 1.13.0 - a screen may ignore named query keys (#1890)
 
 A screen may carry `ignoreQuery`: 1 to 8 distinct query keys (`[A-Za-z0-9_.-]`, up to 64

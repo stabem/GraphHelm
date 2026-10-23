@@ -2,7 +2,7 @@ import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow } from "../runtime/client";
-import { countSteps, failsOnlyOn, journeyScore, journeySteps, lastRunChip, preparingStatus } from "./steps";
+import { becauseOf, countSteps, failsOnlyOn, journeyScore, journeySteps, lastRunChip, preparingStatus } from "./steps";
 
 const flow: JourneyFlow = {
   id: "buy",
@@ -114,5 +114,27 @@ describe("step counts and journey score", () => {
     expect(journeyScore({ ...flow, lastRun: { ...last, status: "failed", failingStep: null } }).passed).toBeNull();
     expect(journeyScore({ ...flow, lastRun: { ...last, status: "passed", failingStep: null } }).passed).toBe(3);
     expect(journeyScore({ ...flow, lastRun: undefined }).passed).toBeNull();
+  });
+});
+
+// #1955: the Action panel reads each step's `why` and each assertion's `because` from the flow.
+// Regression: a reason shown under the wrong assertion (matched by role alone), or an empty reason
+// read as given so the panel never says none was written.
+describe("journey explanations", () => {
+  it("carries the edge's why and matches each check to its own because", () => {
+    const explained: JourneyFlow = {
+      ...flow,
+      screens: [{ id: "list", url: "/items" }, { id: "item", url: "/items/1" }, { id: "done", url: "/done", expect: [
+        { role: "stdout", name: "a", because: "only a was recorded" },
+        { role: "stdout", name: "b", because: "  " },
+      ] } as never],
+      edges: [{ ...flow.edges![0]!, why: "Saving keeps the sofa" }, { ...flow.edges![1]!, why: "" }],
+    };
+    const steps = journeySteps(explained, null);
+    expect(steps.map((step) => step.why)).toEqual([null, null, "Saving keeps the sofa"]);
+    const done = steps[2]!;
+    expect(becauseOf(done.expects, { role: "stdout", name: "a" })).toBe("only a was recorded");
+    expect(becauseOf(done.expects, { role: "stdout", name: "b" })).toBeNull();
+    expect(becauseOf(done.expects, { role: "stdout", name: "a", text: "x" })).toBeNull();
   });
 });

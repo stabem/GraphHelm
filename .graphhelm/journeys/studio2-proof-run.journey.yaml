@@ -24,7 +24,7 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-run
     ignoreQuery: [session, project]
     state: loading
-    expect: [{role: log, name: Run console, text: observer}, {role: button, name: Hide log}]
+    expect: [{role: log, name: Run console, text: observer, because: "the run console prints the browser observer's setup lines, which name the observer"}, {role: button, name: Hide log}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
   - id: preparing
     title: The browser is being prepared
@@ -38,22 +38,25 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-run
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: list, name: Steps}, {role: img, name: Step 1 frame}, {role: listitem, name: Step 1, text: web}, {role: listitem, name: Step 1, text: mobile}]
+    expect: [{role: list, name: Steps}, {role: img, name: Step 1 frame}, {role: listitem, name: Step 1, text: web, because: "every run plays both widths, so step 1 carries a web verdict"}, {role: listitem, name: Step 1, text: mobile, because: "every run plays both widths, so step 1 carries a mobile verdict"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
 edges:
   - id: journeys.preparing
     from: journeys
     to: preparing
+    why: "Run first prepares the browser and says so, so the owner knows the run started."
     acts:
       - {kind: activate, role: button, name: Run}
   - id: log.ran
     from: log
     to: ran
+    why: When the run ends each step card holds its frame and its verdict for web and for mobile.
     acts:
       - {kind: wait_for, role: list, name: Steps}
   - id: preparing.log
     from: preparing
     to: log
+    why: "Show log opens what the preparation printed, so a slow or failed setup can be read."
     acts:
       - {kind: activate, role: button, name: Show log}
 paths:

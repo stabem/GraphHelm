@@ -96,6 +96,8 @@ allowed** (`flow.not_canonical`); `journey compile --fmt` rewrites a flow canoni
 | `purpose` | what the journey proves for the user, in one sentence |
 | screen `title` | what the screen is for |
 | edge `intent` | optional: what the user does on the edge and why, including what is left as-is |
+| edge `why` | what this step proves for the user, in a sentence a person who did not write the flow can check |
+| expect `because` | why this expected value is the right one; required when it is not obvious |
 
 A journey must say what it proves (#1287). The draft writer and `journey approve` refuse a flow
 with no `purpose` (`flow.purpose_missing`), a screen with no `title`
@@ -105,6 +107,28 @@ its previous screen did not already show (`flow.outcome_unchecked`): click, clic
 "success" is not a test. `validate` reports the same gaps on an existing flow as
 `flow.weak_journey` warnings, and the Studio test view shows the purpose, each step's inputs and
 every check. For a save, end the path on the same page after a reload and expect the saved value.
+
+A journey also explains itself to whoever approves it (#1955). Every edge carries `why`, and every
+non-obvious expectation carries `because`: one on a screen an `http` or `cli` act leads to, one with
+a backend role (`exit`, `stdout`, `json`), or one that checks `text` or `absent`. The draft writer,
+`journey approve` and `validate` on a draft refuse an edge with no `why` (`flow.step_why_missing`)
+and such an expectation with no `because` (`flow.expect_because_missing`); an approved flow keeps
+working and carries them as `flow.unexplained` warnings. Proof shows each step's WHY THIS STEP and
+each assertion's reason. Both are part of the approval digest, so rewording one makes the approval
+stale. Good:
+
+```yaml
+  - id: review.block
+    from: approved-b
+    to: blocked-b
+    why: A BLOCK recorded on head B is reported even after B was approved, so an approval never hides an open objection.
+    acts:
+      - {kind: cli, role: exec, name: python run.py block}
+```
+
+with `{role: stdout, name: "\"matchingBlockIds\":[\"block-b\"]", because: block-b is the only BLOCK recorded at head B}`.
+Bad: `why: runs the block command` and `because: expected output`: they restate the act and the
+value, and tell the approver nothing.
 
 Rules: ids match `^[a-z0-9][a-z0-9._-]{0,127}$`; acts and expectations name an ARIA role and
 accessible name, never a CSS selector; secrets are names, never values. Bounds: 32 KiB file,

@@ -13,18 +13,19 @@ screens:
     title: "The blocked check routes back, the corrected check advances to review"
     url: /report
     state: stable
-    expect: [{role: exit, name: "0"}, {role: stdout, name: keel.scope.path_outside_card}, {role: stdout, name: blocked=routed-to-implement; corrected=advanced-to-review}]
+    expect: [{role: exit, name: "0", because: scenario.py exits 0 only when both routes happened as expected}, {role: stdout, name: keel.scope.path_outside_card, because: "the blocked diff touches a path outside the card, so the finding is keel.scope.path_outside_card"}, {role: stdout, name: blocked=routed-to-implement; corrected=advanced-to-review, because: the scenario prints this line only after the blocked check readied route-correction and the corrected check readied route-review}]
     scope: unknown
   - id: task-started
     title: A task starts with a scoped card
     url: /task
     state: stable
-    expect: [{role: stdout, name: blocked=routed-to-implement; corrected=advanced-to-review}]
+    expect: [{role: stdout, name: blocked=routed-to-implement; corrected=advanced-to-review, because: "the scenario prints the same summary line from its start screen, since one command observes the whole route"}]
     scope: unknown
 edges:
   - id: route-by-verdict
     from: task-started
     to: routing-report
+    why: "A blocked Keel check sends the task back to implement with its finding, and a corrected head moves it on to review."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-watchdog-routing/scenario.py}
 paths:

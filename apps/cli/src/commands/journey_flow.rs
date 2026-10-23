@@ -304,6 +304,7 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
         }
     }
     findings.extend(weak_journey(value, false));
+    findings.extend(unexplained(value, false));
     findings.extend(observer_missing(value, false));
     let mut reached = BTreeSet::new();
     for (name, path) in value["paths"].as_object().unwrap() {
@@ -590,6 +591,71 @@ fn weak_journey(value: &Value, strict: bool) -> Vec<Finding> {
     gaps
 }
 
+/// The roles a command or HTTP screen expects (`journey_backend`): an exit code, printed text or a
+/// JSON field is opaque to a person who did not write the flow, so each needs its `because`.
+const BACKEND_ROLES: &[&str] = &["exit", "stdout", "json"];
+
+/// #1955: a journey explains itself to whoever approves it. Every edge says in `why` what the step
+/// proves for the user, and every non-obvious expectation says in `because` why its value is the
+/// right one: any expectation on a screen an `http` or `cli` act leads to, any with a backend role
+/// (`exit`, `stdout`, `json`), and any that checks `text` or `absent`. `strict` (the agent's draft
+/// writer, approval, and `journey validate` on a draft) refuses each gap with its own code;
+/// everywhere else an existing flow keeps working and carries each gap as a `flow.unexplained`
+/// warning, so a flow approved before the rule is flagged, never broken.
+fn unexplained(value: &Value, strict: bool) -> Vec<Finding> {
+    let mut gaps = Vec::new();
+    let said = |v: &Value| v.as_str().is_some_and(|t| !t.trim().is_empty());
+    let mut backend = BTreeSet::new();
+    for (i, edge) in value["edges"].as_array().into_iter().flatten().enumerate() {
+        if !said(&edge["why"]) {
+            gaps.push(Finding::new(
+                "flow.step_why_missing",
+                format!("/edges/{i}/why"),
+                "say in the edge `why` what this step proves for the user",
+            ));
+        }
+        if edge["acts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|act| matches!(act["kind"].as_str(), Some("http" | "cli")))
+            && let Some(to) = edge["to"].as_str()
+        {
+            backend.insert(to);
+        }
+    }
+    for (i, screen) in value["screens"].as_array().into_iter().flatten().enumerate() {
+        let on_backend = screen["id"].as_str().is_some_and(|id| backend.contains(id));
+        for (j, expect) in screen["expect"].as_array().into_iter().flatten().enumerate() {
+            let opaque = on_backend
+                || expect["role"]
+                    .as_str()
+                    .is_some_and(|role| BACKEND_ROLES.contains(&role))
+                || expect.get("text").is_some()
+                || expect["absent"] == true;
+            if opaque && !said(&expect["because"]) {
+                gaps.push(Finding::new(
+                    "flow.expect_because_missing",
+                    format!("/screens/{i}/expect/{j}/because"),
+                    "say in `because` why this expected value is the right one",
+                ));
+            }
+        }
+    }
+    if strict {
+        return gaps;
+    }
+    gaps.into_iter()
+        .map(|g| {
+            Finding::new(
+                "flow.unexplained",
+                g.pointer,
+                format!("{}: {}", g.code, g.message),
+            )
+        })
+        .collect()
+}
+
 fn mark_digest(flow: &Value, edge: &Value) -> String {
     let url = flow["screens"]
         .as_array()
@@ -740,7 +806,16 @@ pub(super) fn draft_bytes(flow: &Value, project: &Path) -> Result<String, Vec<Fi
 
 pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
     match read(file) {
-        Ok((text, value)) => check_snapshot(file, &text, &value, project),
+        Ok((text, value)) => {
+            let mut findings = check_snapshot(file, &text, &value, project);
+            // #1955: a draft must explain itself before it is approved; an approved flow written
+            // before the rule keeps its `flow.unexplained` warning.
+            if value["status"] != "approved" {
+                findings.retain(|f| f.code != "flow.unexplained");
+                findings.extend(unexplained(&value, true));
+            }
+            findings
+        }
         Err(findings) => findings,
     }
 }
@@ -1366,6 +1441,9 @@ fn approval_findings(file: &Path, text: &str, flow: &Value, project: &Path) -> V
     // #1287: nothing is approved that does not say what it proves.
     findings.retain(|f| f.code != "flow.weak_journey");
     findings.extend(weak_journey(flow, true));
+    // #1955: nothing is approved that does not say why each step and check is there.
+    findings.retain(|f| f.code != "flow.unexplained");
+    findings.extend(unexplained(flow, true));
     findings.extend(observer_missing(flow, true));
     if text != canonical(flow, false) {
         findings.push(Finding::new(
@@ -1726,6 +1804,12 @@ pub(crate) fn write_draft(
             )],
             json!({}),
         );
+    }
+    // #1955: an agent's draft says why each step and each non-obvious check is there.
+    let gaps = unexplained(&flow, true);
+    if !gaps.is_empty() {
+        restore(&previous);
+        return report(COMMAND, vec![], gaps, json!({}));
     }
     let digest = approval_digest_of(&flow);
     if let Err(message) = super::journey_owner::record_drafted(&project, id, &digest, writer) {
@@ -2169,7 +2253,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
                 "scope",
             ][..],
         ),
-        ("edges", &["id", "from", "to", "intent", "acts", "safe"][..]),
+        ("edges", &["id", "from", "to", "intent", "why", "acts", "safe"][..]),
     ] {
         out.push_str(&format!("{group}:\n"));
         let mut entries = value[group].as_array().unwrap().iter().collect::<Vec<_>>();
@@ -2193,7 +2277,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
                 } else {
                     out.push_str(&format!(
                         "{prefix}{field}: {}\n",
-                        inline(v, &["role", "name", "absent", "text", "digest"])
+                        inline(v, &["role", "name", "absent", "text", "because", "digest"])
                     ));
                 }
             }
@@ -2383,6 +2467,85 @@ mod tests {
         assert_eq!(canonical(&reread, false), written);
         assert_ne!(approval_digest(&with), approval_digest(&plain));
         assert_eq!(written.replacen(&line, "", 1), canonical(&plain, false));
+    }
+
+    /// #1955: a journey explains itself to whoever approves it. Defects named: the canonical writer
+    /// drops `why` or `because` (so formatting erases the explanation and the approval ignores it),
+    /// the schema takes an empty one, a draft with an unexplained step or command check is accepted
+    /// by the strict doors, an obvious browser check is wrongly demanded a reason, or an approved
+    /// flow without them is broken instead of warned. Cost: in memory only.
+    #[test]
+    fn a_step_why_and_a_check_because_are_written_required_and_approved() {
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let schemas = flow_schemas().unwrap();
+        let mut bare = plain.clone();
+        for edge in bare["edges"].as_array_mut().unwrap() {
+            edge.as_object_mut().unwrap().remove("why");
+        }
+        let codes = |found: Vec<Finding>| -> Vec<(&'static str, String)> {
+            found.into_iter().map(|f| (f.code, f.pointer)).collect()
+        };
+        assert_eq!(
+            codes(unexplained(&bare, true)),
+            vec![
+                ("flow.step_why_missing", "/edges/0/why".to_owned()),
+                ("flow.step_why_missing", "/edges/1/why".to_owned()),
+            ],
+            "a browser check of a heading needs no because; every step needs a why"
+        );
+        // Not strict (an approved flow, preview, watch): the same gaps, as warnings.
+        let warned = unexplained(&bare, false);
+        assert!(warned.iter().all(|f| f.code == "flow.unexplained" && f.is_warning()));
+        assert_eq!(warned.len(), 2);
+        assert!(unexplained(&plain, true).is_empty(), "the fixture explains itself");
+
+        // A command step: every expectation on the screen it leads to needs its because.
+        let mut command = plain.clone();
+        command["edges"][1]["acts"] = json!([{"kind": "cli", "role": "exec", "name": "sh pay.sh"}]);
+        command["screens"][1]["expect"] = json!([
+            {"role": "exit", "name": "0", "because": "the payment script succeeds"},
+            {"role": "heading", "name": "Order placed"}
+        ]);
+        assert_eq!(
+            codes(unexplained(&command, true)),
+            vec![("flow.expect_because_missing", "/screens/1/expect/1/because".to_owned())]
+        );
+        assert!(schemas.validate(FLOW_SCHEMA_ID, &command, "journey-flow").is_empty());
+        for (field, at) in [("why", "/edges/0/why"), ("because", "/screens/1/expect/0/because")] {
+            let mut empty = command.clone();
+            let target = if field == "why" {
+                &mut empty["edges"][0]
+            } else {
+                &mut empty["screens"][1]["expect"][0]
+            };
+            target[field] = json!("");
+            assert!(
+                schemas
+                    .validate(FLOW_SCHEMA_ID, &empty, "journey-flow")
+                    .iter()
+                    .any(|d| d.path.starts_with(at)),
+                "an empty {field} is refused"
+            );
+        }
+
+        // Written, read back the same, and part of what the owner approves.
+        let written = canonical(&command, false);
+        assert!(written.contains("    why: "), "{written}");
+        assert!(
+            written.contains("{role: exit, name: \"0\", because: the payment script succeeds}"),
+            "{written}"
+        );
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(canonical(&reread, false), written);
+        let mut reworded = command.clone();
+        reworded["screens"][1]["expect"][0]["because"] = json!("another reason");
+        assert_ne!(approval_digest(&reworded), approval_digest(&command));
+        let mut rewhy = command.clone();
+        rewhy["edges"][0]["why"] = json!("another reason");
+        assert_ne!(approval_digest(&rewhy), approval_digest(&command));
     }
 
     /// #1041: "this thing is gone" is an expectation. Defects named: the canonical writer drops

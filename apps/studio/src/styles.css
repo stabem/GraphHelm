@@ -312,6 +312,10 @@ button { font: inherit; }
 .action-thumbs img { display: block; width: 100%; aspect-ratio: 1694 / 946; object-fit: cover; object-position: top; }
 .action-show { align-self: flex-end; color: #8ab4ff; padding: 0; background: none; border: 0; }
 .action-reason { color: var(--muted); }
+/* #1955: why the step is there, and each assertion's reason under it. */
+.action-why { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-left: 2px solid #ff8a3d; border-radius: 0 6px 6px 0; background: var(--bg); }
+.assertion { display: flex; flex-direction: column; gap: 2px; }
+.assertion-because { padding-left: 16px; font-size: 11px; }
 .compare-side-panel .muted { color: var(--faint); }
 .compare-changed { color: #ff8a3d; }
 @media (max-width: 760px) {

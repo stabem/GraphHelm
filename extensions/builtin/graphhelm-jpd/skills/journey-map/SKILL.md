@@ -75,10 +75,11 @@ if broken. For each write `.graphhelm/journeys/<id>.journey.yaml` (the worked ex
   and `risks` (the contract's risk enum, for example `authentication`, `money`, `personal_data`).
 - `screens`: one per screen from (a) on the journey: `id`, `title` (what the screen is for), `url` (a path pattern; numeric, uuid
   or hex segments become `:id`), `state` (the contract's expected-state enum), `expect` (1-8
-  `{role, name}` pairs with the exact accessible name the screen must show) and `scope` (the
+  `{role, name}` pairs with the exact accessible name the screen must show, each with a
+  `because` when its value is not obvious) and `scope` (the
   `scopePaths` list from (a), or the string `unknown`; never an empty list).
 - `edges`: `id` (`<from>.<verb>`), `from`, `to`, optional `intent` (what the user does and why,
-  including what is left as-is), and `acts`, each `{kind, role, name}` with the contract's
+  including what is left as-is), `why` (what the step proves for the user) and `acts`, each `{kind, role, name}` with the contract's
   semantic action kinds; `enter_text` takes `secret: <name>` (or a non-secret `text`). Write
   every input the user gives before a submit (`enter_text`, `select`, `upload`) as its own act.
 - Labels (#1296): `name` and `feature` sit outside the approved digest, so give a journey that
@@ -94,6 +95,20 @@ if broken. For each write `.graphhelm/journeys/<id>.journey.yaml` (the worked ex
   expect the saved value). `validate` reports the same gaps on an existing flow as
   `flow.weak_journey` warnings, and the Studio test view shows the purpose, each step's inputs
   and every check.
+- Explain it to whoever approves it (#1955). Every edge carries `why`: one plain sentence on what
+  this step proves for the user. Every non-obvious expectation carries `because`: why that value is
+  the right one. Non-obvious means any expectation on a screen an `http` or `cli` act leads to, any
+  with a backend role (`exit`, `stdout`, `json`), and any that checks `text` or `absent`; a heading
+  or button a browser screen shows needs none. The owner approves from these sentences, and a flow
+  copied into another project is only rewritten correctly if the reason travels with the value.
+  Good: `why: A BLOCK on head B is still reported after B is approved, so a later approval never
+  hides an open objection.` and `{role: stdout, name: "\"verdicts\":[]", because: approval-a was
+  given at head A; at head B it no longer counts, so no verdict matches}`. Bad: `why: run the
+  block step` (restates the act) and `because: expected output` (restates the value). The draft
+  writer, approval and `validate` on a draft refuse an edge with no `why`
+  (`flow.step_why_missing`) and a non-obvious expectation with no `because`
+  (`flow.expect_because_missing`); an approved flow carries them as `flow.unexplained` warnings.
+  Changing either text changes the approval digest, so the owner approves it again.
 - `paths`: `main` is the journey in one line, a list of edge ids; other named paths are
   alternatives. No path may revisit a screen.
 - `drift: []`.
@@ -247,12 +262,14 @@ edges:
   - id: entrar.sign-in
     from: entrar
     to: onboarding
+    why: The sign-in button takes a first-time seller into store setup, not to an error.
     acts:
       - {kind: activate, role: button, name: Entrar com Mercado Livre}
   - id: onboarding.finish
     from: onboarding
     to: dashboard
     intent: Finish setup with the defaults the store already has; nothing is typed
+    why: Finishing setup with the defaults lands the seller on the dashboard, so setup completes.
     acts:
       - {kind: submit, role: button, name: Finish}
 paths:

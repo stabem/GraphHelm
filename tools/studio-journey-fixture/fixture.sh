@@ -163,18 +163,19 @@ screens:
     title: The health answer read again
     url: /health
     state: success
-    expect: [{role: status, name: "200"}, {role: json, name: ok=true}, {role: json, name: command=serve.health}]
+    expect: [{role: status, name: "200", because: a healthy Runtime answers its health route with HTTP 200}, {role: json, name: ok=true, because: the fixture Runtime is up and says so}, {role: json, name: command=serve.health, because: the answer comes from the Runtime's own health handler}]
     scope: unknown
   - id: start
     title: The Runtime answers its health check
     url: /health
     state: stable
-    expect: [{role: status, name: "200"}, {role: json, name: ok=true}]
+    expect: [{role: status, name: "200", because: a healthy Runtime answers its health route with HTTP 200}, {role: json, name: ok=true, because: the fixture Runtime is up and says so}]
     scope: unknown
 edges:
   - id: read
     from: start
     to: checked
+    why: Reading the health route again gives the same healthy answer.
     acts:
       - {kind: http, role: GET, name: /health}
 paths:
@@ -205,29 +206,31 @@ screens:
     title: Node printed its version
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: v}]
+    expect: [{role: exit, name: "0", because: node --version succeeds}, {role: stdout, name: v, because: Node prints its version starting with v}]
     scope: unknown
   - id: start
     title: A shell is ready
     url: /
     state: stable
-    expect: [{role: exit, name: "0"}]
+    expect: [{role: exit, name: "0", because: the entry step is only where the commands start}]
     scope: unknown
   - id: waited
     title: Node printed after a wait
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: waited}]
+    expect: [{role: exit, name: "0", because: the wait command succeeds}, {role: stdout, name: waited, because: the command prints waited after its four-second wait}]
     scope: unknown
 edges:
   - id: printed.wait
     from: printed
     to: waited
+    why: A second command that waits keeps the run playing long enough to be watched.
     acts:
       - {kind: cli, role: exec, name: "node -e setTimeout(()=>console.log('waited'),4000)"}
   - id: start.print
     from: start
     to: printed
+    why: Node prints its version once the owner confirms the command.
     acts:
       - {kind: cli, role: exec, name: node --version}
 paths:
@@ -257,18 +260,19 @@ screens:
     title: The health answer says not ok
     url: /health
     state: success
-    expect: [{role: status, name: "200"}, {role: json, name: ok=false}]
+    expect: [{role: status, name: "200", because: the Runtime answers its health route with HTTP 200}, {role: json, name: ok=false, because: "deliberately wrong: the Runtime says ok=true, so this flow always fails"}]
     scope: unknown
   - id: start
     title: The Runtime answers its health check
     url: /health
     state: stable
-    expect: [{role: status, name: "200"}]
+    expect: [{role: status, name: "200", because: the Runtime answers its health route with HTTP 200}]
     scope: unknown
 edges:
   - id: read
     from: start
     to: checked
+    why: The health check is read and judged against a wrong expectation, so the journey fails.
     acts:
       - {kind: http, role: GET, name: /health}
 paths:

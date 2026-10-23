@@ -40,6 +40,8 @@ impl Finding {
             "flow.unreachable_screen"
                 // #1287: an approved flow that does not say what it proves is flagged, not broken.
                 | "flow.weak_journey"
+                // #1955: an approved flow that does not say why is flagged, not broken.
+                | "flow.unexplained"
                 | "flow.safe_stale"
                 | "flow.approval_unverifiable"
                 // #534 slice 2: an unsigned or unverifiable safe mark is void, not wrong.

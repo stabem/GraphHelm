@@ -35,8 +35,12 @@ export interface Step {
   url: string;
   /** #1905: every act of the edge, in words (WHAT IT DID). */
   acts: string[];
-  /** #1905: what the screen expects (ASSERTIONS), as the flow file declares it. */
-  expects: { role: string; name: string; text?: string }[];
+  /** #1955: what the edge into this step proves for the user (WHY THIS STEP); `null` when the
+   * flow gives no reason or the step is the entry screen. */
+  why: string | null;
+  /** #1905: what the screen expects (ASSERTIONS), as the flow file declares it, each with the
+   * flow's reason for it (#1955) when it gives one. */
+  expects: Expect[];
   /** #1905: the run's own check of each expectation, when it recorded them. */
   checks: Check[] | null;
   /** #1905: why the step stands as it does, as the Runtime recorded it (screen, else edge). */
@@ -93,12 +97,28 @@ function checksOf(seen: unknown): Check[] | null {
     typeof item === "object" && item !== null && typeof (item as Check).role === "string" && typeof (item as Check).name === "string" && typeof (item as Check).seen === "boolean");
 }
 
+/** One expectation a screen declares; `because` (#1955) is why its value is the right one. */
+export interface Expect { role: string; name: string; text?: string; because?: string }
+
 /** The screen's `expect` list, which the Runtime serves with the flow (the typed client omits it). */
-function expectsOf(screen: unknown): { role: string; name: string; text?: string }[] {
+function expectsOf(screen: unknown): Expect[] {
   const list = (screen as { expect?: unknown } | undefined)?.expect;
   if (!Array.isArray(list)) return [];
-  return list.filter((item): item is { role: string; name: string; text?: string } =>
+  return list.filter((item): item is Expect =>
     typeof item === "object" && item !== null && typeof (item as { role?: unknown }).role === "string" && typeof (item as { name?: unknown }).name === "string");
+}
+
+/** #1955: the flow's reason for an expectation the run checked, matched on role, name and text;
+ * `null` when the flow gives none. */
+export function becauseOf(expects: Expect[], check: { role: string; name: string; text?: string }): string | null {
+  const said = expects.find((want) => want.role === check.role && want.name === check.name && (want.text ?? "") === (check.text ?? ""))?.because;
+  return typeof said === "string" && said.trim() !== "" ? said : null;
+}
+
+/** #1955: the flow's reason for a step, when it gives one. */
+function whyOf(edge: JourneyEdge | null): string | null {
+  const said = edge?.why;
+  return typeof said === "string" && said.trim() !== "" ? said : null;
 }
 
 /** The order the run walks: the `main` path (else the first path), entry screen first, then each
@@ -168,6 +188,7 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
       title: screens.get(screen)?.title ?? null,
       url,
       acts: (edge?.acts ?? []).map(sayAct),
+      why: whyOf(edge),
       expects: expectsOf(screens.get(screen)),
       checks: checksOf(seen),
       reason: precondition ? "The commands' starting point: a command flow does not observe it." : (walked?.result === "skipped" ? walked.reason : undefined) ?? seen?.reason ?? walked?.reason ?? null,

@@ -24,37 +24,40 @@ screens:
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Work reassigned}, {role: list, name: Agent board, text: reassigned}]
+    expect: [{role: status, name: Work reassigned}, {role: list, name: Agent board, text: reassigned, because: the board marks an agent whose work was moved with the word reassigned}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]
   - id: stopped
     title: The stopped agent shows as stopped
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Agent stopped}, {role: list, name: Agent board, text: stopped}]
+    expect: [{role: status, name: Agent stopped}, {role: list, name: Agent board, text: stopped, because: the board marks a stopped agent with the word stopped}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]
   - id: woken
     title: Wake shows on the board
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Wake sent}, {role: list, name: Agent board, text: woken}]
+    expect: [{role: status, name: Wake sent}, {role: list, name: Agent board, text: woken, because: the board marks an agent that was just woken with the word woken}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]
 edges:
   - id: agent.woken
     from: agent
     to: woken
+    why: Wake on an agent is recorded and the board shows it woken.
     acts:
       - {kind: activate, role: button, name: Wake}
   - id: reassigned.stopped
     from: reassigned
     to: stopped
+    why: "Stop, once confirmed, stops the agent and the board shows it stopped."
     acts:
       - {kind: activate, role: button, name: Stop}
       - {kind: activate, role: button, name: Confirm stop}
   - id: woken.reassigned
     from: woken
     to: reassigned
+    why: Reassign moves the agent's work and the board shows it reassigned.
     acts:
       - {kind: activate, role: button, name: Reassign}
 paths:

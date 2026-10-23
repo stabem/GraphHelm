@@ -63,6 +63,13 @@ promise (`docs/keel/RECORDS.md` in the GraphHelm repository).
    not only what the previous screen already showed. The draft writer and approval refuse a flow
    that does not (`flow.purpose_missing`, `flow.screen_title_missing`,
    `flow.submit_without_input`, `flow.outcome_unchecked`).
+8b. Explain it to whoever approves it (#1955). Every flow edge carries `why`, a plain sentence on
+   what the step proves for the user; every non-obvious expectation (on an `http` or `cli` screen,
+   a backend role `exit`/`stdout`/`json`, or one with `text` or `absent`) carries `because`, why
+   that value is the right one. Good: `because: approval-a was given at head A, so at head B no
+   verdict matches`. Bad: `because: expected output`, which restates the value. The draft writer,
+   approval and `validate` on a draft refuse the gap (`flow.step_why_missing`,
+   `flow.expect_because_missing`).
 9. Where the journey lives decides how it is saved. If `.graphhelm/journeys/` already holds a
    flow (`<id>.journey.yaml`) for this journey, change the flow (its screens, edges and paths, as
    the `journey-map` skill describes), run `cli:journey validate` with `--all` and

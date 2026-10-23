@@ -13,51 +13,55 @@ screens:
     title: The approval matches head A
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"verdicts\":[\"approval-a\"]"}]
+    expect: [{role: exit, name: "0", because: run.py exits 0 only when the verdicts and block ids keel verdict printed are exactly the ones expected for this mode}, {role: stdout, name: "\"verdicts\":[\"approval-a\"]", because: "the comment snapshot holds one approval, approval-a, signed for head A, and the check asks about head A"}]
     scope: unknown
   - id: approved-b
     title: A new approval matches head B
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"verdicts\":[\"approval-b\"]"}]
+    expect: [{role: exit, name: "0", because: run.py exits 0 only when the verdicts and block ids keel verdict printed are exactly the ones expected for this mode}, {role: stdout, name: "\"verdicts\":[\"approval-b\"]", because: "mode b keeps only approval-b, signed for head B, and drops block-b from the snapshot, so approval-b is the one verdict at head B"}]
     scope: unknown
   - id: blocked-b
     title: A BLOCK on B is reported
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"matchingBlockIds\":[\"block-b\"]"}]
+    expect: [{role: exit, name: "0", because: run.py exits 0 only when the verdicts and block ids keel verdict printed are exactly the ones expected for this mode}, {role: stdout, name: "\"matchingBlockIds\":[\"block-b\"]", because: "mode block keeps both comments at head B, approval-b and the BLOCK block-b; block-b is the only BLOCK, so it is the one matching block id"}]
     scope: unknown
   - id: stale-a
     title: The approval on A is absent at head B
     url: /
     state: success
-    expect: [{role: exit, name: "0"}, {role: stdout, name: "\"verdicts\":[]"}]
+    expect: [{role: exit, name: "0", because: run.py exits 0 only when the verdicts and block ids keel verdict printed are exactly the ones expected for this mode}, {role: stdout, name: "\"verdicts\":[]", because: "approval-a was signed for head A but the check asks about head B, so no verdict matches and the list is empty"}]
     scope: unknown
   - id: start
     title: A local review fixture is ready
     url: /
     state: stable
-    expect: [{role: exit, name: "0"}]
+    expect: [{role: exit, name: "0", because: "the fixture needs no setup command: the step only marks where the commands start, and exit 0 is the shell being ready"}]
     scope: unknown
 edges:
   - id: review.a
     from: start
     to: approved-a
+    why: "An approval given at head A counts at head A, so a reviewed head can merge."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py a}
   - id: review.b
     from: stale-a
     to: approved-b
+    why: "A fresh approval given at head B counts at head B, so re-reviewing the new head is enough to merge it."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py b}
   - id: review.block
     from: approved-b
     to: blocked-b
+    why: "A BLOCK given at head B is reported even though B also has an approval, so an approval never hides an open objection."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py block}
   - id: review.stale
     from: approved-a
     to: stale-a
+    why: "After a new commit moves the branch to head B, the approval given at A no longer counts, so an unreviewed head cannot merge on an old verdict."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py stale}
 paths:

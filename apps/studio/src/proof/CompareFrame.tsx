@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 import type { JourneyPastRun, Runtime } from "../runtime/client";
 import { changedSentence, diffPixels, type CompareMode, type Pixels } from "./compare";
-import { failsOnlyOn, type Step } from "./steps";
+import { becauseOf, failsOnlyOn, type Step } from "./steps";
 import { yamlLines } from "./yaml-view";
 
 const MODES: { mode: CompareMode; label: string }[] = [
@@ -125,6 +125,12 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
         <strong className="action-title">{step.label}</strong>
         {step.title && <span>{step.title}</span>}
         <pre className="action-code">step {step.screen}{"\n"}does {step.label}</pre>
+        <section aria-label="Why this step" className="action-why">
+          <span className="section-label">WHY THIS STEP</span>
+          {step.why !== null
+            ? <span>{step.why}</span>
+            : <span className="muted">{step.edge === null ? "The journey starts here." : "No reason written for this step."}</span>}
+        </section>
         <section aria-label="Compare with an earlier run" className="action-compare">
           <span className="section-label">{earlier === null ? "NO EARLIER RUN" : `COMPARE WITH ${when}`}</span>
           {offReason !== null && <span>{offReason}</span>}
@@ -145,12 +151,12 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
         <span className="section-label">ASSERTIONS</span>
         {step.checks !== null && step.checks.length > 0
           ? step.checks.map((check, index) => (
-            <span key={index}><b className={check.seen ? "pass" : "fail"}>{check.seen ? "✓" : "✕"}</b> shows {check.role} “{check.name}”{check.text ? ` with “${check.text}”` : ""}</span>
+            <span key={index} className="assertion"><span><b className={check.seen ? "pass" : "fail"}>{check.seen ? "✓" : "✕"}</b> shows {check.role} “{check.name}”{check.text ? ` with “${check.text}”` : ""}</span><Because said={becauseOf(step.expects, check)} /></span>
           ))
           : step.expects.length === 0
             ? <span className="muted">This screen declares no assertions.</span>
             : step.expects.map((want, index) => (
-              <span key={index}><b className={step.status === "passed" ? "pass" : "idle"}>{assertMark}</b> shows {want.role} “{want.name}”{want.text ? ` with “${want.text}”` : ""}</span>
+              <span key={index} className="assertion"><span><b className={step.status === "passed" ? "pass" : "idle"}>{assertMark}</b> shows {want.role} “{want.name}”{want.text ? ` with “${want.text}”` : ""}</span><Because said={becauseOf([want], want)} /></span>
             ))}
         {step.checks === null && (step.status === "failed" || step.status === "drift") && <span className="muted">This run recorded no per-assertion checks for this step.</span>}
         {step.reason !== null && step.status !== "passed" && <span className="action-reason">{step.reason}</span>}
@@ -159,6 +165,11 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
       </aside>
     </div>
   );
+}
+
+/** #1955: an assertion's reason, in muted text under it; said plainly when the flow gives none. */
+function Because({ said }: { said: string | null }) {
+  return <span className="muted assertion-because">{said ?? "No reason written for this check."}</span>;
 }
 
 /** #1914: stdout that parses as JSON reads as indented key: value lines, coloured by type, with a

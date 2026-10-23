@@ -17,27 +17,28 @@ screens:
     url: /?session=studio-fixture
     ignoreQuery: [session, project, run]
     state: stable
-    expect: [{role: banner, name: Top bar, text: demo}, {role: region, name: Project demo}, {role: link, name: proj-two}, {role: list, name: Runs in demo, absent: true}]
+    expect: [{role: banner, name: Top bar, text: demo, because: "the top bar names the open project, demo"}, {role: region, name: Project demo}, {role: link, name: proj-two}, {role: list, name: Runs in demo, absent: true, because: each project is one card with no run list under it}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
   - id: first
     title: The first project's run is shown
     url: /?session=studio-fixture
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: navigation, name: Projects}, {role: region, name: Project demo, text: journeys}, {role: banner, name: Top bar, text: demo}, {role: list, name: Runs in demo, absent: true}, {role: button, name: Add project folder}]
+    expect: [{role: navigation, name: Projects}, {role: region, name: Project demo, text: journeys, because: the project card in the sidebar counts its journeys}, {role: banner, name: Top bar, text: demo, because: "the top bar names the open project, demo"}, {role: list, name: Runs in demo, absent: true, because: each project is one card with no run list under it}, {role: button, name: Add project folder}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
   - id: second
     title: The added project opens with its own run
     url: /?session=studio-fixture
     ignoreQuery: [session, project, run]
     state: stable
-    expect: [{role: banner, name: Top bar, text: second-run}, {role: region, name: Project proj-two}, {role: link, name: demo}, {role: list, name: Runs in proj-two, absent: true}]
+    expect: [{role: banner, name: Top bar, text: second-run, because: "the second project's own team run is second-run, and the top bar names it"}, {role: region, name: Project proj-two}, {role: link, name: demo}, {role: list, name: Runs in proj-two, absent: true, because: each project is one card with no run list under it}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
 edges:
   - id: first.second
     from: first
     to: second
     intent: The owner adds the second project's folder with the ticket graphhelm studio open --project minted for it.
+    why: Adding a second project folder with its ticket opens it as its own card in the same Studio.
     acts:
       - {kind: activate, role: button, name: Add project folder}
       - {kind: enter_text, role: textbox, name: Project folder, secret: proj_two_folder}
@@ -46,6 +47,7 @@ edges:
   - id: second.back
     from: second
     to: back
+    why: Switching back in the sidebar opens the first project's own run again.
     acts:
       - {kind: activate, role: link, name: demo}
 paths:

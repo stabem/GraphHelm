@@ -1,5 +1,5 @@
-import type { OwnerRequest } from "../graph/requests";
-import type { BoardTask } from "../runtime/client";
+import { arrangeRequests, requestActivity, requestColor, requestProgress, type Arranged, type OwnerRequest, type RequestProgress } from "../graph/requests";
+import type { BoardTask, JourneyFlow } from "../runtime/client";
 import type { Agent } from "./board";
 
 /** The colour of one agent's square and chip in WHAT I ASKED (Lanes.dc.html): it asks a question,
@@ -15,6 +15,13 @@ export interface AskedCard {
   agents: { lane: string; tone: AskedTone }[];
   /** "N agents", plus " · needs a reply" when one of them asks. */
   summary: string;
+  /** #1922: not started / in progress N of M merged / delivered / proven. */
+  chip: RequestProgress["chip"];
+  progress: RequestProgress;
+  /** Newest activity in ms; orders the column. */
+  at: number;
+  /** The request's own stripe colour. */
+  color: string;
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -54,6 +61,17 @@ export function requestTitles(requests: readonly OwnerRequest[], all: readonly A
   return titles;
 }
 
+/** The stripe colour of the request each lane serves (same pick as `requestTitles`). */
+export function requestColors(requests: readonly OwnerRequest[], all: readonly Agent[], tasks: readonly BoardTask[]): Map<string, string> {
+  const colors = new Map<string, string>();
+  for (const request of [...requests].reverse()) {
+    for (const agent of agentsFor(request, all, tasks)) {
+      if (!colors.has(agent.lane)) colors.set(agent.lane, requestColor(request.requestId));
+    }
+  }
+  return colors;
+}
+
 /** #1921: whether the issue on a lane's card is linked to no recorded owner request. `false` while
  * the requests are not loaded yet or when the card holds no issue, so nothing is flagged early. */
 export function unlinkedIssue(requests: readonly OwnerRequest[] | null, issue: number | null | undefined): boolean {
@@ -62,16 +80,27 @@ export function unlinkedIssue(requests: readonly OwnerRequest[] | null, issue: n
 }
 
 /** Every request, newest first (the Runtime serves them oldest first), as the column draws it. */
-export function askedCards(requests: readonly OwnerRequest[], all: readonly Agent[], tasks: readonly BoardTask[]): AskedCard[] {
-  return [...requests].reverse().map((request) => {
+export function askedCards(requests: readonly OwnerRequest[], all: readonly Agent[], tasks: readonly BoardTask[], flows: readonly JourneyFlow[] = [], stalled: ReadonlySet<string> = new Set()): AskedCard[] {
+  const cards = [...requests].reverse().map((request) => {
     const working = agentsFor(request, all, tasks);
+    const progress = requestProgress(request, tasks, flows, stalled);
     const asks = working.some((agent) => agent.questions.length > 0);
     return {
       requestId: request.requestId,
       when: askedWhen(request.recordedAt),
       title: request.title ?? request.ask,
       agents: working.map((agent) => ({ lane: agent.lane, tone: tone(agent) })),
-      summary: `${working.length} ${working.length === 1 ? "agent" : "agents"}${asks ? " · needs a reply" : ""}`,
+      summary: working.length === 0 ? "no agent working" : `${working.length} ${working.length === 1 ? "agent" : "agents"}${asks ? " · needs a reply" : ""}`,
+      chip: progress.chip,
+      progress,
+      at: requestActivity(request, tasks),
+      color: requestColor(request.requestId),
     };
   });
+  return cards;
+}
+
+/** The column's order: working first, not started next, delivered apart (collapsed by the view). */
+export function arrangeAsked(cards: readonly AskedCard[], now: number): Arranged<AskedCard> {
+  return arrangeRequests(cards, (card) => ({ key: card.chip.key, at: card.at }), now);
 }

@@ -344,7 +344,7 @@ button { font: inherit; }
 .asked-dot.asked-on { background: var(--live); }
 .col-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .col-dot.implement { background: var(--accent); }
-.col-dot.review { background: #8ab4ff; }
+.col-dot.review { background: #4ea1ff; }
 .col-dot.blocked { background: #ff6b6b; }
 .col-dot.silent { background: var(--faint); }
 .col-dot.merge { background: var(--live); }
@@ -542,3 +542,22 @@ button { font: inherit; }
   .gv-lane-row .gv-issue { grid-column: 1 / -1; }
   .gv-pr, .gv-res { width: auto; height: auto; min-width: 0; }
 }
+
+.request-chip { align-self: flex-start; font-size: 10px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--chip, var(--edge-strong)); color: var(--chip, var(--faint)); }
+.req-head { display: flex; align-items: center; gap: 8px; }
+.req-pct { font-size: 10px; color: var(--muted); }
+.req-bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: #2a2a30; }
+.req-bar > span { flex: 1; }
+.req-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10px; color: var(--muted); }
+.req-legend > span { display: inline-flex; gap: 4px; align-items: center; }
+.req-legend i { width: 7px; height: 7px; border-radius: 2px; }
+
+.asked-delivered, .gv-delivered { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.asked-delivered-row, .gv-delivered-row { text-align: left; padding: 8px 10px; border-radius: 10px; border: 1px dashed var(--edge-strong); color: var(--muted); font: 11px var(--mono); }
+@keyframes dcpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.curstep { animation: dcpulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .curstep { animation: none; } }
+/* #1922: a request's own colour is the card's whole 1px border and its date label; no request keeps the neutral border; a selected card is light. */
+.rq { border-color: var(--rq); }
+.rq .asked-when, .rq .gv-ask-when { color: var(--rq); }
+.asked-card.rq[aria-pressed="true"], .gv-issue.rq[aria-pressed="true"], .agent-card.rq.selected { border-color: #f5f5f6; }

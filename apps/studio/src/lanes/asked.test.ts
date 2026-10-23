@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import type { OwnerRequest } from "../graph/requests";
 import type { BoardTask } from "../runtime/client";
-import { askedCards, askedWhen, requestTitles, unlinkedIssue } from "./asked";
+import { arrangeRequests, requestChip, requestProgress, requestColor, REQUEST_COLORS } from "../graph/requests";
+import { arrangeAsked, askedCards, askedWhen, requestTitles, unlinkedIssue } from "./asked";
 import type { Agent } from "./board";
 
 const request = (requestId: string, issues: number[], extra: Partial<OwnerRequest> = {}): OwnerRequest => ({
@@ -49,5 +50,73 @@ describe("what I asked", () => {
     expect(unlinkedIssue([], 8)).toBe(true);
     expect(unlinkedIssue(null, 8)).toBe(false);
     expect(unlinkedIssue(requests, null)).toBe(false);
+  });
+});
+
+
+describe("request status chips, order and delivered collapse (#1922)", () => {
+  const NOW = Date.parse("2026-10-23T12:00:00Z");
+  const hours = (n: number) => new Date(NOW - n * 3600_000).toISOString();
+  const done = (issue: number) => ({ issue, slices: [{ pr: issue, step: "merged", merged: true }] });
+  const merged = (issue: number, ago: number, journeys: string[] = []) => ({ key: `k${issue}`, lane: "x", issue, step: "merged", journeys, clock: { since: hours(ago) } }) as unknown as BoardTask;
+  const flow = (id: string, status: "passed" | "failed") => ({ id, title: id, status: "draft", lastRun: { status, ranAt: null, kind: "replay", reason: null, failingStep: null, flowChanged: null } }) as never;
+
+  it("maps a request to its chip", () => {
+    expect(requestChip(request("a", [], { status: "open" }), [], []).label).toBe("Not started");
+    expect(requestChip(request("a", [1, 2], { issues: [done(1), { issue: 2, slices: [] }] }), [], []).label).toBe("In progress · 1 of 2");
+    expect(requestChip(request("a", [1], { status: "delivered", issues: [done(1)] }), [merged(1, 1)], []).key).toBe("delivered");
+    expect(requestChip(request("a", [1], { status: "delivered", issues: [done(1)] }), [merged(1, 1, ["j"])], [flow("j", "passed")]).key).toBe("proven");
+    expect(requestChip(request("a", [1], { status: "delivered", issues: [done(1)] }), [merged(1, 1, ["j"])], [flow("j", "failed")]).key).toBe("delivered");
+  });
+
+  it("puts working first (newest on top), then not started, then delivered; hides delivered older than 24 h", () => {
+    const rows = [
+      { id: "old-work", key: "in_progress" as const, at: NOW - 5 * 3600_000 },
+      { id: "delivered-new", key: "delivered" as const, at: NOW - 2 * 3600_000 },
+      { id: "idle", key: "not_started" as const, at: NOW - 1 * 3600_000 },
+      { id: "new-work", key: "in_progress" as const, at: NOW - 1 * 60_000 },
+      { id: "delivered-old", key: "proven" as const, at: NOW - 30 * 3600_000 },
+    ];
+    const arranged = arrangeRequests(rows, (row) => row, NOW);
+    expect(arranged.open.map((row) => row.id)).toEqual(["new-work", "old-work", "idle"]);
+    expect(arranged.delivered.map((row) => row.id)).toEqual(["delivered-new", "delivered-old"]);
+    expect(arranged.recent.map((row) => row.id)).toEqual(["delivered-new"]);
+  });
+
+  it("says no agent working and arranges the Lanes cards", () => {
+    const cards = askedCards(
+      [request("d", [3], { status: "delivered", issues: [done(3)] }), request("n", [], { status: "open" })],
+      [], [merged(3, 50)], [],
+    );
+    expect(cards.find((card) => card.requestId === "n")!.summary).toBe("no agent working");
+    const arranged = arrangeAsked(cards, NOW);
+    expect(arranged.open.map((card) => card.requestId)).toEqual(["n"]);
+    expect(arranged.delivered.map((card) => card.requestId)).toEqual(["d"]);
+    expect(arranged.recent).toEqual([]);
+  });
+});
+
+describe("request colour (#1922)", () => {
+  it("is stable per id, drawn from the palette, and spreads across it", () => {
+    expect(requestColor("screens-match-design")).toBe(requestColor("screens-match-design"));
+    const ids = Array.from({ length: 40 }, (_, at) => `request-${at}`);
+    for (const id of ids) expect(REQUEST_COLORS).toContain(requestColor(id));
+    expect(new Set(ids.map(requestColor)).size).toBeGreaterThan(4);
+    expect(askedCards([request("r1", [7])], [], [], [])[0]!.color).toBe(requestColor("r1"));
+  });
+});
+
+describe("request progress bar (#1922)", () => {
+  const flow = (id: string, status: "passed" | "failed") => ({ id, title: id, status: "draft", lastRun: { status, ranAt: null, kind: "replay", reason: null, failingStep: null, flowChanged: null } }) as never;
+  it("orders segments proven to stalled, counts a legend and the percent delivered", () => {
+    const t = (issue: number, step: string, journeys: string[] = []) => ({ key: `k${issue}`, lane: "x", issue, step, journeys, pr: null }) as unknown as BoardTask;
+    const req = request("p", [1, 2, 3, 4], { issues: [1, 2, 3, 4].map((issue) => ({ issue, slices: [] })) });
+    const progress = requestProgress(req, [t(1, "merged", ["j"]), t(2, "merged"), t(3, "review"), t(4, "implement")], [flow("j", "passed")], new Set());
+    expect(progress.segs.map((seg) => seg.state)).toEqual(["proven", "merged, waits proof", "in review", "implementing"]);
+    expect(progress.segs.map((seg) => seg.color)).toEqual(["#3ddc97", "#d08cff", "#4ea1ff", "#ff8a3d"]);
+    expect(progress.pct).toBe("50%");
+    expect(progress.chip.label).toBe("In progress · 2 of 4");
+    expect(progress.legend.map((g) => `${g.n} ${g.label}`)).toEqual(["1 proven", "1 merged, waits proof", "1 in review", "1 implementing"]);
+    expect(requestProgress(req, [t(1, "implement")], [], new Set(["k1"])).chip.key).toBe("stalled");
   });
 });

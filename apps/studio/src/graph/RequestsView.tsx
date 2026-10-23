@@ -4,10 +4,13 @@ import type { BoardTask, JourneyFlow, Runtime, TasksBoard } from "../runtime/cli
 import { ReviewModal } from "./ReviewModal";
 import { reviewable } from "./review";
 import { idleText, stepAged } from "../lanes/board";
-import { cards, KANBAN, KANBAN_NAME, type OwnerRequest } from "./requests";
-import { COLUMN_COLOR, counts, detail, graphRequests, journeyCards, journeyMeta } from "./layout";
+import { RequestProgress } from "./RequestProgress";
+import { cards, KANBAN, KANBAN_NAME, requestColor, type OwnerRequest } from "./requests";
+import { arrangeGraph, COLUMN_COLOR, counts, detail, blocks, graphRequests, journeyCards, journeyMeta } from "./layout";
 
 /** The board and the requests are read again this often. */
+/** The orange of a step being worked on: the only square that moves. */
+const LIVE = "#ff8a3d";
 const POLL_MS = 5_000;
 
 type Mode = "graph" | "kanban";
@@ -33,6 +36,8 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
   const [requests, setRequests] = useState<OwnerRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<BoardTask | null>(null);
+  const [deliveredOpen, setDeliveredOpen] = useState<boolean | null>(null);
+  const [olderShown, setOlderShown] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
 
   const read = useCallback(async () => {
@@ -58,9 +63,16 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
   const flows = journeys ?? [];
   const withWork = journeyCards(board, flows);
   const picked = withWork.find((card) => card.id === journey) ?? null;
-  const graph = graphRequests(requests, board, flows, journey);
+  const arranged = arrangeGraph(graphRequests(requests, board, flows, journey), Date.parse(board.now) || Date.now());
+  const deliveredShown = deliveredOpen ?? arranged.open.length === 0;
+  const graph = [...arranged.open, ...(deliveredShown ? (olderShown ? arranged.delivered : arranged.recent) : [])];
+  const olderCount = arranged.delivered.length - arranged.recent.length;
   const tally = counts(board, flows, journey);
   const allIssues = new Set(board.tasks.filter((task) => task.releasedBy === undefined).map((task) => task.issue ?? task.key)).size;
+  const stripeOf = (issue: number | null): string | null => {
+    const owner = issue === null ? undefined : [...requests].reverse().find((request) => request.issues.some((row) => row.issue === issue));
+    return owner === undefined ? null : requestColor(owner.requestId);
+  };
   const flat = graph.flatMap((row) => row.items.map((item) => ({ item, row })));
   const chosen = flat.find((entry) => entry.item.issue === selected) ?? flat[0] ?? null;
   const panel = chosen === null ? null : detail(chosen.item, chosen.row, board);
@@ -111,24 +123,24 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
                 </div>
                 <ul aria-label="Owner requests" className="gv-requests">
                   {graph.map((row) => (
-                    <li key={row.request.requestId} aria-label={row.request.title ?? row.request.ask} className="gv-request" style={{ "--h": `${row.height}px` } as CSSProperties}>
+                    <li key={row.request.requestId} data-chip={row.chip.key} aria-label={row.request.title ?? row.request.ask} className="gv-request" style={{ "--h": `${row.height}px` } as CSSProperties}>
                       <svg aria-hidden="true" className="gv-links" width="1040" height={row.height}>
                         {row.links.map((link, index) => <path key={index} d={link.d} fill="none" stroke={link.color} strokeWidth="1.5" strokeDasharray={link.dashed ? "4 4" : undefined} />)}
                       </svg>
-                      <div className="gv-ask gv-node" style={{ "--x": "0px", "--y": `${row.askY}px` } as CSSProperties}>
+                      <div className="gv-ask gv-node rq" style={{ "--x": "0px", "--y": `${row.askY}px`, "--rq": requestColor(row.request.requestId) } as CSSProperties}>
                         <span className="mono gv-ask-when">YOU ASKED · {row.when}</span>
                         <span className="gv-ask-text">{row.request.title ?? row.request.ask}</span>
-                        <span className="gv-bar">{row.bar.map((color, index) => <span key={index} className="gv-sq" style={{ background: color }} />)}</span>
-                        <span className="mono gv-meta">{row.items.length === 0 ? "no issue opened yet" : row.summary}</span>
+                        <RequestProgress progress={row.progress} />
+                        {row.items.length === 0 && <span className="mono gv-meta">no issue opened yet</span>}
                       </div>
                       {row.items.map((item) => (
                         <div key={item.issue} className="gv-lane-row">
                           <button
                             type="button"
-                            className="b gv-issue gv-node"
+                            className="b gv-issue gv-node rq"
                             aria-pressed={chosen?.item.issue === item.issue}
                             aria-label={`Issue #${item.issue}`}
-                            style={{ "--x": "300px", "--y": `${item.y}px` } as CSSProperties}
+                            style={{ "--x": "300px", "--y": `${item.y}px`, "--rq": requestColor(row.request.requestId) } as CSSProperties}
                             onClick={() => {
                               setSelected(item.issue);
                               if (item.task !== null && item.column !== null && reviewable(item.column, item.pr)) setReviewing(item.task);
@@ -136,17 +148,17 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
                           >
                             <span className="gv-row"><span className="mono gv-muted">#{item.issue}</span><span className="gv-grow gv-ellipsis">{item.title}</span></span>
                             <span className="gv-row" aria-label={`Steps ${item.blocks.filter((b) => b.color === "#3ddc97").length} of ${item.blocks.length}`}>
-                              {item.blocks.map((block) => <span key={block.step} title={block.step} className="gv-sq small" style={{ background: block.color }} />)}
+                              {item.blocks.map((block) => <span key={block.step} title={block.step} className={`gv-sq small${block.color === LIVE && (item.column === "implementing" || item.column === "review") ? " curstep" : ""}`} style={{ background: block.color }} />)}
                               <span className="mono gv-meta gv-agent">{item.lane ?? "no lane"}</span>
                             </span>
                             <span className="mono gv-meta gv-ellipsis">{item.last}</span>
                             <span className="gv-row gv-jname"><span className="gv-swatch small" style={{ background: item.journey?.color ?? "#45454e" }} />{item.journey?.title ?? "no journey"}</span>
                           </button>
                           <div role="group" aria-label={`Pull request of #${item.issue}`} className={`gv-pr gv-node${item.pr === null ? " none" : ""}`} style={{ "--x": "600px", "--y": `${item.y + 16}px` } as CSSProperties}>
-                            <span className="mono" style={{ color: item.pr === null ? "#8a8a96" : "#8ab4ff" }}>{item.pr === null ? "no PR yet" : `PR #${item.pr}`}</span>
+                            <span className="mono" style={{ color: item.pr === null ? "#8a8a96" : "#4ea1ff" }}>{item.pr === null ? "no PR yet" : `PR #${item.pr}`}</span>
                             <span className="mono gv-meta gv-ellipsis">{item.prLine}</span>
                           </div>
-                          <div role="group" aria-label={`Result of #${item.issue}`} className="gv-res gv-node" style={{ "--x": "840px", "--y": `${item.y + 16}px`, borderColor: item.result.color === "#8b7cff" ? "#3a3466" : undefined } as CSSProperties}>
+                          <div role="group" aria-label={`Result of #${item.issue}`} className="gv-res gv-node" style={{ "--x": "840px", "--y": `${item.y + 16}px`, borderColor: item.result.color === "#d08cff" ? "#5a3a6a" : undefined } as CSSProperties}>
                             <span style={{ color: item.result.color }}>{item.result.word}</span>
                             <span className="mono gv-meta">{item.result.detail}</span>
                           </div>
@@ -155,6 +167,12 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
                     </li>
                   ))}
                 </ul>
+                {arranged.delivered.length > 0 && (
+                  <div className="gv-delivered">
+                    <button type="button" className="b gv-delivered-row" aria-expanded={deliveredShown} onClick={() => setDeliveredOpen(!deliveredShown)}>Delivered ({arranged.delivered.length})</button>
+                    {deliveredShown && olderCount > 0 && !olderShown && <button type="button" className="b gv-delivered-row" onClick={() => setOlderShown(true)}>show older ({olderCount})</button>}
+                  </div>
+                )}
               </>
             )}
           </section>
@@ -167,9 +185,10 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
                   <h2><span className="gv-dot" style={{ background: COLUMN_COLOR[column] }} />{KANBAN_NAME[column]} <span className="muted">{inColumn.length}</span></h2>
                   <ul aria-label={KANBAN_NAME[column]}>
                     {inColumn.map(({ task, column: at, stepMinutes }) => (
-                      <li key={task.key} className={`kanban-card${stepAged(stepMinutes) ? " aged" : ""}`}>
+                      <li key={task.key} style={stripeOf(task.issue) === null ? undefined : ({ "--rq": stripeOf(task.issue) } as CSSProperties)} className={`kanban-card${stripeOf(task.issue) === null ? "" : " rq"}${stepAged(stepMinutes) ? " aged" : ""}`}>
                         <span className="mono small">{task.issue === null ? task.key : `#${task.issue}`}{task.pr === null ? "" : ` · PR #${task.pr}`}</span>
                         <span>{task.prTitle ?? task.title ?? ""}</span>
+                        <span className="gv-bar" aria-hidden="true">{blocks(task, at).map((block) => <span key={block.step} className={`gv-sq small${block.color === LIVE && (at === "implementing" || at === "review") ? " curstep" : ""}`} style={{ background: block.color }} />)}</span>
                         <span className="muted small">{task.lane ?? "no lane"} · {task.step}{stepMinutes === null ? "" : " "}{stepMinutes !== null && <span role="group" aria-label="Time in step" className={`mono step-age${stepAged(stepMinutes) ? " aged" : ""}`}>{idleText(stepMinutes)}</span>}</span>
                         {reviewable(at, task.pr) && (
                           <button type="button" className="b ghost small" onClick={() => setReviewing(task)}>Open review</button>

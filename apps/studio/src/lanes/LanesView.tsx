@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 
 import { OWNER, type JourneyFlow, type LaneAction, type Runtime, type TasksBoard } from "../runtime/client";
 import { controlBody, draftFor, messageBody, newId, type Draft, type LaneControl } from "./drafts";
 import { actionLine, clock } from "./format";
 import { LanesPanels } from "./LanesPanels";
-import { agentsFor, askedCards, requestTitles, unlinkedIssue } from "./asked";
+import { RequestProgress } from "../graph/RequestProgress";
+import { agentsFor, arrangeAsked, askedCards, requestColors, requestTitles, unlinkedIssue } from "./asked";
 import type { OwnerRequest } from "../graph/requests";
 import { agents, blocks, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
@@ -38,6 +39,8 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [deliveredOpen, setDeliveredOpen] = useState<boolean | null>(null);
+  const [olderShown, setOlderShown] = useState(false);
   // #1901: the owner's requests (WHAT I ASKED) and the one picked to narrow the board, if any.
   const [requests, setRequests] = useState<OwnerRequest[] | null>(null);
   const [request, setRequest] = useState<string | null>(null);
@@ -98,8 +101,13 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   const pickedRequest = requests?.find((row) => row.requestId === request) ?? null;
   const forRequest = pickedRequest === null ? null : new Set(agentsFor(pickedRequest, all, board.tasks).map((agent) => agent.lane));
   const shown = (filter === "reply" ? asking : filter === "idle" ? idle : all).filter((agent) => forRequest === null || forRequest.has(agent.lane));
-  const asked = askedCards(requests ?? [], all, board.tasks);
+  const asked = askedCards(requests ?? [], all, board.tasks, journeys ?? [], new Set(board.stalls.map((stall) => stall.key)));
+  const arrangedAsked = arrangeAsked(asked, Date.parse(board.now) || Date.now());
+  const deliveredShown = deliveredOpen ?? arrangedAsked.open.length === 0;
+  const shownAsked = [...arrangedAsked.open, ...(deliveredShown ? (olderShown ? arrangedAsked.delivered : arrangedAsked.recent) : [])];
+  const olderAsked = arrangedAsked.delivered.length - arrangedAsked.recent.length;
   const serves = requestTitles(requests ?? [], all, board.tasks);
+  const stripes = requestColors(requests ?? [], all, board.tasks);
   const gone = picked !== null && shownAgent.current?.lane === picked ? { ...shownAgent.current, questions: [], moreQuestions: 0 } : null;
   const selected = all.find((agent) => agent.lane === picked) ?? gone ?? asking[0] ?? all[0] ?? null;
   shownAgent.current = selected;
@@ -124,12 +132,13 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
               <h3><span className="col-dot asked" />What I asked<span className="mono count">{requests === null ? "…" : asked.length}</span></h3>
               {requests !== null && asked.length === 0 && <span className="none">No request recorded yet.</span>}
               <ul aria-label="Owner requests">
-                {asked.map((card) => (
+                {shownAsked.map((card) => (
                   <li key={card.requestId}>
-                    <button type="button" className="b asked-card" aria-pressed={card.requestId === request} onClick={() => setRequest((prior) => (prior === card.requestId ? null : card.requestId))}>
+                    <button type="button" style={{ "--rq": card.color } as CSSProperties} className="b asked-card rq" aria-pressed={card.requestId === request} onClick={() => setRequest((prior) => (prior === card.requestId ? null : card.requestId))}>
                       {card.when !== null && <span className="mono asked-when">{card.when}</span>}
                       <span className="asked-title">{card.title}</span>
-                      {card.agents.length > 0 && <span className="blocks" aria-hidden="true">{card.agents.map((agent) => <span key={agent.lane} className={`block asked-${agent.tone}`} />)}</span>}
+                      <RequestProgress progress={card.progress} />
+                      {card.agents.length > 0 && <span className="blocks" aria-hidden="true">{card.agents.map((agent) => <span key={agent.lane} className={`block asked-${agent.tone}${agent.tone === "on" ? " curstep" : ""}`} />)}</span>}
                       <span className="mono asked-summary">{card.summary}</span>
                       {card.agents.length > 0 && (
                         <span className="asked-agents">{card.agents.map((agent) => <span key={agent.lane} className="mono asked-chip"><span className={`asked-dot asked-${agent.tone}`} />{agent.lane}</span>)}</span>
@@ -138,6 +147,12 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
                   </li>
                 ))}
               </ul>
+              {arrangedAsked.delivered.length > 0 && (
+                <div className="asked-delivered">
+                  <button type="button" className="b asked-delivered-row" aria-expanded={deliveredShown} onClick={() => setDeliveredOpen(!deliveredShown)}>Delivered ({arrangedAsked.delivered.length})</button>
+                  {deliveredShown && olderAsked > 0 && !olderShown && <button type="button" className="b asked-delivered-row" onClick={() => setOlderShown(true)}>show older ({olderAsked})</button>}
+                </div>
+              )}
             </section>
           </li>
           {COLUMNS.map((name) => {
@@ -147,7 +162,7 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
                 <h3><span className={`col-dot ${name}`} />{COLUMN_NAME[name]}<span className="mono count">{cards.length}</span></h3>
                 {cards.length === 0 ? <span className="none">none</span> : (
                   <ul aria-label={COLUMN_NAME[name]}>
-                    {cards.map((agent) => <Card key={agent.lane} agent={agent} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} unlinked={unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
+                    {cards.map((agent) => <Card key={agent.lane} agent={agent} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} stripe={stripes.get(agent.lane) ?? null} unlinked={unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
                   </ul>
                 )}
               </li>
@@ -181,13 +196,13 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   );
 }
 
-function Card({ agent, selected, serves, unlinked, last, onPick }: { agent: Agent; selected: boolean; serves: string | null; unlinked: boolean; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
+function Card({ agent, selected, serves, stripe, unlinked, last, onPick }: { agent: Agent; selected: boolean; serves: string | null; stripe: string | null; unlinked: boolean; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
   const task = agent.task;
   const tone = idleTone(agent.idleMinutes);
   const asking = agent.questions[0];
   const aged = stepAged(agent.stepMinutes);
   return (
-    <li className={`agent-card${selected ? " selected" : ""}${asking ? " asking" : ""}${aged ? " aged" : ""}`}>
+    <li style={stripe === null ? undefined : ({ "--rq": stripe } as CSSProperties)} className={`agent-card${stripe === null ? "" : " rq"}${selected ? " selected" : ""}${asking ? " asking" : ""}${aged ? " aged" : ""}`}>
       <button type="button" className="b agent-name" aria-pressed={selected} onClick={() => onPick(agent.lane)}>
         <span className={`agent-dot ${asking ? "asks" : tone === "late" ? "quiet" : "on"}`} />
         <strong>{agent.lane}</strong>

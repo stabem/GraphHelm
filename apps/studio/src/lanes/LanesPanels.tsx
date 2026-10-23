@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { OWNER, type Capacity, type FileCollisions, type LaneAction, type Runtime, type TasksBoard } from "../runtime/client";
 import { controlBody, draftFor, messageBody, newId, type Draft } from "./drafts";
-import { actionText, clock } from "./format";
+import { actionText } from "./format";
+import { When } from "../time/Stamp";
 import { capacityRows, feed, needsAction, type Need } from "./panels";
 import { idleText } from "./board";
 import type { OwnerRequest } from "../graph/requests";
@@ -181,7 +182,7 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
           <ul aria-label="Live feed rows" className="feed">
             {rows.map((row) => (
               <li key={`${row.lane}:${row.action.sequence}`}>
-                <span className="mono faint">{clock(row.action.occurredAt)}</span>
+                <When className="mono faint" at={row.action.occurredAt} />
                 <span className="mono feed-who">{row.lane}</span>
                 <span className="muted">{actionText(row.action)}</span>
               </li>

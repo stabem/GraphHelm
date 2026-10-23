@@ -14,6 +14,7 @@ import { LanesView } from "./lanes/LanesView";
 import { GraphView } from "./views/Views";
 import { RequestsView } from "./graph/RequestsView";
 import { ViewBoundary } from "./views/ViewBoundary";
+import { Loading } from "./states/ViewState";
 
 /** How often the run list is read again: one page of at most 50 rows per poll. */
 const POLL_MS = 5_000;
@@ -129,6 +130,8 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
   }, [route.view, journeys, readJourneys]);
 
   const project = session.project ?? "this project";
+  // #1934: the empty state of every view starts a team run the same way the top bar does.
+  const startRun = runs !== null && !(composing && route.view === "graph") ? () => { setComposing(true); go({ ...route, view: "graph" }); } : null;
   // #1901: one project, one team run. The URL's ?run= still deep-links; without it the Studio
   // opens the run team.json marks, else the most recently active one, and the URL stays clean.
   const runId = route.run ?? (runs === null ? null : teamRun(runs, session.teamRun)?.executionId ?? null);
@@ -163,9 +166,9 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
           onStart={runs !== null && runId === null && !(composing && route.view === "graph") ? () => { setComposing(true); go({ ...route, view: "graph" }); } : null}
         />
         <ViewBoundary key={`${route.view}:${runId ?? ""}`} name={route.view}>
-        {runs === null && route.run === null ? <section className="view" aria-label="Reading"><p>Reading the project's team run…</p></section> : <>
+        {runs === null && route.run === null ? <section className="view" aria-label="Reading"><Loading text="Reading the project's team run…" /></section> : <>
         {route.view === "graph" && (
-          <GraphView run={run} runId={runId} requests={runId === null ? undefined : <RequestsView runtime={runtime} executionId={runId} journeys={journeys} onOpenProof={(journey) => go({ project: route.project, run: route.run, view: "proof", journey })} />}>
+          <GraphView run={run} runId={runId} onStart={startRun} requests={runId === null ? undefined : <RequestsView runtime={runtime} executionId={runId} journeys={journeys} onOpenProof={(journey) => go({ project: route.project, run: route.run, view: "proof", journey })} />}>
             {composing && runId === null && (
               <StartRun
                 runtime={runtime}
@@ -179,7 +182,7 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
             )}
           </GraphView>
         )}
-        {route.view === "lanes" && <LanesView runtime={runtime} executionId={runId} journeys={journeys} />}
+        {route.view === "lanes" && <LanesView runtime={runtime} executionId={runId} journeys={journeys} onStart={startRun} />}
         {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={runId} onRan={readJourneys} initial={route.journey ?? null} />}
         </>}
         </ViewBoundary>

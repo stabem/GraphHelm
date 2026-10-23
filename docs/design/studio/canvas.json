@@ -42,10 +42,24 @@
       "w": 1208,
       "h": 52,
       "title": "Shared — top bar"
+    },
+    "Tokens.dc.html": {
+      "x": 0,
+      "y": -900,
+      "w": 1440,
+      "h": 700,
+      "title": "Tokens — one scale for every view"
+    },
+    "States.dc.html": {
+      "x": 1600,
+      "y": -900,
+      "w": 1440,
+      "h": 700,
+      "title": "States — loading, offline, restarting, empty, error"
     }
   },
   "createdOnFiles": {
-    "at": "2026-10-21T23:40:00Z",
+    "at": "2026-10-23T12:00:00Z",
     "v": 1
   },
   "designSystems": [],
@@ -58,7 +72,9 @@
     "Graph.dc.html",
     "Lanes.dc.html",
     "Sidebar.dc.html",
-    "Topbar.dc.html"
+    "Topbar.dc.html",
+    "Tokens.dc.html",
+    "States.dc.html"
   ],
   "pages": [],
   "title": "GraphHelm Studio"

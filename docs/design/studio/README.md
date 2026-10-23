@@ -2,7 +2,7 @@
 
 These files are the owner-approved design of the Studio, the screens that the Studio v2 rebuild (#1790)
 implements. The live, editable copy is the design artifact:
-https://claude.ai/artifact/6zmUpDHeLfSo75ZRmVvSm5
+https://claude.ai/artifact/WjdL5A6eXFgT2BWVbcmfuL (earlier copy: https://claude.ai/artifact/6zmUpDHeLfSo75ZRmVvSm5)
 
 | File | Screen |
 |---|---|
@@ -11,6 +11,8 @@ https://claude.ai/artifact/6zmUpDHeLfSo75ZRmVvSm5
 | `Graph.dc.html` | Work by request: owner requests, the issues and PRs opened for them, review modal with Before / Now, request status chips with the Delivered collapse |
 | `Lanes.dc.html` | Agent control: agents by state, idle time, questions waiting for a reply, needs-action queue, capacity, live feed |
 | `Proof.dc.html` | Journeys column, run bar with setup log, step frames, Before / Now compare, web and mobile; a Proof states section with live and result cards, Send to fix, the kind badge, Run these commands?, terminal tiles, the terminal panel with Structured / Raw, and the phone frame |
+| `Tokens.dc.html` | One scale for Graph, Lanes and Proof: type 11/12/13/15, spacing 4/8/12/16/24, card and column sizes, state colours, and the date format |
+| `States.dc.html` | States every view can be in: loading, Runtime not answering with Retry, restarting, empty, error with detail and Copy details |
 | `canvas.json` | Layout of the canvas the files come from |
 | `frame-sample.webp` | Sample captured frame used by the mock-ups |
 

@@ -1,5 +1,6 @@
 import type { BoardTask, JourneyFlow, TasksBoard } from "../runtime/client";
 import { minutesInStep } from "../lanes/board";
+import { when } from "../time/when";
 import { cards, kanbanColumn, KANBAN_NAME, type KanbanColumn, type OwnerRequest, arrangeRequests, requestActivity, requestProgress, type Arranged, type RequestProgress } from "./requests";
 
 /** #1903: the Graph view of the approved design (docs/design/studio/Graph.dc.html), as pure data. */
@@ -112,22 +113,8 @@ export function arrangeGraph(rows: readonly GraphRequest[], now: number): Arrang
   return arrangeRequests(rows, (row) => ({ key: row.chip.key, at: row.at }), now);
 }
 
-const two = (value: number) => String(value).padStart(2, "0");
-
-/** "22 Oct 19:40" in local time, or `null` from an older Runtime without `recordedAt`. */
-export function when(at: string | undefined): string | null {
-  if (!at) return null;
-  const date = new Date(at);
-  if (Number.isNaN(date.getTime())) return null;
-  const month = date.toLocaleString("en-GB", { month: "short" });
-  return `${date.getDate()} ${month} ${two(date.getHours())}:${two(date.getMinutes())}`;
-}
-
-function clock(at: string | null | undefined): string {
-  if (!at) return "";
-  const date = new Date(at);
-  return Number.isNaN(date.getTime()) ? "" : `${two(date.getHours())}:${two(date.getMinutes())}`;
-}
+/** A time in the one Studio format (#1934), or "" when it is unknown. */
+const stamp = (at: string | null | undefined): string => (at ? when(at).text : "").replace("—", "");
 
 /** The live slice that stands for an issue: the newest one not released. */
 export function taskOf(board: TasksBoard, issue: number): BoardTask | null {
@@ -183,7 +170,7 @@ export function graphRequests(
           ? STEPS.map((step, at) => ({ step, color: merged && at < 7 ? "#3ddc97" : "#2a2a30" }))
           : blocks(task, column),
         lane: task?.lane ?? null,
-        last: task === null ? (merged ? "merged" : "no slice recorded") : `${clock(task.clock?.since)}  ${column === null ? task.step : KANBAN_NAME[column].toLowerCase()}`.trim(),
+        last: task === null ? (merged ? "merged" : "no slice recorded") : `${stamp(task.clock?.since)}  ${column === null ? task.step : KANBAN_NAME[column].toLowerCase()}`.trim(),
         journey: journeyList.find((card) => task?.journeys.includes(card.id)) ?? null,
         prLine,
         result: outcome(column, merged),
@@ -206,7 +193,7 @@ export function graphRequests(
       chip: progress.chip,
       progress,
       at: requestActivity(request, board.tasks),
-      when: when(request.recordedAt) ?? request.recordedBy,
+      when: request.recordedAt && stamp(request.recordedAt) !== "" ? stamp(request.recordedAt) : request.recordedBy,
       height,
       askY,
       items,
@@ -229,6 +216,6 @@ export function detail(item: GraphItem, request: GraphRequest, board: TasksBoard
   const history = [`asked ${request.when}`];
   const row = request.request.issues.find((entry) => entry.issue === item.issue);
   for (const slice of row?.slices ?? []) history.push(`${slice.pr === null ? "slice" : `PR #${slice.pr}`} · ${slice.merged ? "merged" : slice.step}`);
-  if (item.task?.clock?.since) history.push(`${item.task.step} since ${clock(item.task.clock.since)}`);
+  if (item.task?.clock?.since) history.push(`${item.task.step} since ${stamp(item.task.clock.since)}`);
   return { now, history };
 }

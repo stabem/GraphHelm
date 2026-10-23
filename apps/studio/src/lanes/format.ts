@@ -1,16 +1,5 @@
 import type { LaneAction } from "../runtime/client";
 
-export function clock(at: string | null | undefined): string {
-  if (!at) return "--:--";
-  const date = new Date(at);
-  return Number.isNaN(date.getTime()) ? "--:--" : `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
-/** One action as the card and the panel print it. */
-export function actionLine(action: LaneAction): string {
-  return `${clock(action.occurredAt)} ${actionText(action)}`;
-}
-
 /** What one action did, without its time. */
 export function actionText(action: LaneAction): string {
   const pr = action.pr === undefined ? "" : ` PR #${action.pr}`;

@@ -1,3 +1,4 @@
+import { when as stamp } from "../time/when";
 import { useEffect, useState } from "react";
 
 import type { JourneyPastRun, Runtime } from "../runtime/client";
@@ -46,7 +47,7 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
   // #1905: the Action panel says how much changed in every mode, so the pair is compared whenever both exist.
   const changes = useChanges(comparable ? before.url : null, comparable ? now ?? null : null);
   const shown = comparable ? mode : "frame";
-  const when = earlier === null ? "" : earlier.ranAt ?? earlier.run;
+  const when = earlier === null ? "" : earlier.ranAt ? stamp(earlier.ranAt).text : earlier.run;
   const offReason = now === undefined
     ? `No frame captured for step ${step.n} in this run, so there is nothing to compare.`
     : earlier === null

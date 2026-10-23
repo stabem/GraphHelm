@@ -344,6 +344,164 @@ def _with_test_threads(argv: list[str], threads: int) -> list[str]:
                            for arg in argv[split:]]
 
 
+# #1932: the cargo test steps of one slot batch are built there with `--no-run`, then their test
+# executables run side by side outside the lease, as many at once as free memory allows (one per
+# GB_PER_PARALLEL_STEP, at most PARALLEL_STEPS_CEILING). One target, so nothing is built twice.
+GB_PER_PARALLEL_STEP = 3.0
+PARALLEL_STEPS_CEILING = 4
+_NO_RUN_FLAGS = ("--no-run", "--message-format=json-render-diagnostics")
+_CARGO_VALUE_FLAGS = {"-p", "--package", "--test", "--bin", "--example", "--bench", "-F", "--features",
+                      "--target", "--profile", "--color", "--message-format"}
+_CARGO_BOOL_FLAGS = {"--locked", "--offline", "--frozen", "--release", "-r", "--all-features",
+                     "--no-default-features", "--lib", "--quiet", "-q", "--verbose", "-v"}
+_LIB_KINDS = {"lib", "rlib", "dylib", "proc-macro", "cdylib", "staticlib"}
+
+
+def _parallel_limit(free_gb: float | None) -> int:
+    """How many test executables may run at once: 1 (serial) when memory is short or unknown."""
+    if free_gb is None:
+        return 1
+    return max(1, min(int(free_gb // GB_PER_PARALLEL_STEP), PARALLEL_STEPS_CEILING))
+
+
+def _test_split(argv: list[str]) -> tuple[str, list[tuple[str, str]], list[str]] | None:
+    """(package, targets, libtest args) of a plain `cargo test`, or None when it is not one.
+
+    Only the forms this runner can replay outside cargo qualify: one package, explicit
+    --test/--bin/--lib targets, known flags, and no cargo-side test filter."""
+    if not argv or Path(argv[0]).name.lower() not in ("cargo", "cargo.exe") or "--no-run" in argv:
+        return None
+    cursor = 1
+    if len(argv) > cursor and argv[cursor].startswith("+"):
+        cursor += 1
+    if len(argv) <= cursor or argv[cursor] != "test":
+        return None
+    head = argv[cursor + 1:argv.index("--")] if "--" in argv else argv[cursor + 1:]
+    tail = argv[argv.index("--") + 1:] if "--" in argv else []
+    packages: list[str] = []
+    targets: list[tuple[str, str]] = []
+    index = 0
+    while index < len(head):
+        raw = head[index]
+        flag, equals, inline = raw.partition("=")
+        if flag in _CARGO_VALUE_FLAGS:
+            value = inline if equals else (head[index + 1] if index + 1 < len(head) else "")
+            index += 1 if equals else 2
+            if not value or value.startswith("-"):
+                return None
+            if flag in ("-p", "--package"):
+                packages.append(value)
+            elif flag in ("--test", "--bin"):
+                targets.append((flag, value))
+            elif flag in ("--example", "--bench", "--message-format"):
+                return None
+            continue
+        if raw in _CARGO_BOOL_FLAGS:
+            if raw == "--lib":
+                targets.append(("--lib", ""))
+            index += 1
+            continue
+        return None
+    if len(packages) != 1 or not targets:
+        return None
+    return packages[0], targets, tail
+
+
+def _no_run(argv: list[str]) -> list[str]:
+    """The build half of a cargo test command: same targets, `--no-run`, JSON artifact lines."""
+    head = argv[:argv.index("--")] if "--" in argv else list(argv)
+    return head + list(_NO_RUN_FLAGS)
+
+
+def _package_matches(package_id: str, package: str) -> bool:
+    if package_id.startswith(package + " "):
+        return True  # cargo before 1.77: "name version (source)"
+    source, _, fragment = package_id.rpartition("#")
+    if fragment.startswith(package + "@"):
+        return True
+    # "path+file:///.../name#version" when the directory name is the package name.
+    return bool(source) and "@" not in fragment and source.rstrip("/").rpartition("/")[2] == package
+
+
+def _test_executables(log: Path, package: str, targets: list[tuple[str, str]]) -> list[dict[str, str]] | None:
+    """One {executable, cwd} per target from the batch log's compiler-artifact lines, or None."""
+    found: dict[tuple[str, str], dict[str, str]] = {}
+    try:
+        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if not line.startswith("{") or '"compiler-artifact"' not in line:
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        target = value.get("target") or {}
+        executable = value.get("executable")
+        if (value.get("reason") != "compiler-artifact" or not executable
+                or not (value.get("profile") or {}).get("test")
+                or not _package_matches(str(value.get("package_id", "")), package)):
+            continue
+        kinds = set(target.get("kind") or [])
+        for flag, name in targets:
+            hit = (flag == "--lib" and bool(kinds & _LIB_KINDS)
+                   or flag == "--test" and "test" in kinds and target.get("name") == name
+                   or flag == "--bin" and "bin" in kinds and target.get("name") == name)
+            if hit:
+                found[(flag, name)] = {"executable": executable,
+                                       "cwd": str(Path(str(value.get("manifest_path", ""))).parent)}
+    if len(found) != len(targets):
+        return None
+    return [found[target] for target in targets]
+
+
+def _run_parallel(jobs: list[dict[str, Any]], limit: int, env: dict[str, str]) -> None:
+    """Run every job's executables, at most `limit` processes at once; fill returncode and seconds."""
+    pending = [(job, exe) for job in jobs for exe in job["executables"]]
+    for job in jobs:
+        job.update({"returncode": 0, "started": None, "running": 0, "seconds": 0.0})
+        job["log"].write_text("", encoding="utf-8")
+    running: list[tuple[subprocess.Popen, dict[str, Any], Any]] = []
+    while pending or running:
+        while pending and len(running) < limit:
+            job, exe = pending.pop(0)
+            child_env = dict(env)
+            child_env.update({"CARGO_MANIFEST_DIR": exe["cwd"], "CARGO_PKG_NAME": job["package"]})
+            child_env.update(job.get("extraEnv", {}))
+            if job["started"] is None:
+                job["started"] = time.monotonic()
+            stream = job["log"].open("a", encoding="utf-8")
+            stream.write(f"$ {exe['executable']} {' '.join(job['args'])}\n")
+            stream.flush()
+            try:
+                proc = subprocess.Popen([exe["executable"], *job["args"]], cwd=exe["cwd"], env=child_env,
+                                        stdout=stream, stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+            except OSError as exc:
+                stream.write(f"spawn failed: {exc}\n")
+                stream.close()
+                job["returncode"] = job["returncode"] or 1
+                continue
+            job["running"] += 1
+            running.append((proc, job, stream))
+        if running:
+            time.sleep(0.2)
+        for item in list(running):
+            proc, job, stream = item
+            code = proc.poll()
+            if code is None:
+                continue
+            stream.close()
+            running.remove(item)
+            job["running"] -= 1
+            if code != 0 and job["returncode"] == 0:
+                job["returncode"] = code
+            if job["running"] == 0 and not any(j is job for j, _ in pending):
+                job["seconds"] = round(time.monotonic() - job["started"], 3)
+                print(f"[reached-tests]   step {job['index']}: tests {job['seconds']:.1f}s side by side "
+                      f"(exit {job['returncode']})", file=sys.stderr, flush=True)
+
+
 def _batch_result(value: Any, count: int, cli_returncode: int) -> tuple[dict[str, Any] | None, str | None]:
     """Strictly validate the CLI batch envelope and return local indices."""
     if not isinstance(value, dict) or value.get("schema") != _BATCH_RESULT_SCHEMA:
@@ -969,6 +1127,7 @@ def run(args: argparse.Namespace) -> int:
                 report["status"] = "blocked"
                 work = []
             keep_going, red = bool(getattr(args, "keep_going", False)), False
+            built: list[dict[str, Any]] = []  # #1932: built test executables waiting to run side by side
             while work:
                 remaining_budget = args.budget_seconds - (time.monotonic() - started)
                 if remaining_budget <= 0:
@@ -1004,6 +1163,22 @@ def run(args: argparse.Namespace) -> int:
                     if identity_complete and programs:
                         command[0] = _slot_program(programs[item["index"]])
                     commands.append(command)
+                # #1932: two or more plain cargo test steps in one batch are built there with
+                # --no-run and their executables run side by side after it, when memory allows.
+                side: dict[int, tuple[str, list[tuple[str, str]], list[str]]] = {}
+                limit = _parallel_limit(_free_memory_gb()) if getattr(args, "parallel_steps", True) else 1
+                if batch_mode and limit > 1 and len(group) > 1:
+                    for local, item in enumerate(group):
+                        split = None if item.get("serial") else _test_split(commands[local])
+                        if split is not None:
+                            side[local] = split
+                    if len(side) + len(built) < 2:
+                        side = {}
+                    for local in side:
+                        commands[local] = _no_run(commands[local])
+                    if side:
+                        print(f"[reached-tests] steps {[indices[local] for local in side]}: build with --no-run, "
+                              f"then run up to {limit} test executables side by side", file=sys.stderr, flush=True)
                 is_batch = batch_mode and len(group) > 1 or batch_mode and _batchable(entry)
                 if is_batch:
                     # The CLI receives original argv; its Rust worker selects the child cwd/target.
@@ -1051,10 +1226,18 @@ def run(args: argparse.Namespace) -> int:
                                                                   "log": str(logfile), "waitedSeconds": q,
                                                                   "heldSeconds": h})
                         completed_count = len(parsed["completed"])
+                        deferred: list[dict[str, Any]] = []
                         for local, child in enumerate(parsed["completed"]):
                             index = indices[local]
                             print(f"[reached-tests]   step {index}: {child['elapsedSeconds']}s (exit {child['exitCode']})",
                                   file=sys.stderr, flush=True)
+                            if local in side and child["exitCode"] == 0:
+                                package, targets, tail = side[local]
+                                deferred.append({"index": index, "local": local, "package": package,
+                                                 "targets": targets, "args": tail,
+                                                 "buildSeconds": child["elapsedSeconds"],
+                                                 "log": logs / f"step-{index}.log"})
+                                continue
                             report["pending"].remove(index)
                             report["completed"].append({"index": index, "batchLocalIndex": local,
                                                          "argv": steps[index]["argv"], "cwd": steps[index]["cwd"], "slot": True,
@@ -1062,6 +1245,52 @@ def run(args: argparse.Namespace) -> int:
                                                          "stepSeconds": child["elapsedSeconds"], "proofKey": keys[index],
                                                          "late": elapsed > args.budget_seconds,
                                                          "log": str(logfile), "tail": _tail(logfile)})
+                        if deferred:
+                            envelope = _last_json(logfile)
+                            target_dir = ((envelope or {}).get("data") or {}).get("targetDir")
+                            for job in deferred:
+                                job["executables"] = _test_executables(logfile, job["package"], job["targets"])
+                                argv0 = steps[job["index"]]["argv"]
+                                job["extraEnv"] = {"CARGO_TARGET_DIR": str(target_dir)} if target_dir else {}
+                                if len(argv0) > 1 and argv0[1].startswith("+"):
+                                    job["extraEnv"]["RUSTUP_TOOLCHAIN"] = argv0[1][1:]
+                            # A step whose executables the log does not name runs again the old way.
+                            fallback = [job for job in deferred if job["executables"] is None]
+                            built.extend(job for job in deferred if job["executables"] is not None)
+                            if fallback:
+                                print(f"[reached-tests] steps {[job['index'] for job in fallback]}: executables not "
+                                      "found in the build log; running them through cargo", file=sys.stderr, flush=True)
+                                work[0:0] = [{**group[job["local"]], "serial": True} for job in fallback]
+                        # A lease boundary ends a batch after its first long build: keep the built
+                        # executables until the rest are built too, so they still run side by side.
+                        if built and not (parsed["stopReason"] == "leaseBoundary" and parsed["remaining"]):
+                            ready, built = built, []
+                            parallel_started = time.monotonic()
+                            _run_parallel(ready, limit, child_env)
+                            print(f"[reached-tests] steps {[job['index'] for job in ready]}: side by side "
+                                  f"{time.monotonic() - parallel_started:.1f}s (total {time.monotonic() - started:.1f}s)",
+                                  file=sys.stderr, flush=True)
+                            side_red = False
+                            for job in ready:
+                                index = job["index"]
+                                report["pending"].remove(index)
+                                seconds = round(job["buildSeconds"] + job["seconds"], 3)
+                                tail_text = _tail(job["log"])
+                                result = {"index": index, "batchLocalIndex": job["local"],
+                                          "argv": steps[index]["argv"], "cwd": steps[index]["cwd"], "slot": True,
+                                          "returncode": job["returncode"], "elapsedSeconds": seconds,
+                                          "stepSeconds": seconds, "buildSeconds": job["buildSeconds"],
+                                          "testSeconds": job["seconds"], "sideBySide": True,
+                                          "proofKey": keys[index],
+                                          "late": time.monotonic() - started > args.budget_seconds,
+                                          "log": str(job["log"]), "tail": tail_text}
+                                side_red = side_red or result["returncode"] != 0
+                                report["completed"].append(result)
+                            if side_red and keep_going:
+                                red = True
+                            elif side_red:
+                                report["status"] = "failed"
+                                break
                         if parsed["stopReason"] == "childFailure" and keep_going:
                             red = True  # #1459: record the red, then run the batch's remaining steps
                             work[0:0] = group[completed_count:]
@@ -1212,6 +1441,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="cargo build jobs for every slot command (1..32; default 6; one root up to 16)")
     ap.add_argument("--test-threads", type=int,
                     help="libtest threads for every cargo test step (1..64; default: from free memory and cores, floor 2, ceiling 8)")
+    ap.add_argument("--no-parallel-steps", dest="parallel_steps", action="store_false",
+                    help="run the cargo test steps of a batch one after another, as before #1932")
     ap.add_argument("--allow-whole-package")
     # #1470: a review or merge run is admitted to the build slot before waiting implement plans.
     ap.add_argument("--stage", choices=("implement", "review", "merge"), default="implement",

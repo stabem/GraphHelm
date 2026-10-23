@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow, JourneyRun } from "../runtime/client";
-import { countSteps, distinctOutputs, journeyKind, journeySteps, liveCard, outputLines, withoutLive } from "./steps";
+import { countSteps, distinctOutputs, journeyKind, journeySteps, liveCard, outputLines, withoutLive, afterPanelGone, watchedIds } from "./steps";
 
 // #1912: the shape of keel-card-accepted: a command-only flow walked on two paths, so each edge's
 // command is kept twice, and its entry screen recorded `not_reached` as the commands' precondition.
@@ -90,5 +90,25 @@ describe("a panel that goes away leaves no running card (#1914)", () => {
     const run: JourneyRun = { state: "running" };
     expect(withoutLive({ a: run, b: run }, "a")).toEqual({ b: run });
     expect(withoutLive({ a: run }, "z")).toEqual({ a: run });
+  });
+});
+
+describe("a card reads running from the Runtime, whichever journey is selected (#1950)", () => {
+  it("keeps a running journey watched after its panel goes, then shows the Runtime's result", () => {
+    const running: JourneyRun = { state: "running", current: "accepted", screens: { accepted: { frame: false, result: "pass" } }, edges: { "start.accept-in-scope": { result: "pass" } } };
+    // The owner selects another journey: the panel that followed this run goes away.
+    const live = afterPanelGone({ [flow.id]: running }, flow.id);
+    expect(watchedIds(live, "other")).toEqual([flow.id]);
+    expect(liveCard(flow, live[flow.id] ?? null)?.text).toBe("● running");
+    // The Runtime's next answer is ready: the card shows the result, and nothing is read again.
+    const ready: JourneyRun = { state: "ready", kind: "replay", result: "pass", screens: { accepted: { frame: false, result: "pass" }, refused: { frame: false, result: "pass" } }, edges: { "start.accept-in-scope": { result: "pass" }, "start.refuse-out-of-scope": { result: "pass" } } };
+    const after = { ...live, [flow.id]: ready };
+    expect(liveCard(flow, after[flow.id] ?? null)?.text).toBe("✓ passed");
+    expect(watchedIds(after, "other")).toEqual([]);
+  });
+
+  it("drops a finished run when its panel goes, and never watches the selected journey", () => {
+    expect(afterPanelGone({ a: { state: "ready" } }, "a")).toEqual({});
+    expect(watchedIds({ a: { state: "running" }, b: { state: "running" } }, "a")).toEqual(["b"]);
   });
 });

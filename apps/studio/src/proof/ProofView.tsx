@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
@@ -8,7 +8,7 @@ import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./
 import { askedWhen } from "../lanes/asked";
 import { OWNER } from "../runtime/client";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
-import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, withoutLive, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, withoutLive, afterPanelGone, watchedIds, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 import { Empty, Loading, ReadFailure } from "../states/ViewState";
 import { When } from "../time/Stamp";
@@ -26,6 +26,11 @@ interface ProofViewProps {
   initial?: string | null;
 }
 
+
+/** #1950: how often a running journey no panel follows is read, and how many failed reads in a
+ * row hand its card back to the journey list. */
+const WATCH_POLL_MS = 2_000;
+const WATCH_MAX_FAILURES = 5;
 
 function message(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
@@ -46,16 +51,48 @@ export function ProofView({ runtime, journeys, error, executionId, onRan, initia
   const [live, setLive] = useState<Record<string, JourneyRun>>({});
   // A list read again carries the result; a run still playing stays until its next answer.
   useEffect(() => { setLive((before) => Object.fromEntries(Object.entries(before).filter(([, run]) => run.state === "running"))); }, [journeys]);
+  const selectedId = journeys === null ? null : (journeys.find((flow) => flow.id === picked) ?? journeys[0] ?? null)?.id ?? null;
+  // #1950: a running journey that no open panel follows is read from the Runtime here, so its card
+  // keeps reading running after the owner selects another journey, and shows the result at its end.
+  const watched = watchedIds(live, selectedId).join(",");
+  const ran = useRef(onRan);
+  ran.current = onRan;
+  useEffect(() => {
+    if (watched === "") return;
+    let on = true;
+    const failures = new Map<string, number>();
+    const timer = setInterval(() => {
+      for (const id of watched.split(",")) {
+        runtime.journeyRun(id).then((run) => {
+          if (!on) return;
+          failures.delete(id);
+          setLive((before) => (before[id]?.state === "running" ? { ...before, [id]: run } : before));
+          if (run.state !== "running") ran.current();
+        }, () => {
+          if (!on) return;
+          const n = (failures.get(id) ?? 0) + 1;
+          failures.set(id, n);
+          // #1915: an unreadable run never leaves a card on running for good; it reads the list.
+          if (n >= WATCH_MAX_FAILURES) setLive((before) => withoutLive(before, id));
+        });
+      }
+    }, WATCH_POLL_MS);
+    return () => { on = false; clearInterval(timer); };
+  }, [watched, runtime]);
   if (error !== null && journeys === null) return <section id="panel-proof" aria-label="Proof" className="view"><ReadFailure what="journeys" route="/v1/journey-flows" message={error} onRetry={onRan} /></section>;
   if (journeys === null) return <section id="panel-proof" aria-label="Proof" className="view"><Loading text="Reading the journeys…" /></section>;
   const selected = journeys.find((flow) => flow.id === picked) ?? journeys[0] ?? null;
-  const started = (id: string) => { if (id === selected?.id) setReread((n) => n + 1); };
+  const started = (id: string) => {
+    // #1950: a run started here is known running until the Runtime says otherwise.
+    setLive((before) => ({ ...before, [id]: { state: "running" } }));
+    if (id === selected?.id) setReread((n) => n + 1);
+  };
   return (
     <section id="panel-proof" aria-label="Proof" className="proof">
       <JourneysColumn runtime={runtime} journeys={journeys} selected={selected?.id ?? null} executionId={executionId} onPick={setPicked} onStarted={started} onRan={onRan} live={live} />
       {selected === null
         ? <div className="proof-main"><Empty title="No journeys yet" hint="This project has no journeys yet. A journey appears here once one is drafted for a request." /></div>
-        : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} executionId={executionId} onRan={onRan} onRun={(run) => setLive((before) => ({ ...before, [selected.id]: run }))} onGone={() => setLive((before) => withoutLive(before, selected.id))} />}
+        : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} executionId={executionId} onRan={onRan} onRun={(run) => setLive((before) => ({ ...before, [selected.id]: run }))} onGone={() => setLive((before) => afterPanelGone(before, selected.id))} />}
     </section>
   );
 }
@@ -183,8 +220,8 @@ function JourneyCard({ flow, selected, disabled, onPick, onRun, run, playing }: 
   const score = now !== null ? { passed: now.passed, total: now.total, bar: now.bar } : base;
   const decision = decisionOf(flow);
   return (
-    <li className={`journey${selected ? " on" : ""}`}>
-      <button type="button" className="b journey-pick" aria-pressed={selected} onClick={() => onPick(flow.id)}>
+    <li className={`journey${selected ? " on" : ""}`} aria-label={nameOf(flow)}>
+      <button type="button" className="b journey-pick" aria-label={`Select ${nameOf(flow)}`} aria-pressed={selected} onClick={() => onPick(flow.id)}>
         <span className="journey-top"><strong>{nameOf(flow)}</strong><KindBadge flow={flow} card /></span>
         {flow.purpose && <span className="journey-purpose">{flow.purpose}</span>}
       </button>

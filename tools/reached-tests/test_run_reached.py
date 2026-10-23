@@ -1740,6 +1740,34 @@ class SideBySideTestSteps(unittest.TestCase):
         self.assertEqual(rr._parallel_limit(6.0), 2)
         self.assertEqual(rr._parallel_limit(64.0), rr.PARALLEL_STEPS_CEILING)
 
+    def test_memory_under_the_reserve_runs_one_at_a_time(self):
+        """#1962: free RAM under the reserve is never spent on parallel tests or threads."""
+        reserve = rr._reserve_gb(3.0)
+        self.assertAlmostEqual(reserve, 3.221225472)
+        self.assertEqual(rr._parallel_limit(5.0, reserve), 1)
+        self.assertEqual(rr._parallel_limit(9.5, reserve), 2)
+        self.assertEqual(rr._test_threads(3.0, 32, reserve), 1)
+        self.assertEqual(rr._test_threads(13.1 + reserve, 32, reserve), 8)
+        with patch.dict(os.environ, {"GRAPHHELM_MEMORY_RESERVE_GIB": "0"}):
+            self.assertEqual(rr._reserve_gb(), 0.0)
+        # Memory falls under the reserve after the first executable starts: the second waits for it.
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp) / "first-running"
+            first = (f"import pathlib,time;p=pathlib.Path({str(marker)!r});p.write_text('1');"
+                     "time.sleep(0.6);p.unlink()")
+            second = (f"import pathlib,sys;sys.exit(3 if pathlib.Path({str(marker)!r}).exists() else 0)")
+            jobs = [{"index": i, "package": "a", "args": ["-c", code], "log": Path(temp) / f"{i}.log",
+                     "executables": [{"executable": sys.executable, "cwd": temp}]}
+                    for i, code in enumerate((first, second))]
+            rr._run_parallel(jobs, 4, dict(os.environ), reserve, free_gb=lambda: 2.0)
+            self.assertEqual([job["returncode"] for job in jobs], [0, 0])
+            # Control: with headroom the two overlap and the second sees the first running.
+            jobs = [{"index": i, "package": "a", "args": ["-c", code], "log": Path(temp) / f"h{i}.log",
+                     "executables": [{"executable": sys.executable, "cwd": temp}]}
+                    for i, code in enumerate((first, "import time;time.sleep(0.3);" + second))]
+            rr._run_parallel(jobs, 4, dict(os.environ), reserve, free_gb=lambda: 64.0)
+            self.assertEqual([job["returncode"] for job in jobs], [0, 3])
+
     def test_split_accepts_only_replayable_cargo_tests(self):
         argv = ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--bin", "graphhelm",
                 "--test", "cli", "--", "--test-threads=8", "api_http::"]

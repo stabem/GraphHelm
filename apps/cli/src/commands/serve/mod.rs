@@ -9,6 +9,7 @@ mod native_chats;
 mod notices;
 pub(super) mod ports;
 mod routes;
+mod supervise;
 pub(super) use routes::percent_decode;
 mod wake;
 
@@ -288,6 +289,9 @@ impl ServeState {
 /// connections it runs until the process is killed, by design (there is no shutdown endpoint in
 /// this milestone).
 pub fn run(args: &ServeArgs) -> Outcome {
+    if args.supervise && !supervise::is_supervised() {
+        return supervise::run(args);
+    }
     // Requests still open and drop their own store; only the journal proof is shared.
     super::enable_shared_prefix_cache();
     // #371: and the folded projection, so a read folds only what was appended since the last one.
@@ -862,6 +866,16 @@ async fn serve_forever(
     {
         exit.insert("journalTailRecovered".to_owned(), recovered.clone());
     }
+    // #1962: a supervisor (`serve --supervise`) started this run after the previous one died;
+    // the restart notice reads it here, beside the previous run's own ending.
+    if let (Some(count), serde_json::Value::Object(exit)) =
+        (supervise::restart_count(), &mut state.previous_exit)
+    {
+        exit.insert(
+            "supervisorRestart".to_owned(),
+            serde_json::json!({ "count": count }),
+        );
+    }
     state.current_run = current_run;
     state.startup = serde_json::json!({
         "journalVerifyMs": journal_verify_ms,
@@ -929,6 +943,7 @@ async fn serve_forever(
         });
     }
     let drain_signal = handover_signal.clone();
+    let handed_over_at_end = handover_signal.clone();
     let app = build_router(state);
     let served = axum::serve(listener, app).with_graceful_shutdown(async move {
         tokio::select! {
@@ -947,7 +962,7 @@ async fn serve_forever(
         () = drained => Ok(()),
     }
     .map_err(|_| serve_invalid("the server loop ended unexpectedly", "/"));
-    lifecycle.finish(result.is_ok())?;
+    lifecycle.finish(result.is_ok(), *handed_over_at_end.borrow())?;
     result
 }
 

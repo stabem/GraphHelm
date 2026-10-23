@@ -193,6 +193,8 @@ mod runtime_http;
 mod schema_cli;
 #[path = "serve_handover.rs"]
 mod serve_handover;
+#[path = "serve_supervise.rs"]
+mod serve_supervise;
 #[path = "shipped_package_coverage.rs"]
 mod shipped_package_coverage;
 #[path = "signal_image_evidence_cli.rs"]

@@ -650,7 +650,7 @@ fn run_command(
         .replace("{file}", &shell_quote(path))
         .replace("{name}", &shell_quote(name))
         .replace("{report}", &shell_quote(&report.to_string_lossy()));
-    let mut command = graphhelm_process::command("sh");
+    let mut command = graphhelm_process::posix_shell();
     command
         .current_dir(tree)
         .args(["-c", &line])

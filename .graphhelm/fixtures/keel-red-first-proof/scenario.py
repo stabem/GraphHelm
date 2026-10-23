@@ -130,6 +130,11 @@ def proof_tuple(envelope: dict, name: str) -> tuple[str, str, str]:
     if len(matches) != 1:
         raise AssertionError(f"expected one proof named {name!r}: {envelope}")
     proof = matches[0]
+    # #1918: a runner that could not start is a missing toolchain, not a vacuous result.
+    for side in ("parent", "head"):
+        detail = str(proof.get(side, {}).get("detail", ""))
+        if proof.get(side, {}).get("outcome") == "not_run" and "did not start" in detail:
+            raise RuntimeError(f"toolchain missing on the {side} side: {detail}")
     return (proof["parent"]["outcome"], proof["head"]["outcome"], proof["verdict"])
 
 

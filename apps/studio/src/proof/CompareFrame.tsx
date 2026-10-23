@@ -26,13 +26,15 @@ interface CompareFrameProps {
   mobileNow?: string | undefined;
   /** The earlier run this step is compared with, or `null` when none kept its frame. */
   earlier: JourneyPastRun | null;
+  /** #1956: the run on screen is the earlier version's, not one of the current version. */
+  staleRun?: boolean;
 }
 
 /** The selected step's frame with its compare modes (docs/design/studio/Proof.dc.html): the frame
  * alone, Before and Now side by side, Now over Before with an opacity slider, or Now with every
  * pixel that changed since Before painted red. Before is the earlier run's frame, fetched with the
  * session's bearer header into an object URL. */
-export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobileNow, earlier }: CompareFrameProps) {
+export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobileNow, earlier, staleRun = false }: CompareFrameProps) {
   const [mode, setMode] = useState<CompareMode>("frame");
   const [opacity, setOpacity] = useState(50);
   const [viewport, setViewport] = useState<"web" | "mobile">("web");
@@ -132,7 +134,7 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
             : <span className="muted">{step.edge === null ? "The journey starts here." : "No reason written for this step."}</span>}
         </section>
         <section aria-label="Compare with an earlier run" className="action-compare">
-          <span className="section-label">{earlier === null ? "NO EARLIER RUN" : `COMPARE WITH ${when}`}</span>
+          <span className="section-label">{staleRun ? "EARLIER VERSION'S RUN · " : ""}{earlier === null ? "NO EARLIER RUN" : `COMPARE WITH ${when}`}</span>
           {offReason !== null && <span>{offReason}</span>}
           {changes.sentence !== null && <span className="compare-changed">{changes.sentence}</span>}
           {pastResult !== undefined && <span className="compare-changed">This step {PAST[pastResult]} then, {nowWord} now.</span>}

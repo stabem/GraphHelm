@@ -202,10 +202,14 @@ export interface JourneyRun {
  * it kept a frame for. */
 export interface JourneyPastRun {
   run: string;
+  state?: "ready" | "failed";
   ranAt?: string;
   result?: StepResult;
+  reason?: string;
   kind?: "replay" | "preview";
-  screens?: Record<string, { frame?: boolean; width?: number; height?: number; result?: StepResult }>;
+  digest?: string;
+  screens?: Record<string, { frame?: boolean; width?: number; height?: number; result?: StepResult; reason?: string }>;
+  edges?: Record<string, { result?: StepResult | "skipped" | null; reason?: string }>;
 }
 
 interface Envelope<T> {

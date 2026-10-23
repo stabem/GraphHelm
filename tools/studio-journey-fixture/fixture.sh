@@ -468,6 +468,21 @@ NODE
     [ -n "$key" ] || { echo "fixture: no preview key for $flow" >&2; exit 1; }
     node "$repo/tools/studio-journey-fixture/seed_run.mjs" "$dir/project" "$flow" $key > /dev/null
   fi
+  # #1956: studio2-proof-stale needs a journey edited after its run: its run is seeded under the
+  # flow's key, then the flow's purpose is edited and committed, so its digest moves and the
+  # preview read answers `none` while that run stays the last one.
+  if [ "$flow" = studio2-proof-stale ]; then
+    "$bin" --json journey preview "$flow" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
+    key=$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).data||{}; if(d.digest&&d.commit) console.log(d.digest+" "+d.commit)' "$dir/.graphhelm/preview-key.json")
+    [ -n "$key" ] || { echo "fixture: no preview key for $flow" >&2; exit 1; }
+    node "$repo/tools/studio-journey-fixture/seed_run.mjs" "$dir/project" "$flow" $key > /dev/null
+    f="$dir/project/.graphhelm/journeys/$flow.journey.yaml"
+    sed 's#^purpose: "A journey whose flow#purpose: "Edited after its run. A journey whose flow#' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    git -C "$dir/project" add -f -- ".graphhelm/journeys/$flow.journey.yaml"
+    git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: edit the flow after its run'
+    "$bin" --json journey preview "$flow" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
+    grep -q '"state":"none"' "$dir/.graphhelm/preview-key.json" || { echo "fixture: $flow still reads its run after the edit" >&2; exit 1; }
+  fi
   # #137: the async Runtime driver records delegation; no model executor is wired. No studio2 flow
   # reads it yet; kept for a lanes flow that names a delegated worker.
   if [ "$flow" = studio-delegation-label ]; then

@@ -2,7 +2,7 @@ import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow } from "../runtime/client";
-import { becauseOf, readableName, reasonSentence, countSteps, failsOnlyOn, journeyScore, journeySteps, lastRunChip, preparingStatus } from "./steps";
+import { becauseOf, CHANGED, countSteps, earlierVersion, failsOnlyOn, journeyScore, journeySteps, lastRunChip, pastAsRun, preparingStatus, readableName, reasonSentence } from "./steps";
 
 const flow: JourneyFlow = {
   id: "buy",
@@ -72,6 +72,31 @@ describe("journeys column chip", () => {
     expect(lastRunChip({ ...last, status: "not_run", kind: null }).text).toBe("○ not run");
     expect(lastRunChip({ ...last, status: "failed", kind: "replay" })).toEqual({ text: "✕ failed", tone: "fail" });
     expect(lastRunChip({ ...last, status: "passed", kind: "preview" })).toEqual({ text: "✓ passed · preview, not proof", tone: "idle" });
+  });
+});
+
+// #1956: a flow edited after its run (its digest moved) reads changed, never passed, and the panel
+// shows that run's results from the history entry; a flow that never ran stays "not run".
+describe("a journey changed since its last run", () => {
+  const last = { ranAt: "t", reason: null, failingStep: null, kind: "replay" as const };
+  const past = { run: "00000001792058400000", state: "ready" as const, result: "pass" as const, ranAt: "2026-10-22T21:53:09Z", digest: "sha256:old",
+    screens: { list: { frame: true, result: "pass" as const }, item: { frame: true, result: "pass" as const }, done: { frame: false, result: "pass" as const } },
+    edges: { "list.item": { result: "pass" as const }, "item.done": { result: "pass" as const } } };
+
+  it("reads Changed since last run on the card when the digest moved, never passed", () => {
+    expect(lastRunChip({ ...last, status: "passed", flowChanged: true })).toEqual({ text: CHANGED, tone: "idle" });
+    expect(lastRunChip({ ...last, status: "passed", flowChanged: false }).text).toBe("✓ passed");
+    expect(lastRunChip({ ...last, status: "not_run", kind: null, flowChanged: null }).text).toBe("○ not run");
+  });
+
+  it("shows the earlier version's results when the current version has no run, and none when it never ran", () => {
+    expect(earlierVersion({ state: "none" }, [past])).toBe(past);
+    expect(earlierVersion({ state: "none" }, [])).toBeNull();
+    expect(earlierVersion({ state: "ready", result: "pass" }, [past])).toBeNull();
+    expect(earlierVersion(null, [past])).toBeNull();
+    const steps = journeySteps(flow, pastAsRun(past));
+    expect(steps.map((step) => step.status)).toEqual(["passed", "passed", "passed"]);
+    expect(steps.map((step) => step.frame)).toEqual([true, true, false]);
   });
 });
 

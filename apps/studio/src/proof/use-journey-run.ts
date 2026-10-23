@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { JourneyPastRun, JourneyRun, Runtime } from "../runtime/client";
 import { followRun } from "./run-all";
-import { outputLines } from "./steps";
+import { earlierVersion, outputLines } from "./steps";
 
 /** How often a running journey is read again. */
 const POLL_MS = 1_000;
@@ -18,6 +18,8 @@ export interface JourneyRunState {
   /** What the Runtime printed while preparing and running, oldest first. */
   log: string[];
   history: JourneyPastRun[];
+  /** #1956: the earlier version's run shown while the current version has none, else `null`. */
+  earlier: JourneyPastRun | null;
   error: string | null;
   starting: boolean;
   /** Run; with a digest, the owner's Confirm of the commands shown under that digest (#1909). */
@@ -127,6 +129,27 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     }
   }, [run, runtime, flowId, attempt]);
 
+  // #1956: the earlier version's frames, read by its run id, under the same slots as a run's.
+  const earlier = earlierVersion(run, history);
+  useEffect(() => {
+    if (earlier === null) return;
+    for (const [screen, seen] of Object.entries(earlier.screens ?? {})) {
+      if (seen.frame !== true) continue;
+      const key = `earlier:${earlier.run}`;
+      const held = urls.current.get(screen);
+      if (held?.key === key) continue;
+      urls.current.set(screen, { key, url: held?.url ?? null });
+      runtime.journeyPastFrame(flowId, earlier.run, screen).then((blob) => {
+        const entry = urls.current.get(screen);
+        if (blob === null || entry === undefined || entry.key !== key) return;
+        const url = URL.createObjectURL(blob);
+        if (entry.url !== null) URL.revokeObjectURL(entry.url);
+        entry.url = url;
+        setFrames((before) => ({ ...before, [screen]: url }));
+      }, () => { urls.current.delete(screen); });
+    }
+  }, [earlier, runtime, flowId]);
+
   const drop = useCallback(() => {
     for (const { url } of urls.current.values()) if (url !== null) URL.revokeObjectURL(url);
     urls.current.clear();
@@ -145,7 +168,7 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
   }, [drop]);
 
   const split = splitFrames(frames, run?.viewportsPlanned?.[0]);
-  return { run, frames: split.web, mobileFrames: split.mobile, log, history, error, starting, start };
+  return { run, frames: split.web, mobileFrames: split.mobile, log, history, earlier, error, starting, start };
 }
 
 /** #1777/#1878: a run's fetched frames by viewport. The top level is the run's first viewport and

@@ -218,6 +218,9 @@ button { font: inherit; }
 .step.failed .step-thumb, .step.drift .step-thumb { border-bottom-color: #ff6b6b; }
 .step.running .step-thumb { border-bottom-color: var(--accent); }
 .step-thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+/* #1956: a step shown from the earlier version of its journey: its frame dimmed, a stale mark. */
+.step.stale .step-thumb img { opacity: .45; filter: grayscale(.6); }
+.stale-mark { align-self: flex-start; margin: 2px 0; padding: 1px 5px; line-height: 1.4; white-space: nowrap; border-radius: 3px; background: #fff3c4; color: #5a4300; font-size: 10px; text-transform: uppercase; }
 .step-text { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; text-align: left; min-width: 0; }
 .step-head { display: flex; justify-content: space-between; font: var(--fs-meta) var(--mono); color: var(--faint); }
 .step.passed .step-status { color: var(--live); }

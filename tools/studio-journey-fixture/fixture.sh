@@ -373,6 +373,11 @@ const records = [
   ['request', 'task.request_recorded', { taskId: 'request-fixture', requestId: 'fixture', ask: 'Show the work graph for the fixture run', recordedBy: 'planner' }],
   ['request-link', 'task.request_linked', { taskId: 'request-fixture', requestId: 'fixture', issue: 721, linkedBy: 'planner' }],
 ];
+// #1947: a request with no issue yet sits beside the one-issue request: its YOU ASKED card (chip,
+// bar, legend) is taller than its row would be, and must not overlap the next request.
+if (journey[0] === 'studio2-graph-requests') {
+  records.push(['request-empty', 'task.request_recorded', { taskId: 'request-empty', requestId: 'empty', ask: 'Prove a regression test for the fixture run', recordedBy: 'planner' }]);
+}
 // #1808: the review's Now is the PR head's captured frame (#1839); one for the first screen.
 if (journey[0] === 'studio2-graph-review-screen') {
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';

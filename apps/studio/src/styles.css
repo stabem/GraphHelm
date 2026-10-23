@@ -529,7 +529,7 @@ button { font: inherit; }
 .gv-node { position: absolute; left: var(--x); top: var(--y); box-sizing: border-box; }
 .gv-ask { width: 240px; padding: var(--card-pad); border-radius: var(--card-radius); border: 1px solid var(--accent); background: var(--card); display: flex; flex-direction: column; gap: var(--s2); }
 .gv-ask-when { font-size: var(--fs-meta); color: var(--accent); }
-.gv-ask-text { font-size: 13px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+.gv-ask-text { font-size: 13px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .gv-bar { display: flex; gap: 3px; flex-wrap: wrap; }
 .gv-sq { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 .gv-sq.small { width: 8px; height: 8px; }

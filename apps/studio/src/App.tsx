@@ -30,10 +30,6 @@ function closedProjects(sessions: Session[], served: { first: string | null; all
   return served.all.filter((id) => !open.has(id));
 }
 
-function clock(date: Date): string {
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
 export function App() {
   const [auth, setAuth] = useState<Login>({ state: "pending" });
   const [route, setRoute] = useState<Route>(() => parseRoute(location.search));
@@ -97,7 +93,7 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
   const runtime = useMemo(() => new Runtime(session.token, session.base), [session.token, session.base]);
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
   const [live, setLive] = useState(false);
-  const [updated, setUpdated] = useState<string | null>(null);
+  const [updated, setUpdated] = useState<number | null>(null);
   const [journeys, setJourneys] = useState<JourneyFlow[] | null>(null);
   const [journeysError, setJourneysError] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
@@ -110,7 +106,7 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
       setRuns(await bounded(runtime.runs()));
       setRunsError(null);
       setLive(true);
-      setUpdated(clock(new Date()));
+      setUpdated(Date.now());
     } catch (failure) {
       setRunsError(failure instanceof Error ? failure.message : "The Runtime is not answering.");
       setLive(false);

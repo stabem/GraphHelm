@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { When } from "../time/Stamp";
 import type { AddRefusal } from "../login/session";
 import { routeSearch, type View } from "../routing/route";
 import { subtitle, type ProjectSummary } from "./project-summary";
@@ -88,11 +89,6 @@ interface Props {
   onView: (view: View) => void;
 }
 
-function hhmm(epochSeconds: number): string {
-  const at = new Date(epochSeconds * 1000);
-  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
-}
-
 function Folder({ stroke }: { stroke: string }) {
   return <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2"><path d="M3 7h6l2 2h10v10H3z" /></svg>;
 }
@@ -111,7 +107,7 @@ export function Sidebar({ projects, closed, current, view, live, onProject, onAd
       </div>
       {restart !== null && (
         <details className="restart" aria-label="Runtime restart">
-          <summary>Runtime restarted {hhmm(restart.startedAt)} · Details</summary>
+          <summary>Runtime restarted <When at={restart.startedAt * 1000} /> · Details</summary>
           <p>{restartDetail(restart)}</p>
         </details>
       )}

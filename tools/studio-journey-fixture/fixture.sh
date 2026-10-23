@@ -237,6 +237,46 @@ drift: []
 FLOW
     git -C "$dir/project" add -f -- .graphhelm/journeys/cli-hello.journey.yaml ;;
   esac
+  # #1919: the Send to fix flows need a journey that fails: a draft reading this fixture's Runtime
+  # health and expecting ok=false, which it never is. FIXTURE-ONLY, and only for those flows.
+  case "${GRAPHHELM_JOURNEY_FLOW:-}" in studio2-proof-send-fix|studio2-proof-send-fix-mobile)
+    cat > "$dir/project/.graphhelm/journeys/health-broken.journey.yaml" <<FLOW
+schema: graphhelm.journey-flow/1
+id: health-broken
+title: A health check that always fails
+name: Broken health check
+purpose: "The fixture's failing draft: the Runtime answers ok=true, the flow expects ok=false."
+status: draft
+approved: null
+base: http://127.0.0.1:$rport
+actors: [owner]
+secrets: []
+risks: []
+screens:
+  - id: checked
+    title: The health answer says not ok
+    url: /health
+    state: success
+    expect: [{role: status, name: "200"}, {role: json, name: ok=false}]
+    scope: unknown
+  - id: start
+    title: The Runtime answers its health check
+    url: /health
+    state: stable
+    expect: [{role: status, name: "200"}]
+    scope: unknown
+edges:
+  - id: read
+    from: start
+    to: checked
+    acts:
+      - {kind: http, role: GET, name: /health}
+paths:
+  main: [read]
+drift: []
+FLOW
+    git -C "$dir/project" add -f -- .graphhelm/journeys/health-broken.journey.yaml ;;
+  esac
   git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: observer seed flow'
   # #1901: the Studio opens a project's team run by itself, so a project with no run at all needs a
   # fixture that starts none: GRAPHHELM_FIXTURE_EMPTY=1, or the studio2-no-run flow, skips both the

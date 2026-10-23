@@ -5,6 +5,7 @@ import { controlBody, draftFor, messageBody, newId, type Draft } from "./drafts"
 import { actionText, clock } from "./format";
 import { capacityRows, feed, needsAction, type Need } from "./panels";
 import { idleText } from "./board";
+import type { OwnerRequest } from "../graph/requests";
 
 /** Collisions are re-read with the board's pace slowed down; capacity is a machine sample. */
 const COLLISIONS_MS = 15_000;
@@ -15,6 +16,8 @@ interface Props {
   runtime: Runtime;
   executionId: string;
   board: TasksBoard;
+  /** #1919: the owner's requests; one no issue was opened for is a Hand off item. */
+  requests: readonly OwnerRequest[];
   actions: Record<string, { rows: LaneAction[] }>;
   /** Answer: select the lane and focus its reply box. */
   onAnswer: (lane: string) => void;
@@ -22,12 +25,12 @@ interface Props {
 }
 
 const DONE: Record<Need["verb"], string> = {
-  Answer: "Answering", Assign: "Assigned", Merge: "Merge requested", Archive: "Archived", Reassign: "Reassigned", Wake: "Woken",
+  Answer: "Answering", Assign: "Assigned", Merge: "Merge requested", Archive: "Archived", Reassign: "Reassigned", Wake: "Woken", "Hand off": "Handed off",
 };
 
 /** The design's bottom row (docs/design/studio/Lanes.dc.html): Needs action, file collisions with
  * capacity, and the live feed. Every read is a public Runtime route. */
-export function LanesPanels({ runtime, executionId, board, actions, onAnswer, onSent }: Props) {
+export function LanesPanels({ runtime, executionId, board, requests, actions, onAnswer, onSent }: Props) {
   const [collisions, setCollisions] = useState<FileCollisions | null>(null);
   const [collisionsError, setCollisionsError] = useState<string | null>(null);
   const [capacity, setCapacity] = useState<Capacity | null>(null);
@@ -60,7 +63,7 @@ export function LanesPanels({ runtime, executionId, board, actions, onAnswer, on
     return () => { live = false; clearInterval(timer); };
   }, [runtime]);
 
-  const needs = useMemo(() => needsAction(board), [board]);
+  const needs = useMemo(() => needsAction(board, requests), [board, requests]);
   const rows = useMemo(() => feed(actions, FEED_ROWS), [actions]);
   const now = Date.parse(board.now);
 
@@ -77,10 +80,12 @@ export function LanesPanels({ runtime, executionId, board, actions, onAnswer, on
     let intent: string;
     let make: () => { id: string; body: Record<string, unknown> };
     let post: (draft: Draft) => Promise<void>;
-    if (need.verb === "Assign" || need.verb === "Merge") {
+    if (need.verb === "Assign" || need.verb === "Merge" || need.verb === "Hand off") {
       const to = need.to;
       if (to === null) return;
-      const text = need.verb === "Assign"
+      const text = need.verb === "Hand off"
+        ? `The owner hands you request ${need.request?.requestId}: open its issue, link it (task.request_linked) and fix it.\n\n${need.request?.ask ?? ""}`
+        : need.verb === "Assign"
         ? `The owner assigns you the review of PR #${pr} (${need.lane}).`
         : `The owner asks you to merge PR #${pr}, approved and ready.`;
       intent = JSON.stringify([need.id, to]);
@@ -133,8 +138,8 @@ export function LanesPanels({ runtime, executionId, board, actions, onAnswer, on
                 <span className="need-text"><span className="need-what">{need.what}</span><span className="mono faint">{waited(need.since)}{need.to !== null && need.verb !== "Merge" ? ` · to ${need.to}` : ""}</span></span>
                 {/* #1808: the verb and its lane name the button, so it is never confused with the
                     agent panel's own Reassign or Wake, nor with the same verb on another item. */}
-                <button type="button" aria-label={`${need.verb} ${need.lane}`} className="b ghost small" disabled={sending !== null || ((need.verb === "Assign" || need.verb === "Reassign") && need.to === null)}
-                  title={(need.verb === "Assign" || need.verb === "Reassign") && need.to === null ? "No free live lane can take it." : undefined}
+                <button type="button" aria-label={`${need.verb} ${need.lane}`} className="b ghost small" disabled={sending !== null || ((need.verb === "Assign" || need.verb === "Reassign" || need.verb === "Hand off") && need.to === null)}
+                  title={(need.verb === "Assign" || need.verb === "Reassign" || need.verb === "Hand off") && need.to === null ? "No free live lane can take it." : undefined}
                   onClick={() => void act(need)}>{need.verb}</button>
               </li>
             ))}

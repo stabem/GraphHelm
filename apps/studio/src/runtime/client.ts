@@ -409,6 +409,12 @@ export class Runtime {
     await this.#request("POST", `/v1/executions/${encodeURIComponent(executionId)}/lanes/${encodeURIComponent(lane)}/${control}`, draft.body, this.#owner(draft.id));
   }
 
+  /** #1919: the owner's request, `task.request_recorded` on `POST /v1/executions/{id}/signal`
+   * (proof/send-fix.ts `fixBody`). The signal id is the idempotency key; owner credential only. */
+  async recordRequest(executionId: string, id: string, body: Record<string, unknown>): Promise<void> {
+    await this.#request("POST", `/v1/executions/${encodeURIComponent(executionId)}/signal`, body, this.#owner(id));
+  }
+
   #owner(key: string): Record<string, string> {
     return { "Idempotency-Key": key, "X-GraphHelm-Actor": OWNER.id, "X-GraphHelm-Actor-Type": OWNER.type };
   }

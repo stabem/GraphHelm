@@ -6242,6 +6242,68 @@ fn a_recorded_request_lists_its_linked_issues_their_prs_and_its_status() {
     );
 }
 
+/// #1919: the Studio's Proof "Send to fix" records the owner's request on the existing signal
+/// route, as the owner (`X-GraphHelm-Actor-Type: owner`, `studio-operator`), with the body
+/// apps/studio/src/proof/send-fix.ts `fixBody` sends. Observer: the real `serve` binary over HTTP.
+/// Contracts: the request is served by `/requests` as the owner's; the same key and body sent again
+/// is reconciled, not a second request; an owner record naming another recorder is refused.
+#[test]
+fn an_owner_records_a_fix_request_from_the_studio() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let extra = throwaway_keyring(dir.path());
+    let run = "fix-run";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 3);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let owner = "studio-operator";
+    let send = |id: &str, recorded_by: &str| {
+        let document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": format!("request-{id}"), "revision": 1, "at": "2026-10-23T10:16:00Z",
+            "requestId": id, "ask": "Fix the journey buy: its last run failed.\nFlow file: .graphhelm/journeys/buy.journey.yaml",
+            "title": "Fix Buy a sofa", "recordedBy": recorded_by});
+        post_json(
+            &format!("{base}/v1/executions/{run}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", owner),
+                ("X-GraphHelm-Actor-Type", "owner"),
+            ],
+            &serde_json::json!({"signal": {"id": id, "type": "task.request_recorded",
+                "source": {"type": "user", "id": owner}, "severity": "low",
+                "emittedAt": "2026-10-23T10:16:00Z", "evidence": [run],
+                "description": document.to_string()}}),
+        )
+    };
+    let (status, reply) = send("fix-buy-20261023t101500z", owner);
+    assert_eq!(status, 200, "{reply}");
+    let (status, reply) = send("fix-buy-20261023t101500z", owner);
+    assert_eq!(status, 200, "the same key and body is reconciled: {reply}");
+    let (status, reply) = send("fix-other", "lane-a");
+    assert_ne!(
+        status, 200,
+        "the owner cannot record in another's name: {reply}"
+    );
+    let view = get_json(
+        &format!("{base}/v1/executions/{run}/requests"),
+        Some(&token),
+    );
+    let requests = view["data"]["requests"].as_array().unwrap();
+    assert_eq!(requests.len(), 1, "{view}");
+    assert_eq!(requests[0]["requestId"], "fix-buy-20261023t101500z");
+    assert_eq!(requests[0]["recordedBy"], owner);
+    assert_eq!(requests[0]["title"], "Fix Buy a sofa");
+    assert_eq!(requests[0]["status"], "open");
+}
+
 /// #1795 (R4a): the issue view asks which journeys an issue's tasks named and, for each, the
 /// newest finished run kept for it, the "before" picture. Observer: the real `serve` binary over
 /// HTTP with a project whose preview store the test seeds. Credible regressions: journeys from

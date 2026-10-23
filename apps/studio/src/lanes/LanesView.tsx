@@ -160,7 +160,7 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
             </li>
           )}
         </ul>
-        <LanesPanels runtime={runtime} executionId={executionId} board={board} actions={actions} onAnswer={(lane) => pick(lane, true)} onSent={read} />
+        <LanesPanels runtime={runtime} executionId={executionId} board={board} requests={requests ?? []} actions={actions} onAnswer={(lane) => pick(lane, true)} onSent={read} />
       </div>
       {selected !== null && (
         <AgentPanel

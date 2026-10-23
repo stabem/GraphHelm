@@ -1591,7 +1591,7 @@ class TestThreadsScaleWithTheHost(unittest.TestCase):
     def test_threads_scale_and_stop_at_the_ceiling(self):
         self.assertEqual(rr._test_threads(13.1, 32), 8)
         self.assertEqual(rr._test_threads(13.1, 8), 4)
-        self.assertEqual(rr._test_threads(200.0, 64), 16)
+        self.assertEqual(rr._test_threads(200.0, 64), 8)
 
     def test_threads_rewrite_only_the_libtest_flag_of_a_cargo_test(self):
         argv = ["cargo", "+1.97.1", "test", "--locked", "-p", "x", "--", "--test-threads=2", "a::"]

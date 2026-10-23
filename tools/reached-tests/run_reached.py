@@ -298,9 +298,10 @@ def _execution_order(steps: list[dict[str, Any]], batch_slot: bool) -> list[dict
 
 
 # #1892: libtest threads scale with the host instead of a fixed 2. One thread per ~1.5 GB of free
-# memory and per two logical cores, never below the old floor of 2 and never above 16.
+# memory and per two logical cores, never below the old floor of 2 and never above 8:
+# at 16 threads with 2.3 GB free, a runtime_http test could not bind its port.
 TEST_THREADS_FLOOR = 2
-TEST_THREADS_CEILING = 16
+TEST_THREADS_CEILING = 8
 GB_PER_TEST_THREAD = 1.5
 
 
@@ -1210,7 +1211,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--jobs", type=int, default=6,
                     help="cargo build jobs for every slot command (1..32; default 6; one root up to 16)")
     ap.add_argument("--test-threads", type=int,
-                    help="libtest threads for every cargo test step (1..64; default: from free memory and cores, floor 2)")
+                    help="libtest threads for every cargo test step (1..64; default: from free memory and cores, floor 2, ceiling 8)")
     ap.add_argument("--allow-whole-package")
     # #1470: a review or merge run is admitted to the build slot before waiting implement plans.
     ap.add_argument("--stage", choices=("implement", "review", "merge"), default="implement",

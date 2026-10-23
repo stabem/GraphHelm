@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { addFolder, login, servedProjects, type Session } from "./login/session";
+import { addFolder, forgetKey, login, servedProjects, type Session } from "./login/session";
 import { parseRoute, routeSearch, type Route, type View } from "./routing/route";
-import { Runtime, type JourneyFlow, type RunSummary } from "./runtime/client";
+import { refusedToken, Runtime, type JourneyFlow, type RunSummary } from "./runtime/client";
 import { Sidebar, type ProjectEntry } from "./sidebar/Sidebar";
 import { useSummaries } from "./sidebar/use-summaries";
 import { useRestart } from "./sidebar/use-health";
@@ -61,6 +61,16 @@ export function App() {
     history.pushState(null, "", `${location.pathname}${routeSearch(next)}`);
   }, []);
 
+  // #1897: a project whose Runtime refuses its token leaves this tab; the last one leaves the connect screen.
+  const dropSession = useCallback((key: string) => {
+    forgetKey(key);
+    setAuth((now) => {
+      if (now.state !== "in") return now;
+      const left = now.sessions.filter((known) => known.key !== key);
+      return left.length === 0 ? { state: "refused" } : { ...now, sessions: left };
+    });
+  }, []);
+
   const sessions = auth.state === "in" ? auth.sessions : NO_SESSIONS;
   const summaries = useSummaries(sessions);
 
@@ -78,7 +88,7 @@ export function App() {
     key: known.key, name: known.project ?? "this project", folder: known.folder, summary: summaries[known.key] ?? null,
   }));
   // Keyed by project: switching starts that project's own reads from empty, never the last one's rows.
-  return <Shell key={session.key} session={session} projects={projects} closed={auth.closed} route={{ ...route, project: session.key }} go={go} />;
+  return <Shell key={session.key} session={session} projects={projects} closed={auth.closed} route={{ ...route, project: session.key }} go={go} onRefused={dropSession} />;
 }
 
 interface ShellProps {
@@ -87,9 +97,11 @@ interface ShellProps {
   closed: string[];
   route: Route;
   go: (route: Route) => void;
+  /** The Runtime refused this session's token (#1897). */
+  onRefused: (key: string) => void;
 }
 
-function Shell({ session, projects, closed, route, go }: ShellProps) {
+function Shell({ session, projects, closed, route, go, onRefused }: ShellProps) {
   const runtime = useMemo(() => new Runtime(session.token, session.base), [session.token, session.base]);
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
   const [live, setLive] = useState(false);
@@ -108,10 +120,11 @@ function Shell({ session, projects, closed, route, go }: ShellProps) {
       setLive(true);
       setUpdated(Date.now());
     } catch (failure) {
+      if (refusedToken(failure)) { onRefused(session.key); return; }
       setRunsError(failure instanceof Error ? failure.message : "The Runtime is not answering.");
       setLive(false);
     }
-  }, [runtime]);
+  }, [runtime, onRefused, session.key]);
 
   useEffect(() => {
     void readRuns();

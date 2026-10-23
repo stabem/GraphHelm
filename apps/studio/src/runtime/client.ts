@@ -218,7 +218,17 @@ interface Envelope<T> {
   diagnostics?: { message?: string }[];
 }
 
-export class RuntimeError extends Error {}
+export class RuntimeError extends Error {
+  /** The HTTP status the Runtime answered with, when it answered (#1897: 401/403 means it refused the token). */
+  readonly status: number | null;
+  constructor(message: string, status: number | null = null) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** #1897: the Runtime answered and refused this token, as opposed to not answering at all. */
+export const refusedToken = (failure: unknown): boolean => failure instanceof RuntimeError && (failure.status === 401 || failure.status === 403);
 
 const listOf = <T,>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
@@ -266,10 +276,10 @@ export class Runtime {
     try {
       envelope = (await response.json()) as Envelope<T>;
     } catch {
-      throw new RuntimeError(`The Runtime replied ${response.status} with a body the Studio could not read.`);
+      throw new RuntimeError(`The Runtime replied ${response.status} with a body the Studio could not read.`, response.status);
     }
     if (!response.ok || envelope.ok !== true || envelope.data === null) {
-      throw new RuntimeError(envelope.diagnostics?.[0]?.message ?? `The Runtime refused (${response.status}).`);
+      throw new RuntimeError(envelope.diagnostics?.[0]?.message ?? `The Runtime refused (${response.status}).`, response.status);
     }
     return envelope.data;
   }

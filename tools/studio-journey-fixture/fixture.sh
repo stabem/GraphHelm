@@ -277,6 +277,58 @@ drift: []
 FLOW
     git -C "$dir/project" add -f -- .graphhelm/journeys/health-broken.journey.yaml ;;
   esac
+  # #1953: the reload flow needs a run that is still playing after a fresh page opens: a draft
+  # reading a FIXTURE-ONLY loopback server that answers every request after six seconds. Its pid
+  # is recorded, so down stops it. Only for that flow, so no other flow's journey count changes.
+  if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-proof-run-reload ]; then
+    rm -f "$dir/.graphhelm/slow.port"
+    nohup node -e '
+      const fs = require("fs"); const file = process.argv[1];
+      const server = require("http").createServer((_, res) => setTimeout(() => { res.setHeader("content-type", "application/json"); res.end("{\"ok\":true}"); }, 6000));
+      server.listen(0, "127.0.0.1", () => fs.writeFileSync(file, String(server.address().port)));
+      setTimeout(() => process.exit(0), 3600000);
+    ' "$dir/.graphhelm/slow.port" > /dev/null 2>&1 &
+    echo "slow-server $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
+    for _ in $(seq 1 50); do [ -s "$dir/.graphhelm/slow.port" ] && break; sleep 0.2; done
+    slow=$(cat "$dir/.graphhelm/slow.port" 2> /dev/null || true)
+    [[ "$slow" =~ ^[0-9]+$ ]] || { echo 'fixture: the slow server did not start' >&2; exit 1; }
+    cat > "$dir/project/.graphhelm/journeys/health-slow.journey.yaml" <<FLOW
+schema: graphhelm.journey-flow/1
+id: health-slow
+title: Read a slow health check
+name: Read a slow health check
+purpose: "The fixture's draft whose run plays for several seconds: its server answers after a wait."
+status: draft
+approved: null
+base: http://127.0.0.1:$slow
+actors: [owner]
+secrets: []
+risks: []
+screens:
+  - id: checked
+    title: The slow server answered ok
+    url: /
+    state: success
+    expect: [{role: status, name: "200"}, {role: json, name: ok=true}]
+    scope: unknown
+  - id: start
+    title: The slow server answers
+    url: /
+    state: stable
+    expect: [{role: status, name: "200"}]
+    scope: unknown
+edges:
+  - id: read
+    from: start
+    to: checked
+    acts:
+      - {kind: http, role: GET, name: /}
+paths:
+  main: [read]
+drift: []
+FLOW
+    git -C "$dir/project" add -f -- .graphhelm/journeys/health-slow.journey.yaml
+  fi
   git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: observer seed flow'
   # #1901: the Studio opens a project's team run by itself, so a project with no run at all needs a
   # fixture that starts none: GRAPHHELM_FIXTURE_EMPTY=1, or the studio2-no-run flow, skips both the

@@ -1407,7 +1407,8 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
                 return json!({"id": id, "title": null, "status": "unreadable",
                     "approved": null, "drift": [], "findings": listed, "approvable": false,
                     "screens": [], "edges": [], "paths": {},
-                    "lastRun": super::journey_preview::last_run(&project, id, None)});
+                    "lastRun": super::journey_preview::last_run(&project, id, None),
+                    "running": super::journey_preview::running(&project, id)});
             };
             let accepted = approval_findings(file, &text, &flow, &project)
                 .iter()
@@ -1444,7 +1445,9 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
                 "findings": listed, "approvable": accepted && !settled,
                 "screens": flow["screens"], "edges": flow["edges"], "paths": flow["paths"],
                 // #1835: the last finished run as its runner recorded it; `not_run` when none.
-                "lastRun": super::journey_preview::last_run(&project, id, Some(&flow))})
+                "lastRun": super::journey_preview::last_run(&project, id, Some(&flow)),
+                // #1953: the run in flight, `null` when none, so a reloaded Studio shows it.
+                "running": super::journey_preview::running(&project, id)})
         })
         .collect();
     Outcome::success(COMMAND, json!({"flows": flows}))

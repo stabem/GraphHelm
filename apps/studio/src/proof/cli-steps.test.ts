@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow, JourneyRun } from "../runtime/client";
-import { countSteps, distinctOutputs, journeyKind, journeySteps, liveCard, outputLines, withoutLive, afterPanelGone, watchedIds } from "./steps";
+import { countSteps, distinctOutputs, journeyKind, journeySteps, liveCard, outputLines, withoutLive, afterPanelGone, watchedIds, liveAfterList } from "./steps";
 
 // #1912: the shape of keel-card-accepted: a command-only flow walked on two paths, so each edge's
 // command is kept twice, and its entry screen recorded `not_reached` as the commands' precondition.
@@ -110,5 +110,21 @@ describe("a card reads running from the Runtime, whichever journey is selected (
   it("drops a finished run when its panel goes, and never watches the selected journey", () => {
     expect(afterPanelGone({ a: { state: "ready" } }, "a")).toEqual({});
     expect(watchedIds({ a: { state: "running" }, b: { state: "running" } }, "a")).toEqual(["b"]);
+  });
+});
+
+describe("a reloaded Studio reads a running journey from the list (#1953)", () => {
+  it("seeds a journey the list says is running, so the watch follows it to its result", () => {
+    const running = { startedAt: "2026-10-23T10:00:00Z", current: "start.accept-in-scope", kind: "replay" as const };
+    const live = liveAfterList({}, [{ id: flow.id, running }, { id: "idle", running: null }, { id: "older-runtime" }]);
+    expect(live).toEqual({ [flow.id]: { state: "running" } });
+    expect(watchedIds(live, "other")).toEqual([flow.id]);
+    expect(liveCard(flow, live[flow.id] ?? null)?.text).toBe("● running");
+  });
+
+  it("keeps a run the view saw playing, drops a finished one, and never overwrites a live run", () => {
+    const playing: JourneyRun = { state: "running", current: "accepted" };
+    const after = liveAfterList({ a: playing, b: { state: "ready" } }, [{ id: "a", running: { startedAt: null, current: null, kind: null } }, { id: "b", running: null }]);
+    expect(after).toEqual({ a: playing });
   });
 });

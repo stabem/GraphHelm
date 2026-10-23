@@ -495,6 +495,53 @@ fn flows_serve_each_journeys_last_recorded_run_and_not_run_when_none() {
     assert_eq!(over_mcp["data"], cli, "MCP differs from the CLI");
 }
 
+/// #1953: a journey whose run is in flight is listed `running` (with when it started and the step
+/// it is on) next to its last finished run, on the Runtime route as on the CLI, so a reloaded
+/// Studio shows it running. Credible regressions: the list hiding a run in flight (the card reads
+/// `not run` until it ends), and a run abandoned long ago listed as running for ever.
+#[test]
+fn flows_list_a_run_in_flight_as_running_and_an_abandoned_one_as_not() {
+    let harness = prepared();
+    let previews = harness.project.join(".graphhelm/journey-previews");
+    let started = chrono::Utc::now().to_rfc3339();
+    std::fs::create_dir_all(previews.join("checkout")).unwrap();
+    std::fs::write(
+        previews.join("checkout/state.json"),
+        json!({"preview":true,"kind":"replay","state":"running","digest":"sha256:aa",
+            "commit":"c1","startedAt":started,"current":"cart.checkout",
+            "screens":{},"edges":{}})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(previews.join("basket")).unwrap();
+    std::fs::write(
+        previews.join("basket/state.json"),
+        json!({"preview":true,"kind":"replay","state":"running","digest":"sha256:aa",
+            "commit":"c1","startedAt":"2020-01-01T00:00:00+00:00","current":null,
+            "screens":{},"edges":{}})
+        .to_string(),
+    )
+    .unwrap();
+
+    let (_server, base, token) = harness.serve(true);
+    let (status, over_http) = http(&base, "GET", "/v1/journey-flows", Some(&token));
+    assert_eq!(status, 200, "{over_http}");
+    let data = &over_http["data"];
+    assert_eq!(
+        flow(data, "checkout")["running"],
+        json!({"startedAt":started,"current":"cart.checkout","kind":"replay"}),
+        "{data}"
+    );
+    assert_eq!(
+        flow(data, "checkout")["lastRun"]["status"],
+        "not_run",
+        "{data}"
+    );
+    assert_eq!(flow(data, "basket")["running"], Value::Null, "{data}");
+    assert_eq!(flow(data, "broken")["running"], Value::Null, "{data}");
+    assert_eq!(*data, harness.flows(), "HTTP differs from the CLI");
+}
+
 #[test]
 fn approve_over_http_and_mcp_does_what_the_cli_does_and_refuses_findings() {
     let harness = prepared();

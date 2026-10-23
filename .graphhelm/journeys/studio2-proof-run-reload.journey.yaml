@@ -1,0 +1,57 @@
+schema: graphhelm.journey-flow/1
+id: studio2-proof-run-reload
+title: A running journey still reads running after the page is opened again
+name: "Run, then open the Studio again"
+feature: Studio
+purpose: "A journey started from one Studio page reads running on a page opened afterwards, which never pressed Run, because the Runtime's journey list reports the run in flight; then the card shows the result once the run ends (#1953)."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, recovery]
+viewports: [web]
+screens:
+  - id: finished
+    title: The card shows the result the Runtime recorded
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
+    ignoreQuery: [session, project, journey]
+    state: success
+    expect: [{role: listitem, name: Read a slow health check, text: passed}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
+  - id: journeys
+    title: The slow journey is selected
+    url: /?session=studio-fixture&run=demo&view=proof&journey=health-slow
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: list, name: Journeys}, {role: button, name: Run Read a slow health check}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
+  - id: reopened
+    title: A page opened afterwards reads the journey running
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
+    ignoreQuery: [session, project, journey]
+    state: loading
+    expect: [{role: listitem, name: Read a slow health check, text: running}]
+    scope: [apps/cli/src/commands/journey_flow.rs, apps/cli/src/commands/journey_preview.rs, apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
+  - id: started
+    title: The journey started from this page reads running
+    url: /?session=studio-fixture&run=demo&view=proof&journey=health-slow
+    ignoreQuery: [session, project, journey]
+    state: loading
+    expect: [{role: listitem, name: Read a slow health check, text: running}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
+edges:
+  - id: journeys.started
+    from: journeys
+    to: started
+    acts:
+      - {kind: activate, role: button, name: Run Read a slow health check}
+  - id: reopened.finished
+    from: reopened
+    to: finished
+    acts:
+      - {kind: wait_for, role: list, name: Journeys}
+paths:
+  main: [journeys.started]
+  reopen: [reopened.finished]
+drift: []

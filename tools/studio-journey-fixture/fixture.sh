@@ -184,7 +184,9 @@ FLOW
   git -C "$dir/project" add -f -- .graphhelm/journeys/runtime-health.journey.yaml
   # #1909: the confirm flows need a draft whose step runs a command, so its preview holds on
   # confirm_needed until the owner confirms. FIXTURE-ONLY, and only for those flows, so no other
-  # flow's journey count changes. The command only prints Node's version.
+  # flow's journey count changes. The commands print Node's version and then,
+  # in a second edge, a line after a wait, on two paths: a run long enough to be polled while it
+  # plays, shaped like keel-card-accepted (#1912).
   case "${GRAPHHELM_JOURNEY_FLOW:-}" in studio2-proof-confirm|studio2-proof-confirm-mobile)
     cat > "$dir/project/.graphhelm/journeys/cli-hello.journey.yaml" <<'FLOW'
 schema: graphhelm.journey-flow/1
@@ -211,14 +213,26 @@ screens:
     state: stable
     expect: [{role: exit, name: "0"}]
     scope: unknown
+  - id: waited
+    title: Node printed after a wait
+    url: /
+    state: success
+    expect: [{role: exit, name: "0"}, {role: stdout, name: waited}]
+    scope: unknown
 edges:
+  - id: printed.wait
+    from: printed
+    to: waited
+    acts:
+      - {kind: cli, role: exec, name: "node -e setTimeout(()=>console.log('waited'),4000)"}
   - id: start.print
     from: start
     to: printed
     acts:
       - {kind: cli, role: exec, name: node --version}
 paths:
-  main: [start.print]
+  main: [start.print, printed.wait]
+  again: [start.print, printed.wait]
 drift: []
 FLOW
     git -C "$dir/project" add -f -- .graphhelm/journeys/cli-hello.journey.yaml ;;

@@ -165,6 +165,10 @@ export type StepResult = "pass" | "fail" | "drift";
 
 export interface CliConfirm { argv: string[]; confirmed: boolean; digest: string }
 
+/** #1662/#1912: what one `cli` act printed, as the run keeps it under `outputs.<edge>`: the command,
+ * its exit code, and its stdout/stderr masked and capped by the Runtime. */
+export interface CliOutput { argv: string; exit: number | null; stdout: string; stderr: string; stdoutSha256?: string; stderrSha256?: string }
+
 /** `GET|POST /v1/journey-flows/{id}/preview` (#519): the journey's run. While `running`, `screens`
  * holds only the screens reached so far; `observerSetup` reports the browser being prepared (#1763). */
 export interface JourneyRun {
@@ -188,6 +192,8 @@ export interface JourneyRun {
   cliConfirm?: CliConfirm;
   launchLog?: { tail?: string };
   driverLog?: { tail?: string };
+  /** #1662/#1912: each `cli` edge's command outputs, in the order they ran (once per path that walked it). */
+  outputs?: Record<string, CliOutput[]>;
 }
 
 /** `GET /v1/journey-flows/{id}/history`: earlier finished runs, newest first, each with the screens

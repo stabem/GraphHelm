@@ -3,7 +3,7 @@ id: studio2-proof-confirm-mobile
 title: Confirm a draft's commands in Proof on a phone
 name: Confirm a draft's commands (mobile)
 feature: Studio
-purpose: "studio2-proof-confirm at mobile, on its own fresh fixture: a draft whose step runs a command waits for the owner: its card's Run shows Run these commands? with the exact command and digest and steps that wait for your confirmation; Confirm and run plays it and it passes."
+purpose: "studio2-proof-confirm at mobile, on its own fresh fixture: a draft whose step runs a command waits for the owner: its card's Run shows Run these commands? with the exact command and digest and steps that wait for your confirmation; Confirm and run plays it and it passes, with each command step showing its command, exit code and stdout in a terminal and Approve offered (#1912)."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -31,8 +31,8 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof&journey=cli-hello
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Passed}, {role: listitem, name: Step 2, text: passed}]
-    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
+    expect: [{role: status, name: Passed}, {role: listitem, name: Step 2, text: passed}, {role: listitem, name: Step 1, text: precondition}, {role: region, name: Terminal, text: node --version}, {role: status, name: Exit code 0}, {role: region, name: Terminal, text: v2}, {role: button, name: Approve}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/run-all.ts]
 edges:
   - id: held.passed
     from: held

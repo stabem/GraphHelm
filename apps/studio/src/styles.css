@@ -244,7 +244,8 @@ button { font: inherit; }
   .shell:has(.terminal) .main, .shell:has(.terminal) .proof, .shell:has(.terminal) .proof-main { min-height: 0; }
   .shell:has(.terminal) .proof-main { overflow: hidden; }
   .shell:has(.terminal) .compare { flex: 1 1 0; min-height: 0; align-items: stretch; flex-wrap: nowrap; }
-  .shell:has(.terminal) .compare-frame.terminal { min-height: 0; }
+  .shell:has(.terminal) .compare-frame.terminal, .shell:has(.terminal) .compare-side-panel { min-height: 0; }
+  .shell:has(.terminal) .compare-side-panel { overflow-y: auto; }
   .shell:has(.terminal) .terminal-run { flex: 1 1 0; min-height: 0; }
   .shell:has(.terminal) .terminal-out { flex: 1 1 0; min-height: 240px; }
 }

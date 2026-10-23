@@ -82,15 +82,6 @@ D7. **No schema changes.** Every event and node field this slice needs already e
 `schemas/`. The slice adds surfaces, a view, tests, an example graph and records — it changes no
 catalog and pins nothing.
 
-D8. **Lanes.** The planner (this session) is neither author nor reviewer: implementer subagents
-write the code, two independent reviewer subagents with fresh context write the passes, the
-gate runs through the registered runner before the passes, and the planner presses. The
-identity line names the subagent and the spawning session so the comment is addressable
-(`Lane: <letter> · Session: subagent-<name> of <ListAgents name> [ref] · Head: <sha8>`). This
-mapping was written into the lane loop §0 by this slice (retired 2026-09-24; see
-`docs/process/ARCHIVE_NAMES.md`), because a rule that lives only in chat is the defect that
-file existed to end.
-
 ## 3. The surfaces, exactly
 
 ### CLI

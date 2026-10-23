@@ -81,8 +81,8 @@ replacement fails validation. Capability increases require a new approval.
 
 ## 4. The entry skills
 
-Since #385 the JPD package exposes two entry skills (`journey-prove` arrives with #381), and the per-task steps live in the
-development-contracts package (`task-plan`, `implement`, `blind-review`, `merge`). The earlier
+The JPD package exposes `journey-map`, `journey-contract`, and `journey-prove`. The per-task
+steps live in the development-contracts package (`task-plan`, `implement`, `blind-review`, `merge`). The earlier
 families (observation compiler, plan council, defect bounty, skill synthesizer and evaluator,
 retry provenance, journey verifier) keep their schemas, policies and fixtures as contracts; their
 guidance was folded into the skills below.

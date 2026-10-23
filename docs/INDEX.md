@@ -34,7 +34,7 @@ These documents contain approved requirements and planned surfaces as well as im
 - [Graph Engineer guide](graph-engineer/GRAPH_ENGINEER_GUIDE.md) and [Graph DSL](graph-engineer/GRAPH_DSL_SPEC.md).
 - [Context, knowledge, and Dreams](context/CONTEXT_KNOWLEDGE_DREAMS.md); [agents, skills, tools, and plugins](agents/AGENTS_SKILLS_PLUGINS.md); [Universal Model Gateway](models/UNIVERSAL_MODEL_GATEWAY.md).
 - [Future directions](product/FUTURE_DIRECTIONS.md), [Studio vision](ux/STUDIO_SPEC.md), and [naming decision](product/NAMING_DECISION.md).
-- [Threat model and isolation](security/SECURITY_ISOLATION_THREAT_MODEL.md) and [target quality/deployment architecture](operations/QUALITY_GATES_AND_DEPLOYMENT.md).
+- [Threat model and isolation](security/SECURITY_ISOLATION_THREAT_MODEL.md) and [verification and deployment boundaries](operations/QUALITY_GATES_AND_DEPLOYMENT.md).
 
 ## Open source and evidence
 

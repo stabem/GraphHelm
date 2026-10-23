@@ -92,7 +92,7 @@ Downloading Chromium 141.0 (playwright build v1194) — 101.2 MiB / 163.4 MiB  <
 <div style="border: 1px solid #34343c; border-radius: 12px; background: #151517; padding: 10px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px">
 <sc-for list="{{steps}}" as="s" hint-placeholder-count="7">
 <button class="seg" style="padding: 0; border-radius: 8px; border: 1px solid {{s.edge}}; background: #1e1e22; overflow: hidden; display: flex; flex-direction: column" onClick="{{s.pick}}">
-<div class="crop" style="border-bottom: 2px solid {{s.bar}}"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Frame of step {{s.n}}" style="filter: {{s.filter}}"></div>
+<div class="crop" style="border-bottom: 2px solid {{s.bar}}"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Frame of step {{s.n}}" style="filter: {{s.filter}}"></div>
 <div style="padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; text-align: left">
 <div style="display: flex; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96"><span>{{s.n}} DOES</span><span style="flex: 1"></span><span style="color: {{s.bar}}">{{s.status}}</span></div>
 <span style="font-size: 11px; color: #f5f5f6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{s.label}}</span>
@@ -133,28 +133,28 @@ Now</label>
 <div style="display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px; background: #0a0a0b">
 <span style="padding: 4px 10px; border-radius: 6px; background: #241010; color: #ff9b9b; font-size: 12px">Fails only on mobile · step 5: button “Escolher esta” is covered by the sticky footer</span>
 <div style="width: 300px; height: 560px; border: 8px solid #2a2a30; border-radius: 28px; overflow: hidden; background: #f0efe9">
-<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Mobile frame" style="width: 100%; height: 100%; object-fit: cover; object-position: 30% 60%; display: block">
+<img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Mobile frame" style="width: 100%; height: 100%; object-fit: cover; object-position: 30% 60%; display: block">
 </div>
 </div>
 </sc-if>
 <sc-if value="{{isFrameWeb}}" hint-placeholder-val="{{ false }}">
-<div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now"></div>
+<div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now"></div>
 </sc-if>
 <sc-if value="{{isSideW}}" hint-placeholder-val="{{ false }}">
 <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; background: #34343c">
-<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Before · 15 Oct</div><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)"></div></div>
-<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Now · 21 Oct</div><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now"></div></div>
+<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Before · 15 Oct</div><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)"></div></div>
+<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Now · 21 Oct</div><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now"></div></div>
 </div>
 </sc-if>
 <sc-if value="{{isOverW}}" hint-placeholder-val="{{ true }}">
 <div class="crop">
-<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)">
-<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now" style="position: absolute; left: 0; top: 0; opacity: {{alpha}}">
+<img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)">
+<img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now" style="position: absolute; left: 0; top: 0; opacity: {{alpha}}">
 </div>
 </sc-if>
 <sc-if value="{{isDiffW}}" hint-placeholder-val="{{ false }}">
 <div class="crop">
-<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now with changes marked" style="filter: grayscale(1) brightness(1.1)">
+<img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now with changes marked" style="filter: grayscale(1) brightness(1.1)">
 <div style="position: absolute; left: 40.3%; top: 85.2%; width: 26%; height: 5.4%; border: 2px solid #ff6b6b; background: rgb(255 107 107 / 22%); border-radius: 4px"></div>
 <span style="position: absolute; left: 40.3%; top: 79.5%; padding: 2px 6px; border-radius: 4px; background: #ff6b6b; color: #241010; font-size: 11px">changed</span>
 </div>
@@ -171,8 +171,8 @@ does Submits “Salvar compra”</pre>
 <span style="color: #ff8a3d">4% of the screen changed (in red).</span>
 <span style="color: #ff8a3d">This step drift then, failed now.</span>
 <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px">
-<button class="seg" onClick="{{toSide}}" style="padding: 0; border: 1px solid #34343c; border-radius: 6px; overflow: hidden"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before thumbnail" style="filter: hue-rotate(160deg) saturate(.4)"></div></button>
-<button class="seg" onClick="{{toSide}}" style="padding: 0; border: 1px solid #34343c; border-radius: 6px; overflow: hidden"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now thumbnail"></div></button>
+<button class="seg" onClick="{{toSide}}" style="padding: 0; border: 1px solid #34343c; border-radius: 6px; overflow: hidden"><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Before thumbnail" style="filter: hue-rotate(160deg) saturate(.4)"></div></button>
+<button class="seg" onClick="{{toSide}}" style="padding: 0; border: 1px solid #34343c; border-radius: 6px; overflow: hidden"><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now thumbnail"></div></button>
 </div>
 <button class="seg" onClick="{{toDiff}}" style="align-self: flex-end; color: #8ab4ff; padding: 0">show changes</button>
 <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96; margin-top: 6px">WHAT IT DID</span>
@@ -264,7 +264,7 @@ does Submits “Salvar compra”</pre>
 <section aria-label="Phone frame" style="display: flex; justify-content: center; align-items: flex-start">
 <div style="width: 190px; height: 370px; border-radius: 28px; border: 6px solid #2a2a30; background: #000; padding: 16px 6px; box-sizing: border-box; position: relative">
 <span style="position: absolute; top: 5px; left: 50%; transform: translateX(-50%); width: 50px; height: 6px; border-radius: 3px; background: #2a2a30"></span>
-<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Mobile frame in a phone" style="width: 100%; height: 100%; object-fit: cover; object-position: 30% 60%; border-radius: 12px; display: block; background: #f0efe9">
+<img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Mobile frame in a phone" style="width: 100%; height: 100%; object-fit: cover; object-position: 30% 60%; border-radius: 12px; display: block; background: #f0efe9">
 </div>
 </section>
 </div>

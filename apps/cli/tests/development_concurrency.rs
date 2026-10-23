@@ -160,7 +160,6 @@ fn request(
 /// deterministic 400 envelope a lone caller gets -- not a reset connection, a 5xx or a hang. The
 /// other five routes still answer an empty body with success.
 const DEVELOPMENT_HTTP_ROUTES: &[(&str, &str, u16, &str)] = &[
-    ("POST", "/v1/development/contract", 200, "\"ok\":true"),
     ("GET", "/v1/development/memory", 200, "\"ok\":true"),
     (
         "POST",
@@ -168,12 +167,10 @@ const DEVELOPMENT_HTTP_ROUTES: &[(&str, &str, u16, &str)] = &[
         400,
         "\"command\":\"development.memory-propose\"",
     ),
-    ("POST", "/v1/development/present", 200, "\"ok\":true"),
     ("POST", "/v1/development/context", 200, "\"ok\":true"),
-    ("GET", "/v1/development/accounting", 200, "\"ok\":true"),
 ];
 
-/// Twenty concurrent callers, cycling through all six `development.*` routes on ONE running
+/// Twenty concurrent callers, cycling through the surviving `development.*` routes on ONE running
 /// server, all succeed. Nothing before this test issued more than one request at a time against
 /// these routes (`development_surface_parity.rs`'s probe spawns one server per single request and
 /// exits) -- a real coverage gap, not a behavioral regression: proven by the absence, not by a

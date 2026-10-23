@@ -73,29 +73,11 @@ Development-contract Runtime services (#223), exposed identically here, over MCP
 Usage: graphhelm development [OPTIONS] <COMMAND>
 
 Commands:
-  resolve-contract  Resolve layered code rules into one contract (#218's resolver, exposed here)
-  memory-status     Report the governed memory states, transitions, and the moves policy allows (#220)
-  present           Render an owner-facing presentation from a task result (#219's renderer, exposed here)
-  compile-context   Compile a context capsule (#222/#273's compiler, exposed here)
-  memory-propose    Propose caller-supplied content for governed memory and report the admission verdict
-  dream-shadow      Run one explicit deterministic Dreams shadow and record its advisory result (#72)
-  accounting        Report a context-accounting receipt (#222/#273's accounting types, exposed here)
-  help              Print this message or the help of the given subcommand(s)
-
-Options:
-      --pretty
-          
-
-      --json
-          Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
-
-  -h, --help
-          Print help
-
-===== graphhelm development accounting --help
-Report a context-accounting receipt (#222/#273's accounting types, exposed here)
-
-Usage: graphhelm development accounting [OPTIONS]
+  memory-status    Report the governed memory states, transitions, and the moves policy allows (#220)
+  compile-context  Compile a context capsule (#222/#273's compiler, exposed here)
+  memory-propose   Propose caller-supplied content for governed memory and report the admission verdict
+  dream-shadow     Run one explicit deterministic Dreams shadow and record its advisory result (#72)
+  help             Print this message or the help of the given subcommand(s)
 
 Options:
       --pretty
@@ -179,19 +161,11 @@ Print this message or the help of the given subcommand(s)
 Usage: graphhelm development help [COMMAND]
 
 Commands:
-  resolve-contract  Resolve layered code rules into one contract (#218's resolver, exposed here)
-  memory-status     Report the governed memory states, transitions, and the moves policy allows (#220)
-  present           Render an owner-facing presentation from a task result (#219's renderer, exposed here)
-  compile-context   Compile a context capsule (#222/#273's compiler, exposed here)
-  memory-propose    Propose caller-supplied content for governed memory and report the admission verdict
-  dream-shadow      Run one explicit deterministic Dreams shadow and record its advisory result (#72)
-  accounting        Report a context-accounting receipt (#222/#273's accounting types, exposed here)
-  help              Print this message or the help of the given subcommand(s)
-
-===== graphhelm development help accounting --help
-Report a context-accounting receipt (#222/#273's accounting types, exposed here)
-
-Usage: graphhelm development help accounting
+  memory-status    Report the governed memory states, transitions, and the moves policy allows (#220)
+  compile-context  Compile a context capsule (#222/#273's compiler, exposed here)
+  memory-propose   Propose caller-supplied content for governed memory and report the admission verdict
+  dream-shadow     Run one explicit deterministic Dreams shadow and record its advisory result (#72)
+  help             Print this message or the help of the given subcommand(s)
 
 ===== graphhelm development help compile-context --help
 Compile a context capsule (#222/#273's compiler, exposed here)
@@ -217,16 +191,6 @@ Usage: graphhelm development help memory-propose
 Report the governed memory states, transitions, and the moves policy allows (#220)
 
 Usage: graphhelm development help memory-status
-
-===== graphhelm development help present --help
-Render an owner-facing presentation from a task result (#219's renderer, exposed here)
-
-Usage: graphhelm development help present
-
-===== graphhelm development help resolve-contract --help
-Resolve layered code rules into one contract (#218's resolver, exposed here)
-
-Usage: graphhelm development help resolve-contract
 
 ===== graphhelm development memory-propose --help
 Propose caller-supplied content for governed memory and report the admission verdict
@@ -258,36 +222,6 @@ Options:
 Report the governed memory states, transitions, and the moves policy allows (#220)
 
 Usage: graphhelm development memory-status [OPTIONS]
-
-Options:
-      --pretty
-          
-
-      --json
-          Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
-
-  -h, --help
-          Print help
-
-===== graphhelm development present --help
-Render an owner-facing presentation from a task result (#219's renderer, exposed here)
-
-Usage: graphhelm development present [OPTIONS]
-
-Options:
-      --pretty
-          
-
-      --json
-          Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
-
-  -h, --help
-          Print help
-
-===== graphhelm development resolve-contract --help
-Resolve layered code rules into one contract (#218's resolver, exposed here)
-
-Usage: graphhelm development resolve-contract [OPTIONS]
 
 Options:
       --pretty
@@ -2254,18 +2188,10 @@ Development-contract Runtime services (#223), exposed identically here, over MCP
 Usage: graphhelm help development [COMMAND]
 
 Commands:
-  resolve-contract  Resolve layered code rules into one contract (#218's resolver, exposed here)
-  memory-status     Report the governed memory states, transitions, and the moves policy allows (#220)
-  present           Render an owner-facing presentation from a task result (#219's renderer, exposed here)
-  compile-context   Compile a context capsule (#222/#273's compiler, exposed here)
-  memory-propose    Propose caller-supplied content for governed memory and report the admission verdict
-  dream-shadow      Run one explicit deterministic Dreams shadow and record its advisory result (#72)
-  accounting        Report a context-accounting receipt (#222/#273's accounting types, exposed here)
-
-===== graphhelm help development accounting --help
-Report a context-accounting receipt (#222/#273's accounting types, exposed here)
-
-Usage: graphhelm help development accounting
+  memory-status    Report the governed memory states, transitions, and the moves policy allows (#220)
+  compile-context  Compile a context capsule (#222/#273's compiler, exposed here)
+  memory-propose   Propose caller-supplied content for governed memory and report the admission verdict
+  dream-shadow     Run one explicit deterministic Dreams shadow and record its advisory result (#72)
 
 ===== graphhelm help development compile-context --help
 Compile a context capsule (#222/#273's compiler, exposed here)
@@ -2286,16 +2212,6 @@ Usage: graphhelm help development memory-propose
 Report the governed memory states, transitions, and the moves policy allows (#220)
 
 Usage: graphhelm help development memory-status
-
-===== graphhelm help development present --help
-Render an owner-facing presentation from a task result (#219's renderer, exposed here)
-
-Usage: graphhelm help development present
-
-===== graphhelm help development resolve-contract --help
-Resolve layered code rules into one contract (#218's resolver, exposed here)
-
-Usage: graphhelm help development resolve-contract
 
 ===== graphhelm help events --help
 Usage: graphhelm help events [COMMAND]

@@ -7,24 +7,6 @@ use std::path::Path;
 
 use crate::output::Outcome;
 
-/// Resolve the code-rule contract from #218's Runtime resolver, over the CLI surface.
-///
-/// **Existence-slice, not the full feature.** Sources are always empty here -- there is no file
-/// argument yet, and adding one is behavioral-parity work (blueprint §6 item 2), not the
-/// existence-parity guard this command exists to give the three adapters something real to agree
-/// on. An empty source list cannot produce a [`graphhelm_policy::ResolutionRefusal`] --
-/// `resolve_code_contract`'s own loop never runs over zero sources, so every branch that could
-/// return `Err` is unreached -- which is why the refusal side has no mapping to
-/// `DevelopmentRefusalCode` yet: there is nothing here that could exercise it.
-#[must_use]
-pub fn run_resolve_contract() -> Outcome {
-    let contract = graphhelm_policy::resolve_code_contract(&[], chrono::Utc::now())
-        .expect("an empty source list always resolves Ok - see resolve_code_contract's own loop");
-    let value: serde_json::Value = serde_json::from_slice(&contract.canonical_bytes())
-        .expect("canonical_bytes() always produces valid JSON");
-    Outcome::success("development.resolve-contract", value)
-}
-
 /// The governed memory transition policy, as shipped (#220).
 ///
 /// Embedded rather than read from disk, following `core/schema/src/registry.rs`, which embeds the
@@ -38,25 +20,7 @@ const MEMORY_TRANSITION_POLICY: &str = include_str!(
     "../../../../extensions/builtin/graphhelm-development-contracts/policies/memory-transition.yaml"
 );
 
-/// Report the governed memory vocabulary and the transitions policy allows, over the CLI surface.
-///
-/// **Existence-slice, not the full feature — and the shape of the slice was a decision.** The
-/// original scope list carried `GET /v1/development/memory/{id}`. Measured while building this:
-/// nothing persists a `MemoryRecord`. It exists only in `core/governor`, constructed in memory, so
-/// an `{id}` had nothing to resolve against. Serving it would have needed either a refusal code
-/// that does not exist (`MemoryRefusalCode` has no "not found") or a constant answer that ignores
-/// the parameter — and a parameter that cannot change the response is a lie with a route attached.
-///
-/// So the slice reads what IS real: the shipped policy. That mirrors `run_resolve_contract`, which
-/// makes a real call over an empty source list rather than returning something invented.
-///
-/// **The `{id}` returns as a FEATURE the day a store lands**, and whoever writes that store is the
-/// consumer of this sentence.
-///
-/// The policy is reported as it ships, not re-derived: the states, the transitions and the allowed
-/// moves live in one authoritative document, and restating them here would make this adapter a
-/// second producer of one vocabulary — which drifts in silence, because a rename on one side still
-/// compiles on the other.
+/// Report the shipped governed-memory states and transitions without reading a record.
 #[must_use]
 pub fn run_memory_status() -> Outcome {
     let policy: serde_json::Value = serde_yaml_ng::from_str(MEMORY_TRANSITION_POLICY).expect(
@@ -64,40 +28,6 @@ pub fn run_memory_status() -> Outcome {
                  digest-bound contribution validated by the extension package guard",
     );
     Outcome::success("development.memory-status", policy)
-}
-
-/// Render the owner-facing presentation from #219's renderer, over the CLI surface.
-///
-/// **Existence-slice, not the full feature**, matching `run_resolve_contract` above: the task
-/// result is a fixed no-decision one because there is no input argument yet, and adding one is
-/// behavioral-parity work (blueprint §6 item 2) rather than the existence-parity this command
-/// exists to give the three adapters something real to agree on.
-///
-/// The renderer is CONSUMED, not reimplemented. `owner_output::render` is the exclusive producer
-/// of owner-facing bytes (its own `OWNER-FACING-BYTES-EMITTER` marker says so), and a second
-/// place that assembles those bytes would be a second oracle for what the owner sees.
-#[must_use]
-pub fn run_present() -> Outcome {
-    let result = graphhelm_runtime::owner_output::OwnerTaskResult {
-        summary: "no task supplied".to_owned(),
-        status: graphhelm_runtime::owner_output::TaskOutcome::Success,
-        owner_action_required: false,
-        decision: None,
-        evidence_limitation: None,
-        rollback: None,
-        risk_flags: graphhelm_runtime::owner_output::RiskFlags::default(),
-    };
-
-    let presentation = graphhelm_runtime::owner_output::render(&result, None)
-        .expect("a no-decision result with no risk flags always renders - see render's own guards");
-
-    Outcome::success(
-        "development.present",
-        serde_json::json!({
-            "text": String::from_utf8(presentation.to_owner_bytes())
-                .expect("the renderer emits UTF-8 slot text"),
-        }),
-    )
 }
 
 /// Compile a context capsule from #222/#273's Runtime compiler, over the CLI surface.
@@ -443,57 +373,6 @@ fn dream_refusal(code: &str, message: &str) -> Outcome {
     Outcome::domain(
         "development.dream-shadow",
         vec![Diagnostic::error(code, message, "/input", "dream-shadow")],
-    )
-}
-
-/// Report a context-accounting receipt, over the CLI surface.
-///
-/// **Existence-slice, not the full feature**, matching its siblings: there is no execution to
-/// account for yet; production measurement requires a real execution accounting receipt.
-///
-/// **The one field is marked `unavailable`, not `measured(0, ...)`, and that is the whole point
-/// of `CostField`'s three-state design (`core/runtime/src/context_accounting.rs`).** Nothing
-/// watched this call spend any tokens, because it did not run against a real execution -- and a
-/// module whose entire acceptance criterion is "an unmeasured cost must never render as zero"
-/// cannot report zero here without contradicting its own reason to exist. `unavailable` is the
-/// field this existence-slice can HONESTLY report; `measured` and `derived` both require an
-/// observation this call did not make.
-///
-/// **No identifier, and that is measured rather than assumed**, the same way `run_memory_status`
-/// and `run_memory_propose` measured theirs: `AccountingReceipt` is a plain builder value
-/// (`core/runtime/src/context_accounting.rs`), never written to the event log or any other store.
-/// `git grep AccountingReceipt` across the WHOLE workspace finds it in exactly two places besides
-/// its own module and this file: `tools/development-benchmark`'s `arm_cost`/`compare_cost`, which
-/// take a receipt already built by the caller and read it in memory (never store or serialise
-/// it) -- a second in-memory consumer, not a second producer or a store. An id would name a
-/// receipt no later call could resolve.
-#[must_use]
-pub fn run_accounting() -> Outcome {
-    let receipt = graphhelm_runtime::context_accounting::AccountingReceipt::new()
-        .with_field(
-            "total_tokens",
-            graphhelm_runtime::context_accounting::CostField::unavailable(
-                "no execution to account for yet - #223 existence-slice",
-            ),
-        )
-        .expect(
-            "`unavailable` never names the accounting module as its own observer - only a \
-                 `measured` field claiming that producer can fail `with_field`",
-        );
-
-    let field = receipt
-        .field("total_tokens")
-        .expect("the field was just added under this exact name");
-
-    Outcome::success(
-        "development.accounting",
-        serde_json::json!({
-            "totalTokens": {
-                "observed": field.observed(),
-                "measured": field.is_measured(),
-                "provenance": field.provenance().wire_name(),
-            },
-        }),
     )
 }
 

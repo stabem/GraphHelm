@@ -6335,14 +6335,6 @@ pub(super) async fn gateway_probe(
     }
 }
 
-/// `POST /v1/development/contract`: #218's code-rule resolver over HTTP. #223 existence-slice —
-/// no request body is read yet, matching the CLI and MCP surfaces (see
-/// `crate::commands::development::run_resolve_contract`'s own doc for why an empty source list
-/// is real behavior, not a stub).
-pub(super) async fn development_resolve_contract() -> Response {
-    respond_outcome(crate::commands::development::run_resolve_contract())
-}
-
 /// `GET /v1/development/memory`: the governed memory vocabulary and the moves policy allows.
 ///
 /// **A GET, and without a record id** — the original scope list carried `/memory/{id}`. Nothing
@@ -6818,14 +6810,6 @@ pub(super) async fn development_memory_propose(
     }
 }
 
-/// `POST /v1/development/present`: #219's owner-output renderer over HTTP. #223 existence-slice --
-/// no request body is read yet, matching the CLI and MCP surfaces (see
-/// `crate::commands::development::run_present`'s own doc for why a fixed task result is real
-/// behavior rather than a stub).
-pub(super) async fn development_present() -> Response {
-    respond_outcome(crate::commands::development::run_present())
-}
-
 /// `POST /v1/development/context`: #222/#273's context compiler over HTTP.
 ///
 /// Reads `budget` and `require` and refuses required context that cannot fit, the same decision
@@ -6928,14 +6912,6 @@ pub(super) async fn development_compile_context(
             crate::commands::development::context_refusal(code, message).output,
         ),
     }
-}
-
-/// `GET /v1/development/accounting`: a context-accounting receipt over HTTP. #223
-/// existence-slice — no execution id is read yet, matching the CLI and MCP surfaces (see
-/// `crate::commands::development::run_accounting`'s own doc for why the one field reports as
-/// unavailable rather than zero).
-pub(super) async fn development_accounting() -> Response {
-    respond_outcome(crate::commands::development::run_accounting())
 }
 
 // -------------------------------------------------------------------------------------------

@@ -1256,21 +1256,12 @@ fn build_router(state: ServeState) -> Router {
             put(routes::gateway_credential_set),
         )
         .route(
-            "/v1/development/contract",
-            post(routes::development_resolve_contract),
-        )
-        .route(
             "/v1/development/memory",
             get(routes::development_memory_status).post(routes::development_memory_propose),
         )
-        .route("/v1/development/present", post(routes::development_present))
         .route(
             "/v1/development/context",
             post(routes::development_compile_context),
-        )
-        .route(
-            "/v1/development/accounting",
-            get(routes::development_accounting),
         )
         .fallback(not_found)
         // BOUNDED ABOVE THE DOCUMENT LIMIT, NOT BELOW IT. Axum's default `Bytes` extractor caps
@@ -1569,7 +1560,7 @@ fn agent_session_route_allowed(request: &Request) -> bool {
                 | ["", "v1", "journey-flows"]
                 | ["", "v1", "workspaces"]
                 | ["", "v1", "gateway", "routes"]
-                | ["", "v1", "development", "memory" | "accounting"]
+                | ["", "v1", "development", "memory"]
         );
     }
     method == axum::http::Method::POST
@@ -1583,12 +1574,7 @@ fn agent_session_route_allowed(request: &Request) -> bool {
                 "signal" | "wake-lease" | "claim" | "clear" | "journey-credentials"
             ] | ["", "v1", "executions", _, "documents", "read"]
                 | ["", "v1", "graph", "topology"]
-                | [
-                    "",
-                    "v1",
-                    "development",
-                    "contract" | "memory" | "present" | "context"
-                ]
+                | ["", "v1", "development", "memory" | "context"]
         )
 }
 

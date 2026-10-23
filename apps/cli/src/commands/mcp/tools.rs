@@ -404,7 +404,7 @@ fn mutating_schema(mut properties: serde_json::Value, required: &[&str]) -> serd
         "type": "integer",
         "minimum": 0,
         "maximum": u64::MAX,
-        "description": "Optional If-Match head pin: 409 if the store moved past it.",
+        "description": "Head pin; 409 if stale.",
     });
     object_schema(properties, required)
 }

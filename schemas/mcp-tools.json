@@ -22,7 +22,7 @@
             "type": "boolean"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -261,7 +261,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -292,7 +292,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -331,7 +331,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -578,7 +578,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -699,7 +699,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -725,7 +725,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -762,7 +762,7 @@
             "type": "object"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -787,7 +787,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -829,7 +829,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -884,7 +884,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -1056,7 +1056,7 @@
             "type": "integer"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -1110,7 +1110,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -1164,7 +1164,7 @@
             "type": "object"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -1218,7 +1218,7 @@
             "type": "object"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -1332,7 +1332,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"

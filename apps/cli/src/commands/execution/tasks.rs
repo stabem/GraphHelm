@@ -359,6 +359,83 @@ pub struct LivenessBudgets {
     pub free_after_seconds: i64,
     /// #1235's `STALL_SECONDS`, served here too so every threshold a reader needs is in one place.
     pub stall_after_seconds: i64,
+    /// #1920: the lane-silence policy window; see [`retire_after_seconds`].
+    pub retire_after_seconds: i64,
+}
+
+/// #1920: the project policy a Runtime retirement cites. A lane silent this long with no open
+/// obligation is retired by the Runtime itself; one that still owes work is only flagged.
+pub const LANE_SILENCE_POLICY: &str = "lane-silence-retire";
+/// #1920: the default policy window, 12 h.
+pub const RETIRE_AFTER_SECONDS: i64 = 12 * 60 * 60;
+/// #1920: the actor a Runtime retirement is attributed to, the Stop reconciler's name.
+pub const RUNTIME_ACTOR: &str = "graphhelm";
+
+/// #1920: the window in force. A project sets it with `GRAPHHELM_LANE_RETIRE_AFTER_SECONDS` on the
+/// Runtime (a positive whole number of seconds); absent or garbled, it is 12 h.
+pub fn retire_after_seconds() -> i64 {
+    retire_budget(
+        std::env::var("GRAPHHELM_LANE_RETIRE_AFTER_SECONDS")
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn retire_budget(raw: Option<&str>) -> i64 {
+    raw.and_then(|value| value.trim().parse::<i64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(RETIRE_AFTER_SECONDS)
+}
+
+/// #1920: one Runtime verdict on a silent lane: a retirement (no open obligation) or a flag (it
+/// still owes work, so nothing is dropped). It cites the policy, its window and the time of the
+/// lane's last record (absent when it has none). It is derived at every read, so the lane's next
+/// record restores it: no stored retirement exists for the signal door to refuse.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaneSilence {
+    pub lane: String,
+    pub by: &'static str,
+    pub policy: &'static str,
+    pub window_seconds: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_record_at: Option<PersistedTimestamp>,
+}
+
+/// #1920: split the judged lanes by the silence policy at `now`. Lanes silent for `window` with no
+/// obligation leave `lanes` and are returned as retired; silent lanes that owe stay and are
+/// returned as flagged. Pure, so the three cases are unit cells.
+pub fn apply_lane_silence(
+    lanes: &mut Vec<LaneLiveness>,
+    window: i64,
+    now: &PersistedTimestamp,
+) -> (Vec<LaneSilence>, Vec<LaneSilence>) {
+    let mut retired = Vec::new();
+    let mut flagged = Vec::new();
+    lanes.retain(|row| {
+        let quiet = row
+            .last_record_at
+            .as_ref()
+            .map(|at| (*now.as_datetime() - *at.as_datetime()).num_seconds());
+        if quiet.is_some_and(|seconds| seconds < window) {
+            return true;
+        }
+        let verdict = LaneSilence {
+            lane: row.lane.clone(),
+            by: RUNTIME_ACTOR,
+            policy: LANE_SILENCE_POLICY,
+            window_seconds: window,
+            last_record_at: row.last_record_at.clone(),
+        };
+        if row.owes {
+            flagged.push(verdict);
+            true
+        } else {
+            retired.push(verdict);
+            false
+        }
+    });
+    (retired, flagged)
 }
 
 /// #1234: one lane's liveness at the read's `now`. `last_record_at` is the Runtime's time of the
@@ -393,6 +470,10 @@ pub struct LaneLiveness {
 pub struct Liveness {
     pub budgets: LivenessBudgets,
     pub lanes: Vec<LaneLiveness>,
+    /// #1920: lanes the Runtime retired under the silence policy at this read; not in `lanes`.
+    pub retired: Vec<LaneSilence>,
+    /// #1920: lanes silent past the policy window that still owe work; flagged, never retired.
+    pub flagged: Vec<LaneSilence>,
 }
 
 /// #1556: the newest task STEP each actor recorded. A reasonless `task.heartbeat` renews a lease,
@@ -528,7 +609,10 @@ fn liveness(
             silent_after_seconds: silent_after_seconds(),
             free_after_seconds: FREE_AFTER_SECONDS,
             stall_after_seconds: STALL_SECONDS,
+            retire_after_seconds: retire_after_seconds(),
         },
+        retired: Vec::new(),
+        flagged: Vec::new(),
         lanes: owes
             .into_iter()
             .map(|(lane, (owing, since))| {
@@ -961,6 +1045,14 @@ pub(crate) fn read_history(
     liveness
         .lanes
         .retain(|row| !fold.retired_lanes.contains(&row.lane));
+    // #1920: the Runtime retires a lane silent past the policy window with nothing open, and only
+    // flags one that still owes work. Judged here, at read time: a new record restores it.
+    let window = liveness.budgets.retire_after_seconds;
+    let (auto_retired, flagged) = apply_lane_silence(&mut liveness.lanes, window, &now);
+    liveness.retired = auto_retired;
+    liveness.flagged = flagged;
+    let mut hidden_lanes = fold.retired_lanes.clone();
+    hidden_lanes.extend(liveness.retired.iter().map(|row| row.lane.clone()));
     // #1851: each lane's reported kind and model, from its newest claim that names them.
     let identities = graphhelm_execution::tasks::lane_identities(&records);
     for row in &mut liveness.lanes {
@@ -971,7 +1063,7 @@ pub(crate) fn read_history(
     }
     let stalls = stalled_tasks(&fold.tasks, &now);
     let backlog = backlog(&records, &fold.tasks);
-    let waiting = open_questions(history, &fold.retired_lanes, |event, record| {
+    let waiting = open_questions(history, &hidden_lanes, |event, record| {
         let envelope_id = format!("signal-{}", record.signal_id.as_str());
         if event.evidence_refs.len() != 1
             || event.evidence_refs[0].evidence_id().as_str() != envelope_id
@@ -1362,6 +1454,56 @@ mod lease_tests {
             reasonless.silent,
             "the hook's heartbeat stays silent: {reasonless:?}"
         );
+    }
+
+    /// #1920: the silence policy's three cases at one read: a lane silent past the window with
+    /// nothing open is retired by the Runtime (citing policy and last record) and leaves the board;
+    /// a silent lane that still owes is flagged and stays; the same lane after a new record is
+    /// restored. Cost: pure calls.
+    #[test]
+    fn the_runtime_retires_a_silent_idle_lane_flags_an_owing_one_and_restores_on_a_record() {
+        let now = at("2026-10-23T12:00:00Z");
+        let old = at("2026-10-22T23:00:00Z"); // 13 h
+        let fresh = at("2026-10-23T11:00:00Z"); // 1 h
+        let window = super::RETIRE_AFTER_SECONDS;
+        let mut lanes = vec![
+            lane_liveness("idle", Some(&old), None, false, &now),
+            lane_liveness("holder", Some(&old), Some(&old), true, &now),
+            lane_liveness("live", Some(&fresh), None, false, &now),
+        ];
+        let (retired, flagged) = super::apply_lane_silence(&mut lanes, window, &now);
+        assert_eq!(retired.len(), 1, "{retired:?}");
+        assert_eq!(retired[0].lane, "idle");
+        assert_eq!(retired[0].by, "graphhelm");
+        assert_eq!(retired[0].policy, "lane-silence-retire");
+        assert_eq!(retired[0].window_seconds, 12 * 3600);
+        assert_eq!(retired[0].last_record_at.as_ref(), Some(&old));
+        assert_eq!(flagged.len(), 1, "{flagged:?}");
+        assert_eq!(flagged[0].lane, "holder");
+        let left: Vec<&str> = lanes.iter().map(|row| row.lane.as_str()).collect();
+        assert_eq!(
+            left,
+            ["holder", "live"],
+            "the retired lane leaves the board"
+        );
+        // Restored: the idle lane records again, and the next read keeps it.
+        let mut back = vec![lane_liveness("idle", Some(&fresh), None, false, &now)];
+        let (retired, flagged) = super::apply_lane_silence(&mut back, window, &now);
+        assert!(retired.is_empty() && flagged.is_empty());
+        assert_eq!(back.len(), 1);
+        // The window edge is exact, and the policy window only takes a positive number.
+        let edge = at("2026-10-23T00:00:00Z");
+        let mut at_edge = vec![lane_liveness("e", Some(&edge), None, false, &now)];
+        assert_eq!(
+            super::apply_lane_silence(&mut at_edge, window, &now)
+                .0
+                .len(),
+            1
+        );
+        assert_eq!(super::retire_budget(Some("3600")), 3600);
+        assert_eq!(super::retire_budget(Some("0")), window);
+        assert_eq!(super::retire_budget(Some("x")), window);
+        assert_eq!(super::retire_budget(None), window);
     }
 
     /// #1234: the verdict at the budget edges. Silent needs an obligation; free needs a record;

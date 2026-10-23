@@ -272,7 +272,7 @@ edges:
   - id: read
     from: start
     to: checked
-    why: The health check is read and judged against a wrong expectation, so the journey fails.
+    why: "The health check is read and judged against a wrong expectation, so the journey fails."
     acts:
       - {kind: http, role: GET, name: /health}
 paths:
@@ -313,18 +313,19 @@ screens:
     title: The slow server answered ok
     url: /
     state: success
-    expect: [{role: status, name: "200"}, {role: json, name: ok=true}]
+    expect: [{role: status, name: "200", because: the slow server answers every GET with HTTP 200 after its wait}, {role: json, name: ok=true, because: the slow server always answers ok}]
     scope: unknown
   - id: start
     title: The slow server answers
     url: /
     state: stable
-    expect: [{role: status, name: "200"}]
+    expect: [{role: status, name: "200", because: the slow server answers every GET with HTTP 200 after its wait}]
     scope: unknown
 edges:
   - id: read
     from: start
     to: checked
+    why: "Reading the slow server takes several seconds, so the run can be seen while it plays."
     acts:
       - {kind: http, role: GET, name: /}
 paths:

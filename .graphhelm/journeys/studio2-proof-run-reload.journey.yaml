@@ -17,7 +17,7 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project, journey]
     state: success
-    expect: [{role: listitem, name: Read a slow health check, text: passed}]
+    expect: [{role: listitem, name: Read a slow health check, text: passed, because: "the slow server always answers ok and the run ends, so the card shows its result"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
   - id: journeys
     title: The slow journey is selected
@@ -31,24 +31,26 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project, journey]
     state: loading
-    expect: [{role: listitem, name: Read a slow health check, text: running}]
+    expect: [{role: listitem, name: Read a slow health check, text: running, because: "the Runtime's journey list reports the run still in flight, though this page never pressed Run"}]
     scope: [apps/cli/src/commands/journey_flow.rs, apps/cli/src/commands/journey_preview.rs, apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
   - id: started
     title: The journey started from this page reads running
     url: /?session=studio-fixture&run=demo&view=proof&journey=health-slow
     ignoreQuery: [session, project, journey]
     state: loading
-    expect: [{role: listitem, name: Read a slow health check, text: running}]
+    expect: [{role: listitem, name: Read a slow health check, text: running, because: "the slow server waits before answering, so the run is still playing"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
 edges:
   - id: journeys.started
     from: journeys
     to: started
+    why: Pressing Run on the slow journey starts a run that is still playing for several seconds.
     acts:
       - {kind: activate, role: button, name: Run Read a slow health check}
   - id: reopened.finished
     from: reopened
     to: finished
+    why: "A page opened during the run reads it running from the Runtime, then shows the result once the run ends."
     acts:
       - {kind: wait_for, role: list, name: Journeys}
 paths:

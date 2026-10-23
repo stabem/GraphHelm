@@ -71,7 +71,7 @@ Write the results into the project (create the repository folder if needed):
    when no lane wrote it through the draft route or when the reviewer ever wrote any version, and records who approved and what was checked. Ask the owner only
    when the doc and the flow disagree on the product itself (two ways the product could work);
    then ask one short question with your recommendation, update the doc, and review again. The
-   owner can still approve or reopen any flow in the Studio's Journey tab. Edits after approval
+   owner can still approve or reopen any flow in the Studio's Proof view. Edits after approval
    follow `journey-map` (c2).
 
 ## Phase 3: Build
@@ -94,7 +94,7 @@ When the v1 flows are approved:
    Reviewers never claim the author's issue or use pre-PR `task_admit`; the approving reviewer runs `merge`. Run at most as many lanes at once as the
    roster says; independent issues in parallel, issues on the same screen in order. You only
    assign, unblock and report.
-3. **Follow along.** The owner watches the Studio: Team tab for tasks and PRs, Journey tab for
+3. **Follow along.** The owner watches the Studio: Graph and Lanes for tasks, PRs and agents, Proof for
    each screen's capture and freshness. A journey with no observer stays `OBSERVER_MISSING`;
    never report it as passing.
 4. **Report.** After each merge, tell the owner in one line which journey moved and what is next.

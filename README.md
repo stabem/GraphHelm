@@ -2,239 +2,168 @@
 
 # GraphHelm
 
-**Run AI-agent workflows with a clear view of the work and control over what happens next.**
+**Orchestrate coding agents around the user journeys a change affects, and see the evidence that those journeys still work.**
 
-GraphHelm is a local-first runtime for AI-agent workflows. Define the work as a typed execution graph, follow its progress, and see when it needs your attention. Inspect the evidence, approve a blocked step, or pause and resume through the CLI, MCP, or local Studio. Claude Code and Codex plugins bring it into your coding sessions, with [Keel](https://github.com/stabem/GraphHelm/blob/main/KEEL.md) for how agents write code and user journeys that prove a change works.
+GraphHelm is for developers who hand software work to AI coding agents (Claude Code, Codex) and need to know whether the result actually works for a user. It links three things that usually live in different places: the request you made, the issues and pull requests agents produce for it, and the journey runs that show the affected flows working, step by step, with captured screens and history.
 
-[Try a local run](#try-a-local-run) · [Install in your project](https://github.com/stabem/GraphHelm/blob/main/INSTALL.md) · [Explore the Studio](https://github.com/stabem/GraphHelm/blob/main/apps/studio/README.md) · [Documentation](https://github.com/stabem/GraphHelm/blob/main/docs/INDEX.md)
+A merge, a green build or an agent saying "done" is not treated as proof. A request reads as proven only when its journeys passed their last run.
 
-**Experimental · Local-first · MIT licensed.** The CLI, Runtime, MCP server, and operator Studio work today. Expect a developer-oriented setup and evolving interfaces; there is no stable release yet.
+[Quick start](#quick-start) · [Install in your project](INSTALL.md) · [Studio](apps/studio/README.md) · [Journeys guide](docs/guides/journeys.md) · [Documentation](docs/INDEX.md)
 
-## Why GraphHelm
+**Experimental · runs on your machine · MIT licensed.** There is no stable release yet; expect a developer-oriented setup and changing interfaces. See [status and limitations](#status-and-limitations).
 
-Delegating a multi-step task raises practical questions: what is running, what is waiting, and what evidence supports the result?
+<!-- No checked-in screenshot of the current Proof view exists yet. Add one under docs/assets/
+     from a real run before linking it here; do not use design mock-ups as evidence. -->
 
-- **Know when to step in.** An attention verdict names the blocked work or missing information. Uncertainty stays visible instead of becoming an all-clear.
-- **Keep decisions explicit.** Typed graphs describe dependencies, completion requirements, and budgets. Supported controls let you pause, approve, resume, or cancel an execution.
-- **Pick up with context.** Execution briefings and event history give a later session a recorded account of the work and pending decisions.
-- **Prove it works.** A [user journey](https://github.com/stabem/GraphHelm/blob/main/docs/guides/journeys.md) replays the real flow in a browser and records what it saw. With no observer, the result stays `OBSERVER_MISSING` instead of passing.
-- **Keep agent code in shape.** [Keel](https://github.com/stabem/GraphHelm/blob/main/KEEL.md) gives every agent the same steps (plan, execute, review, merge), and `graphhelm keel check` blocks the rules a machine can measure.
-- **Inspect the result.** Append-only event history, evidence, and replay make a run reviewable beyond a chat transcript.
+## The problem
 
-Use it for agent workflows with several steps, human review points, or work that continues across sessions. Start locally, learn the control model, then connect the model and tool routes your project needs.
+Delegating a multi-step change to agents raises questions a chat transcript does not answer:
 
-<a id="try-it-locally"></a>
-## Try a local run
+- Which issues and PRs belong to my request, and what is still open or blocked?
+- Which agent is doing what, and which one is waiting on me?
+- Does the flow the user actually goes through still work, at this commit, and how do I know?
+- If it broke, at which step, and what changed compared to the last time it worked?
 
-This demo deliberately fails the implementation step so you can see how GraphHelm asks for intervention. **It uses fixture outcomes: it does not call a model, edit a repository, or deploy anything.**
+GraphHelm answers them from recorded events and journey runs, not from what an agent reports.
 
-Prerequisites: Git, the pinned **Rust 1.97.1** toolchain, and your platform's build dependencies. See [prerequisites](https://github.com/stabem/GraphHelm/blob/main/docs/install/GETTING_STARTED.md#prerequisites). Cargo may download dependencies during the first build.
+## How a change flows
 
-Run in Bash on Linux or macOS:
+Using GraphHelm in your own project:
+
+1. **Request.** You ask for a change in your agent host (for example "let users reset their password"). The work is recorded as one request.
+2. **Agents work.** Agents open issues and pull requests for it. Each runs as a lane you can follow; a question an agent asks waits for your answer instead of being guessed.
+3. **Journeys define the promise.** The user-visible promise is written as a journey: `.graphhelm/journeys/<id>.journey.yaml`, a small graph of screens (observable states) and edges (the acts between them), with explicit checks on each screen. A journey is a draft until you, the owner, approve it.
+4. **Journeys run.** An approved journey is replayed at the committed head without a model call: in a real browser through the Playwright observer, or as `cli`/`http` acts for backends.
+5. **You inspect the evidence.** Each step shows its result, the checks it made, the captured frame (browser journeys) and how it compares with an earlier run.
+6. **You review the result.** For a PR, the review screen compares the journey's frames on `main` with the PR head's. The request moves to Proven only when its journeys passed.
+
+Contributing **to GraphHelm itself** follows the same idea with this repository's own rules: issue first, a [Keel](KEEL.md) card sized to the change, one independent review, merge by the reviewer. See [Contributing](#contributing).
+
+## The Studio: Graph, Lanes, Proof
+
+The Studio is a local web page connected to your project's Runtime. It uses only the public Runtime API, so everything it does can also be done from the CLI or MCP. Details: [apps/studio/README.md](apps/studio/README.md).
+
+**Graph: what was asked, and where it stands.** Each request you made, with the issues opened for it, their pull requests, and the result, as a graph or as Kanban columns. This is where you see dependencies and what is left. "Merged" is not "done": a card reads Proven only when its journeys passed their last replay. A card in review opens a large review screen with the journey's frames on `main` (Before) and on the PR head (Now).
+
+**Lanes: who is working, and who needs you.** One card per agent with its request, progress, last action and idle time. Questions agents ask appear here with your reply. You can Wake, Reassign or Stop an agent, and a Needs action list collects what is blocked on you. The run's capacity is shown too.
+
+**Proof: does it work, and what changed.** The project's journeys, grouped by feature. Run one and watch the browser being prepared and its log; then read the step cards: each step's status, its checks and its captured frame. A failed step names its cause. Compare a frame with an earlier run (see below), and Approve or Reject a draft journey as the owner.
+
+## Journey-Proven Development (JPD)
+
+JPD is the rule behind Proof: **a promise is done only when an observer has watched it hold.** Full guide: [docs/jpd/README.md](docs/jpd/README.md); design: [JOURNEY_PROVEN_DEVELOPMENT.md](docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md).
+
+A journey has:
+
+- **An observable goal**: what the user should be able to do, in their terms.
+- **Steps**: screens connected by edges; each edge has 1 to 8 acts (click, type, navigate, an HTTP request, a CLI command).
+- **Explicit checks**: every screen lists what must be true there, such as a visible element with a role and name, an HTTP status, a JSON field, a CLI exit code or a line on stdout.
+- **Evidence**: per-step results, captured frames for browser journeys, and the run kept in history.
+
+Journeys can be browser flows (accessible roles and names, run by the Playwright observer) or backend flows (`http` and `cli` acts). One flow is either browser or backend, not both.
+
+Results are kept distinct:
+
+| Result | Meaning |
+| --- | --- |
+| passed | The step ran and every check held. |
+| failed / drift | An act could not run (failed), or it ran and a check did not hold (drift). |
+| not run / skipped | The step was not reached, so nothing was observed. |
+| `OBSERVER_MISSING` | Nothing installed can observe the promise (for example no browser observer). This is never counted as a pass. |
+
+A screenshot on its own proves only that a screen was seen at a revision, not that the promise holds; the checks are what decide a step. A later green run does not erase an earlier failure. To show a journey really observes the code, `graphhelm keel test sabotage` applies a breaking patch and expects the journey to come back `caught`.
+
+## Before/after and history
+
+What Proof and the review screen compare, exactly:
+
+- **Proof:** the selected step's frame in the run on screen is compared with the **newest earlier finished run that kept a frame for that same screen**. Past runs are listed as history (pass or fail, and when they ran), but you cannot pick two arbitrary runs to compare.
+- **PR review (Graph):** Before is the journey's frame from the run on `main`; Now is the PR head's frame.
+- **Modes:** Frame (one image), Side by side, Overlay, and Changes (changed pixels in red with the share of the screen that changed). Changes refuses frames of different sizes instead of stretching them.
+
+Limits to keep in mind:
+
+- A pixel difference is not automatically a regression, and an unchanged screen is not proof that behavior is right: the step's checks decide.
+- Mobile frames come from an emulated mobile viewport in the browser, not from a physical device.
+- Frames exist only for browser journeys; backend journeys show results and output, not pictures.
+- A capture becomes `stale` when files in its screen's scope changed after it was taken.
+
+## Quick start
+
+Prerequisites: Git, Rust **1.97.1** (pinned) and Node **22+** for the Studio. See [prerequisites](docs/install/GETTING_STARTED.md#prerequisites).
+
+**1. Install in your project.** Follow [INSTALL.md](INSTALL.md) top to bottom (or hand it to your agent). It builds the CLI (`cargo +1.97.1 install --locked --path apps/cli`), runs `graphhelm init`, starts the Runtime, installs the plugin and registers MCP, with a verify step for each. Installing the plugin alone is not enough.
+
+**2. Install the browser observer** (for browser journeys):
 
 ```bash
-git clone https://github.com/stabem/GraphHelm.git
-cd GraphHelm
-
-DEMO_DIR="$(mktemp -d)"
-printf '%s\n' '{"nodeOutcomes":{"implementation":"failure"}}' > "$DEMO_DIR/fixtures.json"
-
-cargo run --locked -p graphhelm-cli -- execution start \
-  --file examples/graphs/manual-override-deploy.yaml \
-  --events "$DEMO_DIR/events" \
-  --fixtures "$DEMO_DIR/fixtures.json" \
-  --mode supervised --execution demo --pretty
-
-cargo run --locked -p graphhelm-cli -- execution status \
-  --events "$DEMO_DIR/events" --execution demo
+graphhelm setup --project . --home <home> --install-observer playwright
 ```
 
-Look for `data.attention: "needs_you"` and a `blocked_node` reason naming `implementation`. The event store stays in the temporary directory printed by `echo "$DEMO_DIR"`.
+**3. Open the Studio** from the project directory:
 
-| Attention | What it tells you |
-| --- | --- |
-| `needs_you` | A named condition requires human attention |
-| `can_sleep` | Nothing needs attention, and in-flight work has been checked |
-| `unknown` | There is not enough information to judge in-flight silence |
-| `calmed_by_amendment` | An explicit silence-budget amendment accounts for the quiet |
+```bash
+graphhelm studio start   # starts the Runtime and the Studio for this project
+graphhelm studio open    # opens it in the browser, already logged in
+```
 
-For automation, read the JSON field: a successful `execution status` command can exit `0` while reporting `needs_you`. Treat unfamiliar attention values conservatively.
+**4. Write and run your first journey.** Write `.graphhelm/journeys/<id>.journey.yaml` (the format and a full example are in [docs/jpd/README.md](docs/jpd/README.md); a runnable backend example is [examples/jpd-quickstart](examples/jpd-quickstart/README.md)), then:
 
-Continue with the [offline quickstart](https://github.com/stabem/GraphHelm/blob/main/QUICKSTART.md), or follow the [full local walkthrough](https://github.com/stabem/GraphHelm/blob/main/docs/install/GETTING_STARTED.md) for the Runtime and Studio, including Windows commands. Real model execution requires separately configured gateway routes and credentials; [provider-less mode](https://github.com/stabem/GraphHelm/blob/main/docs/product/PROVIDER_LESS_MODE.md) explains the boundary.
+```bash
+graphhelm journey compile <id> --fmt --include-draft --project .   # check and format
+graphhelm journey approve <id> --token-file .graphhelm/events.token --project .   # owner approves
+graphhelm keel test validation --repo .   # runs every journey path at committed HEAD
+```
 
-<a id="install-the-agent-plugin"></a>
-## Use GraphHelm in your project
+You can also approve and run the journey from Proof. Step-by-step with real output: [docs/guides/journeys.md](docs/guides/journeys.md).
 
-Follow [INSTALL.md](https://github.com/stabem/GraphHelm/blob/main/INSTALL.md) for the ordered, host-specific checklist. It covers:
+<a id="try-it-locally"></a>
+<a id="try-a-local-run"></a>
+### Optional: see the Runtime with a fixture run
 
-1. Build and install the current CLI from source
-2. Initialize the project for the host you choose
-3. Start its authenticated local Runtime with the same project identity
-4. Install the plugin in that host
-5. Register MCP in that host
-6. Restart the host and verify an actual Runtime tool call
+This demo deliberately fails one step so you can see how GraphHelm asks for intervention. It uses fixture outcomes: no model call, no repository edit, no deploy.
 
-**Give an agent INSTALL.md when asking it to install GraphHelm.** Installing the plugin alone does not install the CLI, start the Runtime, or complete MCP registration.
+```bash
+git clone https://github.com/stabem/GraphHelm.git && cd GraphHelm
+DEMO_DIR="$(mktemp -d)"
+printf '%s\n' '{"nodeOutcomes":{"implementation":"failure"}}' > "$DEMO_DIR/fixtures.json"
+cargo run --locked -p graphhelm-cli -- execution start \
+  --file examples/graphs/manual-override-deploy.yaml \
+  --events "$DEMO_DIR/events" --fixtures "$DEMO_DIR/fixtures.json" \
+  --mode supervised --execution demo --pretty
+cargo run --locked -p graphhelm-cli -- execution status --events "$DEMO_DIR/events" --execution demo
+```
 
-| Integration | Available path |
-| --- | --- |
-| Claude Code | Guide, setup, and resume skills; project-aware MCP registration |
-| Codex CLI | Guide, setup, and resume skills; hook compatibility companion and a reviewed MCP configuration snippet |
-| Keel only | The standalone `keel` plugin (five skills, no MCP, no hooks) for any project, in Claude Code or Codex |
-| Local Studio | Browser-based execution and evidence inspection, attention views, user journeys (run, compare, approve), and supported control actions; Node 22+ required |
-
-See the [plugin guide](https://github.com/stabem/GraphHelm/blob/main/plugins/graphhelm/README.md) for commands, host trust, and optional hooks. Configuration and local tests do not establish native host activation: check each selected host in a fresh session.
-
-The [v0.1.1 CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.1) provides Windows x86-64 and Ubuntu x86-64 binaries with the current project adoption flow. macOS and other platforms use the source path, with less platform validation. Studio also runs from source. Once installed, `graphhelm update` reinstalls the CLI from `origin/main`.
+Look for `data.attention: "needs_you"` and a `blocked_node` reason naming `implementation`. More in the [offline quickstart](QUICKSTART.md).
 
 <a id="what-works-today"></a>
 <a id="repository-map"></a>
-## How it fits together
+## Architecture
 
-The Rust core owns typed contracts, graph validation, and execution rules. Adapters connect models, tools, and local or PostgreSQL event storage. CLI and MCP expose execution controls; Studio operates through the public Runtime API. Graph versions, transactional drafts, and event history keep changes inspectable.
+- **Runtime** (Rust, `core/`, `adapters/`): the source of truth. An append-only event store, typed execution graphs, deterministic policy and validation, and the journey runner. It binds to loopback and protects its API with a bearer token.
+- **Studio** (`apps/studio`): the local web view (Graph, Lanes, Proof). Talks only to the public Runtime API.
+- **CLI and MCP** (`apps/cli`): `graphhelm` for people and scripts (JSON envelope for machines, a readable summary in a terminal); the MCP server gives agents the same operations. Plugins for [Claude Code and Codex](plugins/graphhelm/README.md) bring them into agent sessions.
+- **JPD**: the journey format, approval, replay, validation and sabotage described above.
+- **Keel** ([KEEL.md](KEEL.md)): the method agents follow to build and review code (plan, execute, review, merge), with `graphhelm keel check` blocking the rules a machine can measure. Keel decides *how* code is written; journeys decide *whether it works*.
 
-Explore [`core/`](https://github.com/stabem/GraphHelm/tree/main/core), [`adapters/`](https://github.com/stabem/GraphHelm/tree/main/adapters), [`apps/`](https://github.com/stabem/GraphHelm/tree/main/apps), and the [example graphs](https://github.com/stabem/GraphHelm/tree/main/examples/graphs).
+## Status and limitations
 
-<a id="development-method"></a>
-## Evidence before completion
+**Available:** CLI, Runtime, MCP server, Claude Code and Codex plugins, the Studio (Graph, Lanes, Proof), browser journeys with the Playwright observer, backend (`http`/`cli`) journeys, owner approval, validation and sabotage tests, Keel checks. A [v0.1.1 CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.1) has Windows x86-64 and Ubuntu x86-64 binaries; otherwise build from source. `graphhelm update` reinstalls from `origin/main`.
 
-GraphHelm includes two complementary development methods:
+**Experimental:** journey explore, drift and heal ([journeys guide §10](docs/guides/journeys.md#10-explore-drift-and-heal-phase-3)); the optional agent-driven `e2e` observer (needs a model key); agent approval of journeys through scoped credentials.
 
-- [Journey-Proven Development](https://github.com/stabem/GraphHelm/blob/main/docs/harness/JOURNEY_PROVEN_DEVELOPMENT.md) defines what an observer must verify about the user's actual journey. Missing proof remains `OBSERVER_MISSING`.
-  Start with the [user journeys guide](https://github.com/stabem/GraphHelm/blob/main/docs/guides/journeys.md): author a flow, validate, approve, replay, and read capture freshness.
-- [Keel](https://github.com/stabem/GraphHelm/blob/main/KEEL.md) is the construction pattern every agent follows: one file of values, one file per step (plan, execute, review, merge), the cheapest observer that proves the promise, and a merge block for every rule a machine can measure. Six rules block today through `graphhelm keel check` (write scope, names, bare flags, panics, missing deadlines, swallowed errors); the others are checked by the reviewer until their check lands.
+**Planned, not shipped:** a visual graph editor, embedded AI chat, the full Context Compiler and Dreams Engine. The [roadmap](docs/product/ROADMAP_AND_ACCEPTANCE.md) lists targets, not shipped features.
 
-The specifications distinguish guidance from implemented checks. See the [delivery process](https://github.com/stabem/GraphHelm/blob/main/docs/process/DELIVERY.md).
-
-## How work flows
-
-Two processes, one inside the other. GraphHelm says how a change travels from an issue to `main`;
-Keel says how the code inside that change is written and proved.
-
-### GraphHelm delivery
-
-```text
-                 ┌──────────────────────────────────────┐
-                 │  GitHub issue                        │
-                 │  one label: current-wave | in-flight │
-                 │  | tech-debt | product-vision        │
-                 └──────────────────┬───────────────────┘
-                                    │ branch issue-<N>-<desc>
-                                    ▼
-                 ┌──────────────────────────────────────┐
-                 │  Keel card, sized to the change      │
-                 │  (see Keel below)                    │
-                 └──────────────────┬───────────────────┘
-                                    ▼
-                 ┌──────────────────────────────────────┐
-                 │  Work: start from the promise,       │
-                 │  add only what it needs, prove it    │
-                 │  PR body lists every test run        │
-                 └──────────────────┬───────────────────┘
-                                    ▼
-                 ┌──────────────────────────────────────┐
-                 │  One review                          │
-                 │  another session or a blind subagent │
-                 │  reads earlier comments, runs the    │
-                 │  reached tests + keel check          │
-                 └───────┬──────────────────────┬───────┘
-                         │                      │
-                       BLOCK         APPROVE | APPROVE-WITH-RISK
-                         │                      │
-          fix (new head) │                      ▼
-          or answer why  │     ┌──────────────────────────────────┐
-          it does not    │     │  Merge by the approving reviewer │
-          hold           │     │  head pinned to the reviewed sha │
-                         │     │  squash, delete branch           │
-                         ▼     └────────────────┬─────────────────┘
-                 back to review                 ▼
-                                    Delivered = merged into main
-                                    and main green on the main proof
-                                    (Keel checks block; no presser)
-```
-
-Every comment, review and merge starts with `Session: <name> · Head: <sha8>`. Long form:
-[delivery process](https://github.com/stabem/GraphHelm/blob/main/docs/process/DELIVERY.md).
-
-### Keel
-
-```text
-                    What does the change touch?
-                                │
-   ┌──────────────┬─────────────┼───────────────┬──────────────────────┐
-   ▼              ▼             ▼               ▼                      ▼
- docs, config,  bounded       a screen       new public            persistence,
- one line,      code          (journey       surface               permissions,
- test only      change        scope)         (module, type,        security,
-                                             fn, dep, route)       external effects
-   │              │             │               │                      │
- summary        card: paths,  card +          full card,            full card
- only           promise,      journeys        surface named         + journey
-                proof         replayed green                        + failure list
-   └──────────────┴─────────────┴───────┬───────┴──────────────────────┘
-                                        ▼
-   PLAN    keel/KEEL_PLAN.md   promise, proof, search what exists,
-                               cost (Big O), risks, measured gain
-                                        ▼
-   EXEC    keel/KEEL_EXEC.md   stay in the card, read the symbol not the file,
-                               cheapest observer that proves the promise,
-                               unit test only for a found bug, break it once,
-                               whole reached plan, receipt in GraphHelm
-                                        ▼
-   REVIEW  keel/KEEL_REVIEW.md blind, reruns everything, lists every value
-                               that does not hold plus the card's risk row,
-                               measures any promised gain before and after
-                                        ▼
-   MERGE   keel/KEEL_MERGE.md  pinned head, rerun if main moved,
-                               check after, clean up what you created
-                                        ▼
-           Values (KEEL.md): cohesion, no duplicate, no dead code,
-           inward dependencies, searchable names, no hidden magic,
-           reliability, idempotency, less complexity, Big O, quiet tools
-           measured rule broken → merge blocked, exception written in code
-           (6 rules measured today; the rest read by the reviewer)
-```
-
-Long form: [KEEL.md](https://github.com/stabem/GraphHelm/blob/main/KEEL.md), and the reasons in
-[the Keel rationale](https://github.com/stabem/GraphHelm/blob/main/docs/keel/KEEL_SPEC.md).
-
-## Control and trust
-
-- Runtime endpoints bind to loopback; protected API operations use bearer-token authentication
-- `graphhelm setup` previews supported host changes and requires an exact reviewed plan digest before applying them, with backups and a restore flow
-- Model proposals do not grant permissions; deterministic validation governs supported graph changes
-- Local-first orchestration does not mean every connected provider stays local. Review model and tool routes before sending project data
-- The local event store is not encrypted at rest. Protect credentials and execution evidence accordingly
-
-## Project status and direction
-
-The local Studio is an operator MVP. A visual graph editor, embedded AI chat, the full Context Compiler, and Dreams Engine remain future work. The [roadmap](https://github.com/stabem/GraphHelm/blob/main/docs/product/ROADMAP_AND_ACCEPTANCE.md) describes targets, not a list of shipped features. There is no hosted CI service; validation is run locally.
+**Trust notes:** runs on your machine, but connected model and tool providers may receive project data, so review routes before use. The local event store is not encrypted at rest. There is no automatic paid-provider fallback. There is no hosted CI; validation runs locally.
 
 <a id="contributing-and-trust"></a>
-## Contribute
+<a id="development-method"></a>
+## Contributing
 
-Try the documented journey and report where it breaks. Include your version, operating system, host, command, and observed result, with secrets removed.
+Try the quick start and report where it breaks: version, OS, host, command and observed result, with secrets removed.
 
-[Contribution guide](https://github.com/stabem/GraphHelm/blob/main/CONTRIBUTING.md) · [Issues](https://github.com/stabem/GraphHelm/issues) · [Support](https://github.com/stabem/GraphHelm/blob/main/.github/SUPPORT.md) · [Code of conduct](https://github.com/stabem/GraphHelm/blob/main/.github/CODE_OF_CONDUCT.md)
+Changes to GraphHelm follow [docs/process/DELIVERY.md](docs/process/DELIVERY.md): an issue first, branch `issue-<N>-<desc>`, a Keel card sized to the change, the tests the change reaches listed in the PR, one independent review, and merge by the approving reviewer. Repository rules for agents are in [AGENTS.md](AGENTS.md).
 
-Report vulnerabilities privately through [SECURITY.md](https://github.com/stabem/GraphHelm/blob/main/SECURITY.md). GraphHelm is [MIT licensed](https://github.com/stabem/GraphHelm/blob/main/LICENSE); bundled Studio fonts retain their [OFL notices](https://github.com/stabem/GraphHelm/blob/main/apps/studio/src/fonts/README.md).
+[Contribution guide](CONTRIBUTING.md) · [Issues](https://github.com/stabem/GraphHelm/issues) · [Support](.github/SUPPORT.md) · [Code of conduct](.github/CODE_OF_CONDUCT.md)
 
-<a id="make-claude-always-use-graphhelm--keel"></a>
-<details>
-<summary>Optional: GraphHelm + Keel instructions for Claude</summary>
-
-1. **Claude Code:** follow [INSTALL.md](https://github.com/stabem/GraphHelm/blob/main/INSTALL.md) for MCP and optional instruction blocks
-2. **claude.ai:** review and paste the preference below into Settings → Instructions for Claude. This instruction applies to that separate product; it does not connect it to your local Runtime
-
-```text
-Use GraphHelm and Keel for software work.
-- If the GraphHelm MCP tools are available (named mcp__graphhelm__* or mcp__plugin_graphhelm_graphhelm__*, depending on the host), use them for state: briefing, status, events, evidence, resume. Otherwise use the graphhelm CLI with --json, and say which source you used.
-- Keel: before any code work, read the project's KEEL.md and the keel/ file for your step (KEEL_PLAN.md, KEEL_EXEC.md, KEEL_REVIEW.md or KEEL_MERGE.md). They are the rules and win over these defaults. Without them: keep effort proportional, state the promise and the command that proves it, name the paths in scope, search before you add, add only what the promise needs.
-- Prove the promise with the cheapest observer that proves it; every new test must catch a deliberate break.
-- Journey-Proven Development: work is done only when an observer proves the user-visible promise. With no observer, say OBSERVER_MISSING; never claim success from a proxy.
-- Report passed, failed, skipped and unobserved separately. A later green never erases an earlier red.
-- Issue first, one PR per issue, one independent review before merge.
-- A project's own KEEL.md, AGENTS.md or CLAUDE.md overrides these defaults.
-```
-
-</details>
+Report vulnerabilities privately through [SECURITY.md](SECURITY.md). GraphHelm is [MIT licensed](LICENSE); bundled Studio fonts keep their [OFL notices](apps/studio/src/fonts/README.md).

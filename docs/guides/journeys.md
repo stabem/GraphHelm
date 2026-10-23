@@ -23,7 +23,7 @@ these commands.
 | Contract (generated projection) | `.graphhelm/journeys/<id>.json`, schema `journey-contract.schema.json` (JPD package) | `journey compile` / `journey approve` |
 | Screen capture | signal `jpd.screen_captured` in a run | `journey capture` or `journey replay` |
 | Walked transition | signal `jpd.transition_walked` in a run | `journey walked` or `journey replay` |
-| Journey map (read model) | `graphhelm journeys`, `GET /v1/journeys`, Studio Journey tab | read only |
+| Journey map (read model) | `graphhelm journeys`, `GET /v1/journeys`, Studio Proof view | read only |
 
 A capture is proof that a screen was **seen** at a git revision. It is not proof that a promise
 holds. With no observer, the honest result is `OBSERVER_MISSING`.
@@ -402,12 +402,15 @@ exists). Now commit a change to `app/checkout/page.tsx` and read again:
 
 Arrow `state`: `walked`, `never_walked`, or `stale` (an endpoint capture went stale).
 
-## 7. Studio Journey tab
+## 7. Studio Proof view
 
-`graphhelm studio start` (from the project directory) opens the Studio for that project. The
-**Journey** tab on the canvas draws the same map as section 6: one card per step with its newest
-capture and freshness, arrows between steps. PR before/after pairs (section 9) open from it. Not
-exercised in this guide's run (it needs Node and the Studio app).
+`graphhelm studio start` (from the project directory) starts the Runtime and the Studio, and
+`graphhelm studio open` opens it logged in (`--journey <id>` opens Proof on that journey). The
+**Proof** view lists the project's journeys; for one journey it runs it, shows a card per step
+with its result, checks and captured frame, compares the selected step's frame with the newest
+earlier run that kept a frame for that screen (Frame, Side by side, Overlay, Changes), and lets
+the owner Approve or Reject a draft. PR before/after (section 9) is shown in the Graph view's
+review screen. Not exercised in this guide's run (it needs Node and the Studio app).
 
 ## 8. Keel cards that name journeys (advisory)
 
@@ -433,8 +436,10 @@ touched screen is reported as having no capture read. A named journey with no re
 ## 9. PR before/after
 
 Capture the same step with `--pr <N> --phase before` on the base and `--phase after` on the
-branch. The Studio pairs, per `(contractId, stepId, pr)`, the newest `before` with the newest
-`after` and shows them side by side; a step with only one phase shows no pair.
+branch; the read model pairs, per `(contractId, stepId, pr)`, the newest `before` with the newest
+`after`, and a step with only one phase has no pair. In the Studio, a Graph card in review opens
+the review screen, which compares the journey's frame from the run on `main` (Before) with the PR
+head's frame (Now).
 
 ## 10. Explore, drift and heal (phase 3)
 

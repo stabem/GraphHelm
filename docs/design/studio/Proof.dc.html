@@ -92,7 +92,7 @@ Downloading Chromium 141.0 (playwright build v1194) — 101.2 MiB / 163.4 MiB  <
 <div style="border: 1px solid #34343c; border-radius: 12px; background: #151517; padding: 10px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px">
 <sc-for list="{{steps}}" as="s" hint-placeholder-count="7">
 <button class="seg" style="padding: 0; border-radius: 8px; border: 1px solid {{s.edge}}; background: #1e1e22; overflow: hidden; display: flex; flex-direction: column" onClick="{{s.pick}}">
-<div class="crop" style="border-bottom: 2px solid {{s.bar}}"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Frame of step {{s.n}}" style="filter: {{s.filter}}"></div>
+<div class="crop" style="border-bottom: 2px solid {{s.bar}}"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Frame of step {{s.n}}" style="filter: {{s.filter}}"></div>
 <div style="padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; text-align: left">
 <div style="display: flex; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96"><span>{{s.n}} DOES</span><span style="flex: 1"></span><span style="color: {{s.bar}}">{{s.status}}</span></div>
 <span style="font-size: 11px; color: #f5f5f6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{s.label}}</span>
@@ -133,28 +133,28 @@ Now</label>
 <div style="display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 20px; background: #0a0a0b">
 <span style="padding: 4px 10px; border-radius: 6px; background: #241010; color: #ff9b9b; font-size: 12px">Fails only on mobile · step 5: button “Escolher esta” is covered by the sticky footer</span>
 <div style="width: 300px; height: 560px; border: 8px solid #2a2a30; border-radius: 28px; overflow: hidden; background: #f0efe9">
-<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Mobile frame" style="width: 100%; height: 100%; object-fit: cover; object-position: 30% 60%; display: block">
+<img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Mobile frame" style="width: 100%; height: 100%; object-fit: cover; object-position: 30% 60%; display: block">
 </div>
 </div>
 </sc-if>
 <sc-if value="{{isFrameWeb}}" hint-placeholder-val="{{ false }}">
-<div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now"></div>
+<div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now"></div>
 </sc-if>
 <sc-if value="{{isSideW}}" hint-placeholder-val="{{ false }}">
 <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; background: #34343c">
-<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Before · 15 Oct</div><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)"></div></div>
-<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Now · 21 Oct</div><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now"></div></div>
+<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Before · 15 Oct</div><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)"></div></div>
+<div><div style="padding: 4px 8px; font-size: 11px; color: #a2a2ad; background: #151517">Now · 21 Oct</div><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now"></div></div>
 </div>
 </sc-if>
 <sc-if value="{{isOverW}}" hint-placeholder-val="{{ true }}">
 <div class="crop">
-<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)">
-<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now" style="position: absolute; left: 0; top: 0; opacity: {{alpha}}">
+<img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Before" style="filter: hue-rotate(160deg) saturate(.4)">
+<img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now" style="position: absolute; left: 0; top: 0; opacity: {{alpha}}">
 </div>
 </sc-if>
 <sc-if value="{{isDiffW}}" hint-placeholder-val="{{ false }}">
 <div class="crop">
-<img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now with changes marked" style="filter: grayscale(1) brightness(1.1)">
+<img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now with changes marked" style="filter: grayscale(1) brightness(1.1)">
 <div style="position: absolute; left: 40.3%; top: 85.2%; width: 26%; height: 5.4%; border: 2px solid #ff6b6b; background: rgb(255 107 107 / 22%); border-radius: 4px"></div>
 <span style="position: absolute; left: 40.3%; top: 79.5%; padding: 2px 6px; border-radius: 4px; background: #ff6b6b; color: #241010; font-size: 11px">changed</span>
 </div>
@@ -171,8 +171,8 @@ does Submits “Salvar compra”</pre>
 <span style="color: #ff8a3d">4% of the screen changed (in red).</span>
 <span style="color: #ff8a3d">This step drift then, failed now.</span>
 <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px">
-<button class="seg" onClick="{{toSide}}" style="padding: 0; border: 1px solid #34343c; border-radius: 6px; overflow: hidden"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Before thumbnail" style="filter: hue-rotate(160deg) saturate(.4)"></div></button>
-<button class="seg" onClick="{{toSide}}" style="padding: 0; border: 1px solid #34343c; border-radius: 6px; overflow: hidden"><div class="crop"><img src="/_blob/f5e1eb6a179acca7e093cd0fdb744f3a" alt="Now thumbnail"></div></button>
+<button class="seg" onClick="{{toSide}}" style="padding: 0; border: 1px solid #34343c; border-radius: 6px; overflow: hidden"><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Before thumbnail" style="filter: hue-rotate(160deg) saturate(.4)"></div></button>
+<button class="seg" onClick="{{toSide}}" style="padding: 0; border: 1px solid #34343c; border-radius: 6px; overflow: hidden"><div class="crop"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Now thumbnail"></div></button>
 </div>
 <button class="seg" onClick="{{toDiff}}" style="align-self: flex-end; color: #8ab4ff; padding: 0">show changes</button>
 <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96; margin-top: 6px">WHAT IT DID</span>
@@ -191,6 +191,84 @@ does Submits “Salvar compra”</pre>
 <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #a2a2ad">No console captured</span>
 </aside>
 </div>
+
+<section aria-label="Proof states" style="display: flex; flex-direction: column; gap: 12px; border-top: 1px dashed #34343c; padding-top: 14px; margin-top: 6px">
+<style>
+@keyframes dcblink{0%,100%{opacity:1}50%{opacity:.35}}
+.runchip{animation:dcblink 1.2s ease-in-out infinite;border:1px solid #2a3b5c;color:#8ab4ff;background:#0f1726}
+@media (prefers-reduced-motion: reduce){.runchip{animation:none}}
+.mono{font-family:'JetBrains Mono',monospace}
+</style>
+<span class="mono" style="font-size: 10px; color: #8a8a96">STATES · shipped #1909 #1912 #1914 #1915 #1917 · in flight #1919</span>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px">
+<div aria-label="Journey card running" style="padding: 10px; border-radius: 10px; border: 1px solid #2a3b5c; background: #151517; display: flex; flex-direction: column; gap: 6px; font-size: 12px">
+<div style="display: flex; gap: 6px; align-items: center"><strong>Installs the CLI</strong><span style="flex: 1"></span><span class="mono" style="padding: 1px 6px; border-radius: 4px; border: 1px solid #34343c; font-size: 10px; color: #a2a2ad">&gt;_ Terminal</span></div>
+<div style="display: flex; gap: 6px; align-items: center"><span class="mono runchip" style="padding: 2px 6px; border-radius: 4px; font-size: 10px">… Running · step 2</span><span style="flex: 1"></span><span style="padding: 3px 8px; border-radius: 6px; border: 1px solid #34343c; font-size: 11px; color: #8a8a96">Running…</span></div>
+<span style="color: #8a8a96; font-size: 10px">Live card (#1915). The running chip blinks blue (#1919).</span>
+</div>
+<div aria-label="Journey card result" style="padding: 10px; border-radius: 10px; border: 1px solid #3a1d1d; background: #151517; display: flex; flex-direction: column; gap: 6px; font-size: 12px">
+<div style="display: flex; gap: 6px; align-items: center"><strong>Opens the dashboard</strong><span style="flex: 1"></span><span class="mono" style="padding: 1px 6px; border-radius: 4px; border: 1px solid #34343c; font-size: 10px; color: #a2a2ad">◱ Browser</span></div>
+<div style="display: flex; gap: 6px; align-items: center"><span class="mono" style="padding: 2px 6px; border-radius: 4px; border: 1px solid #5c2a2a; color: #ff6b6b; font-size: 10px">✕ failed</span><span class="mono" style="font-size: 10px; color: #8a8a96">4/7</span><span style="flex: 1"></span><span style="padding: 3px 8px; border-radius: 6px; border: 1px solid #34343c; font-size: 11px">▶ Run again</span></div>
+<textarea aria-label="Note for the fix" style="background: #0a0a0b; color: #f5f5f6; border: 1px solid #34343c; border-radius: 6px; font: inherit; font-size: 11px; padding: 6px; resize: none" rows="2">The save button is hidden under the footer on mobile.</textarea>
+<div style="display: flex; gap: 6px; align-items: center"><span style="padding: 4px 10px; border-radius: 6px; background: #ff8a3d; color: #0a0a0b; font-size: 11px; font-weight: 600">Send to fix</span><span style="flex: 1"></span><span class="mono" style="font-size: 10px; color: #3ddc97">Sent · 10:42</span></div>
+<span style="color: #8a8a96; font-size: 10px">Result card. A failed journey takes a note, Send to fix, then shows Sent · time (#1919).</span>
+</div>
+<div aria-label="Journey card both kinds" style="padding: 10px; border-radius: 10px; border: 1px solid #1d3a2c; background: #151517; display: flex; flex-direction: column; gap: 6px; font-size: 12px">
+<div style="display: flex; gap: 6px; align-items: center"><strong>Builds and serves</strong><span style="flex: 1"></span><span class="mono" style="padding: 1px 6px; border-radius: 4px; border: 1px solid #34343c; font-size: 10px; color: #a2a2ad">&gt;_ ◱ Terminal and Browser</span></div>
+<div style="display: flex; gap: 6px; align-items: center"><span class="mono" style="padding: 2px 6px; border-radius: 4px; border: 1px solid #1d3a2c; color: #3ddc97; font-size: 10px">✓ passed</span><span class="mono" style="font-size: 10px; color: #8a8a96">5/5</span></div>
+<span style="color: #8a8a96; font-size: 10px">Kind badge: Terminal, Browser, or both (#1912).</span>
+</div>
+</div>
+
+<section aria-label="Run these commands?" style="border: 1px solid #5c3a1d; border-radius: 12px; background: #1a120c; padding: 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px">
+<strong>Run these commands?</strong>
+<span style="color: #a2a2ad">This draft runs commands on this machine. They run only once you confirm this exact list.</span>
+<ol class="mono" style="margin: 0; padding-left: 20px; font-size: 11px; color: #f5f5f6; line-height: 1.6"><li>npm ci</li><li>npm run build</li><li>node dist/cli.js --version</li></ol>
+<span class="mono" aria-label="Digest" style="font-size: 10px; color: #8a8a96">sha256:9f2c…41ab</span>
+<span style="align-self: flex-start; padding: 6px 12px; border-radius: 6px; background: #ff8a3d; color: #0a0a0b; font-weight: 600">Confirm and run</span>
+</section>
+
+<div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; border: 1px solid #34343c; border-radius: 12px; background: #151517; padding: 10px">
+<div aria-label="Terminal tile" style="grid-column: span 2; aspect-ratio: 16/10; border-radius: 8px; background: #050506; border: 1px solid #2a2a30; padding: 8px; display: flex; flex-direction: column; gap: 4px; box-sizing: border-box">
+<span class="mono" style="color: #3ddc97; font-size: 14px">&gt;_</span>
+<span class="mono" style="font-size: 10px; color: #d0d0d6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">npm run build</span>
+<span style="flex: 1"></span>
+<span class="mono" style="align-self: flex-start; padding: 1px 6px; border-radius: 4px; background: #10261c; color: #3ddc97; font-size: 10px">exit 0</span>
+</div>
+<div aria-label="Terminal tile failed" style="grid-column: span 2; aspect-ratio: 16/10; border-radius: 8px; background: #050506; border: 1px solid #2a2a30; padding: 8px; display: flex; flex-direction: column; gap: 4px; box-sizing: border-box">
+<span class="mono" style="color: #3ddc97; font-size: 14px">&gt;_</span>
+<span class="mono" style="font-size: 10px; color: #d0d0d6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">node dist/cli.js --version</span>
+<span style="flex: 1"></span>
+<span class="mono" style="align-self: flex-start; padding: 1px 6px; border-radius: 4px; background: #2a1010; color: #ff6b6b; font-size: 10px">exit 1</span>
+</div>
+<span style="grid-column: span 3; color: #8a8a96; font-size: 11px; align-self: center">A command step shows a dark terminal tile: the &gt;_ icon, the command, and the exit chip, green for 0 and red otherwise (#1914).</span>
+</div>
+
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) 210px; gap: 10px; min-height: 380px">
+<section aria-label="Terminal" style="border: 1px solid #34343c; border-radius: 12px; background: #050506; display: flex; flex-direction: column; min-height: 0">
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #2a2a30; font-size: 12px; flex-wrap: wrap">
+<span class="mono" style="color: #3ddc97">&gt;_</span><span class="mono" style="color: #f5f5f6">node dist/cli.js status --json</span><span style="flex: 1"></span>
+<span class="mono" style="padding: 1px 6px; border-radius: 4px; background: #10261c; color: #3ddc97; font-size: 10px">exit 0</span>
+<span style="padding: 3px 8px; border-radius: 6px; background: #2a2a30; font-size: 11px">Structured</span><span style="padding: 3px 8px; border-radius: 6px; border: 1px solid #34343c; color: #a2a2ad; font-size: 11px">Raw</span>
+</div>
+<pre class="mono" style="flex: 1; margin: 0; padding: 10px 12px; overflow: auto; font-size: 11px; line-height: 1.6; color: #d0d0d6"><span style="color: #8ab4ff">version</span>: <span style="color: #3ddc97">"0.9.2"</span>
+<span style="color: #8ab4ff">runtime</span>:
+  <span style="color: #8ab4ff">port</span>: <span style="color: #ffb27f">8793</span>
+  <span style="color: #8ab4ff">healthy</span>: <span style="color: #ffb27f">true</span>
+<span style="color: #8ab4ff">lanes</span>:
+  - <span style="color: #8ab4ff">name</span>: <span style="color: #3ddc97">"lane-a"</span>
+    <span style="color: #8ab4ff">state</span>: <span style="color: #3ddc97">"working"</span></pre>
+<span style="padding: 6px 12px; color: #8a8a96; font-size: 10px; border-top: 1px solid #2a2a30">The terminal panel fills the available height (#1917). JSON output reads as structured, YAML-like text with a Raw toggle (#1912).</span>
+</section>
+<section aria-label="Phone frame" style="display: flex; justify-content: center; align-items: flex-start">
+<div style="width: 190px; height: 370px; border-radius: 28px; border: 6px solid #2a2a30; background: #000; padding: 16px 6px; box-sizing: border-box; position: relative">
+<span style="position: absolute; top: 5px; left: 50%; transform: translateX(-50%); width: 50px; height: 6px; border-radius: 3px; background: #2a2a30"></span>
+<img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Mobile frame in a phone" style="width: 100%; height: 100%; object-fit: cover; object-position: 30% 60%; border-radius: 12px; display: block; background: #f0efe9">
+</div>
+</section>
+</div>
+</section>
 
 </div>
 </div>

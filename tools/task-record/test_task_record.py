@@ -171,6 +171,19 @@ class TaskRecordTest(unittest.TestCase):
                                     "lane": "lane-a"})
         self.assertEqual(FakeRuntime.reads, [], "a heartbeat reads no history")
 
+    def test_a_claim_with_a_request_id_also_links_the_request(self):
+        # #1921: the issue-to-ask link rides on the claim; no separate request_linked call.
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "1921", "--branch", "b", "--title", "t",
+                                  "--request-id", "auto-record")
+        self.assertEqual(code, 0, out)
+        kinds = [entry[1]["signal"]["type"] for entry in FakeRuntime.seen]
+        self.assertEqual(kinds, ["task.claimed", "task.request_linked"])
+        linked = json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])
+        self.assertEqual((linked["taskId"], linked["requestId"], linked["issue"], linked["linkedBy"]),
+                         ("request-auto-record", "auto-record", 1921, "lane-a"))
+        claim = json.loads(FakeRuntime.seen[0][1]["signal"]["description"])
+        self.assertNotIn("requestId", claim)
+
     def test_a_lane_credential_that_cannot_read_history_still_records_its_heartbeat(self):
         # #1556 RED on main: the live Runtime answers 401 to a lane credential's history read, so
         # the recorder exited "heartbeat history is unavailable" and every waiting lane read Silent.
@@ -803,6 +816,24 @@ class TitleAndSummary(unittest.TestCase):
         self.assertNotIn("title", document)
         self.assertEqual(self.asked, [])
 
+    def test_an_omitted_title_without_gh_fails_loudly(self):
+        # #1921: a claim without gh used to land with no title ("title not recorded" on the Graph).
+        def unavailable(*_):
+            raise task_record.GithubUnavailable("gh issue view 1921: FileNotFoundError")
+        task_record.github_words = unavailable
+        with self.assertRaises(SystemExit) as raised:
+            self.doc("claimed", "--issue", "1921", "--branch", "b")
+        self.assertIn("--title was omitted and gh could not read it", str(raised.exception))
+        document, _ = self.doc("claimed", "--issue", "1921", "--branch", "b", "--title", "Mine")
+        self.assertEqual(document["title"], "Mine")
+
+    def test_a_missing_gh_binary_raises_unavailable(self):
+        # #1921: the real reader, with gh absent from the host, names the failure instead of (None, None).
+        task_record.github_words = self.github
+        with patch.object(task_record.subprocess, "run", side_effect=FileNotFoundError("gh")):
+            with self.assertRaises(task_record.GithubUnavailable):
+                task_record.github_words("claimed", 1921, "stabem/GraphHelm")
+
 class Planned(unittest.TestCase):
     """#480: `planned` records the lane's keel plan so the Studio lights Plan (and Critic for a
     `design` plan). Its fields come from the plan itself, never retyped, and the older steps keep
@@ -1007,7 +1038,8 @@ class Planned(unittest.TestCase):
         for kind, extra, revision in (("claimed", ["--branch", "b"], 1),
                                       ("pr_opened", ["--pr", "1", "--head", HEAD_A, "--reviewer", "r"], 2),
                                       ("merged", ["--pr", "1", "--merge-sha", HEAD_A], 5)):
-            args = task_record.parse(["--lane", "l", kind, "--issue", "9", *extra])
+            # #1921: --no-github; this cell is about revisions, and an omitted title without gh now fails.
+            args = task_record.parse(["--lane", "l", kind, "--issue", "9", "--no-github", *extra])
             self.assertEqual(task_record.document(args, "t")["revision"], revision, kind)
 
 

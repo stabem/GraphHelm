@@ -371,6 +371,7 @@ button { font: inherit; }
 .small { font-size: 11px; }
 .ghost.small { align-self: flex-start; padding: 4px 10px; }
 .serves { font-size: 10px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.serves.unlinked { color: var(--muted); font-style: italic; }
 /* #1904: no 360px cap; the panel widens with the screen. */
 .agent-panel { flex: 1 1 clamp(300px, 18vw, 520px); max-width: none; border-left: 1px solid var(--edge); padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .panel-head { display: flex; align-items: center; gap: 8px; font-size: 15px; }

@@ -14,7 +14,7 @@ viewports: [mobile]
 screens:
   - id: asked
     title: The request shows in WHAT I ASKED and Needs action
-    url: /?session=studio-fixture&run=demo&view=lanes
+    url: /?session=studio-fixture&run=demo&view=lanes&journey=health-broken
     ignoreQuery: [session, project]
     state: success
     expect: [{role: list, name: Owner requests, text: Fix Broken health check}, {role: region, name: Needs action, text: Your request waits for a lane}]

@@ -191,3 +191,77 @@ fn a_killed_runtime_comes_back_and_a_clean_stop_does_not_restart() {
         fixture.stderr()
     );
 }
+
+// #1963 review: after a #1523 handover the successor owns the lock before the supervisor looks.
+// The supervisor must keep watching it, not read the held lock as a stop and close its
+// kill-on-close job under the successor. Past the old 60 s settle window, both must still live,
+// and a clean stop of the successor must still end the supervisor.
+#[test]
+fn a_handed_over_successor_and_its_supervisor_outlive_the_settle_window() {
+    let fixture = Fixture::new();
+    let install = fixture.events.with_file_name("install");
+    std::fs::create_dir_all(install.join("bin")).unwrap();
+    std::fs::write(install.join(".graphhelm-installed-head"), "old-head\n").unwrap();
+    std::fs::copy(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+        install.join("bin").join(if cfg!(windows) {
+            "graphhelm.exe"
+        } else {
+            "graphhelm"
+        }),
+    )
+    .unwrap();
+    let mut supervisor = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["serve", "--supervise", "--events"])
+        .arg(&fixture.events)
+        .args(["--bind", &format!("127.0.0.1:{}", fixture.port)])
+        .arg("--keyring")
+        .arg(&fixture.keyring)
+        .args(["--key-id", "signal-key", "--handover-install"])
+        .arg(&install)
+        .env("GRAPHHELM_EVENTS_KEY", KEY_HEX)
+        .env("GRAPHHELM_TEST_SHUTDOWN_FILE", &fixture.shutdown)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(std::fs::File::create(fixture.events.with_extension("stderr")).unwrap())
+        .spawn()
+        .unwrap();
+    let Some((first, _)) = fixture.serving_other_than(None, Duration::from_secs(120)) else {
+        let _ = supervisor.kill();
+        panic!(
+            "the supervised Runtime never answered: {}",
+            fixture.stderr()
+        );
+    };
+    std::fs::write(install.join(".graphhelm-installed-head"), "new-head\n").unwrap();
+    let Some((successor, _)) = fixture.serving_other_than(Some(first), Duration::from_secs(120))
+    else {
+        let _ = supervisor.kill();
+        panic!("no successor took over: {}", fixture.stderr());
+    };
+    std::thread::sleep(Duration::from_secs(70));
+    let alive = supervisor.try_wait().unwrap().is_none();
+    let serving = fixture
+        .health()
+        .and_then(|data| data["currentRun"]["pid"].as_u64());
+    std::fs::write(&fixture.shutdown, "").unwrap();
+    let stopped = exited_within(&mut supervisor, Duration::from_secs(30));
+    if !stopped {
+        let _ = supervisor.kill();
+    }
+    assert!(
+        alive,
+        "the supervisor ended after the handover: {}",
+        fixture.stderr()
+    );
+    assert_eq!(serving, Some(successor), "{}", fixture.stderr());
+    assert!(
+        stopped,
+        "a clean stop of the successor must end the supervisor"
+    );
+    assert!(
+        !fixture.stderr().contains("exited unexpectedly"),
+        "{}",
+        fixture.stderr()
+    );
+}

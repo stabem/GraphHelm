@@ -150,16 +150,15 @@ pub(super) fn run(args: &ServeArgs) -> Outcome {
     }
 }
 
-/// The ending of the child that just exited. Its lock is normally free already; a lock still
-/// held is a successor taking over, or another process that is not ours to restart over.
+/// The ending of the child that just exited. Its lock is normally free already. A lock still
+/// held means a Runtime is serving this events directory (a handover successor that took the
+/// lock before this poll): the supervisor keeps watching for as long as it serves, and judges
+/// its ending once it lets go. Returning earlier would end the supervisor, and closing the
+/// kill-on-close job would kill that successor (#1963 review).
 fn settle(events: &Path) -> Ending {
-    let deadline = Instant::now() + TAKEOVER;
     loop {
         if let Some(ending) = ending(events) {
             return ending;
-        }
-        if Instant::now() > deadline {
-            return Ending::Clean;
         }
         std::thread::sleep(POLL);
     }

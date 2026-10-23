@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
 import { CompareFrame } from "./CompareFrame";
 import { decisionOf, offersDecision, rejectNote } from "./decision";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
-import { countSteps, failsOnlyOn, isHeld, journeyScore, journeySteps, lastRunChip, preparingStatus, STATUS_TEXT, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 
 interface ProofViewProps {
@@ -36,16 +36,20 @@ export function ProofView({ runtime, journeys, error, executionId, onRan, initia
   const [picked, setPicked] = useState<string | null>(initial);
   // #1905: bumped after a run is started from the column, so the open panel reads the run again.
   const [reread, setReread] = useState(0);
+  // #1914: the run the open panel follows, by journey, so its card reads it before the list is read again.
+  const [live, setLive] = useState<Record<string, JourneyRun>>({});
+  // A list read again carries the result; a run still playing stays until its next answer.
+  useEffect(() => { setLive((before) => Object.fromEntries(Object.entries(before).filter(([, run]) => run.state === "running"))); }, [journeys]);
   if (error !== null) return <section id="panel-proof" aria-label="Proof" className="view"><p className="error">{error}</p></section>;
   if (journeys === null) return <section id="panel-proof" aria-label="Proof" className="view"><p>Reading the journeys…</p></section>;
   const selected = journeys.find((flow) => flow.id === picked) ?? journeys[0] ?? null;
   const started = (id: string) => { if (id === selected?.id) setReread((n) => n + 1); };
   return (
     <section id="panel-proof" aria-label="Proof" className="proof">
-      <JourneysColumn runtime={runtime} journeys={journeys} selected={selected?.id ?? null} executionId={executionId} onPick={setPicked} onStarted={started} onRan={onRan} />
+      <JourneysColumn runtime={runtime} journeys={journeys} selected={selected?.id ?? null} executionId={executionId} onPick={setPicked} onStarted={started} onRan={onRan} live={live} />
       {selected === null
         ? <div className="proof-main"><p>This project has no journeys yet.</p></div>
-        : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} executionId={executionId} onRan={onRan} />}
+        : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} executionId={executionId} onRan={onRan} onRun={(run) => setLive((before) => ({ ...before, [selected.id]: run }))} />}
     </section>
   );
 }
@@ -58,10 +62,13 @@ interface ColumnProps {
   onPick: (id: string) => void;
   onStarted: (id: string) => void;
   onRan: () => void;
+  live: Record<string, JourneyRun>;
 }
 
-function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onStarted, onRan }: ColumnProps) {
+function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onStarted, onRan, live }: ColumnProps) {
   const [busy, setBusy] = useState<string | null>(null);
+  // #1914: the journey Run all is playing now; its card reads running even when no panel follows it.
+  const [active, setActive] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
   const counts = { passed: 0, failed: 0, stale: 0, not_run: 0 };
   for (const flow of journeys) {
@@ -95,15 +102,20 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
     try {
       for (const [index, flow] of journeys.entries()) {
         setBusy(`Running all · ${index + 1}/${journeys.length}`);
+        setActive(flow.id);
         await runOne(flow);
         if (await runAllUntil(() => runtime.journeyRun(flow.id)) === "timeout") {
           setRefusal(`Run all stopped: ${nameOf(flow)} was still running after ${RUN_ALL_TIMEOUT_MS / 60_000} minutes.`);
           return;
         }
+        // #1914: each card shows its result as its run ends, not when the whole batch has.
+        setActive(null);
+        onRan();
       }
     } catch (cause) {
       setRefusal(message(cause, "The Runtime refused the run."));
     } finally {
+      setActive(null);
       setBusy(null);
       onRan();
     }
@@ -146,7 +158,7 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
                 <span className={`mono group-score${failed ? " fail" : passed > 0 ? " pass" : ""}`} aria-label={`${feature}: ${passed} of ${flows.length} passed`}>{passed}/{flows.length}</span>
               </div>
               <ul>
-                {flows.map((flow) => <JourneyCard key={flow.id} flow={flow} selected={flow.id === selected} disabled={busy !== null} onPick={onPick} onRun={runSingle} />)}
+                {flows.map((flow) => <JourneyCard key={flow.id} flow={flow} selected={flow.id === selected} disabled={busy !== null} onPick={onPick} onRun={runSingle} run={live[flow.id] ?? null} playing={active === flow.id} />)}
               </ul>
             </li>
           );
@@ -156,14 +168,17 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
   );
 }
 
-function JourneyCard({ flow, selected, disabled, onPick, onRun }: { flow: JourneyFlow; selected: boolean; disabled: boolean; onPick: (id: string) => void; onRun: (flow: JourneyFlow) => void }) {
-  const chip = lastRunChip(flow.lastRun);
-  const score = journeyScore(flow);
+function JourneyCard({ flow, selected, disabled, onPick, onRun, run, playing }: { flow: JourneyFlow; selected: boolean; disabled: boolean; onPick: (id: string) => void; onRun: (flow: JourneyFlow) => void; run: JourneyRun | null; playing: boolean }) {
+  // #1914: the run the open panel follows beats the list's last result until the list is read again.
+  const now = liveCard(flow, run) ?? (playing ? liveCard(flow, { state: "running" }) : null);
+  const chip = now !== null ? { text: now.text, tone: now.tone === "wait" ? "idle" as const : now.tone } : lastRunChip(flow.lastRun);
+  const base = journeyScore(flow);
+  const score = now !== null ? { passed: now.passed, total: now.total, bar: now.bar } : base;
   const decision = decisionOf(flow);
   return (
     <li className={`journey${selected ? " on" : ""}`}>
       <button type="button" className="b journey-pick" aria-pressed={selected} onClick={() => onPick(flow.id)}>
-        <strong>{nameOf(flow)}</strong>
+        <span className="journey-top"><strong>{nameOf(flow)}</strong><KindBadge flow={flow} card /></span>
         {flow.purpose && <span className="journey-purpose">{flow.purpose}</span>}
       </button>
       <div className="journey-row">
@@ -195,10 +210,49 @@ function runStatus(run: JourneyRun | null, starting: boolean): { name: string; t
 /** #1912: said in the console when a finished run kept no line for it. */
 const NO_LOG = "This run kept no log lines: the Runtime keeps the browser's and the app's tail only when one of them failed, and a command run's output shows on each step.";
 
-/** #1912: a command step's card shows its last exit code, not an empty frame. */
+/** #1914: a command step's thumbnail is a dark terminal tile: the ">_" glyph, the command, and the
+ * exit chip (green for 0, red otherwise). */
 function CliThumb({ step }: { step: Step }) {
   const last = step.outputs[step.outputs.length - 1];
-  return <span className="mono cli-thumb">{last === undefined ? "$ command" : `$ exit ${last.exit ?? "?"}`}</span>;
+  const command = last?.argv ?? step.label;
+  return (
+    <span className="cli-thumb">
+      <TerminalIcon />
+      <span className="mono cli-thumb-cmd">$ {command}</span>
+      {last !== undefined && <span className={`mono cli-thumb-exit ${last.exit === 0 ? "pass" : "fail"}`}>exit {last.exit ?? "?"}</span>}
+    </span>
+  );
+}
+
+function TerminalIcon() {
+  return (
+    <svg className="kind-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 4.5 7 8l-4 3.5" /><path d="M9 12h4" />
+    </svg>
+  );
+}
+
+function BrowserIcon() {
+  return (
+    <svg className="kind-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" /><path d="M1.5 5.5h13" /><circle cx="3.6" cy="4" r=".4" />
+    </svg>
+  );
+}
+
+const KIND_TEXT: Record<JourneyKind, string> = { terminal: "Terminal", browser: "Browser", both: "Terminal and Browser" };
+
+/** #1914: what the journey drives, as icons: the terminal glyph, the browser window, or both. */
+function KindBadge({ flow, card = false }: { flow: JourneyFlow; card?: boolean }) {
+  const kind = journeyKind(flow);
+  // The header's badge is "<Kind> journey"; a card's names its journey so the two never share a name.
+  return (
+    <span role="img" aria-label={card ? `${nameOf(flow)}: ${KIND_TEXT[kind]} journey` : `${KIND_TEXT[kind]} journey`} className={`kind-badge ${kind}`}>
+      {kind !== "browser" && <TerminalIcon />}
+      {kind !== "terminal" && <BrowserIcon />}
+      <span aria-hidden="true">{KIND_TEXT[kind]}</span>
+    </span>
+  );
 }
 
 function verdict(run: JourneyRun | null): string | null {
@@ -222,8 +276,8 @@ function viewportLine(step: Step) {
   );
 }
 
-function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runtime; flow: JourneyFlow; executionId: string | null; onRan: () => void }) {
-  const { run, frames, mobileFrames, log, history, error, starting, start } = useJourneyRun(runtime, flow.id, executionId, onRan);
+function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun }: { runtime: Runtime; flow: JourneyFlow; executionId: string | null; onRan: () => void; onRun: (run: JourneyRun) => void }) {
+  const { run, frames, mobileFrames, log, history, error, starting, start } = useJourneyRun(runtime, flow.id, executionId, onRan, onRun);
   const [showLog, setShowLog] = useState(false);
   const [picked, setPicked] = useState<number | null>(null);
   const steps = journeySteps(flow, run);
@@ -243,6 +297,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan }: { runtime: Runti
       <section aria-label="Journey run" className="journey-run">
         <div className="run-head">
           <h1>{nameOf(flow)}</h1>
+          <KindBadge flow={flow} />
           <span className="mono run-counts" aria-label="Step counts">
             <span className="pass">{counts.passed} passed</span> <span className="wait">{counts.waits} waits for you</span> <span className="fail">{counts.failed} failed</span> <span className="idle">{counts.notRun} not run</span>
           </span>

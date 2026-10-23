@@ -178,18 +178,28 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
   });
 }
 
-/** #1912: a run walks an edge once per path, so the same command can be kept more than once; each
- * distinct output (command, exit, and the digests of what it printed) is shown once. */
+/** #1914: a run walks an edge once per path, and the Runtime keeps the command again each time (its
+ * output can differ by a digest, a temp path or a clock). A command is one act: it is shown once,
+ * where its first run stood, with what its last run printed. */
 export function distinctOutputs(list: CliOutput[] | undefined): CliOutput[] {
   if (!Array.isArray(list)) return [];
-  const seen = new Set<string>();
-  return list.filter((output) => {
-    if (typeof output !== "object" || output === null || typeof output.argv !== "string") return false;
-    const key = [output.argv, output.exit, output.stdoutSha256 ?? output.stdout, output.stderrSha256 ?? output.stderr].join("\u0000");
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const byCommand = new Map<string, CliOutput>();
+  for (const output of list) {
+    if (typeof output !== "object" || output === null || typeof output.argv !== "string") continue;
+    byCommand.set(output.argv, output);
+  }
+  return [...byCommand.values()];
+}
+
+/** #1914: what a journey drives. Terminal when every act is a command, Browser when none is, Both
+ * when it mixes the two; a flow with no act reads as Browser, the Studio's default. */
+export type JourneyKind = "terminal" | "browser" | "both";
+
+export function journeyKind(flow: JourneyFlow): JourneyKind {
+  const acts = (flow.edges ?? []).flatMap((edge) => edge.acts ?? []);
+  const cli = acts.filter((act) => act.kind === "cli").length;
+  if (cli === 0) return "browser";
+  return cli === acts.length ? "terminal" : "both";
 }
 
 /** #1912: the console lines a command run gives: each command, what it printed, and its exit code,
@@ -243,6 +253,22 @@ export function journeyScore(flow: JourneyFlow): { passed: number | null; total:
   const index = failing === null ? -1 : steps.findIndex((step) => (failing.kind === "edge" ? step.edge === failing.id : step.screen === failing.id));
   if (index < 0) return { passed: null, total, bar: none };
   return { passed: index, total, bar: steps.map((_, i): BarCell => (i < index ? "pass" : i === index ? "fail" : "none")) };
+}
+
+/** #1914: a card's chip, score and bar from the run the open panel is following, so the card
+ * reads `running` with its live step count while the run plays and the result the moment it ends,
+ * before the journey list is read again. `null` when the run says nothing yet (state `none`). */
+export function liveCard(flow: JourneyFlow, run: JourneyRun | null): { text: string; tone: "pass" | "fail" | "idle" | "wait"; passed: number; total: number; bar: BarCell[] } | null {
+  if (run === null || run.state === "none") return null;
+  const steps = journeySteps(flow, run);
+  const passed = steps.filter((step) => step.status === "passed").length;
+  const bar = steps.map((step): BarCell => (step.status === "passed" ? "pass" : step.status === "failed" || step.status === "drift" ? "fail" : "none"));
+  const total = steps.length;
+  if (run.state === "running") return { text: "● running", tone: "wait", passed, total, bar };
+  const ok = run.state === "ready" && run.result === "pass";
+  const mark = ok ? "✓ passed" : "✕ failed";
+  const tail = run.kind === "replay" ? "" : " · preview, not proof";
+  return { text: `${mark}${tail}`, tone: run.kind === "replay" ? (ok ? "pass" : "fail") : "idle", passed, total, bar };
 }
 
 /** The journeys column's chip. Only a replay is proof; a preview's verdict is labelled as such, and

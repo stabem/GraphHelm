@@ -242,7 +242,21 @@ button { font: inherit; }
 .terminal-exit { align-self: flex-start; font-family: var(--mono, ui-monospace, monospace); font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
 .terminal-exit.pass { color: #7ed69a; }
 .terminal-exit.fail { color: #f2a09a; }
-.cli-thumb { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 11px; color: #e6e4dc; background: #0d0d0f; }
+.cli-thumb { display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; gap: 4px; box-sizing: border-box; width: 100%; height: 100%; padding: 6px 8px; font-size: 10px; color: #e6e4dc; background: #0d0d0f; overflow: hidden; }
+.cli-thumb-cmd { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cli-thumb-exit { padding: 1px 6px; border-radius: 999px; border: 1px solid currentColor; }
+.cli-thumb-exit.pass { color: #7ed69a; }
+.cli-thumb-exit.fail { color: #f2a09a; }
+.journey-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.kind-badge { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--edge-strong); }
+.kind-icon { flex: none; }
+.terminal-toggle { align-self: flex-start; }
+.terminal-yaml .yaml-line { display: inline; }
+.yaml-key { color: #8ab4f8; }
+.yaml-string { color: #a5d6a7; }
+.yaml-number { color: #f2c97d; }
+.yaml-boolean { color: #d7a8f0; }
+.yaml-null, .yaml-dash { color: #9a9aa2; }
 .compare-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--edge); flex-wrap: wrap; }
 .compare-step { flex: 1 1 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .compare-count, .compare-note { font-size: 11px; color: var(--muted); }

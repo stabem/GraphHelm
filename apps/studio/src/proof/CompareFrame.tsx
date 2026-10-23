@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { JourneyPastRun, Runtime } from "../runtime/client";
 import { changedSentence, diffPixels, type CompareMode, type Pixels } from "./compare";
 import { failsOnlyOn, type Step } from "./steps";
+import { yamlLines } from "./yaml-view";
 
 const MODES: { mode: CompareMode; label: string }[] = [
   { mode: "frame", label: "Frame" },
@@ -159,6 +160,37 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
   );
 }
 
+/** #1914: stdout that parses as JSON reads as indented key: value lines, coloured by type, with a
+ * toggle to the raw text; anything else is plain text. Text nodes only, never innerHTML. */
+function Stdout({ text }: { text: string }) {
+  const [raw, setRaw] = useState(false);
+  const lines = yamlLines(text);
+  if (lines === null || raw) {
+    return (
+      <>
+        {lines !== null && <button type="button" className="b ghost terminal-toggle" aria-pressed={raw} onClick={() => setRaw(false)}>Structured</button>}
+        <pre aria-label="stdout" className="terminal-out">{text || "(empty)"}</pre>
+      </>
+    );
+  }
+  return (
+    <>
+      <button type="button" className="b ghost terminal-toggle" aria-pressed={raw} onClick={() => setRaw(true)}>Raw</button>
+      <pre aria-label="stdout" className="terminal-out terminal-yaml">
+        {lines.map((line, index) => (
+          <span key={index} className="yaml-line">
+            {"  ".repeat(line.indent)}
+            {line.bullet && <span className="yaml-dash">- </span>}
+            {line.key !== null && <><span className="yaml-key">{line.key}</span>:{line.scalar !== null ? " " : ""}</>}
+            {line.scalar !== null && <span className={`yaml-${line.scalar.kind}`}>{line.scalar.text}</span>}
+            {"\n"}
+          </span>
+        ))}
+      </pre>
+    </>
+  );
+}
+
 /** #1912: a command step has no screen. In place of the frame it shows each command the run ran
  * into this step, its exit code and what it printed, as the Runtime recorded them (masked, capped). */
 function Terminal({ step }: { step: Step }) {
@@ -175,7 +207,7 @@ function Terminal({ step }: { step: Step }) {
             <pre aria-label="Command" className="terminal-cmd">$ {output.argv}</pre>
             <span role="status" aria-label={`Exit code ${output.exit ?? "unknown"}`} className={`terminal-exit ${output.exit === 0 ? "pass" : "fail"}`}>exit {output.exit ?? "unknown"}</span>
             <span className="section-label">STDOUT</span>
-            <pre aria-label="stdout" className="terminal-out">{output.stdout || "(empty)"}</pre>
+            <Stdout text={output.stdout} />
             {output.stderr !== "" && (
               <>
                 <span className="section-label">STDERR</span>

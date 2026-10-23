@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow, JourneyRun } from "../runtime/client";
-import { countSteps, journeySteps, outputLines } from "./steps";
+import { countSteps, distinctOutputs, journeyKind, journeySteps, liveCard, outputLines, withoutLive } from "./steps";
 
 // #1912: the shape of keel-card-accepted: a command-only flow walked on two paths, so each edge's
 // command is kept twice, and its entry screen recorded `not_reached` as the commands' precondition.
@@ -55,5 +55,40 @@ describe("a passed command run (#1912)", () => {
       "$ python run.py outside", "keel.scope.path_outside_card docs/notes.md", "refused", "exit 2",
     ]);
     expect(outputLines({ state: "ready" })).toEqual([]);
+  });
+});
+
+describe("one output per command (#1914)", () => {
+  it("shows a command once when its runs differ only by a digest or a clock", () => {
+    const again = { ...inside, stdout: "{\"ok\":true,\"at\":2}\n", stdoutSha256: "z" };
+    expect(distinctOutputs([inside, outside, again]).map((output) => [output.argv, output.stdoutSha256])).toEqual([["python run.py inside", "z"], ["python run.py outside", "b"]]);
+    expect(outputLines({ state: "ready", outputs: { "start.accept-in-scope": [inside, again] } }).filter((line) => line.startsWith("$ "))).toEqual(["$ python run.py inside"]);
+  });
+});
+
+describe("journey kind (#1914)", () => {
+  it("reads Terminal when every act is a command, Browser when none is, Both when mixed", () => {
+    expect(journeyKind(flow)).toBe("terminal");
+    expect(journeyKind({ ...flow, edges: [{ id: "a", from: "start", to: "accepted", acts: [{ kind: "activate", role: "button", name: "Go" }] }] })).toBe("browser");
+    expect(journeyKind({ ...flow, edges: [...flow.edges!, { id: "b", from: "start", to: "accepted", acts: [{ kind: "activate", role: "button", name: "Go" }] }] })).toBe("both");
+  });
+});
+
+describe("a card follows the live run (#1914)", () => {
+  it("reads running with its step count, then passed when the run ends", () => {
+    const running: JourneyRun = { state: "running", current: "accepted", screens: { accepted: { frame: false, result: "pass" } }, edges: { "start.accept-in-scope": { result: "pass" } } };
+    const mid = liveCard(flow, running)!;
+    expect([mid.text, mid.passed, mid.total]).toEqual(["● running", 1, 3]);
+    const done = liveCard(flow, { ...passed, kind: "replay" })!;
+    expect([done.text, done.tone, done.total]).toEqual(["✓ passed", "pass", 3]);
+    expect(liveCard(flow, { state: "none" })).toBeNull();
+  });
+});
+
+describe("a panel that goes away leaves no running card (#1914)", () => {
+  it("drops only that journey's live run", () => {
+    const run: JourneyRun = { state: "running" };
+    expect(withoutLive({ a: run, b: run }, "a")).toEqual({ b: run });
+    expect(withoutLive({ a: run }, "z")).toEqual({ a: run });
   });
 });

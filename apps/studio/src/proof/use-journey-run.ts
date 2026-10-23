@@ -30,7 +30,7 @@ function message(error: unknown): string {
 
 /** The selected journey's run: read on open, started by Run, read again while it runs, and its
  * frames fetched with the session's bearer header and shown through object URLs. */
-export function useJourneyRun(runtime: Runtime, flowId: string, executionId: string | null, onFinished: () => void): JourneyRunState {
+export function useJourneyRun(runtime: Runtime, flowId: string, executionId: string | null, onFinished: () => void, onRun?: (run: JourneyRun) => void): JourneyRunState {
   const [run, setRun] = useState<JourneyRun | null>(null);
   const [frames, setFrames] = useState<Record<string, string>>({});
   const [log, setLog] = useState<string[]>([]);
@@ -42,6 +42,8 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
   const urls = useRef(new Map<string, { key: string; url: string | null }>());
   const finished = useRef(onFinished);
   finished.current = onFinished;
+  const seen = useRef(onRun);
+  seen.current = onRun;
 
   const note = useCallback((line: string | undefined) => {
     const text = line?.trim();
@@ -54,6 +56,7 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     const ran = attempt > 0;
     const show = (next: JourneyRun) => {
       setRun(next);
+      seen.current?.(next);
       setError(null);
       setStarting(false);
       note(next.observerSetup?.message);
@@ -82,7 +85,9 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
       note(last.launchLog?.tail);
       note(last.driverLog?.tail);
       runtime.journeyHistory(flowId).then((runs) => { if (live) setHistory(runs.slice(0, 8)); }, () => undefined);
-      if (ran) finished.current();
+      // #1914: a run that began before this panel opened (started from the column) was followed
+      // here too; its end reads the journey list again, or the card stays on "not run".
+      if (ran || first.state === "running") finished.current();
     });
     const begin = attempt === 0
       ? runtime.journeyRun(flowId)

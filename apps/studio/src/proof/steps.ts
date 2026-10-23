@@ -1,4 +1,4 @@
-import type { CliOutput, JourneyEdge, JourneyFlow, JourneyLastRun, JourneyRun } from "../runtime/client";
+import type { CliOutput, JourneyEdge, JourneyFlow, JourneyLastRun, JourneyPastRun, JourneyRun } from "../runtime/client";
 
 /** How one step stands in the open run. `running` is the screen the Runtime is playing now. */
 export type StepStatus = "passed" | "failed" | "drift" | "skipped" | "running" | "waiting" | "precondition" | "not run";
@@ -306,6 +306,8 @@ export function liveCard(flow: JourneyFlow, run: JourneyRun | null): { text: str
 export function lastRunChip(lastRun: JourneyLastRun | undefined): { text: string; tone: "pass" | "fail" | "idle" } {
   if (lastRun === undefined) return { text: "? unknown", tone: "idle" };
   if (lastRun.status === "not_run") return { text: "○ not run", tone: "idle" };
+  // #1956: a run of an earlier version of the flow proves nothing about this one.
+  if (lastRun.flowChanged === true) return { text: CHANGED, tone: "idle" };
   const mark = lastRun.status === "passed" ? "✓ passed" : "✕ failed";
   if (lastRun.kind !== "replay") return { text: `${mark} · preview, not proof`, tone: "idle" };
   return { text: mark, tone: lastRun.status === "passed" ? "pass" : "fail" };
@@ -328,4 +330,29 @@ export function preparingStatus(message: string): string {
   const percent = /\b(\d{1,3})\s?%/.exec(message)?.[1];
   const shown = percent !== undefined && Number(percent) <= 100 ? ` ${Number(percent)}%` : "";
   return phase ? `Preparing the browser · ${phase}${shown}` : `Preparing the browser${shown}`;
+}
+
+/** #1956: what a journey edited since its last run reads, on its card and in the panel header. */
+export const CHANGED = "Changed since last run";
+
+/** #1956: the run of an earlier version of the flow the panel shows when the current version has
+ * none. The preview read answers `none` once the flow's digest (or scope commit) moved, and the
+ * Runtime then lists the earlier version's run as the newest history entry; with no history the
+ * journey never ran. A run of the current version (any state but `none`) is always shown instead. */
+export function earlierVersion(run: JourneyRun | null, history: JourneyPastRun[]): JourneyPastRun | null {
+  if (run?.state !== "none") return null;
+  return history[0] ?? null;
+}
+
+/** #1956: an earlier version's run as the step grid reads a run: its recorded results, never live. */
+export function pastAsRun(past: JourneyPastRun): JourneyRun {
+  return {
+    state: past.state === "failed" ? "failed" : "ready",
+    kind: past.kind,
+    ranAt: past.ranAt,
+    result: past.result,
+    reason: past.reason,
+    screens: Object.fromEntries(Object.entries(past.screens ?? {}).map(([id, seen]) => [id, { ...seen, frame: seen.frame === true }])),
+    edges: past.edges ?? {},
+  };
 }

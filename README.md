@@ -134,7 +134,16 @@ cargo run --locked -p graphhelm-cli -- execution start \
 cargo run --locked -p graphhelm-cli -- execution status --events "$DEMO_DIR/events" --execution demo
 ```
 
-Look for `data.attention: "needs_you"` and a `blocked_node` reason naming `implementation`. More in the [offline quickstart](QUICKSTART.md).
+Look for `data.attention: "needs_you"` and a `blocked_node` reason naming `implementation`. The attention values:
+
+| Attention | What it tells you |
+| --- | --- |
+| `needs_you` | A named condition requires human attention |
+| `can_sleep` | Nothing needs attention, and in-flight work has been checked |
+| `unknown` | There is not enough information to judge in-flight silence |
+| `calmed_by_amendment` | An explicit silence-budget amendment accounts for the quiet |
+
+A successful `execution status` can exit `0` while reporting `needs_you`, so automation should read the JSON field. More in the [offline quickstart](QUICKSTART.md).
 
 <a id="what-works-today"></a>
 <a id="repository-map"></a>

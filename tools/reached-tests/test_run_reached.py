@@ -1731,5 +1731,135 @@ class SlotProgramSpelling(unittest.TestCase):
             self.assertEqual(rr._slot_program(program), program)
 
 
+class SideBySideTestSteps(unittest.TestCase):
+    """#1932: the cargo test steps of one batch build once with --no-run, then run side by side."""
+
+    def test_parallel_limit_follows_free_memory(self):
+        self.assertEqual(rr._parallel_limit(None), 1)
+        self.assertEqual(rr._parallel_limit(5.9), 1)
+        self.assertEqual(rr._parallel_limit(6.0), 2)
+        self.assertEqual(rr._parallel_limit(64.0), rr.PARALLEL_STEPS_CEILING)
+
+    def test_split_accepts_only_replayable_cargo_tests(self):
+        argv = ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--bin", "graphhelm",
+                "--test", "cli", "--", "--test-threads=8", "api_http::"]
+        self.assertEqual(rr._test_split(argv), ("graphhelm-cli", [("--bin", "graphhelm"), ("--test", "cli")],
+                                                ["--test-threads=8", "api_http::"]))
+        self.assertEqual(rr._test_split(["C:/x/cargo.exe", "test", "-p", "a", "--lib"]), ("a", [("--lib", "")], []))
+        for refused in (["cargo", "test", "-p", "a", "--lib", "filter"],  # cargo-side filter
+                        ["cargo", "test", "--lib"],  # no package
+                        ["cargo", "test", "-p", "a", "-p", "b", "--lib"],
+                        ["cargo", "test", "-p", "a"],  # no explicit target
+                        ["cargo", "test", "-p", "a", "--doc"],
+                        ["cargo", "test", "-p", "a", "--lib", "--no-run"],
+                        ["cargo", "clippy", "-p", "a"]):
+            self.assertIsNone(rr._test_split(refused), refused)
+        self.assertEqual(rr._no_run(argv), argv[:10] + ["--no-run", "--message-format=json-render-diagnostics"])
+
+    def test_executables_are_matched_by_package_target_and_test_profile(self):
+        def artifact(pid, name, kinds, exe, test=True):
+            return json.dumps({"reason": "compiler-artifact", "package_id": pid,
+                               "manifest_path": "D:/r/apps/cli/Cargo.toml",
+                               "target": {"name": name, "kind": kinds}, "profile": {"test": test},
+                               "executable": exe})
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "batch.log"
+            log.write_text("\n".join([
+                "   Compiling noise",
+                artifact("path+file:///D:/r/apps/cli#graphhelm-cli@0.1.0", "graphhelm", ["bin"], "D:/t/graphhelm.exe", test=False),
+                artifact("path+file:///D:/r/apps/cli#graphhelm-cli@0.1.0", "graphhelm", ["bin"], "D:/t/deps/graphhelm-1.exe"),
+                artifact("path+file:///D:/r/other#other@0.1.0", "cli", ["test"], "D:/t/deps/cli-other.exe"),
+                artifact("path+file:///D:/r/apps/cli#graphhelm-cli@0.1.0", "cli", ["test"], "D:/t/deps/cli-2.exe"),
+                artifact("path+file:///D:/r/core/store#0.1.0", "store", ["lib"], "D:/t/deps/store-3.exe"),
+            ]), encoding="utf-8")
+            found = rr._test_executables(log, "graphhelm-cli", [("--bin", "graphhelm"), ("--test", "cli")])
+            self.assertEqual([item["executable"] for item in found],
+                             ["D:/t/deps/graphhelm-1.exe", "D:/t/deps/cli-2.exe"])
+            self.assertEqual(found[0]["cwd"], str(Path("D:/r/apps/cli")))
+            self.assertEqual(rr._test_executables(log, "store", [("--lib", "")])[0]["executable"],
+                             "D:/t/deps/store-3.exe")
+            self.assertIsNone(rr._test_executables(log, "graphhelm-cli", [("--test", "missing")]))
+
+    def _run(self, temp, child_codes):
+        repo = Path(temp)
+        sp = __import__("subprocess")
+        sp.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
+        (repo / "x").write_text("x", encoding="utf-8")
+        sp.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+        sp.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"], cwd=repo,
+               check=True, creationflags=NO_WINDOW)
+        output = Path(temp).parent / (Path(temp).name + "-side-report.json")
+        # The "test executable" is this Python; the libtest args become `-c <code>`.
+        plan = {"steps": [
+            {"argv": ["cargo", "+1.97.1", "test", "-p", "a", "--test", "one", "--", "-c", child_codes[0]],
+             "cwd": ".", "slot": True},
+            {"argv": ["cargo", "+1.97.1", "test", "-p", "a", "--lib", "--", "-c", child_codes[1]],
+             "cwd": ".", "slot": True},
+            {"argv": ["cargo", "+1.97.1", "clippy", "-p", "a"], "cwd": ".", "slot": True},
+        ]}
+        calls = []
+
+        def fake_git(_repo, *args):
+            return "sha-" + args[1] if args[0] == "rev-parse" else ""
+
+        def fake_run(command, **kwargs):
+            if command[0] == "git":
+                return sp.CompletedProcess(command, 0, "", "")
+            calls.append(json.loads(kwargs["env"]["GRAPHHELM_SLOT_BATCH"])["commands"])
+            out = kwargs["stdout"]
+            for name, kinds in (("one", ["test"]), ("a", ["lib"])):
+                out.write(json.dumps({"reason": "compiler-artifact", "package_id": "path+file:///r#a@0.1.0",
+                                      "manifest_path": str(repo / "Cargo.toml"),
+                                      "target": {"name": name, "kind": kinds},
+                                      "profile": {"test": True}, "executable": sys.executable}) + "\n")
+            batch = {"schema": "graphhelm.slot-batch-result/1",
+                     "completed": [{"index": i, "exitCode": 0, "elapsedSeconds": 1} for i in range(3)],
+                     "remaining": [], "stopReason": "exhausted"}
+            out.write(json.dumps({"command": "workspace.slot", "ok": True, "data": {
+                "waitedSeconds": 1, "heldSeconds": 2, "exitCode": 0, "batch": batch,
+                "targetDir": str(repo / "t")}}) + "\n")
+            return sp.CompletedProcess(command, 0, "", "")
+
+        args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "BASE", "head": "HEAD",
+                                  "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                  "allow_whole_package": None, "plan": False, "test_threads": 2,
+                                  "graphhelm": sys.executable, "jobs": 1, "keep_going": False})()
+        with patch.object(rr, "_selector", return_value=plan), patch.object(rr, "_git", side_effect=fake_git), \
+                patch.object(rr, "_free_memory_gb", return_value=12.0),                 patch.object(rr, "_tool_fingerprint", return_value={"identityComplete": True}), \
+                patch.object(rr.subprocess, "run", side_effect=fake_run):
+            code = rr.run(args)
+        return plan, calls, code, json.loads(output.read_text(encoding="utf-8"))
+
+    def test_batch_builds_with_no_run_and_runs_executables_side_by_side(self):
+        with tempfile.TemporaryDirectory() as temp:
+            marker = Path(temp).parent / (Path(temp).name + "-env.txt")
+            code_one = ("import os; open(%r, 'w').write(os.environ['CARGO_TARGET_DIR'] + ',' + "
+                        "os.environ['RUSTUP_TOOLCHAIN'])" % str(marker))
+            plan, calls, code, report = self._run(temp, [code_one, "print('ok')"])
+            self.assertEqual(code, 0, report)
+            self.assertEqual(len(calls), 1)
+            no_run = ["--no-run", "--message-format=json-render-diagnostics"]
+            self.assertEqual(calls[0][0][-2:], no_run)
+            self.assertEqual(calls[0][1][-2:], no_run)
+            self.assertEqual(calls[0][2], plan["steps"][2]["argv"])  # clippy unchanged
+            self.assertEqual(report["status"], "passed")
+            side = sorted((item["index"], item.get("sideBySide", False)) for item in report["completed"])
+            self.assertEqual(side, [(0, True), (1, True), (2, False)])
+            # Proof keys still come from the selector's argv, so reuse is unchanged.
+            self.assertTrue(all(item["argv"] == plan["steps"][item["index"]]["argv"]
+                                for item in report["completed"]))
+            self.assertTrue(all(item.get("reusable") for item in report["completed"]))
+            self.assertEqual(marker.read_text(encoding="utf-8"), str(Path(temp) / "t") + ",1.97.1")
+            marker.unlink()
+
+    def test_a_red_executable_fails_the_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _plan, _calls, code, report = self._run(temp, ["import sys; sys.exit(3)", "print('ok')"])
+            self.assertEqual(code, 1)
+            self.assertEqual(report["status"], "failed")
+            red = [item for item in report["completed"] if item["index"] == 0][0]
+            self.assertEqual(red["returncode"], 3)
+            self.assertFalse(red.get("reusable", False))
+
 if __name__ == "__main__":
     unittest.main()

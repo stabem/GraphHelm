@@ -2669,7 +2669,7 @@ fn review_activity_append_boundary_revalidates_after_conflicts() {
         let input = write(scratch.path(), "race-wait.json", &envelope);
         let fifo = scratch.path().join("post-validation.fifo");
         assert!(
-            std::process::Command::new("mkfifo")
+            graphhelm_process::command("mkfifo")
                 .arg(&fifo)
                 .status()
                 .unwrap()

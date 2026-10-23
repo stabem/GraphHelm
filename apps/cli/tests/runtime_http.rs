@@ -6296,7 +6296,7 @@ fn an_owner_records_a_fix_request_from_the_studio() {
         &format!("{base}/v1/executions/{run}/requests"),
         Some(&token),
     );
-    let requests = view["data"]["requests"].as_array().unwrap();
+    let requests = envelope_array(&view, "requests", "GET /requests");
     assert_eq!(requests.len(), 1, "{view}");
     assert_eq!(requests[0]["requestId"], "fix-buy-20261023t101500z");
     assert_eq!(requests[0]["recordedBy"], owner);

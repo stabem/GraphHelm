@@ -26,6 +26,9 @@ describe("what I asked", () => {
       [request("r1", [7], { title: "Old ask" }), request("r2", [8, 9], { recordedAt: "2026-10-21T18:30:00" })],
       [agent("a", 99), agent("b", 8, { questions: [asking] }), agent("c", 9, { column: "merge" }), agent("d", 9, { idleMinutes: 45 }), agent("e", null), agent("f", null)],
       tasks,
+      [],
+      new Set(),
+      new Date(2026, 9, 23, 12, 0),
     );
     expect(cards.map((card) => card.requestId)).toEqual(["r2", "r1"]);
     expect(cards[0]).toMatchObject({ title: "ask r2", when: "21 Oct 18:30", summary: "3 agents · needs a reply" });

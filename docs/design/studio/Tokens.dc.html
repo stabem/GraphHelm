@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tokens</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0a0a0b}
+.mono{font-family:'JetBrains Mono',monospace}
+</style>
+</helmet>
+<div style="font-family: 'Space Grotesk', system-ui, sans-serif; color: #f5f5f6; background: #0a0a0b; min-height: 700px; padding: 16px; box-sizing: border-box; font-size: 12px; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; align-items: center; gap: 12px"><h1 style="margin: 0; font-size: 15px; font-weight: 600">One scale for every view</h1><span class="mono" style="font-size: 11px; color: #8a8a96">Graph · Lanes · Proof · #1934</span></div>
+
+<div style="display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 12px">
+
+<section aria-label="Type" style="border: 1px solid #2a2a30; border-radius: 10px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 8px; align-items: center; min-height: 24px"><strong class="mono" style="font-size: 11px">TYPE</strong><span style="flex: 1"></span><span class="mono" style="padding: 0 8px; border-radius: 999px; background: #1e1e22; font-size: 11px; line-height: 20px; color: #8a8a96">4</span></div>
+<sc-for list="{{type}}" as="t">
+<div style="display: flex; gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid #2a2a30">
+<span class="mono" style="font-size: 11px; color: #8a8a96; width: 88px; flex: none">{{t.tag}}</span>
+<span style="font-size: {{t.size}}; font-weight: {{t.w}}; font-family: {{t.f}}">{{t.sample}}</span>
+</div>
+</sc-for>
+</section>
+
+<section aria-label="Spacing" style="border: 1px solid #2a2a30; border-radius: 10px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 8px; align-items: center; min-height: 24px"><strong class="mono" style="font-size: 11px">SPACING</strong><span style="flex: 1"></span><span class="mono" style="padding: 0 8px; border-radius: 999px; background: #1e1e22; font-size: 11px; line-height: 20px; color: #8a8a96">5</span></div>
+<sc-for list="{{space}}" as="s">
+<div style="display: flex; gap: 12px; align-items: center">
+<span class="mono" style="font-size: 11px; color: #8a8a96; width: 40px; flex: none">{{s.v}}</span>
+<span style="height: 12px; width: {{s.v}}; background: #ff8a3d; border-radius: 2px"></span>
+<span style="font-size: 11px; color: #a2a2ad">{{s.use}}</span>
+</div>
+</sc-for>
+<span class="mono" style="font-size: 11px; color: #8a8a96; margin-top: 8px">LAYOUT</span>
+<span style="color: #a2a2ad">Main padding 16 · gap between panels 12 · column min width 220</span>
+<span class="mono" style="font-size: 11px; color: #8a8a96; margin-top: 8px">STATE COLOURS</span>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<sc-for list="{{states}}" as="c">
+<span class="mono" style="display: inline-flex; gap: 8px; align-items: center; padding: 4px 8px; border-radius: 999px; background: #151517; font-size: 11px"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{c.c}}"></span>{{c.n}} <span style="color: #8a8a96">{{c.c}}</span></span>
+</sc-for>
+</div>
+</section>
+
+<section aria-label="Sample column" style="border: 1px solid #2a2a30; border-radius: 10px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 8px; align-items: center; min-height: 24px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #ff8a3d"></span><strong class="mono" style="font-size: 11px">IMPLEMENTING</strong><span style="flex: 1"></span><span class="mono" style="padding: 0 8px; border-radius: 999px; background: #1e1e22; font-size: 11px; line-height: 20px; color: #8a8a96">3</span></div>
+<div style="padding: 12px; border-radius: 10px; border: 1px solid #6ec6ff; background: #1e1e22; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 8px; align-items: center"><span class="mono" style="font-size: 11px; color: #a2a2ad">#1776</span><span style="flex: 1"></span><span class="mono" style="font-size: 11px; color: #8a8a96" title="2026-10-23 00:02:08 local">2 min ago</span></div>
+<span style="font-size: 13px; font-weight: 500; line-height: 1.35">Before/Now compare in the frame</span>
+<span style="font-size: 12px; color: #a2a2ad">Card: 1px border · radius 10 · padding 12 · gap 8 · title 13/500.</span>
+<span class="mono" style="font-size: 11px; color: #8a8a96">gh-claude-17</span>
+</div>
+<span class="mono" style="font-size: 11px; color: #8a8a96; margin-top: 8px">DATES · local time, full stamp in the tooltip</span>
+<sc-for list="{{dates}}" as="d">
+<div style="display: flex; gap: 12px; align-items: baseline">
+<span style="font-size: 11px; color: #8a8a96; width: 72px; flex: none">{{d.when}}</span>
+<span class="mono" style="font-size: 11px; color: #f5f5f6" title="{{d.full}}">{{d.show}}</span>
+</div>
+</sc-for>
+</section>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":700}}'>
+class Component extends DCLogic {
+renderVals() {
+const SG = "'Space Grotesk', system-ui, sans-serif", JB = "'JetBrains Mono', monospace";
+return {
+type: [
+{ tag: '15 · 600', size: '15px', w: 600, f: SG, sample: 'View title' },
+{ tag: '13 · 500', size: '13px', w: 500, f: SG, sample: 'Card title' },
+{ tag: '12 · 400', size: '12px', w: 400, f: SG, sample: 'Body text in cards and panels' },
+{ tag: '11 · mono', size: '11px', w: 400, f: JB, sample: 'META · LABELS · #1776' }
+],
+space: [
+{ v: '4px', use: 'chip padding, tight rows' },
+{ v: '8px', use: 'gap inside a card' },
+{ v: '12px', use: 'card padding, gap between panels' },
+{ v: '16px', use: 'main padding' },
+{ v: '24px', use: 'canvas inset' }
+],
+states: [
+{ n: 'stalled', c: '#ff6b6b' },
+{ n: 'implementing', c: '#ff8a3d' },
+{ n: 'review', c: '#4ea1ff' },
+{ n: 'merged', c: '#d08cff' },
+{ n: 'proven', c: '#3ddc97' }
+],
+dates: [
+{ when: 'under 1 h', show: '2 min ago', full: '2026-10-23 00:02:08 local' },
+{ when: 'today', show: '00:02', full: '2026-10-23 00:02:08 local' },
+{ when: 'this year', show: '23 Oct 00:02', full: '2026-10-23 00:02:08 local' },
+{ when: 'older', show: '23 Oct 2025', full: '2025-10-23 00:02:08 local' },
+{ when: 'run bar', show: 'Passed · 23 Oct 00:02', full: '2026-10-23 00:02:08 local' }
+]
+};
+}
+}
+</script>
+</body>
+</html>

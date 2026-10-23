@@ -1,3 +1,4 @@
+import { when } from "../time/when";
 import { useEffect, useRef, useState } from "react";
 
 import type { BoardTask, IssueJourney, Runtime } from "../runtime/client";
@@ -90,10 +91,10 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
   const shown: ReviewMode = on[mode] ? mode : "frame";
   const screens = screensOf(journey);
   const beforeFigure = before.src !== null
-    ? <figure><figcaption>Before · {journey?.before?.ranAt ?? journey?.before?.run} · {journey?.before?.result ?? ""}</figcaption><img src={before.src} alt={`${screen ?? "screen"} before`} /></figure>
+    ? <figure><figcaption>Before · {journey?.before?.ranAt ? when(journey.before.ranAt).text : journey?.before?.run} · {journey?.before?.result ?? ""}</figcaption><img src={before.src} alt={`${screen ?? "screen"} before`} /></figure>
     : null;
   const nowFigure = now.src !== null
-    ? <figure><figcaption>Now · PR #{journey?.now?.pr} at {journey?.now?.headSha?.slice(0, 8)} · {journey?.now?.ranAt ?? ""} · {journey?.now?.result ?? ""}</figcaption><img src={now.src} alt={`${screen ?? "screen"} now`} /></figure>
+    ? <figure><figcaption>Now · PR #{journey?.now?.pr} at {journey?.now?.headSha?.slice(0, 8)} · {journey?.now?.ranAt ? when(journey.now.ranAt).text : ""} · {journey?.now?.result ?? ""}</figcaption><img src={now.src} alt={`${screen ?? "screen"} now`} /></figure>
     : null;
 
   return (

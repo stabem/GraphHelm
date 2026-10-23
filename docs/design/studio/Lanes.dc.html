@@ -30,49 +30,50 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 
 
 <div style="display: flex; flex: 1; flex-wrap: wrap; min-height: 0">
-<main style="flex: 999 1 800px; min-width: 0; padding: 16px; display: flex; flex-direction: column; gap: 14px">
+<main style="flex: 999 1 800px; min-width: 0; padding: 16px; display: flex; flex-direction: column; gap: 12px">
 
 <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
+<h1 style="margin: 0; font-size: 15px; font-weight: 600">Agents</h1>
 <button class="b" onClick="{{fAll}}" style="padding: 8px 12px; border-radius: 10px; border: 1px solid {{allEdge}}; background: #151517">8 agents</button>
 <button class="b" onClick="{{fReply}}" style="padding: 8px 12px; border-radius: 10px; border: 1px solid {{replyEdge}}; background: #241010; color: #ff9b9b">2 wait for a reply</button>
 <button class="b" onClick="{{fIdle}}" style="padding: 8px 12px; border-radius: 10px; border: 1px solid {{idleEdge}}; background: #24170e; color: #ff8a3d">2 idle over 30 min</button>
 <span style="padding: 8px 12px; border-radius: 10px; background: #10201a; color: #3ddc97">4 working</span>
 <span style="flex: 1"></span>
-<span class="mono" style="font-size: 10px; color: #8a8a96">updated 21:24:10 · live</span>
+<span class="mono" style="font-size: 11px; color: #8a8a96">updated 21:24:10 · live</span>
 </div>
 
-<div style="display: grid; grid-template-columns: 230px repeat(6, minmax(0, 1fr)); gap: 10px; min-height: 360px">
-<section aria-label="What I asked" style="border: 1px solid #5a3a22; border-radius: 12px; background: #151210; padding: 10px; display: flex; flex-direction: column; gap: 8px">
-<div style="display: flex; gap: 6px; align-items: center"><span style="width: 8px; height: 8px; border-radius: 50%; background: #ff8a3d"></span><strong class="mono" style="font-size: 11px">WHAT I ASKED</strong><span style="flex: 1"></span><span class="mono" style="color: #8a8a96">{{reqN}}</span></div>
+<div style="display: grid; grid-template-columns: repeat(7, minmax(220px, 1fr)); min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; gap: 12px; min-height: 360px">
+<section aria-label="What I asked" style="border: 1px solid #5a3a22; border-radius: 10px; background: #151210; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 8px; align-items: center; min-height: 24px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #ff8a3d"></span><strong class="mono" style="font-size: 11px">WHAT I ASKED</strong><span style="flex: 1"></span><span class="mono" style="padding: 0 8px; border-radius: 999px; background: #1e1e22; font-size: 11px; line-height: 20px; color: #8a8a96">{{reqN}}</span></div>
 <sc-for list="{{reqs}}" as="r">
-<button class="b" onClick="{{r.pick}}" style="padding: 10px; border-radius: 10px; border: 1px solid {{r.edge}}; background: #1e1e22; display: flex; flex-direction: column; gap: 6px">
-<span class="mono" style="font-size: 10px; color: #ff8a3d">{{r.when}}</span>
-<span style="font-weight: 500; line-height: 1.35">{{r.ask}}</span>
-<div style="display: flex; gap: 3px"><sc-for list="{{r.bar}}" as="q"><span class="{{q.k}}" style="width: 9px; height: 9px; border-radius: 2px; background: {{q.c}}"></span></sc-for></div>
-<span class="mono" style="font-size: 10px; color: #a2a2ad">{{r.summary}}</span>
-<div style="display: flex; flex-wrap: wrap; gap: 4px"><sc-for list="{{r.agents}}" as="g"><span class="mono" style="display: inline-flex; gap: 4px; align-items: center; padding: 2px 6px; border-radius: 999px; background: #151517; font-size: 10px; color: #f5f5f6"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{g.c}}"></span>{{g.n}}</span></sc-for></div>
+<button class="b" onClick="{{r.pick}}" style="padding: 12px; border-radius: 10px; border: 1px solid {{r.edge}}; background: #1e1e22; display: flex; flex-direction: column; gap: 8px">
+<span class="mono" style="font-size: 11px; color: #ff8a3d">{{r.when}}</span>
+<span style="font-size: 13px; font-weight: 500; line-height: 1.35">{{r.ask}}</span>
+<div style="display: flex; gap: 4px"><sc-for list="{{r.bar}}" as="q"><span class="{{q.k}}" style="width: 9px; height: 9px; border-radius: 2px; background: {{q.c}}"></span></sc-for></div>
+<span class="mono" style="font-size: 11px; color: #a2a2ad">{{r.summary}}</span>
+<div style="display: flex; flex-wrap: wrap; gap: 4px"><sc-for list="{{r.agents}}" as="g"><span class="mono" style="display: inline-flex; gap: 4px; align-items: center; padding: 4px 8px; border-radius: 999px; background: #151517; font-size: 11px; color: #f5f5f6"><span style="width: 6px; height: 6px; border-radius: 50%; background: {{g.c}}"></span>{{g.n}}</span></sc-for></div>
 </button>
 </sc-for>
 </section>
 <sc-for list="{{cols}}" as="col" hint-placeholder-count="6">
-<section aria-label="{{col.name}}" style="border: 1px solid #2a2a30; border-radius: 12px; background: #111113; padding: 10px; display: flex; flex-direction: column; gap: 8px">
-<div style="display: flex; gap: 6px; align-items: center"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{col.c}}"></span><strong class="mono" style="font-size: 11px">{{col.name}}</strong><span style="flex: 1"></span><span class="mono" style="color: #8a8a96">{{col.n}}</span></div>
+<section aria-label="{{col.name}}" style="border: 1px solid #2a2a30; border-radius: 10px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 8px; align-items: center; min-height: 24px"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{col.c}}"></span><strong class="mono" style="font-size: 11px">{{col.name}}</strong><span style="flex: 1"></span><span class="mono" style="padding: 0 8px; border-radius: 999px; background: #1e1e22; font-size: 11px; line-height: 20px; color: #8a8a96">{{col.n}}</span></div>
 <sc-for list="{{col.cards}}" as="a">
-<button class="b" onClick="{{a.pick}}" style="padding: 10px; border-radius: 10px; border: 1px solid {{a.edge}}; background: #1e1e22; display: flex; flex-direction: column; gap: 6px">
-<div style="display: flex; gap: 6px; align-items: center">
-<span style="width: 8px; height: 8px; border-radius: 50%; background: {{a.dot}}"></span>
-<strong style="font-size: 13px">{{a.name}}</strong>
-<span class="mono" style="font-size: 10px; color: #8a8a96">{{a.kind}}</span>
+<button class="b" onClick="{{a.pick}}" style="padding: 12px; border-radius: 10px; border: 1px solid {{a.edge}}; background: #1e1e22; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center">
+<span style="width: 8px; height: 8px; border-radius: 50%; background: {{a.dot}}; flex: none"></span>
+<strong style="font-size: 13px; font-weight: 500; min-width: 0; overflow-wrap: anywhere; line-height: 1.35">{{a.name}}</strong>
+<span class="mono" style="font-size: 11px; color: #8a8a96">{{a.kind}}</span>
 <span style="flex: 1"></span>
-<span class="mono" style="font-size: 10px; color: {{a.idleC}}">{{a.idle}}</span>
+<span class="mono" style="font-size: 11px; color: {{a.idleC}}">{{a.idle}}</span>
 </div>
 <span><span class="mono" style="color: #a2a2ad">#{{a.issue}}</span> {{a.task}}</span>
-<span style="font-size: 10px; color: #ff8a3d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">for: {{a.reqShort}}</span>
-<div style="display: flex; gap: 3px; align-items: center"><sc-for list="{{a.blocks}}" as="q"><span class="{{q.k}}" style="width: 9px; height: 9px; border-radius: 2px; background: {{q.c}}"></span></sc-for></div>
-<span class="mono" style="font-size: 10px; color: #a2a2ad; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{a.lastAct}}</span>
+<span style="font-size: 11px; color: #ff8a3d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">for: {{a.reqShort}}</span>
+<div style="display: flex; gap: 4px; align-items: center"><sc-for list="{{a.blocks}}" as="q"><span class="{{q.k}}" style="width: 9px; height: 9px; border-radius: 2px; background: {{q.c}}"></span></sc-for></div>
+<span class="mono" style="font-size: 11px; color: #a2a2ad; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{a.lastAct}}</span>
 <sc-if value="{{a.asks}}" hint-placeholder-val="{{ false }}">
 <div style="padding: 8px; border-radius: 8px; background: #241010; border: 1px solid #5a2a2a; display: flex; flex-direction: column; gap: 4px">
-<span class="mono" style="font-size: 10px; color: #ff9b9b">ASKS {{a.askTo}} · {{a.askAge}}</span>
+<span class="mono" style="font-size: 11px; color: #ff9b9b">ASKS {{a.askTo}} · {{a.askAge}}</span>
 <span style="color: #f5f5f6; line-height: 1.35">{{a.ask}}</span>
 </div>
 </sc-if>
@@ -83,59 +84,67 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 </sc-for>
 </div>
 
-<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px">
-<section aria-label="Needs action" style="border: 1px solid #2a2a30; border-radius: 12px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
-<div style="display: flex; gap: 6px; align-items: center"><strong class="mono" style="font-size: 11px">NEEDS ACTION</strong><span class="mono" style="color: #8a8a96">· oldest first</span><span style="flex: 1"></span><span class="mono" style="color: #ff6b6b">6</span></div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px">
+<section aria-label="Needs action" style="border: 1px solid #2a2a30; border-radius: 10px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 8px; align-items: center; min-height: 24px"><strong class="mono" style="font-size: 11px">NEEDS ACTION</strong><span class="mono" style="color: #8a8a96">· oldest first</span><span style="flex: 1"></span><span class="mono" style="color: #ff6b6b">6</span></div>
 <sc-for list="{{todo}}" as="t">
 <div style="display: flex; gap: 8px; align-items: center; padding: 8px; border-radius: 8px; background: #1e1e22">
 <span style="width: 8px; height: 8px; border-radius: 50%; background: {{t.c}}; flex: none"></span>
-<div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{t.what}}</span><span class="mono" style="font-size: 10px; color: #8a8a96">{{t.meta}}</span></div>
-<button class="b" style="padding: 5px 10px; border-radius: 6px; border: 1px solid #34343c; white-space: nowrap">{{t.act}}</button>
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{t.what}}</span><span class="mono" style="font-size: 11px; color: #8a8a96">{{t.meta}}</span></div>
+<button class="b" style="padding: 4px 12px; border-radius: 6px; border: 1px solid #34343c; white-space: nowrap">{{t.act}}</button>
 </div>
 </sc-for>
 </section>
-<section aria-label="Risks and capacity" style="border: 1px solid #2a2a30; border-radius: 12px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 10px">
+<section aria-label="Risks and capacity" style="border: 1px solid #2a2a30; border-radius: 10px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 12px">
 <strong class="mono" style="font-size: 11px">FILE COLLISIONS</strong>
-<div style="padding: 8px; border-radius: 8px; background: #24170e; display: flex; flex-direction: column; gap: 2px"><span class="mono" style="color: #ff8a3d">apps/studio/src/mission-view.tsx</span><span style="color: #a2a2ad">PR #1771 (gh-claude-20) and PR #1774 (gh-claude-17) both change it</span></div>
-<div style="padding: 8px; border-radius: 8px; background: #1e1e22; display: flex; flex-direction: column; gap: 2px"><span class="mono" style="color: #a2a2ad">apps/studio/src/proof/*</span><span style="color: #8a8a96">#1776 and #1775 touch nearby files, no overlap yet</span></div>
+<div style="padding: 8px; border-radius: 8px; background: #24170e; display: flex; flex-direction: column; gap: 4px"><span class="mono" style="color: #ff8a3d">apps/studio/src/mission-view.tsx</span><span style="color: #a2a2ad">PR #1771 (gh-claude-20) and PR #1774 (gh-claude-17) both change it</span></div>
+<div style="padding: 8px; border-radius: 8px; background: #1e1e22; display: flex; flex-direction: column; gap: 4px"><span class="mono" style="color: #a2a2ad">apps/studio/src/proof/*</span><span style="color: #8a8a96">#1776 and #1775 touch nearby files, no overlap yet</span></div>
 <strong class="mono" style="font-size: 11px; margin-top: 4px">CAPACITY</strong>
 <sc-for list="{{cap}}" as="c">
 <div style="display: flex; flex-direction: column; gap: 4px"><div style="display: flex"><span>{{c.n}}</span><span style="flex: 1"></span><span class="mono" style="color: {{c.fc}}">{{c.v}}</span></div><div style="height: 6px; border-radius: 3px; background: #2a2a30; overflow: hidden"><div style="height: 6px; width: {{c.w}}; background: {{c.fc}}"></div></div></div>
 </sc-for>
 </section>
-<section aria-label="Live feed" style="border: 1px solid #2a2a30; border-radius: 12px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 6px">
-<div style="display: flex; gap: 6px; align-items: center"><strong class="mono" style="font-size: 11px">LIVE FEED</strong><span style="flex: 1"></span><span class="mono" style="font-size: 10px; color: #3ddc97">● live</span></div>
-<sc-for list="{{feed}}" as="e"><div style="display: flex; gap: 8px"><span class="mono" style="font-size: 10px; color: #8a8a96; flex: none">{{e.t}}</span><span class="mono" style="font-size: 10px; color: {{e.c}}; flex: none; width: 88px; overflow: hidden; text-overflow: ellipsis">{{e.who}}</span><span style="font-size: 11px; color: #a2a2ad">{{e.m}}</span></div></sc-for>
+<section aria-label="Live feed" style="border: 1px solid #2a2a30; border-radius: 10px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 8px; align-items: center"><strong class="mono" style="font-size: 11px">LIVE FEED</strong><span style="flex: 1"></span><span class="mono" style="font-size: 11px; color: #3ddc97">● live</span></div>
+<sc-for list="{{feed}}" as="e"><div style="display: flex; gap: 8px"><span class="mono" style="font-size: 11px; color: #8a8a96; flex: none">{{e.t}}</span><span class="mono" style="font-size: 11px; color: {{e.c}}; flex: none; width: 88px; overflow-wrap: anywhere">{{e.who}}</span><span style="font-size: 11px; color: #a2a2ad">{{e.m}}</span></div></sc-for>
 </section>
 </div>
 </main>
 
-<aside aria-label="Agent" style="flex: 1 1 300px; max-width: 360px; border-left: 1px solid #2a2a30; padding: 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px">
-<div style="display: flex; align-items: center; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 50%; background: {{sel.dot}}"></span><strong style="font-size: 15px">{{sel.name}}</strong><span class="mono" style="font-size: 10px; color: #8a8a96">{{sel.kind}}</span></div>
+<sc-if value="{{panelClosed}}" hint-placeholder-val="{{ false }}">
+<aside aria-label="Agent" style="flex: none; width: 40px; border-left: 1px solid #2a2a30; padding: 8px 4px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 8px">
+<button class="b" aria-label="Open agent panel" aria-expanded="false" onClick="{{togglePanel}}" style="width: 32px; height: 32px; border-radius: 8px; border: 1px solid #34343c; display: flex; align-items: center; justify-content: center; color: #a2a2ad"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4l-4 4 4 4"></path></svg></button>
+<span style="width: 10px; height: 10px; border-radius: 50%; background: {{sel.dot}}" title="{{sel.name}}"></span>
+</aside>
+</sc-if>
+<sc-if value="{{panelOpen}}" hint-placeholder-val="{{ true }}">
+<aside aria-label="Agent" style="flex: none; width: 300px; border-left: 1px solid #2a2a30; padding: 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; align-items: flex-start; gap: 8px"><span style="width: 10px; height: 10px; border-radius: 50%; background: {{sel.dot}}; flex: none; margin-top: 4px"></span><div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px"><strong style="font-size: 13px; font-weight: 500; overflow-wrap: anywhere; line-height: 1.35">{{sel.name}}</strong><span class="mono" style="font-size: 11px; color: #8a8a96">{{sel.kind}}</span></div><button class="b" aria-label="Collapse agent panel" aria-expanded="true" onClick="{{togglePanel}}" style="flex: none; width: 32px; height: 32px; border-radius: 8px; border: 1px solid #34343c; display: flex; align-items: center; justify-content: center; color: #a2a2ad"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"></path></svg></button></div>
 <span style="color: #a2a2ad"><span class="mono">#{{sel.issue}}</span> {{sel.task}} · {{sel.colName}}</span>
 <span class="mono" style="font-size: 11px; color: {{sel.idleC}}">last heartbeat {{sel.idle}} ago</span>
-<span class="mono" style="font-size: 10px; color: #8a8a96; margin-top: 6px">MESSAGES</span>
+<span class="mono" style="font-size: 11px; color: #8a8a96; margin-top: 8px">MESSAGES</span>
 <div style="display: flex; flex-direction: column; gap: 8px">
 <sc-for list="{{sel.thread}}" as="t">
-<div style="padding: 8px 10px; border-radius: 8px; background: {{t.bg}}; display: flex; flex-direction: column; gap: 2px; align-self: {{t.side}}; max-width: 92%">
-<span class="mono" style="font-size: 10px; color: #8a8a96">{{t.who}} · {{t.at}}</span>
+<div style="padding: 8px 12px; border-radius: 8px; background: {{t.bg}}; display: flex; flex-direction: column; gap: 4px; align-self: {{t.side}}; max-width: 92%">
+<span class="mono" style="font-size: 11px; color: #8a8a96">{{t.who}} · {{t.at}}</span>
 <span style="line-height: 1.4">{{t.m}}</span>
 </div>
 </sc-for>
 </div>
-<label style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px">
-<span class="mono" style="font-size: 10px; color: #8a8a96">REPLY TO {{sel.name}}</span>
+<label style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px">
+<span class="mono" style="font-size: 11px; color: #8a8a96">REPLY TO {{sel.name}}</span>
 <textarea rows="3" placeholder="Answer, or give the next task" style="resize: vertical; padding: 8px; border-radius: 8px; border: 1px solid #34343c; background: #0a0a0b; color: #f5f5f6; font: inherit"></textarea>
 </label>
-<div style="display: flex; gap: 6px; flex-wrap: wrap">
-<button class="b" style="padding: 8px 14px; border-radius: 8px; background: #ff8a3d; color: #241004; font-weight: 600">Send</button>
+<div style="display: flex; gap: 8px; flex-wrap: wrap">
+<button class="b" style="padding: 8px 16px; border-radius: 8px; background: #ff8a3d; color: #241004; font-weight: 600">Send</button>
 <button class="b" style="padding: 8px 12px; border-radius: 8px; border: 1px solid #34343c">Wake</button>
 <button class="b" style="padding: 8px 12px; border-radius: 8px; border: 1px solid #34343c">Reassign</button>
 <button class="b" style="padding: 8px 12px; border-radius: 8px; border: 1px solid #5a2a2a; color: #ff9b9b">Stop</button>
 </div>
-<span class="mono" style="font-size: 10px; color: #8a8a96; margin-top: 6px">LAST ACTIONS</span>
-<sc-for list="{{sel.log}}" as="l"><span class="mono" style="font-size: 10px; color: #a2a2ad">{{l}}</span></sc-for>
+<span class="mono" style="font-size: 11px; color: #8a8a96; margin-top: 8px">LAST ACTIONS</span>
+<sc-for list="{{sel.log}}" as="l"><span class="mono" style="font-size: 11px; color: #a2a2ad">{{l}}</span></sc-for>
 </aside>
+</sc-if>
 </div>
 </div>
 </div>
@@ -143,7 +152,7 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
 class Component extends DCLogic {
-constructor(p){ super(p); this.state = { sel: 'gh-claude-20', f: 'all', r: 0 }; }
+constructor(p){ super(p); this.state = { sel: 'gh-claude-20', f: 'all', r: 0, panel: true }; }
 renderVals() {
 const COLS = [['BACKLOG','#a2a2ad'],['IMPLEMENT','#ff8a3d'],['REVIEW','#8ab4ff'],['BLOCKED','#ff6b6b'],['SILENT','#8a8a96'],['MERGE','#3ddc97']];
 const G='#3ddc97',O='#ff8a3d',R='#ff6b6b',N='#2a2a30';
@@ -199,7 +208,7 @@ const feed = [
 { t: '20:50', who: 'gh-claude-17', c: '#3ddc97', m: 'merged #1780' }
 ];
 const e = (k) => f === k ? '#ff8a3d' : '#2a2a30';
-return { cols, sel, todo, cap, feed, reqs, reqN: RQ.length - 1, fAll: () => this.setState({ f: 'all' }), fReply: () => this.setState({ f: 'reply' }), fIdle: () => this.setState({ f: 'idle' }), allEdge: e('all'), replyEdge: e('reply'), idleEdge: e('idle') };
+return { panelOpen: this.state.panel, panelClosed: !this.state.panel, togglePanel: () => this.setState({ panel: !this.state.panel }), cols, sel, todo, cap, feed, reqs, reqN: RQ.length - 1, fAll: () => this.setState({ f: 'all' }), fReply: () => this.setState({ f: 'reply' }), fIdle: () => this.setState({ f: 'idle' }), allEdge: e('all'), replyEdge: e('reply'), idleEdge: e('idle') };
 }
 }
 </script>

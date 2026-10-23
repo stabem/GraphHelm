@@ -5,6 +5,7 @@ import { ReviewModal } from "./ReviewModal";
 import { reviewable } from "./review";
 import { idleText, stepAged } from "../lanes/board";
 import { RequestProgress } from "./RequestProgress";
+import { Loading, ReadFailure } from "../states/ViewState";
 import { cards, KANBAN, KANBAN_NAME, requestColor, type OwnerRequest } from "./requests";
 import { arrangeGraph, COLUMN_COLOR, counts, detail, blocks, graphRequests, journeyCards, journeyMeta } from "./layout";
 
@@ -57,8 +58,8 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
     return () => clearInterval(timer);
   }, [read]);
 
-  if (error !== null && board === null) return <p role="alert">{error}</p>;
-  if (board === null || requests === null) return <p>Reading the run's requests.</p>;
+  if (error !== null && board === null) return <ReadFailure what="run's requests" route={`/v1/executions/${executionId}/requests`} message={error} onRetry={() => void read()} />;
+  if (board === null || requests === null) return <Loading text="Reading the run's requests…" />;
 
   const flows = journeys ?? [];
   const withWork = journeyCards(board, flows);

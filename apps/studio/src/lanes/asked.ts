@@ -1,6 +1,7 @@
 import { arrangeRequests, requestActivity, requestColor, requestProgress, type Arranged, type OwnerRequest, type RequestProgress } from "../graph/requests";
 import type { BoardTask, JourneyFlow } from "../runtime/client";
 import type { Agent } from "./board";
+import { when } from "../time/when";
 
 /** The colour of one agent's square and chip in WHAT I ASKED (Lanes.dc.html): it asks a question,
  * it has been quiet 30 minutes or more, its slice waits to merge, or it is working. */
@@ -24,15 +25,11 @@ export interface AskedCard {
   color: string;
 }
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** `21 Oct 18:30` in local time, or `null` for an absent or unreadable time. */
-export function askedWhen(at: string | null | undefined): string | null {
-  if (!at) return null;
-  const date = new Date(at);
-  if (Number.isNaN(date.getTime())) return null;
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getDate()} ${MONTHS[date.getMonth()]} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+export function askedWhen(at: string | null | undefined, now: Date = new Date()): string | null {
+  const stamp = when(at, now);
+  return stamp.full === "" ? null : stamp.text;
 }
 
 function tone(agent: Agent): AskedTone {
@@ -80,14 +77,14 @@ export function unlinkedIssue(requests: readonly OwnerRequest[] | null, issue: n
 }
 
 /** Every request, newest first (the Runtime serves them oldest first), as the column draws it. */
-export function askedCards(requests: readonly OwnerRequest[], all: readonly Agent[], tasks: readonly BoardTask[], flows: readonly JourneyFlow[] = [], stalled: ReadonlySet<string> = new Set()): AskedCard[] {
+export function askedCards(requests: readonly OwnerRequest[], all: readonly Agent[], tasks: readonly BoardTask[], flows: readonly JourneyFlow[] = [], stalled: ReadonlySet<string> = new Set(), now: Date = new Date()): AskedCard[] {
   const cards = [...requests].reverse().map((request) => {
     const working = agentsFor(request, all, tasks);
     const progress = requestProgress(request, tasks, flows, stalled);
     const asks = working.some((agent) => agent.questions.length > 0);
     return {
       requestId: request.requestId,
-      when: askedWhen(request.recordedAt),
+      when: askedWhen(request.recordedAt, now),
       title: request.title ?? request.ask,
       agents: working.map((agent) => ({ lane: agent.lane, tone: tone(agent) })),
       summary: working.length === 0 ? "no agent working" : `${working.length} ${working.length === 1 ? "agent" : "agents"}${asks ? " · needs a reply" : ""}`,

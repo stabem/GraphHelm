@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefO
 
 import { OWNER, type JourneyFlow, type LaneAction, type Runtime, type TasksBoard } from "../runtime/client";
 import { controlBody, draftFor, messageBody, newId, type Draft, type LaneControl } from "./drafts";
-import { actionLine, clock } from "./format";
+import { actionText } from "./format";
+import { When } from "../time/Stamp";
+import { Empty, Loading, ReadFailure } from "../states/ViewState";
+import { readCollapsed, writeCollapsed } from "./panel-rail";
 import { LanesPanels } from "./LanesPanels";
 import { RequestProgress } from "../graph/RequestProgress";
 import { agentsFor, arrangeAsked, askedCards, requestColors, requestTitles, unlinkedIssue } from "./asked";
@@ -30,11 +33,16 @@ interface Props {
   runtime: Runtime;
   executionId: string | null;
   journeys: JourneyFlow[] | null;
+  /** Opens the team-run composer; null when a run is already open or the Studio cannot start one. */
+  onStart?: (() => void) | null;
 }
 
 /** The Lanes region (docs/design/studio/Lanes.dc.html): the filters, one card per agent in its
  * column, and the selected agent's panel with its questions, the reply box and its last actions. */
-export function LanesView({ runtime, executionId, journeys }: Props) {
+export function LanesView({ runtime, executionId, journeys, onStart = null }: Props) {
+  // #1934: the agent panel folds to a 40px rail; the choice is kept per viewer.
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const toggle = () => setCollapsed((prior) => { writeCollapsed(!prior); return !prior; });
   const [board, setBoard] = useState<TasksBoard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
@@ -91,8 +99,8 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
     return () => clearInterval(timer);
   }, [read]);
 
-  if (executionId === null) return <section id="panel-lanes" aria-label="Lanes" className="view"><p>Open a team run to see its lanes.</p></section>;
-  if (board === null) return <section id="panel-lanes" aria-label="Lanes" className="view"><p className={error ? "error" : undefined}>{error ?? "Reading the lanes…"}</p></section>;
+  if (executionId === null) return <section id="panel-lanes" aria-label="Lanes" className="view"><Empty title="No work yet" hint="Lanes appear here once a team picks up a task." onStart={onStart} /></section>;
+  if (board === null) return <section id="panel-lanes" aria-label="Lanes" className="view">{error === null ? <Loading text="Reading the lanes…" /> : <ReadFailure what="lanes list" route={`/v1/executions/${executionId}/tasks`} message={error} onRetry={() => void read()} />}</section>;
 
   const all = agents(board);
   const asking = all.filter((agent) => agent.questions.length > 0);
@@ -101,7 +109,7 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
   const pickedRequest = requests?.find((row) => row.requestId === request) ?? null;
   const forRequest = pickedRequest === null ? null : new Set(agentsFor(pickedRequest, all, board.tasks).map((agent) => agent.lane));
   const shown = (filter === "reply" ? asking : filter === "idle" ? idle : all).filter((agent) => forRequest === null || forRequest.has(agent.lane));
-  const asked = askedCards(requests ?? [], all, board.tasks, journeys ?? [], new Set(board.stalls.map((stall) => stall.key)));
+  const asked = askedCards(requests ?? [], all, board.tasks, journeys ?? [], new Set(board.stalls.map((stall) => stall.key)), new Date(Date.parse(board.now) || Date.now()));
   const arrangedAsked = arrangeAsked(asked, Date.parse(board.now) || Date.now());
   const deliveredShown = deliveredOpen ?? arrangedAsked.open.length === 0;
   const shownAsked = [...arrangedAsked.open, ...(deliveredShown ? (olderShown ? arrangedAsked.delivered : arrangedAsked.recent) : [])];
@@ -171,14 +179,21 @@ export function LanesView({ runtime, executionId, journeys }: Props) {
           {done.length > 0 && (
             <li className="board-column controls" aria-label="Recent controls">
               <h3>Recent controls</h3>
-              <ul>{done.slice(-5).reverse().map((row, index) => <li key={index} className="mono">{clock(row.at)} {row.lane} {row.word}</li>)}</ul>
+              <ul>{done.slice(-5).reverse().map((row, index) => <li key={index} className="mono"><When at={row.at} /> {row.lane} {row.word}</li>)}</ul>
             </li>
           )}
         </ul>
         <LanesPanels runtime={runtime} executionId={executionId} board={board} requests={requests ?? []} actions={actions} onAnswer={(lane) => pick(lane, true)} onSent={read} />
       </div>
-      {selected !== null && (
+      {selected !== null && collapsed && (
+        <aside aria-label="Agent" className="agent-rail">
+          <button type="button" className="b rail-toggle" aria-label="Open agent panel" aria-expanded="false" onClick={toggle}><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 4l-4 4 4 4" /></svg></button>
+          <span className={`agent-dot ${selected.questions.length > 0 ? "asks" : idleTone(selected.idleMinutes) === "late" ? "quiet" : "on"}`} title={selected.lane} />
+        </aside>
+      )}
+      {selected !== null && !collapsed && (
         <AgentPanel
+          onCollapse={toggle}
           key={selected.lane}
           runtime={runtime}
           executionId={executionId}
@@ -222,10 +237,10 @@ function Card({ agent, selected, serves, stripe, unlinked, last, onPick }: { age
       <span role="group" aria-label="Progress" className="blocks">
         {blocks(task?.step ?? null, agent.column === "blocked").map((block, index) => <span key={index} className={`block ${block}`} />)}
       </span>
-      <span role="group" aria-label="Last action" className="mono last-action">{last ? actionLine(last) : agent.lastRecordAt ? `${clock(agent.lastRecordAt)} last record` : "no record yet"}</span>
+      <span role="group" aria-label="Last action" className="mono last-action">{last ? <><When at={last.occurredAt} /> {actionText(last)}</> : agent.lastRecordAt ? <><When at={agent.lastRecordAt} /> last record</> : "no record yet"}</span>
       {asking && (
         <section aria-label="Question" className="question">
-          <span className="mono">ASKS {askedTo(asking.waitsOn)} · {clock(asking.since)}</span>
+          <span className="mono">ASKS {askedTo(asking.waitsOn)} · <When at={asking.since} /></span>
           <span>{asking.question}</span>
           {agent.questions.length + agent.moreQuestions > 1 && <span className="mono more">+{agent.questions.length - 1 + agent.moreQuestions} more</span>}
           <button type="button" className="b ghost small" onClick={() => onPick(agent.lane, true)}>Reply</button>
@@ -246,9 +261,10 @@ interface PanelProps {
   lanes: string[];
   onSent: () => Promise<void>;
   onControl: (lane: string, control: LaneControl) => void;
+  onCollapse: () => void;
 }
 
-function AgentPanel({ runtime, executionId, agent, actions, journeys, replyBox, drafts, lanes, onSent, onControl }: PanelProps) {
+function AgentPanel({ runtime, executionId, agent, actions, journeys, replyBox, drafts, lanes, onSent, onControl, onCollapse }: PanelProps) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState<string | null>(null);
   const others = lanes.filter((lane) => lane !== agent.lane);
@@ -319,7 +335,7 @@ function AgentPanel({ runtime, executionId, agent, actions, journeys, replyBox, 
   const flows = new Map((journeys ?? []).map((flow) => [flow.id, flow]));
   return (
     <aside aria-label="Agent" className="agent-panel">
-      <div className="panel-head"><span className={`agent-dot ${answering ? "asks" : idleTone(agent.idleMinutes) === "late" ? "quiet" : "on"}`} /><strong>{agent.lane}</strong></div>
+      <div className="panel-head"><span className={`agent-dot ${answering ? "asks" : idleTone(agent.idleMinutes) === "late" ? "quiet" : "on"}`} /><strong>{agent.lane}</strong><button type="button" className="b rail-toggle" aria-label="Collapse agent panel" aria-expanded="true" onClick={onCollapse}><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 4l4 4-4 4" /></svg></button></div>
       <span className="muted">{task === null ? "no task" : <><span className="mono">#{task.issue ?? "—"}</span> {task.prTitle ?? task.title ?? task.key}</>} · {COLUMN_NAME[agent.column].toLowerCase()}</span>
       <span className={`mono idle ${idleTone(agent.idleMinutes)}`}>{agent.idleMinutes === null ? "no record yet" : `last record ${idleText(agent.idleMinutes)} ago`}</span>
       {task !== null && task.journeys.length > 0 && (
@@ -335,7 +351,7 @@ function AgentPanel({ runtime, executionId, agent, actions, journeys, replyBox, 
       {agent.questions.length === 0 ? <span className="muted">No open question.</span> : (
         <ul className="thread">
           {agent.questions.map((row) => (
-            <li key={row.signalId}><span className="mono">{agent.lane} → {askedTo(row.waitsOn)} · {clock(row.since)}</span><span>{row.question}</span></li>
+            <li key={row.signalId}><span className="mono">{agent.lane} → {askedTo(row.waitsOn)} · <When at={row.since} /></span><span>{row.question}</span></li>
           ))}
           {agent.moreQuestions > 0 && <li className="mono more">+{agent.moreQuestions} more open questions</li>}
         </ul>
@@ -369,7 +385,7 @@ function AgentPanel({ runtime, executionId, agent, actions, journeys, replyBox, 
       {failure !== null && <span role="alert" className="error">{failure}</span>}
       <span className="section-label">LAST ACTIONS</span>
       {actions === null ? <span className="muted">Reading…</span> : actions.length === 0 ? <span className="muted">No action recorded.</span> : (
-        <ul className="last-actions">{actions.map((action) => <li key={action.sequence} className="mono">{actionLine(action)}</li>)}</ul>
+        <ul className="last-actions">{actions.map((action) => <li key={action.sequence} className="mono"><When at={action.occurredAt} /> {actionText(action)}</li>)}</ul>
       )}
     </aside>
   );

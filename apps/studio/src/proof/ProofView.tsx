@@ -10,6 +10,9 @@ import { OWNER } from "../runtime/client";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
 import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, withoutLive, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
+import { Empty, Loading, ReadFailure } from "../states/ViewState";
+import { When } from "../time/Stamp";
+import { when } from "../time/when";
 
 interface ProofViewProps {
   runtime: Runtime;
@@ -43,15 +46,15 @@ export function ProofView({ runtime, journeys, error, executionId, onRan, initia
   const [live, setLive] = useState<Record<string, JourneyRun>>({});
   // A list read again carries the result; a run still playing stays until its next answer.
   useEffect(() => { setLive((before) => Object.fromEntries(Object.entries(before).filter(([, run]) => run.state === "running"))); }, [journeys]);
-  if (error !== null) return <section id="panel-proof" aria-label="Proof" className="view"><p className="error">{error}</p></section>;
-  if (journeys === null) return <section id="panel-proof" aria-label="Proof" className="view"><p>Reading the journeys…</p></section>;
+  if (error !== null && journeys === null) return <section id="panel-proof" aria-label="Proof" className="view"><ReadFailure what="journeys" route="/v1/journey-flows" message={error} onRetry={onRan} /></section>;
+  if (journeys === null) return <section id="panel-proof" aria-label="Proof" className="view"><Loading text="Reading the journeys…" /></section>;
   const selected = journeys.find((flow) => flow.id === picked) ?? journeys[0] ?? null;
   const started = (id: string) => { if (id === selected?.id) setReread((n) => n + 1); };
   return (
     <section id="panel-proof" aria-label="Proof" className="proof">
       <JourneysColumn runtime={runtime} journeys={journeys} selected={selected?.id ?? null} executionId={executionId} onPick={setPicked} onStarted={started} onRan={onRan} live={live} />
       {selected === null
-        ? <div className="proof-main"><p>This project has no journeys yet.</p></div>
+        ? <div className="proof-main"><Empty title="No journeys yet" hint="This project has no journeys yet. A journey appears here once one is drafted for a request." /></div>
         : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} executionId={executionId} onRan={onRan} onRun={(run) => setLive((before) => ({ ...before, [selected.id]: run }))} onGone={() => setLive((before) => withoutLive(before, selected.id))} />}
     </section>
   );
@@ -264,7 +267,7 @@ function verdict(run: JourneyRun | null): string | null {
   if (run.state === "running") return null;
   if (isHeld(run)) return "Waits for your confirmation";
   if (run.state === "failed") return run.reason ? `The run could not finish: ${run.reason}` : "The run could not finish";
-  return `${run.result === "pass" ? "Passed" : run.result === "drift" ? "Drifted" : "Failed"}${run.ranAt ? ` · ${run.ranAt}` : ""}`;
+  return `${run.result === "pass" ? "Passed" : run.result === "drift" ? "Drifted" : "Failed"}${run.ranAt ? ` · ${when(run.ranAt).text}` : ""}`;
 }
 
 /** #1777: each viewport's mark on a step card, and the line that says a break is mobile-only. */
@@ -324,7 +327,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           {busy && <span id="proof-stop-note" className="run-note">The Runtime has no route to stop a run.</span>}
           {run !== null && offersFix(run) && <SendToFix key={fixRequestId(flow.id, run)} runtime={runtime} flow={flow} run={run} steps={steps} executionId={executionId} />}
           {status !== null && <span role="status" aria-label={status.name} className="run-status"><span className="pulse" aria-hidden="true" />{status.text}</span>}
-          {said !== null && <span role="status" aria-label={said.split(" · ")[0]} className="run-verdict">{said}</span>}
+          {said !== null && <span role="status" aria-label={said.split(" · ")[0]} className="run-verdict" title={when(run?.ranAt).full || undefined}>{said}</span>}
           {(busy || log.length > 0) && (
             <button type="button" className="b ghost" aria-expanded={showLog} onClick={() => setShowLog(!showLog)}>{showLog ? "Hide log" : "Show log"}</button>
           )}
@@ -336,7 +339,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           <span className="run-history" aria-label="History">
             <span className="section-label">HISTORY</span>
             {history.map((past, index) => (
-              <span key={past.run} className={`history-chip${index === 0 ? " newest" : ""}`}><b className={past.result === "pass" ? "pass" : "fail"}>{past.result === "pass" ? "✓" : "✕"}</b> {past.ranAt ?? past.run}</span>
+              <span key={past.run} className={`history-chip${index === 0 ? " newest" : ""}`}><b className={past.result === "pass" ? "pass" : "fail"}>{past.result === "pass" ? "✓" : "✕"}</b> {past.ranAt ? <When at={past.ranAt} /> : past.run}</span>
             ))}
           </span>
         )}

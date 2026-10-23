@@ -1886,40 +1886,51 @@ fn history_ids(history: &Path) -> Vec<String> {
 
 /// `GET /v1/journey-flows/{id}/history` (#history): the journey's earlier finished runs, newest
 /// first, each with its verdict, time, flow digest, commit and per-screen results. The current
-/// run is the preview route's; this is only what came before it.
+/// run is the preview route's; this is only what came before it. #1956: a finished run kept for
+/// an earlier version of the flow (its digest or scope commit no longer the flow's) is no longer
+/// the preview route's current run, which reads `none`; it is listed here as the newest entry,
+/// under the id it will be archived with, so its verdict and frames stay readable.
 pub(crate) fn history(project: &Path, id: &str) -> Outcome {
     if !plain_id(id) {
         return answer(json!({}), Some(failure("preview.flow_unknown", "/id", 2)));
     }
-    if let Err(failed) = flow_and_key(project, id) {
-        return answer(json!({}), Some(failed));
-    }
-    let history = dir_of(project, id).join("history");
-    let runs: Vec<Value> = history_ids(&history)
-        .into_iter()
-        .rev()
-        .filter_map(|run| {
-            let state = read_state(&history.join(&run))?;
-            let mut entry = json!({"run": run});
-            for key in [
-                "state",
-                "kind",
-                "result",
-                "reason",
-                "digest",
-                "commit",
-                "startedAt",
-                "ranAt",
-                "screens",
-                "edges",
-                "detail",
-            ] {
-                if !state[key].is_null() {
-                    entry[key] = state[key].clone();
-                }
+    let (_, digest, commit) = match flow_and_key(project, id) {
+        Ok(key) => key,
+        Err(failed) => return answer(json!({}), Some(failed)),
+    };
+    let dir = dir_of(project, id);
+    let history = dir.join("history");
+    let entry = |run: String, state: Value| {
+        let mut entry = json!({"run": run});
+        for key in [
+            "state",
+            "kind",
+            "result",
+            "reason",
+            "digest",
+            "commit",
+            "startedAt",
+            "ranAt",
+            "screens",
+            "edges",
+            "detail",
+        ] {
+            if !state[key].is_null() {
+                entry[key] = state[key].clone();
             }
-            Some(entry)
-        })
+        }
+        entry
+    };
+    let archived = history_ids(&history);
+    let earlier = earlier_version_run(&dir, &digest, &commit)
+        .filter(|(run, _)| !archived.contains(run))
+        .map(|(run, state)| entry(run, state));
+    let runs: Vec<Value> = earlier
+        .into_iter()
+        .chain(archived.into_iter().rev().filter_map(|run| {
+            let state = read_state(&history.join(&run))?;
+            Some(entry(run, state))
+        }))
         .collect();
     answer(json!({"id": id, "runs": runs}), None)
 }
@@ -2015,10 +2026,32 @@ pub(crate) fn history_frame(
     {
         return None;
     }
-    let dir = dir_of(project, id).join("history").join(run);
-    let state = read_state(&dir)?;
+    let flow_dir = dir_of(project, id);
+    let dir = flow_dir.join("history").join(run);
+    let (dir, state) = match read_state(&dir) {
+        Some(state) => (dir, state),
+        // #1956: the earlier version's run the history lists before it is archived.
+        None => {
+            let (_, digest, commit) = flow_and_key(project, id).ok()?;
+            let (kept, state) = earlier_version_run(&flow_dir, &digest, &commit)?;
+            (kept == run).then_some((flow_dir, state))?
+        }
+    };
     let (_, file) = viewport_frame(&dir, &state, screen, viewport)?;
     std::fs::read(file).ok()
+}
+
+/// #1956: the finished run in the journey's current slot when it was kept for another version of
+/// the flow (digest or scope commit), with the history id it will be archived under. `None` when
+/// the slot is empty, still running, or holds the current version's run.
+fn earlier_version_run(dir: &Path, digest: &str, commit: &str) -> Option<(String, Value)> {
+    let state = read_state(dir)?;
+    let finished = matches!(state["state"].as_str(), Some("ready" | "failed"));
+    let current = state["digest"] == digest && state["commit"] == commit;
+    if !finished || current {
+        return None;
+    }
+    Some((history_id(&state)?, state))
 }
 
 /// #1835: the journey's last finished run, as `journey flows` lists it. Read only from what the
@@ -2745,6 +2778,60 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             runs.last(),
             history_id(&finished("2026-10-14T11:24:00Z")).as_ref()
         );
+    }
+
+    /// #1956: a flow edited after its run reads `none` on the preview route, and that run is then
+    /// the newest history entry with its frame readable by run id, so Proof shows the earlier
+    /// version's result instead of "not run". Defects named: the run vanishes from every route,
+    /// the current version's own run is listed as history, or a running slot is offered.
+    #[test]
+    fn an_earlier_versions_run_is_the_newest_history_entry() {
+        let project = tempfile::tempdir().unwrap();
+        let journeys = project.path().join(".graphhelm/journeys");
+        std::fs::create_dir_all(&journeys).unwrap();
+        std::fs::write(
+            journeys.join("studio-add-project.journey.yaml"),
+            include_bytes!("testdata/studio-add-project.journey.yaml"),
+        )
+        .unwrap();
+        for path in [
+            "apps/studio/src/components/addproject.tsx",
+            "apps/studio/src/components/rail.tsx",
+        ] {
+            let target = project.path().join(path);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(target, "fixture").unwrap();
+        }
+        let id = "studio-add-project";
+        let dir = super::dir_of(project.path(), id);
+        std::fs::create_dir_all(dir.join("frames")).unwrap();
+        std::fs::write(dir.join("frames/run.png"), b"old run").unwrap();
+        let (_, digest, commit) = super::flow_and_key(project.path(), id).unwrap();
+        let kept = |digest: &str, state: &str| {
+            json!({"preview":true,"state":state,"result":"pass","digest":digest,"commit":commit,
+                "startedAt":"2026-10-22T21:53:00Z","ranAt":"2026-10-22T21:53:09Z",
+                "screens":{"run":{"frame":true,"file":"run.png","result":"pass"}},"edges":{}})
+        };
+        let runs = |project: &std::path::Path| {
+            super::history(project, id).output.data.unwrap()["runs"].clone()
+        };
+        save_state(&dir, &kept("sha256:old", "ready"));
+        let run = history_id(&kept("sha256:old", "ready")).unwrap();
+        let listed = runs(project.path());
+        assert_eq!(listed[0]["run"], run.as_str(), "{listed}");
+        assert_eq!(listed[0]["digest"], "sha256:old", "{listed}");
+        assert_eq!(listed[0]["result"], "pass", "{listed}");
+        assert_eq!(
+            history_frame(project.path(), id, &run, "run", None).unwrap(),
+            b"old run"
+        );
+        // The current version's run is the preview route's, never history.
+        save_state(&dir, &kept(&digest, "ready"));
+        assert_eq!(runs(project.path()), json!([]));
+        assert!(history_frame(project.path(), id, &run, "run", None).is_none());
+        // A slot still running is no earlier result.
+        save_state(&dir, &kept("sha256:old", "running"));
+        assert_eq!(runs(project.path()), json!([]));
     }
 
     /// #560 review: a `running` state past the budget reads as a dead runner even when its pid is

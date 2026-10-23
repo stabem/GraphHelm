@@ -8,7 +8,7 @@ import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./
 import { askedWhen } from "../lanes/asked";
 import { OWNER } from "../runtime/client";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
-import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 import { Empty, Loading, ReadFailure } from "../states/ViewState";
 import { When } from "../time/Stamp";
@@ -322,16 +322,18 @@ function viewportLine(step: Step) {
 }
 
 function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: { runtime: Runtime; flow: JourneyFlow; executionId: string | null; onRan: () => void; onRun: (run: JourneyRun) => void; onGone: () => void }) {
-  const { run, frames, mobileFrames, log, history, error, starting, start } = useJourneyRun(runtime, flow.id, executionId, onRan, onRun);
+  const { run, frames, mobileFrames, log, history, earlier, error, starting, start } = useJourneyRun(runtime, flow.id, executionId, onRan, onRun);
   const [showLog, setShowLog] = useState(false);
   // #1914: a panel that goes away (another journey picked) stops reporting; its card must not stay "running".
   useEffect(() => onGone, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [picked, setPicked] = useState<number | null>(null);
-  const steps = journeySteps(flow, run);
+  // #1956: with no run of the current version, the earlier version's run is shown, marked stale.
+  const stale = earlier !== null && !starting;
+  const steps = journeySteps(flow, stale ? pastAsRun(earlier) : run);
   const counts = countSteps(steps);
   const busy = starting || run?.state === "running";
   const status = runStatus(run, starting);
-  const said = verdict(run);
+  const said = stale ? CHANGED : verdict(run);
   const selected = steps.find((step) => step.n === picked) ?? steps.find((step) => step.status === "failed")
     // #1912: a command flow opens on its first command, not on the start screen it never observes.
     ?? steps.find((step) => step.status !== "precondition") ?? steps[0] ?? null;
@@ -366,6 +368,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           {run !== null && offersFix(run) && <SendToFix key={fixRequestId(flow.id, run)} runtime={runtime} flow={flow} run={run} steps={steps} executionId={executionId} />}
           {status !== null && <span role="status" aria-label={status.name} className="run-status"><span className="pulse" aria-hidden="true" />{status.text}</span>}
           {said !== null && <span role="status" aria-label={said.split(" · ")[0]} className="run-verdict" title={when(run?.ranAt).full || undefined}>{said}</span>}
+          {stale && <span className="run-note stale-note">Results and frames from the earlier version ({earlier.ranAt ? when(earlier.ranAt).text : earlier.run}). Run to prove the current version.</span>}
           {(busy || log.length > 0) && (
             <button type="button" className="b ghost" aria-expanded={showLog} onClick={() => setShowLog(!showLog)}>{showLog ? "Hide log" : "Show log"}</button>
           )}
@@ -402,11 +405,11 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
       <div className="steps-card">
         <ol className="steps" aria-label="Steps">
           {steps.map((step) => (
-            <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${step.status.replace(" ", "-")}`}>
+            <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${step.status.replace(" ", "-")}${stale ? " stale" : ""}`}>
               <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
                 <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
                 <span className="step-text">
-                  <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{STATUS_TEXT[step.status]}</span></span>
+                  <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{STATUS_TEXT[step.status]}</span>{stale && <span className="stale-mark" title="From the earlier version of this journey">stale</span>}</span>
                   <span className="step-label">{step.label}</span>
                   {viewportLine(step)}
                 </span>

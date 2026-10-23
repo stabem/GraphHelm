@@ -124,6 +124,15 @@ export async function login(search: string, store: KeyStore = browserStore()): P
   return sessions.length === 0 ? null : sessions;
 }
 
+/** #1897: the Runtime refused this project's token, so its stored key is dropped: a reload asks for
+ * a new ticket instead of reading OFFLINE forever. Other projects' keys stay. */
+export function forgetKey(project: string, store: KeyStore = browserStore()): void {
+  try {
+    const { [project]: _dropped, ...rest } = readKeys(store);
+    store?.setItem(SESSION_KEYS_STORAGE, JSON.stringify(rest));
+  } catch { /* nothing stored to drop */ }
+}
+
 /** Why `/__studio/add` refused a folder, in the dev server's closed list. */
 export type AddRefusal = "not_a_project" | "runtime_not_running" | "refused";
 

@@ -4,7 +4,7 @@ import { agents } from "../lanes/board";
 import { needsAction } from "../lanes/panels";
 import { cards } from "../graph/requests";
 import { ViewBoundary } from "../views/ViewBoundary";
-import { Runtime } from "./client";
+import { refusedToken, Runtime } from "./client";
 
 // #1899: the owner's Runtime predates #1794, so its open tasks reply has no `waiting`. This is the
 // key set that Runtime returned for a real run (read-only GET), with one open slice and one lane.
@@ -47,5 +47,16 @@ describe("a run read from an older Runtime (#1899)", () => {
     const shown = boundary.render() as { props: { children: { props: { role: string; children: unknown[] } } } };
     expect(shown.props.children.props.role).toBe("alert");
     expect(shown.props.children.props.children.join("")).toContain("board.waiting is not iterable");
+  });
+});
+
+describe("a Runtime that refuses the token (#1897)", () => {
+  it("tells a refusal (401, 403) from a Runtime that does not answer", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, data: null, diagnostics: [{ message: "bad token" }] }), { status: 401 })));
+    const refused = await new Runtime("old").runs().catch((error: unknown) => error);
+    expect(refusedToken(refused)).toBe(true);
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("down"); }));
+    const silent = await new Runtime("old").runs().catch((error: unknown) => error);
+    expect(refusedToken(silent)).toBe(false);
   });
 });

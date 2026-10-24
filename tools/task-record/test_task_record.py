@@ -390,6 +390,49 @@ class TaskRecordTest(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertEqual(FakeRuntime.paths, ["/v1/executions/studio-v2/signal"])
 
+        ancestor = Path(self.tmp.name) / "ancestor-binding"
+        ancestor_nested = ancestor / "src" / "deep"
+        (ancestor / ".graphhelm").mkdir(parents=True)
+        ancestor_nested.mkdir(parents=True)
+        (ancestor / ".graphhelm" / "team.json").write_text(
+            json.dumps({"executionId": "ancestor-run"}), encoding="utf-8")
+        remote_token = Path(self.tmp.name) / "runtime-only" / "events.agent.token"
+        remote_token.parent.mkdir()
+        remote_token.write_text("agent-token\n", encoding="utf-8")
+        task_record.credential_file(remote_token, "lane-a").write_text("credential-lane-a\n", encoding="utf-8")
+        old = Path.cwd()
+        try:
+            os.chdir(ancestor_nested)
+            code, output = self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                                         "--no-github", "--token-file", str(remote_token), execution=None)
+        finally:
+            os.chdir(old)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(FakeRuntime.paths[-1], "/v1/executions/ancestor-run/signal")
+
+        worktree = Path(self.tmp.name) / "worktree"
+        worktree_nested = worktree / "src"
+        (worktree / ".graphhelm").mkdir(parents=True)
+        worktree_nested.mkdir(parents=True)
+        (worktree / ".git").write_text("gitdir: elsewhere", encoding="utf-8")
+        (worktree / ".graphhelm" / "team.json").write_text(
+            json.dumps({"executionId": "wrong-local"}), encoding="utf-8")
+        worktree_token = Path(self.tmp.name) / "worktree-runtime" / "events.agent.token"
+        worktree_token.parent.mkdir()
+        worktree_token.write_text("agent-token\n", encoding="utf-8")
+        task_record.credential_file(worktree_token, "lane-a").write_text("credential-lane-a\n", encoding="utf-8")
+        (worktree_token.parent / "team.json").write_text(
+            json.dumps({"executionId": "token-sibling"}), encoding="utf-8")
+        old = Path.cwd()
+        try:
+            os.chdir(worktree_nested)
+            code, output = self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                                         "--no-github", "--token-file", str(worktree_token), execution=None)
+        finally:
+            os.chdir(old)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(FakeRuntime.paths[-1], "/v1/executions/token-sibling/signal")
+
         before = len(FakeRuntime.paths)
         (project / ".graphhelm" / "team.json").write_text("not json", encoding="utf-8")
         old = Path.cwd()
@@ -445,7 +488,9 @@ class TaskRecordTest(unittest.TestCase):
         # Existing coverage had no config parser or no-send observer; this uses the real loopback.
         cases = [
             ("missing", {}), ("empty", {"executionId": ""}),
-            ("path", {"executionId": "bad/id"}), ("long", {"executionId": "a" * 129}),
+            ("path", {"executionId": "bad/id", "token": "sentinel-secret"}), ("query", {"executionId": "bad?query"}),
+            ("fragment", {"executionId": "bad#fragment"}), ("percent", {"executionId": "bad%value"}),
+            ("long", {"executionId": "a" * 129}),
             ("array", []), ("oversized", {"executionId": "ok", "padding": "x" * 65536}),
         ]
         for name, value in cases:
@@ -457,10 +502,11 @@ class TaskRecordTest(unittest.TestCase):
                 task_record.credential_file(token, "lane-a").write_text("credential-lane-a\n", encoding="utf-8")
                 (folder / "team.json").write_text(json.dumps(value), encoding="utf-8")
                 before = len(FakeRuntime.paths)
-                with self.assertRaises(SystemExit):
+                with self.assertRaises(SystemExit) as refusal:
                     self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
                                   "--no-github", "--token-file", str(token), execution=None)
                 self.assertEqual(len(FakeRuntime.paths), before)
+                self.assertNotIn("sentinel-secret", str(refusal.exception))
 
         folder = Path(self.tmp.name) / "invalid-utf8"
         folder.mkdir(parents=True)
@@ -473,6 +519,17 @@ class TaskRecordTest(unittest.TestCase):
             self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
                           "--no-github", "--token-file", str(token), execution=None)
         self.assertEqual(len(FakeRuntime.paths), before)
+
+        valid = Path(self.tmp.name) / "valid-colon"
+        valid.mkdir(parents=True)
+        token = valid / "events.agent.token"
+        token.write_text("agent-token\n", encoding="utf-8")
+        task_record.credential_file(token, "lane-a").write_text("credential-lane-a\n", encoding="utf-8")
+        (valid / "team.json").write_text(json.dumps({"executionId": "run:blue"}), encoding="utf-8")
+        code, output = self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                                     "--no-github", "--token-file", str(token), execution=None)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(FakeRuntime.paths[-1], "/v1/executions/run:blue/signal")
 
     def test_the_fix_loop_records_a_second_pr_opened_and_verdict_on_the_new_head(self):
         steps = [

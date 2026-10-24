@@ -67,16 +67,9 @@ MAX_TEAM_CONFIG_BYTES = 64 * 1024
 
 
 def valid_execution_id(value):
-    """Match the Runtime's bounded opaque execution identifier without importing core code."""
-    if not isinstance(value, str) or not 0 < len(value) <= 128:
-        return False
-    try:
-        encoded = value.encode("utf-8")
-    except UnicodeEncodeError:
-        return False
-    return all(0x21 <= byte <= 0x2e or 0x30 <= byte <= 0x39 or
-               0x3b <= byte <= 0x5b or 0x5d <= byte <= 0x7e
-               for byte in encoded)
+    """Match the Runtime's bounded execution binding alphabet without importing core code."""
+    return (isinstance(value, str) and
+            re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value, re.ASCII) is not None)
 
 
 def _team_config_execution(path):
@@ -90,7 +83,7 @@ def _team_config_execution(path):
         sys.exit("task_record: configured team.json exceeds its byte bound; no record sent")
     try:
         value = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
         sys.exit("task_record: configured team.json is not valid UTF-8 JSON; no record sent")
     execution = value.get("executionId") if isinstance(value, dict) else None
     if not isinstance(value, dict) or not valid_execution_id(execution):
@@ -120,7 +113,7 @@ def resolve_execution(explicit, token_file):
         if candidate in seen:
             continue
         seen.add(candidate)
-        if candidate.exists():
+        if os.path.lexists(candidate):
             return _team_config_execution(candidate)
     sys.exit("task_record: no execution binding found; pass --execution or create .graphhelm/team.json; no record sent")
 

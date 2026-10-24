@@ -28,7 +28,9 @@ def team(project, execution_override=None):
         try:
             os.lstat(p)
         except FileNotFoundError:
-            pass
+            if (d / '.git').exists():
+                break
+            continue
         except OSError:
             raise SystemExit('lanes: configured team.json cannot be inspected')
         else:

@@ -1508,7 +1508,7 @@ const FLOWS_THREADS: usize = 8;
 fn flow_entry(file: &Path, project: &Path) -> Value {
     let name = file.file_name().unwrap_or_default().to_string_lossy();
     let id = name.trim_end_matches(".journey.yaml");
-    let findings = check(file, &project);
+    let findings = check(file, project);
     let listed: Vec<Value> = findings
         .iter()
         .map(|f| {
@@ -1520,8 +1520,8 @@ fn flow_entry(file: &Path, project: &Path) -> Value {
         return json!({"id": id, "title": null, "status": "unreadable",
                     "approved": null, "drift": [], "findings": listed, "approvable": false,
                     "screens": [], "edges": [], "paths": {},
-                    "lastRun": super::journey_preview::last_run(&project, id, None),
-                    "running": super::journey_preview::running(&project, id)});
+                    "lastRun": super::journey_preview::last_run(project, id, None),
+                    "running": super::journey_preview::running(project, id)});
     };
     let stale = findings.iter().any(|f| f.code == "flow.approval_stale");
     let drifted = flow["drift"].as_array().is_some_and(|d| !d.is_empty());
@@ -1555,15 +1555,15 @@ fn flow_entry(file: &Path, project: &Path) -> Value {
                 "feature": flow.get("feature").cloned().unwrap_or(Value::Null),
                 "status": status, "approved": approved,
                 // #1588: the owner's latest rejection of this exact content, with its reason.
-                "rejected": super::journey_owner::rejection(&project, id, &approval_digest_of(&flow))
+                "rejected": super::journey_owner::rejection(project, id, &approval_digest_of(&flow))
                     .unwrap_or(Value::Null),
                 "drift": flow["drift"],
                 "findings": listed, "approvable": accepted && !settled,
                 "screens": flow["screens"], "edges": flow["edges"], "paths": flow["paths"],
                 // #1835: the last finished run as its runner recorded it; `not_run` when none.
-                "lastRun": super::journey_preview::last_run(&project, id, Some(&flow)),
+                "lastRun": super::journey_preview::last_run(project, id, Some(&flow)),
                 // #1953: the run in flight, `null` when none, so a reloaded Studio shows it.
-                "running": super::journey_preview::running(&project, id)})
+                "running": super::journey_preview::running(project, id)})
 }
 
 /// `graphhelm journey approve <id>` from a terminal (#534): the owner's door, so it asks for the

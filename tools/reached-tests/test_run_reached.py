@@ -1247,8 +1247,26 @@ class ResumeAndPreflightContracts(unittest.TestCase):
             self.assertEqual(report["status"], "incomplete")
             self.assertEqual(report["completed"][0]["returncode"], 0)
             self.assertFalse(any(e.get("reusable") for e in report["completed"]))
-            self.assertEqual(self.run_once()[0], 0)
-            self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+            second_code, second_report = self.run_once()
+            self.assertEqual(second_code, 0)
+            third_code, third_report = self.run_once()
+
+            def reuse_evidence(code, report):
+                fingerprint = report.get("fingerprint", {})
+                tools = fingerprint.get("tools", {})
+                return {"code": code, "status": report.get("status"), "error": report.get("error"),
+                        "fingerprint": {key: fingerprint.get(key) for key in
+                                        ("tree", "toolsSha256", "envSha256")},
+                        "identityComplete": tools.get("identityComplete"),
+                        "identityReason": tools.get("identityReason"),
+                        "completed": [{key: entry.get(key) for key in
+                                       ("proofKey", "reused", "reusable", "returncode", "error")}
+                                      for entry in report.get("completed", [])]}
+
+            self.assertTrue(third_report["completed"][0].get("reused"),
+                            json.dumps({"second": reuse_evidence(second_code, second_report),
+                                        "third": reuse_evidence(third_code, third_report),
+                                        "actualRuns": self.runs()}, sort_keys=True))
         self.assertEqual(self.runs(), ["prepared", "node", "node"])
 
     @unittest.skipUnless(os.name == "nt" and __import__("shutil").which("node"), "OBSERVER_MISSING: native Windows PATH/PATHEXT executable launch")

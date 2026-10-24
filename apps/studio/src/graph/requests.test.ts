@@ -31,7 +31,7 @@ describe("Graph requests and Kanban", () => {
     }
   });
 
-  it("narrows cards, requests and the filter to one journey, and leaves released slices out", () => {
+  it("narrows cards to one journey and leaves released slices out", () => {
     const b = board([
       task({ key: "a", issue: 1, journeys: ["j1"] }),
       task({ key: "b", issue: 2, journeys: ["j2"] }),

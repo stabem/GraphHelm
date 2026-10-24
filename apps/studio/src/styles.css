@@ -353,15 +353,18 @@ button { font: inherit; }
 .filter.reply { background: #241010; color: #ff9b9b; }
 .filter.idle { background: #24170e; color: var(--accent); }
 .filter.working { background: #10201a; color: var(--live); border-color: transparent; }
-.board { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--s3); min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; flex: 1 0 auto; min-height: 360px; }
-.board-column { border: 1px solid var(--edge); border-radius: var(--card-radius); background: #111113; padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--card-gap); min-width: 0; }
+.board { list-style: none; margin: 0; padding: 0; display: flex; gap: var(--s3); min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; flex: 1 0 auto; min-height: 360px; }
+.board-column { border: 1px solid var(--edge); border-radius: var(--card-radius); background: #111113; padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--card-gap); min-width: 0; flex: 1 1 220px; }
+/* #1996: a column with no cards folds to a 44px strip (Lanes.dc.html): dot, count, name down the strip. */
+.board-column.folded { flex: 0 0 44px; align-items: center; padding: var(--card-pad) 0; background: #0e0e10; }
+.board-column.folded .count { margin-left: 0; padding: 0 6px; border-radius: 999px; background: var(--card); color: var(--faint); font: 400 var(--fs-meta)/20px var(--mono); }
+.board-column.folded .folded-name { writing-mode: vertical-rl; letter-spacing: 1px; color: var(--faint); font: 600 var(--fs-meta) var(--mono); text-transform: uppercase; }
 /* #1934: one column header and count chip in every view (Tokens.dc.html "Sample column"). */
 .board-column h3, .kanban-col h2, .col-head { margin: 0; min-height: 24px; display: flex; align-items: center; gap: var(--s2); font: 600 var(--fs-meta) var(--mono); text-transform: uppercase; }
 .board-column h3 .count, .kanban-col h2 .count, .col-head .count, .box-head .count { margin-left: auto; padding: 0 var(--s2); border-radius: 999px; background: var(--card); color: var(--faint); font: 400 var(--fs-meta)/20px var(--mono); }
 .board-column > ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .board-column .none { color: var(--faint); font-size: 11px; }
 /* #1901: WHAT I ASKED, the first board column of Lanes.dc.html. */
-.board.with-asked { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .board-column.asked { border-color: #5a3a22; background: #151210; }
 .board-column.asked > section { display: flex; flex-direction: column; gap: 8px; }
 .board-column.asked ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -444,7 +447,10 @@ button { font: inherit; }
 .sent { color: var(--live); }
 @media (max-width: 760px) {
   .lanes-main { padding: 12px 16px; }
-  .board, .board.with-asked { grid-template-columns: 1fr; overflow-x: visible; min-height: 0; }
+  .board, .board.with-asked { flex-direction: column; overflow-x: visible; min-height: 0; }
+  .board-column, .board-column.folded { flex: 0 0 auto; }
+  .board-column.folded { flex-direction: row; padding: var(--card-pad); }
+  .board-column.folded .folded-name { writing-mode: horizontal-tb; }
   .lanes { flex-direction: column; }
   .agent-panel { width: auto; border-left: 0; border-top: 1px solid var(--edge); }
   .agent-rail { width: auto; flex-direction: row; border-left: 0; border-top: 1px solid var(--edge); }

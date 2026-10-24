@@ -42,8 +42,9 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 <span class="mono" style="font-size: 11px; color: #8a8a96">updated 21:24:10 · live</span>
 </div>
 
-<div style="display: grid; grid-template-columns: repeat(7, minmax(220px, 1fr)); min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; gap: 12px; min-height: 360px">
-<section aria-label="What I asked" style="border: 1px solid #5a3a22; border-radius: 10px; background: #151210; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<!-- #1991 follow-up: columns with cards share the width; an empty column folds to a 44px strip (dot, count, name written down the strip), so a 1440px board never squeezes card text. -->
+<div style="display: flex; min-width: 0; max-width: 100%; gap: 12px; min-height: 360px">
+<section aria-label="What I asked" style="flex: 1 1 220px; min-width: 0; border: 1px solid #5a3a22; border-radius: 10px; background: #151210; padding: 12px; display: flex; flex-direction: column; gap: 8px">
 <div style="display: flex; gap: 8px; align-items: center; min-height: 24px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #ff8a3d"></span><strong class="mono" style="font-size: 11px">WHAT I ASKED</strong><span style="flex: 1"></span><span class="mono" style="padding: 0 8px; border-radius: 999px; background: #1e1e22; font-size: 11px; line-height: 20px; color: #8a8a96">{{reqN}}</span></div>
 <sc-for list="{{reqs}}" as="r">
 <button class="b" onClick="{{r.pick}}" style="padding: 12px; border-radius: 10px; border: 1px solid {{r.edge}}; background: #1e1e22; display: flex; flex-direction: column; gap: 8px">
@@ -56,7 +57,15 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 </sc-for>
 </section>
 <sc-for list="{{cols}}" as="col" hint-placeholder-count="6">
-<section aria-label="{{col.name}}" style="border: 1px solid #2a2a30; border-radius: 10px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<sc-if value="{{col.empty}}" hint-placeholder-val="{{ false }}">
+<section aria-label="{{col.name}}, empty" title="{{col.name}} · none" style="flex: 0 0 44px; border: 1px solid #2a2a30; border-radius: 10px; background: #0e0e10; padding: 12px 0; display: flex; flex-direction: column; align-items: center; gap: 8px">
+<span style="width: 8px; height: 8px; border-radius: 50%; background: {{col.c}}"></span>
+<span class="mono" style="padding: 0 6px; border-radius: 999px; background: #1e1e22; font-size: 11px; line-height: 20px; color: #8a8a96">0</span>
+<strong class="mono" style="font-size: 11px; color: #8a8a96; writing-mode: vertical-rl; letter-spacing: 1px">{{col.name}}</strong>
+</section>
+</sc-if>
+<sc-if value="{{col.full}}" hint-placeholder-val="{{ true }}">
+<section aria-label="{{col.name}}" style="flex: 1 1 220px; min-width: 0; border: 1px solid #2a2a30; border-radius: 10px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
 <div style="display: flex; gap: 8px; align-items: center; min-height: 24px"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{col.c}}"></span><strong class="mono" style="font-size: 11px">{{col.name}}</strong><span style="flex: 1"></span><span class="mono" style="padding: 0 8px; border-radius: 999px; background: #1e1e22; font-size: 11px; line-height: 20px; color: #8a8a96">{{col.n}}</span></div>
 <sc-for list="{{col.cards}}" as="a">
 <button class="b" onClick="{{a.pick}}" style="padding: 12px; border-radius: 10px; border: 1px solid {{a.edge}}; background: #1e1e22; display: flex; flex-direction: column; gap: 8px">
@@ -79,8 +88,8 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 </sc-if>
 </button>
 </sc-for>
-<sc-if value="{{col.empty}}" hint-placeholder-val="{{ false }}"><span style="color: #8a8a96; font-size: 11px">none</span></sc-if>
 </section>
+</sc-if>
 </sc-for>
 </div>
 
@@ -176,7 +185,7 @@ const keep = (a) => (this.state.r === 0 || a.req === this.state.r) && (f === 'al
 const RC = ['#e0a458', '#6ec6ff', '#c792ea', '#f78fb3']; // #1923: one stable colour per WHAT I ASKED request, shown only as a left stripe
 const card = (a) => ({ ...a, blocks: a.blocks.map(c => ({ c, k: (c === O && (a.col === 1 || a.col === 2) && !a.asks && a.idleM < 30) ? 'curstep' : '' })), rc: a.req ? RC[(a.req - 1) % RC.length] : '#34343c', reqShort: a.req ? RQ[a.req].ask : 'no request', dot: a.asks ? R : (a.idleM >= 30 ? '#8a8a96' : G), idleC: a.idleM >= 30 ? R : (a.idleM >= 10 ? O : '#8a8a96'),
 edge: this.state.sel === a.name ? '#f5f5f6' : (a.req ? RC[(a.req - 1) % RC.length] : '#34343c'), pick: () => this.setState({ sel: a.name }) });
-const cols = COLS.map((c, i) => { const cards = A.filter(a => a.col === i && keep(a)).map(card); return { name: c[0], c: c[1], n: cards.length, cards, empty: cards.length === 0 }; });
+const cols = COLS.map((c, i) => { const cards = A.filter(a => a.col === i && keep(a)).map(card); return { name: c[0], c: c[1], n: cards.length, cards, empty: cards.length === 0, full: cards.length > 0 }; });
 const s = card(A.find(a => a.name === this.state.sel));
 const sel = { ...s, colName: COLS[s.col][0].toLowerCase() };
 const reqs = RQ.slice(1).map((x, i) => { const id = i + 1; const ag = A.filter(a => a.req === id);

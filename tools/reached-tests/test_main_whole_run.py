@@ -1,8 +1,12 @@
 """Contracts for main_whole_run.py: when a run is due and what a red receipt says; no git, Runtime or cargo."""
 import json
+import http.server
+import threading
+import os
 import tempfile
 import sys
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -10,6 +14,137 @@ import main_whole_run as mw
 
 
 class WholeRun(unittest.TestCase):
+    def test_main_posts_to_bound_execution_before_state_completion(self):
+        seen = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                seen.append(self.path)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = root / 'caller' / 'repo'
+            (repo / '.graphhelm').mkdir(parents=True)
+            (repo / '.graphhelm' / 'team.json').write_text(
+                json.dumps({'executionId': 'studio#v2'}), encoding='utf-8')
+            token = repo / '.graphhelm' / 'events.token'
+            token.write_text('agent-token\n', encoding='utf-8')
+            other = root / 'other-cwd'
+            (other / '.graphhelm').mkdir(parents=True)
+            (other / '.graphhelm' / 'team.json').write_text(
+                json.dumps({'executionId': 'wrong-cwd'}), encoding='utf-8')
+            state = root / 'state.json'
+            work = root / 'work'
+            sha, base = 'a' * 40, 'b' * 40
+
+            def fake_git(_repo, *args):
+                return sha if args == ('rev-parse', 'origin/main') else base
+
+            def fake_prepare(_repo, tree, _sha):
+                Path(tree).mkdir(parents=True, exist_ok=True)
+
+            def fake_run(command, **kwargs):
+                output = Path(command[command.index('--output') + 1])
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(json.dumps({'status': 'passed'}), encoding='utf-8')
+                return SimpleNamespace(returncode=0)
+
+            old_git, old_prepare, old_run, old_cwd = mw.git, mw.prepare_tree, mw.subprocess.run, os.getcwd()
+            mw.git, mw.prepare_tree, mw.subprocess.run = fake_git, fake_prepare, fake_run
+            try:
+                os.chdir(other)
+                code = mw.main(['--repo', str(repo), '--root', str(work), '--state', str(state),
+                                '--url', 'http://127.0.0.1:%d' % server.server_address[1],
+                                '--allow-shared-token', '--min-interval', '0'])
+            finally:
+                os.chdir(old_cwd)
+                mw.git, mw.prepare_tree, mw.subprocess.run = old_git, old_prepare, old_run
+            self.assertEqual(code, 0)
+            self.assertEqual(seen, ['/v1/executions/studio%23v2/signal'])
+            self.assertTrue(json.loads(state.read_text())['recorded'])
+
+    def test_scheduled_repo_binding_is_resolved_before_work(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / 'scheduled-repo'
+            (repo / '.graphhelm').mkdir(parents=True)
+            (repo / '.graphhelm' / 'team.json').write_text(
+                json.dumps({'executionId': 'studio-v2'}), encoding='utf-8')
+            args = SimpleNamespace(execution=None, token_file=str(Path(temp) / 'events.token'), repo=str(repo))
+            self.assertEqual(mw.resolve_execution(args), 'studio-v2')
+
+    def test_invalid_binding_refuses_before_git_or_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / 'repo'
+            (repo / '.graphhelm').mkdir(parents=True)
+            (repo / '.graphhelm' / 'team.json').write_text('{"executionId":"bad/id"}', encoding='utf-8')
+            state = Path(temp) / 'state.json'
+            old_git = mw.git
+            mw.git = lambda *args: self.fail('git must not run before binding refusal')
+            try:
+                with self.assertRaises(SystemExit):
+                    mw.main(['--repo', str(repo), '--state', str(state), '--root', str(Path(temp) / 'work')])
+            finally:
+                mw.git = old_git
+            self.assertFalse(state.exists())
+
+    def test_omitted_token_uses_repo_and_refuses_when_repo_binding_is_missing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            caller = root / 'caller'
+            repo = root / 'requested-repo'
+            (caller / '.graphhelm').mkdir(parents=True)
+            (caller / '.graphhelm' / 'team.json').write_text(
+                json.dumps({'executionId': 'wrong-cwd'}), encoding='utf-8')
+            (repo / '.graphhelm').mkdir(parents=True)
+            state = root / 'state.json'
+            old_git, old_cwd = mw.git, os.getcwd()
+            mw.git = lambda *args: self.fail('git must not run before binding refusal')
+            try:
+                os.chdir(caller)
+                with self.assertRaises(SystemExit):
+                    mw.main(['--repo', str(repo), '--root', str(root / 'work'), '--state', str(state)])
+            finally:
+                os.chdir(old_cwd)
+                mw.git = old_git
+            self.assertFalse(state.exists())
+
+    def test_explicit_relative_token_keeps_caller_cwd_binding(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            caller = root / 'caller'
+            repo = root / 'requested-repo'
+            (caller / '.graphhelm').mkdir(parents=True)
+            (caller / '.graphhelm' / 'team.json').write_text(
+                json.dumps({'executionId': 'caller-run'}), encoding='utf-8')
+            (caller / '.graphhelm' / 'events.token').write_text('token\n', encoding='utf-8')
+            (repo / '.graphhelm').mkdir(parents=True)
+            (repo / '.graphhelm' / 'team.json').write_text(
+                json.dumps({'executionId': 'repo-run'}), encoding='utf-8')
+            old_git, old_cwd = mw.git, os.getcwd()
+            seen = {}
+            real_resolve = mw.resolve_execution
+            mw.git = lambda *args: 'a' * 40
+            mw.resolve_execution = lambda args: seen.setdefault('execution', real_resolve(args))
+            try:
+                os.chdir(caller)
+                mw.main(['--repo', str(repo), '--root', str(root / 'work'), '--dry-run',
+                         '--token-file', '.graphhelm/events.token'])
+            finally:
+                os.chdir(old_cwd)
+                mw.git, mw.resolve_execution = old_git, real_resolve
+            self.assertEqual(seen['execution'], 'caller-run')
+
     def test_due_only_when_main_moved_and_the_hour_passed(self):
         self.assertEqual(mw.due({}, "b", 1000, 3600), (True, "no earlier whole run"))
         self.assertFalse(mw.due({"sha": "a", "startedAt": 0}, "a", 99999, 3600)[0])

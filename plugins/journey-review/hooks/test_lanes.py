@@ -75,6 +75,15 @@ class LanesTokenStaysOnLoopback(unittest.TestCase):
                               capture_output=True, text=True, timeout=60, env=e,
                               creationflags=NO_WINDOW)
 
+    def run_lanes_from_project(self, project, **env):
+        e = {k: v for k, v in os.environ.items()
+             if k.upper() not in ('GRAPHHELM_RUNTIME_URL', 'GRAPHHELM_EXECUTION',
+                                  'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY')}
+        e.update(env)
+        return subprocess.run([sys.executable, '-I', str(LANES), str(project), str(self.tok)],
+                              capture_output=True, text=True, timeout=60, env=e,
+                              creationflags=NO_WINDOW)
+
     def test_reads_the_board_with_the_bearer_token(self):
         rt = self.serve({TASKS: ok({'now': 'n', 'tasks': [{'issue': 7, 'step': 'plan'}]}),
                          SLOTS: ok({'slots': [{'name': 's'}]})})
@@ -116,6 +125,40 @@ class LanesTokenStaysOnLoopback(unittest.TestCase):
             r = self.run_lanes(url)
             self.assertNotEqual(r.returncode, 0, url)
             self.assertIn('loopback http URL', r.stderr, url)
+
+    def test_project_binding_selects_configured_execution_path(self):
+        rt = self.serve({'/v1/executions/studio-v2/tasks': ok({'tasks': []}),
+                         SLOTS: ok({'slots': []})})
+        project = Path(self.tmp.name, 'nested')
+        (project / '.graphhelm').mkdir(parents=True)
+        (project / '.graphhelm' / 'team.json').write_text(
+            json.dumps({'runtimeUrl': rt.url, 'executionId': 'studio-v2'}), encoding='utf-8')
+        r = self.run_lanes_from_project(project)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([path for path, _ in rt.seen],
+                         ['/v1/executions/studio-v2/tasks', SLOTS])
+
+    def test_explicit_execution_keeps_configured_runtime_url(self):
+        rt = self.serve({'/v1/executions/override-run/tasks': ok({'tasks': []}),
+                         SLOTS: ok({'slots': []})})
+        project = Path(self.tmp.name, 'override')
+        (project / '.graphhelm').mkdir(parents=True)
+        (project / '.graphhelm' / 'team.json').write_text(
+            json.dumps({'runtimeUrl': rt.url, 'executionId': 'configured-run'}), encoding='utf-8')
+        r = self.run_lanes_from_project(project, GRAPHHELM_EXECUTION='override-run')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([path for path, _ in rt.seen],
+                         ['/v1/executions/override-run/tasks', SLOTS])
+
+    def test_broken_project_binding_refuses_before_any_request(self):
+        rt = self.serve({})
+        project = Path(self.tmp.name, 'broken')
+        (project / '.graphhelm').mkdir(parents=True)
+        (project / '.graphhelm' / 'team.json').write_text('{"executionId": "bad/id"}', encoding='utf-8')
+        r = self.run_lanes_from_project(project, GRAPHHELM_RUNTIME_URL=rt.url)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('valid executionId', r.stderr)
+        self.assertEqual(rt.seen, [])
 
 
 if __name__ == '__main__':

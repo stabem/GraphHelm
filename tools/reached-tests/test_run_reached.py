@@ -5,8 +5,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -808,20 +810,25 @@ class RunnerContracts(unittest.TestCase):
             marker = Path(temp).parent / (Path(temp).name + "-child-marker")
             plan = {"steps": [{"argv": ["python", "-c", f"from pathlib import Path; Path(r'{marker}').write_text('done')"], "cwd": ".", "slot": False},
                                {"argv": ["python", "-c", "raise SystemExit(99)"], "cwd": ".", "slot": False}]}
-            real_clock = time.monotonic
-            clock_calls = [0]
+            clock = [100.0]
+            real_run = rr.subprocess.run
+            child_runs = []
 
-            def controlled_clock():
-                clock_calls[0] += 1
-                value = real_clock()
-                return value + (2.0 if clock_calls[0] >= 3 else 0)
+            def observed_run(command, *run_args, **run_kwargs):
+                result = real_run(command, *run_args, **run_kwargs)
+                if "-c" in command and command[0] == rr.sys.executable:
+                    child_runs.append(command)
+                    clock[0] = 103.0
+                return result
 
-            with patch.object(rr, "_selector", return_value=plan):
+            with patch.object(rr, "_selector", return_value=plan), \
+                 patch.object(rr.subprocess, "run", side_effect=observed_run), \
+                 patch.object(rr.time, "monotonic", side_effect=lambda: clock[0]):
                 args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
-                                          "root": "D:/gh", "lane": "test", "budget_seconds": 1.0,
+                                          "root": "D:/gh", "lane": "test", "budget_seconds": 2.0,
                                           "allow_whole_package": None, "plan": False})()
-                with patch.object(rr.time, "monotonic", side_effect=controlled_clock):
-                    self.assertEqual(rr.run(args), 1)
+                self.assertEqual(rr.run(args), 1)
+            self.assertEqual(len(child_runs), 1)
             report = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(report["status"], "budgetExceeded")
             self.assertEqual(report["completed"][0]["returncode"], 0)
@@ -1240,8 +1247,26 @@ class ResumeAndPreflightContracts(unittest.TestCase):
             self.assertEqual(report["status"], "incomplete")
             self.assertEqual(report["completed"][0]["returncode"], 0)
             self.assertFalse(any(e.get("reusable") for e in report["completed"]))
-            self.assertEqual(self.run_once()[0], 0)
-            self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+            second_code, second_report = self.run_once()
+            self.assertEqual(second_code, 0)
+            third_code, third_report = self.run_once()
+
+            def reuse_evidence(code, report):
+                fingerprint = report.get("fingerprint", {})
+                tools = fingerprint.get("tools", {})
+                return {"code": code, "status": report.get("status"), "error": report.get("error"),
+                        "fingerprint": {key: fingerprint.get(key) for key in
+                                        ("tree", "toolsSha256", "envSha256")},
+                        "identityComplete": tools.get("identityComplete"),
+                        "identityReason": tools.get("identityReason"),
+                        "completed": [{key: entry.get(key) for key in
+                                       ("proofKey", "reused", "reusable", "returncode", "error")}
+                                      for entry in report.get("completed", [])]}
+
+            self.assertTrue(third_report["completed"][0].get("reused"),
+                            json.dumps({"second": reuse_evidence(second_code, second_report),
+                                        "third": reuse_evidence(third_code, third_report),
+                                        "actualRuns": self.runs()}, sort_keys=True))
         self.assertEqual(self.runs(), ["prepared", "node", "node"])
 
     @unittest.skipUnless(os.name == "nt" and __import__("shutil").which("node"), "OBSERVER_MISSING: native Windows PATH/PATHEXT executable launch")
@@ -1395,10 +1420,27 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         self.assertEqual(len(self.runs()), 22)
 
     def test_discovery_output_and_deadline_are_bounded(self):
-        with self.assertRaisesRegex(RuntimeError, "output"):
-            rr._discovery_output([sys.executable, "-c", "print('x'*1000000)"], self.repo, dict(os.environ), 2)
-        with self.assertRaisesRegex(RuntimeError, "deadline"):
-            rr._discovery_output([sys.executable, "-c", "import time; time.sleep(5)"], self.repo, dict(os.environ), 0.1)
+        real_popen = rr.subprocess.Popen
+        children = []
+
+        def observed_popen(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+
+        with patch.object(rr.subprocess, "Popen", side_effect=observed_popen), \
+             warnings.catch_warnings():
+            warnings.simplefilter("error", ResourceWarning)
+            with self.assertRaisesRegex(RuntimeError, "output"):
+                rr._discovery_output([sys.executable, "-c", "print('x'*1000000)"], self.repo, dict(os.environ), 2)
+            with self.assertRaisesRegex(RuntimeError, "deadline"):
+                rr._discovery_output([sys.executable, "-c", "import time; time.sleep(5)"], self.repo, dict(os.environ), 0.1)
+            with self.assertRaisesRegex(RuntimeError, "refused"):
+                rr._discovery_output([sys.executable, "-c", "raise SystemExit(3)"], self.repo, dict(os.environ), 2)
+        self.assertEqual(len(children), 3)
+        self.assertTrue(all(child.returncode is not None for child in children))
+        self.assertTrue(all(child.poll() is not None for child in children))
+        self.assertTrue(all(child.stdout.closed for child in children))
 
     @unittest.skipIf(os.name == "nt", "POSIX symlink-sensitive traversal")
     def test_invocation_parent_components_are_not_lexically_collapsed(self):
@@ -1750,23 +1792,102 @@ class SideBySideTestSteps(unittest.TestCase):
         self.assertEqual(rr._test_threads(13.1 + reserve, 32, reserve), 8)
         with patch.dict(os.environ, {"GRAPHHELM_MEMORY_RESERVE_GIB": "0"}):
             self.assertEqual(rr._reserve_gb(), 0.0)
-        # Memory falls under the reserve after the first executable starts: the second waits for it.
         with tempfile.TemporaryDirectory() as temp:
-            marker = Path(temp) / "first-running"
-            first = (f"import pathlib,time;p=pathlib.Path({str(marker)!r});p.write_text('1');"
-                     "time.sleep(0.6);p.unlink()")
-            second = (f"import pathlib,sys;sys.exit(3 if pathlib.Path({str(marker)!r}).exists() else 0)")
-            jobs = [{"index": i, "package": "a", "args": ["-c", code], "log": Path(temp) / f"{i}.log",
-                     "executables": [{"executable": sys.executable, "cwd": temp}]}
-                    for i, code in enumerate((first, second))]
-            rr._run_parallel(jobs, 4, dict(os.environ), reserve, free_gb=lambda: 2.0)
-            self.assertEqual([job["returncode"] for job in jobs], [0, 0])
-            # Control: with headroom the two overlap and the second sees the first running.
-            jobs = [{"index": i, "package": "a", "args": ["-c", code], "log": Path(temp) / f"h{i}.log",
-                     "executables": [{"executable": sys.executable, "cwd": temp}]}
-                    for i, code in enumerate((first, "import time;time.sleep(0.3);" + second))]
-            rr._run_parallel(jobs, 4, dict(os.environ), reserve, free_gb=lambda: 64.0)
-            self.assertEqual([job["returncode"] for job in jobs], [0, 3])
+            ready, release, outcome, lock = [Path(temp) / name for name in
+                                             ("first-ready", "release-first", "second-outcome", "held")]
+            setup = ("import pathlib,sys,time\n"
+                     f"ready=pathlib.Path({str(ready)!r})\n"
+                     f"release=pathlib.Path({str(release)!r})\n"
+                     f"outcome=pathlib.Path({str(outcome)!r})\n"
+                     f"lock=pathlib.Path({str(lock)!r})\n"
+                     "def await_path(path):\n"
+                     " deadline=time.monotonic()+20\n"
+                     " while not path.exists():\n"
+                     "  if time.monotonic()>=deadline: sys.exit(4)\n"
+                     "  time.sleep(0.01)\n")
+            first = (setup + "lock.mkdir()\ntry:\n ready.write_text('ready')\n"
+                     " await_path(release)\nfinally:\n lock.rmdir()\n")
+            second = (setup + "await_path(ready)\ntry:\n lock.mkdir()\n"
+                      "except FileExistsError: code=3\nelse: lock.rmdir();code=0\n"
+                      "outcome.write_text(str(code))\nsys.exit(code)\n")
+
+            def run_case(available_gb, prefix):
+                jobs = [{"index": i, "package": "a", "args": ["-c", code],
+                         "log": Path(temp) / f"{prefix}{i}.log",
+                         "executables": [{"executable": sys.executable, "cwd": temp}]}
+                        for i, code in enumerate((first, second))]
+                children, streams, failures, admissions, polls = [], [], [], [], []
+                real_popen = rr.subprocess.Popen
+
+                def start_child(*args, **kwargs):
+                    live_before = sum(poll() is None for poll in polls)
+                    child = real_popen(*args, **kwargs)
+                    original_poll, original_wait = child.poll, child.wait
+                    children.append(child)
+                    streams.append(kwargs["stdout"])
+                    polls.append(original_poll)
+                    admissions.append(live_before + 1)
+
+                    def release_at_completion():
+                        # The held child can finish when the serial runner observes its
+                        # completion, not when memory is queried before admission is decided.
+                        if available_gb < reserve and len(children) == 1:
+                            release.touch()
+
+                    def observed_poll():
+                        release_at_completion()
+                        return original_poll()
+
+                    def observed_wait(*wait_args, **wait_kwargs):
+                        release_at_completion()
+                        return original_wait(*wait_args, **wait_kwargs)
+
+                    child.poll, child.wait = observed_poll, observed_wait
+                    return child
+
+                def await_path(path):
+                    deadline = time.monotonic() + 15
+                    while not path.exists():
+                        if failures or not worker.is_alive() or time.monotonic() >= deadline:
+                            raise AssertionError("real-child readiness/outcome was not observed")
+                        time.sleep(0.01)
+
+                def available_memory():
+                    await_path(ready)
+                    return available_gb
+
+                def run_jobs():
+                    try:
+                        rr._run_parallel(jobs, 4, dict(os.environ), reserve, free_gb=available_memory)
+                    except Exception as error:
+                        failures.append(error)
+
+                worker = threading.Thread(target=run_jobs, daemon=True)
+                with patch.object(rr.subprocess, "Popen", side_effect=start_child):
+                    worker.start()
+                    try:
+                        await_path(outcome)
+                    finally:
+                        release.touch()
+                        worker.join(timeout=5)
+                        for child in children:
+                            if child.poll() is None:
+                                child.kill()
+                            child.wait(timeout=5)
+                        worker.join(timeout=5)
+                        if not worker.is_alive():
+                            for stream in streams:
+                                stream.close()
+                self.assertFalse(worker.is_alive(), "owned worker did not finish after cleanup")
+                self.assertEqual(failures, [])
+                self.assertEqual(len(children), 2)
+                self.assertTrue(all(child.returncode is not None for child in children))
+                return [job["returncode"] for job in jobs], admissions
+
+            self.assertEqual(run_case(available_gb=2.0, prefix="serial"), ([0, 0], [1, 1]))
+            for path in (ready, release, outcome):
+                path.unlink()
+            self.assertEqual(run_case(available_gb=64.0, prefix="parallel"), ([0, 3], [1, 2]))
 
     def test_split_accepts_only_replayable_cargo_tests(self):
         argv = ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--bin", "graphhelm",

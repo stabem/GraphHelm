@@ -472,6 +472,33 @@ def _normal_closure(packages, start):
     return reached
 
 
+def _mask_simple_fn_argument_impls(text):
+    """Mask non-item ``impl`` words only in simple closed parameter lists."""
+    # Block comments can contain declaration-like text. Unknown contexts keep the original
+    # conservative item scan; this optimization does not try to lex Rust literals or comments.
+    if "/*" in text:
+        return text
+    masked = list(text)
+    declaration = re.compile(r"(?m)^[ \t]*(?:pub(?:\([^()\n]*\))?[ \t]+)?fn[ \t]+[A-Za-z_]\w*[ \t\r\n]*\(")
+    cursor = 0
+    while (match := declaration.search(text, cursor)) is not None:
+        start = end = match.end()
+        depth = 1
+        while end < len(text) and depth:
+            char = text[end]
+            if char in "{};\"'/":
+                break
+            depth += {"(": 1, ")": -1}.get(char, 0)
+            end += 1
+        cursor = end + 1  # Even an unsupported candidate is scanned only once.
+        if depth:
+            continue
+        for word in re.finditer(r"\bimpl\b", text[start:end - 1]):
+            begin = start + word.start()
+            masked[begin:begin + 4] = "    "
+    return "".join(masked)
+
+
 def core_module_cli(packages, p, rel, root):
     """#1875: the CLI part of the plan for a change to one module of a core crate `p`: the union of
     the narrow plans (`cli_module`) of the CLI files that name an affected path, plus the CLI test
@@ -531,7 +558,7 @@ def core_module_cli(packages, p, rel, root):
     for path, text in sources.items():
         if top(path) not in affected:
             continue
-        for header in re.findall(r"\bimpl\b([^{;]*)\{", text):
+        for header in re.findall(r"\bimpl\b([^{;]*)\{", _mask_simple_fn_argument_impls(text)):
             # #1877 review (cases V, W): narrow only for `impl [<params>] [Trait for] Name[<args>]`
             # where Name is one bare identifier the affected modules declare and not a generic
             # parameter of the impl; a path (`crate::n::T`), a `where` clause, a reference, a

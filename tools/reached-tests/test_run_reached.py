@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import warnings
@@ -1773,23 +1774,86 @@ class SideBySideTestSteps(unittest.TestCase):
         self.assertEqual(rr._test_threads(13.1 + reserve, 32, reserve), 8)
         with patch.dict(os.environ, {"GRAPHHELM_MEMORY_RESERVE_GIB": "0"}):
             self.assertEqual(rr._reserve_gb(), 0.0)
-        # Memory falls under the reserve after the first executable starts: the second waits for it.
         with tempfile.TemporaryDirectory() as temp:
-            marker = Path(temp) / "first-running"
-            first = (f"import pathlib,time;p=pathlib.Path({str(marker)!r});p.write_text('1');"
-                     "time.sleep(0.6);p.unlink()")
-            second = (f"import pathlib,sys;sys.exit(3 if pathlib.Path({str(marker)!r}).exists() else 0)")
-            jobs = [{"index": i, "package": "a", "args": ["-c", code], "log": Path(temp) / f"{i}.log",
-                     "executables": [{"executable": sys.executable, "cwd": temp}]}
-                    for i, code in enumerate((first, second))]
-            rr._run_parallel(jobs, 4, dict(os.environ), reserve, free_gb=lambda: 2.0)
-            self.assertEqual([job["returncode"] for job in jobs], [0, 0])
-            # Control: with headroom the two overlap and the second sees the first running.
-            jobs = [{"index": i, "package": "a", "args": ["-c", code], "log": Path(temp) / f"h{i}.log",
-                     "executables": [{"executable": sys.executable, "cwd": temp}]}
-                    for i, code in enumerate((first, "import time;time.sleep(0.3);" + second))]
-            rr._run_parallel(jobs, 4, dict(os.environ), reserve, free_gb=lambda: 64.0)
-            self.assertEqual([job["returncode"] for job in jobs], [0, 3])
+            ready, release, outcome, lock = [Path(temp) / name for name in
+                                             ("first-ready", "release-first", "second-outcome", "held")]
+            setup = ("import pathlib,sys,time\n"
+                     f"ready=pathlib.Path({str(ready)!r})\n"
+                     f"release=pathlib.Path({str(release)!r})\n"
+                     f"outcome=pathlib.Path({str(outcome)!r})\n"
+                     f"lock=pathlib.Path({str(lock)!r})\n"
+                     "def await_path(path):\n"
+                     " deadline=time.monotonic()+20\n"
+                     " while not path.exists():\n"
+                     "  if time.monotonic()>=deadline: sys.exit(4)\n"
+                     "  time.sleep(0.01)\n")
+            first = (setup + "lock.mkdir()\ntry:\n ready.write_text('ready')\n"
+                     " await_path(release)\nfinally:\n lock.rmdir()\n")
+            second = (setup + "await_path(ready)\ntry:\n lock.mkdir()\n"
+                      "except FileExistsError: code=3\nelse: lock.rmdir();code=0\n"
+                      "outcome.write_text(str(code))\nsys.exit(code)\n")
+
+            def run_case(available_gb, prefix):
+                jobs = [{"index": i, "package": "a", "args": ["-c", code],
+                         "log": Path(temp) / f"{prefix}{i}.log",
+                         "executables": [{"executable": sys.executable, "cwd": temp}]}
+                        for i, code in enumerate((first, second))]
+                children, streams, failures = [], [], []
+                real_popen = rr.subprocess.Popen
+
+                def start_child(*args, **kwargs):
+                    child = real_popen(*args, **kwargs)
+                    children.append(child)
+                    streams.append(kwargs["stdout"])
+                    return child
+
+                def await_path(path):
+                    deadline = time.monotonic() + 15
+                    while not path.exists():
+                        if failures or not worker.is_alive() or time.monotonic() >= deadline:
+                            raise AssertionError("real-child readiness/outcome was not observed")
+                        time.sleep(0.01)
+
+                def available_memory():
+                    await_path(ready)
+                    # Low-memory admission releases the held child; with headroom it stays
+                    # held until the second child reports an actual atomic mkdir collision.
+                    if available_gb < reserve:
+                        release.touch()
+                    return available_gb
+
+                def run_jobs():
+                    try:
+                        rr._run_parallel(jobs, 4, dict(os.environ), reserve, free_gb=available_memory)
+                    except Exception as error:
+                        failures.append(error)
+
+                worker = threading.Thread(target=run_jobs, daemon=True)
+                with patch.object(rr.subprocess, "Popen", side_effect=start_child):
+                    worker.start()
+                    try:
+                        await_path(outcome)
+                    finally:
+                        release.touch()
+                        worker.join(timeout=5)
+                        for child in children:
+                            if child.poll() is None:
+                                child.kill()
+                            child.wait(timeout=5)
+                        worker.join(timeout=5)
+                        if not worker.is_alive():
+                            for stream in streams:
+                                stream.close()
+                self.assertFalse(worker.is_alive(), "owned worker did not finish after cleanup")
+                self.assertEqual(failures, [])
+                self.assertEqual(len(children), 2)
+                self.assertTrue(all(child.returncode is not None for child in children))
+                return [job["returncode"] for job in jobs]
+
+            self.assertEqual(run_case(available_gb=2.0, prefix="serial"), [0, 0])
+            for path in (ready, release, outcome):
+                path.unlink()
+            self.assertEqual(run_case(available_gb=64.0, prefix="parallel"), [0, 3])
 
     def test_split_accepts_only_replayable_cargo_tests(self):
         argv = ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--bin", "graphhelm",

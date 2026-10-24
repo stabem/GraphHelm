@@ -359,7 +359,9 @@ A critic round's verdict is not an argument: the script derives it from the scor
 - **Defaults.** `--url http://127.0.0.1:8793`, `--repo stabem/GraphHelm`; the execution is selected
   by explicit `--execution`, or otherwise by the first existing `team.json` beside the effective
   `--token-file` and then the nearest project `.graphhelm/team.json`. A missing or invalid binding
-  refuses before any Runtime or GitHub work; there is no implicit `gh-team` fallback.
+  refuses before any Runtime or GitHub work; there is no implicit `gh-team` fallback. Execution IDs
+  use the Runtime's exact bounded opaque-ASCII predicate (up to 128 bytes), and the recorder
+  percent-encodes the ID as one URL path segment before POSTing.
   `revision` is the step's position (claimed 1 … merged 5; `planned` is 1, beside its claim). `closes` is exactly the `--closes`
   numbers (the issues the squash closed, the intent `ci/closing-keywords.ps1` checked); with none
   given it is empty, which is right for a `Refs` PR.

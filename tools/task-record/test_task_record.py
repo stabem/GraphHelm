@@ -482,14 +482,47 @@ class TaskRecordTest(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertEqual(FakeRuntime.paths, ["/v1/executions/explicit-run/signal"])
 
+    def test_runtime_execution_ids_are_accepted_and_percent_encoded(self):
+        # Contract: the recorder accepts the Runtime's opaque ASCII alphabet and encodes the
+        # execution segment so reserved bytes cannot become query or fragment syntax.
+        # Regression: the review fix must not narrow existing IDs, and raw POST paths must not
+        # reinterpret punctuation. Existing tests observed only simple execution names.
+        execution_ids = ("run!blue", "run#blue", "run~blue", "run+blue", "run[blue",
+                         "run?blue", "run%blue")
+        for mode in ("config", "explicit"):
+            for index, execution in enumerate(execution_ids):
+                with self.subTest(mode=mode, execution=execution):
+                    folder = Path(self.tmp.name) / f"valid-{mode}-{index}"
+                    folder.mkdir(parents=True)
+                    token = folder / "events.agent.token"
+                    token.write_text("agent-token\n", encoding="utf-8")
+                    task_record.credential_file(token, "lane-a").write_text("credential-lane-a\n", encoding="utf-8")
+                    if mode == "config":
+                        (folder / "team.json").write_text(json.dumps({"executionId": execution}), encoding="utf-8")
+                    else:
+                        (folder / "team.json").write_text("[]", encoding="utf-8")
+                    old = Path.cwd()
+                    try:
+                        os.chdir(folder)
+                        extra = () if mode == "config" else ("--execution", execution)
+                        code, output = self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                                                     "--no-github", "--token-file", str(token), *extra,
+                                                     execution=None)
+                    finally:
+                        os.chdir(old)
+                    self.assertEqual(code, 0, output)
+                    expected = "/v1/executions/" + urllib.parse.quote(execution, safe="") + "/signal"
+                    self.assertEqual(FakeRuntime.paths[-1], expected)
+
     def test_invalid_team_bindings_are_bounded_and_never_sent(self):
         # Contract: malformed, non-object, missing and oversized bindings refuse before HTTP.
         # Regression: an invalid value could become a URL path or silently select a fallback.
         # Existing coverage had no config parser or no-send observer; this uses the real loopback.
         cases = [
             ("missing", {}), ("empty", {"executionId": ""}),
-            ("path", {"executionId": "bad/id", "token": "sentinel-secret"}), ("query", {"executionId": "bad?query"}),
-            ("fragment", {"executionId": "bad#fragment"}), ("percent", {"executionId": "bad%value"}),
+            ("slash", {"executionId": "bad/id", "token": "sentinel-secret"}),
+            ("backslash", {"executionId": "bad\\id"}), ("nonascii", {"executionId": "é"}),
+            ("colon", {"executionId": "run:blue"}), ("control", {"executionId": "bad\nvalue"}),
             ("long", {"executionId": "a" * 129}),
             ("array", []), ("oversized", {"executionId": "ok", "padding": "x" * 65536}),
         ]
@@ -520,16 +553,51 @@ class TaskRecordTest(unittest.TestCase):
                           "--no-github", "--token-file", str(token), execution=None)
         self.assertEqual(len(FakeRuntime.paths), before)
 
-        valid = Path(self.tmp.name) / "valid-colon"
-        valid.mkdir(parents=True)
-        token = valid / "events.agent.token"
+        for name, raw in (("deep", b"[" * 1200 + b"0" + b"]" * 1200),
+                          ("number", b'{"executionId": ' + b"9" * 5000 + b"}")):
+            folder = Path(self.tmp.name) / f"invalid-{name}"
+            folder.mkdir(parents=True)
+            token = folder / "events.agent.token"
+            token.write_text("agent-token\n", encoding="utf-8")
+            task_record.credential_file(token, "lane-a").write_text("credential-lane-a\n", encoding="utf-8")
+            (folder / "team.json").write_bytes(raw)
+            before = len(FakeRuntime.paths)
+            with self.assertRaises(SystemExit) as refusal:
+                self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                              "--no-github", "--token-file", str(token), execution=None)
+            self.assertEqual(len(FakeRuntime.paths), before)
+            self.assertNotIn("sentinel-secret", str(refusal.exception))
+
+    def test_team_binding_permission_error_does_not_fall_through(self):
+        project = Path(self.tmp.name) / "permission-project"
+        nested = project / "src"
+        nested.mkdir(parents=True)
+        (project / ".graphhelm").mkdir()
+        (project / ".graphhelm" / "team.json").write_text(
+            json.dumps({"executionId": "fallback-must-not-win"}), encoding="utf-8")
+        token = Path(self.tmp.name) / "permission-runtime" / "events.agent.token"
+        token.parent.mkdir()
         token.write_text("agent-token\n", encoding="utf-8")
         task_record.credential_file(token, "lane-a").write_text("credential-lane-a\n", encoding="utf-8")
-        (valid / "team.json").write_text(json.dumps({"executionId": "run:blue"}), encoding="utf-8")
-        code, output = self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
-                                     "--no-github", "--token-file", str(token), execution=None)
-        self.assertEqual(code, 0, output)
-        self.assertEqual(FakeRuntime.paths[-1], "/v1/executions/run:blue/signal")
+        sibling = token.parent / "team.json"
+        real_lstat = task_record.os.lstat
+
+        def deny_sibling(path):
+            if Path(path).absolute() == sibling.absolute():
+                raise PermissionError("permission denied")
+            return real_lstat(path)
+
+        before = len(FakeRuntime.paths)
+        with patch.object(task_record.os, "lstat", side_effect=deny_sibling), self.assertRaises(SystemExit) as refusal:
+            old = Path.cwd()
+            try:
+                os.chdir(nested)
+                self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                              "--no-github", "--token-file", str(token), execution=None)
+            finally:
+                os.chdir(old)
+        self.assertEqual(len(FakeRuntime.paths), before)
+        self.assertNotIn("fallback-must-not-win", str(refusal.exception))
 
     def test_the_fix_loop_records_a_second_pr_opened_and_verdict_on_the_new_head(self):
         steps = [

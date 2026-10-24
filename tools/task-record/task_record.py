@@ -67,9 +67,16 @@ MAX_TEAM_CONFIG_BYTES = 64 * 1024
 
 
 def valid_execution_id(value):
-    """Match the Runtime's bounded execution binding alphabet without importing core code."""
-    return (isinstance(value, str) and
-            re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value, re.ASCII) is not None)
+    """Match the Runtime's bounded opaque execution identifier without importing core code."""
+    if not isinstance(value, str) or not 0 < len(value) <= 128:
+        return False
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return all(0x21 <= byte <= 0x2e or 0x30 <= byte <= 0x39 or
+               0x3b <= byte <= 0x5b or 0x5d <= byte <= 0x7e
+               for byte in encoded)
 
 
 def _team_config_execution(path):
@@ -113,7 +120,13 @@ def resolve_execution(explicit, token_file):
         if candidate in seen:
             continue
         seen.add(candidate)
-        if os.path.lexists(candidate):
+        try:
+            os.lstat(candidate)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            sys.exit("task_record: cannot inspect configured team.json; no record sent")
+        else:
             return _team_config_execution(candidate)
     sys.exit("task_record: no execution binding found; pass --execution or create .graphhelm/team.json; no record sent")
 
@@ -953,7 +966,7 @@ def send(args, doc, now, attachments=None):
                        "description": json.dumps(doc, separators=(",", ":"))}}
     if attachments:
         body["attachments"] = attachments
-    url = f"{args.url.rstrip('/')}/v1/executions/{args.execution}/signal"
+    url = f"{args.url.rstrip('/')}/v1/executions/{urllib.parse.quote(args.execution, safe='')}/signal"
     headers = {"Content-Type": "application/json", "Idempotency-Key": signal_id,
                "X-GraphHelm-Actor": args.lane,
                "X-GraphHelm-Actor-Type": "owner" if args.kind == "lane_retired" else "agent"}

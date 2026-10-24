@@ -35,6 +35,26 @@ export interface Agent {
 
 const open = (task: BoardTask) => task.step !== "merged" && task.releasedBy === undefined;
 
+/** #1979: lanes off the board: finished lanes, i.e. the newest slice they own was recorded `merged`, they hold
+ * or review no open slice and wait on no question. Derived from records (no `lane_retired`); a
+ * new claim opens a slice and the lane is no longer finished. */
+export function finishedLanes(board: TasksBoard): Set<string> {
+  const finished = new Set<string>();
+  const owners = new Set(board.tasks.map((task) => task.lane).filter((lane): lane is string => !!lane));
+  for (const lane of owners) {
+    const newest = board.tasks.filter((task) => task.lane === lane).sort((a, b) => b.lastSequence - a.lastSequence)[0];
+    const busy = board.tasks.some((task) => open(task) && (task.lane === lane || task.currentReviewer === lane));
+    if (newest?.step === "merged" && !busy && !board.waiting.some((row) => row.lane === lane)) finished.add(lane);
+  }
+  // A lane whose records are only requests/notes (the orchestrator): it never claimed or reviewed a
+  // slice, reported no kind or model and asks nothing, so it is no card of the board.
+  for (const row of board.liveness.lanes) {
+    const touched = board.tasks.some((task) => task.lane === row.lane || task.currentReviewer === row.lane);
+    if (!touched && row.agentKind === undefined && row.agentModel === undefined && !board.waiting.some((ask) => ask.lane === row.lane)) finished.add(row.lane);
+  }
+  return finished;
+}
+
 /** The board read as one card per lane, in lane order. A lane is any lane the liveness verdicts,
  * the open slices or the open questions name. */
 export function agents(board: TasksBoard): Agent[] {
@@ -47,7 +67,8 @@ export function agents(board: TasksBoard): Agent[] {
   }
   for (const row of board.waiting) names.add(row.lane);
   const now = Date.parse(board.now);
-  return [...names].sort().map((lane) => {
+  const done = finishedLanes(board);
+  return [...names].filter((lane) => !done.has(lane)).sort().map((lane) => {
     const owned = board.tasks.filter((task) => open(task) && task.lane === lane).sort((a, b) => b.lastSequence - a.lastSequence);
     const reviewing = board.tasks.filter((task) => open(task) && task.currentReviewer === lane);
     const task = owned[0] ?? reviewing[0] ?? null;

@@ -13,11 +13,9 @@ export function RequestProgress({ progress }: { progress: Progress }) {
         <span className={`mono request-chip chip-${chip.key}`} style={{ "--chip": chip.color } as CSSProperties}>{chip.label}</span>
         <span className="mono req-pct">{pct}</span>
       </span>
-      {total > 0 && (
-        <span role="img" aria-label={`${done} of ${total} issues delivered`} className="req-bar">
-          {segs.map((seg) => <span key={seg.issue} title={`#${seg.issue} ${seg.state}`} style={{ background: seg.color }} />)}
-        </span>
-      )}
+      <span role="img" aria-label={`${done} of ${total} issues delivered`} className="req-bar">
+        {segs.map((seg) => <span key={seg.issue} title={`#${seg.issue} ${seg.state}`} style={{ background: seg.color }} />)}
+      </span>
       {legend.length > 0 && (
         <span className="req-legend">
           {legend.map((entry) => <span key={entry.label} className="mono"><i style={{ background: entry.color }} />{entry.n} {entry.label}</span>)}

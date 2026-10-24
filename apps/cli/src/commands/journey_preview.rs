@@ -198,18 +198,49 @@ pub(crate) fn reviewed_on_main(project: &Path, id: &str) -> bool {
     let Ok(local) = std::fs::read(&file) else {
         return false;
     };
-    graphhelm_process::command("git")
+    if local.is_empty() {
+        return false;
+    }
+    let spawned = graphhelm_process::command("git")
         .arg("-C")
         .arg(project)
         .args(["cat-file", "blob"])
         .arg(format!("refs/remotes/origin/main:./{relative}"))
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .is_some_and(|output| !local.is_empty() && output.stdout == local)
+        .spawn();
+    let Ok(mut child) = spawned else {
+        return false;
+    };
+    // The blob is read on its own thread so a full pipe never stalls the bounded wait below.
+    let reader = child.stdout.take().map(|mut out| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut out, &mut bytes).map(|_| bytes)
+        })
+    });
+    let deadline = Instant::now() + REVIEWED_BLOB_LIMIT;
+    let succeeded = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.success(),
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            // A hung or unreadable git is no review: kill it and wait for review.
+            // A failed kill changes nothing: the answer is already "not reviewed".
+            _ => {
+                drop(child.kill());
+                break false;
+            }
+        }
+    };
+    let blob = reader
+        .and_then(|thread| thread.join().ok())
+        .and_then(|read| read.ok());
+    succeeded && blob.is_some_and(|blob| blob == local)
 }
+
+/// How long reading the reviewed blob from the local object store may take (#1911).
+const REVIEWED_BLOB_LIMIT: Duration = Duration::from_secs(10);
 
 fn read_state(dir: &Path) -> Option<Value> {
     let file = dir.join(STATE);

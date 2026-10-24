@@ -10,7 +10,7 @@ const live = (lane: string, extra: Partial<TasksBoard["liveness"]["lanes"][numbe
 
 describe("lanes panels", () => {
   it("#1919: an open request no issue was opened for waits to be handed to a free lane", () => {
-    const board: TasksBoard = { now: "2026-10-23T12:00:00Z", tasks: [], liveness: { lanes: [live("lane-free", { free: true })] }, stalls: [], waiting: [] };
+    const board: TasksBoard = { now: "2026-10-23T12:00:00Z", tasks: [task("f#1", "lane-free", "implement", { releasedBy: "orch" })], liveness: { lanes: [live("lane-free", { free: true })] }, stalls: [], waiting: [] };
     const request = (requestId: string, status: "open" | "in_progress", issues: number[]) => ({
       requestId, ask: "Fix the journey buy", title: `Fix ${requestId}`, recordedBy: "studio-operator", sequence: 1,
       recordedAt: "2026-10-23T11:00:00Z", status, issues: issues.map((issue) => ({ issue, slices: [] })),
@@ -25,6 +25,7 @@ describe("lanes panels", () => {
     const board: TasksBoard = {
       now: "2026-10-22T12:00:00Z",
       tasks: [
+        task("f#1", "lane-free", "implement", { releasedBy: "orch" }),
         task("s#1", "lane-s", "implement", { lastSequence: 4 }),
         task("p#1", "lane-p", "review", { pr: 11, clock: { since: "2026-10-22T11:48:00Z" } }),
         task("m#1", "lane-m", "merge", { pr: 12, currentReviewer: "lane-r", clock: { since: "2026-10-22T11:50:00Z" } }),
@@ -59,6 +60,28 @@ describe("lanes panels", () => {
       waiting: [],
     };
     expect(needsAction(board).map((need) => [need.verb, need.to])).toEqual([["Reassign", "lane-p"], ["Assign", null]]);
+  });
+
+  it("never names a finished lane as the target of a Reassign (#1986)", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [task("s#1", "lane-s", "implement"), task("d#1", "lane-done", "merged", { lastSequence: 9 })],
+      liveness: { lanes: [live("lane-s", { silent: true, lastRecordAt: "2026-10-22T09:00:00Z" }), live("lane-done", { free: true })] },
+      stalls: [],
+      waiting: [],
+    };
+    expect(needsAction(board).map((need) => [need.verb, need.to])).toEqual([["Reassign", null]]);
+  });
+
+  it("never picks a heartbeating zero-slice lane (the orchestrator) as a target (#1986)", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [task("s#1", "lane-s", "implement")],
+      liveness: { lanes: [live("lane-s", { silent: true, lastRecordAt: "2026-10-22T09:00:00Z" }), live("a-orch", { free: true, lastRecordAt: "2026-10-22T11:59:00Z" })] },
+      stalls: [],
+      waiting: [],
+    };
+    expect(needsAction(board).map((need) => [need.verb, need.to])).toEqual([["Reassign", null]]);
   });
 
   it("merges every lane's actions into one feed, newest first, bounded", () => {

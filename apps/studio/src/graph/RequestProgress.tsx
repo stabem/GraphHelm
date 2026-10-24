@@ -14,7 +14,7 @@ export function RequestProgress({ progress }: { progress: Progress }) {
         <span className="mono req-pct">{pct}</span>
       </span>
       <span role="img" aria-label={`${done} of ${total} issues delivered`} className="req-bar">
-        {segs.map((seg) => <span key={seg.issue} title={`#${seg.issue} ${seg.state}`} style={{ background: seg.color }} />)}
+        {segs.map((seg) => <span key={seg.issue} title={`#${seg.issue} ${seg.state}`} style={{ background: seg.fill >= 1 ? seg.color : `linear-gradient(90deg, ${seg.color} ${seg.fill * 100}%, transparent ${seg.fill * 100}%)` }} />)}
       </span>
       {legend.length > 0 && (
         <span className="req-legend">

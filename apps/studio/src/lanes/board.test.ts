@@ -88,7 +88,7 @@ describe("lanes board", () => {
   it("carries each lane's kind and model from its liveness row, and none when it never said (#1851)", () => {
     const board: TasksBoard = {
       now: "2026-10-22T12:00:00Z",
-      tasks: [task("b#1", "lane-b", "implement")],
+      tasks: [task("a#1", "lane-a", "implement"), task("b#1", "lane-b", "implement")],
       liveness: { lanes: [
         { lane: "lane-a", agentKind: "claude", agentModel: "opus", owes: false, silent: false, free: true },
         { lane: "lane-b", owes: false, silent: false, free: true },
@@ -117,5 +117,32 @@ describe("lanes board", () => {
     board.liveness.lanes.push({ lane: "orch", lastRecordAt: "2026-10-22T09:00:00Z", owes: false, silent: false, free: true });
     expect([...finishedLanes(board)].sort()).toEqual(["lane-done", "orch"]);
     expect(agents(board).map((agent) => [agent.lane, agent.column])).toEqual([["lane-again", "implement"]]);
+  });
+
+  it("keeps a request-only lane off the board even when it reported a kind and model; its request records still count (#1986)", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [task("b#1", "lane-b", "implement")],
+      liveness: { lanes: [
+        { lane: "orch", lastRecordAt: "2026-10-22T11:00:00Z", agentKind: "claude", agentModel: "opus", owes: false, silent: false, free: true },
+        { lane: "lane-b", lastRecordAt: "2026-10-22T11:59:00Z", owes: true, silent: false, free: false },
+      ] },
+      stalls: [],
+      waiting: [],
+    };
+    expect([...finishedLanes(board)]).toEqual(["orch"]);
+    expect(agents(board).map((agent) => agent.lane)).toEqual(["lane-b"]);
+  });
+
+  it("moves a silent lane to implement once a heartbeat makes it live again (#1986)", () => {
+    const at = (silent: boolean): TasksBoard => ({
+      now: "2026-10-22T12:00:00Z",
+      tasks: [task("a#1", "lane-a", "implement")],
+      liveness: { lanes: [{ lane: "lane-a", lastRecordAt: silent ? "2026-10-22T09:00:00Z" : "2026-10-22T11:59:00Z", owes: true, silent, free: false }] },
+      stalls: [],
+      waiting: [],
+    });
+    expect(agents(at(true)).map((agent) => agent.column)).toEqual(["silent"]);
+    expect(agents(at(false)).map((agent) => agent.column)).toEqual(["implement"]);
   });
 });

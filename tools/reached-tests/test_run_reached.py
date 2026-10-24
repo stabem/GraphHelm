@@ -808,20 +808,25 @@ class RunnerContracts(unittest.TestCase):
             marker = Path(temp).parent / (Path(temp).name + "-child-marker")
             plan = {"steps": [{"argv": ["python", "-c", f"from pathlib import Path; Path(r'{marker}').write_text('done')"], "cwd": ".", "slot": False},
                                {"argv": ["python", "-c", "raise SystemExit(99)"], "cwd": ".", "slot": False}]}
-            real_clock = time.monotonic
-            clock_calls = [0]
+            clock = [100.0]
+            real_run = rr.subprocess.run
+            child_runs = []
 
-            def controlled_clock():
-                clock_calls[0] += 1
-                value = real_clock()
-                return value + (2.0 if clock_calls[0] >= 3 else 0)
+            def observed_run(command, *run_args, **run_kwargs):
+                result = real_run(command, *run_args, **run_kwargs)
+                if "-c" in command and command[0] == rr.sys.executable:
+                    child_runs.append(command)
+                    clock[0] = 103.0
+                return result
 
-            with patch.object(rr, "_selector", return_value=plan):
+            with patch.object(rr, "_selector", return_value=plan), \
+                 patch.object(rr.subprocess, "run", side_effect=observed_run), \
+                 patch.object(rr.time, "monotonic", side_effect=lambda: clock[0]):
                 args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
-                                          "root": "D:/gh", "lane": "test", "budget_seconds": 1.0,
+                                          "root": "D:/gh", "lane": "test", "budget_seconds": 2.0,
                                           "allow_whole_package": None, "plan": False})()
-                with patch.object(rr.time, "monotonic", side_effect=controlled_clock):
-                    self.assertEqual(rr.run(args), 1)
+                self.assertEqual(rr.run(args), 1)
+            self.assertEqual(len(child_runs), 1)
             report = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(report["status"], "budgetExceeded")
             self.assertEqual(report["completed"][0]["returncode"], 0)

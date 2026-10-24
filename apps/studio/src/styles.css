@@ -250,7 +250,8 @@ button { font: inherit; }
 .phone .compare-side { grid-template-columns: minmax(0, 1fr); }
 .compare-frame > img, .compare-frame > p { margin: 0; }
 /* #1966: every frame (Frame, Side by side, Overlay, Changes, web and phone) is scaled to its box width with its aspect ratio kept, never cropped and never given its own scroll. */
-.compare-frame img, .phone img { display: block; flex: none; width: 100%; max-width: 100%; height: auto; object-fit: contain; background: #f0efe9; }
+/* #1971: and bounded by the height left in the viewport (the bar and page header take ~240px), so the bottom edge is in view without scrolling; contain letterboxes it, centred. */
+.compare-frame img, .phone img { display: block; flex: none; width: 100%; max-width: 100%; height: auto; max-height: max(320px, calc(100vh - 240px)); max-height: max(320px, calc(100dvh - 240px)); object-fit: contain; object-position: center; margin-inline: auto; background: #f0efe9; }
 /* #1912: a command step's terminal, in place of a frame. */
 .terminal { color: #e6e4dc; }
 .terminal-empty { padding: 12px 14px; }
@@ -303,7 +304,8 @@ button { font: inherit; }
 .compare-side figure { margin: 0; min-width: 0; }
 .compare-side figcaption { padding: 4px 8px; font-size: 11px; color: var(--muted); }
 .compare-overlay { position: relative; line-height: 0; }
-.compare-overlay img + img { position: absolute; left: 0; top: 0; height: 100%; }
+.compare-overlay img + img { position: absolute; left: 0; top: 0; height: 100%; max-height: none; }
+.compare-overlay img:first-child { max-height: max(320px, calc(100vh - 240px)); }
 .compare-side-panel { flex: 1 1 260px; min-width: 0; border: 1px solid var(--edge-strong); border-radius: 12px; background: #151517; padding: 12px; display: flex; flex-direction: column; gap: 8px; font-size: 12px; overflow-wrap: anywhere; }
 .compare-side-panel > .section-label { margin-top: 6px; }
 .compare-side-panel > .section-label:first-child { margin-top: 0; }

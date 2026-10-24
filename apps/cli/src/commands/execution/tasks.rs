@@ -59,6 +59,31 @@ pub struct TasksView {
     pub retired_lanes: Vec<String>,
     /// #1794 (Studio v2 R3): every question a lane asked that no reply answers yet, oldest first.
     pub waiting: Vec<LaneWaiting>,
+    /// #1981: the owner dispatch notes on the journal (signal id to the lane it names), read from
+    /// plaintext. Not served on the tasks routes; the requests route reads it.
+    #[serde(skip)]
+    pub dispatch_notes: BTreeMap<String, String>,
+}
+
+/// #1981: every owner `operator_note` whose signal id is a request dispatch id, by id, with its
+/// `to`. No envelope is opened.
+pub fn dispatch_notes(history: &[graphhelm_protocols::EventEnvelope]) -> BTreeMap<String, String> {
+    history
+        .iter()
+        .filter(|event| event.actor.actor_type() == graphhelm_protocols::PersistedActorType::Owner)
+        .filter_map(|event| match &event.kind {
+            EventKind::SignalRecorded(record)
+                if record.kind == "operator_note"
+                    && record.signal_id.as_str().starts_with("dispatch-") =>
+            {
+                record
+                    .to
+                    .as_ref()
+                    .map(|to| (record.signal_id.as_str().to_owned(), to.as_str().to_owned()))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// #1794: one open question of a lane. A lane asks with a signal of type `question` addressed
@@ -1166,6 +1191,7 @@ pub(crate) fn read_history(
         backlog,
         retired_lanes: fold.retired_lanes,
         waiting,
+        dispatch_notes: dispatch_notes(history),
     })
 }
 

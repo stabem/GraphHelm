@@ -43,7 +43,8 @@ export function needsAction(board: TasksBoard, requests: readonly OwnerRequest[]
   // #1919: an owner request (a Proof "Send to fix" among them) that no issue was opened for yet
   // waits for the owner to hand it to a free lane.
   for (const request of requests) {
-    if (request.status !== "open" || request.issues.length > 0) continue;
+    // #1981: one the Runtime already handed to a lane waits on nobody.
+    if (request.status !== "open" || request.issues.length > 0 || request.dispatchedTo) continue;
     const to = freeLane(board, []);
     needs.push({
       id: `handoff:${request.requestId}`, verb: "Hand off", tone: "red",

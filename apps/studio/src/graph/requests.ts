@@ -12,6 +12,8 @@ export interface OwnerRequest {
   recordedAt?: string;
   status: "open" | "in_progress" | "delivered";
   issues: { issue: number; slices: { pr: number | null; step: string; merged: boolean }[] }[];
+  /** #1981: the lane the Runtime handed the request to, before that lane links its issue. */
+  dispatchedTo?: string;
 }
 
 /** The Kanban columns of the design, left to right. "Merged" is not done: a card is Proven only
@@ -137,7 +139,9 @@ export function requestProgress(request: OwnerRequest, tasks: readonly BoardTask
     .map((col) => ({ n: its.filter((it) => it.col === col).length, ...(col < 0 ? NOT_STARTED : ISSUE_STATES[col]!) }))
     .filter((g) => g.n > 0);
   let chip: RequestChip;
-  if (total === 0) chip = { key: "not_started", label: "Not started", color: "#a2a2ad" };
+  // #1981: the Runtime handed it to a lane that has not linked its issue yet: work has started.
+  if (total === 0 && request.dispatchedTo) chip = { key: "in_progress", label: `In progress · handed to ${request.dispatchedTo}`, color: "#ff8a3d" };
+  else if (total === 0) chip = { key: "not_started", label: "Not started", color: "#a2a2ad" };
   else if (done === total) {
     chip = its.every((it) => it.col >= 4) ? { key: "proven", label: "\u2713 Proven", color: "#3ddc97" } : { key: "delivered", label: "Delivered", color: "#4ea1ff" };
   } else if (its.some((it) => it.col === 1 || it.col === 2)) chip = { key: "in_progress", label: `In progress \u00b7 ${done} of ${total}`, color: "#ff8a3d" };

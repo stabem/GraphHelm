@@ -60,6 +60,10 @@ pub struct RequestView {
     pub recorded_at: Option<PersistedTimestamp>,
     pub status: RequestStatus,
     pub issues: Vec<RequestIssue>,
+    /// #1981: the lane the Runtime handed this request to (its dispatch note's `to`), absent until
+    /// it is handed. The lane links its issue with `task.request_linked`, which moves the status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatched_to: Option<String>,
 }
 
 /// Every recorded request, oldest first. A later `task.request_recorded` for the same request
@@ -108,6 +112,7 @@ pub fn requests(records: &[TaskEventRecord], tasks: &[TaskState]) -> Vec<Request
                         recorded_at: record.occurred_at.clone(),
                         status: RequestStatus::Open,
                         issues: Vec::new(),
+                        dispatched_to: None,
                     });
             }
             TaskEventKind::RequestLinked => {
@@ -146,6 +151,58 @@ pub fn requests(records: &[TaskEventRecord], tasks: &[TaskState]) -> Vec<Request
         })
         .collect();
     out.sort_by_key(|view| view.sequence);
+    out
+}
+
+/// #1981: the id of the one operator note that hands `request_id` to a lane. Derived from the
+/// request alone, so every dispatcher names the same signal and the store admits it once.
+#[must_use]
+pub fn dispatch_signal_id(request_id: &str) -> String {
+    let digest = graphhelm_protocols::hash::sha256_hex(
+        format!(
+            "request-dispatch
+{request_id}"
+        )
+        .as_bytes(),
+    );
+    format!("dispatch-{}", &digest[..32])
+}
+
+/// #1981: fill `dispatched_to` from the dispatch notes on the journal (signal id to its `to`).
+pub fn mark_dispatched(views: &mut [RequestView], notes: &BTreeMap<String, String>) {
+    for view in views {
+        view.dispatched_to = notes.get(&dispatch_signal_id(&view.request_id)).cloned();
+    }
+}
+
+/// #1981: which open request goes to which lane, oldest request first. A request waits for a lane
+/// while no issue is linked and it was never handed; it goes to the first free lane (in the order
+/// given) that does not already hold a handed request still waiting for its issue. Pure: the
+/// caller decides what free means and appends the notes.
+#[must_use]
+pub fn plan_dispatch(views: &[RequestView], free_lanes: &[String]) -> Vec<(String, String)> {
+    let waiting = |view: &RequestView| view.status == RequestStatus::Open && view.issues.is_empty();
+    let mut busy: Vec<&str> = views
+        .iter()
+        .filter(|view| waiting(view))
+        .filter_map(|view| view.dispatched_to.as_deref())
+        .collect();
+    let mut ordered: Vec<&RequestView> = views
+        .iter()
+        .filter(|view| waiting(view) && view.dispatched_to.is_none())
+        .collect();
+    ordered.sort_by_key(|view| view.sequence);
+    let mut out = Vec::new();
+    for view in ordered {
+        let Some(lane) = free_lanes
+            .iter()
+            .find(|lane| !busy.contains(&lane.as_str()))
+        else {
+            break;
+        };
+        busy.push(lane);
+        out.push((view.request_id.clone(), lane.clone()));
+    }
     out
 }
 
@@ -381,6 +438,39 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    /// #1981: open requests go oldest first to free lanes, one waiting request per lane; a handed
+    /// request is not handed again, and a linked one never waits. Defect named: nothing handed an
+    /// owner request to any lane, so a Send to fix stayed Not started.
+    #[test]
+    fn open_requests_are_planned_onto_free_lanes_once_each() {
+        let records = [
+            recorded(1, "old", "a"),
+            recorded(2, "mid", "b"),
+            recorded(3, "new", "c"),
+            recorded(4, "linked", "d"),
+            linked(5, "linked", 9),
+        ];
+        let mut views = requests(&records, &[]);
+        let lanes = ["lane-a".to_owned(), "lane-b".to_owned()];
+        assert_eq!(
+            plan_dispatch(&views, &lanes),
+            [
+                ("old".to_owned(), "lane-a".to_owned()),
+                ("mid".to_owned(), "lane-b".to_owned())
+            ]
+        );
+        let notes = BTreeMap::from([(dispatch_signal_id("old"), "lane-a".to_owned())]);
+        mark_dispatched(&mut views, &notes);
+        assert_eq!(views[0].dispatched_to.as_deref(), Some("lane-a"));
+        assert_eq!(
+            plan_dispatch(&views, &lanes),
+            [("mid".to_owned(), "lane-b".to_owned())],
+            "a handed request is not handed again and its lane takes no second one"
+        );
+        assert!(plan_dispatch(&views, &[]).is_empty());
+        assert_ne!(dispatch_signal_id("old"), dispatch_signal_id("mid"));
     }
 
     /// #1901: a request is dated by the Runtime's append time of its first record; a later

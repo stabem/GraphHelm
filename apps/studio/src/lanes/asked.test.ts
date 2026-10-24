@@ -36,6 +36,14 @@ describe("what I asked", () => {
     expect(cards[1]).toMatchObject({ title: "Old ask", when: null, summary: "1 agent" });
   });
 
+  it("shows a request the Runtime handed to a lane as in progress with that agent (#1981)", () => {
+    const handed = request("fix-1", [], { status: "open", dispatchedTo: "lane-a" });
+    const cards = askedCards([handed, request("fix-2", [], { status: "open" })], [agent("lane-a", null), agent("lane-b", null)], []);
+    expect(cards[1]).toMatchObject({ requestId: "fix-1", summary: "1 agent", chip: { key: "in_progress", label: "In progress · handed to lane-a" } });
+    expect(cards[1]!.agents).toEqual([{ lane: "lane-a", tone: expect.any(String) }]);
+    expect(cards[0]).toMatchObject({ requestId: "fix-2", summary: "no agent working", chip: { key: "not_started" } });
+  });
+
   it("names on each card the newest request its lane serves (#1904)", () => {
     const tasks = [slice("a", 7), slice("b", 8), slice("b", 7)];
     const titles = requestTitles([request("r1", [7], { title: "Old ask" }), request("r2", [8])], [agent("a", 7), agent("b", 8), agent("c", null)], tasks);

@@ -6304,6 +6304,121 @@ fn an_owner_records_a_fix_request_from_the_studio() {
     assert_eq!(requests[0]["status"], "open");
 }
 
+/// #1981: a Send to fix nobody picked up. The Runtime now hands an owner request with no linked
+/// issue to a free live lane by itself: an owner `operator_note` to that lane (which rings its wake
+/// lease), served as `dispatchedTo` on `/requests`. Observer: the real `serve` binary over HTTP.
+/// Credible regressions: the request stays unhanded (the defect), it goes to a lane that owes work,
+/// one lane is handed two waiting requests, or a request is handed twice.
+#[test]
+fn a_send_to_fix_request_is_handed_to_a_free_lane_without_the_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let extra = throwaway_keyring(dir.path());
+    let run = "dispatch-run";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 3);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    // lane-b claims and keeps owing; lane-a claims, then releases: it is the one free lane.
+    for (lane, issue) in [("lane-b", 10), ("lane-a", 9)] {
+        let (status, reply, _) = task_record(
+            &base,
+            &token,
+            run,
+            lane,
+            "task.claimed",
+            &format!("claim-{issue}"),
+            &claim_document(lane, issue),
+        );
+        assert_eq!(status, 200, "{lane}: {reply}");
+    }
+    let tasks = get_json(
+        &format!("{base}/v1/executions/{run}/tasks?full=1"),
+        Some(&token),
+    );
+    let claim_sequence = tasks["data"]["headSequence"].as_u64().unwrap();
+    let release = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-9",
+        "revision": 2, "at": "2026-10-13T12:00:00Z", "lane": "lane-a",
+        "claimSequence": claim_sequence, "reason": "Handed back"});
+    let (status, reply, _) = task_record(
+        &base,
+        &token,
+        run,
+        "lane-a",
+        "task.released",
+        "release-9",
+        &release,
+    );
+    assert_eq!(status, 200, "{reply}");
+    let owner = "studio-operator";
+    let record = |id: &str| {
+        let document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": format!("request-{id}"), "revision": 1, "at": "2026-10-24T10:00:00Z",
+            "requestId": id, "ask": "Fix the journey buy: its last run failed.",
+            "title": "Fix Buy a sofa", "recordedBy": owner});
+        post_json(
+            &format!("{base}/v1/executions/{run}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", owner),
+                ("X-GraphHelm-Actor-Type", "owner"),
+            ],
+            &serde_json::json!({"signal": {"id": id, "type": "task.request_recorded",
+                "source": {"type": "user", "id": owner}, "severity": "low",
+                "emittedAt": "2026-10-24T10:00:00Z", "evidence": [run],
+                "description": document.to_string()}}),
+        )
+    };
+    let read = || {
+        let view = get_json(
+            &format!("{base}/v1/executions/{run}/requests"),
+            Some(&token),
+        );
+        envelope_array(&view, "requests", "GET /requests").clone()
+    };
+    let wait_handed = |count: usize| {
+        let deadline = Instant::now() + scaled(Duration::from_secs(20));
+        loop {
+            let requests = read();
+            if requests
+                .iter()
+                .filter(|r| r.get("dispatchedTo").is_some())
+                .count()
+                >= count
+                || Instant::now() > deadline
+            {
+                return requests;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+    let (status, reply) = record("fix-first");
+    assert_eq!(status, 200, "{reply}");
+    let requests = wait_handed(1);
+    assert_eq!(
+        requests[0]["dispatchedTo"], "lane-a",
+        "handed to the free lane: {requests:?}"
+    );
+    // A second request waits: lane-a already holds one, lane-b owes work.
+    let (status, reply) = record("fix-second");
+    assert_eq!(status, 200, "{reply}");
+    std::thread::sleep(scaled(Duration::from_secs(2)));
+    let requests = read();
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    assert_eq!(requests[0]["dispatchedTo"], "lane-a");
+    assert!(
+        requests[1].get("dispatchedTo").is_none(),
+        "no lane is free for it: {requests:?}"
+    );
+}
+
 /// #1795 (R4a): the issue view asks which journeys an issue's tasks named and, for each, the
 /// newest finished run kept for it, the "before" picture. Observer: the real `serve` binary over
 /// HTTP with a project whose preview store the test seeds. Credible regressions: journeys from

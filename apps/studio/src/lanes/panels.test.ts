@@ -19,6 +19,8 @@ describe("lanes panels", () => {
     expect(needs.map((need) => [need.verb, need.lane, need.to, need.what, need.request?.requestId])).toEqual([
       ["Hand off", "lane-free", "lane-free", "Your request waits for a lane: Fix fix-a", "fix-a"],
     ]);
+    // #1981: one the Runtime already handed to a lane asks nothing of the owner.
+    expect(needsAction(board, [{ ...request("fix-a", "open", []), dispatchedTo: "lane-free" }])).toEqual([]);
   });
 
   it("lists what waits on the owner oldest first, each with the verb and the lane it acts on", () => {

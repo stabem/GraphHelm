@@ -62,6 +62,15 @@ describe("request status chips, order and delivered collapse (#1922)", () => {
   const hours = (n: number) => new Date(NOW - n * 3600_000).toISOString();
   const done = (issue: number) => ({ issue, slices: [{ pr: issue, step: "merged", merged: true }] });
   const merged = (issue: number, ago: number, journeys: string[] = []) => ({ key: `k${issue}`, lane: "x", issue, step: "merged", journeys, clock: { since: hours(ago) } }) as unknown as BoardTask;
+  const flow = (id: string, status: "passed" | "failed") => ({ id, title: id, status: "draft", lastRun: { status, ranAt: null, kind: "replay", reason: null, failingStep: null, flowChanged: null } }) as never;
+
+  it("maps a request to its chip through the live progress producer", () => {
+    expect(requestProgress(request("a", [], { status: "open" }), [], []).chip.label).toBe("Not started");
+    expect(requestProgress(request("a", [1, 2], { issues: [done(1), { issue: 2, slices: [] }] }), [], []).chip.label).toBe("In progress · 1 of 2");
+    expect(requestProgress(request("a", [1], { status: "delivered", issues: [done(1)] }), [merged(1, 1)], []).chip.key).toBe("delivered");
+    expect(requestProgress(request("a", [1], { status: "delivered", issues: [done(1)] }), [merged(1, 1, ["j"])], [flow("j", "passed")]).chip.key).toBe("proven");
+    expect(requestProgress(request("a", [1], { status: "delivered", issues: [done(1)] }), [merged(1, 1, ["j"])], [flow("j", "failed")]).chip.key).toBe("delivered");
+  });
 
   it("puts working first (newest on top), then not started, then delivered; hides delivered older than 24 h", () => {
     const rows = [

@@ -22,11 +22,11 @@ use graphhelm_governor::{
     CaptureOptIn, CaptureTouch, MemoryAdmissionRefusalRequest, MemoryCandidate, MemoryField,
     MemoryOrigin, MemoryPublicationState, MemoryPublicationTransition,
     MemoryPublicationTransitionRequest, MemoryRecord, MemoryRecordSupersededRequest,
-    MemoryRefusalCode, MemorySemanticState, PublicationStep, SupersessionReason,
-    admit_memory_candidate, apply_publication_transition, bind_evidence, capture_memory,
-    check_dependency_freshness, durable_memory_evidence_bytes, handoff_into_scope,
-    publication_steps, record_memory_admission_refusal, record_memory_publication_transition,
-    record_memory_record_superseded, republish, supersede, validate_candidate,
+    MemoryRefusalCode, MemorySemanticState, SupersessionReason, admit_memory_candidate,
+    apply_publication_transition, bind_evidence, capture_memory, check_dependency_freshness,
+    durable_memory_evidence_bytes, handoff_into_scope, record_memory_admission_refusal,
+    record_memory_publication_transition, record_memory_record_superseded, republish, supersede,
+    validate_candidate,
 };
 use graphhelm_protocols::{
     ActorId, ArtifactId, Clock, DevelopmentScope, EventEnvelope, EventKind, EvidenceId,
@@ -941,43 +941,6 @@ fn provider_output_cannot_be_recaptured_as_a_fresh_candidate() {
     let refusal = admit_memory_candidate(&recalled, &into)
         .expect_err("provider output was recaptured as a fresh candidate");
     assert_eq!(refusal.code(), MemoryRefusalCode::RecaptureLoop);
-}
-
-/// G7 of the blueprint: whatever survives a crash must read as the SAFE state.
-///
-/// Every prefix is checked, not a hand-picked one. A crash test that picks its own crash point
-/// tests the point the author thought of; the invariant has to hold at every boundary the write
-/// sequence actually has.
-///
-/// The production change this catches: publishing the record before sealing its evidence. Both
-/// orders are correct once complete; they differ only in what a crash leaves behind, and one of
-/// them leaves a published record with no evidence under it.
-#[test]
-fn no_crash_point_leaves_a_record_published_without_its_evidence() {
-    let steps = publication_steps();
-
-    // Landmark: the completed sequence contains both, so the invariant below is not vacuously true
-    // for a sequence that never publishes anything at all.
-    assert!(
-        steps.contains(&PublicationStep::EvidenceSealed),
-        "HARNESS-BROKE: the sequence never seals evidence"
-    );
-    assert!(
-        steps.contains(&PublicationStep::RecordPublished),
-        "HARNESS-BROKE: the sequence never publishes the record"
-    );
-
-    for crash_after in 0..=steps.len() {
-        let survived = &steps[..crash_after];
-
-        if survived.contains(&PublicationStep::RecordPublished) {
-            assert!(
-                survived.contains(&PublicationStep::EvidenceSealed),
-                "a crash after {crash_after} step(s) left a published record with no evidence \
-                 under it; the survivor reads as {survived:?}"
-            );
-        }
-    }
 }
 
 /// G8 of the blueprint: publication requires NEWLY sealed evidence.

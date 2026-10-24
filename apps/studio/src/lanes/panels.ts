@@ -1,6 +1,6 @@
 import type { OwnerRequest } from "../graph/requests";
 import type { BoardTask, Capacity, LaneAction, TasksBoard } from "../runtime/client";
-import { OWNER_ADDRESS } from "./board";
+import { OWNER_ADDRESS, finishedLanes } from "./board";
 
 /** What a Needs action item's button does. Answer opens the lane's reply box; Assign and Merge
  * message the lane that should act (the Studio never calls GitHub); Archive, Reassign and Wake are
@@ -29,10 +29,12 @@ export interface Need {
 
 const open = (task: BoardTask) => task.step !== "merged" && task.releasedBy === undefined;
 
-/** A live lane that can take work: free, not silent, and not one of `except`. */
+/** A live lane that can take work: free, not silent, not finished (#1986: a finished lane is off the
+ * board and is nobody's target) and not one of `except`. */
 function freeLane(board: TasksBoard, except: (string | null)[]): string | null {
+  const done = finishedLanes(board, false);
   return board.liveness.lanes
-    .filter((row) => row.free && !row.silent && !except.includes(row.lane))
+    .filter((row) => row.free && !row.silent && !done.has(row.lane) && !except.includes(row.lane))
     .map((row) => row.lane)
     .sort()[0] ?? null;
 }

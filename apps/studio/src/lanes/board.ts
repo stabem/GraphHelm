@@ -38,7 +38,7 @@ const open = (task: BoardTask) => task.step !== "merged" && task.releasedBy === 
 /** #1979: lanes off the board: finished lanes, i.e. the newest slice they own was recorded `merged`, they hold
  * or review no open slice and wait on no question. Derived from records (no `lane_retired`); a
  * new claim opens a slice and the lane is no longer finished. */
-export function finishedLanes(board: TasksBoard): Set<string> {
+export function finishedLanes(board: TasksBoard, includeRequestOnly = true): Set<string> {
   const finished = new Set<string>();
   const owners = new Set(board.tasks.map((task) => task.lane).filter((lane): lane is string => !!lane));
   for (const lane of owners) {
@@ -46,11 +46,12 @@ export function finishedLanes(board: TasksBoard): Set<string> {
     const busy = board.tasks.some((task) => open(task) && (task.lane === lane || task.currentReviewer === lane));
     if (newest?.step === "merged" && !busy && !board.waiting.some((row) => row.lane === lane)) finished.add(lane);
   }
-  // A lane whose records are only requests/notes (the orchestrator): it never claimed or reviewed a
-  // slice, reported no kind or model and asks nothing, so it is no card of the board.
-  for (const row of board.liveness.lanes) {
+  // A lane whose records are only requests/notes (the orchestrator): it never owned or reviewed a
+  // slice (merged or released ones count), owes nothing and asks nothing, so it is no card of the
+  // board. It is keyed on what the lane holds, not on missing kind/model (#1986).
+  for (const row of includeRequestOnly ? board.liveness.lanes : []) {
     const touched = board.tasks.some((task) => task.lane === row.lane || task.currentReviewer === row.lane);
-    if (!touched && row.agentKind === undefined && row.agentModel === undefined && !board.waiting.some((ask) => ask.lane === row.lane)) finished.add(row.lane);
+    if (!touched && !row.owes && !board.waiting.some((ask) => ask.lane === row.lane)) finished.add(row.lane);
   }
   return finished;
 }

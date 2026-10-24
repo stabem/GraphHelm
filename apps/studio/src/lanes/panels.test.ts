@@ -61,6 +61,17 @@ describe("lanes panels", () => {
     expect(needsAction(board).map((need) => [need.verb, need.to])).toEqual([["Reassign", "lane-p"], ["Assign", null]]);
   });
 
+  it("never names a finished lane as the target of a Reassign (#1986)", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [task("s#1", "lane-s", "implement"), task("d#1", "lane-done", "merged", { lastSequence: 9 })],
+      liveness: { lanes: [live("lane-s", { silent: true, lastRecordAt: "2026-10-22T09:00:00Z" }), live("lane-done", { free: true })] },
+      stalls: [],
+      waiting: [],
+    };
+    expect(needsAction(board).map((need) => [need.verb, need.to])).toEqual([["Reassign", null]]);
+  });
+
   it("merges every lane's actions into one feed, newest first, bounded", () => {
     const act = (sequence: number, occurredAt: string | null): LaneAction => ({ kind: "task.heartbeat", sequence, occurredAt });
     const rows = feed({

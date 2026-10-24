@@ -68,7 +68,8 @@ const NOT_STARTED = { label: "not started", color: "#45454e" };
 
 export type RequestChipKey = "not_started" | "in_progress" | "stalled" | "delivered" | "proven";
 export interface RequestChip { key: RequestChipKey; label: string; color: string }
-export interface RequestSeg { issue: number; state: string; color: string }
+/** `fill` is how much of the segment is drawn: 1 once merged, a started share before, 0 when not started. */
+export interface RequestSeg { issue: number; state: string; color: string; fill: number }
 export interface RequestProgress {
   chip: RequestChip;
   /** "33%": share of issues merged. */
@@ -98,7 +99,10 @@ export function requestProgress(request: OwnerRequest, tasks: readonly BoardTask
   const done = its.filter((it) => it.col >= 3).length;
   const segs = [...its].sort((a, b) => b.col - a.col).map((it) => {
     const state = it.col < 0 ? NOT_STARTED : ISSUE_STATES[it.col]!;
-    return { issue: it.issue, state: state.label, color: state.color};
+    // A merged or proven issue fills its segment; one still under way shows only a started share, so
+    // the bar never reads full while the percent reads 0%.
+    const fill = it.col >= 3 ? 1 : it.col === 2 ? 0.6 : it.col >= 0 ? 0.3 : 0;
+    return { issue: it.issue, state: state.label, color: state.color, fill };
   });
   const legend = [4, 3, 2, 1, 0, -1]
     .map((col) => ({ n: its.filter((it) => it.col === col).length, ...(col < 0 ? NOT_STARTED : ISSUE_STATES[col]!) }))

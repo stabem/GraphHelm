@@ -121,5 +121,13 @@ describe("request progress bar (#1922)", () => {
     expect(progress.chip.label).toBe("In progress · 2 of 4");
     expect(progress.legend.map((g) => `${g.n} ${g.label}`)).toEqual(["1 proven", "1 merged, waits proof", "1 in review", "1 implementing"]);
     expect(requestProgress(req, [t(1, "implement")], [], new Set(["k1"])).chip.key).toBe("stalled");
+    expect(progress.segs.map((seg) => seg.fill)).toEqual([1, 1, 0.6, 0.3]);
+  });
+
+  it("draws an in-progress 0 of 1 request as a started segment, not a full bar (#1986)", () => {
+    const t = { key: "k1", lane: "x", issue: 1, step: "implement", journeys: [], pr: null } as unknown as BoardTask;
+    const progress = requestProgress(request("q", [1], { issues: [{ issue: 1, slices: [] }] }), [t], [], new Set());
+    expect(progress.pct).toBe("0%");
+    expect(progress.segs[0]!.fill).toBeLessThan(1);
   });
 });

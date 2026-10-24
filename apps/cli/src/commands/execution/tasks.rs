@@ -70,13 +70,23 @@ pub struct TasksView {
 pub fn dispatch_notes(
     history: &[graphhelm_protocols::EventEnvelope],
 ) -> BTreeMap<String, graphhelm_execution::requests::DispatchNote> {
+    use graphhelm_execution::autopilot::AUTOPILOT_ACTOR;
+    use graphhelm_protocols::PersistedActorType;
+    // #2005: the autopilot's own notes share this map (ids never collide: each has its prefix):
+    // its launches are owner notes, its escalations and pauses come from its own actor.
+    let ours = |event: &graphhelm_protocols::EventEnvelope, id: &str| match event.actor.actor_type()
+    {
+        PersistedActorType::Owner => id.starts_with("dispatch-") || id.starts_with("autopilot-"),
+        PersistedActorType::Agent => {
+            event.actor.id().as_str() == AUTOPILOT_ACTOR && id.starts_with("autopilot-")
+        }
+        _ => false,
+    };
     history
         .iter()
-        .filter(|event| event.actor.actor_type() == graphhelm_protocols::PersistedActorType::Owner)
         .filter_map(|event| match &event.kind {
             EventKind::SignalRecorded(record)
-                if record.kind == "operator_note"
-                    && record.signal_id.as_str().starts_with("dispatch-") =>
+                if record.kind == "operator_note" && ours(event, record.signal_id.as_str()) =>
             {
                 record.to.as_ref().map(|to| {
                     (

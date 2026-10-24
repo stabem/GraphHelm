@@ -1413,6 +1413,13 @@ pub struct ServeArgs {
     /// watches the successor. Stopping this parent stops its Runtime (#1962).
     #[arg(long)]
     pub supervise: bool,
+    /// #2005: a JSON file that turns on the pipeline autopilot for one run: on a timer and after
+    /// every signal it names each open item's broken stage (request unclaimed, author silent,
+    /// review unassigned, reviewer silent, BLOCK unanswered, approved not merged) and starts the
+    /// agent that fixes it with the file's `launcher` argv (hidden window, bounded, capped, then
+    /// escalated to the owner). Off unless given; an invalid file stops `serve` from starting.
+    #[arg(long)]
+    pub autopilot: Option<PathBuf>,
     /// Run the customs sweep automatically every N seconds, journalling each one as
     /// `SweepCaller::Tick`.
     ///

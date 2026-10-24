@@ -7632,6 +7632,7 @@ pub(super) mod tests {
             grants: Arc::new(super::super::journey_credentials::Journal::open(
                 &directory.path().join("events"),
             )),
+            autopilot: None,
         };
         (directory, state)
     }

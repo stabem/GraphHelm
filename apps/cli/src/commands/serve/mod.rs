@@ -1,4 +1,5 @@
 pub(crate) mod alloc_guard;
+mod autopilot;
 mod dispatch;
 mod documents;
 mod handover;
@@ -206,6 +207,8 @@ struct ServeState {
     seen_actors: Arc<std::sync::Mutex<BTreeMap<String, (Instant, &'static str)>>>,
     /// #1309: owner-issued journey credential grants, in their private journal beside `events`.
     grants: Arc<journey_credentials::Journal>,
+    /// #2005: the pipeline autopilot from `--autopilot`, or `None` (the default: nothing starts).
+    autopilot: Option<Arc<autopilot::Autopilot>>,
 }
 
 impl ServeState {
@@ -460,6 +463,13 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         native_chat_busy: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         seen_actors: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
         grants: Arc::new(journey_credentials::Journal::open(&args.events)),
+        autopilot: args
+            .autopilot
+            .as_deref()
+            .map(autopilot::load)
+            .transpose()
+            .map_err(|message| serve_invalid(&message, "/autopilot"))?
+            .map(Arc::new),
     };
 
     let rt =
@@ -944,6 +954,7 @@ async fn serve_forever(
     if let Some(seconds) = state.sweep_interval {
         tokio::spawn(sweep_tick(Arc::clone(&state.events), seconds));
     }
+    autopilot::start(&state);
     if let (Some(root), Some(seconds)) = (&state.workspace_root, state.workspace_sweep_seconds) {
         tokio::spawn(workspace_sweep_tick(
             Arc::clone(root),

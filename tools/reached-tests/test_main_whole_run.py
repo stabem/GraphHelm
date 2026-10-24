@@ -98,6 +98,53 @@ class WholeRun(unittest.TestCase):
                 mw.git = old_git
             self.assertFalse(state.exists())
 
+    def test_omitted_token_uses_repo_and_refuses_when_repo_binding_is_missing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            caller = root / 'caller'
+            repo = root / 'requested-repo'
+            (caller / '.graphhelm').mkdir(parents=True)
+            (caller / '.graphhelm' / 'team.json').write_text(
+                json.dumps({'executionId': 'wrong-cwd'}), encoding='utf-8')
+            (repo / '.graphhelm').mkdir(parents=True)
+            state = root / 'state.json'
+            old_git, old_cwd = mw.git, os.getcwd()
+            mw.git = lambda *args: self.fail('git must not run before binding refusal')
+            try:
+                os.chdir(caller)
+                with self.assertRaises(SystemExit):
+                    mw.main(['--repo', str(repo), '--root', str(root / 'work'), '--state', str(state)])
+            finally:
+                os.chdir(old_cwd)
+                mw.git = old_git
+            self.assertFalse(state.exists())
+
+    def test_explicit_relative_token_keeps_caller_cwd_binding(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            caller = root / 'caller'
+            repo = root / 'requested-repo'
+            (caller / '.graphhelm').mkdir(parents=True)
+            (caller / '.graphhelm' / 'team.json').write_text(
+                json.dumps({'executionId': 'caller-run'}), encoding='utf-8')
+            (caller / '.graphhelm' / 'events.token').write_text('token\n', encoding='utf-8')
+            (repo / '.graphhelm').mkdir(parents=True)
+            (repo / '.graphhelm' / 'team.json').write_text(
+                json.dumps({'executionId': 'repo-run'}), encoding='utf-8')
+            old_git, old_cwd = mw.git, os.getcwd()
+            seen = {}
+            real_resolve = mw.resolve_execution
+            mw.git = lambda *args: 'a' * 40
+            mw.resolve_execution = lambda args: seen.setdefault('execution', real_resolve(args))
+            try:
+                os.chdir(caller)
+                mw.main(['--repo', str(repo), '--root', str(root / 'work'), '--dry-run',
+                         '--token-file', '.graphhelm/events.token'])
+            finally:
+                os.chdir(old_cwd)
+                mw.git, mw.resolve_execution = old_git, real_resolve
+            self.assertEqual(seen['execution'], 'caller-run')
+
     def test_due_only_when_main_moved_and_the_hour_passed(self):
         self.assertEqual(mw.due({}, "b", 1000, 3600), (True, "no earlier whole run"))
         self.assertFalse(mw.due({"sha": "a", "startedAt": 0}, "a", 99999, 3600)[0])

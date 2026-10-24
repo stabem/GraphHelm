@@ -175,6 +175,42 @@ pub(crate) fn scope_commit_of(project: &Path, id: &str, flow: &Value) -> String 
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
+/// #1911: whether flow `id` is the reviewed one: its file in the project is a regular file (no
+/// symlink or junction on the way) whose bytes equal the blob at the same path on
+/// `refs/remotes/origin/main`, the main every reviewed PR is merged into. Deterministic and local:
+/// one `git cat-file` on the object store, no fetch, no filters. Any doubt (bad id, link, missing
+/// ref or blob, git failure, different bytes, empty file) answers `false`, so the commands wait.
+pub(crate) fn reviewed_on_main(project: &Path, id: &str) -> bool {
+    if !plain_id(id) {
+        return false;
+    }
+    let relative = format!(".graphhelm/journeys/{id}.journey.yaml");
+    let dir = project.join(".graphhelm");
+    let file = project.join(&relative);
+    let regular = [dir.clone(), dir.join("journeys")]
+        .iter()
+        .all(|node| safe_node(node) && node.is_dir())
+        && safe_node(&file)
+        && std::fs::symlink_metadata(&file).is_ok_and(|meta| meta.is_file());
+    if !regular {
+        return false;
+    }
+    let Ok(local) = std::fs::read(&file) else {
+        return false;
+    };
+    graphhelm_process::command("git")
+        .arg("-C")
+        .arg(project)
+        .args(["cat-file", "blob"])
+        .arg(format!("refs/remotes/origin/main:./{relative}"))
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .is_some_and(|output| !local.is_empty() && output.stdout == local)
+}
+
 fn read_state(dir: &Path) -> Option<Value> {
     let file = dir.join(STATE);
     if !safe_node(&file) {
@@ -1309,15 +1345,20 @@ fn play(
         && !argv.is_empty()
         && super::journey_owner::cli_confirmed(project, &run.flow_id, &digest, &argv)
             .unwrap_or(false);
+    // #1911: a draft whose flow file is byte-identical to the reviewed blob on origin/main runs
+    // its commands without the owner's confirm; any other draft waits for review.
+    let cli_reviewed = !approved && !argv.is_empty() && reviewed_on_main(project, &run.flow_id);
     if !approved && !argv.is_empty() {
         run.state["cliConfirm"] =
             json!({"digest": digest, "argv": argv, "confirmed": cli_confirmed});
+        run.state["cliReviewed"] = json!(cli_reviewed);
     }
     let guard = Guard {
         approved,
         launched: launched.is_some(),
         confirmed: run.confirmed,
         cli_confirmed,
+        cli_reviewed,
     };
     let screens: std::collections::BTreeMap<&str, &Value> = flow["screens"]
         .as_array()
@@ -1480,6 +1521,8 @@ struct Guard {
     confirmed: bool,
     /// #1662: the owner's store holds a confirm of this draft's exact digest and argv list.
     cli_confirmed: bool,
+    /// #1911: the draft's flow file is byte-identical to its blob on origin/main.
+    cli_reviewed: bool,
 }
 
 impl Guard {
@@ -1493,8 +1536,10 @@ impl Guard {
     /// the owner's click.
     fn stops_before(self, act: &Value) -> Option<&'static str> {
         let backend = matches!(act["kind"].as_str(), Some("http" | "cli"));
-        if act["kind"] == "cli" && !self.approved && !self.cli_confirmed {
-            return Some("confirm_needed");
+        // #1911: a draft's command runs when its flow is the reviewed one on main (or the owner
+        // confirmed this exact argv, #1662); otherwise it waits for review.
+        if act["kind"] == "cli" && !self.approved && !self.cli_confirmed && !self.cli_reviewed {
+            return Some("review_needed");
         }
         would_destroy(act)?;
         if self.approved {
@@ -1579,7 +1624,7 @@ fn play_path(
             for act in edge["acts"].as_array().unwrap() {
                 if let Some(reason) = guard.stops_before(act) {
                     run.edge(id, "skipped", Some(reason));
-                    if reason == "confirm_needed" {
+                    if matches!(reason, "confirm_needed" | "review_needed") {
                         run.state["held"] = json!({"edge":id,"act":act["name"],"base":base});
                         if act["kind"] == "cli" {
                             run.state["held"]["cliConfirm"] = run.state["cliConfirm"].clone();
@@ -1700,7 +1745,7 @@ fn play_backend_path(
             for act in edge["acts"].as_array().unwrap() {
                 if let Some(reason) = guard.stops_before(act) {
                     run.edge(id, "skipped", Some(reason));
-                    if reason == "confirm_needed" {
+                    if matches!(reason, "confirm_needed" | "review_needed") {
                         run.state["held"] = json!({"edge":id,"act":act["name"],"base":base});
                         if act["kind"] == "cli" {
                             run.state["held"]["cliConfirm"] = run.state["cliConfirm"].clone();
@@ -2652,6 +2697,109 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         );
     }
 
+    /// #1911: a draft's commands run unasked only when the flow file is byte-identical to its blob
+    /// on origin/main. Defects named, each must answer "not reviewed": a working copy edited after
+    /// merge (tampered), a flow committed locally but not on origin/main, a stale origin/main whose
+    /// blob is an older version, a missing origin/main, an id reaching outside the journeys
+    /// directory, and a symlinked flow or journeys directory. Cost: a few git processes.
+    #[test]
+    fn reviewed_on_main_answers_true_only_for_the_exact_blob_on_origin_main() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let git = |args: &[&str]| {
+            let out = graphhelm_process::command("git")
+                .current_dir(root)
+                .args(["-c", "user.name=T", "-c", "user.email=t@example.test"])
+                .args(["-c", "core.autocrlf=false"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let flow = root.join(".graphhelm/journeys/greet.journey.yaml");
+        std::fs::create_dir_all(flow.parent().unwrap()).unwrap();
+        git(&["init", "-q", "--object-format=sha1"]);
+        std::fs::write(&flow, "id: greet\nv: 1\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "v1"]);
+        let v1 = git(&["rev-parse", "HEAD"]).trim().to_owned();
+
+        // No origin/main at all: nothing is known to be reviewed.
+        assert!(!super::reviewed_on_main(root, "greet"));
+
+        // Merged: origin/main holds exactly these bytes.
+        git(&["update-ref", "refs/remotes/origin/main", &v1]);
+        assert!(super::reviewed_on_main(root, "greet"));
+
+        // A path outside the journeys directory is never looked up.
+        for bad in ["../greet", "a/b", "", ".greet"] {
+            assert!(!super::reviewed_on_main(root, bad), "{bad}");
+        }
+
+        // Tampered working copy: one byte differs from the merged blob.
+        std::fs::write(&flow, "id: greet\nv: 2\n").unwrap();
+        assert!(!super::reviewed_on_main(root, "greet"));
+
+        // Edited after merge and committed locally: origin/main still has v1, so it is stale for
+        // this content and the flow waits for review.
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "v2"]);
+        assert!(!super::reviewed_on_main(root, "greet"));
+
+        // Merged later: origin/main moves to v2 and the same bytes are reviewed again; a stale
+        // origin/main pointing back at v1 does not vouch for v2.
+        let v2 = git(&["rev-parse", "HEAD"]).trim().to_owned();
+        git(&["update-ref", "refs/remotes/origin/main", &v2]);
+        assert!(super::reviewed_on_main(root, "greet"));
+        git(&["update-ref", "refs/remotes/origin/main", &v1]);
+        assert!(!super::reviewed_on_main(root, "greet"));
+        git(&["update-ref", "refs/remotes/origin/main", &v2]);
+
+        // A symlink in place of the flow file, even to the reviewed bytes, is refused.
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("greet.journey.yaml");
+        std::fs::copy(&flow, &target).unwrap();
+        std::fs::remove_file(&flow).unwrap();
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&target, &flow).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&target, &flow).is_ok();
+        if linked {
+            assert!(!super::reviewed_on_main(root, "greet"));
+            std::fs::remove_file(&flow).unwrap();
+        } else {
+            eprintln!("symlink case not staged: this host cannot create a symlink");
+        }
+        std::fs::copy(&target, &flow).unwrap();
+        assert!(super::reviewed_on_main(root, "greet"));
+
+        // The journeys directory itself redirected elsewhere (symlink, or a junction on Windows).
+        let journeys = root.join(".graphhelm").join("journeys");
+        let moved = root.join(".graphhelm").join("real-journeys");
+        std::fs::rename(&journeys, &moved).unwrap();
+        #[cfg(unix)]
+        let redirected = std::os::unix::fs::symlink(&moved, &journeys).is_ok();
+        #[cfg(windows)]
+        let redirected = graphhelm_process::command("cmd")
+            .arg("/c")
+            .arg("mklink")
+            .arg("/J")
+            .arg(&journeys)
+            .arg(&moved)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        assert!(redirected, "the directory redirect was not staged");
+        assert!(flow.is_file(), "the redirect must reach the reviewed bytes");
+        assert!(!super::reviewed_on_main(root, "greet"));
+    }
+
     /// #1633 follow-up (gh-claude-18): only a path's ENTRY screen is excused by a passing edge
     /// leaving it. A screen in the middle of a path that was never observed is not, even when the
     /// next edge passed. Cost: microseconds.
@@ -3137,6 +3285,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 launched,
                 confirmed: false,
                 cli_confirmed: false,
+                cli_reviewed: false,
             };
             assert_eq!(held.stops_before(&pay), Some("confirm_needed"));
             assert_eq!(held.stops_before(&look), None);
@@ -3151,6 +3300,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             launched,
             confirmed: false,
             cli_confirmed: false,
+            cli_reviewed: false,
         };
         assert_eq!(draft(false).stops_before(&pay), Some("guard_refused"));
         assert_eq!(draft(true).stops_before(&pay), None);
@@ -3169,6 +3319,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 launched,
                 confirmed: false,
                 cli_confirmed: false,
+                cli_reviewed: false,
             };
             for method in ["DELETE", "POST", "put", "BREW"] {
                 assert_eq!(
@@ -3180,7 +3331,14 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             for method in ["GET", "HEAD", "options"] {
                 assert_eq!(draft.stops_before(&http(method)), None, "{method}");
             }
-            assert_eq!(draft.stops_before(&cli), Some("confirm_needed"));
+            assert_eq!(draft.stops_before(&cli), Some("review_needed"));
+            // #1911: a draft reviewed on main runs its command; a destructive one stays refused.
+            let reviewed = Guard {
+                cli_reviewed: true,
+                ..draft
+            };
+            assert_eq!(reviewed.stops_before(&cli), None);
+            assert_eq!(reviewed.stops_before(&wipe), Some("guard_refused"));
             // #1662: the owner's confirm of this argv lets it play; a destructive one stays refused.
             let confirmed = Guard {
                 cli_confirmed: true,
@@ -3194,6 +3352,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             launched: true,
             confirmed: false,
             cli_confirmed: false,
+            cli_reviewed: false,
         };
         for method in ["DELETE", "POST"] {
             assert_eq!(approved.stops_before(&http(method)), Some("confirm_needed"));

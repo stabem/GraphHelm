@@ -203,7 +203,7 @@ fn a_backend_journey_is_green_on_good_code_and_sabotage_catches_a_break() {
         .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap());
     let state = state.expect("the validation run keeps its state");
     assert_eq!(
-        state["edges"]["greet"]["reason"], "confirm_needed",
+        state["edges"]["greet"]["reason"], "review_needed",
         "{state}"
     );
 
@@ -324,7 +324,7 @@ fn a_draft_command_runs_only_on_the_owners_confirm_of_what_they_saw() {
 
     // A draft holds before its command and names the digest and argv a confirm would allow.
     let (_, held) = preview(&[]);
-    assert_eq!(held["edges"]["greet"]["reason"], "confirm_needed", "{held}");
+    assert_eq!(held["edges"]["greet"]["reason"], "review_needed", "{held}");
     let shown = &held["held"]["cliConfirm"];
     assert_eq!(shown["argv"], serde_json::json!(["sh greet.sh"]), "{held}");
     let digest = shown["digest"]
@@ -409,7 +409,84 @@ fn a_draft_command_runs_only_on_the_owners_confirm_of_what_they_saw() {
     .unwrap();
     let (_, again) = preview(&["--force"]);
     assert_eq!(
-        again["edges"]["greet"]["reason"], "confirm_needed",
+        again["edges"]["greet"]["reason"], "review_needed",
         "{again}"
     );
+}
+
+/// #1911: a draft whose flow file is byte-identical to its blob on origin/main (merged through a
+/// reviewed PR) runs its command with no owner confirm; the same draft edited in the working copy
+/// waits for review and runs nothing. Defects named: a reviewed flow still asking "Run these
+/// commands?", an edited flow riding on the old review, and a waiting flow whose command still
+/// executes. Counted by the command itself (`ran.count`).
+#[test]
+fn a_draft_reviewed_on_main_runs_its_command_and_an_edited_one_waits_for_review() {
+    let dir = project("backend", FLOW);
+    let root = dir.path();
+    std::fs::write(
+        root.join("greet.sh"),
+        "echo ran >> ran.count\necho hello from the cli\necho greeted on stderr >&2\n",
+    )
+    .unwrap();
+    commit(root, "count runs");
+    git(root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    let runs =
+        || std::fs::read_to_string(root.join("ran.count")).map_or(0, |text| text.lines().count());
+    let preview = |extra: &[&str]| -> Value {
+        let mut args = vec!["journey", "preview", "backend"];
+        args.extend(extra);
+        args.push("--project");
+        let (code, reply) = graphhelm(&args, root, &[]);
+        assert_eq!(code, 0, "{reply}");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            let (_, read) = graphhelm(
+                &["journey", "preview", "backend", "--read", "--project"],
+                root,
+                &[],
+            );
+            if read["data"]["state"] != "running" && read["data"]["ranAt"].is_string() {
+                return read["data"].clone();
+            }
+            assert!(std::time::Instant::now() < deadline, "never ended: {read}");
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    };
+
+    // Reviewed on main: the command runs unasked, and no owner confirm was recorded for it.
+    let played = preview(&[]);
+    assert_eq!(played["result"], "pass", "{played}");
+    assert_eq!(played["edges"]["greet"]["result"], "pass", "{played}");
+    assert!(played["held"].is_null(), "{played}");
+    assert_eq!(played["cliReviewed"], true, "{played}");
+    assert_eq!(runs(), 1, "the reviewed command ran once");
+    let confirms = std::fs::read_dir(root.join(".graphhelm/owner-records"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("journey-cli-confirmed-")
+        })
+        .count();
+    assert_eq!(confirms, 0, "a reviewed flow needed no confirm");
+
+    // Edited after merge: the flow differs from main, so the command waits for review.
+    let flow = root.join(".graphhelm/journeys/backend.journey.yaml");
+    let text = std::fs::read_to_string(&flow).unwrap();
+    std::fs::write(
+        &flow,
+        text.replace("A client greets", "A client first greets"),
+    )
+    .unwrap();
+    let waiting = preview(&["--force"]);
+    assert_eq!(
+        waiting["edges"]["greet"]["reason"], "review_needed",
+        "{waiting}"
+    );
+    assert_eq!(waiting["cliReviewed"], false, "{waiting}");
+    assert_ne!(waiting["result"], "pass", "{waiting}");
+    assert_eq!(runs(), 1, "a flow that differs from main ran its command");
 }

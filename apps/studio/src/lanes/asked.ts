@@ -42,10 +42,7 @@ function tone(agent: Agent): AskedTone {
  * whichever slice their card shows. */
 export function agentsFor(request: OwnerRequest, all: readonly Agent[], tasks: readonly BoardTask[]): Agent[] {
   const issues = new Set(request.issues.map((row) => row.issue));
-  const lanes = new Set(tasks.filter((task) => task.releasedBy === undefined && task.issue !== null && issues.has(task.issue)).map((task) => task.lane));
-  // #1981: the lane the Runtime handed it to works on it before it links an issue.
-  if (issues.size === 0 && request.dispatchedTo) lanes.add(request.dispatchedTo);
-  return all.filter((agent) => lanes.has(agent.lane));
+  const lanes = new Set(tasks.filter((task) => task.releasedBy === undefined && task.issue !== null && issues.has(task.issue)).map((task) => task.lane));  return all.filter((agent) => lanes.has(agent.lane));
 }
 
 /** The request each lane serves, by title (#1904, Lanes.dc.html "for:"): the newest request whose

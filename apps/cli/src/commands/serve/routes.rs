@@ -2118,10 +2118,8 @@ pub(super) async fn requests(
                 execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
             })
             .map(|view| {
-                let mut requests =
-                    graphhelm_execution::requests::requests(&view.records, &view.tasks);
-                // #1981: which lane the Runtime handed each request to.
-                graphhelm_execution::requests::mark_dispatched(&mut requests, &view.dispatch_notes);
+                // #1981: with each request's hand-off, judged now.
+                let requests = execution::tasks::owner_requests(&view);
                 serde_json::json!({
                     "executionId": view.execution_id,
                     "headSequence": view.head_sequence,

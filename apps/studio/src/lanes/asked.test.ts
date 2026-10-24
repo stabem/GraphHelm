@@ -36,12 +36,11 @@ describe("what I asked", () => {
     expect(cards[1]).toMatchObject({ title: "Old ask", when: null, summary: "1 agent" });
   });
 
-  it("shows a request the Runtime handed to a lane as in progress with that agent (#1981)", () => {
+  it("says a request handed to a lane is not yet taken until that lane links an issue (#1981)", () => {
     const handed = request("fix-1", [], { status: "open", dispatchedTo: "lane-a" });
-    const cards = askedCards([handed, request("fix-2", [], { status: "open" })], [agent("lane-a", null), agent("lane-b", null)], []);
-    expect(cards[1]).toMatchObject({ requestId: "fix-1", summary: "1 agent", chip: { key: "in_progress", label: "In progress · handed to lane-a" } });
-    expect(cards[1]!.agents).toEqual([{ lane: "lane-a", tone: expect.any(String) }]);
-    expect(cards[0]).toMatchObject({ requestId: "fix-2", summary: "no agent working", chip: { key: "not_started" } });
+    const cards = askedCards([handed, request("fix-2", [], { status: "open", dispatchLapsed: ["lane-b"] })], [agent("lane-a", null), agent("lane-b", null)], []);
+    expect(cards[1]).toMatchObject({ requestId: "fix-1", summary: "no agent working", chip: { key: "not_started", label: "Handed to lane-a, not yet taken" } });
+    expect(cards[0]).toMatchObject({ requestId: "fix-2", summary: "no agent working", chip: { key: "not_started", label: "Not started" } });
   });
 
   it("names on each card the newest request its lane serves (#1904)", () => {

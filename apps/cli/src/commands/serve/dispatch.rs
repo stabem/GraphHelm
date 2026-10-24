@@ -7,7 +7,10 @@
 //! handed request still waiting for its issue (`graphhelm_execution::requests::plan_dispatch`).
 //!
 //! The hand-off is an `operator_note` addressed to that lane, so it rings the lane's wake lease
-//! like any note. It is appended through the signal route under the Runtime's own owner actor
+//! like any note. It ends: when the lane links no issue within the lease
+//! (`GRAPHHELM_DISPATCH_LEASE_SECONDS`, default 600) or goes silent, it lapses, the owner's Hand
+//! off returns, and the next check hands the request to another free lane, at most
+//! `MAX_DISPATCH_ATTEMPTS` times in all. It is appended through the signal route under the Runtime's own owner actor
 //! (`graphhelm`), with a signal id and an `Idempotency-Key` derived from the request alone: two
 //! checks racing on one request name the same key, and the store admits only the first body. The
 //! note's plaintext `to` is what the requests route serves as `dispatchedTo`. No model is asked and
@@ -15,11 +18,9 @@
 
 use axum::body::Bytes;
 use axum::extract::{Path as UrlPath, State};
-use axum::http::{HeaderMap, HeaderValue};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
-use graphhelm_execution::requests::{
-    RequestView, dispatch_signal_id, mark_dispatched, plan_dispatch, requests,
-};
+use graphhelm_execution::requests::{RequestView, dispatch_signal_id, plan_dispatch};
 
 use super::{ServeState, routes};
 use crate::commands::execution;
@@ -57,8 +58,7 @@ fn read(state: &ServeState, execution_id: &str) -> Option<(Vec<RequestView>, Vec
         execution::tasks::read_cached(&state.events, execution_id, &keyring, &budget, cache)
     })
     .ok()?;
-    let mut views = requests(&view.records, &view.tasks);
-    mark_dispatched(&mut views, &view.dispatch_notes);
+    let views = execution::tasks::owner_requests(&view);
     let mut free: Vec<String> = view
         .liveness
         .lanes
@@ -91,12 +91,12 @@ pub(super) async fn dispatch(state: ServeState, execution_id: String) {
     else {
         return;
     };
-    for (request_id, lane) in plan_dispatch(&views, &free) {
+    for (request_id, lane, attempt) in plan_dispatch(&views, &free) {
         let Some(view) = views.iter().find(|view| view.request_id == request_id) else {
             continue;
         };
-        let id = dispatch_signal_id(&request_id);
-        let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let id = dispatch_signal_id(&request_id, attempt);
+        let at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let body = serde_json::json!({ "signal": {
             "id": id,
             "type": "operator_note",
@@ -118,13 +118,21 @@ pub(super) async fn dispatch(state: ServeState, execution_id: String) {
                 headers.insert(name, value);
             }
         }
-        // A refusal (another check appended this request first) leaves nothing to undo.
-        let _ = routes::signal(
+        let reply = routes::signal(
             State(state.clone()),
             UrlPath(execution_id.clone()),
             headers,
             Bytes::from(body.to_string()),
         )
         .await;
+        // A conflict is the expected race: another check appended this hand-off first. Any other
+        // refusal is named on stderr (ids and status only; the note's text is not printed).
+        let status = reply.status();
+        if !status.is_success() && status != StatusCode::CONFLICT {
+            eprintln!(
+                "graphhelm serve: hand-off of request {request_id} to lane {lane} was refused \
+                 ({status})"
+            );
+        }
     }
 }

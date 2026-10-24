@@ -62,12 +62,14 @@ pub struct TasksView {
     /// #1981: the owner dispatch notes on the journal (signal id to the lane it names), read from
     /// plaintext. Not served on the tasks routes; the requests route reads it.
     #[serde(skip)]
-    pub dispatch_notes: BTreeMap<String, String>,
+    pub dispatch_notes: BTreeMap<String, graphhelm_execution::requests::DispatchNote>,
 }
 
 /// #1981: every owner `operator_note` whose signal id is a request dispatch id, by id, with its
-/// `to`. No envelope is opened.
-pub fn dispatch_notes(history: &[graphhelm_protocols::EventEnvelope]) -> BTreeMap<String, String> {
+/// `to` and the Runtime's append time. No envelope is opened.
+pub fn dispatch_notes(
+    history: &[graphhelm_protocols::EventEnvelope],
+) -> BTreeMap<String, graphhelm_execution::requests::DispatchNote> {
     history
         .iter()
         .filter(|event| event.actor.actor_type() == graphhelm_protocols::PersistedActorType::Owner)
@@ -76,14 +78,50 @@ pub fn dispatch_notes(history: &[graphhelm_protocols::EventEnvelope]) -> BTreeMa
                 if record.kind == "operator_note"
                     && record.signal_id.as_str().starts_with("dispatch-") =>
             {
-                record
-                    .to
-                    .as_ref()
-                    .map(|to| (record.signal_id.as_str().to_owned(), to.as_str().to_owned()))
+                record.to.as_ref().map(|to| {
+                    (
+                        record.signal_id.as_str().to_owned(),
+                        graphhelm_execution::requests::DispatchNote {
+                            lane: to.as_str().to_owned(),
+                            at: event.occurred_at.clone(),
+                        },
+                    )
+                })
             }
             _ => None,
         })
         .collect()
+}
+
+/// #1981: how long a hand-off stays live without a link: `GRAPHHELM_DISPATCH_LEASE_SECONDS` when
+/// it is a positive number, else `DISPATCH_LEASE_SECONDS`.
+fn dispatch_lease_seconds() -> i64 {
+    std::env::var("GRAPHHELM_DISPATCH_LEASE_SECONDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<i64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(graphhelm_execution::requests::DISPATCH_LEASE_SECONDS)
+}
+
+/// #1981: the run's owner requests with their hand-offs judged at the read's `now`: a hand-off
+/// lapses past the lease or when its lane is silent or no longer judged (retired).
+#[must_use]
+pub fn owner_requests(view: &TasksView) -> Vec<graphhelm_execution::requests::RequestView> {
+    let mut requests = graphhelm_execution::requests::requests(&view.records, &view.tasks);
+    graphhelm_execution::requests::mark_dispatched(
+        &mut requests,
+        &view.dispatch_notes,
+        &view.now,
+        dispatch_lease_seconds(),
+        |lane| {
+            !view
+                .liveness
+                .lanes
+                .iter()
+                .any(|row| row.lane == lane && !row.silent)
+        },
+    );
+    requests
 }
 
 /// #1794: one open question of a lane. A lane asks with a signal of type `question` addressed

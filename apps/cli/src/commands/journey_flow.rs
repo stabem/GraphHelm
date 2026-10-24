@@ -1478,50 +1478,78 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
     let Some(files) = files(&project, &[]) else {
         return input_error(COMMAND, "unsafe or unreadable journeys directory");
     };
-    let flows: Vec<Value> = files
-        .iter()
-        .map(|file| {
-            let name = file.file_name().unwrap_or_default().to_string_lossy();
-            let id = name.trim_end_matches(".journey.yaml");
-            let findings = check(file, &project);
-            let listed: Vec<Value> = findings
-                .iter()
-                .map(|f| {
-                    json!({"code": f.code, "pointer": f.pointer, "message": f.message,
-                        "severity": if f.is_warning() { "warning" } else { "error" }})
+    // #1972: the entries are built on a few threads, order kept, so one flow's `git log`
+    // (`preview_gate`) does not wait for every flow before it.
+    let width = files.len().div_ceil(FLOWS_THREADS).max(1);
+    let flows: Vec<Value> = std::thread::scope(|threads| {
+        let jobs: Vec<_> = files
+            .chunks(width)
+            .map(|chunk| {
+                let project = &project;
+                threads.spawn(move || {
+                    chunk
+                        .iter()
+                        .map(|file| flow_entry(file, project))
+                        .collect::<Vec<_>>()
                 })
-                .collect();
-            let Ok((text, flow)) = read(file) else {
-                return json!({"id": id, "title": null, "status": "unreadable",
+            })
+            .collect();
+        jobs.into_iter()
+            .flat_map(|job| job.join().unwrap_or_default())
+            .collect()
+    });
+    Outcome::success(COMMAND, json!({"flows": flows}))
+}
+
+/// #1972: how many threads `journey flows` builds its entries on.
+const FLOWS_THREADS: usize = 8;
+
+/// One `journey flows` entry for one flow source.
+fn flow_entry(file: &Path, project: &Path) -> Value {
+    let name = file.file_name().unwrap_or_default().to_string_lossy();
+    let id = name.trim_end_matches(".journey.yaml");
+    let findings = check(file, &project);
+    let listed: Vec<Value> = findings
+        .iter()
+        .map(|f| {
+            json!({"code": f.code, "pointer": f.pointer, "message": f.message,
+                        "severity": if f.is_warning() { "warning" } else { "error" }})
+        })
+        .collect();
+    let Ok((text, flow)) = read(file) else {
+        return json!({"id": id, "title": null, "status": "unreadable",
                     "approved": null, "drift": [], "findings": listed, "approvable": false,
                     "screens": [], "edges": [], "paths": {},
                     "lastRun": super::journey_preview::last_run(&project, id, None),
                     "running": super::journey_preview::running(&project, id)});
-            };
-            let accepted = approval_findings(file, &text, &flow, &project)
-                .iter()
-                .all(Finding::is_warning)
-                && preview_gate(&project, id, &flow).is_none();
-            let stale = findings.iter().any(|f| f.code == "flow.approval_stale");
-            let drifted = flow["drift"].as_array().is_some_and(|d| !d.is_empty());
-            let settled = flow["status"] == "approved" && !stale && !drifted;
-            // #1287 follow-up: an approved flow that does not say what it proves is not settled:
-            // `weak` with no approved digest, so no replay cached under that digest reads as proof.
-            let weak = flow["status"] == "approved" && !weak_journey(&flow, true).is_empty();
-            let settled = settled && !weak;
-            let status = if stale {
-                json!("approval_stale")
-            } else if weak {
-                json!("weak")
-            } else {
-                flow["status"].clone()
-            };
-            let approved = if weak {
-                Value::Null
-            } else {
-                flow["approved"].clone()
-            };
-            json!({"id": id, "title": flow.get("title").cloned().unwrap_or(Value::Null),
+    };
+    let stale = findings.iter().any(|f| f.code == "flow.approval_stale");
+    let drifted = flow["drift"].as_array().is_some_and(|d| !d.is_empty());
+    let settled = flow["status"] == "approved" && !stale && !drifted;
+    // #1287 follow-up: an approved flow that does not say what it proves is not settled:
+    // `weak` with no approved digest, so no replay cached under that digest reads as proof.
+    let weak = flow["status"] == "approved" && !weak_journey(&flow, true).is_empty();
+    let settled = settled && !weak;
+    // #1972: `approvable` is `accepted && !settled`, so a settled flow skips the checks
+    // (and `preview_gate`'s `git log`) whose answer it would discard.
+    let accepted = !settled
+        && approval_findings(file, &text, &flow, project)
+            .iter()
+            .all(Finding::is_warning)
+        && preview_gate(project, id, &flow).is_none();
+    let status = if stale {
+        json!("approval_stale")
+    } else if weak {
+        json!("weak")
+    } else {
+        flow["status"].clone()
+    };
+    let approved = if weak {
+        Value::Null
+    } else {
+        flow["approved"].clone()
+    };
+    json!({"id": id, "title": flow.get("title").cloned().unwrap_or(Value::Null),
                 "purpose": flow.get("purpose").cloned().unwrap_or(Value::Null),
                 "name": flow.get("name").cloned().unwrap_or(Value::Null),
                 "feature": flow.get("feature").cloned().unwrap_or(Value::Null),
@@ -1536,9 +1564,6 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
                 "lastRun": super::journey_preview::last_run(&project, id, Some(&flow)),
                 // #1953: the run in flight, `null` when none, so a reloaded Studio shows it.
                 "running": super::journey_preview::running(&project, id)})
-        })
-        .collect();
-    Outcome::success(COMMAND, json!({"flows": flows}))
 }
 
 /// `graphhelm journey approve <id>` from a terminal (#534): the owner's door, so it asks for the

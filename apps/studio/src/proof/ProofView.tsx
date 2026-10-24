@@ -8,7 +8,7 @@ import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./
 import { askedWhen } from "../lanes/asked";
 import { OWNER } from "../runtime/client";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
-import { countSteps, failsOnlyOn, isHeld, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, STATUS_TEXT, type JourneyKind, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, isHeld, isWaitingReview, statusText,journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 import { Empty, Loading, ReadFailure } from "../states/ViewState";
 import { When } from "../time/Stamp";
@@ -304,6 +304,7 @@ function verdict(run: JourneyRun | null): string | null {
   if (run === null || run.state === "none") return "Not run yet";
   if (run.state === "running") return null;
   if (isHeld(run)) return "Waits for your confirmation";
+  if (isWaitingReview(run)) return "Waits for review";
   if (run.state === "failed") return run.reason ? `The run could not finish: ${run.reason}` : "The run could not finish";
   return `${run.result === "pass" ? "Passed" : run.result === "drift" ? "Drifted" : "Failed"}${run.ranAt ? ` · ${when(run.ranAt).text}` : ""}`;
 }
@@ -409,7 +410,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
               <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
                 <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
                 <span className="step-text">
-                  <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{STATUS_TEXT[step.status]}</span></span>
+                  <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{statusText(step.status, run)}</span></span>
                   {stale && <span className="stale-mark" title="From the earlier version of this journey">stale</span>}
                   <span className="step-label">{step.label}</span>
                   {viewportLine(step)}

@@ -203,7 +203,7 @@ fn a_backend_journey_is_green_on_good_code_and_sabotage_catches_a_break() {
         .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap());
     let state = state.expect("the validation run keeps its state");
     assert_eq!(
-        state["edges"]["greet"]["reason"], "confirm_needed",
+        state["edges"]["greet"]["reason"], "review_needed",
         "{state}"
     );
 
@@ -324,7 +324,7 @@ fn a_draft_command_runs_only_on_the_owners_confirm_of_what_they_saw() {
 
     // A draft holds before its command and names the digest and argv a confirm would allow.
     let (_, held) = preview(&[]);
-    assert_eq!(held["edges"]["greet"]["reason"], "confirm_needed", "{held}");
+    assert_eq!(held["edges"]["greet"]["reason"], "review_needed", "{held}");
     let shown = &held["held"]["cliConfirm"];
     assert_eq!(shown["argv"], serde_json::json!(["sh greet.sh"]), "{held}");
     let digest = shown["digest"]
@@ -409,7 +409,197 @@ fn a_draft_command_runs_only_on_the_owners_confirm_of_what_they_saw() {
     .unwrap();
     let (_, again) = preview(&["--force"]);
     assert_eq!(
-        again["edges"]["greet"]["reason"], "confirm_needed",
+        again["edges"]["greet"]["reason"], "review_needed",
         "{again}"
+    );
+}
+
+/// One request to the test Runtime; `body` makes it a JSON POST.
+fn http(base: &str, method: &str, path: &str, token: &str, body: Option<&str>) -> (u16, Value) {
+    use std::io::{Read, Write};
+    let (host, port, _) = support::split_url(base);
+    let mut stream = std::net::TcpStream::connect((host.as_str(), port)).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        .unwrap();
+    let body = body.unwrap_or("");
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).unwrap();
+    let response = support::parse_response(&String::from_utf8_lossy(&raw)).unwrap();
+    let text = response.body.trim();
+    // A chunked body carries its size line first; the JSON starts at the first brace.
+    let json = text
+        .find('{')
+        .and_then(|start| text.rfind('}').map(|end| &text[start..=end]))
+        .unwrap_or("null");
+    (
+        response.status,
+        serde_json::from_str(json).unwrap_or(Value::Null),
+    )
+}
+
+/// #1911 (BLOCK on #2002): through the real Runtime, a draft runs its command with no owner
+/// confirm only when its flow equals the blob on the `main` of the remote the Runtime was started
+/// with (`serve --reviewed-remote`). Defects named: a reviewed flow still asking; a flow edited
+/// and committed locally, with the project's `refs/remotes/origin/main` and `origin` URL forged to
+/// vouch for it, running its command; a lane's CLI passing the remote by environment to make its
+/// own draft run. Counted by the command itself (`ran.count`).
+#[test]
+fn a_draft_runs_unasked_only_when_the_runtimes_remote_main_holds_its_bytes() {
+    let dir = project("backend", FLOW);
+    let root = dir.path();
+    std::fs::write(
+        root.join("greet.sh"),
+        "echo ran >> ran.count\necho hello from the cli\necho greeted on stderr >&2\n",
+    )
+    .unwrap();
+    commit(root, "count runs");
+    let runs =
+        || std::fs::read_to_string(root.join("ran.count")).map_or(0, |text| text.lines().count());
+    // The reviewed remote: a bare repository whose main is this commit.
+    let remote = tempfile::tempdir().unwrap();
+    git(
+        remote.path(),
+        &["init", "-q", "--bare", "--object-format=sha1"],
+    );
+    let url = remote.path().to_str().unwrap().to_owned();
+    git(root, &["push", "-q", &url, "HEAD:refs/heads/main"]);
+
+    // A lane's CLI cannot hand itself the remote: the variable is stripped before the runner.
+    let mut lane = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    let started = lane
+        .env("GRAPHHELM_REVIEWED_REMOTE", &url)
+        .args(["--json", "journey", "preview", "backend", "--project"])
+        .arg(root)
+        .output()
+        .unwrap();
+    assert!(started.status.success(), "{started:?}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let lane_run = loop {
+        let (_, read) = graphhelm(
+            &["journey", "preview", "backend", "--read", "--project"],
+            root,
+            &[],
+        );
+        if read["data"]["state"] != "running" && read["data"]["ranAt"].is_string() {
+            break read["data"].clone();
+        }
+        assert!(std::time::Instant::now() < deadline, "never ended: {read}");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    assert_eq!(
+        lane_run["edges"]["greet"]["reason"], "review_needed",
+        "{lane_run}"
+    );
+    assert_eq!(runs(), 0, "a lane's CLI ran its draft's command");
+
+    // The Runtime, started with the reviewed remote.
+    let events = tempfile::tempdir().unwrap();
+    let events = events.path().join("events");
+    let mut serve = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    serve
+        .args(["serve", "--events"])
+        .arg(&events)
+        .args(["--bind", "127.0.0.1:0", "--project"])
+        .arg(root)
+        .args(["--reviewed-remote", &url])
+        .env("GRAPHHELM_CLI", assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        let git_bin = Path::new(r"C:\Program Files\Git\bin");
+        if git_bin.join("sh.exe").is_file() {
+            let mut path = std::ffi::OsString::from(git_bin.as_os_str());
+            path.push(";");
+            path.push(std::env::var_os("PATH").unwrap_or_default());
+            serve.env("PATH", path);
+        }
+    }
+    let mut child = serve.spawn().unwrap();
+    struct Stop(std::process::Child);
+    impl Drop for Stop {
+        fn drop(&mut self) {
+            drop(self.0.kill());
+            drop(self.0.wait());
+        }
+    }
+    let mut line = String::new();
+    std::io::BufRead::read_line(
+        &mut std::io::BufReader::new(child.stdout.take().unwrap()),
+        &mut line,
+    )
+    .unwrap();
+    let _server = Stop(child);
+    let started: Value = serde_json::from_str(line.trim()).unwrap();
+    let base = format!("http://{}", started["data"]["address"].as_str().unwrap());
+    let token = support::read_token(&support::token_path(&events))
+        .trim()
+        .to_owned();
+    support::wait_for_health(&base);
+    let play = || -> Value {
+        let (status, reply) = http(
+            &base,
+            "POST",
+            "/v1/journey-flows/backend/preview",
+            &token,
+            Some(r#"{"force":true}"#),
+        );
+        assert!(matches!(status, 200 | 202), "{status} {reply}");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        loop {
+            let (_, read) = http(
+                &base,
+                "GET",
+                "/v1/journey-flows/backend/preview",
+                &token,
+                None,
+            );
+            let data = if read["data"].is_object() {
+                read["data"].clone()
+            } else {
+                read.clone()
+            };
+            if data["state"] != "running" && data["ranAt"].is_string() {
+                return data;
+            }
+            assert!(std::time::Instant::now() < deadline, "never ended: {read}");
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    };
+
+    // Reviewed on the remote's main: the command runs unasked, with no owner confirm recorded.
+    let played = play();
+    assert_eq!(played["result"], "pass", "{played}");
+    assert_eq!(played["cliReviewed"], true, "{played}");
+    assert!(played["held"].is_null(), "{played}");
+    assert_eq!(runs(), 1, "the reviewed command ran once");
+
+    // Edited, committed locally, and the local anchors forged to vouch for it.
+    let flow = root.join(".graphhelm/journeys/backend.journey.yaml");
+    let text = std::fs::read_to_string(&flow).unwrap();
+    std::fs::write(
+        &flow,
+        text.replace("A client greets", "A client first greets"),
+    )
+    .unwrap();
+    commit(root, "unreviewed edit");
+    git(root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git(root, &["remote", "add", "origin", root.to_str().unwrap()]);
+    let waiting = play();
+    assert_eq!(
+        waiting["edges"]["greet"]["reason"], "review_needed",
+        "{waiting}"
+    );
+    assert_eq!(waiting["cliReviewed"], false, "{waiting}");
+    assert_eq!(
+        runs(),
+        1,
+        "a flow that differs from the remote's main ran its command"
     );
 }

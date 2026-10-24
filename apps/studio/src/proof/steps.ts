@@ -16,6 +16,18 @@ export function isHeld(run: JourneyRun | null): boolean {
   return Object.values(run.edges ?? {}).some((edge) => edge.reason === "confirm_needed");
 }
 
+/** #1911: the run stopped before a draft's commands because its flow differs from the reviewed one
+ * on main. Nothing ran and there is nothing to confirm: the flow waits for review. */
+export function isWaitingReview(run: JourneyRun | null): boolean {
+  if (run === null || run.state === "running") return false;
+  return Object.values(run.edges ?? {}).some((edge) => edge.reason === "review_needed");
+}
+
+/** #1911: a waiting step's card says what it waits for. */
+export function statusText(status: StepStatus, run: JourneyRun | null): string {
+  return status === "waiting" && isWaitingReview(run) ? "waits for review" : STATUS_TEXT[status];
+}
+
 export type Viewport = "web" | "mobile";
 
 export interface Step {
@@ -139,6 +151,7 @@ const REASONS: Record<string, string> = {
   act_failed: "An action of this step could not be done.",
   not_reached: "The run stopped before this step.",
   confirm_needed: "This step waits for your confirmation of its commands.",
+  review_needed: "This step waits for review: its flow differs from the reviewed one on main.",
   cli_needs_approval: "This step waits for your approval of its commands.",
   timeout: "The step took too long and was stopped.",
   internal: "The run stopped on an internal error.",
@@ -166,7 +179,7 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
     : [...screens.keys()].map((screen) => ({ screen, edge: null }));
   // #1909: a draft held on `confirm_needed` waits for the owner's confirmation; every step it did
   // not play waits with it, never reads `not run` or skipped.
-  const held = isHeld(run);
+  const held = isHeld(run) || isWaitingReview(run);
   // #1912: a flow whose acts are all commands never observes its entry screen: the Runtime records
   // it `not_reached` because it is the commands' precondition, not a step that failed to run.
   const allEdges = flow.edges ?? [];
@@ -275,7 +288,7 @@ export function outputLines(run: JourneyRun | null): string[] {
  * counts as waiting for you, not as not run. */
 export interface StepCounts { passed: number; waits: number; failed: number; notRun: number }
 
-const WAITS = new Set(["confirm_needed", "cli_needs_approval"]);
+const WAITS = new Set(["confirm_needed", "cli_needs_approval", "review_needed"]);
 
 export function countSteps(steps: Step[]): StepCounts {
   const counts: StepCounts = { passed: 0, waits: 0, failed: 0, notRun: 0 };

@@ -1345,6 +1345,11 @@ pub struct ServeArgs {
     /// manifest itself, so the two are refused together.
     #[arg(long = "gateway-manifest", conflicts_with = "manifest")]
     pub gateway_manifest: Option<PathBuf>,
+    /// #1911: the repository URL whose `main` holds the reviewed journey flows. A draft's CLI
+    /// steps run without the owner's confirm only when the flow equals its blob on this remote's
+    /// `main`, fetched fresh at run start. Absent: every draft's commands wait for review.
+    #[arg(long = "reviewed-remote")]
+    pub reviewed_remote: Option<String>,
     /// The credential broker directory the model half leases from. See `--manifest`.
     #[arg(long)]
     pub broker: Option<PathBuf>,

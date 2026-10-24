@@ -6342,7 +6342,9 @@ fn a_send_to_fix_request_is_handed_to_a_free_lane_without_the_owner() {
         &format!("{base}/v1/executions/{run}/tasks?full=1"),
         Some(&token),
     );
-    let claim_sequence = tasks["data"]["headSequence"].as_u64().unwrap();
+    let claim_sequence = tasks["data"]["headSequence"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("no headSequence: {tasks}"));
     let release = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-9",
         "revision": 2, "at": "2026-10-13T12:00:00Z", "lane": "lane-a",
         "claimSequence": claim_sequence, "reason": "Handed back"});

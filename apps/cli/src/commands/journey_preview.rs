@@ -144,8 +144,10 @@ fn flow_key_and_source(project: &Path, id: &str) -> Result<(Value, String, Strin
     }
     let (flow, source) =
         super::journey_flow::read_for_preview_source(&file, project).map_err(|findings| {
-            let finding = findings.into_iter().find(|f| !f.is_warning()).unwrap();
-            failure(finding.code, finding.pointer, 2)
+            findings.into_iter().find(|f| !f.is_warning()).map_or_else(
+                || failure("preview.flow_unknown", "/id", 2),
+                |finding| failure(finding.code, finding.pointer, 2),
+            )
         })?;
     let digest = super::journey_flow::approval_digest(&flow);
     let commit = scope_commit_of(project, id, &flow);

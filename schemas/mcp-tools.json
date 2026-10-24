@@ -22,7 +22,7 @@
             "type": "boolean"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -261,7 +261,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -292,7 +292,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -331,7 +331,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -578,7 +578,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -699,7 +699,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -725,7 +725,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -762,7 +762,7 @@
             "type": "object"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -787,7 +787,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -829,7 +829,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -884,7 +884,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -1009,7 +1009,7 @@
       "name": "probe"
     },
     {
-      "description": "Report the governed memory states, transitions, and the moves policy allows (GET /v1/development/memory). Reads the shipped transition policy; no record id, because nothing persists a memory record yet.",
+      "description": "Report the governed memory states, transitions, and the moves policy allows (GET /v1/development/memory). Reads the shipped transition policy; this policy read does not retrieve an individual memory record.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {},
@@ -1017,6 +1017,30 @@
         "type": "object"
       },
       "name": "memory_status"
+    },
+    {
+      "description": "Compile required context items within a token budget and report the capsule digest (POST /v1/development/context). Required items are never dropped; insufficient budget returns a refusal.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "budget": {
+            "description": "Token budget the capsule must fit within. Required context that does not fit is refused, never trimmed.",
+            "maximum": 18446744073709551615,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "require": {
+            "description": "Required context sections. Never dropped to fit.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "compile_context"
     },
     {
       "description": "Publish opt-in durable memory through POST /v1/development/memory. Requires content, exact workspace/project, expiry, sourceExecutionId and a separately authenticated validatorSignalId. Returns committed record and sealed Evidence ids; missing or mismatched validation is refused.",
@@ -1032,7 +1056,7 @@
             "type": "integer"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -1086,7 +1110,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -1140,7 +1164,7 @@
             "type": "object"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -1194,7 +1218,7 @@
             "type": "object"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"
@@ -1308,7 +1332,7 @@
             "type": "string"
           },
           "ifMatch": {
-            "description": "Optional If-Match head pin: 409 if the store moved past it.",
+            "description": "Head pin; 409 if stale.",
             "maximum": 18446744073709551615,
             "minimum": 0,
             "type": "integer"

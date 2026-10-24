@@ -324,22 +324,18 @@ The gate, receipt store, merge-proof and presser were retired by owner order on 
 
 ## Wave D. Inputs: less to read, less to send, one schema
 
-### D1. MCP description diet
+### D1. MCP descriptions and working operations
 
-- Paths: `apps/cli/src/commands/mcp/tools.rs:29-384` (44 tools, about 14.4 KB of descriptions),
-  `:397` (`mutating_schema` repeats a 140-char `ifMatch` description on about 25 tools), the
-  stub tools `present` (:300, :423), `resolve_contract` (:408), `accounting` (:480),
-  `compile_context`.
-- Today: `tools/list` costs about 26 to 28 KB (about 7k tokens) per connect; the four longest
-  descriptions are `start` 1,013 chars, `synthesize` 722, `wake_wait` 624, `claim` 604. Stubs
-  that take no arguments still ship a description.
-- Promise: every description at or under 300 chars, one line plus the route; the `ifMatch`
-  text hoisted to one sentence; the four stubs leave `tools/list` until they do something (they
-  stay as HTTP routes for the parity guard). About 8 to 10 KB per session saved.
-- Proof: a test in `tools.rs` that serialises `tools/list` and asserts total bytes under a
-  named budget and no description over 300 chars; `tests/development_surface_parity.rs`
-  updated for the hidden stubs; `tests/surface_completeness.rs` green.
-- Keel row: wire contract (compatibility, expanded route). Size S.
+MCP descriptions remain bounded by the catalog byte budget and description-length guards in
+`apps/cli/src/commands/mcp/tools.rs`. The empty-input `resolve_contract`, `present`, and
+`accounting` adapters are retired across CLI, HTTP, MCP, and extension surface admission by
+[RFC-1951](../rfcs/RFC-1951-CODING-SCOPE-AND-PLACEHOLDER-RETIREMENT.md).
+`compile_context` accepts real required items and a budget and is listed as a working tool.
+The underlying policy, presentation, and accounting library contracts remain separate from
+the retired adapters.
+
+Proof remains the emitted catalog, tool schema/mutation guards, public surface parity and
+retirement checks, capability checks, and CLI help/catalog fixtures.
 
 ### D2. One schema source for MCP and WebMCP
 

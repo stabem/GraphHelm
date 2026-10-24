@@ -89,7 +89,12 @@ fn rust_sources(root: &Path) -> BTreeMap<String, String> {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if path.is_dir() {
-                if name != "target" && !name.starts_with('.') {
+                // `tests/fixtures/` contains input data, including frozen source corpora.
+                // Its declarations are not executable helpers, and its mentions cannot
+                // establish a caller for a real helper either.
+                let fixture_data =
+                    name == "fixtures" && directory.file_name().is_some_and(|name| name == "tests");
+                if name != "target" && !name.starts_with('.') && !fixture_data {
                     walk(&path, found);
                 }
             } else if name.ends_with(".rs") {
@@ -176,6 +181,33 @@ fn every_test_support_helper_has_a_caller() {
          Note that `#![allow(dead_code)]` in a support module is load-bearing and is NOT the thing \
          to remove: the module compiles into several test binaries and rustc cannot tell \
          'unused in this binary' from 'unused anywhere'."
+    );
+}
+
+#[test]
+fn fixture_corpora_are_neither_support_helpers_nor_executable_callers() {
+    let scratch = tempfile::tempdir().unwrap();
+    let support = scratch.path().join("adapters/example/tests/support/mod.rs");
+    let fixture = scratch
+        .path()
+        .join("adapters/example/tests/fixtures/tree/apps/example.rs");
+    fs::create_dir_all(support.parent().unwrap()).unwrap();
+    fs::create_dir_all(fixture.parent().unwrap()).unwrap();
+    fs::write(&support, "pub fn unused_real_helper() {}\n").unwrap();
+    fs::write(
+        &fixture,
+        "pub fn frozen_adapter() { unused_real_helper(); }\n",
+    )
+    .unwrap();
+
+    let sources = rust_sources(scratch.path());
+    let support_path = support.display().to_string().replace('\\', "/");
+    assert_eq!(sources.keys().collect::<Vec<_>>(), vec![&support_path]);
+    assert_eq!(support_modules(&sources).len(), 1);
+    assert_eq!(
+        dead_helpers(&support_path, &sources[&support_path], &sources),
+        BTreeSet::from(["unused_real_helper".to_owned()]),
+        "a call stored as fixture data cannot make an executable helper live"
     );
 }
 

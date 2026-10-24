@@ -180,7 +180,6 @@ fn top_level_command(argument: &str) -> Option<&'static str> {
         "mcp" => Some("mcp"),
         "wake-wait" => Some("wake-wait"),
         "quality" => Some("quality"),
-        "gate" => Some("gate"),
         "init" => Some("init"),
         "keel" => Some("keel"),
         "studio" => Some("studio"),

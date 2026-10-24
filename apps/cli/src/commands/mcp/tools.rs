@@ -27,7 +27,7 @@ struct ToolSpec {
 }
 
 /// The closed list, in the plan's order. Nothing else — the sabotage target.
-const TOOLS: [ToolSpec; 49] = [
+const TOOLS: [ToolSpec; 46] = [
     ToolSpec {
         name: "start",
         description: "Start an execution (POST /v1/executions/{executionId}/start): a new executionId, mode, and file (a graph path on the Runtime host) or inline graph. held: true starts without driving. After a client timeout it may have started: read status, never retry. Mode governs proposals; pause holds dispatch.",
@@ -246,29 +246,17 @@ const TOOLS: [ToolSpec; 49] = [
         schema: probe_schema,
     },
     ToolSpec {
-        name: "resolve_contract",
-        description: "Resolve the code-rule contract from layered rule sources (POST \
-                      /v1/development/contract). #223 existence-slice: no sources argument yet.",
-        schema: resolve_contract_schema,
-    },
-    ToolSpec {
         name: "memory_status",
         description: "Report the governed memory states, transitions, and the moves policy \
                       allows (GET /v1/development/memory). Reads the shipped transition policy; \
-                      no record id, because nothing persists a memory record yet.",
+                      this policy read does not retrieve an individual memory record.",
         schema: memory_status_schema,
     },
     ToolSpec {
-        name: "present",
-        description: "Render the owner-facing presentation of a task result (POST \
-                      /v1/development/present). #223 existence-slice: no result argument yet.",
-        schema: present_schema,
-    },
-    ToolSpec {
         name: "compile_context",
-        description: "Compile a context capsule and report its digest (POST \
-                      /v1/development/context). #223 existence-slice: no capsule content \
-                      argument yet.",
+        description: "Compile required context items within a token budget and report the capsule \
+                      digest (POST /v1/development/context). Required items are never dropped; \
+                      insufficient budget returns a refusal.",
         schema: compile_context_schema,
     },
     ToolSpec {
@@ -278,13 +266,6 @@ const TOOLS: [ToolSpec; 49] = [
                       a separately authenticated validatorSignalId. Returns committed record \
                       and sealed Evidence ids; missing or mismatched validation is refused.",
         schema: memory_propose_schema,
-    },
-    ToolSpec {
-        name: "accounting",
-        description: "Report a context-accounting receipt (GET /v1/development/accounting). \
-                      #223 existence-slice: no execution id yet, and the one field reports as \
-                      unavailable rather than zero -- nothing was measured.",
-        schema: accounting_schema,
     },
     ToolSpec {
         name: "sweep",
@@ -363,12 +344,8 @@ const ROUTES: &[Route] = &[
     Route { tool: "journey_close", method: "DELETE", path: &[Lit("v1"), Lit("journeys"), Lit("sessions"), Arg("sessionId")], body: RouteBody::None },
     Route { tool: "evidence", method: "GET", path: &[Lit("v1"), Lit("executions"), Arg("executionId"), Lit("evidence"), Arg("evidenceId")], body: RouteBody::None },
     Route { tool: "cancel", method: "POST", path: &[Lit("v1"), Lit("executions"), Arg("executionId"), Lit("cancel")], body: RouteBody::Empty },
-    // #223 existence-slices: no arguments yet; mutations in shape (POST, key), reads as reads.
-    Route { tool: "resolve_contract", method: "POST", path: &[Lit("v1"), Lit("development"), Lit("contract")], body: RouteBody::Empty },
     Route { tool: "memory_status", method: "GET", path: &[Lit("v1"), Lit("development"), Lit("memory")], body: RouteBody::None },
-    Route { tool: "present", method: "POST", path: &[Lit("v1"), Lit("development"), Lit("present")], body: RouteBody::Empty },
     Route { tool: "memory_propose", method: "POST", path: &[Lit("v1"), Lit("development"), Lit("memory")], body: RouteBody::Arguments },
-    Route { tool: "accounting", method: "GET", path: &[Lit("v1"), Lit("development"), Lit("accounting")], body: RouteBody::None },
 ];
 
 /// #1361: the request a pass-through route builds, arguments required left to right.
@@ -428,16 +405,9 @@ fn mutating_schema(mut properties: serde_json::Value, required: &[&str]) -> serd
         "type": "integer",
         "minimum": 0,
         "maximum": u64::MAX,
-        "description": "Optional If-Match head pin: 409 if the store moved past it.",
+        "description": "Head pin; 409 if stale.",
     });
     object_schema(properties, required)
-}
-
-fn resolve_contract_schema() -> serde_json::Value {
-    // No fields yet: #223's existence-slice always resolves against an empty source list.
-    // Sources become a real argument when the behavioral-parity guard (blueprint §6 item 2)
-    // wires this to actual rule artifacts.
-    object_schema(serde_json::json!({}), &[])
 }
 
 fn memory_status_schema() -> serde_json::Value {
@@ -445,13 +415,6 @@ fn memory_status_schema() -> serde_json::Value {
     // shipped transition policy, which takes no parameter. A record id would be the argument, and
     // nothing persists a record to name -- see `commands::development::run_memory_status` for the
     // measurement and for when the id returns.
-    object_schema(serde_json::json!({}), &[])
-}
-
-fn present_schema() -> serde_json::Value {
-    // No fields yet, for the same reason as resolve_contract_schema: #223's existence-slice
-    // renders a fixed no-decision result. The task result becomes a real argument when the
-    // behavioral-parity guard (blueprint section 6 item 2) wires this to actual task outcomes.
     object_schema(serde_json::json!({}), &[])
 }
 
@@ -503,12 +466,6 @@ fn memory_propose_schema() -> serde_json::Value {
             "validatorSignalId",
         ],
     )
-}
-
-fn accounting_schema() -> serde_json::Value {
-    // No fields yet: there is no execution to name until the existence-slice grows an id
-    // argument, which is behavioral-parity work, not this guard's job.
-    object_schema(serde_json::json!({}), &[])
 }
 
 fn list_schema() -> serde_json::Value {
@@ -1266,16 +1223,6 @@ fn matured_reply(already_past: bool) -> HandlerOutcome {
     }))
 }
 
-/// #1277 (plan D1): the existence-slice stubs (#223) that take no argument and do nothing yet.
-/// They stay callable by name and keep their HTTP routes, but leave `tools/list` until they do
-/// something: each costs every connecting session its description and schema for nothing.
-pub(crate) const UNLISTED_STUBS: [&str; 4] = [
-    "resolve_contract",
-    "present",
-    "compile_context",
-    "accounting",
-];
-
 /// #1277: the most `tools/list` may serialise to, in bytes. Every connecting session pays it;
 /// the guard below fails a change that grows it past this, so growth is a decision in a diff.
 /// Raised from 25 500 for `signal`'s `lane` and `credentialFile` (lane-signed writes), already
@@ -1291,7 +1238,6 @@ const DESCRIPTION_MAX_CHARS: usize = 300;
 pub(crate) fn tool_list() -> serde_json::Value {
     let tools: Vec<serde_json::Value> = TOOLS
         .iter()
-        .filter(|tool| !UNLISTED_STUBS.contains(&tool.name))
         .map(|tool| {
             serde_json::json!({
                 "name": tool.name,
@@ -2525,19 +2471,16 @@ mod envelope_tests {
     /// #1361 (opt-2's review risk): the body column decides whether a route sends the derived
     /// idempotency key and the caller's If-Match. A route sends them exactly when its tool's schema
     /// is a mutating schema (it declares `ifMatch`), so `cancel` turned to `RouteBody::None` would
-    /// silently drop both and fail here. Named exceptions: the #223 stubs whose schema has no
-    /// fields yet but are mutations in shape (POST with a key, see their table comment).
+    /// silently drop both and fail here.
     #[test]
     fn every_table_route_sends_the_key_exactly_when_its_tool_mutates() {
-        const MUTATIONS_WITHOUT_FIELDS: [&str; 2] = ["resolve_contract", "present"];
         for route in ROUTES {
             let tool = TOOLS.iter().find(|tool| tool.name == route.tool).unwrap();
             let declares_if_match = (tool.schema)()["properties"].get("ifMatch").is_some();
-            let mutates = declares_if_match || MUTATIONS_WITHOUT_FIELDS.contains(&route.tool);
             let sends_key = !matches!(route.body, RouteBody::None);
             assert_eq!(
                 sends_key,
-                mutates,
+                declares_if_match,
                 "{}: body {} but its schema {} ifMatch",
                 route.tool,
                 if sends_key {
@@ -2612,29 +2555,6 @@ mod envelope_tests {
              GRAPHHELM_WRITE_FIXTURES=1 cargo test -p graphhelm-cli --bin graphhelm -- \
              the_committed_tool_catalog_is_the_emitted_one"
         );
-    }
-
-    /// #1277: the unlisted stubs leave `tools/list` and nothing else does; each stays in the
-    /// table, so `tools/call` still reaches it by name.
-    #[test]
-    fn the_unlisted_stubs_are_callable_but_not_listed() {
-        let listed: Vec<String> = tool_list()["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|tool| tool["name"].as_str().unwrap().to_owned())
-            .collect();
-        for stub in UNLISTED_STUBS {
-            assert!(
-                !listed.iter().any(|name| name == stub),
-                "{stub} is still listed"
-            );
-            assert!(
-                TOOLS.iter().any(|tool| tool.name == stub),
-                "{stub} left the table, so it is no longer callable"
-            );
-        }
-        assert_eq!(listed.len() + UNLISTED_STUBS.len(), TOOLS.len());
     }
 
     /// Every tool's minimal example carries every field its own schema requires - the invariant

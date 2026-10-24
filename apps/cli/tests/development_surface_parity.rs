@@ -45,15 +45,6 @@ use serde_json::{Value, json};
 /// looking closed with one entry in it.
 const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
     FamilySurfaces {
-        cli: "resolve-contract",
-        mcp: "resolve_contract",
-        http_method: "POST",
-        // "resolve-contract" -> "/v1/development/contract": the CLI/MCP names the ACTION ("resolve"),
-        // the HTTP path names the RESOURCE it acts on ("contract"), under the REST convention this
-        // codebase already uses elsewhere (`/v1/executions/{id}/start`, not `/v1/start-execution`).
-        http_probe_path: "/v1/development/contract",
-    },
-    FamilySurfaces {
         cli: "memory-status",
         mcp: "memory_status",
         http_method: "GET",
@@ -68,23 +59,6 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
         // that store is the consumer of this sentence. Until then this reads the shipped
         // memory-transition policy, which is real, digest-bound and schema-owned.
         http_probe_path: "/v1/development/memory",
-    },
-    FamilySurfaces {
-        cli: "present",
-        mcp: "present",
-        http_method: "POST",
-        // "/v1/development/present", with NO suffix stripped and none added -- and that is a fact
-        // about this family rather than a rule about names. The other two families split a verb
-        // from a noun because their action and their resource are different words. Here they are
-        // the SAME word: the thing being done IS the thing being acted on, so the whole name is
-        // the segment.
-        //
-        // Worth stating rather than leaving to be re-derived: before this struct existed, the path
-        // was computed by dropping the text before the first hyphen. "present" has no hyphen, so
-        // that computation returned the whole name -- the right answer, reached by falling through
-        // rather than by deciding. The old `to_http_path` asked whoever brought the first exception
-        // to write the decision down; this is it, in the place decisions now live.
-        http_probe_path: "/v1/development/present",
     },
     FamilySurfaces {
         cli: "compile-context",
@@ -111,24 +85,6 @@ const DEVELOPMENT_OPERATION_FAMILIES: &[FamilySurfaces] = &[
         // noun that can never be fetched. A route that cannot answer GET is not a resource.
         http_probe_path: "/v1/development/memory",
     },
-    FamilySurfaces {
-        cli: "accounting",
-        mcp: "accounting",
-        http_method: "GET",
-        // "accounting" has no verb-noun split at all -- same shape as "present" above, the whole
-        // name is the segment because there is no separate action word.
-        http_probe_path: "/v1/development/accounting",
-    },
-];
-
-/// #1277 (plan D1): the #223 existence-slice stubs that leave `tools/list` until they do
-/// something. Hand-written, the same set as `UNLISTED_STUBS` in `src/commands/mcp/tools.rs`
-/// (unreachable from here: the crate is bin-only). They keep their CLI leaf and HTTP route.
-const UNLISTED_MCP_STUBS: [&str; 4] = [
-    "resolve_contract",
-    "present",
-    "compile_context",
-    "accounting",
 ];
 
 /// CLI-only development leaves are explicit exceptions because they intentionally have no MCP or
@@ -412,7 +368,7 @@ fn real_mcp_tool_names() -> Vec<String> {
 // which exists there for long-running concurrent tests this one is not.
 // -------------------------------------------------------------------------------------------
 
-fn probe_http_route_exists(method_path: &str) {
+fn probe_http_route_status(method_path: &str) -> u16 {
     let directory = tempfile::tempdir().unwrap();
     let events = directory.path().join("events");
     let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
@@ -464,6 +420,12 @@ fn probe_http_route_exists(method_path: &str) {
     let _ = child.kill();
     let _ = child.wait();
 
+    status
+}
+
+fn probe_http_route_exists(method_path: &str) {
+    let status = probe_http_route_status(method_path);
+    let (method, path) = method_path.split_once(' ').unwrap();
     assert_ne!(
         status, 404,
         "{method} {path} 404'd against the real server -- the route is declared but not wired \
@@ -575,22 +537,12 @@ fn every_declared_development_operation_family_exists_on_all_three_surfaces() {
              subcommand. Real subcommands seen: {cli_leaves:?}"
         );
 
-        // #1277: an unlisted stub is still a family (CLI and HTTP below), callable by name but
-        // absent from tools/list; listing it again is as much a drift as dropping a real tool.
-        if UNLISTED_MCP_STUBS.contains(&family.mcp) {
-            assert!(
-                !mcp_tools.contains(&family.mcp.to_owned()),
-                "{name:?} is an unlisted stub, but tools/list lists {:?}",
-                family.mcp
-            );
-        } else {
-            assert!(
-                mcp_tools.contains(&family.mcp.to_owned()),
-                "{name:?} is declared but the real MCP tools/list has no {:?} entry. \
-                 Real tools seen: {mcp_tools:?}",
-                family.mcp
-            );
-        }
+        assert!(
+            mcp_tools.contains(&family.mcp.to_owned()),
+            "{name:?} is declared but the real MCP tools/list has no {:?} entry. \
+             Real tools seen: {mcp_tools:?}",
+            family.mcp
+        );
 
         probe_http_route_exists(&format!(
             "{} {}",
@@ -777,5 +729,76 @@ fn every_named_exception_still_names_a_real_tool() {
              tool. The entry outlived the tool it excepted -- a rename or a removal left it \
              behind. Real tools seen: {tools:?}"
         );
+    }
+}
+
+/// Retired placeholder operations must fail at all public boundaries, not merely leave discovery.
+#[test]
+fn retired_development_placeholders_are_rejected_on_all_surfaces() {
+    for name in ["resolve-contract", "present", "accounting"] {
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["development", name])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "retired CLI operation {name}"
+        );
+    }
+    for route in [
+        "POST /v1/development/contract",
+        "POST /v1/development/present",
+        "GET /v1/development/accounting",
+    ] {
+        assert_eq!(
+            probe_http_route_status(route),
+            404,
+            "retired HTTP operation {route}"
+        );
+    }
+    let names = ["resolve_contract", "present", "accounting"];
+    let mut messages = vec![
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"retirement-proof","version":"1"}}}),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+    ];
+    for (index, name) in names.iter().enumerate() {
+        messages.push(json!({"jsonrpc":"2.0","id":index + 2,"method":"tools/call","params":{"name":name,"arguments":{}}}));
+    }
+    let input = messages
+        .iter()
+        .map(|value| format!("{value}\n"))
+        .collect::<String>();
+    let output = assert_cmd::Command::from_std(graphhelm_process::command(
+        assert_cmd::cargo::cargo_bin!("graphhelm"),
+    ))
+    .args(["mcp", "--url", "http://127.0.0.1:9", "--actor", "agent-x"])
+    .env("GRAPHHELM_API_TOKEN", "test-token")
+    .write_stdin(input)
+    .timeout(scaled(Duration::from_secs(30)))
+    .output()
+    .unwrap();
+    let replies: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|value| value.get("jsonrpc").is_some())
+        .collect();
+    assert_eq!(replies.len(), 4);
+    for (reply, name) in replies.iter().skip(1).zip(names) {
+        assert_eq!(
+            reply["error"]["code"], -32602,
+            "retired MCP operation {name}: {reply}"
+        );
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("no tool named")
+        );
+    }
+    let listed = real_mcp_tool_names();
+    for name in names {
+        assert!(!listed.iter().any(|listed| listed == name));
     }
 }

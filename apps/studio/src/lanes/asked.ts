@@ -8,7 +8,7 @@ import { when } from "../time/when";
 export type AskedTone = "asks" | "quiet" | "merge" | "on";
 
 /** One owner request as the WHAT I ASKED column draws it. */
-export interface AskedCard {
+interface AskedCard {
   requestId: string;
   /** "21 Oct 18:30" from the Runtime's `recordedAt`; `null` when the Runtime served none. */
   when: string | null;

@@ -56,39 +56,6 @@ export function cards(board: TasksBoard, flows: readonly JourneyFlow[], journey:
     .map((task) => ({ task, column: kanbanColumn(task, stalled, flows), stepMinutes: minutesInStep(task, board.now) }));
 }
 
-/** The journeys that have work in flight, for the filter: the ones some live slice names, each with
- * its count of slices, in the order the flows list them. */
-export function journeysWithWork(board: TasksBoard, flows: readonly JourneyFlow[]): { id: string; title: string; slices: number }[] {
-  const counts = new Map<string, number>();
-  for (const task of board.tasks) {
-    if (task.releasedBy !== undefined) continue;
-    for (const id of task.journeys) counts.set(id, (counts.get(id) ?? 0) + 1);
-  }
-  const known = flows.filter((flow) => counts.has(flow.id)).map((flow) => ({ id: flow.id, title: flow.title ?? flow.name ?? flow.id, slices: counts.get(flow.id)! }));
-  const unknown = [...counts.keys()].filter((id) => !flows.some((flow) => flow.id === id)).sort().map((id) => ({ id, title: id, slices: counts.get(id)! }));
-  return [...known, ...unknown];
-}
-
-/** The requests to draw: all of them, or with a journey picked, only the ones with an issue whose
- * slice names that journey. */
-export function requestsFor(requests: readonly OwnerRequest[], board: TasksBoard, journey: string | null): OwnerRequest[] {
-  if (journey === null) return [...requests];
-  const issues = new Set(board.tasks.filter((task) => task.journeys.includes(journey) && task.issue !== null).map((task) => task.issue));
-  return requests.filter((request) => request.issues.some((row) => issues.has(row.issue)));
-}
-
-/** What a request's result column says. Delivered means every linked issue merged; it reads Proven
- * only when the merged slices' journeys passed as well. */
-export function result(request: OwnerRequest, board: TasksBoard, flows: readonly JourneyFlow[]): { word: string; detail: string } {
-  if (request.status === "open") return { word: "open", detail: "no issue opened yet" };
-  const linked = new Set(request.issues.map((row) => row.issue));
-  const merged = board.tasks.filter((task) => task.issue !== null && linked.has(task.issue) && task.step === "merged");
-  const done = request.issues.filter((row) => row.slices.some((slice) => slice.merged)).length;
-  if (request.status === "in_progress") return { word: "in progress", detail: `${done} of ${request.issues.length} issues merged` };
-  if (merged.length > 0 && merged.every((task) => proven(task, flows))) return { word: "proven", detail: "every journey passed" };
-  return { word: "merged", detail: "waits for the journey replay" };
-}
-
 /** #1922 (Graph.dc.html renderVals): the state of one issue of a request, stalled to proven. */
 export const ISSUE_STATES = [
   { label: "stalled", color: "#ff6b6b" },
@@ -144,10 +111,6 @@ export function requestProgress(request: OwnerRequest, tasks: readonly BoardTask
   else if (its.some((it) => it.col === 0)) chip = { key: "stalled", label: "Stalled", color: "#ff6b6b" };
   else chip = done > 0 ? { key: "in_progress", label: `In progress \u00b7 ${done} of ${total}`, color: "#ff8a3d" } : { key: "not_started", label: "Not started", color: "#a2a2ad" };
   return { chip, pct: `${total === 0 ? 0 : Math.round((done / total) * 100)}%`, done, total, segs, legend };
-}
-
-export function requestChip(request: OwnerRequest, tasks: readonly BoardTask[], flows: readonly JourneyFlow[], stalled: ReadonlySet<string> = new Set()): RequestChip {
-  return requestProgress(request, tasks, flows, stalled).chip;
 }
 
 /** The newest sign of life of a request, in ms: the newest step clock on a slice of its issues,

@@ -49,7 +49,7 @@ describe("lanes board", () => {
     };
     expect(agents(board).map((agent) => [agent.lane, agent.column, agent.task?.key ?? null, agent.idleMinutes, agent.moreQuestions])).toEqual([
       ["lane-a", "implement", "a#1", 14, 0],
-      ["lane-b", "silent", "b#1", 105, 0],
+      ["lane-b", "review", "b#1", 105, 0], // #1991: open PR under review is waiting, not silent,
       ["lane-q", "blocked", null, null, 5],
       ["lane-r", "review", "b#1", null, 0],
     ]);
@@ -144,5 +144,18 @@ describe("lanes board", () => {
     });
     expect(agents(at(true)).map((agent) => agent.column)).toEqual(["silent"]);
     expect(agents(at(false)).map((agent) => agent.column)).toEqual(["implement"]);
+  });
+
+  it("#1991: a lane whose open PR waits for review sits in Review, not Silent", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [task("a#1", "lane-a", "review", { pr: 20 }), task("b#1", "lane-b", "implement")],
+      liveness: { lanes: [
+        { lane: "lane-a", lastRecordAt: "2026-10-22T11:14:00Z", owes: true, silent: true, free: false },
+        { lane: "lane-b", lastRecordAt: "2026-10-22T09:00:00Z", owes: true, silent: true, free: false },
+      ] },
+      stalls: [], waiting: [],
+    };
+    expect(agents(board).map((agent) => [agent.lane, agent.column])).toEqual([["lane-a", "review"], ["lane-b", "silent"]]);
   });
 });

@@ -35,6 +35,11 @@ export interface Agent {
 
 const open = (task: BoardTask) => task.step !== "merged" && task.releasedBy === undefined;
 
+/** #1991: a slice whose PR is open and waits for its review (or already has a reviewer): its author
+ * is waiting, not silent, and nothing about it needs the owner's action as "silent". */
+export const awaitsReview = (task: BoardTask) =>
+  open(task) && task.pr !== null && (task.step === "review" || task.step === "merge" || task.currentReviewer !== null);
+
 /** #1979: lanes off the board: finished lanes, i.e. the newest slice they own was recorded `merged`, they hold
  * or review no open slice and wait on no question. Derived from records (no `lane_retired`); a
  * new claim opens a slice and the lane is no longer finished. */
@@ -81,7 +86,7 @@ export function agents(board: TasksBoard): Agent[] {
     return {
       lane,
       column: column({
-        silent: liveness?.silent ?? false,
+        silent: (liveness?.silent ?? false) && !(owned[0] !== undefined && awaitsReview(owned[0])),
         asks: questions.length > 0,
         blocked: owned.some((slice) => slice.blockedBy !== null) || board.stalls.some((stall) => stall.owner === lane),
         step: owned[0]?.step ?? (reviewing.length > 0 ? "review" : null),

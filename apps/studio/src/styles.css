@@ -353,7 +353,7 @@ button { font: inherit; }
 .filter.reply { background: #241010; color: #ff9b9b; }
 .filter.idle { background: #24170e; color: var(--accent); }
 .filter.working { background: #10201a; color: var(--live); border-color: transparent; }
-.board { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(var(--col-min), 1fr)); gap: var(--s3); min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; flex: 1 0 auto; min-height: 360px; }
+.board { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--s3); min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; flex: 1 0 auto; min-height: 360px; }
 .board-column { border: 1px solid var(--edge); border-radius: var(--card-radius); background: #111113; padding: var(--card-pad); display: flex; flex-direction: column; gap: var(--card-gap); min-width: 0; }
 /* #1934: one column header and count chip in every view (Tokens.dc.html "Sample column"). */
 .board-column h3, .kanban-col h2, .col-head { margin: 0; min-height: 24px; display: flex; align-items: center; gap: var(--s2); font: 600 var(--fs-meta) var(--mono); text-transform: uppercase; }
@@ -361,7 +361,7 @@ button { font: inherit; }
 .board-column > ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .board-column .none { color: var(--faint); font-size: 11px; }
 /* #1901: WHAT I ASKED, the first board column of Lanes.dc.html. */
-.board.with-asked { grid-template-columns: repeat(7, minmax(var(--col-min), 1fr)); }
+.board.with-asked { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .board-column.asked { border-color: #5a3a22; background: #151210; }
 .board-column.asked > section { display: flex; flex-direction: column; gap: 8px; }
 .board-column.asked ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }

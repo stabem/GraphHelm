@@ -107,4 +107,14 @@ describe("lanes panels", () => {
     expect(capacityRows({ ...capacity, memory: { availableBytes: null, totalBytes: null, reason: "unsupported platform" } }).at(-1))
       .toMatchObject({ value: "unknown", fill: null, reason: "unsupported platform" });
   });
+
+  it("#1991: a silent author whose PR waits for review is not flagged; one without a PR still is", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [task("w#1", "lane-w", "review", { pr: 20, currentReviewer: "lane-r", lastSequence: 3 }), task("s#1", "lane-s", "implement", { lastSequence: 4 })],
+      liveness: { lanes: [live("lane-w", { silent: true, lastRecordAt: "2026-10-22T11:14:00Z" }), live("lane-s", { silent: true, lastRecordAt: "2026-10-22T09:00:00Z" })] },
+      stalls: [], waiting: [],
+    };
+    expect(needsAction(board).map((need) => need.id)).toEqual(["reassign:s#1"]);
+  });
 });

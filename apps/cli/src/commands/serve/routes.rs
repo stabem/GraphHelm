@@ -2118,10 +2118,12 @@ pub(super) async fn requests(
                 execution::tasks::read_cached(&events, &execution_id, &keyring, &budget, cache)
             })
             .map(|view| {
+                // #1981: with each request's hand-off, judged now.
+                let requests = execution::tasks::owner_requests(&view);
                 serde_json::json!({
                     "executionId": view.execution_id,
                     "headSequence": view.head_sequence,
-                    "requests": graphhelm_execution::requests::requests(&view.records, &view.tasks),
+                    "requests": requests,
                 })
             })
         })

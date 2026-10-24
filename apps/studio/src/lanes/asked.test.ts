@@ -36,6 +36,13 @@ describe("what I asked", () => {
     expect(cards[1]).toMatchObject({ title: "Old ask", when: null, summary: "1 agent" });
   });
 
+  it("says a request handed to a lane is not yet taken until that lane links an issue (#1981)", () => {
+    const handed = request("fix-1", [], { status: "open", dispatchedTo: "lane-a" });
+    const cards = askedCards([handed, request("fix-2", [], { status: "open", dispatchLapsed: ["lane-b"] })], [agent("lane-a", null), agent("lane-b", null)], []);
+    expect(cards[1]).toMatchObject({ requestId: "fix-1", summary: "no agent working", chip: { key: "not_started", label: "Handed to lane-a, not yet taken" } });
+    expect(cards[0]).toMatchObject({ requestId: "fix-2", summary: "no agent working", chip: { key: "not_started", label: "Not started" } });
+  });
+
   it("names on each card the newest request its lane serves (#1904)", () => {
     const tasks = [slice("a", 7), slice("b", 8), slice("b", 7)];
     const titles = requestTitles([request("r1", [7], { title: "Old ask" }), request("r2", [8])], [agent("a", 7), agent("b", 8), agent("c", null)], tasks);

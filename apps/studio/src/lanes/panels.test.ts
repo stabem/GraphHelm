@@ -19,6 +19,9 @@ describe("lanes panels", () => {
     expect(needs.map((need) => [need.verb, need.lane, need.to, need.what, need.request?.requestId])).toEqual([
       ["Hand off", "lane-free", "lane-free", "Your request waits for a lane: Fix fix-a", "fix-a"],
     ]);
+    // #1981: a live hand-off asks nothing of the owner; a lapsed one (no dispatchedTo) is a Hand off again.
+    expect(needsAction(board, [{ ...request("fix-a", "open", []), dispatchedTo: "lane-free" }])).toEqual([]);
+    expect(needsAction(board, [{ ...request("fix-a", "open", []), dispatchLapsed: ["lane-x"] }]).map((need) => need.verb)).toEqual(["Hand off"]);
   });
 
   it("lists what waits on the owner oldest first, each with the verb and the lane it acts on", () => {

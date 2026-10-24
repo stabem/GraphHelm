@@ -1,4 +1,5 @@
 pub(crate) mod alloc_guard;
+mod dispatch;
 mod documents;
 mod handover;
 mod journey_credentials;
@@ -1252,7 +1253,7 @@ fn build_router(state: ServeState) -> Router {
             "/v1/executions/{id}/signal",
             // #313 Ruling 6: up to four 8 MiB images as base64 (42.7 MiB worst case). Only this
             // route; the global 5 MiB limit below still bounds every other one.
-            post(routes::signal).layer(axum::extract::DefaultBodyLimit::max(48 * 1024 * 1024)),
+            post(dispatch::signal).layer(axum::extract::DefaultBodyLimit::max(48 * 1024 * 1024)),
         )
         .route(
             "/v1/executions/{id}/native-chats",

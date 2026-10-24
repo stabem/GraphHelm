@@ -276,7 +276,7 @@ Delivered is defined once, in [`keel/KEEL_MERGE.md`](../../keel/KEEL_MERGE.md).
 
 `task_record.py merged` requires GitHub-confirmed `MERGED` state and a matching merge SHA (full or at least 7 hex characters, case-insensitive); `--no-github` refuses unless `--dry-run` is set, and an `OPEN` state or null merge commit retries up to three reads, two seconds apart.
 
-Where a Runtime execution coordinates the lanes (`gh-team` here), each step that writes an identity
+Where a configured Runtime execution coordinates the lanes, each step that writes an identity
 line also records the matching `task.*` signal, so the Studio can draw each task's graph from
 records instead of prose. The signal's `type` is the kind, its `source` is
 `{"type":"user","id":"<your lane>"}` and its `description` is one `graphhelm-task-event-v1`
@@ -346,7 +346,7 @@ A critic round's verdict is not an argument: the script derives it from the scor
   mints it at start (D-058). **The value sent for a `task.*` record is not that token but
   the lane's own credential**, `<events>.agent.<lane>.token` beside it, which the owner or
   the orchestrator mints once per lane and execution:
-  `graphhelm tasks credential --lane <lane> --execution gh-team --token-file <project>/.graphhelm/events.token`.
+  `graphhelm tasks credential --lane <lane> --execution <execution> --token-file <project>/.graphhelm/events.token`.
   The Runtime derives it from the owner token, the execution and the lane and verifies it by
   recomputation; the credential presented under another lane's `X-GraphHelm-Actor` is not a
   principal (401). **Rollout:** a Runtime started with `serve --require-lane-credential` refuses a
@@ -356,7 +356,12 @@ A critic round's verdict is not an argument: the script derives it from the scor
   Without the file, `task_record.py` refuses and prints the mint command (#1459); `--allow-shared-token` sends the shared token instead, with that note on stderr;
   under the flag that record is refused. Never use the owner's `events.token` as a lane record's
   bearer.
-- **Defaults.** `--url http://127.0.0.1:8793`, `--execution gh-team`, `--repo stabem/GraphHelm`;
+- **Defaults.** `--url http://127.0.0.1:8793`, `--repo stabem/GraphHelm`; the execution is selected
+  by explicit `--execution`, or otherwise by the first existing `team.json` beside the effective
+  `--token-file` and then the nearest project `.graphhelm/team.json`. A missing or invalid binding
+  refuses before any Runtime or GitHub work; there is no implicit `gh-team` fallback. Execution IDs
+  use the Runtime's exact bounded opaque-ASCII predicate (up to 128 bytes), and the recorder
+  percent-encodes the ID as one URL path segment before POSTing.
   `revision` is the step's position (claimed 1 … merged 5; `planned` is 1, beside its claim). `closes` is exactly the `--closes`
   numbers (the issues the squash closed, the intent `ci/closing-keywords.ps1` checked); with none
   given it is empty, which is right for a `Refs` PR.

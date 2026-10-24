@@ -1140,12 +1140,8 @@ pub struct CodeIndexQueryArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum DevelopmentCommand {
-    /// Resolve layered code rules into one contract (#218's resolver, exposed here).
-    ResolveContract,
     /// Report the governed memory states, transitions, and the moves policy allows (#220).
     MemoryStatus,
-    /// Render an owner-facing presentation from a task result (#219's renderer, exposed here).
-    Present,
     /// Compile a context capsule (#222/#273's compiler, exposed here).
     CompileContext {
         /// Token budget the compiled capsule must fit within.
@@ -1196,8 +1192,6 @@ pub enum DevelopmentCommand {
         #[arg(long)]
         events: Option<PathBuf>,
     },
-    /// Report a context-accounting receipt (#222/#273's accounting types, exposed here).
-    Accounting,
 }
 
 #[derive(Debug, Args)]

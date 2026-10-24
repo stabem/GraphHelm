@@ -848,9 +848,7 @@ fn journey_draft_and_review_forward_scoped_credentials_and_runtime_refusals() {
 /// while a genuinely wrong name in a skill nobody had added yet would have been caught for the
 /// wrong reason. A second copy of a set is a second thing to forget.
 ///
-/// #1277: `resolve_contract`, `present`, `compile_context` and `accounting` are callable but
-/// unlisted (`UNLISTED_STUBS` in tools.rs), so they are not here.
-const MCP_TOOL_NAMES: [&str; 45] = [
+const MCP_TOOL_NAMES: [&str; 46] = [
     "start",
     "list",
     "topology",
@@ -895,6 +893,7 @@ const MCP_TOOL_NAMES: [&str; 45] = [
     "route_set",
     "probe",
     "memory_status",
+    "compile_context",
     "memory_propose",
     "sweep",
     "claim",
@@ -1345,15 +1344,7 @@ fn tools_list_names_exactly_the_registered_tools_with_closed_schemas() {
         names,
         MCP_TOOL_NAMES.to_vec(),
         "exactly the tools in `MCP_TOOL_NAMES`, in order, and NOTHING else — no credential tool exists by \
-         design (omission is the enforcement); #223 added resolve_contract, memory_status, \
-         present, compile_context, memory_propose, then accounting, each after the one before \
-         it; #288 added sweep after those; #105 added list beside start, the read a caller \
-         reaches for before it knows an execution id; #107 added synthesize, the Graph Architect, \
-         last; #1063 added briefing beside status, the read a harness picking a run up makes \
-         first. This pin is a LIST and not a count, so a tool added \
-         to TOOLS without a line here fails on the NAME rather than on a number -- which is what \
-         happened to present (#357 moved TOOLS and not this list, and the gate that PR chose did \
-         not run this file)."
+         design (omission is the enforcement). The ordered list names the actual public tools."
     );
     for tool in &tools {
         let schema = &tool["inputSchema"];

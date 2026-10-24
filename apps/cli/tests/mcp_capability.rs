@@ -117,7 +117,7 @@ fn development_capability_package() -> PackageFixture {
         &root,
         "fixtures/development-resolver.json",
         b"{}",
-        &["tool:resolve_contract"],
+        &["tool:compile_context"],
         &["runtime.connect"],
         &["network.loopback"],
     );
@@ -459,8 +459,8 @@ fn tools_call_proceeds_past_the_capability_gate_when_the_tool_is_allowlisted() {
 
 #[test]
 fn a_minted_development_tool_is_allowed_while_another_is_refused_by_the_same_token() {
-    // `resolve_contract` and `compile_context` are the MCP names for the
-    // `development.resolve-contract` and `development.compile-context` operations. Keep exactly
+    // `compile_context` and `memory_status` are the MCP names for the
+    // `development.compile-context` and `development.memory-status` operations. Keep exactly
     // one on the token so this one real session proves both sides of the per-tool allowlist
     // rather than inferring development-family coverage from other tools.
     let package = development_capability_package();
@@ -486,7 +486,7 @@ fn a_minted_development_tool_is_allowed_while_another_is_refused_by_the_same_tok
     assert_eq!(minted["ok"], true, "{minted}");
     assert_eq!(
         minted["data"]["allowedTools"],
-        json!(["resolve_contract"]),
+        json!(["compile_context"]),
         "the production mint must derive the exact development allowlist from contribution surfaces"
     );
     let token_path = write_token_file(directory.path(), &minted["data"]);
@@ -504,9 +504,9 @@ fn a_minted_development_tool_is_allowed_while_another_is_refused_by_the_same_tok
             initialize_request(1),
             initialized_notification(),
             json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                "params": {"name": "resolve_contract", "arguments": {}}}),
-            json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                 "params": {"name": "compile_context", "arguments": {}}}),
+            json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                "params": {"name": "memory_status", "arguments": {}}}),
         ],
     );
 
@@ -514,14 +514,14 @@ fn a_minted_development_tool_is_allowed_while_another_is_refused_by_the_same_tok
     if let Some(message) = session.replies[1]["error"]["message"].as_str() {
         assert!(
             !message.contains("capability") && !message.contains("allowlist"),
-            "resolve_contract IS the token's sole allowlisted development tool; any failure must \
+            "compile_context IS the token's sole allowlisted development tool; any failure must \
              be downstream of the capability gate: {message}"
         );
     }
     let refusal = &session.replies[2];
     assert!(
         refusal.get("error").is_some(),
-        "compile_context is outside the token's allowlist and must be refused: {refusal}"
+        "memory_status is outside the token's allowlist and must be refused: {refusal}"
     );
 
     let records = read_jsonl(&audit_log);
@@ -530,9 +530,9 @@ fn a_minted_development_tool_is_allowed_while_another_is_refused_by_the_same_tok
         2,
         "one decision per development tool: {records:?}"
     );
-    assert_eq!(records[0]["toolName"], "resolve_contract");
+    assert_eq!(records[0]["toolName"], "compile_context");
     assert_eq!(records[0]["decision"]["outcome"], "allowed");
-    assert_eq!(records[1]["toolName"], "compile_context");
+    assert_eq!(records[1]["toolName"], "memory_status");
     assert_eq!(records[1]["decision"]["outcome"], "refused");
     assert_eq!(
         records[1]["decision"]["code"], "tool_not_allowlisted",
@@ -629,18 +629,6 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
         token_path.to_str().unwrap(),
         "agent-x",
         audit_log.to_str().unwrap(),
-    );
-    // #1277: the unlisted #223 stubs are still callable, so the empty allowlist must refuse them
-    // too; tools/list no longer brings them into the population, so they are named here.
-    let mut population = population;
-    population.extend(
-        [
-            "resolve_contract",
-            "present",
-            "compile_context",
-            "accounting",
-        ]
-        .map(str::to_owned),
     );
     let mut lines = vec![initialize_request(1), initialized_notification()];
     for (index, name) in population.iter().enumerate() {

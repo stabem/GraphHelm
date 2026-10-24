@@ -7,7 +7,7 @@ This document consolidates the product decisions already made. They are normativ
 | D-001 | Topology | Local Studio as control plane; runtime and data on the user's VPS. |
 | D-002 | VPS connection | Existing VPS connected via SSH; installation and updates via Docker. **Exception in ADR-037 (#663): the host-side install/update/backup/restore lifecycle may be systemd-managed, as PR #595 ships it. Accepted on the merge of #595, along that axis only; the SSH clause above stands, and Docker remains the packaging for the runtime image.** |
 | D-003 | Autonomy | Total autonomy governed by the harness; no mandatory approval between phases. |
-| D-004 | Scope | Generalist agent operating system, not just a coding tool. |
+| D-004 | Scope | Orchestrate coding agents around software requests and the user journeys a change affects. Keel governs how changes are built and independently reviewed; Journey-Proven Development supplies observable evidence for the promised behavior. Reusable Runtime, graph, policy, memory, model, and deployment capabilities support that focus rather than independent general-purpose product verticals. Preserve working consumers and persisted/wire compatibility when retiring a surface. Owner-authorized scope clarification, 2026-10-23: [RFC-1951](rfcs/RFC-1951-CODING-SCOPE-AND-PLACEHOLDER-RETIREMENT.md). |
 | D-005 | Harness | Harness synthesized per task from atomic capabilities; no fixed domain-specific pack. |
 | D-006 | Mandatory rules | Deterministic Policy Engine enforces invariants and gates according to risk signals. |
 | D-007 | Agents | Ephemeral agents are synthesized with contracts and registered capabilities. |

@@ -10,14 +10,7 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-const DEVELOPMENT_OPERATIONS: &[&str] = &[
-    "resolve-contract",
-    "memory-status",
-    "present",
-    "compile-context",
-    "memory-propose",
-    "accounting",
-];
+const DEVELOPMENT_OPERATIONS: &[&str] = &["memory-status", "compile-context", "memory-propose"];
 
 fn raw_output(subcommand: &str) -> Vec<u8> {
     graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
@@ -46,7 +39,6 @@ fn run(subcommand: &str) -> Value {
 /// a plain, hand-written expectation for exactly that reason.
 fn expected_top_level_keys(subcommand: &str) -> &'static [&'static str] {
     match subcommand {
-        "resolve-contract" => &["record", "requirements"],
         // Updated by #220/ADR-032's two-axis memory lifecycle (#548, `68d8890`): the shipped
         // `memory-transition.yaml` this command echoes verbatim replaced its one-axis shape
         // (`states`/`transitions`/`allowed`) with two independent axes plus the supersession
@@ -61,10 +53,8 @@ fn expected_top_level_keys(subcommand: &str) -> &'static [&'static str] {
             "semanticStates",
             "supersessionReasons",
         ],
-        "present" => &["text"],
         "compile-context" => &["digest"],
         "memory-propose" => &["admitted"],
-        "accounting" => &["totalTokens"],
         other => panic!(
             "{other}: no expected key set recorded here -- add one in the same change that adds \
              the operation rather than leaving it unchecked"
@@ -107,10 +97,6 @@ fn every_development_cli_output_has_its_declared_key_set() {
 /// against the RAW stdout bytes, not a parsed field -- a leak can land anywhere a string gets
 /// spliced into the response, not only in a field this test happens to inspect structurally.
 ///
-/// Armed and proven by #394's own sabotage-and-revert: with a literal `C:\Users\test\...
-/// panicked at ...` fragment appended to `run_present`'s `text` field, this test fails at this
-/// exact assertion (documented in the PR), and the full existing `development_*`/`mcp_stdio`/
-/// `api_http` suite stays green under the same sabotage -- proving the gap #394 was filed for.
 const HOME_PATH_MARKERS: &[&str] = &["Users\\", "Users/", "/home/"];
 const BACKTRACE_MARKERS: &[&str] = &["panicked at", "stack backtrace", "RUST_BACKTRACE"];
 

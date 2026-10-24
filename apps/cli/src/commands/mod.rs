@@ -216,9 +216,7 @@ pub fn run(command: TopLevel) -> Outcome {
             }
         },
         TopLevel::Development(development_args) => match development_args.command {
-            DevelopmentCommand::ResolveContract => development::run_resolve_contract(),
             DevelopmentCommand::MemoryStatus => development::run_memory_status(),
-            DevelopmentCommand::Present => development::run_present(),
             DevelopmentCommand::MemoryPropose {
                 content,
                 workspace_id,
@@ -246,7 +244,6 @@ pub fn run(command: TopLevel) -> Outcome {
             DevelopmentCommand::CompileContext { budget, require } => {
                 development::run_compile_context(budget, &require)
             }
-            DevelopmentCommand::Accounting => development::run_accounting(),
         },
         TopLevel::Events(events) => match events.command {
             EventsCommand::Verify {

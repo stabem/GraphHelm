@@ -390,3 +390,22 @@ fn malformed_global_flag_invocations_keep_one_json_envelope_for_all_command_fami
         assert_eq!(value["diagnostics"][0]["code"], "GHCLI001_ARGUMENT_INVALID");
     }
 }
+
+#[test]
+fn retired_gate_is_rejected_like_an_unknown_command() {
+    for flag in ["--json", "--pretty"] {
+        let output = command()
+            .args([flag, "gate", "classify-red"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(
+            output.stdout.is_empty(),
+            "a retired command has no recognized JSON family"
+        );
+        assert!(
+            !output.stderr.is_empty(),
+            "clap must explain the unknown command"
+        );
+    }
+}

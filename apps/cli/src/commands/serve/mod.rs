@@ -362,6 +362,8 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
             "/workspaceSweepSeconds",
         ));
     }
+    // #1911: the reviewed-flows anchor comes from the Runtime's own startup argument only.
+    crate::commands::journey_preview::set_reviewed_remote(args.reviewed_remote.clone());
     let seconds = args.workspace_sweep_seconds;
     #[cfg(debug_assertions)]
     let seconds = if seconds == 0 {

@@ -852,7 +852,12 @@ pub(crate) fn read_for_watch(file: &Path, project: &Path) -> Result<Value, Vec<F
 /// #1684: what a preview plays. As `read_for_watch`, and an approved flow edited since its approval
 /// (`flow.approval_stale`) is previewed as the draft it now is: re-approving it needs a recorded
 /// preview, and the approval digest leaves out `status` and `approved`, so the key is unchanged.
-pub(crate) fn read_for_preview(file: &Path, project: &Path) -> Result<Value, Vec<Finding>> {
+/// It also returns the exact text that was parsed (#1911: the reviewed-on-main check compares
+/// these bytes, never a second read of the file).
+pub(crate) fn read_for_preview_source(
+    file: &Path,
+    project: &Path,
+) -> Result<(Value, String), Vec<Finding>> {
     let (text, mut value) = read(file)?;
     let mut findings = check_snapshot(file, &text, &value, project);
     findings.retain(|f| {
@@ -869,7 +874,7 @@ pub(crate) fn read_for_preview(file: &Path, project: &Path) -> Result<Value, Vec
     if findings.iter().any(|f| !f.is_warning()) {
         Err(findings)
     } else {
-        Ok(value)
+        Ok((value, text))
     }
 }
 

@@ -127,6 +127,12 @@ fn dir_for(project: &Path, id: &str, validation_dir: Option<&Path>) -> PathBuf {
 
 /// The flow as the preview plays it, and the key its result is kept under.
 fn flow_and_key(project: &Path, id: &str) -> Result<(Value, String, String)> {
+    flow_key_and_source(project, id).map(|(flow, digest, commit, _)| (flow, digest, commit))
+}
+
+/// `flow_and_key` plus the exact text the flow was parsed from (#1911: the reviewed check compares
+/// these bytes, never a second read of the file).
+fn flow_key_and_source(project: &Path, id: &str) -> Result<(Value, String, String, String)> {
     if !plain_id(id) {
         return Err(failure("preview.flow_unknown", "/id", 2));
     }
@@ -136,13 +142,14 @@ fn flow_and_key(project: &Path, id: &str) -> Result<(Value, String, String)> {
     if !safe_node(&file) {
         return Err(failure("preview.flow_unknown", "/id", 2));
     }
-    let flow = super::journey_flow::read_for_preview(&file, project).map_err(|findings| {
-        let finding = findings.into_iter().find(|f| !f.is_warning()).unwrap();
-        failure(finding.code, finding.pointer, 2)
-    })?;
+    let (flow, source) =
+        super::journey_flow::read_for_preview_source(&file, project).map_err(|findings| {
+            let finding = findings.into_iter().find(|f| !f.is_warning()).unwrap();
+            failure(finding.code, finding.pointer, 2)
+        })?;
     let digest = super::journey_flow::approval_digest(&flow);
     let commit = scope_commit_of(project, id, &flow);
-    Ok((flow, digest, commit))
+    Ok((flow, digest, commit, source))
 }
 
 /// The flow's scope commit, part of the key (#1309 card 1c): the latest commit that touched the
@@ -175,72 +182,119 @@ pub(crate) fn scope_commit_of(project: &Path, id: &str, flow: &Value) -> String 
         .unwrap_or_else(|| "unknown".to_owned())
 }
 
-/// #1911: whether flow `id` is the reviewed one: its file in the project is a regular file (no
-/// symlink or junction on the way) whose bytes equal the blob at the same path on
-/// `refs/remotes/origin/main`, the main every reviewed PR is merged into. Deterministic and local:
-/// one `git cat-file` on the object store, no fetch, no filters. Any doubt (bad id, link, missing
-/// ref or blob, git failure, different bytes, empty file) answers `false`, so the commands wait.
-pub(crate) fn reviewed_on_main(project: &Path, id: &str) -> bool {
-    if !plain_id(id) {
-        return false;
+/// #1911: the URL of the repository whose `main` is the reviewed source, set once by the Runtime
+/// from its own startup argument (`serve --reviewed-remote`), never read from the project's
+/// `.git/config`, which a lane can edit.
+static REVIEWED_REMOTE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The variable the Runtime hands the reviewed remote to its own preview runner through.
+const REVIEWED_REMOTE_ENV: &str = "GRAPHHELM_REVIEWED_REMOTE";
+
+/// #1911: called once by `serve` with its `--reviewed-remote`.
+pub(crate) fn set_reviewed_remote(url: Option<String>) {
+    if let Some(url) = url.filter(|url| !url.trim().is_empty()) {
+        drop(REVIEWED_REMOTE.set(url));
     }
-    let relative = format!(".graphhelm/journeys/{id}.journey.yaml");
-    let dir = project.join(".graphhelm");
-    let file = project.join(&relative);
-    let regular = [dir.clone(), dir.join("journeys")]
-        .iter()
-        .all(|node| safe_node(node) && node.is_dir())
-        && safe_node(&file)
-        && std::fs::symlink_metadata(&file).is_ok_and(|meta| meta.is_file());
-    if !regular {
-        return false;
-    }
-    let Ok(local) = std::fs::read(&file) else {
+}
+
+/// #1911: whether `parsed`, the exact bytes the run parsed its flow from, is the reviewed flow:
+/// equal to the blob at `.graphhelm/journeys/<id>.journey.yaml` on the `main` the remote serves
+/// NOW. The anchor is the remote, not any local ref: the Runtime's remote URL is fetched
+/// (`refs/heads/main`, depth 1) into a fresh repository of its own under the temp directory, with
+/// system and global git config ignored, and the blob is read there. A lane can move
+/// `refs/remotes/origin/main` or edit `.git/config`; neither is consulted. No URL, a network
+/// failure, a timeout, a missing blob or different bytes all answer `false`: the commands wait.
+pub(crate) fn reviewed_on_main(remote: Option<&str>, id: &str, parsed: &[u8]) -> bool {
+    let Some(remote) = remote.filter(|url| !url.is_empty() && !url.starts_with('-')) else {
         return false;
     };
-    if local.is_empty() {
+    if !plain_id(id) || parsed.is_empty() {
         return false;
     }
-    let spawned = graphhelm_process::command("git")
-        .arg("-C")
-        .arg(project)
-        .args(["cat-file", "blob"])
-        .arg(format!("refs/remotes/origin/main:./{relative}"))
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    let scratch =
+        std::env::temp_dir().join(format!("graphhelm-reviewed-{}-{nonce}", std::process::id()));
+    if std::fs::create_dir(&scratch).is_err() {
+        return false;
+    }
+    let git = |args: &[&str]| {
+        let mut command = graphhelm_process::command("git");
+        command
+            .arg("--git-dir")
+            .arg(&scratch)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                if cfg!(windows) { "NUL" } else { "/dev/null" },
+            )
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+            .env_remove("GIT_CONFIG_PARAMETERS");
+        bounded_stdout(command, REVIEWED_FETCH_LIMIT)
+    };
+    let answer = git(&["init", "-q", "--bare"]).is_some()
+        && git(&[
+            "fetch",
+            "-q",
+            "--no-tags",
+            "--depth=1",
+            "--",
+            remote,
+            "+refs/heads/main:refs/reviewed/main",
+        ])
+        .is_some()
+        && git(&[
+            "cat-file",
+            "blob",
+            &format!("refs/reviewed/main:.graphhelm/journeys/{id}.journey.yaml"),
+        ])
+        .is_some_and(|blob| blob == parsed);
+    drop(std::fs::remove_dir_all(&scratch));
+    answer
+}
+
+/// How long each git step of the reviewed check may take (#1911).
+const REVIEWED_FETCH_LIMIT: Duration = Duration::from_secs(30);
+
+/// Runs `command` to its end within `limit` and returns its stdout when it succeeded. A spawn
+/// failure, a non-zero exit, or a timeout (the child is killed) answers `None`.
+fn bounded_stdout(mut command: std::process::Command, limit: Duration) -> Option<Vec<u8>> {
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .spawn();
-    let Ok(mut child) = spawned else {
-        return false;
-    };
-    // The blob is read on its own thread so a full pipe never stalls the bounded wait below.
+        .spawn()
+        .ok()?;
+    // Stdout is read on its own thread so a full pipe never stalls the bounded wait below.
     let reader = child.stdout.take().map(|mut out| {
         std::thread::spawn(move || {
             let mut bytes = Vec::new();
             std::io::Read::read_to_end(&mut out, &mut bytes).map(|_| bytes)
         })
     });
-    let deadline = Instant::now() + REVIEWED_BLOB_LIMIT;
+    let deadline = Instant::now() + limit;
     let succeeded = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status.success(),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            // A hung or unreadable git is no review: kill it and wait for review.
-            // A failed kill changes nothing: the answer is already "not reviewed".
+            // A hung or unreadable child: kill it. A failed kill changes nothing, the answer is None.
             _ => {
                 drop(child.kill());
                 break false;
             }
         }
     };
-    let blob = reader
+    let out = reader
         .and_then(|thread| thread.join().ok())
         .and_then(|read| read.ok());
-    succeeded && blob.is_some_and(|blob| blob == local)
+    out.filter(|_| succeeded)
 }
-
-/// How long reading the reviewed blob from the local object store may take (#1911).
-const REVIEWED_BLOB_LIMIT: Duration = Duration::from_secs(10);
 
 fn read_state(dir: &Path) -> Option<Value> {
     let file = dir.join(STATE);
@@ -570,6 +624,15 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
             "--project",
         ])
         .arg(&project);
+    // #1911: only the Runtime's own owner route hands its reviewed remote to the runner; any other
+    // start (a lane's CLI, validation) carries none, so its drafts' commands wait for review.
+    command.env_remove(REVIEWED_REMOTE_ENV);
+    if let Some(url) = REVIEWED_REMOTE
+        .get()
+        .filter(|_| args.owner && args.validation_dir.is_none())
+    {
+        command.env(REVIEWED_REMOTE_ENV, url);
+    }
     if let Some(validation_dir) = args.validation_dir.as_deref() {
         command.arg("--validation-dir").arg(validation_dir);
     }
@@ -968,6 +1031,8 @@ struct Run {
     /// Validation owns a separate result tree and asks the driver for JS coverage per path.
     validation: bool,
     flow_id: String,
+    /// #1911: the parsed flow bytes equal the blob on the reviewed remote's `main`.
+    reviewed: bool,
 }
 
 /// An approved flow asked to record into an execution on a Runtime with no sealed keyring: refused,
@@ -1092,10 +1157,19 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         Ok(project) => project,
         Err(failed) => return answer(json!({}), Some(failed)),
     };
-    let (flow, digest, commit) = match flow_and_key(&project, &args.id) {
+    let (flow, digest, commit, source) = match flow_key_and_source(&project, &args.id) {
         Ok(found) => found,
         Err(failed) => return answer(json!({}), Some(failed)),
     };
+    // #1911: the reviewed check runs on the bytes just parsed, before anything plays. Only a
+    // draft with commands needs it, so other runs never touch the network.
+    let reviewed = flow["status"] != "approved"
+        && !super::journey_backend::cli_argv(&flow).is_empty()
+        && reviewed_on_main(
+            std::env::var(REVIEWED_REMOTE_ENV).ok().as_deref(),
+            &args.id,
+            source.as_bytes(),
+        );
     // #1662 review: the runner does not re-confirm. The door recorded the owner's confirm before
     // spawning it, and `play` lets a draft's command run only when the owner store holds that
     // exact digest and argv, so a forged `--run --confirm` still holds.
@@ -1134,6 +1208,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         first_view: true,
         validation: args.validation_dir.is_some(),
         flow_id: args.id.clone(),
+        reviewed,
     };
     (run.viewport, run.declared) = declared_browser(&flow, json!({"width":WIDTH,"height":HEIGHT}));
     let views = if super::journey_backend::is_backend(&flow) {
@@ -1378,7 +1453,7 @@ fn play(
             .unwrap_or(false);
     // #1911: a draft whose flow file is byte-identical to the reviewed blob on origin/main runs
     // its commands without the owner's confirm; any other draft waits for review.
-    let cli_reviewed = !approved && !argv.is_empty() && reviewed_on_main(project, &run.flow_id);
+    let cli_reviewed = !approved && !argv.is_empty() && run.reviewed;
     if !approved && !argv.is_empty() {
         run.state["cliConfirm"] =
             json!({"digest": digest, "argv": argv, "confirmed": cli_confirmed});
@@ -2346,6 +2421,7 @@ mod tests {
             first_view: true,
             validation: false,
             flow_id: String::new(),
+            reviewed: false,
         };
         let mut played = Vec::new();
         each_view(&flow, &views_of(&json!({})), &mut run, |run, _, view| {
@@ -2728,18 +2804,18 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         );
     }
 
-    /// #1911: a draft's commands run unasked only when the flow file is byte-identical to its blob
-    /// on origin/main. Defects named, each must answer "not reviewed": a working copy edited after
-    /// merge (tampered), a flow committed locally but not on origin/main, a stale origin/main whose
-    /// blob is an older version, a missing origin/main, an id reaching outside the journeys
-    /// directory, and a symlinked flow or journeys directory. Cost: a few git processes.
+    /// #1911 (BLOCK on #2002): a draft's commands run unasked only when the PARSED bytes equal the
+    /// blob on the `main` the Runtime's own remote serves now. Defects named, each must answer
+    /// "not reviewed": no remote configured, tampered bytes, a stale review (the remote's main
+    /// moved on), an id reaching outside the journeys directory, an option-shaped or unreachable
+    /// URL, and a project whose local `refs/remotes/origin/main` and `.git/config` remote were
+    /// rewritten to vouch for the draft (neither is consulted). Cost: a few local git processes.
     #[test]
-    fn reviewed_on_main_answers_true_only_for_the_exact_blob_on_origin_main() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let git = |args: &[&str]| {
+    fn reviewed_on_main_trusts_only_the_runtime_remotes_main_and_the_parsed_bytes() {
+        let remote = tempfile::tempdir().unwrap();
+        let git_in = |dir: &Path, args: &[&str]| {
             let out = graphhelm_process::command("git")
-                .current_dir(root)
+                .current_dir(dir)
                 .args(["-c", "user.name=T", "-c", "user.email=t@example.test"])
                 .args(["-c", "core.autocrlf=false"])
                 .args(args)
@@ -2752,83 +2828,129 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             );
             String::from_utf8(out.stdout).unwrap()
         };
-        let flow = root.join(".graphhelm/journeys/greet.journey.yaml");
-        std::fs::create_dir_all(flow.parent().unwrap()).unwrap();
-        git(&["init", "-q", "--object-format=sha1"]);
-        std::fs::write(&flow, "id: greet\nv: 1\n").unwrap();
-        git(&["add", "-A"]);
-        git(&["commit", "-q", "-m", "v1"]);
-        let v1 = git(&["rev-parse", "HEAD"]).trim().to_owned();
+        let commit_flow = |dir: &Path, text: &str, message: &str| {
+            let flow = dir.join(".graphhelm").join("journeys");
+            std::fs::create_dir_all(&flow).unwrap();
+            std::fs::write(flow.join("greet.journey.yaml"), text).unwrap();
+            git_in(dir, &["add", "-A"]);
+            git_in(dir, &["commit", "-q", "-m", message]);
+        };
+        let v1 = b"id: greet\nv: 1\n".as_slice();
+        let v2 = b"id: greet\nv: 2\n".as_slice();
+        git_in(
+            remote.path(),
+            &["init", "-q", "-b", "main", "--object-format=sha1"],
+        );
+        commit_flow(remote.path(), "id: greet\nv: 1\n", "v1");
+        let url = remote.path().to_str().unwrap().to_owned();
+        let url = Some(url.as_str());
 
-        // No origin/main at all: nothing is known to be reviewed.
-        assert!(!super::reviewed_on_main(root, "greet"));
-
-        // Merged: origin/main holds exactly these bytes.
-        git(&["update-ref", "refs/remotes/origin/main", &v1]);
-        assert!(super::reviewed_on_main(root, "greet"));
-
+        // Merged on the remote's main: these exact parsed bytes are reviewed.
+        assert!(super::reviewed_on_main(url, "greet", v1));
+        // No remote from the Runtime: nothing is known to be reviewed.
+        assert!(!super::reviewed_on_main(None, "greet", v1));
+        // Tampered or edited bytes are not the reviewed ones.
+        assert!(!super::reviewed_on_main(url, "greet", v2));
+        assert!(!super::reviewed_on_main(url, "greet", b""));
         // A path outside the journeys directory is never looked up.
         for bad in ["../greet", "a/b", "", ".greet"] {
-            assert!(!super::reviewed_on_main(root, bad), "{bad}");
+            assert!(!super::reviewed_on_main(url, bad, v1), "{bad}");
         }
+        // An option-shaped or unreachable URL fails closed.
+        assert!(!super::reviewed_on_main(
+            Some("--upload-pack=x"),
+            "greet",
+            v1
+        ));
+        let gone = remote.path().join("missing-repo");
+        assert!(!super::reviewed_on_main(gone.to_str(), "greet", v1));
 
-        // Tampered working copy: one byte differs from the merged blob.
-        std::fs::write(&flow, "id: greet\nv: 2\n").unwrap();
-        assert!(!super::reviewed_on_main(root, "greet"));
+        // A lane's project with forged local anchors: its own commit holds v2, its
+        // refs/remotes/origin/main points at that commit and its `origin` URL points at itself.
+        // The Runtime's remote still serves v1, so v2 waits for review.
+        let project = tempfile::tempdir().unwrap();
+        git_in(
+            project.path(),
+            &["init", "-q", "-b", "main", "--object-format=sha1"],
+        );
+        commit_flow(project.path(), "id: greet\nv: 2\n", "forged");
+        git_in(
+            project.path(),
+            &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        );
+        let own = project.path().to_str().unwrap().to_owned();
+        git_in(project.path(), &["remote", "add", "origin", &own]);
+        assert!(!super::reviewed_on_main(url, "greet", v2));
 
-        // Edited after merge and committed locally: origin/main still has v1, so it is stale for
-        // this content and the flow waits for review.
-        git(&["add", "-A"]);
-        git(&["commit", "-q", "-m", "v2"]);
-        assert!(!super::reviewed_on_main(root, "greet"));
+        // Stale review: the remote's main moved to v2, so v1 is no longer the reviewed flow.
+        commit_flow(remote.path(), "id: greet\nv: 2\n", "v2");
+        assert!(super::reviewed_on_main(url, "greet", v2));
+        assert!(!super::reviewed_on_main(url, "greet", v1));
+    }
 
-        // Merged later: origin/main moves to v2 and the same bytes are reviewed again; a stale
-        // origin/main pointing back at v1 does not vouch for v2.
-        let v2 = git(&["rev-parse", "HEAD"]).trim().to_owned();
-        git(&["update-ref", "refs/remotes/origin/main", &v2]);
-        assert!(super::reviewed_on_main(root, "greet"));
-        git(&["update-ref", "refs/remotes/origin/main", &v1]);
-        assert!(!super::reviewed_on_main(root, "greet"));
-        git(&["update-ref", "refs/remotes/origin/main", &v2]);
+    /// #1911 (BLOCK on #2002): the reviewed check sees the bytes the run PARSED, never a second
+    /// read. Defect named: a malicious flow parsed, then the reviewed bytes swapped back into the
+    /// file before the check, so the check passes while the malicious argv runs. Cost: a few
+    /// local git processes.
+    #[test]
+    fn a_flow_swapped_after_parse_is_checked_as_parsed() {
+        let reviewed =
+            include_str!("../../tests/fixtures/journey_backend/backend.journey.yaml").to_owned();
+        let remote = tempfile::tempdir().unwrap();
+        let git_in = |dir: &Path, args: &[&str]| {
+            let out = graphhelm_process::command("git")
+                .current_dir(dir)
+                .args(["-c", "user.name=T", "-c", "user.email=t@example.test"])
+                .args(["-c", "core.autocrlf=false"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        let journeys = remote.path().join(".graphhelm").join("journeys");
+        std::fs::create_dir_all(&journeys).unwrap();
+        std::fs::write(journeys.join("backend.journey.yaml"), &reviewed).unwrap();
+        git_in(
+            remote.path(),
+            &["init", "-q", "-b", "main", "--object-format=sha1"],
+        );
+        git_in(remote.path(), &["add", "-A"]);
+        git_in(remote.path(), &["commit", "-q", "-m", "reviewed"]);
+        let url = remote.path().to_str().unwrap().to_owned();
 
-        // A symlink in place of the flow file, even to the reviewed bytes, is refused.
-        let outside = tempfile::tempdir().unwrap();
-        let target = outside.path().join("greet.journey.yaml");
-        std::fs::copy(&flow, &target).unwrap();
-        std::fs::remove_file(&flow).unwrap();
-        #[cfg(unix)]
-        let linked = std::os::unix::fs::symlink(&target, &flow).is_ok();
-        #[cfg(windows)]
-        let linked = std::os::windows::fs::symlink_file(&target, &flow).is_ok();
-        if linked {
-            assert!(!super::reviewed_on_main(root, "greet"));
-            std::fs::remove_file(&flow).unwrap();
-        } else {
-            eprintln!("symlink case not staged: this host cannot create a symlink");
-        }
-        std::fs::copy(&target, &flow).unwrap();
-        assert!(super::reviewed_on_main(root, "greet"));
-
-        // The journeys directory itself redirected elsewhere (symlink, or a junction on Windows).
-        let journeys = root.join(".graphhelm").join("journeys");
-        let moved = root.join(".graphhelm").join("real-journeys");
-        std::fs::rename(&journeys, &moved).unwrap();
-        #[cfg(unix)]
-        let redirected = std::os::unix::fs::symlink(&moved, &journeys).is_ok();
-        #[cfg(windows)]
-        let redirected = graphhelm_process::command("cmd")
-            .arg("/c")
-            .arg("mklink")
-            .arg("/J")
-            .arg(&journeys)
-            .arg(&moved)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
-        assert!(redirected, "the directory redirect was not staged");
-        assert!(flow.is_file(), "the redirect must reach the reviewed bytes");
-        assert!(!super::reviewed_on_main(root, "greet"));
+        let project = tempfile::tempdir().unwrap();
+        let file = project
+            .path()
+            .join(".graphhelm")
+            .join("journeys")
+            .join("backend.journey.yaml");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let malicious = reviewed.replace("sh greet.sh", "sh evil.sh");
+        assert_ne!(malicious, reviewed, "the fixture must name the command");
+        std::fs::write(&file, &malicious).unwrap();
+        let (flow, _, _, source) = super::flow_key_and_source(project.path(), "backend").unwrap();
+        assert_eq!(
+            super::super::journey_backend::cli_argv(&flow),
+            vec!["sh evil.sh".to_owned()]
+        );
+        // The swap: the reviewed bytes are back in the file before the check runs.
+        std::fs::write(&file, &reviewed).unwrap();
+        assert!(!super::reviewed_on_main(
+            Some(&url),
+            "backend",
+            source.as_bytes()
+        ));
+        // Control: the reviewed bytes, parsed, are reviewed.
+        let (_, _, _, source) = super::flow_key_and_source(project.path(), "backend").unwrap();
+        assert!(super::reviewed_on_main(
+            Some(&url),
+            "backend",
+            source.as_bytes()
+        ));
     }
 
     /// #1633 follow-up (gh-claude-18): only a path's ENTRY screen is excused by a passing edge
@@ -3646,6 +3768,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             first_view: true,
             validation: false,
             flow_id: "checkout".to_owned(),
+            reviewed: false,
         };
         let observer = super::record_pass(&run, project.path(), &digest, &commit).unwrap();
         assert_eq!(
@@ -3686,6 +3809,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 first_view: true,
                 validation: false,
                 flow_id: String::new(),
+                reviewed: false,
             };
             run.save();
             let _ = super::play(

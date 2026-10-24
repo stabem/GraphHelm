@@ -4524,6 +4524,9 @@ Options:
       --gateway-manifest <GATEWAY_MANIFEST>
           A route manifest the Studio's Models panel lists and writes (`GET`/`PUT /v1/gateway/routes`) WITHOUT wiring any executor: cognitive nodes stay on node fixtures (#585: the journey fixture shows the Add model form this way). `--manifest` names the manifest itself, so the two are refused together
 
+      --reviewed-remote <REVIEWED_REMOTE>
+          #1911: the repository URL whose `main` holds the reviewed journey flows. A draft's CLI steps run without the owner's confirm only when the flow equals its blob on this remote's `main`, fetched fresh at run start. Absent: every draft's commands wait for review
+
       --broker <BROKER>
           The credential broker directory the model half leases from. See `--manifest`
 

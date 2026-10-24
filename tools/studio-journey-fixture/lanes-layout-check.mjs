@@ -15,11 +15,14 @@ for (const [width, height] of [[1440, 900], [1600, 1000]]) {
   await page.waitForTimeout(800);
   const r = await page.evaluate(() => {
     const cols = [...document.querySelectorAll('.board > .board-column')].map((c) => Math.round(c.getBoundingClientRect().right));
+    const widths = [...document.querySelectorAll('.board > .board-column')].map((c) => ({ folded: c.classList.contains('folded'), w: Math.round(c.getBoundingClientRect().width) }));
     const el = document.scrollingElement;
     const board = document.querySelector('.board');
-    return { cols, vw: window.innerWidth, pageScroll: el.scrollWidth > el.clientWidth, boardScroll: board.scrollWidth > board.clientWidth };
+    return { cols, widths, vw: window.innerWidth, pageScroll: el.scrollWidth > el.clientWidth, boardScroll: board.scrollWidth > board.clientWidth };
   });
-  const ok = r.cols.length >= 6 && r.cols.every((x) => x <= r.vw) && !r.pageScroll && !r.boardScroll;
+  // #1996: a column with cards is at least 220px wide; one without folds to 44px.
+  const ok = r.cols.length >= 6 && r.cols.every((x) => x <= r.vw) && !r.pageScroll && !r.boardScroll
+    && r.widths.every((c) => (c.folded ? c.w === 44 : c.w >= 220));
   console.log(`${width}x${height}`, JSON.stringify(r), ok ? 'OK' : 'FAIL');
   if (!ok) bad = 1;
   await page.screenshot({ path: `${out}/lanes-${width}x${height}.png` });

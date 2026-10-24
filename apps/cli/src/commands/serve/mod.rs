@@ -920,6 +920,26 @@ async fn serve_forever(
     crate::output::print(&started.output, false);
     let _ = std::io::stdout().flush();
 
+    // #1980: the first read of a store walks its journal from genesis to fill the shared
+    // prefix cache (seconds on a large journal), and the Studio's first `GET /v1/journey-flows`
+    // was that walk. Pay it once here, in the background, for the Runtime's store and the
+    // project's owner record store; a request that arrives first waits on the same single-flight
+    // walk (#1721), never a second one.
+    let warm = warm_stores(&state.events, state.project.as_deref());
+    tokio::task::spawn_blocking(move || {
+        for store in warm {
+            execution::timing::request("background.warm_prefix", || {
+                // A failed warm-up is only a slower first read: report it, keep serving.
+                if let Err(error) = super::event_store(&store) {
+                    eprintln!(
+                        "serve: warming the journal proof of {} failed: {error}",
+                        store.display()
+                    );
+                }
+            });
+        }
+    });
+
     if let Some(seconds) = state.sweep_interval {
         tokio::spawn(sweep_tick(Arc::clone(&state.events), seconds));
     }
@@ -964,6 +984,19 @@ async fn serve_forever(
     .map_err(|_| serve_invalid("the server loop ended unexpectedly", "/"));
     lifecycle.finish(result.is_ok(), *handed_over_at_end.borrow())?;
     result
+}
+
+/// #1980: the stores whose prefix cache `serve` warms at start: its own events directory and, when
+/// it differs and exists, the project's owner record store. Each path once.
+fn warm_stores(events: &Path, project: Option<&Path>) -> Vec<PathBuf> {
+    let mut stores = vec![events.to_path_buf()];
+    if let Some(owner) = project.map(super::journey_owner::store)
+        && owner.exists()
+        && !stores.contains(&owner)
+    {
+        stores.push(owner);
+    }
+    stores
 }
 
 /// #1649: with `GRAPHHELM_SERVE_TIMING=1`, how late the runtime wakes a task that asked to wake
@@ -4053,6 +4086,24 @@ fn append_audit_line(path: &Path, line: &serde_json::Value) -> std::io::Result<(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// #1980: serve warms its own store and the project's owner store, each path once (the usual
+    /// Runtime has `--events <project>/.graphhelm/events`), and no owner store that is not there.
+    #[test]
+    fn warm_stores_names_each_existing_store_once() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        let owner = project.join(".graphhelm").join("events");
+        let own = root.path().join("own-events");
+        assert_eq!(warm_stores(&own, Some(&project)), vec![own.clone()]);
+        std::fs::create_dir_all(&owner).unwrap();
+        assert_eq!(
+            warm_stores(&own, Some(&project)),
+            vec![own.clone(), owner.clone()]
+        );
+        assert_eq!(warm_stores(&owner, Some(&project)), vec![owner.clone()]);
+        assert_eq!(warm_stores(&own, None), vec![own]);
+    }
 
     /// #1298 review: `serve --events <main>/.graphhelm/events` started inside a worktree without
     /// `--project` is that worktree's Runtime and must be refused like the explicit form; the main

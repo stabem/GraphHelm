@@ -6,7 +6,7 @@ import { cards, kanbanColumn, KANBAN_NAME, type KanbanColumn, type OwnerRequest,
 /** #1903: the Graph view of the approved design (docs/design/studio/Graph.dc.html), as pure data. */
 
 /** The design's journey colours, in the order the journeys-with-work column lists them. */
-export const JOURNEY_COLORS = ["#ff8a3d", "#8b7cff", "#3ddc97", "#8ab4ff"] as const;
+const JOURNEY_COLORS = ["#ff8a3d", "#8b7cff", "#3ddc97", "#8ab4ff"] as const;
 
 /** The step squares of an issue, left to right. */
 export const STEPS = ["claimed", "planned", "implementing", "tests green", "PR open", "in review", "merged", "proven"] as const;
@@ -83,7 +83,7 @@ export const ROW = 96;
  * three lines, the chip and percent, the bar and the "no issue" line (#1947). */
 export const ASK_MIN = 190;
 /** One legend row of the card, two states a row at the card's 240px (#1947). */
-export const LEGEND_ROW = 18;
+const LEGEND_ROW = 18;
 
 /** The least height a request row may have so its YOU ASKED card never reaches the next row. */
 export function askHeight(legendCount: number): number {

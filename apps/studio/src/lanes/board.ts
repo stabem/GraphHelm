@@ -8,11 +8,11 @@ export type Column = (typeof COLUMNS)[number];
 export const OWNER_ADDRESS = "studio-operator";
 
 /** The design's idle colours: grey under 10 minutes, orange from 10, red from 30. */
-export type IdleTone = "ok" | "slow" | "late";
+type IdleTone = "ok" | "slow" | "late";
 
 /** The progress blocks: one per timed step of a slice. */
 export const STEPS: readonly TaskStepName[] = ["plan", "critic", "implement", "review", "merge"];
-export type Block = "done" | "now" | "stuck" | "todo";
+type Block = "done" | "now" | "stuck" | "todo";
 
 export interface Agent {
   lane: string;

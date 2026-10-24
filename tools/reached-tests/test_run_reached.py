@@ -26,6 +26,11 @@ class RunnerContracts(unittest.TestCase):
     """Orchestration contracts; the fingerprint and preflight seams have their own suite below."""
 
     def setUp(self):
+        # Orchestration fixtures do not exercise the host CLI unless a test opts in. Keep an
+        # unrelated installed binary from changing resolution before the seams below are reached.
+        self._graphhelm_env = patch.dict(os.environ, {"GRAPHHELM_CLI": ""})
+        self._graphhelm_env.start()
+        self.addCleanup(self._graphhelm_env.stop)
         for name, value in (("_fingerprint", lambda *unused: dict(_FIXED_FINGERPRINT)),
                             ("_preflight", lambda *unused: ([], [])),
                             ("_reusable_results", lambda *unused: ({}, None))):
@@ -885,6 +890,12 @@ class ResumeAndPreflightContracts(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
+        # These fixtures exercise Python/Node/cache behavior. A host-global GraphHelm binary is
+        # unrelated to those steps and would make their fingerprints change when another lane
+        # updates the installed CLI. Tests that exercise CLI selection set this variable explicitly.
+        self._graphhelm_env = patch.dict(os.environ, {"GRAPHHELM_CLI": ""})
+        self._graphhelm_env.start()
+        self.addCleanup(self._graphhelm_env.stop)
         self.repo = Path(temp.name) / "repo"
         self.repo.mkdir()
         self.output = Path(temp.name) / "out" / "feedback.json"

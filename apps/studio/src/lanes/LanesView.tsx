@@ -10,6 +10,7 @@ import { LanesPanels } from "./LanesPanels";
 import { RequestProgress } from "../graph/RequestProgress";
 import { agentsFor, arrangeAsked, askedCards, requestColors, requestTitles, unlinkedIssue } from "./asked";
 import type { OwnerRequest } from "../graph/requests";
+import { BoardColumn } from "./BoardColumn";
 import { agents, blocks, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
 /** How often the board is read again: one tasks read, plus one activity read per lane whose last
@@ -166,14 +167,11 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
           {COLUMNS.map((name) => {
             const cards = shown.filter((agent) => agent.column === name);
             return (
-              <li key={name} className={`board-column ${name}`}>
-                <h3><span className={`col-dot ${name}`} />{COLUMN_NAME[name]}<span className="mono count">{cards.length}</span></h3>
-                {cards.length === 0 ? <span className="none">none</span> : (
-                  <ul aria-label={COLUMN_NAME[name]}>
-                    {cards.map((agent) => <Card key={agent.lane} agent={agent} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} stripe={stripes.get(agent.lane) ?? null} unlinked={unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
-                  </ul>
-                )}
-              </li>
+              <BoardColumn key={name} name={name} label={COLUMN_NAME[name]} count={cards.length}>
+                <ul aria-label={COLUMN_NAME[name]}>
+                  {cards.map((agent) => <Card key={agent.lane} agent={agent} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} stripe={stripes.get(agent.lane) ?? null} unlinked={unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
+                </ul>
+              </BoardColumn>
             );
           })}
           {done.length > 0 && (

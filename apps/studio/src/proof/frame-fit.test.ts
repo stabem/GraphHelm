@@ -37,6 +37,10 @@ describe("the step frame shows the whole screenshot (#1966)", () => {
     expect(stylesheet).not.toMatch(/calc\(100d?vh\s*-\s*\d+px\)/);
   });
 
+  it("the side panel scrolls inside its own column so no row is clipped (#1978)", () => {
+    expect(declared(".shell:has(.compare-frame:not(.terminal)) .compare-side-panel")).toMatchObject({ "min-height": "0", "overflow-y": "auto" });
+  });
+
   it("the phone box grows with the frame and gives it no scroll of its own", () => {
     const phone = declared(".phone");
     expect(phone["height"]).toBe("auto");

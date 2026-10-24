@@ -59,4 +59,16 @@ describe("a Runtime that refuses the token (#1897)", () => {
     const silent = await new Runtime("old").runs().catch((error: unknown) => error);
     expect(refusedToken(silent)).toBe(false);
   });
+
+  it("#1991: identical GETs in flight share one request; a later one asks again; POSTs never merge", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, data: { executions: [], flows: [] } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = new Runtime("t");
+    await Promise.all([runtime.runs(), runtime.runs(), runtime.journeyRun("f1"), runtime.journeyRun("f1")]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await runtime.runs();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await Promise.all([runtime.startJourneyRun("f1", null), runtime.startJourneyRun("f1", null)]);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
 });

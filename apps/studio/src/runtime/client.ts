@@ -256,7 +256,22 @@ export class Runtime {
     this.#base = base;
   }
 
-  async #request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+  /** #1991: identical GETs in flight at the same instant share one request (React effects that
+   * fire twice, two panels asking for the same list). Settled requests are not cached. */
+  readonly #inflight = new Map<string, Promise<unknown>>();
+
+  #request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+    if (method !== "GET" || body !== undefined || Object.keys(headers).length > 0) return this.#send<T>(method, path, body, headers);
+    const pending = this.#inflight.get(path);
+    if (pending !== undefined) return pending as Promise<T>;
+    const started = this.#send<T>(method, path);
+    this.#inflight.set(path, started);
+    const settle = () => { this.#inflight.delete(path); };
+    started.then(settle, settle);
+    return started;
+  }
+
+  async #send<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
     let response: Response;
     try {
       response = await fetch(`${this.#base}${path}`, {

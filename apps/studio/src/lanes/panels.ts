@@ -1,6 +1,6 @@
 import type { OwnerRequest } from "../graph/requests";
 import type { BoardTask, Capacity, LaneAction, TasksBoard } from "../runtime/client";
-import { OWNER_ADDRESS, finishedLanes } from "./board";
+import { OWNER_ADDRESS, awaitsReview, finishedLanes } from "./board";
 
 /** What a Needs action item's button does. Answer opens the lane's reply box; Assign and Merge
  * message the lane that should act (the Studio never calls GitHub); Archive, Reassign and Wake are
@@ -63,6 +63,7 @@ export function needsAction(board: TasksBoard, requests: readonly OwnerRequest[]
   }
   for (const row of board.liveness.lanes.filter((lane) => lane.silent)) {
     const held = board.tasks.filter((task) => open(task) && task.lane === row.lane).sort((a, b) => b.lastSequence - a.lastSequence)[0];
+    if (held !== undefined && awaitsReview(held)) continue; // #1991: waiting for review is not silence
     needs.push(held === undefined
       ? { id: `archive:${row.lane}`, verb: "Archive", tone: "red", what: `${row.lane} silent, holds no task`, since: row.lastRecordAt ?? null, lane: row.lane, to: null, slice: null }
       : { id: `reassign:${held.key}`, verb: "Reassign", tone: "red", what: `${row.lane} silent on #${held.issue ?? held.key}`, since: row.lastRecordAt ?? null, lane: row.lane, to: freeLane(board, [row.lane]), slice: held });

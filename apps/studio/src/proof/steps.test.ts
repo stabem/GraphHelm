@@ -1,7 +1,7 @@
 import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
-import type { JourneyFlow } from "../runtime/client";
+import type { JourneyFlow, JourneyRun } from "../runtime/client";
 import { becauseOf, CHANGED, countSteps, earlierVersion, failsOnlyOn, isHeld, isWaitingReview, statusText, journeyScore, journeySteps, lastRunChip, pastAsRun, preparingStatus, readableName, reasonSentence } from "./steps";
 
 const flow: JourneyFlow = {
@@ -135,8 +135,8 @@ describe("step counts and journey score", () => {
   // #1911: a draft whose flow differs from main waits for review: no confirm prompt, and the cards
   // say "waits for review", never "waits for your confirmation".
   it("reads a run held on review_needed as waiting for review, not for a confirm", () => {
-    const run = {
-      state: "ready" as const,
+    const run: JourneyRun = {
+      state: "ready",
       screens: { list: { frame: true, result: "pass" }, item: { frame: false, reason: "not_reached" } },
       edges: { "list.item": { result: "skipped", reason: "review_needed" }, "item.done": { result: null, reason: "not_reached" } },
       cliConfirm: { digest: "sha256:x", argv: ["sh greet.sh"], confirmed: false },
@@ -148,7 +148,7 @@ describe("step counts and journey score", () => {
     expect(countSteps(steps)).toEqual({ passed: 1, waits: 2, failed: 0, notRun: 0 });
     expect(statusText(steps[1]!.status, run)).toBe("waits for review");
     expect(reasonSentence("review_needed")).toContain("waits for review");
-    const confirm = { ...run, edges: { ...run.edges, "list.item": { result: "skipped", reason: "confirm_needed" } } };
+    const confirm: JourneyRun = { ...run, edges: { ...run.edges, "list.item": { result: "skipped", reason: "confirm_needed" } } };
     expect(isWaitingReview(confirm)).toBe(false);
     expect(statusText("waiting", confirm)).toBe("waits for your confirmation");
   });

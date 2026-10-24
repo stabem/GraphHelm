@@ -1798,13 +1798,33 @@ class SideBySideTestSteps(unittest.TestCase):
                          "log": Path(temp) / f"{prefix}{i}.log",
                          "executables": [{"executable": sys.executable, "cwd": temp}]}
                         for i, code in enumerate((first, second))]
-                children, streams, failures = [], [], []
+                children, streams, failures, admissions, polls = [], [], [], [], []
                 real_popen = rr.subprocess.Popen
 
                 def start_child(*args, **kwargs):
+                    live_before = sum(poll() is None for poll in polls)
                     child = real_popen(*args, **kwargs)
+                    original_poll, original_wait = child.poll, child.wait
                     children.append(child)
                     streams.append(kwargs["stdout"])
+                    polls.append(original_poll)
+                    admissions.append(live_before + 1)
+
+                    def release_at_completion():
+                        # The held child can finish when the serial runner observes its
+                        # completion, not when memory is queried before admission is decided.
+                        if available_gb < reserve and len(children) == 1:
+                            release.touch()
+
+                    def observed_poll():
+                        release_at_completion()
+                        return original_poll()
+
+                    def observed_wait(*wait_args, **wait_kwargs):
+                        release_at_completion()
+                        return original_wait(*wait_args, **wait_kwargs)
+
+                    child.poll, child.wait = observed_poll, observed_wait
                     return child
 
                 def await_path(path):
@@ -1816,10 +1836,6 @@ class SideBySideTestSteps(unittest.TestCase):
 
                 def available_memory():
                     await_path(ready)
-                    # Low-memory admission releases the held child; with headroom it stays
-                    # held until the second child reports an actual atomic mkdir collision.
-                    if available_gb < reserve:
-                        release.touch()
                     return available_gb
 
                 def run_jobs():
@@ -1848,12 +1864,12 @@ class SideBySideTestSteps(unittest.TestCase):
                 self.assertEqual(failures, [])
                 self.assertEqual(len(children), 2)
                 self.assertTrue(all(child.returncode is not None for child in children))
-                return [job["returncode"] for job in jobs]
+                return [job["returncode"] for job in jobs], admissions
 
-            self.assertEqual(run_case(available_gb=2.0, prefix="serial"), [0, 0])
+            self.assertEqual(run_case(available_gb=2.0, prefix="serial"), ([0, 0], [1, 1]))
             for path in (ready, release, outcome):
                 path.unlink()
-            self.assertEqual(run_case(available_gb=64.0, prefix="parallel"), [0, 3])
+            self.assertEqual(run_case(available_gb=64.0, prefix="parallel"), ([0, 3], [1, 2]))
 
     def test_split_accepts_only_replayable_cargo_tests(self):
         argv = ["cargo", "+1.97.1", "test", "--locked", "-p", "graphhelm-cli", "--bin", "graphhelm",

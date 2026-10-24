@@ -25,6 +25,18 @@ describe("the step frame shows the whole screenshot (#1966)", () => {
     expect(image["object-fit"]).toBe("contain");
   });
 
+  it("on desktop the frame is bounded by the box it lives in, down from one viewport-tall shell (#1971)", () => {
+    const shell = ".shell:has(.compare-frame:not(.terminal))";
+    expect(declared(shell)["height"]).toMatch(/100d?vh/);
+    expect(declared(`${shell} .proof-main`)["overflow-y"]).toBe("auto");
+    for (const box of [`${shell} .main`, `${shell} .proof`, `${shell} .proof-main`]) expect(declared(box)["min-height"]).toBe("0");
+    expect(declared(`${shell} .compare`)).toMatchObject({ flex: "1 1 0", "min-height": "320px" });
+    expect(declared(".compare-frame:not(.terminal) > img")).toMatchObject({ flex: "1 1 0", "min-height": "0", height: "100%" });
+    expect(declared(".compare-frame:not(.terminal) .compare-side img")).toMatchObject({ flex: "1 1 0", "min-height": "0" });
+    expect(declared(".compare-frame:not(.terminal) .compare-overlay img")).toMatchObject({ position: "absolute", inset: "0" });
+    expect(stylesheet).not.toMatch(/calc\(100d?vh\s*-\s*\d+px\)/);
+  });
+
   it("the phone box grows with the frame and gives it no scroll of its own", () => {
     const phone = declared(".phone");
     expect(phone["height"]).toBe("auto");

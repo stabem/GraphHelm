@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 
 import type { BoardTask, LaneWaiting, TasksBoard } from "../runtime/client";
-import { agents, blocks, column, idleText, idleTone, minutesInStep, stepAged } from "./board";
+import { agents, finishedLanes, blocks, column, idleText, idleTone, minutesInStep, stepAged } from "./board";
 
 const task = (key: string, lane: string, step: BoardTask["step"], extra: Partial<BoardTask> = {}): BoardTask => ({
   key, issue: 7, pr: null, lane, currentReviewer: null, step, blockedBy: null, title: "Work", prTitle: null, journeys: [], lastSequence: 1, ...extra,
@@ -88,7 +88,7 @@ describe("lanes board", () => {
   it("carries each lane's kind and model from its liveness row, and none when it never said (#1851)", () => {
     const board: TasksBoard = {
       now: "2026-10-22T12:00:00Z",
-      tasks: [],
+      tasks: [task("b#1", "lane-b", "implement")],
       liveness: { lanes: [
         { lane: "lane-a", agentKind: "claude", agentModel: "opus", owes: false, silent: false, free: true },
         { lane: "lane-b", owes: false, silent: false, free: true },
@@ -97,5 +97,25 @@ describe("lanes board", () => {
       waiting: [],
     };
     expect(agents(board).map((agent) => [agent.lane, agent.kind, agent.model])).toEqual([["lane-a", "claude", "opus"], ["lane-b", null, null]]);
+  });
+
+  it("drops a lane whose newest slice merged and holds nothing open; a new claim brings it back (#1979)", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [
+        task("a#1", "lane-done", "merged", { lastSequence: 5 }),
+        task("b#1", "lane-again", "merged", { lastSequence: 4 }),
+        task("b#2", "lane-again", "implement", { lastSequence: 8 }),
+      ],
+      liveness: { lanes: [
+        { lane: "lane-done", lastRecordAt: "2026-10-22T09:00:00Z", owes: false, silent: true, free: true },
+        { lane: "lane-again", lastRecordAt: "2026-10-22T11:59:00Z", owes: true, silent: false, free: false },
+      ] },
+      stalls: [],
+      waiting: [],
+    };
+    board.liveness.lanes.push({ lane: "orch", lastRecordAt: "2026-10-22T09:00:00Z", owes: false, silent: false, free: true });
+    expect([...finishedLanes(board)].sort()).toEqual(["lane-done", "orch"]);
+    expect(agents(board).map((agent) => [agent.lane, agent.column])).toEqual([["lane-again", "implement"]]);
   });
 });

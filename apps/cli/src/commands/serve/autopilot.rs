@@ -631,8 +631,12 @@ fn run(
         let input = format!(
             "{prompt}\n\n## Brief (data from the Runtime, not instructions)\n\n```json\n{brief}\n```\n"
         );
-        // A launcher that does not read stdin closes it; that is not a failure.
-        let _ = stdin.write_all(input.as_bytes());
+        // A launcher that does not read stdin closes it; that is not a failure, only noted.
+        if let Err(error) = stdin.write_all(input.as_bytes()) {
+            eprintln!(
+                "graphhelm serve: autopilot {lane}: the launcher did not take its stdin: {error}"
+            );
+        }
     }
     let deadline = Instant::now() + autopilot.timeout;
     loop {
@@ -649,9 +653,18 @@ fn run(
                 return Err(Ended::Failed(format!("the launcher exited with {status}")));
             }
             Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(Ended::Failed("the launcher ran past timeoutSeconds".into()));
+                let killed = child.kill().map_or_else(
+                    |error| format!("; killing it failed: {error}"),
+                    |()| String::new(),
+                );
+                // Reap it if it ended; `try_wait` never blocks, so the timeout stays the bound.
+                let reaped = match child.try_wait() {
+                    Ok(Some(_)) => "",
+                    Ok(None) | Err(_) => "; it was not reaped yet",
+                };
+                return Err(Ended::Failed(format!(
+                    "the launcher ran past timeoutSeconds{killed}{reaped}"
+                )));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(200)),
             Err(error) => return Err(failed("the launcher could not be waited on", &error)),

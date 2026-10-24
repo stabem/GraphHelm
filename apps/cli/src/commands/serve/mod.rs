@@ -929,7 +929,13 @@ async fn serve_forever(
     tokio::task::spawn_blocking(move || {
         for store in warm {
             execution::timing::request("background.warm_prefix", || {
-                let _ = super::event_store(&store);
+                // A failed warm-up is only a slower first read: report it, keep serving.
+                if let Err(error) = super::event_store(&store) {
+                    eprintln!(
+                        "serve: warming the journal proof of {} failed: {error}",
+                        store.display()
+                    );
+                }
             });
         }
     });

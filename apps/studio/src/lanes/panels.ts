@@ -32,7 +32,7 @@ const open = (task: BoardTask) => task.step !== "merged" && task.releasedBy === 
 /** A live lane that can take work: free, not silent, not finished (#1986: a finished lane is off the
  * board and is nobody's target) and not one of `except`. */
 function freeLane(board: TasksBoard, except: (string | null)[]): string | null {
-  const done = finishedLanes(board, false);
+  const done = finishedLanes(board);
   return board.liveness.lanes
     .filter((row) => row.free && !row.silent && !done.has(row.lane) && !except.includes(row.lane))
     .map((row) => row.lane)

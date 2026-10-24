@@ -20,6 +20,6 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), devSession(env)],
     server: { host: "127.0.0.1", port: 5185, strictPort: true, proxy },
     preview: { host: "127.0.0.1", port: 5185, strictPort: true, proxy },
-    test: { environment: "node", maxWorkers: 1 },
+    test: { environment: "node", maxWorkers: 1, css: { include: [/styles.css/] } },
   };
 });

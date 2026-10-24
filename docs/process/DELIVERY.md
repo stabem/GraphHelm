@@ -362,6 +362,8 @@ A critic round's verdict is not an argument: the script derives it from the scor
   refuses before any Runtime or GitHub work; there is no implicit `gh-team` fallback. Execution IDs
   use the Runtime's exact bounded opaque-ASCII predicate (up to 128 bytes), and the recorder
   percent-encodes the ID as one URL path segment before POSTing.
+  The scheduled whole-run script anchors its omitted `--token-file` at `<repo>/.graphhelm/events.token`;
+  an explicitly supplied relative token path keeps its caller-cwd meaning.
   `revision` is the step's position (claimed 1 … merged 5; `planned` is 1, beside its claim). `closes` is exactly the `--closes`
   numbers (the issues the squash closed, the intent `ci/closing-keywords.ps1` checked); with none
   given it is empty, which is right for a `Refs` PR.

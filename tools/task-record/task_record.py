@@ -98,7 +98,7 @@ def _team_config_execution(path):
     return execution
 
 
-def resolve_execution(explicit, token_file):
+def resolve_execution(explicit, token_file, project_dir=None):
     """Choose an explicit execution or the first existing local team binding."""
     if explicit is not None:
         if not valid_execution_id(explicit):
@@ -106,7 +106,7 @@ def resolve_execution(explicit, token_file):
         return explicit
     token_path = Path(token_file).absolute()
     candidates = [token_path.parent / "team.json"]
-    directory = Path.cwd().absolute()
+    directory = Path(project_dir).absolute() if project_dir is not None else Path.cwd().absolute()
     while True:
         candidates.append(directory / ".graphhelm" / "team.json")
         if (directory / ".git").exists():

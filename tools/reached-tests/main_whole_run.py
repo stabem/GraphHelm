@@ -126,6 +126,14 @@ def post(args, body):
         return False
 
 
+def resolve_execution(args):
+    """Resolve the configured execution before any scheduled work or state write."""
+    spec = importlib.util.spec_from_file_location("task_record", HERE.parent / "task-record" / "task_record.py")
+    task_record = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(task_record)
+    return task_record.resolve_execution(args.execution, args.token_file, args.repo)
+
+
 def save_then_post(args, state_file, sha, now, report, body, poster=None):
     """State first, then the post: a missing credential (post exits) must not re-run the suite every tick."""
     def save(recorded):
@@ -148,12 +156,15 @@ def main(argv=None):
     ap.add_argument("--min-interval", type=float, default=3600)
     ap.add_argument("--timeout", type=float, default=3600, help="hard limit in seconds for the run_reached child")
     ap.add_argument("--url", default="http://127.0.0.1:8793")
-    ap.add_argument("--execution", default="gh-team")
-    ap.add_argument("--token-file", default=".graphhelm/events.token")
+    ap.add_argument("--execution", default=None)
+    ap.add_argument("--token-file", default=None)
     ap.add_argument("--allow-shared-token", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="say what would run and print the signal; run nothing")
     args = ap.parse_args(argv)
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if args.token_file is None:
+        args.token_file = str(Path(args.repo) / ".graphhelm" / "events.token")
+    args.execution = resolve_execution(args)
     work = Path(args.root) / "main-whole-run"
     state_file = Path(args.state) if args.state else work / "state.json"
     try:

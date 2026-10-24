@@ -12,7 +12,9 @@ does not mean task work has started. The orchestrator never takes a lane's ident
 
 1. The Studio is open for the project (`graphhelm studio start` from the project root; see
    `graphhelm-setup`). Read the team execution and Runtime URL from the GraphHelm MCP `briefing` tool
-   (or `graphhelm execution briefing --events <events dir> --json`). Default execution `gh-team`, URL `http://127.0.0.1:8793`.
+   (or `graphhelm execution briefing --events <events dir> --json`). Use the execution shown by
+   the briefing or by `<project>/.graphhelm/team.json`; there is no implicit execution fallback.
+   The default Runtime URL is `http://127.0.0.1:8793` when no configured or explicit URL is given.
 2. The recorder is `tools/task-record/task_record.py` in the GraphHelm clone that
    `graphhelm studio start` keeps up to date. It needs the agent session token
    `<project>/.graphhelm/events.agent.token`; never the owner's `events.token`.

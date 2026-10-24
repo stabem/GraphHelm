@@ -104,8 +104,9 @@ ode_modules`) can be a junction into the
   lane forgot (signed with that lane's own credential file; a lane without one is reported under
   `adopted.refused`). It is a scheduled job, not a serve-side poller, so the Runtime and the Policy
   Engine stay network-free and the same reconciler code runs on Stop and on the timer. `pythonw`
-  has no console, so `--log` appends each reply. The orchestrator registers it once (and mints the
-  `graphhelm` credential first: `graphhelm tasks credential --lane graphhelm --execution gh-team --token-file F:/github/GraphHelm/.graphhelm/events.token`, which mints `.graphhelm/events.agent.graphhelm.token`). `--runtime-timeout 60` lets a run wait for a loaded Runtime (#1632); the Stop hook keeps its 2 s / 3 s defaults. One run on a loaded Runtime took 566 s (2026-10-19), so the limit is 15 minutes. The interval must never be shorter than the limit: with `IgnoreNew`, a shorter interval restarts the job as soon as the last run ends, a near-continuous load on a saturated Runtime. It is 30 minutes until the Runtime latency (#1649) lands, then 15:
+  has no console, so `--log` appends each reply. The orchestrator registers it once, using the
+  execution from the project `team.json` or the Studio briefing (shown below as `<execution>`),
+  and mints the `graphhelm` credential first: `graphhelm tasks credential --lane graphhelm --execution <execution> --token-file F:/github/GraphHelm/.graphhelm/events.token`, which mints `.graphhelm/events.agent.graphhelm.token`. `--runtime-timeout 60` lets a run wait for a loaded Runtime (#1632); the Stop hook keeps its 2 s / 3 s defaults. One run on a loaded Runtime took 566 s (2026-10-19), so the limit is 15 minutes. The interval must never be shorter than the limit: with `IgnoreNew`, a shorter interval restarts the job as soon as the last run ends, a near-continuous load on a saturated Runtime. It is 30 minutes until the Runtime latency (#1649) lands, then 15:
 
       $a = New-ScheduledTaskAction -Execute "pythonw.exe" -Argument 'F:/github/GraphHelm/plugins/graphhelm/hooks/tasks_reconcile.py --execution gh-team --url http://127.0.0.1:8793 --token-file F:/github/GraphHelm/.graphhelm/events.agent.graphhelm.token --repo stabem/GraphHelm --lane graphhelm --adopt-opened --runtime-timeout 60 --log D:/_merge-leftovers/board-sync.log'
       $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 30)
@@ -329,8 +330,8 @@ records"). From a lane worktree the token path must be absolute:
 `Refs` PR. Every lane merges under one GitHub account, so `mergedBy` cannot tell whose merge it
 was; the exit code of the `gh pr merge` you ran is the evidence.
 
-**One issue lock.** The single lock for an issue is the Runtime `task.claimed` record on `gh-team`.
-- An orchestrator reads `GET /v1/executions/gh-team/tasks?issue=<N>`, plus the issue's last
+**One issue lock.** The single lock for an issue is the Runtime `task.claimed` record on the configured team execution.
+- An orchestrator reads `GET /v1/executions/<execution>/tasks?issue=<N>`, plus the issue's last
   comments and open PRs, before assigning.
 - A lane records `claimed` before its first edit, then confirms it landed with the same GET.
 - A claim that timed out is not a claim until that GET shows it. No confirmation means no edit.
@@ -361,7 +362,7 @@ barrier. Direct host APIs outside this workflow are not intercepted.
 `tools/codex-launcher/run-codex.cmd` delegates argument handling to `run_codex.py`:
 
 ```text
-run-codex.cmd <actual-lane> <unique-run-tag> <prompt-file> --execution gh-team --issue <N> --branch <branch> --repo stabem/GraphHelm --claim-sequence <sequence> --url http://127.0.0.1:8793 --token-file F:/github/GraphHelm/.graphhelm/events.agent.token --result-file <lane-result-file>
+run-codex.cmd <actual-lane> <unique-run-tag> <prompt-file> --execution <execution> --issue <N> --branch <branch> --repo stabem/GraphHelm --claim-sequence <sequence> --url http://127.0.0.1:8793 --token-file F:/github/GraphHelm/.graphhelm/events.agent.token --result-file <lane-result-file>
 ```
 
 Python, GraphHelm and Codex must already be installed. `--graphhelm` and `--codex` may pin existing

@@ -1684,6 +1684,58 @@ class CoreModules(unittest.TestCase):
         root, packages = self.tree({"core/k/src/m.rs": "pub struct S;\nimpl S { pub fn f() {} }\nimpl Clone for S { fn clone(&self) -> S { S } }\n"})
         self.assertEqual(self.plan(root, packages), {self.CLI_A})
 
+    def test_argument_position_impl_trait_is_not_an_impl_item(self):
+        root, packages = self.tree({
+            "core/k/src/m.rs": "pub fn accepts(predicate: impl Fn(&str) -> bool) {}\n"
+        })
+        self.assertEqual(self.plan(root, packages), {self.CLI_A})
+
+    def test_multiple_argument_position_impl_traits_stay_narrow(self):
+        root, packages = self.tree({
+            "core/k/src/m.rs": "pub fn accepts(a: impl Fn(&str), b: impl FnMut(u8)) {}\n"
+        })
+        self.assertEqual(self.plan(root, packages), {self.CLI_A})
+
+    def test_unproved_impl_forms_keep_the_conservative_fallback(self):
+        cases = {
+            "generic argument impl": "pub fn accepts<T: impl Fn(&str) -> bool>(predicate: T) {}\n",
+            "impl in a block expression": "pub const VALUE: () = { impl Fake { } };\n",
+            "foreign impl nested in a parenthesized block": (
+                "pub fn accepts() { let _ = ({ impl crate::n::T { fn extra(&self) {} } }); }\n"
+            ),
+            "lifetime before a foreign impl": (
+                "pub fn accepts<'a>(value: &'a str) {}\nimpl crate::n::T { fn extra(&self) {} }\n"
+            ),
+            "single lifetime before a foreign impl": (
+                "pub fn accepts<'a>() {}\nimpl crate::n::T { fn extra(&self) {} }\n"
+            ),
+            "foreign impl nested in an array block": (
+                "pub fn accepts() { let _ = [{ impl crate::n::T { fn extra(&self) {} } 0 }]; }\n"
+            ),
+            "argument opaque type followed by a foreign impl": (
+                "pub fn accepts(value: impl Fn(&str)) {}\nimpl crate::n::T { fn extra(&self) {} }\n"
+            ),
+            "raw text cannot hide a later foreign impl": (
+                'pub const TEXT: &str = r#"\nfn fake(value: impl Fn(&str) -> bool\n"#;\n'
+                "impl crate::n::T { fn extra(&self) {} }\n"
+            ),
+            "return-position opaque type remains unproved": (
+                "pub fn accepts() -> impl Iterator<Item=u8> { std::iter::empty() }\n"
+            ),
+            "fake function text in a comment": (
+                "// fn fake(value: impl Fn(&str) -> bool) {}\n"
+                "pub fn accepts(value: impl Fn(&str) -> bool) {}\n"
+            ),
+        }
+        for why, source in cases.items():
+            with self.subTest(why):
+                root, packages = self.tree({"core/k/src/m.rs": source})
+                self.assertIsNone(self.plan(root, packages), why)
+        root, packages = self.tree({
+            "core/k/src/m.rs": "pub fn accepts(predicate: impl Fn(&str) -> bool) { /* impl Fake { } */ }\n"
+        })
+        self.assertIsNone(self.plan(root, packages))
+
     def test_a_crate_between_that_does_not_name_the_module_keeps_the_narrow_plan(self):
         root, packages = self.tree({"apps/cli/src/commands/a.rs": "fn h() { graphhelm_k::{n}::g() }\n"}, mid=True)
         self.assertEqual(self.plan(root, packages), {self.CLI_A})

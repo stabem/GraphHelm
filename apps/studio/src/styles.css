@@ -35,14 +35,12 @@
   --mono: "JetBrains Mono", ui-monospace, monospace;
   /* #1934: one scale for Graph, Lanes and Proof (docs/design/studio/Tokens.dc.html). */
   --fs-meta: 11px;
-  --fs-body: 12px;
   --fs-card: 13px;
   --fs-title: 15px;
   --s1: 4px;
   --s2: 8px;
   --s3: 12px;
   --s4: 16px;
-  --s5: 24px;
   --card-radius: 10px;
   --card-pad: 12px;
   --card-gap: 8px;

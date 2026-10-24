@@ -1200,32 +1200,6 @@ pub fn validate_candidate(
     Ok(())
 }
 
-/// A durable step in publishing a memory record.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PublicationStep {
-    /// The record's evidence is sealed and durable.
-    EvidenceSealed,
-    /// The record is published and visible by default.
-    RecordPublished,
-}
-
-/// The order the durable steps of publication are written in.
-#[must_use]
-pub fn publication_steps() -> Vec<PublicationStep> {
-    // Evidence first. Both orders are correct once the sequence completes; they differ only in
-    // what a crash leaves behind. Sealed-then-published leaves evidence nobody points at, which is
-    // garbage to collect. Published-then-sealed leaves a published record with nothing under it,
-    // which is an audit trail asserting something it cannot support -- and the reader cannot tell
-    // it apart from a record whose evidence was deleted.
-    //
-    // The rule is not "write in this order", it is: order the writes so that every intermediate a
-    // crash can leave behind reads as the TRUTH.
-    vec![
-        PublicationStep::EvidenceSealed,
-        PublicationStep::RecordPublished,
-    ]
-}
-
 /// Republish a record over freshly sealed evidence.
 ///
 /// # Errors

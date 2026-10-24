@@ -757,8 +757,8 @@ core/governor/src/memory.rs:268   if content_is_secret_shaped(content) { ... }
 core/governor/src/memory.rs:273   code: MemoryRefusalCode::SecretDetected
 core/governor/src/memory.rs:313   fn content_is_secret_shaped -> content.contains("ghp_")
 core/governor/tests/memory.rs:69    fn refusal_names_the_code_and_location_but_never_the_secret_value
-core/governor/tests/memory.rs:1037  fn capture_refuses_secret_bearing_content_before_touching_any_boundary
-core/governor/tests/memory.rs:1074  fn the_secret_detector_covers_the_shape_it_declares_and_no_other
+core/governor/tests/memory.rs:1000  fn capture_refuses_secret_bearing_content_before_touching_any_boundary
+core/governor/tests/memory.rs:1037  fn the_secret_detector_covers_the_shape_it_declares_and_no_other
 ```
 
 **Trigger it would catch.** Remove the screen call at :240, or widen `content_is_secret_shaped` to

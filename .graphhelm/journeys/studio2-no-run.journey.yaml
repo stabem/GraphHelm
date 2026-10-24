@@ -3,7 +3,7 @@ id: studio2-no-run
 title: See journeys in a project with no team run
 name: Start from no run
 feature: Studio
-purpose: "A project with no team run still shows its journeys in Proof and a working Start a team run button in the top bar."
+purpose: A project with no team run still shows its journeys in Proof and a working Start a team run button in the top bar.
 status: draft
 approved: null
 base: http://127.0.0.1:5184

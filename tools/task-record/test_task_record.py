@@ -34,6 +34,7 @@ HEAD_B = "b" * 40
 class FakeRuntime(http.server.BaseHTTPRequestHandler):
     keys = {}
     seen = []
+    paths = []
     # #498: a Runtime built before #486 refuses the opening records' title/summary keys.
     old = False
     no_lease = False  # #1223: a Runtime built before #1194 refuses `leaseSeconds` (GHCLI003)
@@ -71,6 +72,7 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self):
+        FakeRuntime.paths.append(self.path)
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         key = self.headers["Idempotency-Key"]
         FakeRuntime.seen.append((key, body))
@@ -292,7 +294,7 @@ class TaskRecordTest(unittest.TestCase):
     def test_lane_retired_is_signed_by_the_owner_and_needs_a_reason(self):
         owner = Path(self.tmp.name) / "events.token"
         owner.write_text("owner-token\n", encoding="utf-8")
-        argv = ["--token-file", str(owner), "--lane", "orchestrator", "lane_retired",
+        argv = ["--token-file", str(owner), "--execution", "gh-team", "--lane", "orchestrator", "lane_retired",
                 "--lanes", "lane-r,lane-s", "--retired", "true"]
         out = io.StringIO()
         with redirect_stdout(out):
@@ -349,6 +351,7 @@ class TaskRecordTest(unittest.TestCase):
         FakeRuntime.deny_reads = False
         FakeRuntime.evidence = {}
         FakeRuntime.reads = []
+        FakeRuntime.paths = []
         # #477: opening records read their title from GitHub; these cells are about the wire.
         self.github = task_record.github_words
         task_record.github_words = lambda *_: (None, None)
@@ -356,11 +359,120 @@ class TaskRecordTest(unittest.TestCase):
     def tearDown(self):
         task_record.github_words = self.github
 
-    def run_step(self, *argv, url=None):
+    def run_step(self, *argv, url=None, execution="gh-team"):
         out = io.StringIO()
+        binding = [] if execution is None else ["--execution", execution]
         with redirect_stdout(out):
-            code = task_record.main(["--url", url or self.url, "--token-file", str(self.token), *argv])
+            code = task_record.main(["--url", url or self.url, "--token-file", str(self.token), *binding, *argv])
         return code, out.getvalue()
+
+    def test_team_binding_selects_execution_and_rejects_broken_binding_without_send(self):
+        # Contract: an existing project binding selects its execution, while malformed bindings
+        # refuse before HTTP. Regression: the old implicit gh-team default ignored project scope.
+        # Existing tests observe payloads and retries but never the execution path or config refusal.
+        # No production seam: this drives the real recorder into the existing loopback observer.
+        project = Path(self.tmp.name) / "binding-project"
+        nested = project / "src" / "deep"
+        (project / ".graphhelm").mkdir(parents=True)
+        nested.mkdir(parents=True)
+        (project / ".graphhelm" / "team.json").write_text(
+            json.dumps({"executionId": "studio-v2", "harmless": True}), encoding="utf-8")
+        token = project / ".graphhelm" / "events.agent.token"
+        token.write_text("agent-token\n", encoding="utf-8")
+        task_record.credential_file(token, "lane-a").write_text("credential-lane-a\n", encoding="utf-8")
+        old = Path.cwd()
+        try:
+            os.chdir(nested)
+            code, output = self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                                         "--no-github", "--token-file", str(token), execution=None)
+        finally:
+            os.chdir(old)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(FakeRuntime.paths, ["/v1/executions/studio-v2/signal"])
+
+        before = len(FakeRuntime.paths)
+        (project / ".graphhelm" / "team.json").write_text("not json", encoding="utf-8")
+        old = Path.cwd()
+        try:
+            os.chdir(nested)
+            with self.assertRaises(SystemExit):
+                self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                              "--no-github", "--token-file", str(token), execution=None)
+        finally:
+            os.chdir(old)
+        self.assertEqual(len(FakeRuntime.paths), before)
+
+        outer = Path(self.tmp.name) / "outer-project"
+        repo = outer / "nested-repo"
+        (outer / ".graphhelm").mkdir(parents=True)
+        (outer / ".graphhelm" / "team.json").write_text(
+            json.dumps({"executionId": "wrong-parent"}), encoding="utf-8")
+        repo.mkdir(parents=True)
+        (repo / ".git").write_text("gitdir: elsewhere", encoding="utf-8")
+        work = repo / "src"
+        work.mkdir(parents=True)
+        old = Path.cwd()
+        try:
+            os.chdir(work)
+            with self.assertRaises(SystemExit):
+                self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                              "--no-github", execution=None)
+        finally:
+            os.chdir(old)
+        self.assertEqual(len(FakeRuntime.paths), before)
+
+    def test_explicit_execution_bypasses_invalid_config(self):
+        project = Path(self.tmp.name) / "explicit-binding"
+        (project / ".graphhelm").mkdir(parents=True)
+        (project / ".graphhelm" / "team.json").write_text("[]", encoding="utf-8")
+        token = project / ".graphhelm" / "events.agent.token"
+        token.write_text("agent-token\n", encoding="utf-8")
+        task_record.credential_file(token, "lane-a").write_text("credential-lane-a\n", encoding="utf-8")
+        old = Path.cwd()
+        try:
+            os.chdir(project)
+            code, output = self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                                         "--no-github", "--token-file", str(token),
+                                         "--execution", "explicit-run")
+        finally:
+            os.chdir(old)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(FakeRuntime.paths, ["/v1/executions/explicit-run/signal"])
+
+    def test_invalid_team_bindings_are_bounded_and_never_sent(self):
+        # Contract: malformed, non-object, missing and oversized bindings refuse before HTTP.
+        # Regression: an invalid value could become a URL path or silently select a fallback.
+        # Existing coverage had no config parser or no-send observer; this uses the real loopback.
+        cases = [
+            ("missing", {}), ("empty", {"executionId": ""}),
+            ("path", {"executionId": "bad/id"}), ("long", {"executionId": "a" * 129}),
+            ("array", []), ("oversized", {"executionId": "ok", "padding": "x" * 65536}),
+        ]
+        for name, value in cases:
+            with self.subTest(name=name):
+                folder = Path(self.tmp.name) / f"invalid-{name}"
+                folder.mkdir(parents=True)
+                token = folder / "events.agent.token"
+                token.write_text("agent-token\n", encoding="utf-8")
+                task_record.credential_file(token, "lane-a").write_text("credential-lane-a\n", encoding="utf-8")
+                (folder / "team.json").write_text(json.dumps(value), encoding="utf-8")
+                before = len(FakeRuntime.paths)
+                with self.assertRaises(SystemExit):
+                    self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                                  "--no-github", "--token-file", str(token), execution=None)
+                self.assertEqual(len(FakeRuntime.paths), before)
+
+        folder = Path(self.tmp.name) / "invalid-utf8"
+        folder.mkdir(parents=True)
+        token = folder / "events.agent.token"
+        token.write_text("agent-token\n", encoding="utf-8")
+        task_record.credential_file(token, "lane-a").write_text("credential-lane-a\n", encoding="utf-8")
+        (folder / "team.json").write_bytes(b"{\xff")
+        before = len(FakeRuntime.paths)
+        with self.assertRaises(SystemExit):
+            self.run_step("--lane", "lane-a", "heartbeat", "--issue", "1024",
+                          "--no-github", "--token-file", str(token), execution=None)
+        self.assertEqual(len(FakeRuntime.paths), before)
 
     def test_the_fix_loop_records_a_second_pr_opened_and_verdict_on_the_new_head(self):
         steps = [
@@ -663,7 +775,7 @@ class TimeoutAndFullHead(unittest.TestCase):
 
     def test_full_and_short_head_both_parse_as_given(self):
         for head in ("abcdef0123456789abcdef0123456789abcdef01", "abcdef01"):
-            args = task_record.parse(["pr_opened", "--lane", "l", "--issue", "1", "--head", head])
+            args = task_record.parse(["pr_opened", "--lane", "l", "--execution", "gh-team", "--issue", "1", "--head", head])
             self.assertEqual(args.head, head)
 
 
@@ -722,12 +834,12 @@ class ClosesAsGiven(unittest.TestCase):
     "closes #356" for PR #456, a `Refs #356` merge, and `--closes` with no numbers could not say none."""
 
     def closes(self, *extra):
-        args = task_record.parse(["--lane", "gh-claude-6", "merged", "--issue", "356", "--pr", "456",
+        args = task_record.parse(["--lane", "gh-claude-6", "--execution", "gh-team", "merged", "--issue", "356", "--pr", "456",
                                   "--merge-sha", "c" * 40, *extra])
         return task_record.document(args, "2026-10-08T00:00:00Z")["closes"]
 
     def critic(self, *extra):
-        args = task_record.parse(["--lane", "gh-claude-3", "critic_verdict", "--issue", "467",
+        args = task_record.parse(["--lane", "gh-claude-3", "--execution", "gh-team", "critic_verdict", "--issue", "467",
                                   "--design-ref", "docs/specs/critic-loop.md", "--reason", "names the promise", *extra])
         return task_record.document(args, "2026-10-08T00:00:00Z")
 
@@ -746,7 +858,7 @@ class ClosesAsGiven(unittest.TestCase):
     def test_a_critic_verdict_without_a_reason_is_stopped_by_the_recipe(self):
         # #547 review: an omitted --reason is an empty list, which the recipe let through, so the
         # lane met the Runtime's refusal instead of the recipe's own line naming the argument.
-        args = task_record.parse(["--lane", "gh-claude-3", "critic_verdict", "--issue", "467",
+        args = task_record.parse(["--lane", "gh-claude-3", "--execution", "gh-team", "critic_verdict", "--issue", "467",
                                   "--round", "1", "--score", "5", "--design-ref", "d.md"])
         with self.assertRaises(SystemExit) as stopped:
             task_record.document(args, "2026-10-08T00:00:00Z")
@@ -781,7 +893,7 @@ class TitleAndSummary(unittest.TestCase):
     def doc(self, *argv):
         err = io.StringIO()
         with redirect_stderr(err):
-            document = task_record.document(task_record.parse(["--lane", "gh-claude-2", *argv]), "2026-10-08T00:00:00Z")
+            document = task_record.document(task_record.parse(["--lane", "gh-claude-2", "--execution", "gh-team", *argv]), "2026-10-08T00:00:00Z")
         return document, err.getvalue()
 
     def test_claimed_reads_the_issue_title_and_summary_from_github(self):
@@ -845,7 +957,7 @@ class Planned(unittest.TestCase):
             "critic": {"mode": "design", "passScore": 8, "maxRounds": 3}}
 
     def planned(self, *extra):
-        args = task_record.parse(["--lane", "gh-claude-1", "planned", "--issue", "480", *extra])
+        args = task_record.parse(["--lane", "gh-claude-1", "--execution", "gh-team", "planned", "--issue", "480", *extra])
         return task_record.document(args, "2026-10-08T00:00:00Z")
 
     def plan_file(self, plan):
@@ -943,7 +1055,7 @@ class Planned(unittest.TestCase):
         nested.write_text("untracked", encoding="utf-8")
         expected = ["core/policy/new/nested.rs", tracked_name]
 
-        args = task_record.parse(["--lane", "lane-a", "planned", "--issue", "702", "--summary", "s",
+        args = task_record.parse(["--lane", "lane-a", "--execution", "gh-team", "planned", "--issue", "702", "--summary", "s",
                                   "--plan-repo", repo, "--graphhelm", "graphhelm"])
         plan = {"schema": "graphhelm-task-plan-v1", "classes": ["code"], "reviews": 1,
                 "proof": "tests", "critic": {"mode": "none", "passScore": 8, "maxRounds": 3}}
@@ -965,7 +1077,7 @@ class Planned(unittest.TestCase):
         # #702: Git's human rename separator can also occur in the destination filename.
         # Windows forbids `>` in real filenames, so supply Git's status output at the I/O edge.
         # This guards the planner argv; only subprocess I/O is replaced. Cost: milliseconds.
-        args = task_record.parse(["--lane", "lane-a", "planned", "--issue", "702", "--summary", "s",
+        args = task_record.parse(["--lane", "lane-a", "--execution", "gh-team", "planned", "--issue", "702", "--summary", "s",
                                   "--plan-repo", ".", "--graphhelm", "graphhelm"])
         plan = {"schema": "graphhelm-task-plan-v1", "classes": ["code"], "reviews": 1,
                 "proof": "tests", "critic": {"mode": "none", "passScore": 8, "maxRounds": 3}}
@@ -1039,7 +1151,7 @@ class Planned(unittest.TestCase):
                                       ("pr_opened", ["--pr", "1", "--head", HEAD_A, "--reviewer", "r"], 2),
                                       ("merged", ["--pr", "1", "--merge-sha", HEAD_A], 5)):
             # #1921: --no-github; this cell is about revisions, and an omitted title without gh now fails.
-            args = task_record.parse(["--lane", "l", kind, "--issue", "9", "--no-github", *extra])
+            args = task_record.parse(["--lane", "l", "--execution", "gh-team", kind, "--issue", "9", "--no-github", *extra])
             self.assertEqual(task_record.document(args, "t")["revision"], revision, kind)
 
 
@@ -1092,7 +1204,7 @@ class MergedRequiresGithub(unittest.TestCase):
         out = io.StringIO()
         with redirect_stdout(out):
             try:
-                code = task_record.main(["--lane", "test", "--issue", "674", "merged",
+                code = task_record.main(["--lane", "test", "--execution", "gh-team", "--issue", "674", "merged",
                                          "--pr", "42", "--merge-sha", sha, *extra])
             except SystemExit as error:
                 code = error.code
@@ -1153,7 +1265,7 @@ class ClosedRequiresGithub(unittest.TestCase):
                 ["gh"], 0, json.dumps({"state": "OPEN", "mergedAt": None}), "")) as run, \
                 patch.object(task_record, "send") as send, patch("task_record.time.sleep"):
             with self.assertRaises(SystemExit) as error:
-                task_record.main(["--lane", "test", "--issue", "747", "closed", "--pr", "685",
+                task_record.main(["--lane", "test", "--execution", "gh-team", "--issue", "747", "closed", "--pr", "685",
                                   "--reason", "superseded", "--by", "740"])
         self.assertIn("state=OPEN", str(error.exception))
         self.assertEqual(run.call_args.args[0], ["gh", "pr", "view", "685", "--json", "state,mergedAt",
@@ -1169,7 +1281,7 @@ class MergedPrIsTerminal(unittest.TestCase):
                 ["gh"], 0, json.dumps({"state": "MERGED"}), "")) as run, \
                 patch.object(task_record, "send") as send:
             with self.assertRaises(SystemExit) as error:
-                task_record.main(["--lane", "test", "--issue", "860", "pr_opened", "--pr", "840",
+                task_record.main(["--lane", "test", "--execution", "gh-team", "--issue", "860", "pr_opened", "--pr", "840",
                                   "--head", HEAD_B, "--reviewer", "codex-review"])
         self.assertIn("PR #840 is already merged", str(error.exception))
         self.assertEqual(run.call_args.args[0], ["gh", "pr", "view", "840", "--json", "state",
@@ -1181,7 +1293,7 @@ class MergedPrIsTerminal(unittest.TestCase):
                 ["gh"], 0, json.dumps({"state": "MERGED"}), "")) as run, \
                 patch.object(task_record, "send", return_value=(0, "record", {})) as send:
             with self.assertRaises(SystemExit) as error:
-                task_record.main(["--lane", "test", "--issue", "860", "review_assigned", "--pr", "840",
+                task_record.main(["--lane", "test", "--execution", "gh-team", "--issue", "860", "review_assigned", "--pr", "840",
                                   "--head", HEAD_B, "--reviewer", "codex-review"])
         self.assertIn("PR #840 is already merged", str(error.exception))
         self.assertEqual(run.call_args.args[0], ["gh", "pr", "view", "840", "--json", "state",
@@ -1192,7 +1304,7 @@ class MergedPrIsTerminal(unittest.TestCase):
         with patch.object(task_record.subprocess, "run", return_value=subprocess.CompletedProcess(
                 ["gh"], 0, json.dumps({"state": "CLOSED", "mergedAt": None}), "")), \
                 patch.object(task_record, "send", return_value=(0, "record", {})) as send:
-            self.assertEqual(task_record.main(["--lane", "test", "--issue", "747", "closed", "--pr", "685",
+            self.assertEqual(task_record.main(["--lane", "test", "--execution", "gh-team", "--issue", "747", "closed", "--pr", "685",
                                                "--reason", "superseded", "--by", "740"]), 0)
         self.assertEqual(send.call_args.args[1]["pr"], 685)
         self.assertEqual(send.call_args.args[1]["reason"], "superseded")
@@ -1246,7 +1358,7 @@ class ReviewActivityCaller(unittest.TestCase):
     def request(self, *extra):
         output = io.StringIO()
         with redirect_stdout(output), redirect_stderr(io.StringIO()), patch.object(task_record.urllib.request, "urlopen", side_effect=AssertionError("dry-run must not contact Runtime")):
-            code = task_record.main(["--lane", "reviewer", "review_activity", "--issue", "1745",
+            code = task_record.main(["--lane", "reviewer", "--execution", "gh-team", "review_activity", "--issue", "1745",
                 "--repo", "fixture/project", "--pr", "17", "--head", HEAD_A,
                 "--review-context-sequence", "41", "--revision", "1", "--activity", "waiting",
                 "--reason", "Waiting for measured dependency proof", "--no-github", "--dry-run", *extra])
@@ -1263,7 +1375,7 @@ class ReviewActivityCaller(unittest.TestCase):
         self.assertEqual(first["headers"]["Idempotency-Key"], same["headers"]["Idempotency-Key"])
         self.assertNotEqual(first["headers"]["Idempotency-Key"], self.request("--review-context-sequence", "42")["headers"]["Idempotency-Key"])
         self.assertNotEqual(first["headers"]["Idempotency-Key"], self.request("--revision", "2")["headers"]["Idempotency-Key"])
-        args = task_record.parse(["--lane", "reviewer", "review_activity", "--issue", "1745", "--pr", "17", "--head", HEAD_A,
+        args = task_record.parse(["--lane", "reviewer", "--execution", "gh-team", "review_activity", "--issue", "1745", "--pr", "17", "--head", HEAD_A,
             "--revision", "2", "--review-context-sequence", "41", "--activity", "resumed", "--no-github"])
         resumed = task_record.document(args, "2026-01-01T00:00:00Z")
         self.assertEqual(resumed["activity"], "resumed")

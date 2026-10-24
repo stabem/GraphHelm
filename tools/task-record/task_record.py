@@ -63,6 +63,66 @@ MAX_HISTORY_PAGES = MAX_HISTORY_EVENTS // 1000
 MAX_HEARTBEAT_EVIDENCE_READS = 256
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_TOTAL_EVIDENCE_BYTES = 2 * 1024 * 1024
+MAX_TEAM_CONFIG_BYTES = 64 * 1024
+
+
+def valid_execution_id(value):
+    """Match the Runtime's bounded opaque execution identifier without importing core code."""
+    if not isinstance(value, str) or not 0 < len(value) <= 128:
+        return False
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return all(0x21 <= byte <= 0x2e or 0x30 <= byte <= 0x39 or
+               0x3b <= byte <= 0x5b or 0x5d <= byte <= 0x7e
+               for byte in encoded)
+
+
+def _team_config_execution(path):
+    """Read one already-selected team binding; a present broken file is authoritative."""
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_TEAM_CONFIG_BYTES + 1)
+    except (OSError, ValueError):
+        sys.exit("task_record: configured team.json cannot be read; no record sent")
+    if len(raw) > MAX_TEAM_CONFIG_BYTES:
+        sys.exit("task_record: configured team.json exceeds its byte bound; no record sent")
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        sys.exit("task_record: configured team.json is not valid UTF-8 JSON; no record sent")
+    execution = value.get("executionId") if isinstance(value, dict) else None
+    if not isinstance(value, dict) or not valid_execution_id(execution):
+        sys.exit("task_record: configured team.json has no valid executionId; no record sent")
+    return execution
+
+
+def resolve_execution(explicit, token_file):
+    """Choose an explicit execution or the first existing local team binding."""
+    if explicit is not None:
+        if not valid_execution_id(explicit):
+            sys.exit("task_record: --execution must be a valid execution id; no record sent")
+        return explicit
+    token_path = Path(token_file).absolute()
+    candidates = [token_path.parent / "team.json"]
+    directory = Path.cwd().absolute()
+    while True:
+        candidates.append(directory / ".graphhelm" / "team.json")
+        if (directory / ".git").exists():
+            break
+        if directory.parent == directory:
+            break
+        directory = directory.parent
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.absolute()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.exists():
+            return _team_config_execution(candidate)
+    sys.exit("task_record: no execution binding found; pass --execution or create .graphhelm/team.json; no record sent")
 
 
 def credential_file(token_file, lane):
@@ -295,7 +355,7 @@ def parse(argv):
     p.add_argument("--critic-mode", choices=("none", "design"))
     p.add_argument("--repo", default="stabem/GraphHelm",
                    help="owner/name; pass '' to omit it (a Runtime older than #420 refuses the field)")
-    p.add_argument("--execution", default="gh-team")
+    p.add_argument("--execution", default=None)
     p.add_argument("--url", default="http://127.0.0.1:8793")
     p.add_argument("--token-file", default=".graphhelm/events.agent.token",
                    help="the Runtime's agent session token path; the lane's own credential is read beside it, "
@@ -319,6 +379,7 @@ def parse(argv):
         p.error("the following arguments are required: --issue")
     if args.kind in ("queued", "lane_retired", "request_recorded") and args.issue is not None:
         p.error(f"{args.kind} is not about one issue; it takes no --issue")
+    args.execution = resolve_execution(args.execution, args.token_file)
     return args
 
 

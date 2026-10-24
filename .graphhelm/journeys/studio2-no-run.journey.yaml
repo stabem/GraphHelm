@@ -3,14 +3,14 @@ id: studio2-no-run
 title: See journeys in a project with no team run
 name: Start from no run
 feature: Studio
-purpose: "A project with no team run still shows its journeys in Proof and a working Start a team run button in the top bar (web; studio2-no-run-mobile is the same flow at mobile: starting a run is permanent, so each width gets its own empty fixture)."
+purpose: A project with no team run still shows its journeys in Proof and a working Start a team run button in the top bar.
 status: draft
 approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux, recovery]
-viewports: [web]
+viewports: [web, mobile]
 screens:
   - id: empty
     title: The project has no team run

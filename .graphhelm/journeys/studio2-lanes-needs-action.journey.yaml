@@ -10,7 +10,7 @@ base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux]
-viewports: [web]
+viewports: [web, mobile]
 screens:
   - id: answered
     title: Answer acts on its item

@@ -3,14 +3,14 @@ id: studio2-proof-send-fix
 title: Send a failed journey to be fixed
 name: Send to fix
 feature: Studio
-purpose: "A journey that fails offers Send to fix with an optional note; pressing it records the owner's request on the team run, the button turns into Sent with its time, and the request shows in WHAT I ASKED and as a Hand off item in Needs action (#1919) (web; studio2-proof-send-fix-mobile is the same flow at mobile: a request is kept, so each width gets its own fresh fixture)."
+purpose: "A journey that fails offers Send to fix with an optional note; pressing it records the owner's request on the team run, the button turns into Sent with its time, and the request shows in WHAT I ASKED and as a Hand off item in Needs action (#1919)."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux, irreversible_effect]
-viewports: [web]
+viewports: [web, mobile]
 screens:
   - id: asked
     title: The request shows in WHAT I ASKED and Needs action

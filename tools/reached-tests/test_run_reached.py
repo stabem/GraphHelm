@@ -1242,11 +1242,13 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         tools.mkdir()
         (tools / "npm.cmd").write_text(f'@echo off\r\n"{sys.executable}" "{prepare}"\r\n', encoding="utf-8")
         self.steps = [["npx", "tsc"]]
-        with patch.dict(os.environ, {"PATH": str(tools) + os.pathsep + os.environ.get("PATH", "")}):
+        with patch.dict(os.environ, {"PATH": str(tools) + os.pathsep + os.environ.get("PATH", ""),
+                                     "GRAPHHELM_CLI": ""}):
             _, report = self.run_once()
             self.assertEqual(report["status"], "incomplete")
             self.assertEqual(report["completed"][0]["returncode"], 0)
             self.assertFalse(any(e.get("reusable") for e in report["completed"]))
+            self.assertIsNone(report["fingerprint"]["tools"].get("graphhelmExecutable"))
             second_code, second_report = self.run_once()
             self.assertEqual(second_code, 0)
             third_code, third_report = self.run_once()

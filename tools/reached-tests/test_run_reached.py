@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1400,10 +1401,27 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         self.assertEqual(len(self.runs()), 22)
 
     def test_discovery_output_and_deadline_are_bounded(self):
-        with self.assertRaisesRegex(RuntimeError, "output"):
-            rr._discovery_output([sys.executable, "-c", "print('x'*1000000)"], self.repo, dict(os.environ), 2)
-        with self.assertRaisesRegex(RuntimeError, "deadline"):
-            rr._discovery_output([sys.executable, "-c", "import time; time.sleep(5)"], self.repo, dict(os.environ), 0.1)
+        real_popen = rr.subprocess.Popen
+        children = []
+
+        def observed_popen(*args, **kwargs):
+            child = real_popen(*args, **kwargs)
+            children.append(child)
+            return child
+
+        with patch.object(rr.subprocess, "Popen", side_effect=observed_popen), \
+             warnings.catch_warnings():
+            warnings.simplefilter("error", ResourceWarning)
+            with self.assertRaisesRegex(RuntimeError, "output"):
+                rr._discovery_output([sys.executable, "-c", "print('x'*1000000)"], self.repo, dict(os.environ), 2)
+            with self.assertRaisesRegex(RuntimeError, "deadline"):
+                rr._discovery_output([sys.executable, "-c", "import time; time.sleep(5)"], self.repo, dict(os.environ), 0.1)
+            with self.assertRaisesRegex(RuntimeError, "refused"):
+                rr._discovery_output([sys.executable, "-c", "raise SystemExit(3)"], self.repo, dict(os.environ), 2)
+        self.assertEqual(len(children), 3)
+        self.assertTrue(all(child.returncode is not None for child in children))
+        self.assertTrue(all(child.poll() is not None for child in children))
+        self.assertTrue(all(child.stdout.closed for child in children))
 
     @unittest.skipIf(os.name == "nt", "POSIX symlink-sensitive traversal")
     def test_invocation_parent_components_are_not_lexically_collapsed(self):

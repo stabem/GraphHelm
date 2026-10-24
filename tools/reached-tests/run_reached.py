@@ -661,6 +661,7 @@ def _needs_studio_preparation(repo: Path, cwd: Path) -> bool:
 def _discovery_output(argv: list[str], cwd: Path, env: dict[str, str], timeout: float) -> str:
     """Bound only identity discovery, including output held by descendants."""
     import threading
+    cleanup_timeout = 1.0
     deadline = time.monotonic() + timeout
     output = bytearray()
     overflow = threading.Event()
@@ -680,25 +681,46 @@ def _discovery_output(argv: list[str], cwd: Path, env: dict[str, str], timeout: 
                 output.extend(chunk)
         except OSError:
             overflow.set()
+        finally:
+            proc.stdout.close()
 
     reader = threading.Thread(target=read, daemon=True)
     reader.start()
+
+    def reap_child(cleanup_deadline: float) -> bool:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            return proc.poll() is not None
+        try:
+            proc.wait(timeout=max(0.0, cleanup_deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            return False
+        return True
+
+    def join_reader_and_close(cleanup_deadline: float) -> bool:
+        reader.join(timeout=max(0.0, cleanup_deadline - time.monotonic()))
+        if reader.is_alive():
+            return False
+        return proc.stdout.closed
+
     try:
         code = proc.wait(timeout=max(0.001, timeout - 0.1))
     except subprocess.TimeoutExpired:
-        proc.kill()
-        try:
-            proc.wait(timeout=max(0, min(0.05, deadline - time.monotonic())))
-        except subprocess.TimeoutExpired:
+        cleanup_deadline = time.monotonic() + cleanup_timeout
+        reaped = reap_child(cleanup_deadline)
+        closed = join_reader_and_close(cleanup_deadline)
+        if not reaped:
             raise RuntimeError("executable identity discovery child could not be reaped before its cleanup deadline") from None
-        reader.join(timeout=max(0, min(0.05, deadline - time.monotonic())))
-        if not reader.is_alive():
-            proc.stdout.close()
+        if not closed:
+            raise RuntimeError("executable identity discovery output remained open after cleanup") from None
         raise RuntimeError("executable identity discovery exceeded its deadline") from None
     reader.join(timeout=max(0, deadline - time.monotonic()))
     if reader.is_alive() or overflow.is_set():
+        cleanup_deadline = time.monotonic() + cleanup_timeout
+        if not join_reader_and_close(cleanup_deadline):
+            raise RuntimeError("executable identity discovery output remained open after cleanup") from None
         raise RuntimeError("executable identity discovery output is unavailable or exceeds its bound")
-    proc.stdout.close()
     if code:
         raise RuntimeError("executable identity discovery refused the selected tool")
     return output.decode("utf-8", errors="replace").strip()

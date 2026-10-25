@@ -119,7 +119,7 @@ fn built_in_jpd_extension_is_a_closed_digest_bound_package() {
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["ok"], true);
     assert_eq!(result["data"]["id"], "graphhelm-jpd");
-    assert_eq!(result["data"]["version"], "0.1.2");
+    assert_eq!(result["data"]["version"], "0.1.3");
     // #385 removed seven folded skill contributions (their contracts stay); #1409 removed the
     // `host/mcp` registration, which the main graphhelm plugin serves.
     assert_eq!(result["data"]["contributionCount"], 49);

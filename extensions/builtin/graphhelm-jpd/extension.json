@@ -3,7 +3,7 @@
   "kind": "Extension",
   "metadata": {
     "id": "graphhelm-jpd",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "publisher": "GraphHelm",
     "source": {
       "repository": "https://github.com/stabem/GraphHelm"
@@ -1061,7 +1061,7 @@
           "id": "skill/journey-prove",
           "kind": "skill",
           "path": "skills/journey-prove/SKILL.md",
-          "sha256": "sha256:ac4ff8def12fab9beba8823eb8236f8ea0b93331a3716b4a657788f40f23f1a1",
+          "sha256": "sha256:53edeebe3be897849ba31132f06a792c80c21f345ac816234044c351099d3121",
           "effects": [
             "artifact.local.write",
             "artifact.propose"

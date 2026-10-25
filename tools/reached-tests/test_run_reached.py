@@ -1106,6 +1106,57 @@ class ResumeAndPreflightContracts(unittest.TestCase):
                     self.assertFalse(any(e.get("reusable") or e.get("proofKey") for e in report["completed"]))
         self.assertEqual(self.runs(), ["ok", "ok", "bad", "bad"])
 
+    def test_identity_accepts_cross_api_ctime_difference_but_refuses_real_mid_read_mutation(self):
+        import hashlib
+        import types
+
+        executable = self.repo.parent / "identity-fixture"
+        executable.write_bytes(b"stable executable bytes")
+        capture = rr._ExecutableCapture(dict(os.environ))
+        real_stat = os.stat(executable)
+        cross_api_stat = types.SimpleNamespace(**{
+            name: getattr(real_stat, name) for name in dir(real_stat) if name.startswith("st_")})
+        cross_api_stat.st_ctime_ns += 1
+        with patch.object(rr.os, "stat", side_effect=[cross_api_stat, cross_api_stat]):
+            identity = capture._identity(str(executable), self.repo)
+        self.assertEqual(identity["sha256"], hashlib.sha256(executable.read_bytes()).hexdigest())
+
+        executable.write_bytes(b"x" * (1 << 20))
+        real_open = open
+        mutated = False
+
+        class MutatingReader:
+            def __init__(self, stream):
+                self.stream = stream
+
+            def __enter__(self):
+                self.stream.__enter__()
+                return self
+
+            def __exit__(self, *args):
+                return self.stream.__exit__(*args)
+
+            def read(self, *args):
+                nonlocal mutated
+                data = self.stream.read(*args)
+                if data and not mutated:
+                    mutated = True
+                    with executable.open("ab") as changed:
+                        changed.write(b"mutation")
+                return data
+
+            def __getattr__(self, name):
+                return getattr(self.stream, name)
+
+        def open_with_mutation(path, mode="r", *args, **kwargs):
+            stream = real_open(path, mode, *args, **kwargs)
+            return MutatingReader(stream) if os.path.normcase(str(path)) == os.path.normcase(str(executable)) \
+                and mode == "rb" else stream
+
+        with patch("builtins.open", side_effect=open_with_mutation), self.assertRaisesRegex(
+                RuntimeError, "executable identity changed while reading"):
+            rr._ExecutableCapture(dict(os.environ))._identity(str(executable), self.repo)
+
     @unittest.skipUnless(os.name != "nt" or __import__("shutil").which("node"),
                          "OBSERVER_MISSING: native Windows Node executable fixture")
     def test_disappearing_required_program_cannot_reuse_saved_pass(self):

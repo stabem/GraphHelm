@@ -6,7 +6,6 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-import uuid
 
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 SCRIPT = Path(__file__).with_name('register_main_whole_run.ps1')
@@ -14,6 +13,16 @@ SCRIPT = Path(__file__).with_name('register_main_whole_run.ps1')
 
 @unittest.skipUnless(os.name == 'nt', 'Windows Task Scheduler contract')
 class ScheduledMain(unittest.TestCase):
+    def isolated_script(self, root):
+        # Change only the OS target in a private copy. Even a lost boundary double cannot
+        # address a real task; production needs no test-only scheduler-name parameter.
+        source = SCRIPT.read_text(encoding='utf-8')
+        target = "$taskName = 'GraphHelm main whole run'"
+        self.assertEqual(source.count(target), 1)
+        script = root / 'register.ps1'
+        script.write_text(source.replace(target, "$taskName = 'GraphHelm fixture " + root.name + "'"), encoding='utf-8')
+        return script
+
     def test_action_survives_removal_of_the_calling_worktree(self):
         with tempfile.TemporaryDirectory(prefix='main check ') as temp:
             root = Path(temp)
@@ -32,15 +41,15 @@ class ScheduledMain(unittest.TestCase):
             git('worktree', 'add', '--detach', str(lane))
             recorder = root / 'observe.ps1'
             # Substitute only the OS scheduler boundary. Git and path resolution are real.
-            recorder.write_text(r'''param($Script, $Repo, $Pythonw, $TaskName)
+            recorder.write_text(r'''param($Script, $Repo, $Pythonw)
 Import-Module ScheduledTasks
 function Get-ScheduledTask { [pscustomobject]@{State='Ready'; Actions=@('old')} }
 function Set-ScheduledTask { param($TaskName, $Action)
     $Action | Select-Object Execute, Arguments, WorkingDirectory | ConvertTo-Json -Compress | Write-Host }
-& $Script -Repo $Repo -Pythonw $Pythonw -TaskName $TaskName -RunnerArguments @('--root', 'D:/slot root', '--timeout', '42', '--state', 'D:\a b\', '--github', 'o/"r')
+& $Script -Repo $Repo -Pythonw $Pythonw -RunnerArguments @('--root', 'D:/slot root', '--timeout', '42', '--state', 'D:\a b\', '--github', 'o/"r')
 ''', encoding='utf-8')
             done = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-File', str(recorder),
-                                   str(SCRIPT), str(lane), shutil.which('pythonw.exe'), 'GraphHelm fixture ' + uuid.uuid4().hex],
+                                   str(self.isolated_script(root)), str(lane), shutil.which('pythonw.exe')],
                                   capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
             self.assertEqual(done.returncode, 0, done.stderr)
             action = json.loads(done.stdout)
@@ -65,7 +74,7 @@ function Set-ScheduledTask { param($TaskName, $Action)
             runner.parent.mkdir(parents=True)
             runner.write_text('raise SystemExit(99)\n', encoding='utf-8')
             recorder = root / 'observe.ps1'
-            recorder.write_text('''param($Script, $Repo, $Pythonw, $Mode, $TaskName)
+            recorder.write_text('''param($Script, $Repo, $Pythonw, $Mode)
 $ErrorActionPreference = 'Stop'
 Import-Module ScheduledTasks
 function Get-ScheduledTask {
@@ -75,7 +84,7 @@ function Get-ScheduledTask {
     [pscustomobject]@{State='Ready'; Actions=@('old')}
 }
 function Set-ScheduledTask { throw 'UNEXPECTED TASK WRITE' }
-$params = @{Repo=$Repo; Pythonw=$Pythonw; TaskName=$TaskName; RunnerArguments=@('--timeout','42')}
+$params = @{Repo=$Repo; Pythonw=$Pythonw; RunnerArguments=@('--timeout','42')}
 if ($Mode -eq 'override') { $params.RunnerArguments=@('--rep=disposable') }
 if ($Mode -eq 'console') { $params.Pythonw=$Pythonw.Replace('pythonw.exe','python.exe') }
 if ($Mode -eq 'whatif') { $params.WhatIf=$true }
@@ -85,6 +94,7 @@ catch {
     Write-Host $_.Exception.Message
 }
 ''', encoding='utf-8')
+            script = self.isolated_script(root)
             reasons = {'override': 'repository is selected', 'console': 'Use pythonw.exe',
                        'missing': 'missing task', 'running': 'main check is running',
                        'multiple': 'one existing task action', 'whatif': 'What if:',
@@ -94,8 +104,8 @@ catch {
                     if mode == 'runner':
                         runner.unlink()
                     done = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-File',
-                                           str(recorder), str(SCRIPT), str(root if mode != 'repo' else root / 'absent'),
-                                           shutil.which('pythonw.exe'), mode, 'GraphHelm fixture ' + uuid.uuid4().hex], capture_output=True, text=True,
+                                           str(recorder), str(script), str(root if mode != 'repo' else root / 'absent'),
+                                           shutil.which('pythonw.exe'), mode], capture_output=True, text=True,
                                           timeout=60, creationflags=NO_WINDOW)
                     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
                     self.assertIn(reason, done.stdout)

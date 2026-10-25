@@ -329,21 +329,29 @@ async function observedLocator(target,r) {
   return clean({role:r.role,name:r.name,exact:true,testId:testId && Buffer.byteLength(testId)<=128 ? redacted(testId) : null,context:ancestry && Buffer.byteLength(ancestry)<=512 ? redacted(ancestry) : null,nth:null});
 }
 /** A page over the model's budget as its outline (#356): landmarks, headings and controls in page
- * order, without their text, cut at whole lines and ending with a note saying so. */
+ * order first, then the page's visible text in the room left (#1783: digits intact, so a drafter
+ * can propose a `text` check on a price or a date), all cut at whole lines, shown in page order
+ * and ending with a note saying how much was kept. `aria` is already redacted by the caller; the
+ * fingerprint is computed elsewhere from masked names, so this text never counts as drift. */
 function summarized(aria, budget) {
   if (Buffer.byteLength(aria) <= budget) return aria;
   const lines = aria.split('\n');
-  const outline = lines.filter(line => { const m = /^\s*- ([a-z]+)/.exec(line); return m !== null && roles.has(m[1]); })
-    .map(line => line.replace(/:\s.*$/, '').replace(/:$/, ''));
+  const outline = [], text = [];
+  lines.forEach((line, at) => {
+    const m = /^\s*- ([a-z]+)/.exec(line);
+    if (m !== null && roles.has(m[1])) outline.push({at, line: line.replace(/:\s.*$/, '').replace(/:$/, '')});
+    else if (/^\s*- (?:text|[a-z]+(?: "(?:[^"\\]|\\.)*")?): \S/.test(line)) text.push({at, line});
+  });
   const kept = [];
-  let size = 0;
-  for (const line of outline) {
-    const next = Buffer.byteLength(line) + 1;
-    if (size + next > budget - 96) break;
-    kept.push(line); size += next;
+  let size = 0, textKept = 0;
+  for (const [pool, isText] of [[outline, false], [text, true]]) for (const item of pool) {
+    const next = Buffer.byteLength(item.line) + 1;
+    if (size + next > budget - 128) { if (isText) continue; break; }
+    kept.push(item); size += next; if (isText) textKept++;
   }
-  kept.push(`- note "page summarized: ${kept.length} of ${lines.length} lines, text left out"`);
-  return kept.join('\n');
+  kept.sort((a, b) => a.at - b.at);
+  const note = `- note "page summarized: ${kept.length} of ${lines.length} lines, ${textKept} of ${text.length} text lines kept"`;
+  return [...kept.map(item => item.line), note].join('\n');
 }
 function skeleton(aria) {
   const controlMap = new Map(), listCounts = [], listStack = [];

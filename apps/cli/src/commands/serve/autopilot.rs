@@ -1205,10 +1205,14 @@ mod tests {
         );
         assert!(matches!(&ended, Err(Ended::Pause(_))), "{}", reason(&ended));
         // #2039: text an agent printed (a long log) is not the launcher's startup failure.
-        let long = format!("{}
+        let long = format!(
+            "{}
 not logged in
-", "agent output
-".repeat(600));
+",
+            "agent output
+"
+            .repeat(600)
+        );
         let ended = exit_with("", 1, &long);
         assert!(
             matches!(&ended, Err(Ended::Failed(_))),

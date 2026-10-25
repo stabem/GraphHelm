@@ -3,10 +3,10 @@
 param(
     [string]$Repo = (Get-Location).Path,
     [string]$Pythonw = (Get-Command pythonw.exe -ErrorAction Stop).Source,
+    [string]$TaskName = 'GraphHelm main whole run',
     [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$RunnerArguments
 )
 $ErrorActionPreference = 'Stop'
-$taskName = 'GraphHelm main whole run'
 
 # A linked worktree is disposable. Its common Git directory belongs to the primary checkout,
 # which workspace removal refuses and sweeps do not select as a linked worktree.

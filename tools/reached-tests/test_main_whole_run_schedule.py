@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import uuid
 
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 SCRIPT = Path(__file__).with_name('register_main_whole_run.ps1')
@@ -31,15 +32,15 @@ class ScheduledMain(unittest.TestCase):
             git('worktree', 'add', '--detach', str(lane))
             recorder = root / 'observe.ps1'
             # Substitute only the OS scheduler boundary. Git and path resolution are real.
-            recorder.write_text(r'''param($Script, $Repo, $Pythonw)
+            recorder.write_text(r'''param($Script, $Repo, $Pythonw, $TaskName)
 Import-Module ScheduledTasks
 function Get-ScheduledTask { [pscustomobject]@{State='Ready'; Actions=@('old')} }
 function Set-ScheduledTask { param($TaskName, $Action)
     $Action | Select-Object Execute, Arguments, WorkingDirectory | ConvertTo-Json -Compress | Write-Host }
-& $Script -Repo $Repo -Pythonw $Pythonw -RunnerArguments @('--root', 'D:/slot root', '--timeout', '42', '--state', 'D:\a b\', '--github', 'o/"r')
+& $Script -Repo $Repo -Pythonw $Pythonw -TaskName $TaskName -RunnerArguments @('--root', 'D:/slot root', '--timeout', '42', '--state', 'D:\a b\', '--github', 'o/"r')
 ''', encoding='utf-8')
             done = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-File', str(recorder),
-                                   str(SCRIPT), str(lane), shutil.which('pythonw.exe')],
+                                   str(SCRIPT), str(lane), shutil.which('pythonw.exe'), 'GraphHelm fixture ' + uuid.uuid4().hex],
                                   capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
             self.assertEqual(done.returncode, 0, done.stderr)
             action = json.loads(done.stdout)
@@ -64,7 +65,7 @@ function Set-ScheduledTask { param($TaskName, $Action)
             runner.parent.mkdir(parents=True)
             runner.write_text('raise SystemExit(99)\n', encoding='utf-8')
             recorder = root / 'observe.ps1'
-            recorder.write_text('''param($Script, $Repo, $Pythonw, $Mode)
+            recorder.write_text('''param($Script, $Repo, $Pythonw, $Mode, $TaskName)
 $ErrorActionPreference = 'Stop'
 Import-Module ScheduledTasks
 function Get-ScheduledTask {
@@ -74,7 +75,7 @@ function Get-ScheduledTask {
     [pscustomobject]@{State='Ready'; Actions=@('old')}
 }
 function Set-ScheduledTask { throw 'UNEXPECTED TASK WRITE' }
-$params = @{Repo=$Repo; Pythonw=$Pythonw; RunnerArguments=@('--timeout','42')}
+$params = @{Repo=$Repo; Pythonw=$Pythonw; TaskName=$TaskName; RunnerArguments=@('--timeout','42')}
 if ($Mode -eq 'override') { $params.RunnerArguments=@('--rep=disposable') }
 if ($Mode -eq 'console') { $params.Pythonw=$Pythonw.Replace('pythonw.exe','python.exe') }
 if ($Mode -eq 'whatif') { $params.WhatIf=$true }
@@ -94,7 +95,7 @@ catch {
                         runner.unlink()
                     done = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-File',
                                            str(recorder), str(SCRIPT), str(root if mode != 'repo' else root / 'absent'),
-                                           shutil.which('pythonw.exe'), mode], capture_output=True, text=True,
+                                           shutil.which('pythonw.exe'), mode, 'GraphHelm fixture ' + uuid.uuid4().hex], capture_output=True, text=True,
                                           timeout=60, creationflags=NO_WINDOW)
                     self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
                     self.assertIn(reason, done.stdout)

@@ -1,0 +1,53 @@
+{
+  "schema": "methodology-cases/1",
+  "cases": [
+    {
+      "id": "csv",
+      "request": "Implement parse_row(text): parse exactly one CSV record, including quoted commas, escaped quotes, Unicode and empty cells. Keep existing simple rows working.",
+      "source": "def parse_row(text):\n    return text.split(\",\")\n",
+      "public": "from subject import parse_row\nassert parse_row(\"a,b\") == [\"a\", \"b\"]\n",
+      "hidden": "from subject import parse_row\nassert parse_row('\"a,b\",\"é\",,\"say \"\"hi\"\"\"') == [\"a,b\", \"é\", \"\", 'say \"hi\"']\n",
+      "fix": "import csv\ndef parse_row(text):\n    return next(csv.reader([text]))\n"
+    },
+    {
+      "id": "pagination",
+      "request": "Implement collect(fetch): fetch(cursor) returns (items,next_cursor). Start with None. Continue for all cursors except None, including 0 and empty string. Refuse repeated cursors with ValueError and never fetch more than 100 pages. Preserve fetch exceptions.",
+      "source": "def collect(fetch):\n    items, cursor = fetch(None)\n    while cursor:\n        page, cursor = fetch(cursor)\n        items += page\n    return items\n",
+      "public": "from subject import collect\nassert collect(lambda c: ([1], None)) == [1]\n",
+      "hidden": "from subject import collect\npages={None:([1],0),0:([2],\"\"),\"\":([3],None)}\nassert collect(lambda c: pages[c]) == [1,2,3]\ncalls=[]\ndef cycle(c):\n calls.append(c)\n if len(calls)>102: raise AssertionError(\"unbounded pagination\")\n return [], \"same\"\ntry: collect(cycle)\nexcept ValueError: pass\nelse: raise AssertionError(\"cycle accepted\")\n",
+      "fix": "def collect(fetch):\n    result, cursor, seen = [], None, set()\n    for _ in range(100):\n        page, cursor = fetch(cursor)\n        result.extend(page)\n        if cursor is None: return result\n        if cursor in seen: raise ValueError(\"repeated cursor\")\n        seen.add(cursor)\n    raise ValueError(\"page bound exceeded\")\n"
+    },
+    {
+      "id": "redaction",
+      "request": "Implement redact(value): recursively copy JSON dictionaries and arrays. Replace values for keys password, token, secret, case-insensitively, with [REDACTED]. Preserve every other value and never mutate the input.",
+      "source": "def redact(value):\n    return {k: \"[REDACTED]\" if k in {\"password\", \"token\", \"secret\"} else v for k,v in value.items()}\n",
+      "public": "from subject import redact\nassert redact({\"token\":\"x\",\"name\":\"a\"}) == {\"token\":\"[REDACTED]\",\"name\":\"a\"}\n",
+      "hidden": "from subject import redact\nx={\"nested\":[{\"PASSWORD\":\"x\",\"token_count\":2},None],\"other\":3}\ny=redact(x)\nassert y == {\"nested\":[{\"PASSWORD\":\"[REDACTED]\",\"token_count\":2},None],\"other\":3}\nassert x[\"nested\"][0][\"PASSWORD\"] == \"x\"\nassert redact([1,\"hi\",False]) == [1,\"hi\",False]\n",
+      "fix": "def redact(value):\n    if isinstance(value, dict):\n        return {k: \"[REDACTED]\" if k.lower() in {\"password\",\"token\",\"secret\"} else redact(v) for k,v in value.items()}\n    if isinstance(value, list): return [redact(v) for v in value]\n    return value\n"
+    },
+    {
+      "id": "authorization",
+      "request": "Implement allowed(actor, tenant, project, operation). Actor has tenant, projects and role. Deny unless actor tenant equals target tenant and project is in actor projects. viewer can read; editor and admin can read/write. Deny unknown roles and operations. Admin cannot bypass tenant or project boundaries.",
+      "source": "def allowed(actor, tenant, project, operation):\n    return actor[\"role\"] == \"admin\" or (actor[\"tenant\"] == tenant and project in actor[\"projects\"] and operation == \"read\")\n",
+      "public": "from subject import allowed\na={\"tenant\":\"a\",\"projects\":[\"p\"],\"role\":\"viewer\"}\nassert allowed(a,\"a\",\"p\",\"read\")\nassert not allowed(a,\"a\",\"p\",\"write\")\n",
+      "hidden": "from subject import allowed\nfor role in [\"viewer\",\"editor\",\"admin\",\"unknown\"]:\n a={\"tenant\":\"a\",\"projects\":[\"p\"],\"role\":role}\n for tenant in [\"a\",\"b\"]:\n  for project in [\"p\",\"q\"]:\n   for op in [\"read\",\"write\",\"delete\"]:\n    expected=tenant==\"a\" and project==\"p\" and (op==\"read\" and role in {\"viewer\",\"editor\",\"admin\"} or op==\"write\" and role in {\"editor\",\"admin\"})\n    assert allowed(a,tenant,project,op) == expected, (role,tenant,project,op)\n",
+      "fix": "def allowed(actor, tenant, project, operation):\n    if actor[\"tenant\"] != tenant or project not in actor[\"projects\"]: return False\n    return operation == \"read\" and actor[\"role\"] in {\"viewer\",\"editor\",\"admin\"} or operation == \"write\" and actor[\"role\"] in {\"editor\",\"admin\"}\n"
+    },
+    {
+      "id": "atomic-json",
+      "request": "Implement save(path, value): serialize JSON then replace destination atomically via same-directory temporary file and os.replace. Serialization or replacement failure must preserve existing destination bytes. Remove own temporary file on failure. Propagate the original error. Use only standard library.",
+      "source": "import json\ndef save(path, value):\n    with open(path,\"w\",encoding=\"utf-8\") as f:\n        json.dump(value,f)\n",
+      "public": "import tempfile,json\nfrom pathlib import Path\nfrom subject import save\nwith tempfile.TemporaryDirectory() as d:\n p=Path(d)/\"a.json\"\n save(p,{\"a\":1})\n assert json.loads(p.read_text()) == {\"a\":1}\n",
+      "hidden": "import tempfile\nfrom pathlib import Path\nfrom unittest.mock import patch\nfrom subject import save\nwith tempfile.TemporaryDirectory() as d:\n p=Path(d)/\"a.json\"\n p.write_bytes(b\"old\")\n try: save(p,object())\n except TypeError: pass\n else: raise AssertionError(\"serialization succeeded\")\n assert p.read_bytes()==b\"old\"\n with patch(\"os.replace\",side_effect=OSError(\"refused\")):\n  try: save(p,{\"new\":1})\n  except OSError: pass\n  else: raise AssertionError(\"replace not used\")\n assert p.read_bytes()==b\"old\"\n assert list(Path(d).iterdir())==[p]\n",
+      "fix": "import json,os,tempfile\nfrom pathlib import Path\ndef save(path,value):\n    data=json.dumps(value).encode(\"utf-8\")\n    path=Path(path)\n    fd,name=tempfile.mkstemp(dir=path.parent)\n    try:\n        with os.fdopen(fd,\"wb\") as f:\n            f.write(data)\n            f.flush()\n            os.fsync(f.fileno())\n        os.replace(name,path)\n    finally:\n        if os.path.exists(name): os.unlink(name)\n"
+    },
+    {
+      "id": "ledger",
+      "request": "Implement Ledger.append(key,value): first write returns integer sequence starting at 1. Repeating identical key/value returns same sequence without allocating another. Conflicting value for existing key raises ValueError with no sequence gap. Concurrent calls must preserve these rules. Preserve values by copy so caller mutation cannot alter recorded identity. Standard library only.",
+      "source": "class Ledger:\n    def __init__(self): self.rows=[]\n    def append(self,key,value):\n        self.rows.append((key,value))\n        return len(self.rows)\n",
+      "public": "from subject import Ledger\nl=Ledger()\nassert l.append(\"a\",1)==1\nassert l.append(\"b\",2)==2\n",
+      "hidden": "from subject import Ledger\nfrom concurrent.futures import ThreadPoolExecutor\nl=Ledger()\nv={\"a\":[1]}\nassert l.append(\"a\",v)==1\nv[\"a\"].append(2)\nassert l.append(\"a\",{\"a\":[1]})==1\ntry: l.append(\"a\",0)\nexcept ValueError: pass\nelse: raise AssertionError(\"conflict accepted\")\nassert l.append(\"b\",0)==2\nwith ThreadPoolExecutor(max_workers=8) as pool:\n assert set(pool.map(lambda _:l.append(\"same\",3),range(100)))=={3}\nassert l.append(\"last\",4)==4\n",
+      "fix": "from threading import Lock\nfrom copy import deepcopy\nclass Ledger:\n    def __init__(self): self.rows={}; self.lock=Lock()\n    def append(self,key,value):\n        with self.lock:\n            if key in self.rows:\n                seq,old=self.rows[key]\n                if old != value: raise ValueError(\"conflicting value\")\n                return seq\n            seq=len(self.rows)+1\n            self.rows[key]=(seq,deepcopy(value))\n            return seq\n"
+    }
+  ]
+}

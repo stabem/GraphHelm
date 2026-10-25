@@ -4,7 +4,7 @@
 //! run the way the tasks route does, asks the pure classifier
 //! (`graphhelm_execution::autopilot::classify`) which open items are broken and how, plans the
 //! actions (`plan`: at most `maxConcurrent` agents at once, `maxAttempts` per item and stage, a
-//! retry only after a failure or `retrySeconds`) and performs them:
+//! retry only after `retrySeconds`, a failed attempt included (#2027)) and performs them:
 //!
 //! - **Launch**: first an owner `operator_note` addressed to the new lane, whose signal id and
 //!   `Idempotency-Key` are derived from (item, stage, attempt), so two ticks racing launch once;
@@ -22,9 +22,12 @@
 //! - **Escalate**: when the attempts ran out and the item is still broken, one note from
 //!   `graphhelm-autopilot` to `studio-operator`, which the Studio already lists under Needs
 //!   action as a question to answer.
-//! - **Pause**: a launcher that is not found, or that exits with one of `pauseExitCodes` (the
-//!   subscription is exhausted), pauses the autopilot until the Runtime restarts, with one note to
-//!   the owner saying why. `"paused": true` in the config starts it paused.
+//! - **Pause**: a launcher that is not found, that exits with one of `pauseExitCodes` (the
+//!   subscription is exhausted), or that fails with a login failure in its output (#2027: one of
+//!   `LOGIN_FAILURES`, or of the owner's `pauseOutputPatterns`, matched case-insensitively in the
+//!   tail of its log) pauses the autopilot until the Runtime restarts, with one note to the owner
+//!   saying why; a login failure asks the owner to log the launcher in. No attempt is spent on it
+//!   again. `"paused": true` in the config starts it paused.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::Write as _;
@@ -175,6 +178,8 @@ struct ConfigFile {
     #[serde(default)]
     pause_exit_codes: Vec<i32>,
     #[serde(default)]
+    pause_output_patterns: Vec<String>,
+    #[serde(default)]
     paused: bool,
     #[serde(default)]
     env: EnvFile,
@@ -192,6 +197,8 @@ pub(super) struct Autopilot {
     interval: Duration,
     timeout: Duration,
     pause_exit_codes: Vec<i32>,
+    /// `LOGIN_FAILURES` plus `pauseOutputPatterns`, lower-cased (#2027).
+    login_failures: Vec<String>,
     /// `env.allow`, upper-cased (#2019).
     env_allow: Vec<String>,
     /// (item, stage) keys with a live process.
@@ -206,6 +213,36 @@ pub(super) struct Autopilot {
     ticking: tokio::sync::Mutex<()>,
     /// Rung after a signal on the run and when an agent ends: the next tick runs now.
     wake: tokio::sync::Notify,
+}
+
+/// #2027: launcher output that means it is not logged in: the same class as an exhausted
+/// subscription, so the autopilot pauses instead of spending attempts. Lower case; matched
+/// case-insensitively against the tail of the attempt's log.
+const LOGIN_FAILURES: &[&str] = &[
+    "failed to authenticate",
+    "oauth session expired",
+    "not logged in",
+    "please run /login",
+    "invalid api key",
+];
+
+/// How much of the end of an attempt's log is searched for a login failure.
+const LOG_TAIL_BYTES: u64 = 64 * 1024;
+
+/// The first login-failure pattern found in the last `LOG_TAIL_BYTES` of `log`.
+fn login_failure(log: &Path, patterns: &[String]) -> Option<String> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let mut file = std::fs::File::open(log).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(LOG_TAIL_BYTES)))
+        .ok()?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).ok()?;
+    let text = String::from_utf8_lossy(&tail).to_lowercase();
+    patterns
+        .iter()
+        .find(|pattern| text.contains(pattern.as_str()))
+        .cloned()
 }
 
 fn in_range<T: PartialOrd + Copy + std::fmt::Display>(
@@ -344,6 +381,16 @@ pub(super) fn load(path: &Path) -> Result<Autopilot, String> {
             "autopilot.timeoutSeconds",
         )?),
         pause_exit_codes: file.pause_exit_codes,
+        login_failures: LOGIN_FAILURES
+            .iter()
+            .map(|pattern| (*pattern).to_owned())
+            .chain(
+                file.pause_output_patterns
+                    .iter()
+                    .map(|pattern| pattern.trim().to_lowercase()),
+            )
+            .filter(|pattern| !pattern.is_empty())
+            .collect(),
         env_allow: file
             .env
             .allow
@@ -726,8 +773,9 @@ fn run(
         .transpose()
         .map_err(|e| failed("the role prompt could not be read", &e))?
         .unwrap_or_default();
-    let log = std::fs::File::create(autopilot.run_dir.join(format!("{stem}.log")))
-        .map_err(|e| failed("the log could not be created", &e))?;
+    let log_path = autopilot.run_dir.join(format!("{stem}.log"));
+    let log =
+        std::fs::File::create(&log_path).map_err(|e| failed("the log could not be created", &e))?;
     let log_err = log
         .try_clone()
         .map_err(|e| failed("the log could not be shared", &e))?;
@@ -847,6 +895,14 @@ fn run(
             code.unwrap_or_default()
         )));
     }
+    // #2027: a login failure is no reason to try again; the owner has to log the launcher in.
+    // Only the matched pattern (ours or the owner's) reaches the note, never the log's text.
+    if let Some(pattern) = login_failure(&log_path, &autopilot.login_failures) {
+        return Err(Ended::Pause(format!(
+            "the launcher is not logged in (it exited with {status} and its output says \
+             {pattern:?}); log the launcher in, then restart the Runtime"
+        )));
+    }
     Err(Ended::Failed(format!("the launcher exited with {status}")))
 }
 
@@ -869,7 +925,12 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         let out = brief["out"].as_str().unwrap_or_default().to_owned();
         match brief["fake"].as_str().unwrap_or_default() {
-            "exit" => std::process::exit(i32::try_from(brief["code"].as_i64().unwrap()).unwrap()),
+            "exit" => {
+                if let Some(text) = brief["stderr"].as_str() {
+                    eprintln!("{text}");
+                }
+                std::process::exit(i32::try_from(brief["code"].as_i64().unwrap()).unwrap())
+            }
             "env" => {
                 let names: Vec<String> = std::env::vars_os()
                     .map(|(name, _)| name.to_string_lossy().into_owned())
@@ -1091,6 +1152,56 @@ mod tests {
             Duration::from_secs(60),
         );
         assert!(matches!(ended, Err(Ended::Failed(_))), "{}", reason(&ended));
+    }
+
+    fn exit_with(extra: &str, code: i32, stderr: &str) -> Result<(), Ended> {
+        let dir = tempfile::tempdir().unwrap();
+        let autopilot = fake_pilot(dir.path(), extra, "p");
+        let brief = serde_json::json!({"fake": "exit", "code": code, "stderr": stderr});
+        run_bounded(autopilot, brief.to_string(), Duration::from_secs(60))
+    }
+
+    #[test]
+    fn a_launcher_login_failure_pauses_with_one_note_and_spends_no_attempt() {
+        // #2027: the live run's launcher said this, and all three attempts ran in one minute.
+        let ended = exit_with(
+            "",
+            1,
+            "Failed to authenticate: OAuth session expired and could not be refreshed",
+        );
+        assert!(
+            matches!(&ended, Err(Ended::Pause(r)) if r.contains("log the launcher in")),
+            "{}",
+            reason(&ended)
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let autopilot = fake_pilot(dir.path(), "", "p");
+        let note = settle(&autopilot, "item\nstage", "id", Some(ended));
+        assert!(note.is_some_and(|n| n.contains("log the launcher in")));
+        assert!(
+            lock(&autopilot.paused).is_some(),
+            "tick launches nothing more"
+        );
+        let again = settle(
+            &autopilot,
+            "item\nstage",
+            "id",
+            Some(Err(Ended::Pause("again".into()))),
+        );
+        assert!(again.is_none(), "already paused: no second note");
+        // The owner's own pattern pauses too; an unrelated failure still only fails.
+        let ended = exit_with(
+            r#"{"pauseOutputPatterns":["Token Revoked"]}"#,
+            2,
+            "error: token revoked by admin",
+        );
+        assert!(matches!(&ended, Err(Ended::Pause(_))), "{}", reason(&ended));
+        let ended = exit_with("", 1, "error: the build broke");
+        assert!(
+            matches!(&ended, Err(Ended::Failed(_))),
+            "{}",
+            reason(&ended)
+        );
     }
 
     #[test]

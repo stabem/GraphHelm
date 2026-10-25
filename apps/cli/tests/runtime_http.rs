@@ -7033,7 +7033,8 @@ fn autopilot_runtime(
         "prompts": {"author": "author.md", "reviewer": "reviewer.md", "merger": "merger.md"},
         "maxConcurrent": 2,
         "maxAttempts": max_attempts,
-        "retrySeconds": 3600,
+        // #2027: a failed attempt waits retrySeconds too, so a failing launcher gets a short one.
+        "retrySeconds": if exit == 0 { 3600 } else { 2 },
         "intervalSeconds": 1,
         "timeoutSeconds": 120,
         "grace": {"requestSeconds": 0, "reviewSeconds": 0, "mergeSeconds": 0},

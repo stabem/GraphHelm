@@ -220,8 +220,35 @@ pub fn classify(
             now,
         );
         let author_gone = gone(task.lane.as_deref()) && !taken_over(task);
+        // #2027: a recorded PR, an assigned reviewer or any verdict means the author handed the
+        // work on, whatever step the fold left; such a slice is never author_silent.
+        let handed_on = task.pr.is_some()
+            || task.current_reviewer.is_some()
+            || task.pending_reviewer.is_some()
+            || !task.assigned_reviewers.is_empty()
+            || !task.reviewers.is_empty();
+        let early = matches!(
+            task.step,
+            TaskStep::Plan | TaskStep::Critic | TaskStep::Implement
+        );
         let found = if task.blocked_by.is_some() {
             author_gone.then(|| (Stage::BlockUnanswered, task.lane.clone()))
+        } else if early && handed_on {
+            // Read as the review it waits for, with the review grace from its newest record.
+            match &task.current_reviewer {
+                None if task.pr.is_some()
+                    && task.pending_reviewer.is_none()
+                    && task.assigned_reviewers.is_empty()
+                    && task.reviewers.is_empty()
+                    && idle.is_some_and(|seconds| seconds >= grace.review) =>
+                {
+                    Some((Stage::ReviewUnassigned, None))
+                }
+                Some(reviewer) if task.pr.is_some() && silent.contains(reviewer) => {
+                    Some((Stage::ReviewerSilent, Some(reviewer.clone())))
+                }
+                _ => None,
+            }
         } else {
             match task.step {
                 TaskStep::Plan | TaskStep::Critic | TaskStep::Implement => {
@@ -332,7 +359,8 @@ pub struct Limits {
 }
 
 /// Plan this tick: for each diagnosis, launch the next attempt when none is running and the last
-/// one failed or had `retry_seconds`; escalate once when attempts ran out. Launches stop at
+/// one had `retry_seconds`, failed or not; escalate once when attempts ran out (at once when the
+/// last one failed). Launches stop at
 /// `max_concurrent` minus `running`. Pure; `history` is looked up per diagnosis.
 #[must_use]
 pub fn plan(
@@ -348,15 +376,17 @@ pub fn plan(
         if seen.running {
             continue;
         }
-        let due = seen.attempts == 0
-            || seen.failed
-            || seen
-                .last_age
-                .is_none_or(|seconds| seconds >= limits.retry_seconds);
+        // #2027: a failure does not shorten the wait before the next attempt (three launcher
+        // failures in one minute spent every attempt); it only lets the escalation go at once.
+        let lapsed = seen
+            .last_age
+            .is_none_or(|seconds| seconds >= limits.retry_seconds);
+        let spent = seen.attempts >= limits.max_attempts;
+        let due = seen.attempts == 0 || lapsed || (spent && seen.failed);
         if !due {
             continue;
         }
-        if seen.attempts >= limits.max_attempts {
+        if spent {
             if !seen.escalated {
                 out.push(Step::Escalate {
                     diagnosis: diagnosis.clone(),
@@ -481,6 +511,37 @@ mod tests {
     }
 
     #[test]
+    fn a_slice_with_an_open_pr_never_reads_author_silent() {
+        // #2027: PR #2025 read author_silent minutes after it was opened. A recorded PR (or any
+        // review record) means the author handed the work on, whatever step the fold left.
+        for step in [TaskStep::Plan, TaskStep::Critic, TaskStep::Implement] {
+            let fresh = with_pr(slice("lane-a", step, FRESH));
+            assert!(
+                stages(&[fresh], &[], &["lane-a"]).is_empty(),
+                "{step:?}: a freshly opened PR gets its grace"
+            );
+            let old = with_pr(slice("lane-a", step, OLD));
+            assert_eq!(
+                stages(&[old], &[], &["lane-a"]),
+                [Stage::ReviewUnassigned],
+                "{step:?}: past the grace it waits for a reviewer, not an author"
+            );
+            let mut reviewed = slice("lane-a", step, OLD);
+            reviewed.reviewers.push("rev".into());
+            assert!(
+                stages(&[reviewed], &[], &["lane-a"]).is_empty(),
+                "{step:?}: a slice with a verdict is not author_silent"
+            );
+            let mut assigned = slice("lane-a", step, OLD);
+            assigned.assigned_reviewers.push("rev".into());
+            assert!(
+                stages(&[assigned], &[], &["lane-a"]).is_empty(),
+                "{step:?}: a slice with a reviewer assigned is not author_silent"
+            );
+        }
+    }
+
+    #[test]
     fn a_pr_with_no_reviewer_past_grace_is_review_unassigned() {
         let task = with_pr(slice("lane-a", TaskStep::Review, OLD));
         let diagnosis = found(std::slice::from_ref(&task), &[], &[]);
@@ -597,12 +658,19 @@ mod tests {
             ..running
         };
         assert!(plan(&diagnosis, |_| ended, 0, limits()).is_empty());
+        // #2027: a failed attempt is no reason to retry at once; three login failures in one
+        // minute spent every attempt. The next one waits retry_seconds like any other.
         let failed = History {
             failed: true,
             ..ended
         };
+        assert!(plan(&diagnosis, |_| failed, 0, limits()).is_empty());
+        let failed_lapsed = History {
+            last_age: Some(600),
+            ..failed
+        };
         assert!(matches!(
-            plan(&diagnosis, |_| failed, 0, limits()).as_slice(),
+            plan(&diagnosis, |_| failed_lapsed, 0, limits()).as_slice(),
             [Step::Launch { attempt: 1, .. }]
         ));
         let lapsed = History {

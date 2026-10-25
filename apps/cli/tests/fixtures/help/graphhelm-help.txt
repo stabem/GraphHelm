@@ -4565,6 +4565,9 @@ Options:
       --supervise
           Stay as a small hidden parent that runs the Runtime as its child with these same arguments and environment (the keys stay in memory) and starts it again, with backoff, when it exits unexpectedly. A clean stop does not restart; after a handover the parent watches the successor. Stopping this parent stops its Runtime (#1962)
 
+      --autopilot <AUTOPILOT>
+          #2005: a JSON file that turns on the pipeline autopilot for one run: on a timer and after every signal it names each open item's broken stage (request unclaimed, author silent, review unassigned, reviewer silent, BLOCK unanswered, approved not merged) and starts the agent that fixes it with the file's `launcher` argv (hidden window, bounded, capped, then escalated to the owner). Off unless given; an invalid file stops `serve` from starting
+
       --sweep-interval <SWEEP_INTERVAL>
           Run the customs sweep automatically every N seconds, journalling each one as `SweepCaller::Tick`.
           

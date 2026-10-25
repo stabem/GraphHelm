@@ -9,6 +9,7 @@
 //! reads history only through the [`journeys::ScopeHistory`] trait.
 
 pub mod attention;
+pub mod autopilot;
 mod bounds;
 mod briefing;
 mod customs;

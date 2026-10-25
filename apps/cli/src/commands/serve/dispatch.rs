@@ -3,7 +3,9 @@
 //! An owner request (`task.request_recorded`, a Proof "Send to fix" among them) used to wait until
 //! someone pressed Hand off. Now every signal the signal route admits is followed by one check of
 //! that run: each request that has no linked issue and was never handed goes, oldest first, to the
-//! first free live lane (the tasks read's own `free && !silent`, by name) that holds no other
+//! first free live lane (the tasks read's own `free && !silent`, by name, and #2005: a lane that
+//! ever owned or reviewed a slice and never recorded a request, so never the orchestrator) that
+//! holds no other
 //! handed request still waiting for its issue (`graphhelm_execution::requests::plan_dispatch`).
 //!
 //! The hand-off is an `operator_note` addressed to that lane, so it rings the lane's wake lease
@@ -44,6 +46,7 @@ pub(super) async fn signal(
     )
     .await;
     if response.status().is_success() && state.sealing.is_some() {
+        super::autopilot::after_signal(&state, &execution_id);
         tokio::spawn(dispatch(state, execution_id));
     }
     response
@@ -64,6 +67,11 @@ fn read(state: &ServeState, execution_id: &str) -> Option<(Vec<RequestView>, Vec
         .lanes
         .iter()
         .filter(|row| row.free && !row.silent)
+        // #2005: the lane that records requests (the orchestrator) or never owned or reviewed a
+        // slice is not a lane that takes work.
+        .filter(|row| {
+            graphhelm_execution::autopilot::takes_work(&row.lane, &view.tasks, &view.records)
+        })
         .map(|row| row.lane.clone())
         .collect();
     free.sort();

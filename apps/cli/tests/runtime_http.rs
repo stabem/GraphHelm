@@ -6957,3 +6957,307 @@ fn a_rerun_at_the_same_head_replaces_the_earlier_runs_frames() {
         "the newest run's own frame: {second}"
     );
 }
+
+/// #2005: the fake launcher the autopilot tests configure. Run normally it does nothing; started
+/// by the Runtime (which sets `GRAPHHELM_AUTOPILOT_BRIEF`) it records its argv, its stdin and
+/// whether it inherited a secret into `AUTOPILOT_FAKE_DIR`, then exits with `AUTOPILOT_FAKE_EXIT`.
+#[test]
+fn autopilot_fake_launcher() {
+    let (Ok(dir), Ok(brief)) = (
+        std::env::var("AUTOPILOT_FAKE_DIR"),
+        std::env::var("GRAPHHELM_AUTOPILOT_BRIEF"),
+    ) else {
+        return;
+    };
+    let mut stdin = String::new();
+    let _ = std::io::stdin().read_to_string(&mut stdin);
+    let lane = std::env::var("GRAPHHELM_LANE").unwrap_or_default();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let record = serde_json::json!({
+        "argv": std::env::args().skip(1).collect::<Vec<_>>(),
+        "lane": lane,
+        "role": std::env::var("GRAPHHELM_AUTOPILOT_ROLE").ok(),
+        "stage": std::env::var("GRAPHHELM_AUTOPILOT_STAGE").ok(),
+        "brief": brief,
+        "stdin": stdin,
+        "eventsKeyInherited": std::env::var_os("GRAPHHELM_EVENTS_KEY").is_some(),
+        "paidKeyInherited": std::env::var_os("ANTHROPIC_API_KEY").is_some(),
+    });
+    std::fs::write(
+        Path::new(&dir).join(format!("{nanos}-{lane}.json")),
+        record.to_string(),
+    )
+    .unwrap();
+    let code = std::env::var("AUTOPILOT_FAKE_EXIT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    std::process::exit(code);
+}
+
+/// #2005: one autopilot Runtime on a free port with the fake launcher; answers the server, its
+/// base URL, token, and the directory the fake records into.
+fn autopilot_runtime(
+    dir: &Path,
+    run: &str,
+    exit: i32,
+    max_attempts: u32,
+) -> (ServerGuard, String, String, PathBuf) {
+    let events = dir.join("events");
+    let records = dir.join("launched");
+    std::fs::create_dir_all(&records).unwrap();
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 3);
+    }
+    for role in ["author", "reviewer", "merger"] {
+        std::fs::write(
+            dir.join(format!("{role}.md")),
+            format!("You are the {role}."),
+        )
+        .unwrap();
+    }
+    let exe = std::env::current_exe().unwrap();
+    let config = serde_json::json!({
+        "execution": run,
+        "launcher": [exe.to_str().unwrap(), "runtime_http::autopilot_fake_launcher", "--exact", "--nocapture",
+            "--test-threads=1", "{lane}", "{role}"],
+        "prompts": {"author": "author.md", "reviewer": "reviewer.md", "merger": "merger.md"},
+        "maxConcurrent": 2,
+        "maxAttempts": max_attempts,
+        "retrySeconds": 3600,
+        "intervalSeconds": 1,
+        "timeoutSeconds": 120,
+        "grace": {"requestSeconds": 0, "reviewSeconds": 0, "mergeSeconds": 0},
+    });
+    let config_path = dir.join("autopilot.json");
+    std::fs::write(&config_path, config.to_string()).unwrap();
+    let mut extra = throwaway_keyring(dir);
+    extra.args.push("--autopilot".into());
+    extra.args.push(config_path.to_str().unwrap().into());
+    extra.env.push((
+        "AUTOPILOT_FAKE_DIR".into(),
+        records.to_str().unwrap().into(),
+    ));
+    extra
+        .env
+        .push(("AUTOPILOT_FAKE_EXIT".into(), exit.to_string()));
+    extra.env.push((
+        "ANTHROPIC_API_KEY".into(),
+        "must-not-reach-the-agent".into(),
+    ));
+    let (server, base, token) = serve_with(&events, &extra);
+    (server, base, token, records)
+}
+
+/// #2005: every launch the fake recorded, oldest first.
+fn launched(records: &Path) -> Vec<Value> {
+    let mut rows: Vec<(String, Value)> = std::fs::read_dir(records)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let text = std::fs::read_to_string(entry.path()).ok()?;
+            Some((
+                entry.file_name().to_string_lossy().into_owned(),
+                serde_json::from_str(&text).ok()?,
+            ))
+        })
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    rows.into_iter().map(|(_, row)| row).collect()
+}
+
+fn wait_for(what: &str, mut done: impl FnMut() -> bool) {
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
+    while !done() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// #2005: the pipeline fixes itself. Observer: the real `serve --autopilot` binary over HTTP on a
+/// free port, with a fake launcher (this test executable) that records its argv and stdin.
+/// - An owner request recorded by the orchestrator, a free live lane that once owned a slice, is
+///   not handed back to it by the #1990 dispatcher (the lane that records requests takes none),
+///   so it reads `request_unclaimed` and one author is launched, once, however many ticks run.
+/// - A recorded PR with no reviewer reads `review_unassigned` and one reviewer is launched.
+/// - The request's ask reaches the agent on stdin only, never on argv; the events key and the
+///   paid API key are not inherited.
+///
+/// Credible regressions: nothing is launched (the defect), a launch repeats every tick, the
+/// orchestrator is handed the request, untrusted text reaches argv, the child inherits a secret.
+#[test]
+fn the_autopilot_launches_one_author_for_an_unclaimed_request_and_one_reviewer_for_a_pr() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = "autopilot-run";
+    let (_server, base, token, records) = autopilot_runtime(dir.path(), run, 0, 3);
+    let lead = "orchestrator";
+    // Like the live orchestrator, the lead once owned a slice (here claimed, then handed back), so
+    // the tasks read judges it a free live lane; it is still the lane that records requests.
+    let (status, reply, _) = task_record(
+        &base,
+        &token,
+        run,
+        lead,
+        "task.claimed",
+        "claim-49",
+        &claim_document(lead, 49),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let claim_sequence = get_json(
+        &format!("{base}/v1/executions/{run}/tasks?full=1"),
+        Some(&token),
+    )["data"]["headSequence"]
+        .as_u64()
+        .unwrap();
+    let release = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-49",
+        "revision": 2, "at": "2026-10-13T12:00:00Z", "lane": lead,
+        "claimSequence": claim_sequence, "reason": "Handed back"});
+    let (status, reply, _) = task_record(
+        &base,
+        &token,
+        run,
+        lead,
+        "task.released",
+        "release-49",
+        &release,
+    );
+    assert_eq!(status, 200, "{reply}");
+    let ask = "Fix it\"; rm -rf / & echo {lane} $(whoami)";
+    let (status, reply, _) = task_record(
+        &base,
+        &token,
+        run,
+        lead,
+        "task.request_recorded",
+        "rec-heal",
+        &request_document(
+            lead,
+            "task.request_recorded",
+            "heal",
+            serde_json::json!({"ask": ask, "title": "Heal"}),
+        ),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let author = "lane-x";
+    let pr = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-50",
+        "revision": 1, "at": "2026-10-24T12:00:00Z", "pr": 501, "headSha": "0123456789abcdef",
+        "journeys": [], "lane": author, "repo": "stabem/GraphHelm"});
+    for (kind, id, document) in [
+        ("task.claimed", "claim-50", claim_document(author, 50)),
+        ("task.pr_opened", "pr-50", pr),
+    ] {
+        let (status, reply, _) = task_record(&base, &token, run, author, kind, id, &document);
+        assert_eq!(status, 200, "{id}: {reply}");
+    }
+    wait_for("an author and a reviewer", || launched(&records).len() >= 2);
+    // More ticks (1 s apart, and one per signal) must not launch either again.
+    std::thread::sleep(scaled(Duration::from_secs(4)));
+    let rows = launched(&records);
+    let lanes: Vec<&str> = rows
+        .iter()
+        .map(|row| row["lane"].as_str().unwrap())
+        .collect();
+    assert_eq!(rows.len(), 2, "each launched once: {rows:?}");
+    assert!(lanes.contains(&"auto-reviewer-pr-501"), "{lanes:?}");
+    let author_row = rows
+        .iter()
+        .find(|row| row["role"] == "author")
+        .unwrap_or_else(|| panic!("no author: {rows:?}"));
+    assert_eq!(author_row["stage"], "request_unclaimed");
+    assert!(
+        author_row["lane"]
+            .as_str()
+            .unwrap()
+            .starts_with("auto-author-req-"),
+        "{author_row}"
+    );
+    for row in &rows {
+        let argv = row["argv"].as_array().unwrap();
+        assert!(
+            argv.iter()
+                .all(|arg| !arg.as_str().unwrap().contains("rm -rf")),
+            "untrusted text on argv: {row}"
+        );
+        assert_eq!(
+            argv[argv.len() - 2],
+            row["lane"],
+            "the lane placeholder: {row}"
+        );
+        assert_eq!(row["eventsKeyInherited"], false, "{row}");
+        assert_eq!(row["paidKeyInherited"], false, "{row}");
+        let stdin = row["stdin"].as_str().unwrap();
+        assert!(
+            stdin.starts_with("You are the "),
+            "role prompt on stdin: {row}"
+        );
+    }
+    assert!(
+        author_row["stdin"].as_str().unwrap().contains("rm -rf"),
+        "the ask reaches the agent as data on stdin: {author_row}"
+    );
+    let requests = get_json(
+        &format!("{base}/v1/executions/{run}/requests"),
+        Some(&token),
+    );
+    let requests = envelope_array(&requests, "requests", "GET /requests");
+    assert!(
+        requests[0].get("dispatchedTo").is_none(),
+        "the lane that records requests is not handed one:{requests:?}"
+    );
+}
+
+/// #2005: a launcher that keeps failing is retried up to `maxAttempts`, then the owner is asked
+/// once: the Studio's Needs action lists the autopilot's question (`waiting` on `/tasks`).
+/// Credible regressions: endless relaunches, no escalation, or an escalation every tick.
+#[test]
+fn a_failing_launcher_is_capped_and_escalated_to_the_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = "autopilot-fail-run";
+    let (_server, base, token, records) = autopilot_runtime(dir.path(), run, 3, 2);
+    let author = "lane-y";
+    let pr = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-60",
+        "revision": 1, "at": "2026-10-24T12:00:00Z", "pr": 601, "headSha": "0123456789abcdef",
+        "journeys": [], "lane": author, "repo": "stabem/GraphHelm"});
+    for (kind, id, document) in [
+        ("task.claimed", "claim-60", claim_document(author, 60)),
+        ("task.pr_opened", "pr-60", pr),
+    ] {
+        let (status, reply, _) = task_record(&base, &token, run, author, kind, id, &document);
+        assert_eq!(status, 200, "{id}: {reply}");
+    }
+    let waiting = || {
+        let view = get_json(&format!("{base}/v1/executions/{run}/tasks"), Some(&token));
+        view["data"]["waiting"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    };
+    wait_for("the escalation", || {
+        waiting()
+            .iter()
+            .any(|row| row["lane"] == "graphhelm-autopilot")
+    });
+    std::thread::sleep(scaled(Duration::from_secs(3)));
+    let rows = launched(&records);
+    assert_eq!(rows.len(), 2, "two attempts, then no more: {rows:?}");
+    let asks: Vec<Value> = waiting()
+        .into_iter()
+        .filter(|row| row["lane"] == "graphhelm-autopilot")
+        .collect();
+    assert_eq!(asks.len(), 1, "one escalation: {asks:?}");
+    let question = asks[0]["question"].as_str().unwrap();
+    assert!(
+        question.contains("PR #601") && question.contains("review_unassigned"),
+        "{question}"
+    );
+    assert_eq!(asks[0]["waitsOn"], "studio-operator");
+}

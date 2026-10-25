@@ -303,7 +303,7 @@ document (`extensions/builtin/graphhelm-development-contracts/schemas/task-event
 | grade the design, once per round, when the plan says `critic: design` | `task.critic_verdict` | `round`, `score`, `passScore`, `maxRounds`, `verdict`, `designRef`, `lane`, `reasons` |
 | refresh the Lanes Backlog (the coordinator; #1469): the open `current-wave` issues no open PR closes, at most 25; `taskId` is `backlog` and the newest record replaces the earlier ones | `task.queued` | `issues` (each `issue`, `title`, `openedAt`), `repo` |
 | record an owner request (#1792): the ask in the owner's words; `taskId` is `request-<requestId>`, and a later record with the same `requestId` replaces `ask` and `title` | `task.request_recorded` | `requestId`, `ask` (1-2000 characters), optional `title`, `recordedBy` (the recorder). Opens no slice; `GET /v1/executions/{id}/requests` serves it |
-| link an issue opened for a request; refused unless the request was recorded | `task.request_linked` | `requestId`, `issue`, `linkedBy` (the recorder). Counted once per issue; the requests route joins it with the issue's PR slices. #1981: a request with no linked issue is handed by the Runtime itself, after any admitted signal, to the first free live lane holding no other handed request: an owner `operator_note` from `graphhelm` addressed to that lane (it rings the lane's wake), served as `dispatchedTo`. The lane that receives it opens the issue, claims it and records this link. A hand-off with no link within `GRAPHHELM_DISPATCH_LEASE_SECONDS` (default 600), or whose lane goes silent, lapses (`dispatchLapsed`): the owner's Hand off returns and the request goes to another free lane, at most 3 hand-offs in all |
+| link an issue opened for a request; refused unless the request was recorded | `task.request_linked` | `requestId`, `issue`, `linkedBy` (the recorder). Counted once per issue; the requests route joins it with the issue's PR slices. #1981: a request with no linked issue is handed by the Runtime itself, after any admitted signal, to the first free live lane holding no other handed request: an owner `operator_note` from `graphhelm` addressed to that lane (it rings the lane's wake), served as `dispatchedTo`. The lane that receives it opens the issue, claims it and records this link. A hand-off with no link within `GRAPHHELM_DISPATCH_LEASE_SECONDS` (default 600), or whose lane goes silent, lapses (`dispatchLapsed`): the owner's Hand off returns and the request goes to another free lane, at most 3 hand-offs in all. #2005: a lane that recorded a request (the orchestrator), or never owned or reviewed a slice, is never handed one; past the hand-offs, `serve --autopilot` starts an author for it (see "The pipeline autopilot") |
 | frames of one journey run at the PR head (#1839); only the PR's author, at its current head, for a journey the PR names | `task.journey_frames` | `pr`, `headSha`, `journey`, `result`, `ranAt`, `screens` (1 to 4), `lane`, plus one PNG attachment per screen. The issue's journeys route serves them as `now`; a new head clears it |
 
 `taskId` is `issue-<N>` for the whole life of the task. An issue worked in several PRs is one
@@ -398,6 +398,43 @@ lane's record; a wrong credential file is refused `GHCLI007` and appends nothing
 `task_record.py … --dry-run` prints the exact signal to send (content-derived id and key; for
 `merged`, the merge SHA confirmed on GitHub, which the Runtime cannot check offline).
 `graphhelm execution signal` writes to a store directly as `owner-cli` and is not a lane door.
+
+### The pipeline autopilot
+
+`graphhelm serve --autopilot <file.json>` (#2005) watches one run and fixes a broken stage without
+anyone watching. Every `intervalSeconds` (default 120) and after every admitted signal it reads
+the run and names, deterministically, each open item's broken stage
+(`core/execution/src/autopilot.rs`):
+
+| Stage | When | Who it starts |
+|---|---|---|
+| `request_unclaimed` | a request with no linked issue and no live hand-off, older than `grace.requestSeconds` (900) | author |
+| `author_silent` | a slice before its PR whose lane is silent and no live lane holds the issue | author |
+| `review_unassigned` | a recorded PR with no reviewer, idle `grace.reviewSeconds` (600) | reviewer |
+| `reviewer_silent` | the assigned reviewer is silent | reviewer |
+| `block_unanswered` | a BLOCK whose author lane is silent | author |
+| `approved_not_merged` | an approved head idle `grace.mergeSeconds` (900); the merger records `task.merged` if GitHub shows it already landed | merger |
+
+For each it appends an owner `operator_note` "auto: starting <role> for <PR #N> …" to the new lane
+`auto-<role>-pr-<N>` / `-issue-<N>` / `-req-<digest>` (id derived from item, stage and attempt, so
+it is done once), then runs `launcher` (argv, placeholders `{lane}`, `{role}`, `{brief}` only)
+hidden, with the role prompt and a JSON brief on stdin. At most `maxConcurrent` (2) agents run;
+an attempt is retried after a failure or `retrySeconds` (1800); after `maxAttempts` (3) the actor
+`graphhelm-autopilot` asks `studio-operator` once, which the Studio lists under Needs action. A
+launcher not found, or an exit code in `pauseExitCodes` (subscription exhausted), pauses it until
+restart with one such note. The agent never inherits `GRAPHHELM_*` keys or tokens nor
+`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`: no paid fallback. An invalid file stops `serve` from
+starting.
+
+```json
+{
+  "execution": "studio-v2",
+  "launcher": ["C:/Users/<you>/.local/bin/claude.exe", "-p", "--permission-mode", "acceptEdits"],
+  "prompts": {"author": "autopilot/author.md", "reviewer": "autopilot/reviewer.md", "merger": "autopilot/merger.md"},
+  "workdir": "F:/github/GraphHelm",
+  "pauseExitCodes": []
+}
+```
 
 ## 6. Housekeeping
 

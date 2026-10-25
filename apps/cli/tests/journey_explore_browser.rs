@@ -297,26 +297,27 @@ process.stdin.on('end',async()=>{await fixture.close();process.exit(0);});
         "node_modules/\n.graphhelm/*\n!.graphhelm/journeys/\n/.mcp.json\n",
     )
     .unwrap();
-    // #1955: the explorer drafts steps without a `why`; the person approving writes what each
-    // step proves, as approval requires, in the flow's canonical layout (right after its `to`).
-    let draft_path = project.join(".graphhelm/journeys/checkout.journey.yaml");
-    let draft = std::fs::read_to_string(&draft_path).unwrap();
-    let (head, edges) = draft.split_once("\nedges:\n").unwrap();
-    let edges: String = edges
-        .split_inclusive('\n')
-        .map(|line| {
-            let body = line.trim_start();
-            let indent = &line[..line.len() - body.len()];
-            match body.strip_prefix("to: ") {
-                Some(to) => format!(
-                    "{line}{indent}why: The shopper reaches the {} screen\n",
-                    to.trim()
-                ),
-                None => line.to_owned(),
-            }
-        })
-        .collect();
-    std::fs::write(&draft_path, format!("{head}\nedges:\n{edges}")).unwrap();
+    // #2043: the explorer proposes every step's `why` and every check's `because` from what it
+    // observed, marked for the owner to confirm, so the draft is approved exactly as written.
+    let draft: Value = serde_yaml_ng::from_slice(&drafts[0]).unwrap();
+    let edges = draft["edges"].as_array().unwrap();
+    assert!(!edges.is_empty(), "{draft:?}");
+    for edge in edges {
+        let why = edge["why"].as_str().unwrap_or_default();
+        assert!(
+            why.starts_with("Proposed by the explorer, to confirm:"),
+            "{edge:?}"
+        );
+    }
+    for screen in draft["screens"].as_array().unwrap() {
+        for expect in screen["expect"].as_array().unwrap() {
+            let because = expect["because"].as_str().unwrap_or_default();
+            assert!(
+                because.starts_with("Proposed by the explorer, to confirm:"),
+                "{expect:?}"
+            );
+        }
+    }
     git(&["add", "."]);
     git(&["commit", "--quiet", "--no-verify", "-m", "explored draft"]);
     support::passing_preview(project, "checkout");

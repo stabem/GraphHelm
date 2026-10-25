@@ -135,9 +135,19 @@ up)
   # #1808: studio2-lanes-needs-action needs silent lanes; this Runtime counts a lane silent after
   # one minute instead of thirty, so the fixture comes up within the launcher's budget.
   if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-lanes-needs-action ]; then export GRAPHHELM_FIXTURE_SILENT_AFTER_SECONDS=60; fi
+  # #2055: the reviewed main (--reviewed-remote) must exist before serve starts; the flows are
+  # pushed to it once written, below. Only for the confirm flow.
+  reviewed_remote=
+  if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-proof-confirm ]; then
+    rm -rf "$dir/reviewed.git"; mkdir -p "$dir/reviewed.git"
+    reviewed_remote="$dir/reviewed.git"
+    if [ -r /proc/$$/winpid ]; then reviewed_remote=$(cygpath -am "$reviewed_remote"); fi
+    git init -q --bare "$dir/reviewed.git"
+  fi
+  reviewed_args=(); [ -z "${reviewed_remote:-}" ] || reviewed_args=(--reviewed-remote "$reviewed_remote")
   GRAPHHELM_SECRET_STUDIO_TOKEN="$(head -1 "$rt/events.token")" \
   nohup "$bin" serve --events "$rt/events" --bind "127.0.0.1:$rport" --project "$dir/project" \
-    --keyring "$rt/keyring" --key-id studio --gateway-manifest "$rt/routes.json" --slot-root "$dir/slots" \
+    --keyring "$rt/keyring" --key-id studio --gateway-manifest "$rt/routes.json" --slot-root "$dir/slots" ${reviewed_args[@]+"${reviewed_args[@]}"} \
     > "$dir/.graphhelm/serve.out" 2> "$dir/.graphhelm/serve.err" &
   echo "serve $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
   for _ in $(seq 1 30); do curl -sf --max-time 10 "http://127.0.0.1:$rport/health" > /dev/null && break; sleep 1; done
@@ -238,7 +248,54 @@ paths:
   again: [start.print, printed.wait]
 drift: []
 FLOW
-    git -C "$dir/project" add -f -- .graphhelm/journeys/cli-hello.journey.yaml ;;
+    # #2055: the reviewed main the Runtime is started with (--reviewed-remote, below). It holds
+    # cli-hello byte for byte (the reviewed draft: its commands run unasked, #1911) and an OLDER
+    # cli-edited (the project's copy differs: it waits for review and runs nothing).
+    cat > "$dir/project/.graphhelm/journeys/cli-edited.journey.yaml" <<'FLOW'
+schema: graphhelm.journey-flow/1
+id: cli-edited
+title: Print the Node banner
+name: Print the Node banner
+purpose: "The fixture's draft with one command step, edited since main reviewed it."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: []
+screens:
+  - id: printed
+    title: Node printed its version
+    url: /
+    state: success
+    expect: [{role: exit, name: "0", because: node --version succeeds}, {role: stdout, name: v, because: Node prints its version starting with v}]
+    scope: unknown
+  - id: start
+    title: A shell is ready
+    url: /
+    state: stable
+    expect: [{role: exit, name: "0", because: the entry step is only where the commands start}]
+    scope: unknown
+edges:
+  - id: start.print
+    from: start
+    to: printed
+    why: Node prints its version when the draft runs.
+    acts:
+      - {kind: cli, role: exec, name: node --version}
+paths:
+  main: [start.print]
+drift: []
+FLOW
+    git -C "$dir/project" add -f -- .graphhelm/journeys/cli-hello.journey.yaml .graphhelm/journeys/cli-edited.journey.yaml
+    reviewed="$dir/reviewed-work"; rm -rf "$reviewed"
+    git init -q -b main "$reviewed"
+    mkdir -p "$reviewed/.graphhelm/journeys"
+    cp "$dir/project/.graphhelm/journeys/cli-hello.journey.yaml" "$reviewed/.graphhelm/journeys/"
+    sed 's#^purpose: .*#purpose: "The fixture draft with one command step, as main reviewed it."#' "$dir/project/.graphhelm/journeys/cli-edited.journey.yaml" > "$reviewed/.graphhelm/journeys/cli-edited.journey.yaml"
+    git -C "$reviewed" add -A
+    git -C "$reviewed" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: reviewed main'
+    git -C "$reviewed" push -q "$reviewed_remote" main ;;
   esac
   # #1919: the Send to fix flows need a journey that fails: a draft reading this fixture's Runtime
   # health and expecting ok=false, which it never is. FIXTURE-ONLY, and only for those flows.

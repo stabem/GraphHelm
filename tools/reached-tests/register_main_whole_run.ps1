@@ -19,7 +19,7 @@ $script = Join-Path $primary 'tools/reached-tests/main_whole_run.py'
 if (-not (Test-Path -LiteralPath $script -PathType Leaf)) { throw "Main-check runner is missing: $script" }
 $pythonPath = (Resolve-Path -LiteralPath $Pythonw).Path
 if ((Split-Path $pythonPath -Leaf) -ne 'pythonw.exe') { throw 'Use pythonw.exe so the scheduled check opens no console.' }
-if ($RunnerArguments -match '^--rep') { throw 'The repository is selected from the primary checkout, not runner overrides.' }
+if ($RunnerArguments -match '^--re') { throw 'The repository is selected from the primary checkout, not runner overrides.' }
 
 # Quote Windows argv, including a path ending in a backslash. No shell evaluates these values.
 $arguments = @($script, '--repo', $primary) + $RunnerArguments

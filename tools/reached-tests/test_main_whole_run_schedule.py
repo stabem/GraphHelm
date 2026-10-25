@@ -85,7 +85,7 @@ function Get-ScheduledTask {
 }
 function Set-ScheduledTask { throw 'UNEXPECTED TASK WRITE' }
 $params = @{Repo=$Repo; Pythonw=$Pythonw; RunnerArguments=@('--timeout','42')}
-if ($Mode -eq 'override') { $params.RunnerArguments=@('--rep=disposable') }
+if ($Mode.StartsWith('override-')) { $params.RunnerArguments=@('--' + $Mode.Substring(9) + '=disposable') }
 if ($Mode -eq 'console') { $params.Pythonw=$Pythonw.Replace('pythonw.exe','python.exe') }
 if ($Mode -eq 'whatif') { $params.WhatIf=$true }
 try { & $Script @params; if ($Mode -ne 'whatif') { throw 'UNEXPECTED SUCCESS' } }
@@ -95,7 +95,8 @@ catch {
 }
 ''', encoding='utf-8')
             script = self.isolated_script(root)
-            reasons = {'override': 'repository is selected', 'console': 'Use pythonw.exe',
+            reasons = {'override-re': 'repository is selected', 'override-rep': 'repository is selected',
+                       'override-repo': 'repository is selected', 'console': 'Use pythonw.exe',
                        'missing': 'missing task', 'running': 'main check is running',
                        'multiple': 'one existing task action', 'whatif': 'What if:',
                        'runner': 'runner is missing', 'repo': 'Cannot find the primary checkout'}

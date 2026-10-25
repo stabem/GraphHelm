@@ -1,0 +1,44 @@
+{
+  "schema": "methodology-profiles/1",
+  "fidelity": "Adapted protocol prompts, not native framework installations; no adoption ranking is claimed.",
+  "profiles": [
+    {
+      "id": "direct",
+      "prompt": "Inspect the source, implement the request, run adequate checks and report the result."
+    },
+    {
+      "id": "tdd",
+      "prompt": "Write a failing behavioral test for the requested change and run it. Make the smallest change that passes. Refactor only if needed and run regression tests."
+    },
+    {
+      "id": "spec-kit",
+      "prompt": "Write a short specification and acceptance checks, then an implementation plan and task list. Implement the tasks and verify the acceptance checks.",
+      "source": "https://github.com/github/spec-kit/blob/67e0f7294e6e728ab60bf7b4590deb470448bc2d/README.md",
+      "revision": "67e0f7294e6e728ab60bf7b4590deb470448bc2d"
+    },
+    {
+      "id": "openspec",
+      "prompt": "Write a change proposal, explicit behavior delta, design and implementation tasks. Apply the tasks, verify the delta and record final verification.",
+      "source": "https://github.com/Fission-AI/OpenSpec/blob/6d04a1b58dedc95729d34e4f223d9d483aae210a/README.md",
+      "revision": "6d04a1b58dedc95729d34e4f223d9d483aae210a"
+    },
+    {
+      "id": "bmad",
+      "prompt": "Use a lightweight analyst, architect, developer and reviewer sequence in this single session. Record requirements, design, implementation and review. Scale artifacts to this task.",
+      "source": "https://github.com/bmad-code-org/BMAD-METHOD/blob/61e01f82644c4bb533750cfa0d6d61ab61d2cc9b/README.md",
+      "revision": "61e01f82644c4bb533750cfa0d6d61ab61d2cc9b"
+    },
+    {
+      "id": "superpowers",
+      "prompt": "Clarify the design from the complete request, write a small plan, use red-green-refactor tests, review the change and verify it before completion. Do not delegate.",
+      "source": "https://github.com/obra/superpowers/blob/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/README.md",
+      "revision": "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b"
+    },
+    {
+      "id": "jpd-keel",
+      "prompt": "State the complete user promise, observable obligations, scoped paths and smallest adequate observer. Search only for a named gap. Implement only that scope, prove the user promise including failure cases, and retain failures and missing observers explicitly.",
+      "source": "GraphHelm KEEL.md and keel/KEEL_PLAN.md, keel/KEEL_EXEC.md",
+      "revision": "27519e3fb5fdf0432e26628d74f8c1ebc7a3d352"
+    }
+  ]
+}

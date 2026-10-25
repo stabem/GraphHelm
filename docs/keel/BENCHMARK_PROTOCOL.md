@@ -548,3 +548,10 @@ report both dimensions. Use the quality and total-cost rules above, including fa
 and independent acceptance. A requested-effort comparison cannot be presented as an observed
 reasoning-budget comparison until an adequate provider observer exists. These controls are
 instruments for an explicitly authorized experiment, not automatic runtime routing policy.
+# Adapted subscription methodology pilot
+
+The runnable seven-profile pilot and its limits are specified in
+[METHODOLOGY_BENCHMARK_2026.md](METHODOLOGY_BENCHMARK_2026.md). It compares frozen
+protocol prompts using existing CLI subscriptions. It does not replace the retrieval
+benchmark, prove native-framework fidelity or infer billed USD from token estimates.
+

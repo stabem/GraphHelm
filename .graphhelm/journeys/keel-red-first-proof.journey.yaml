@@ -2,8 +2,8 @@ schema: graphhelm.journey-flow/1
 id: keel-red-first-proof
 title: Prove a regression test against its parent
 purpose: A regression test is shown to fail on the parent commit and pass on the fix.
-status: draft
-approved: null
+status: approved
+approved: {revision: d658cb7cf77ade01dafc41c8b995f1b7bce1d585, digest: sha256:cdcd2eac4818c1c448e087e1693183d7a05ac1d39f76a88a6a5b5be105f2690f}
 base: http://127.0.0.1:1
 actors: [owner]
 secrets: []

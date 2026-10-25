@@ -54,6 +54,7 @@ class L {
   count() { return Promise.resolve(1); }
   first() { return this; }
   isVisible() { return Promise.resolve(true); }
+  boundingBox() { return Promise.resolve({x: 128, y: 72, width: 320, height: 36}); }
   waitFor() { return Promise.resolve(); }
   click() { const e = new Error('fixture action failure'); e.code = 'driver.action_failed'; throw e; }
   fill() { return Promise.resolve(); }

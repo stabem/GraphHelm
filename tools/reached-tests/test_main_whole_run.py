@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import main_whole_run as mw
+import run_reached as runner
 
 
 class WholeRun(unittest.TestCase):
@@ -165,6 +166,19 @@ class WholeRun(unittest.TestCase):
         cmd = mw.child_command("t", "b", "s", "r", "o.json", 3600)
         self.assertEqual(float(cmd[cmd.index("--budget-seconds") + 1]), 3300.0)
         self.assertLess(mw.child_budget(100), 100)
+        seen, real_run = [], runner.run
+        runner.run = lambda args: seen.append(args) or 0
+        try:
+            runner.main(cmd[2:])
+            runner.main(['--repo', 't', '--output', 'ordinary.json'])
+        finally:
+            runner.run = real_run
+        broad = {'packages': ['graphhelm-cli']}
+        self.assertIsNone(runner._whole_reason(broad, seen[0].allow_whole_package))
+        self.assertIsNotNone(runner._whole_reason(broad, seen[1].allow_whole_package))
+        self.assertTrue(seen[0].keep_going)
+        self.assertFalse(seen[0].resume)
+        self.assertEqual(seen[0].budget_seconds, 3300.0)
         for status in ("budgetExceeded", "incomplete"):
             signal = mw.build_signal("a" * 40, "b" * 40, {"status": status}, Path("r.json"), "o/r", "2026-01-01T00:00:00Z")["signal"]
             self.assertEqual(signal["severity"], "high")

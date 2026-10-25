@@ -287,6 +287,16 @@ ode_modules`) can be a junction into the
   `--allow-whole-package` by default (#1608): an `apps/cli/src/commands` change reaches only its
   modules (DELIVERY.md §3), and the scheduled main whole run (#1540) is the whole-package backstop.
 
+  The existing `GraphHelm main whole run` task starts the absolute runner path in the primary
+  checkout, never in a lane or review worktree. `main_whole_run.py` fetches main and recreates its
+  disposable test worktree when absent; that worktree is not the scheduled entry point. Repair
+  only the existing task action with the command below, preserving its triggers and settings.
+  Pass all intended runner overrides explicitly; `--execution` remains optional and otherwise
+  comes from the project's `.graphhelm/team.json`. The command also works from a linked worktree,
+  resolving its primary checkout through Git. Inspect with `-WhatIf` first.
+
+      ./tools/reached-tests/register_main_whole_run.ps1 -Repo F:/github/GraphHelm -RunnerArguments @('--root', 'D:/gh/c', '--token-file', 'F:/github/GraphHelm/.graphhelm/events.token')
+
   Keep the same isolated worktree target warm across edits. Cold preparation and explicit broad
   audits may exceed 900 seconds and must be reported as such. Long experiments run as separate
   commands in an agreed quiet window, not as one script ahead of ordinary changes. With twenty

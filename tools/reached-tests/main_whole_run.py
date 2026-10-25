@@ -67,6 +67,7 @@ def child_command(tree, base, sha, root, report_path, timeout):
     return [sys.executable, str(Path(tree) / "tools" / "reached-tests" / "run_reached.py"), "--repo", str(tree),
             "--base", base, "--head", sha, "--root", str(root), "--lane", "main-whole-run",
             "--output", str(report_path), "--keep-going", "--no-resume",
+            "--allow-whole-package", "Scheduled main backstop covers the whole packages reached after merges",
             "--budget-seconds", repr(child_budget(timeout))]
 
 

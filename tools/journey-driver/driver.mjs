@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { resolve, relative, isAbsolute, dirname } from 'node:path';
 import { lstat, mkdir, rename, writeFile } from 'node:fs/promises';
-import { judgeExpectations, containsText, normalText } from './judge.mjs';
+import { judgeExpectations, containsText, normalText, viewportRect } from './judge.mjs';
 
 const PROTOCOL = 'graphhelm-journey-driver/1';
 const FRAME = 65536, TIMEOUT = 30000;
@@ -513,15 +513,24 @@ async function run(r) {
       if (!observed.has(key) && observed.size>=128) continue;
       observed.set(key,{role:match[1],name,count:1,visible:true});
     }
+    const rects=new Map();
     for (const expected of r.expect) {
       const locator=page.getByRole(expected.role,{name:expected.name,exact:true});
       const count=await locator.count();
       const visible=count>0 && await locator.first().isVisible();
       const key=JSON.stringify([expected.role,expected.name]);
       observed.set(key,{...expected,count,visible,...(actual.has(key)?{actual:actual.get(key)}:{})});
+      // #2028: where the one visible element a present check matched sits on the frame, as
+      // fractions of the viewport, so the Studio can box it. An element that cannot be measured
+      // (detached between the count and the box) gets no rect: the Studio then draws no box.
+      if (expected.absent!==true && count===1 && visible) {
+        const box=await locator.first().boundingBox({timeout:TIMEOUT}).catch(()=>null);
+        const rect=viewportRect(box,page.viewportSize());
+        if (rect) rects.set(key,rect);
+      }
     }
     const checks=judgeExpectations(r.expect,[...observed.values()]).map(check=>({
-      ...check,name:redacted(check.name),...(Object.hasOwn(check,'text')?{text:redacted(check.text),actual:check.actual===null?null:boundedText(redacted(check.actual))}:{}),closest:check.closest && {...check.closest,name:redacted(check.closest.name)},
+      ...check,...(check.seen && rects.has(JSON.stringify([check.role,check.name]))?{rect:rects.get(JSON.stringify([check.role,check.name]))}:{}),name:redacted(check.name),...(Object.hasOwn(check,'text')?{text:redacted(check.text),actual:check.actual===null?null:boundedText(redacted(check.actual))}:{}),closest:check.closest && {...check.closest,name:redacted(check.closest.name)},
     }));
     let ariaYaml=mainAria;
     const expectations=[];

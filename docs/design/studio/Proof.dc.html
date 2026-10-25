@@ -92,10 +92,11 @@ Downloading Chromium 141.0 (playwright build v1194) — 101.2 MiB / 163.4 MiB  <
 <div style="border: 1px solid #34343c; border-radius: 10px; background: #151517; padding: 12px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px">
 <sc-for list="{{steps}}" as="s" hint-placeholder-count="7">
 <button class="seg" style="padding: 0; border-radius: 8px; border: 1px solid {{s.edge}}; background: #1e1e22; overflow: hidden; display: flex; flex-direction: column" onClick="{{s.pick}}">
-<div class="crop" style="border-bottom: 2px solid {{s.bar}}"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Frame of step {{s.n}}" style="filter: {{s.filter}}"></div>
+<div class="crop" style="position: relative; border-bottom: 2px solid {{s.bar}}"><img src="/_blob/fcfb83e8101f51073bb3f40ce081b32c" alt="Frame of step {{s.n}}" style="filter: {{s.filter}}"><span aria-hidden="true" title="What this step checked" style="position: absolute; left: {{s.bx}}; top: {{s.by}}; width: {{s.bw}}; height: {{s.bh}}; border: 2px solid {{s.bar}}; border-radius: 4px; box-shadow: 0 0 0 2px #0a0a0bcc"></span></div>
 <div style="padding: 4px 8px; display: flex; flex-direction: column; gap: 4px; text-align: left">
 <div style="display: flex; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #8a8a96"><span>{{s.n}} DOES</span><span style="flex: 1"></span><span style="color: {{s.bar}}">{{s.status}}</span></div>
-<span style="font-size: 11px; color: #f5f5f6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{s.label}}</span>
+<!-- Owner 2026-10-25: the step's action is read at a glance, so it wraps (up to 3 lines, full text in the tooltip) instead of cutting; the box on the frame marks what the step checked, in the step's result colour. -->
+<span title="{{s.label}}" style="font-size: 11px; line-height: 1.35; color: #f5f5f6; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden">{{s.label}}</span>
 <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #8a8a96">web <span style="color: {{s.webC}}">{{s.webM}}</span> · mobile <span style="color: {{s.mobC}}">{{s.mobM}}</span></span>
 </div>
 </button>
@@ -322,11 +323,13 @@ class Component extends DCLogic {
 constructor(p){ super(p); this.state = { mode: 'over', opacity: 50, sel: 7, vp: 'web', running: true, log: true }; }
 renderVals() {
 const m = this.state.mode;
-const labels = ['Opens /obras','Clicks “Apartamento Pinheiros”','Clicks “Sala”','Clicks “Sofá 3 lugares”','Clicks “Escolher esta”','Clicks “Marcar como comprado”','Submits “Salvar compra”'];
+const labels = ['Opens /obras','Clicks “Apartamento Pinheiros”','Clicks “Sala”','Clicks “Sofá 3 lugares”','Clicks “Escolher esta”','Types “Comprado na loja do centro, entrega sexta” into “Nota da compra”','Submits “Salvar compra”'];
+const BOX = [['6%','8%','40%','14%'],['10%','30%','55%','16%'],['10%','48%','30%','12%'],['50%','40%','40%','18%'],['58%','70%','34%','12%'],['8%','62%','70%','16%'],['60%','80%','32%','12%']];
 const steps = labels.map((label, i) => {
 const n = i + 1;
 const failed = n === 7; const mobFail = n === 5 || n === 7;
-return { n, label, status: failed ? 'failed' : 'passed', bar: failed ? '#ff6b6b' : '#3ddc97',
+const [bx, by, bw, bh] = BOX[i];
+return { n, label, bx, by, bw, bh, status: failed ? 'failed' : 'passed', bar: failed ? '#ff6b6b' : '#3ddc97',
 edge: this.state.sel === n ? '#8ab4ff' : '#34343c', filter: 'none',
 webM: failed ? '✕' : '✓', webC: failed ? '#ff6b6b' : '#3ddc97', mobM: mobFail ? '✕' : '✓', mobC: mobFail ? '#ff6b6b' : '#3ddc97',
 pick: () => this.setState({ sel: n }) };

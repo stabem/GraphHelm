@@ -40,6 +40,10 @@ const viewport={width:1280,height:720};
 async function open(c,base,allowOrigins=[],extra={}) {const r=await c.send('open',{base,viewport,allowOrigins,...extra});assert.equal(r.ok,true,JSON.stringify(r));}
 async function act(c,kind,role,name,extra={}) {return c.send('act',{kind,role,name,...extra});}
 
+// #2028: a measured rect is four viewport fractions describing a box inside the frame.
+function assertRect(rect){assert.deepEqual(Object.keys(rect ?? {}).sort(),['h','w','x','y'],JSON.stringify(rect));for(const v of Object.values(rect))assert.ok(v>=0&&v<=1,JSON.stringify(rect));assert.ok(rect.w>0&&rect.h>0&&rect.x+rect.w<=1.0001&&rect.y+rect.h<=1.0001,JSON.stringify(rect));}
+function withoutRect({rect,...check}){return check;}
+
 test('snapshot wire reports each check after a missing heading and redacts diagnostics',async t=>{
   const secret='CANARY_driver_checks_721';
   const server=createServer((_,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<h1>Produto conferido</h1><section role="region" aria-label="Também encontramos em"><button>Salvar item</button></section><button aria-label="${secret}">private</button>`);});
@@ -49,7 +53,13 @@ test('snapshot wire reports each check after a missing heading and redacts diagn
   await open(c,`http://127.0.0.1:${server.address().port}/`,[],{survive:true});
   const failed=await c.send('snapshot',{expect:[{role:'heading',name:'Produto encontrado'},{role:'region',name:'Também encontramos em'},{role:'button',name:'Salvar item'}]});
   assert.equal(failed.ok,false);assert.equal(failed.code,'driver.expectation_failed');
-  assert.deepEqual(failed.details.checks,[
+  // #2028: each seen present check carries where its element sits on the frame; an unseen one none.
+  for (const check of failed.details.checks.slice(1)) assertRect(check.rect);
+  assert.equal(failed.details.checks[0].rect,undefined);
+  // The button sits inside the region: its box lies within the region's box.
+  const [,region,button]=failed.details.checks.map(check=>check.rect);
+  assert.ok(button.x>=region.x && button.y>=region.y && button.x+button.w<=region.x+region.w+1e-3 && button.y+button.h<=region.y+region.h+1e-3,JSON.stringify({region,button}));
+  assert.deepEqual(failed.details.checks.map(withoutRect),[
     {role:'heading',name:'Produto encontrado',seen:false,closest:{role:'heading',name:'Produto conferido'}},
     {role:'region',name:'Também encontramos em',seen:true,closest:null},
     {role:'button',name:'Salvar item',seen:true,closest:null},
@@ -70,7 +80,8 @@ test('a text expectation proves what the element says, waits for it, and names w
   await open(c,`http://127.0.0.1:${server.address().port}/`,[],{survive:true});
   const ok=await c.send('snapshot',{expect:[{role:'status',name:'Total',text:'R$ 246,90'},{role:'heading',name:'Agenda de entregas daqui a 1 semana',text:'daqui a  1 semana'}]});
   assert.equal(ok.ok,true,JSON.stringify(ok));
-  assert.deepEqual(ok.result.checks[0],{role:'status',name:'Total',text:'R$ 246,90',actual:'Total: R$ 246,90',seen:true,closest:null});
+  assertRect(ok.result.checks[0].rect);assertRect(ok.result.checks[1].rect);
+  assert.deepEqual(withoutRect(ok.result.checks[0]),{role:'status',name:'Total',text:'R$ 246,90',actual:'Total: R$ 246,90',seen:true,closest:null});
   const wrong=await c.send('snapshot',{expect:[{role:'heading',name:'Agenda de entregas daqui a 1 semana',text:'daqui a 2 dias'},{role:'status',name:'Nota',text:'nada'}]});
   assert.equal(wrong.ok,false);assert.equal(wrong.code,'driver.expectation_failed');
   assert.deepEqual(wrong.details.checks[0],{role:'heading',name:'Agenda de entregas daqui a 1 semana',text:'daqui a 2 dias',actual:'Agenda de entregas daqui a 1 semana',seen:false,closest:null});

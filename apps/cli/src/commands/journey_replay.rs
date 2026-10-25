@@ -742,6 +742,9 @@ impl Driver {
                     result["checks"].as_array().is_some_and(|checks| {
                         checks.len() == expect.len()
                             && checks.iter().zip(expect).all(|(check, wanted)| {
+                                let Some(check) = &without_rect(check, wanted) else {
+                                    return false;
+                                };
                                 // #1041: a met `absent` check says so; a present one never does.
                                 (if wanted["absent"] == true {
                                     closed(check, &["role", "name", "absent", "seen", "closest"])
@@ -1231,6 +1234,32 @@ fn text_check(check: &Value, wanted: &Value) -> bool {
         && (check["actual"].is_null() || check["actual"].as_str().is_some_and(|t| t.len() <= 256))
 }
 
+/// #2028: a seen present check may carry `rect`, where its one element sits on the frame as
+/// `{x,y,w,h}` fractions of the viewport (each in 0..=1, the box inside the frame). The check is
+/// returned without it for the closed-shape checks; `None` when a `rect` is malformed, rides an
+/// `absent` or unseen check, so a box is never drawn from anything but a measured match.
+fn without_rect(check: &Value, wanted: &Value) -> Option<Value> {
+    let Some(rect) = check.get("rect") else {
+        return Some(check.clone());
+    };
+    let unit = |key: &str| {
+        rect[key]
+            .as_f64()
+            .filter(|value| (0.0..=1.0).contains(value))
+    };
+    let inside = rect.as_object().is_some_and(|object| object.len() == 4)
+        && matches!(
+            (unit("x"), unit("y"), unit("w"), unit("h")),
+            (Some(x), Some(y), Some(w), Some(h)) if w > 0.0 && h > 0.0 && x + w <= 1.0001 && y + h <= 1.0001
+        );
+    if !inside || wanted["absent"] == true || check["seen"] != true {
+        return None;
+    }
+    let mut bare = check.clone();
+    bare.as_object_mut()?.remove("rect");
+    Some(bare)
+}
+
 /// The driver's per-expectation judgement on a failed snapshot (#1324), kept only when it is the
 /// exact shape the driver promises: one entry per requested expectation, in order, naming the
 /// same role and name, at least one unseen, and a `closest` that is null or one short role/name
@@ -1248,6 +1277,9 @@ pub(super) fn failed_checks(details: &Value, expect: &Value) -> Option<Value> {
         && checks.len() == expect.len()
         && checks.iter().any(|check| check["seen"] == false)
         && checks.iter().zip(expect).all(|(check, wanted)| {
+            let Some(check) = &without_rect(check, wanted) else {
+                return false;
+            };
             // #1041: an `absent` check carries `absent: true` and never a closest match.
             let absent = wanted["absent"] == true;
             (if absent {
@@ -2637,6 +2669,42 @@ mod tests {
             "{tail}"
         );
         assert!(take_driver_log().is_none(), "kept once");
+    }
+
+    /// #2028: a seen present check keeps the rect where its element sits on the frame; a rect that
+    /// is malformed, outside the frame, or on an unseen or `absent` check refuses the judgement, so
+    /// the Studio never boxes an element nobody measured. Cost: microseconds, in-memory JSON.
+    #[test]
+    fn a_seen_check_keeps_its_measured_rect_and_nothing_else_carries_one() {
+        let expect = json!([{"role":"heading","name":"Produto encontrado"},
+            {"role":"button","name":"Salvar item"}]);
+        let rect = json!({"x":0.1,"y":0.2,"w":0.3,"h":0.05});
+        let with = |seen_rect: Value| {
+            json!({"checks":[
+                {"role":"heading","name":"Produto encontrado","seen":false,"closest":null},
+                {"role":"button","name":"Salvar item","seen":true,"closest":null,"rect":seen_rect},
+            ]})
+        };
+        let kept = failed_checks(&with(rect.clone()), &expect).expect("a measured rect is kept");
+        assert_eq!(kept[1]["rect"], rect);
+        for bad in [
+            json!({"x":0.9,"y":0.2,"w":0.3,"h":0.05}),
+            json!({"x":0.1,"y":0.2,"w":0.0,"h":0.05}),
+            json!({"x":0.1,"y":0.2,"w":0.3}),
+            json!({"x":0.1,"y":0.2,"w":0.3,"h":0.05,"z":1}),
+            json!({"x":"0.1","y":0.2,"w":0.3,"h":0.05}),
+            json!(null),
+        ] {
+            assert_eq!(failed_checks(&with(bad.clone()), &expect), None, "{bad}");
+        }
+        let unseen = json!({"checks":[
+            {"role":"heading","name":"Produto encontrado","seen":false,"closest":null,"rect":rect},
+            {"role":"button","name":"Salvar item","seen":true,"closest":null},
+        ]});
+        assert_eq!(failed_checks(&unseen, &expect), None);
+        let gone = json!([{"role":"region","name":"Aviso","absent":true}]);
+        let absent = json!({"role":"region","name":"Aviso","absent":true,"seen":true,"closest":null,"rect":rect});
+        assert_eq!(without_rect(&absent, &gone[0]), None);
     }
 
     #[test]

@@ -2,7 +2,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { judgeExpectations } from './judge.mjs';
+import { judgeExpectations, viewportRect } from './judge.mjs';
+
+// #2028: the matched element's box, as fractions of the frame, clipped to it; none off-frame.
+test('a matched element is placed on the frame as viewport fractions, clipped, never invented', () => {
+  const view={width:1280,height:800};
+  assert.deepEqual(viewportRect({x:128,y:80,width:320,height:40},view), {x:0.1,y:0.1,w:0.25,h:0.05});
+  assert.deepEqual(viewportRect({x:-100,y:760,width:300,height:100},view), {x:0,y:0.95,w:0.1563,h:0.05});
+  assert.equal(viewportRect({x:10,y:900,width:50,height:20},view), null);
+  assert.equal(viewportRect({x:10,y:10,width:0,height:20},view), null);
+  assert.equal(viewportRect(null,view), null);
+  assert.equal(viewportRect({x:1,y:1,width:1,height:1},null), null);
+  assert.equal(viewportRect({x:NaN,y:1,width:1,height:1},view), null);
+});
 
 test('judges ordered checks independently with closest role names and duplicate protection', () => {
   const expect = [{role:'heading',name:'Produto conferido'}, {role:'region',name:'Também encontramos em'}, {role:'button',name:'Salvar'}];

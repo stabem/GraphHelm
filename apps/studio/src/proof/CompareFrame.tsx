@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 import type { JourneyPastRun, Runtime } from "../runtime/client";
 import { changedSentence, diffPixels, type CompareMode, type Pixels } from "./compare";
-import { becauseOf, failsOnlyOn, readableName, reasonSentence, type Step } from "./steps";
+import { becauseOf, checkMarks, failsOnlyOn, readableName, reasonSentence, type Step } from "./steps";
 import { yamlLines } from "./yaml-view";
 
 const MODES: { mode: CompareMode; label: string }[] = [
@@ -34,6 +34,41 @@ interface CompareFrameProps {
  * alone, Before and Now side by side, Now over Before with an opacity slider, or Now with every
  * pixel that changed since Before painted red. Before is the earlier run's frame, fetched with the
  * session's bearer header into an object URL. */
+/** #2028: a box around each element the step's checks matched, in the step's result colour, over
+ * a tile `aspect` wide per 1 high. Nothing when the run measured no element. */
+export function CheckMarks({ step, aspect, fit = "cover" }: { step: Pick<Step, "checks" | "frameSize" | "status">; aspect: number; fit?: "cover" | "contain" }) {
+  const marks = checkMarks(step, aspect, fit);
+  if (marks.length === 0) return null;
+  return (
+    <span className={`check-marks ${step.status.replace(" ", "-")}`} aria-hidden="true">
+      {marks.map((mark, index) => (
+        <span key={index} className="check-mark" title="What this step checked" style={{ left: `${mark.left}%`, top: `${mark.top}%`, width: `${mark.width}%`, height: `${mark.height}%` }} />
+      ))}
+    </span>
+  );
+}
+
+/** #2028: the large frame with its check boxes; the boxes follow the frame's rendered box. */
+function MarkedFrame({ src, alt, step, marked }: { src: string; alt: string; step: Step; marked: boolean }) {
+  const [box, setBox] = useState<HTMLDivElement | null>(null);
+  const [aspect, setAspect] = useState(0);
+  useEffect(() => {
+    if (box === null || typeof ResizeObserver === "undefined") return;
+    const measure = () => setAspect(box.clientHeight > 0 ? box.clientWidth / box.clientHeight : 0);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [box]);
+  if (!marked || checkMarks(step, 1, "contain").length === 0) return <img src={src} alt={alt} />;
+  return (
+    <div ref={setBox} className="marked-frame">
+      <img src={src} alt={alt} />
+      {aspect > 0 && <CheckMarks step={step} aspect={aspect} fit="contain" />}
+    </div>
+  );
+}
+
 export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobileNow, earlier, staleRun = false }: CompareFrameProps) {
   const [mode, setMode] = useState<CompareMode>("frame");
   const [opacity, setOpacity] = useState(50);
@@ -64,7 +99,10 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
 
   const body = (
     <>
-      {shown === "frame" && (now ? <img src={now} alt={`Step ${step.n} captured`} /> : <p>No frame captured for step {step.n} in this run.</p>)}
+      {shown === "frame" && (now
+        // #2028: the run's rects were measured on its first viewport's frame: the one the thumbnail shows.
+        ? <MarkedFrame src={now} alt={`Step ${step.n} captured`} step={step} marked={now === webNow || webNow === undefined} />
+        : <p>No frame captured for step {step.n} in this run.</p>)}
       {shown === "side" && before.url !== null && now && (
         <div role="group" aria-label="Before and Now side by side" className="compare-side">
           <figure><figcaption>Before · {when}</figcaption><img src={before.url} alt={`Step ${step.n} before`} /></figure>

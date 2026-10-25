@@ -42,6 +42,8 @@ export interface Step {
    * size, so the viewport it did not play is `not run`. */
   viewports: Record<Viewport, StepStatus>;
   frame: boolean;
+  /** #2028: the size the frame was captured at, `null` when the run did not record one. */
+  frameSize: { width: number; height: number } | null;
   /** #1905: the screen's title and URL, for the Action panel and the compare's address bar. */
   title: string | null;
   url: string;
@@ -100,7 +102,39 @@ function does(edge: JourneyEdge): string {
 
 /** #1905: each expectation the run checked on this screen and whether it was seen, as the Runtime
  * records it under `screens.<id>.checks` (absent from the typed client); `null` when none recorded. */
-export interface Check { role: string; name: string; text?: string; seen: boolean }
+export interface Check { role: string; name: string; text?: string; seen: boolean; rect?: Rect }
+
+/** #2028: where a check's matched element sits on the frame, as fractions of the frame (0..1). */
+export interface Rect { x: number; y: number; w: number; h: number }
+
+/** #2028: a box to draw over a frame tile, in percent of the tile (CSS `left/top/width/height`). */
+export interface Mark { left: number; top: number; width: number; height: number }
+
+const unit = (value: unknown): value is number => typeof value === "number" && value >= 0 && value <= 1;
+
+/** #2028: the boxes of what a step checked, on a tile of `tileAspect` (width / height) that shows
+ * the step's frame like `object-fit: cover; object-position: top` (`contain` for the large frame,
+ * centred). One box per seen check whose element the observer measured; none without a frame size
+ * or a measured rect (a command step, a run recorded before #2028): never an invented box. */
+export function checkMarks(step: Pick<Step, "checks" | "frameSize">, tileAspect: number, fit: "cover" | "contain" = "cover"): Mark[] {
+  const size = step.frameSize;
+  if (size === null || !(size.width > 0) || !(size.height > 0) || !(tileAspect > 0)) return [];
+  // The tile is `tileAspect` wide and 1 high; the frame is scaled to cover (or fit) it.
+  const scale = (fit === "cover" ? Math.max : Math.min)(tileAspect / size.width, 1 / size.height);
+  const shownW = size.width * scale, shownH = size.height * scale;
+  const offX = (tileAspect - shownW) / 2, offY = fit === "cover" ? 0 : (1 - shownH) / 2;
+  const marks: Mark[] = [];
+  for (const check of step.checks ?? []) {
+    const rect = check.rect;
+    if (!check.seen || rect === undefined || ![rect.x, rect.y, rect.w, rect.h].every(unit)) continue;
+    const left = Math.max(0, offX + rect.x * shownW), right = Math.min(tileAspect, offX + (rect.x + rect.w) * shownW);
+    const top = Math.max(0, offY + rect.y * shownH), bottom = Math.min(1, offY + (rect.y + rect.h) * shownH);
+    if (right <= left || bottom <= top) continue;
+    const pct = (value: number) => Math.round(value * 10000) / 100;
+    marks.push({ left: pct(left / tileAspect), top: pct(top), width: pct((right - left) / tileAspect), height: pct(bottom - top) });
+  }
+  return marks;
+}
 
 function checksOf(seen: unknown): Check[] | null {
   const list = (seen as { checks?: unknown } | undefined)?.checks;
@@ -231,6 +265,7 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
       status,
       viewports,
       frame: seen?.frame === true,
+      frameSize: seen?.frame === true && typeof seen.width === "number" && typeof seen.height === "number" ? { width: seen.width, height: seen.height } : null,
       title: screens.get(screen)?.title ?? null,
       url,
       acts: (edge?.acts ?? []).map(sayAct),

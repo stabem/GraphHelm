@@ -38,3 +38,16 @@ export function judgeExpectations(expect, observed) {
     return {role,name,seen,closest:seen || !choices.length ? null : {role,name:choices[0].name}};
   });
 }
+
+// #2028: an element's box on the captured frame (a viewport screenshot), as fractions of the
+// viewport rounded to 4 places and clipped to it. `null` when there is no box, no size, or the
+// element lies wholly outside the frame: a box is drawn only where the element really shows.
+export function viewportRect(box, viewport) {
+  if (!box || !viewport || !(viewport.width > 0) || !(viewport.height > 0)) return null;
+  if (![box.x,box.y,box.width,box.height].every(Number.isFinite)) return null;
+  const left=Math.max(0,box.x), top=Math.max(0,box.y);
+  const right=Math.min(viewport.width,box.x+box.width), bottom=Math.min(viewport.height,box.y+box.height);
+  if (right<=left || bottom<=top) return null;
+  const f=(value,of)=>Math.round(value/of*1e4)/1e4;
+  return {x:f(left,viewport.width),y:f(top,viewport.height),w:f(right-left,viewport.width),h:f(bottom-top,viewport.height)};
+}

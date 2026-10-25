@@ -224,7 +224,14 @@ button { font: inherit; }
 .step.passed .step-status { color: var(--live); }
 .step.failed .step-status, .step.drift .step-status { color: #ff6b6b; }
 .step.running .step-status { color: var(--accent); }
-.step-label { font-size: 11px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* #2028: the step's action wraps to 3 lines (full text in the title tooltip), never an ellipsis. */
+.step-label { font-size: 11px; line-height: 1.35; color: var(--text); overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; }
+/* #2028: a box around each element the step's checks matched, in the step's result colour. */
+.step-thumb, .marked-frame { position: relative; }
+.check-marks { position: absolute; inset: 0; pointer-events: none; }
+.check-mark { position: absolute; box-sizing: border-box; border: 2px solid var(--faint); border-radius: 4px; box-shadow: 0 0 0 2px #0a0a0bcc; }
+.check-marks.passed .check-mark { border-color: #3ddc97; }
+.check-marks.failed .check-mark, .check-marks.drift .check-mark { border-color: #ff6b6b; }
 .step-viewports { font: var(--fs-meta) var(--mono); color: var(--faint); }
 .step-viewports .passed { color: var(--live); }
 .step-viewports .failed, .step-viewports .drift { color: #ff6b6b; }
@@ -276,6 +283,8 @@ button { font: inherit; }
   .shell:has(.compare-frame:not(.terminal)) .compare-side-panel { min-height: 0; overflow-y: auto; }
   .compare-frame:not(.terminal) > img, .compare-frame:not(.terminal) > .compare-side, .compare-frame:not(.terminal) > .compare-overlay, .compare-frame:not(.terminal) > .phone-stage { flex: 1 1 0; min-height: 0; }
   .compare-frame:not(.terminal) > img { height: 100%; }
+  .compare-frame:not(.terminal) > .marked-frame { flex: 1 1 0; min-height: 0; }
+  .compare-frame:not(.terminal) > .marked-frame img { height: 100%; }
   .compare-frame:not(.terminal) .compare-side { grid-template-rows: minmax(0, 1fr); }
   .compare-frame:not(.terminal) .compare-side figure { display: flex; flex-direction: column; min-height: 0; }
   .compare-frame:not(.terminal) .compare-side img { flex: 1 1 0; min-height: 0; height: 100%; }

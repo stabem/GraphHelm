@@ -352,6 +352,10 @@ pub struct JourneyPreviewArgs {
     /// Internal validation-owned result directory. Ordinary preview cache is never reused.
     #[arg(long, hide = true)]
     pub validation_dir: Option<PathBuf>,
+    /// Internal (#1784): the declared state validation plays this run in. Absent: the flow's first
+    /// declared state, or none for a flow that declares no `states`.
+    #[arg(long, hide = true, requires = "validation_dir")]
+    pub state: Option<String>,
     /// #1662: with `--confirm` on a draft, the flow digest the owner saw beside its commands. A
     /// flow edited since then is refused, so a confirm never allows argv the owner did not see.
     #[arg(long, requires = "confirm")]

@@ -1,0 +1,34 @@
+schema: graphhelm.journey-flow/1
+id: agenda
+title: Agenda in each delivery state
+purpose: The client reads the agenda status in every state an item can be in.
+status: draft
+approved: null
+base: http://127.0.0.1:8765
+actors: [client]
+secrets: []
+risks: []
+states: [on_the_way, delivered, lost]
+screens:
+  - id: read
+    title: The status the client read again
+    url: /status.json
+    state: success
+    expect: [{role: status, name: "200", because: the seeded status route answers a GET with HTTP 200}, {role: json, name: state, because: the launcher seeds the state field}]
+    scope: unknown
+  - id: start
+    title: The agenda status
+    url: /status.json
+    state: stable
+    expect: [{role: status, name: "200", because: a running fixture answers its status route with HTTP 200}, {role: json, name: state, because: the launcher seeds the state field}]
+    scope: unknown
+edges:
+  - id: reread
+    from: start
+    to: read
+    why: The client reads the agenda status again over HTTP.
+    acts:
+      - {kind: http, role: GET, name: /status.json}
+paths:
+  main: [reread]
+drift: []

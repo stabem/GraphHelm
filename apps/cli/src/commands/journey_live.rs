@@ -129,6 +129,9 @@ fn report(command: &'static str, data: Value, failed: Option<Failure>) -> Outcom
         "watch.launch_failed" => {
             "the project's launcher did not bring the app under test up on the flow's base in time"
         }
+        "watch.state_not_seeded" => {
+            "the project's launcher did not confirm the flow's state (GRAPHHELM_JOURNEY_STATE) in <dir>/.graphhelm/state, so that state is not observed"
+        }
         "watch.pace_invalid" => "paceMs must be between 0 and 10000",
         "watch.pace_too_slow" => {
             "this path's acts at this pace would wait longer than half the run budget; choose a shorter paceMs"
@@ -756,7 +759,11 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     // launcher brings it up (and the host stops it when the watch ends). An isolated launcher
     // always brings up its own, on free ports (#585).
     let launched = if args.watch && (launcher_isolated(&project) || !base_reachable(&base)) {
-        let launched = launch(&project, &base, &args.id, |_| Ok(()))?;
+        // #1784: a watch is seen in one state; a flow that declares states watches its first.
+        let state = super::journey_flow::declared_states(&flow)
+            .into_iter()
+            .next();
+        let launched = launch(&project, &base, &args.id, state.as_deref(), |_| Ok(()))?;
         data["launched"] = true.into();
         if let Some(own) = &launched.base {
             base = own.clone();
@@ -1279,9 +1286,27 @@ pub(super) fn launch(
     project: &Path,
     base: &str,
     flow: &str,
+    state: Option<&str>,
     before_up: impl FnOnce(&LaunchedStop) -> Result<()>,
 ) -> Result<Launched> {
-    launch_within(project, base, flow, LAUNCH_READY, before_up)
+    launch_within(project, base, flow, state, LAUNCH_READY, before_up)
+}
+
+/// #1784: the state the launcher wrote to `<dir>/.graphhelm/state` once it seeded it, or `None`
+/// (not written, a link, unreadable, too long). Only an exact match counts as seeded.
+fn seeded_state(dir: &Path) -> Option<String> {
+    let marker = dir.join(".graphhelm").join("state");
+    if !safe_node(dir) || !safe_node(&dir.join(".graphhelm")) || !safe_node(&marker) {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(&marker)
+        .and_then(|file| file.take(257).read_to_end(&mut bytes))
+        .ok()?;
+    (bytes.len() <= 256)
+        .then(|| String::from_utf8(bytes).ok())
+        .flatten()
+        .map(|text| text.trim().to_owned())
 }
 
 /// [`launch`] with its readiness bound as a parameter, so the bound itself is testable: the
@@ -1290,6 +1315,7 @@ pub(super) fn launch_within(
     project: &Path,
     base: &str,
     flow: &str,
+    state: Option<&str>,
     ready: Duration,
     before_up: impl FnOnce(&LaunchedStop) -> Result<()>,
 ) -> Result<Launched> {
@@ -1359,6 +1385,11 @@ pub(super) fn launch_within(
         command.env("GRAPHHELM_BIN", executable);
     }
     command.env("GRAPHHELM_JOURNEY_FLOW", flow);
+    // #1784: the state to seed, only for a flow that declares states; otherwise never inherited.
+    command.env_remove("GRAPHHELM_JOURNEY_STATE");
+    if let Some(state) = state {
+        command.env("GRAPHHELM_JOURNEY_STATE", state);
+    }
     let answers_on = isolated_base.clone().unwrap_or_else(|| base.to_owned());
     let mut launched = Launched {
         project: project.to_path_buf(),
@@ -1410,6 +1441,14 @@ pub(super) fn launch_within(
         return Err(failure("watch.launch_failed", "/launcher", 1));
     }
     let _ = std::fs::remove_file(&log_path);
+    // #1784: a launcher that cannot seed the asked state says so by not confirming it; the run
+    // stops here, so the state is reported unobserved, never played in some other state.
+    if let Some(state) = state
+        && seeded_state(&launched.dir).as_deref() != Some(state)
+    {
+        launched.stop();
+        return Err(failure("watch.state_not_seeded", "/states", 2));
+    }
     // The launcher may mint secrets during `up`. Read data, never source shell code or
     // mutate the process environment. Bound the file and reject links before opening it.
     let secret_dir = launched.dir.join(".graphhelm");
@@ -2189,6 +2228,7 @@ mod launch_tests {
             project.path(),
             &format!("http://127.0.0.1:{port}"),
             "checkout",
+            None,
             Duration::from_secs(2),
             |_| Ok(()),
         );
@@ -2227,6 +2267,7 @@ mod launch_tests {
             project.path(),
             &format!("http://127.0.0.1:{port}"),
             "checkout",
+            None,
             std::time::Duration::from_secs(2),
             |_| Ok(()),
         );

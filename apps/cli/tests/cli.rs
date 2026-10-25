@@ -145,6 +145,8 @@ mod journey_replay_browser;
 mod journey_replay_cli;
 #[path = "journey_scope_guard.rs"]
 mod journey_scope_guard;
+#[path = "journey_states.rs"]
+mod journey_states;
 #[path = "journey_validate_cli.rs"]
 mod journey_validate_cli;
 #[path = "journeys_surfaces.rs"]

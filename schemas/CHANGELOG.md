@@ -1,5 +1,17 @@
 # Schema Changelog
 
+## journey-flow 1.15.0 - the states a flow is seen in (#1784)
+
+A flow may declare a top-level `states`: 1 to 8 distinct state ids (the flow id pattern), the
+starting states its screens must be seen in, for example `[on_the_way, delivered]`. `keel test
+validation` runs the flow once per state, in declared order, and starts the fixture launcher with
+`GRAPHHELM_JOURNEY_STATE` set to that state; preview and watch seed the first one. The launcher
+confirms it seeded the state by writing the id to `<dir>/.graphhelm/state`; a state it does not
+confirm, or that no path reached, is reported `unobserved`, never passed. The canonical writer and
+the approval digest include `states` only when present. Additive: every 1.14.0 flow stays valid
+with the same bytes and digest, and runs once as before. The catalog digest is updated from
+canonical JSON.
+
 ## journey-flow 1.14.0 - a step says why, a check says because (#1955)
 
 An edge may carry `why` (1 to 512 characters): what the step proves for the user, in a plain

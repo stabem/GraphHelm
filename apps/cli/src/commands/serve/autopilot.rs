@@ -12,10 +12,10 @@
 //!   (`launcher`, placeholders `{lane}`, `{role}`, `{brief}` only) through
 //!   `graphhelm_process::command` (hidden window). The role prompt file and a JSON brief go on
 //!   stdin; the brief is also a file. Owner- or lane-written text (the ask, titles) is never put
-//!   on a command line or through a shell. The child loses every `GRAPHHELM_*` key/token/secret
-//!   variable, the paid API keys and switches (`PAID_KEYS`) and the cloud credential families
-//!   (`AWS_*`, `AZURE_*`), so a launcher runs on its subscription login or not at all: no paid
-//!   fallback. `timeoutSeconds` runs from the spawn (the stdin write cannot outlast it); past it
+//!   on a command line or through a shell. The child inherits only an allow list (#2019): the OS
+//!   session variables in `ALLOWED_NAMES`, non-secret `GRAPHHELM_*` names and the owner's
+//!   `env.allow`; everything else is dropped, whatever its name, so a launcher runs on its
+//!   subscription login or not at all: no paid fallback. `timeoutSeconds` runs from the spawn (the stdin write cannot outlast it); past it
 //!   the launcher's whole process tree is killed and the attempt counts as failed. A launch note
 //!   younger than the timeout that this instance did not start counts as a live agent, so a
 //!   Runtime restart does not start a second one.
@@ -50,27 +50,87 @@ use crate::commands::execution;
 /// The Runtime's owner actor, as the #1990 dispatcher writes its notes.
 const OWNER: &str = execution::tasks::RUNTIME_ACTOR;
 const PLACEHOLDERS: [&str; 3] = ["{lane}", "{role}", "{brief}"];
-/// Environment the launched agent never inherits (#2016): every key that lets a launcher bill an
-/// API or a cloud account instead of running on its subscription login (no paid fallback).
-const PAID_KEYS: [&str; 6] = [
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "OPENAI_API_KEY",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "GOOGLE_APPLICATION_CREDENTIALS",
+/// Environment the launched agent inherits (#2019): an ALLOW list, so a paid key of any name (a
+/// provider, a gateway, a base URL, a name nobody has met yet) is dropped without being listed. A
+/// subscription-logged-in `claude` or `codex` finds its login under the home directory
+/// (`~/.claude`, `~/.codex`; `CLAUDE_CONFIG_DIR` / `CODEX_HOME` move them), so it needs only the
+/// OS session variables below. Anything else the owner's launcher needs goes in `env.allow`.
+const ALLOWED_NAMES: [&str; 48] = [
+    // Program lookup and the OS.
+    "PATH",
+    "PATHEXT",
+    "OS",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "NUMBER_OF_PROCESSORS",
+    "COMPUTERNAME",
+    "USERDOMAIN",
+    "SESSIONNAME",
+    "ALLUSERSPROFILE",
+    "PUBLIC",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "COMMONPROGRAMW6432",
+    "DRIVERDATA",
+    // Where the login lives.
+    "HOME",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "USERNAME",
+    "USER",
+    "LOGNAME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_RUNTIME_DIR",
+    "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
+    // Scratch space, terminal, locale, shell.
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "TERM",
+    "LANG",
+    "LANGUAGE",
+    "TZ",
+    "SHELL",
+    "COLORTERM",
+    "NO_COLOR",
+    "FORCE_COLOR",
+    "WSLENV",
 ];
-/// Prefixes of cloud credential families the agent never inherits (#2016).
-const PAID_PREFIXES: [&str; 2] = ["AWS_", "AZURE_"];
+/// Prefixes of allowed families: the CPU description, locale categories.
+const ALLOWED_PREFIXES: [&str; 2] = ["PROCESSOR_", "LC_"];
 
-/// Whether the variable `name` is withheld from a launched agent.
-fn withheld(name: &str) -> bool {
+/// Whether the variable `name` reaches a launched agent. Windows names are case-insensitive, so
+/// the comparison is. `extra` is the owner's `env.allow`, already upper-cased.
+fn allowed(name: &str, extra: &[String]) -> bool {
     let text = name.to_ascii_uppercase();
-    let secret = text.starts_with("GRAPHHELM_")
-        && (text.contains("KEY") || text.contains("TOKEN") || text.contains("SECRET"));
-    secret
-        || PAID_KEYS.contains(&text.as_str())
-        || PAID_PREFIXES.iter().any(|prefix| text.starts_with(prefix))
+    // The Runtime's own routing names, except anything that reads as a secret.
+    let own = text.starts_with("GRAPHHELM_")
+        && !(text.contains("KEY") || text.contains("TOKEN") || text.contains("SECRET"));
+    own || ALLOWED_NAMES.contains(&text.as_str())
+        || ALLOWED_PREFIXES
+            .iter()
+            .any(|prefix| text.starts_with(prefix))
+        || extra.contains(&text)
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EnvFile {
+    /// Extra variable names the launcher may inherit (exact names, any case).
+    #[serde(default)]
+    allow: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -108,6 +168,8 @@ struct ConfigFile {
     pause_exit_codes: Vec<i32>,
     #[serde(default)]
     paused: bool,
+    #[serde(default)]
+    env: EnvFile,
 }
 
 /// The validated configuration and what this Runtime instance knows about its own processes.
@@ -122,6 +184,8 @@ pub(super) struct Autopilot {
     interval: Duration,
     timeout: Duration,
     pause_exit_codes: Vec<i32>,
+    /// `env.allow`, upper-cased (#2019).
+    env_allow: Vec<String>,
     /// (item, stage) keys with a live process.
     running: Mutex<HashSet<String>>,
     /// (item, stage) keys whose newest process failed.
@@ -272,6 +336,12 @@ pub(super) fn load(path: &Path) -> Result<Autopilot, String> {
             "autopilot.timeoutSeconds",
         )?),
         pause_exit_codes: file.pause_exit_codes,
+        env_allow: file
+            .env
+            .allow
+            .iter()
+            .map(|name| name.trim().to_ascii_uppercase())
+            .collect(),
         running: Mutex::new(HashSet::new()),
         failed: Mutex::new(HashSet::new()),
         launched: Mutex::new(HashSet::new()),
@@ -675,7 +745,7 @@ fn run(
         .env("GRAPHHELM_AUTOPILOT_BRIEF", &brief_arg)
         .env("GRAPHHELM_EXECUTION", &autopilot.execution);
     for (name, _) in std::env::vars_os() {
-        if withheld(&name.to_string_lossy()) {
+        if !allowed(&name.to_string_lossy(), &autopilot.env_allow) {
             command.env_remove(&name);
         }
     }
@@ -882,39 +952,73 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_env_loses_every_paid_fallback_key() {
+    fn the_agent_env_keeps_only_the_allow_list() {
         for name in [
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
-            "OPENAI_API_KEY",
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_FOUNDRY_API_KEY",
+            "CLAUDE_CODE_USE_FOUNDRY",
             "CLAUDE_CODE_USE_BEDROCK",
-            "claude_code_use_vertex",
+            "CODEX_API_KEY",
+            "OPENAI_API_KEY",
+            "OPENAI_BASE_URL",
+            "OPENROUTER_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
             "GOOGLE_APPLICATION_CREDENTIALS",
             "AWS_ACCESS_KEY_ID",
-            "AWS_SESSION_TOKEN",
-            "AWS_PROFILE",
             "AZURE_OPENAI_API_KEY",
-            "AZURE_CLIENT_SECRET",
+            "SOME_VENDOR_NOBODY_LISTED_KEY",
             "GRAPHHELM_EVENTS_KEY",
         ] {
-            assert!(withheld(name), "{name} must be withheld");
+            assert!(!allowed(name, &[]), "{name} must be dropped");
         }
-        for name in ["PATH", "USERPROFILE", "GRAPHHELM_LANE", "CLAUDE_CONFIG_DIR"] {
-            assert!(!withheld(name), "{name} must pass through");
+        for name in [
+            "PATH",
+            "Path",
+            "SystemRoot",
+            "USERPROFILE",
+            "HOME",
+            "LOCALAPPDATA",
+            "ProgramFiles(x86)",
+            "PROCESSOR_ARCHITECTURE",
+            "LC_ALL",
+            "TEMP",
+            "CLAUDE_CONFIG_DIR",
+            "GRAPHHELM_LANE",
+        ] {
+            assert!(allowed(name, &[]), "{name} must pass through");
         }
     }
 
     #[test]
-    fn the_launched_env_carries_no_withheld_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("env.txt");
-        let autopilot = fake_pilot(dir.path(), "", "p");
-        let brief = serde_json::json!({"fake": "env", "out": out}).to_string();
-        let ended = run_bounded(autopilot, brief, Duration::from_secs(60));
-        assert!(ended.is_ok(), "{}", reason(&ended));
-        let names = std::fs::read_to_string(&out).unwrap();
+    fn env_allow_extends_the_list_but_a_listed_name_is_the_owners_choice() {
+        let extra = vec!["MY_PROXY".to_owned()];
+        assert!(!allowed("MY_PROXY", &[]));
+        assert!(allowed("my_proxy", &extra));
+        assert!(!allowed("OPENROUTER_API_KEY", &extra));
+    }
+
+    #[test]
+    fn the_launched_env_is_the_allow_list_and_env_allow_adds_to_it() {
+        // `cargo test` sets CARGO_MANIFEST_DIR in this process: a name that is on no list.
+        assert!(std::env::var_os("CARGO_MANIFEST_DIR").is_some());
+        let names_of = |extra: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            let out = dir.path().join("env.txt");
+            let autopilot = fake_pilot(dir.path(), extra, "p");
+            let brief = serde_json::json!({"fake": "env", "out": out}).to_string();
+            let ended = run_bounded(autopilot, brief, Duration::from_secs(60));
+            assert!(ended.is_ok(), "{}", reason(&ended));
+            std::fs::read_to_string(&out).unwrap()
+        };
+        let names = names_of("");
         assert!(names.lines().any(|n| n == "GRAPHHELM_LANE"), "{names}");
-        assert!(names.lines().all(|n| !withheld(n)), "{names}");
+        assert!(names.lines().all(|n| allowed(n, &[])), "{names}");
+        assert!(!names.lines().any(|n| n == "CARGO_MANIFEST_DIR"), "{names}");
+        let names = names_of(r#"{"env":{"allow":["cargo_manifest_dir"]}}"#);
+        assert!(names.lines().any(|n| n == "CARGO_MANIFEST_DIR"), "{names}");
     }
 
     #[test]

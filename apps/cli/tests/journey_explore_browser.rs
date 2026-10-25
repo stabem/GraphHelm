@@ -297,6 +297,26 @@ process.stdin.on('end',async()=>{await fixture.close();process.exit(0);});
         "node_modules/\n.graphhelm/*\n!.graphhelm/journeys/\n/.mcp.json\n",
     )
     .unwrap();
+    // #1955: the explorer drafts steps without a `why`; the person approving writes what each
+    // step proves, as approval requires, in the flow's canonical layout (right after its `to`).
+    let draft_path = project.join(".graphhelm/journeys/checkout.journey.yaml");
+    let draft = std::fs::read_to_string(&draft_path).unwrap();
+    let (head, edges) = draft.split_once("\nedges:\n").unwrap();
+    let edges: String = edges
+        .split_inclusive('\n')
+        .map(|line| {
+            let body = line.trim_start();
+            let indent = &line[..line.len() - body.len()];
+            match body.strip_prefix("to: ") {
+                Some(to) => format!(
+                    "{line}{indent}why: The shopper reaches the {} screen\n",
+                    to.trim()
+                ),
+                None => line.to_owned(),
+            }
+        })
+        .collect();
+    std::fs::write(&draft_path, format!("{head}\nedges:\n{edges}")).unwrap();
     git(&["add", "."]);
     git(&["commit", "--quiet", "--no-verify", "-m", "explored draft"]);
     support::passing_preview(project, "checkout");

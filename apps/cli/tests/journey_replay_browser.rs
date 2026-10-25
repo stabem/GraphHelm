@@ -252,8 +252,8 @@ fn two_credential_free_paths_replay_to_canonical_cache_sealed_captures_and_fresh
     flow["screens"].as_array_mut().unwrap().push(json!({"id":"guest","title":"The guest checkout step","url":"/guest","state":"stable","expect":[{"role":"heading","name":"Guest checkout"}],"scope":["fixture-server.mjs"]}));
     flow["edges"][1]["acts"][1]["name"] = "Submit order".into();
     flow["edges"].as_array_mut().unwrap().extend([
-        json!({"id":"cart.guest","from":"cart","to":"guest","acts":[{"kind":"navigate","role":"link","name":"Guest checkout"}]}),
-        json!({"id":"guest.submit","from":"guest","to":"done","intent":"The guest order is placed as shown, with no input to give","acts":[{"kind":"submit","role":"button","name":"Place guest order"}]}),
+        json!({"id":"cart.guest","from":"cart","to":"guest","why":"The shopper can leave the cart for the guest checkout without an account","acts":[{"kind":"navigate","role":"link","name":"Guest checkout"}]}),
+        json!({"id":"guest.submit","from":"guest","to":"done","why":"A guest places the order and sees it confirmed","intent":"The guest order is placed as shown, with no input to give","acts":[{"kind":"submit","role":"button","name":"Place guest order"}]}),
     ]);
     flow["paths"]["guest"] = json!(["cart.guest", "guest.submit"]);
     std::fs::write(

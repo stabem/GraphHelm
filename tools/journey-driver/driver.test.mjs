@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { judgeExpectations, viewportRect } from './judge.mjs';
 
 // #2028: the matched element's box, as fractions of the frame, clipped to it; none off-frame.
@@ -72,7 +75,7 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost.evil.test.example/cart', viewport: {width:1280,height:720}, allowOrigins: [] }, 'driver.host_refused'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://user:password@localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [] }, 'driver.host_refused'],
     // #398: `headed` is a boolean open field; true passes validation and reaches the browser
-    // load (no Playwright in this cwd), a non-boolean is refused before it.
+    // load (no Playwright in the bare project), a non-boolean is refused before it.
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true }, 'driver.observer_missing'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: 'yes' }, 'driver.protocol_invalid'],
     // #356: `survive` (a healing replay keeps its session at the broken edge) is boolean too.
@@ -109,8 +112,11 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     ['x'.repeat(65537), 'driver.frame_too_large'],
     ['{"protocol":', 'driver.protocol_invalid'],
   ];
+  // The `observer_missing` cases need a project where Playwright does not resolve; the test's own
+  // cwd is not one when a parent directory has a node_modules with it (#2038).
+  const bare = mkdtempSync(join(tmpdir(), 'gh-driver-bare-'));
   for (const [request, code] of cases) {
-    const child = spawn(process.execPath, [driver, '--project', process.cwd(), '--output-dir', process.cwd()], {
+    const child = spawn(process.execPath, [driver, '--project', bare, '--output-dir', bare], {
       env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, GRAPHHELM_SECRET_PASSWORD: 'canary' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

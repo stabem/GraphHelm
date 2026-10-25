@@ -554,6 +554,17 @@ fn confirm_commands(args: &JourneyPreviewArgs, project: &Path, flow: &Value) -> 
         .map_err(|_| failure("preview.confirm_unrecorded", "/confirm", 1))
 }
 
+/// #1784: the declared state this run seeds: `--state` when it is one the flow declares, else the
+/// flow's first declared state, or none for a flow that declares no `states`.
+fn state_of(args: &JourneyPreviewArgs, flow: &Value) -> Result<Option<String>> {
+    let declared = super::journey_flow::declared_states(flow);
+    match &args.state {
+        Some(state) if declared.contains(state) => Ok(Some(state.clone())),
+        Some(_) => Err(failure("preview.state_unknown", "/states", 2)),
+        None => Ok(declared.into_iter().next()),
+    }
+}
+
 /// [`start`] with the runner probe the reaper uses (a test supplies it).
 fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) -> Outcome {
     if args.run {
@@ -570,6 +581,10 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
     if let Err(failed) = confirm_commands(args, &project, &flow) {
         return answer(json!({}), Some(failed));
     }
+    let journey_state = match state_of(args, &flow) {
+        Ok(state) => state,
+        Err(failed) => return answer(json!({}), Some(failed)),
+    };
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
     let stored = reap_lost_from_with(&project, &dir, || read_state(&dir), &liveness);
     // The reaper probed the runner once and stored a dead one as failed, so a `running` it hands
@@ -637,6 +652,9 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
     }
     if let Some(validation_dir) = args.validation_dir.as_deref() {
         command.arg("--validation-dir").arg(validation_dir);
+        if let Some(state) = &journey_state {
+            command.args(["--state", state]);
+        }
     }
     if args.confirm {
         command.arg("--confirm");
@@ -815,6 +833,8 @@ fn failed_reason(code: &str) -> &'static str {
         "watch.app_down" => "watch.app_down",
         "watch.launch_failed" => "watch.launch_failed",
         "watch.launcher_invalid" => "watch.launcher_invalid",
+        // #1784: the launcher did not confirm the declared state it was asked to seed.
+        "watch.state_not_seeded" => "watch.state_not_seeded",
         "observer.setup_failed" => "observer.setup_failed",
         "observer.setup_timeout" => "observer.setup_timeout",
         // #1722: a stale copy keeps the closed reason list (#519); `detail.code` says which.
@@ -1035,6 +1055,8 @@ struct Run {
     flow_id: String,
     /// #1911: the parsed flow bytes equal the blob on the reviewed remote's `main`.
     reviewed: bool,
+    /// #1784: the declared state the launcher is asked to seed, if the flow declares states.
+    journey_state: Option<String>,
 }
 
 /// An approved flow asked to record into an execution on a Runtime with no sealed keyring: refused,
@@ -1175,6 +1197,10 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     // #1662 review: the runner does not re-confirm. The door recorded the owner's confirm before
     // spawning it, and `play` lets a draft's command run only when the owner store holds that
     // exact digest and argv, so a forged `--run --confirm` still holds.
+    let journey_state = match state_of(args, &flow) {
+        Ok(state) => state,
+        Err(failed) => return answer(json!({}), Some(failed)),
+    };
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
     let mut state = read_state(&dir).unwrap_or_else(|| json!({}));
     if state["digest"] != digest.as_str() || state["state"] != "running" {
@@ -1211,7 +1237,11 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         validation: args.validation_dir.is_some(),
         flow_id: args.id.clone(),
         reviewed,
+        journey_state,
     };
+    if let Some(seeded) = &run.journey_state {
+        run.state["journeyState"] = seeded.as_str().into();
+    }
     (run.viewport, run.declared) = declared_browser(&flow, json!({"width":WIDTH,"height":HEIGHT}));
     let views = if super::journey_backend::is_backend(&flow) {
         vec![View {
@@ -1521,10 +1551,12 @@ fn start_app(
     run: &mut Run,
     stopper: &std::sync::Arc<std::sync::Mutex<Option<LaunchedStop>>>,
 ) -> Result<Launched> {
+    let journey_state = run.journey_state.clone();
     launch(
         project,
         base,
         flow["id"].as_str().unwrap_or_default(),
+        journey_state.as_deref(),
         |stop| {
             run.state["launched"] = stop.record();
             super::atomic::atomic_write(
@@ -1925,6 +1957,10 @@ fn finalize_coverage(
         artifact["flow"] = run.flow_id.clone().into();
         artifact["path"] = path_name.into();
         artifact["execution"] = execution.into();
+        // #1784: one path is covered once per declared state; the state keeps them apart.
+        if let Some(state) = &run.journey_state {
+            artifact["state"] = state.as_str().into();
+        }
         let dir = run.dir.join("coverage").join(sha_of(path_name));
         std::fs::create_dir_all(&dir).ok()?;
         let mut file = std::fs::OpenOptions::new()
@@ -2423,6 +2459,7 @@ mod tests {
             validation: false,
             flow_id: String::new(),
             reviewed: false,
+            journey_state: None,
         };
         let mut played = Vec::new();
         each_view(&flow, &views_of(&json!({})), &mut run, |run, _, view| {
@@ -2731,6 +2768,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             keyring: None,
             key_id: None,
             validation_dir: None,
+            state: None,
             confirm_digest: None,
             token_file: None,
             owner: false,
@@ -3257,6 +3295,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 keyring: None,
                 key_id: None,
                 validation_dir: None,
+                state: None,
                 confirm_digest: None,
                 token_file: None,
                 owner: false,
@@ -3368,6 +3407,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             keyring: None,
             key_id: None,
             validation_dir: None,
+            state: None,
             confirm_digest: None,
             token_file: None,
             owner: false,
@@ -3572,6 +3612,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             keyring: Some("k".into()),
             key_id: Some("id".into()),
             validation_dir: None,
+            state: None,
             confirm_digest: None,
             token_file: None,
             owner: false,
@@ -3584,6 +3625,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let partial = JourneyPreviewArgs {
             key_id: None,
             validation_dir: None,
+            state: None,
             ..full
         };
         assert!(proof_args(&partial, &approved, project).is_none());
@@ -3593,6 +3635,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let no_execution = JourneyPreviewArgs {
             execution: None,
             validation_dir: None,
+            state: None,
             ..partial
         };
         assert!(!unsealed_proof(&no_execution, &approved));
@@ -3776,6 +3819,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             validation: false,
             flow_id: "checkout".to_owned(),
             reviewed: false,
+            journey_state: None,
         };
         let observer = super::record_pass(&run, project.path(), &digest, &commit).unwrap();
         assert_eq!(
@@ -3817,6 +3861,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 validation: false,
                 flow_id: String::new(),
                 reviewed: false,
+                journey_state: None,
             };
             run.save();
             let _ = super::play(

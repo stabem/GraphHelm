@@ -29,6 +29,26 @@ do not hold the sweep open for missing browser coverage. Sabotage reads them lik
 until the owner confirms, so a backend flow that relies on either reports that path as not
 completed.
 
+## Flows seen in several states
+
+A flow may declare the starting states its screens must be seen in, for example
+`states: [on_the_way, delivered]` (#1784). Validation then runs that flow once per state, in
+declared order, each with a fresh fixture and its own result tree, and starts the launcher with
+`GRAPHHELM_JOURNEY_STATE` set to the state (see the
+[launcher contract](../jpd/README.md)). Each path entry carries its `state`, and the flow entry lists
+`states: [{id, result, resultDir}]` with `result` one of:
+
+- `passed`: every declared path completed in that state.
+- `failed`: a path ran in that state and failed or drifted.
+- `unobserved`: the launcher did not confirm the state (`detail: watch.state_not_seeded`), or no
+  path reached it. It is a `failures[]` entry with reason `state_unobserved` and blocks the sweep;
+  it is never passed.
+
+A flow without `states` runs once, exactly as before, with the same canonical bytes and approval
+digest. Preview and watch seed the first declared state. When a state needs other expectations
+(for example a delivered item must be gone from the agenda), express it today as a separate flow
+whose `states` names that state alone; `states` changes what is seeded, not what is expected.
+
 ## Reading the report
 
 - `used`: a collected generated JavaScript function had a positive execution count. Its source

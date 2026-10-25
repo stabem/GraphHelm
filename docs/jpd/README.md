@@ -81,6 +81,12 @@ The app port is taken as ready as soon as it accepts a connection, so bind it on
 answers. When `up` fails, the tail of its stdout and stderr is kept in the validation report
 (`failures[].launchLog`: `{path, tail}`); `<dir>` itself is removed.
 
+**Environment.** `up` gets `GRAPHHELM_JOURNEY_FLOW` (the flow id) and, for a flow that declares
+`states` (#1784), `GRAPHHELM_JOURNEY_STATE`: the state to seed. Once seeded, the launcher writes
+that id to `<dir>/.graphhelm/state`; a launcher that cannot seed it writes nothing there, and the
+state is reported `unobserved` (`watch.state_not_seeded`), never passed. For a flow without
+`states`, `GRAPHHELM_JOURNEY_STATE` is unset and no confirmation is read.
+
 **Generated contracts.** `journey compile` writes `<id>.json` (and `<id>.<path>.json`) next to the
 YAML. Any other `*.json` in `.graphhelm/journeys/` (a hand-written or legacy contract) is never
 executed: validation lists it under `standaloneContracts` as `unsupported` with reason

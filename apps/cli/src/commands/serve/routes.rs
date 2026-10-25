@@ -2936,6 +2936,7 @@ pub(super) async fn start_journey_preview(
             key_id: sealing.as_ref().map(|keyring| keyring.key_id.clone()),
             execution,
             validation_dir: None,
+            state: None,
             confirm_digest,
             token_file: None,
             // #1662: this route takes the owner credential only, so it may confirm commands.
@@ -2964,6 +2965,7 @@ pub(super) async fn journey_preview(
             keyring: None,
             key_id: None,
             validation_dir: None,
+            state: None,
             confirm_digest: None,
             token_file: None,
             owner: false,

@@ -195,6 +195,17 @@ fn path_entry(flow: &str, path: &str, state: &str, collection: &str) -> Value {
     json!({"flow": flow, "path": path, "execution": state, "collection": collection,"negativeEvidenceEligible":false})
 }
 
+/// One played path: its flow, path and (#1784) declared state, empty for a flow without states.
+/// A path entry and its coverage artifact match only on all three.
+fn run_key(entry: &Value) -> Option<String> {
+    Some(format!(
+        "{}\u{0}{}\u{0}{}",
+        entry["flow"].as_str()?,
+        entry["path"].as_str()?,
+        entry["state"].as_str().unwrap_or_default()
+    ))
+}
+
 fn declared_path_names(flow: &Value) -> Vec<String> {
     if let Some(paths) = flow["paths"].as_object() {
         return paths.keys().cloned().collect();
@@ -432,52 +443,106 @@ pub(crate) fn run(repo: &Path) -> Outcome {
             flows_report.push(json!({"id":id,"status":"invalid"}));
             continue;
         }
-        let flow_dir = result_root.join(id);
-        if let Err(error) = std::fs::create_dir_all(&flow_dir) {
-            failures.push(json!({"flow":id,"reason":"validation_result_dir_failed","detail":error.to_string()}));
-            flows_report.push(json!({"id":id,"status":"failed"}));
-            continue;
-        }
-        let mut args = vec!["--json", "journey", "preview", id, "--run", "--project"];
-        let project_text = repo.to_string_lossy().to_string();
-        args.push(&project_text);
-        let validation_root_text = result_root.to_string_lossy().to_string();
-        args.extend(["--validation-dir", &validation_root_text]);
-        let execution = graphhelm_process::command(
-            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("graphhelm")),
-        )
-        .args(args)
-        .stdin(Stdio::null())
-        .output();
-        let reply = execution
-            .as_ref()
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| serde_json::from_slice::<Value>(&output.stdout).ok())
-            .unwrap_or(Value::Null);
-        let result = &reply["data"];
-        let mut successful = result["state"] == "ready" && result["result"] == "pass";
-        for path in declared_path_names(flow) {
-            let entry = &result["paths"][&path];
-            let state = entry["execution"].as_str().unwrap_or("not_run");
-            let collection = entry["collection"].as_str().unwrap_or("unavailable");
-            successful &= state == "completed";
-            paths.push(path_entry(id, &path, state, collection));
-        }
-        if !successful {
-            // The concrete cause stays the reason; a draft adds `flow_not_approved` beside it,
-            // never in its place, because a draft is never proof.
-            let mut reasons = vec!["execution_failed"];
-            if flow["status"] != "approved" {
-                reasons.push("flow_not_approved");
+        // #1784: a flow that declares states runs once per state, each in its own result tree
+        // (`<id>@<state>`: `@` is never in an id); one without states runs once, as before.
+        let declared_states = super::journey_flow::declared_states(flow);
+        let runs: Vec<Option<&str>> = if declared_states.is_empty() {
+            vec![None]
+        } else {
+            declared_states
+                .iter()
+                .map(|state| Some(state.as_str()))
+                .collect()
+        };
+        let mut flow_successful = true;
+        let mut state_reports = Vec::new();
+        let mut flow_dir = result_root.join(id);
+        for journey_state in runs {
+            let validation_root = match journey_state {
+                Some(state) => result_root.join(format!("{id}@{state}")),
+                None => result_root.clone(),
+            };
+            flow_dir = validation_root.join(id);
+            if let Err(error) = std::fs::create_dir_all(&flow_dir) {
+                failures.push(json!({"flow":id,"state":journey_state,"reason":"validation_result_dir_failed","detail":error.to_string()}));
+                flow_successful = false;
+                state_reports.push(json!({"id":journey_state,"result":"unobserved"}));
+                continue;
             }
-            let mut failure = json!({"flow":id,"reason":"execution_failed","reasons":reasons,"status":flow["status"],"result":result["result"],"detail":result["reason"]});
-            if !result["launchLog"].is_null() {
-                failure["launchLog"] = result["launchLog"].clone();
+            let mut args = vec!["--json", "journey", "preview", id, "--run", "--project"];
+            let project_text = repo.to_string_lossy().to_string();
+            args.push(&project_text);
+            let validation_root_text = validation_root.to_string_lossy().to_string();
+            args.extend(["--validation-dir", &validation_root_text]);
+            if let Some(state) = journey_state {
+                args.extend(["--state", state]);
             }
-            failures.push(failure);
+            let execution = graphhelm_process::command(
+                std::env::current_exe().unwrap_or_else(|_| PathBuf::from("graphhelm")),
+            )
+            .args(args)
+            .stdin(Stdio::null())
+            .output();
+            let reply = execution
+                .as_ref()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| serde_json::from_slice::<Value>(&output.stdout).ok())
+                .unwrap_or(Value::Null);
+            let result = &reply["data"];
+            let mut successful = result["state"] == "ready" && result["result"] == "pass";
+            let mut reached = false;
+            for path in declared_path_names(flow) {
+                let entry = &result["paths"][&path];
+                let state = entry["execution"].as_str().unwrap_or("not_run");
+                let collection = entry["collection"].as_str().unwrap_or("unavailable");
+                successful &= state == "completed";
+                reached |= state != "not_run";
+                let mut entry = path_entry(id, &path, state, collection);
+                if let Some(journey_state) = journey_state {
+                    entry["state"] = journey_state.into();
+                }
+                paths.push(entry);
+            }
+            flow_successful &= successful;
+            // A declared state the launcher did not confirm, or that no path reached, was never
+            // seen: it is unobserved, never passed and never a product failure of that state.
+            let unobserved = journey_state.is_some()
+                && (result["reason"] == "watch.state_not_seeded" || !reached);
+            if let Some(state) = journey_state {
+                let verdict = if successful {
+                    "passed"
+                } else if unobserved {
+                    "unobserved"
+                } else {
+                    "failed"
+                };
+                state_reports.push(json!({"id":state,"result":verdict,"resultDir":flow_dir}));
+            }
+            if unobserved {
+                failures.push(json!({"flow":id,"state":journey_state,"reason":"state_unobserved","reasons":["state_unobserved"],"detail":result["reason"]}));
+            } else if !successful {
+                // The concrete cause stays the reason; a draft adds `flow_not_approved` beside it,
+                // never in its place, because a draft is never proof.
+                let mut reasons = vec!["execution_failed"];
+                if flow["status"] != "approved" {
+                    reasons.push("flow_not_approved");
+                }
+                let mut failure = json!({"flow":id,"reason":"execution_failed","reasons":reasons,"status":flow["status"],"result":result["result"],"detail":result["reason"]});
+                if let Some(state) = journey_state {
+                    failure["state"] = state.into();
+                }
+                if !result["launchLog"].is_null() {
+                    failure["launchLog"] = result["launchLog"].clone();
+                }
+                failures.push(failure);
+            }
         }
-        flows_report.push(json!({"id":id,"status":if successful {"completed"} else {"failed"},"resultDir":flow_dir}));
+        let mut report = json!({"id":id,"status":if flow_successful {"completed"} else {"failed"},"resultDir":flow_dir});
+        if !declared_states.is_empty() {
+            report["states"] = state_reports.into();
+        }
+        flows_report.push(report);
     }
     let after_result = inventory(&repo);
     let after_error = after_result.as_ref().err().cloned();
@@ -495,38 +560,19 @@ pub(crate) fn run(repo: &Path) -> Outcome {
     let expected_paths: BTreeSet<String> = paths
         .iter()
         .filter(|path| path["collection"] != "not_applicable")
-        .filter_map(|path| {
-            Some(format!(
-                "{}\u{0}{}",
-                path["flow"].as_str()?,
-                path["path"].as_str()?
-            ))
-        })
+        .filter_map(run_key)
         .collect();
     let collected_paths: BTreeSet<String> = artifacts
         .iter()
         .filter(|artifact| complete_artifact(artifact))
-        .filter_map(|artifact| {
-            Some(format!(
-                "{}\u{0}{}",
-                artifact["flow"].as_str()?,
-                artifact["path"].as_str()?
-            ))
-        })
+        .filter_map(run_key)
         .collect();
     for path in &mut paths {
-        let key = format!(
-            "{}\u{0}{}",
-            path["flow"].as_str().unwrap_or_default(),
-            path["path"].as_str().unwrap_or_default()
-        );
-        if let Some(artifact) = artifacts.iter().find(|artifact| {
-            format!(
-                "{}\u{0}{}",
-                artifact["flow"].as_str().unwrap_or_default(),
-                artifact["path"].as_str().unwrap_or_default()
-            ) == key
-        }) {
+        let key = run_key(path);
+        if let Some(artifact) = artifacts
+            .iter()
+            .find(|artifact| key.is_some() && run_key(artifact) == key)
+        {
             path["negativeEvidenceEligible"] = complete_artifact(artifact).into();
             path["collection"] = if complete_artifact(artifact) {
                 "captured"
@@ -667,8 +713,12 @@ pub(crate) fn run(repo: &Path) -> Outcome {
         if let Some(detail) = failure["detail"].as_str() {
             why.insert(1, detail);
         }
+        let state = failure["state"]
+            .as_str()
+            .map(|state| format!(" state {state}"))
+            .unwrap_or_default();
         blocking.push(format!(
-            "flow {}: {}",
+            "flow {}{state}: {}",
             failure["flow"].as_str().unwrap_or_default(),
             why.join(", ")
         ));

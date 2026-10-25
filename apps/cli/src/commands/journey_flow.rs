@@ -168,6 +168,18 @@ pub(super) fn local_base(base: &str) -> bool {
                 && (host.ends_with(".localhost") || host.ends_with(".test"))))
 }
 
+/// #1784: the starting states a flow's screens must be seen in, in declared order. Empty: the flow
+/// declares none and runs once, in whatever state the launcher seeds.
+pub(crate) fn declared_states(flow: &Value) -> Vec<String> {
+    flow["states"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
 /// #1782: an instant the driver can install as the page's now.
 fn clock_is_valid(clock: &str) -> bool {
     chrono::DateTime::parse_from_rfc3339(clock).is_ok_and(|instant| {
@@ -2263,6 +2275,7 @@ fn canonical(value: &Value, approval_projection: bool) -> String {
         "viewports",
         "storage",
         "clock",
+        "states",
     ] {
         // #1296: `name` and `feature` are labels: kept in the file's canonical bytes, never in
         // what the owner approves.
@@ -2744,6 +2757,66 @@ viewports: [web]
                 .iter()
                 .any(|f| f.code == "flow.viewport_and_viewports" && f.pointer == "/viewports")
         );
+    }
+
+    /// #1784: a flow names the starting states its screens must be seen in. Defects named: the
+    /// writer drops `states` (so `--fmt` silently returns the flow to one state) or the approval
+    /// ignores it, a malformed list is accepted, or adding the field moves the bytes or digest of
+    /// flows that never use it. Cost: in memory only.
+    #[test]
+    fn a_flow_states_list_is_written_approved_and_leaves_stateless_flows_alone() {
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let schemas = flow_schemas().unwrap();
+        let plain_bytes = canonical(&plain, false);
+        assert!(!plain_bytes.contains("states"), "{plain_bytes}");
+        assert_eq!(
+            approval_digest(&plain),
+            "sha256:aace853dc94a68d337b4485ce74cc878b13f5d291d2dff3e40d2ec5004fc7072",
+            "a flow without states keeps the digest origin/main computes"
+        );
+        assert!(declared_states(&plain).is_empty());
+        let mut with = plain.clone();
+        with["states"] = json!(["on_the_way", "delivered"]);
+        assert!(
+            schemas
+                .validate(FLOW_SCHEMA_ID, &with, "journey-flow")
+                .is_empty()
+        );
+        let written = canonical(&with, false);
+        assert_eq!(
+            written,
+            plain_bytes.replacen(
+                "\nscreens:",
+                "\nstates: [on_the_way, delivered]\nscreens:",
+                1
+            ),
+            "only the states line is added"
+        );
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(declared_states(&reread), ["on_the_way", "delivered"]);
+        assert_ne!(approval_digest(&with), approval_digest(&plain));
+        let mut reordered = with.clone();
+        reordered["states"] = json!(["delivered", "on_the_way"]);
+        assert_ne!(approval_digest(&reordered), approval_digest(&with));
+        for shape in [
+            json!([]),
+            json!(["Delivered"]),
+            json!(["a", "a"]),
+            json!("delivered"),
+            json!(["a..b"]),
+        ] {
+            let mut bad = plain.clone();
+            bad["states"] = shape.clone();
+            assert!(
+                !schemas
+                    .validate(FLOW_SCHEMA_ID, &bad, "journey-flow")
+                    .is_empty(),
+                "{shape}"
+            );
+        }
     }
 
     /// #1782: a flow's `clock` is the instant its browser runs see as now. Defects named: the

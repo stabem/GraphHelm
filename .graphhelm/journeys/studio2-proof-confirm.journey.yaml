@@ -1,9 +1,9 @@
 schema: graphhelm.journey-flow/1
 id: studio2-proof-confirm
-title: Confirm a draft's commands in Proof
-name: Confirm a draft's commands
+title: Run a draft's commands only once main has reviewed it
+name: Draft commands run only once reviewed
 feature: Studio
-purpose: "A draft whose step runs a command waits for the owner: its card's Run shows Run these commands? with the exact command and digest and steps that wait for your confirmation; Confirm and run plays it and it passes, with each command step showing its command, exit code and stdout in a terminal and Approve offered (#1912)."
+purpose: "A draft whose flow file is the one main reviewed runs its command step with no prompt and passes, each command step showing its command, exit code and stdout in a terminal and Approve offered. A draft edited since main reviewed it shows Waits for review and runs nothing (#1911, #1912)."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -12,42 +12,50 @@ secrets: []
 risks: [critical_ux, irreversible_effect]
 viewports: [web, mobile]
 screens:
-  - id: held
-    title: The run waits for the owner's confirmation of the shown commands
-    url: /?session=studio-fixture&run=demo&view=proof&journey=cli-hello
+  - id: edited
+    title: The draft edited since main reviewed it is selected
+    url: /?session=studio-fixture&run=demo&view=proof&journey=cli-edited
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Run these commands?, text: node --version, because: "the fixture draft's only command step runs node --version, and the confirmation shows that exact command"}, {role: status, name: Waits for your confirmation}, {role: listitem, name: Step 2, text: waits for your confirmation, because: "step 2 is the command step, which must not run before the owner confirms"}, {role: button, name: Confirm and run}]
+    expect: [{role: list, name: Journeys, because: the Proof view lists the drafts the owner can run}, {role: img, name: "Print the Node banner: Terminal journey", because: "the edited draft's only steps are commands, so its card carries the Terminal journey badge"}, {role: button, name: Run Print the Node banner, because: the owner presses Run on the card to play the draft}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
   - id: journeys
-    title: The draft with a command step is selected
+    title: The reviewed draft with a command step is selected
     url: /?session=studio-fixture&run=demo&view=proof&journey=cli-hello
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: list, name: Journeys}, {role: img, name: "Print the Node version: Terminal journey"}, {role: button, name: Run Print the Node version}]
+    expect: [{role: list, name: Journeys, because: the Proof view lists the drafts the owner can run}, {role: img, name: "Print the Node version: Terminal journey", because: "the reviewed draft's only steps are commands, so its card carries the Terminal journey badge"}, {role: button, name: Run Print the Node version, because: the owner presses Run on the card to play the draft}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
   - id: passed
-    title: The confirmed run passes
+    title: The reviewed draft ran its command and passed
     url: /?session=studio-fixture&run=demo&view=proof&journey=cli-hello
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Passed}, {role: listitem, name: Step 2, text: passed, because: the command step ran after the confirmation and node printed its version}, {role: listitem, name: Step 1, text: precondition, because: "step 1 is only the shell the commands start from, so it is a precondition, not a step that ran"}, {role: region, name: Terminal, text: node --version, because: the terminal shows the command the step ran}, {role: status, name: Exit code 0}, {role: region, name: Terminal, text: v2, because: "node --version prints the version starting with v, and current Node is v2x"}, {role: img, name: Terminal journey}, {role: button, name: Approve}]
+    expect: [{role: status, name: Passed, because: "main holds this exact flow, so the run needed no confirmation and ended in a pass"}, {role: listitem, name: Step 2, text: passed, because: "step 2 is the command step, and it ran straight away"}, {role: listitem, name: Step 1, text: precondition, because: "step 1 is only the shell the commands start from, so it is a precondition, not a step that ran"}, {role: region, name: Terminal, text: node --version, because: the terminal shows the command the step ran}, {role: status, name: Exit code 0, because: node --version succeeds}, {role: region, name: Terminal, text: v2, because: "node --version prints the version starting with v, and current Node is v2x"}, {role: img, name: Terminal journey, because: the run header names the kind of journey it played}, {role: button, name: Approve, because: a passing preview lets the owner approve the draft}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/run-all.ts]
+  - id: waits
+    title: The edited draft waits for review and ran nothing
+    url: /?session=studio-fixture&run=demo&view=proof&journey=cli-edited
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: status, name: Waits for review, because: "the flow differs from the one main reviewed, so the run stopped before its command"}, {role: listitem, name: Step 2, text: waits for review, because: "step 2 is the command step, which must not run until main has reviewed this flow"}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
 edges:
-  - id: held.passed
-    from: held
-    to: passed
-    why: "Confirm and run plays the command the owner saw, and the step passes with its output shown."
+  - id: edited.waits
+    from: edited
+    to: waits
+    why: "Run on the edited draft does not run its command: it says it waits for review, and nothing is asked of the owner."
     acts:
-      - {kind: activate, role: button, name: Confirm and run}
-      - {kind: wait_for, role: status, name: Passed}
-  - id: journeys.held
+      - {kind: activate, role: button, name: Run Print the Node banner}
+      - {kind: wait_for, role: status, name: Waits for review}
+  - id: journeys.passed
     from: journeys
-    to: held
-    why: "Run on a draft with a command does not run it yet: it shows the exact command and waits for the owner."
+    to: passed
+    why: "Run on the reviewed draft plays its command with no prompt, and the step passes with its output shown."
     acts:
       - {kind: activate, role: button, name: Run Print the Node version}
-      - {kind: wait_for, role: region, name: Run these commands?}
+      - {kind: wait_for, role: status, name: Passed}
 paths:
-  main: [journeys.held, held.passed]
+  main: [journeys.passed]
+  edited: [edited.waits]
 drift: []

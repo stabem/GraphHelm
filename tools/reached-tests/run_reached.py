@@ -1038,6 +1038,10 @@ def _summary(report: dict[str, Any], output: Path) -> str:
         lines.append(f"  FAILED step {entry['index']}: {' '.join(entry['argv'])} (exit {entry.get('returncode')}) -> {entry.get('log')}")
     for entry in unobserved:
         lines.append(f"  UNOBSERVED step {entry['index']}: {entry.get('error')} -> {entry.get('log')}")
+    for item in report.get("skipped", []):
+        steps = report.get("plan", {}).get("steps", [])
+        argv = ' '.join(steps[item["index"]]["argv"]) if item["index"] < len(steps) else "?"
+        lines.append(f"  UNOBSERVED step {item['index']}: {item['reason']}: {argv}")
     for index in report.get("pending", []):
         steps = report.get("plan", {}).get("steps", [])
         argv = ' '.join(steps[index]["argv"]) if index < len(steps) else "?"
@@ -1125,11 +1129,13 @@ def run(args: argparse.Namespace) -> int:
                 )
                 raise RuntimeError(f"selector returned unsupported targets; no steps executed: {reasons}")
             browser_steps = [i for i, step in enumerate(steps) if step["observer"] == "browser"]
-            skip_browser = browser_steps if not getattr(args, "include_browser", False) else []
-            report["skipped"] = [{"index": index, "reason": "no observer"} for index in skip_browser]
-            if browser_steps and not _browser_toolchain_ready():
-                if getattr(args, "include_browser", False):
-                    raise RuntimeError("--include-browser requires GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT with local @playwright/test")
+            if browser_steps and not _browser_toolchain_ready() and getattr(args, "include_browser", False):
+                raise RuntimeError("--include-browser requires GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT with local @playwright/test")
+            # #2033: a browser step the change reaches runs by default when Playwright is present; when it is
+            # absent the step is reported unobserved (OBSERVER_MISSING), never passed.
+            skip_browser = browser_steps if browser_steps and not _browser_toolchain_ready() else []
+            report["skipped"] = [{"index": index, "reason": "OBSERVER_MISSING: GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT"}
+                                 for index in skip_browser]
             for index in skip_browser:
                 report["pending"].remove(index)
             child_env = os.environ.copy()
@@ -1415,7 +1421,7 @@ def run(args: argparse.Namespace) -> int:
                     break
             else:
                 if report["status"] != "blocked":
-                    unobserved = any(e.get("unobserved") for e in report["completed"])
+                    unobserved = any(e.get("unobserved") for e in report["completed"]) or bool(report.get("skipped"))
                     report["status"] = ("failed" if red else "incomplete" if unobserved or report["pending"]
                                         else "passed")
             if red:

@@ -562,6 +562,31 @@ class Reach(unittest.TestCase):
         self.assertNotIn(rt.BROWSER_OBSERVERS, tools)
         self.assertIn("-- --ignored journey_replay_browser::", rt.BROWSER_OBSERVERS)
 
+    def test_a_journey_driver_change_reaches_the_browser_test_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            tool = repo / "tools" / "journey-driver"
+            tool.mkdir(parents=True)
+            for name in ("driver.mjs", "driver.test.mjs", "driver.browser.test.mjs"):
+                (tool / name).write_text("", encoding="utf-8")
+            *_, tools, _, _ = reach("tools/journey-driver/driver.mjs", repo=repo)
+            self.assertTrue(any("tools/journey-driver/driver.browser.test.mjs" in t for t in tools), tools)
+
+    def test_a_journey_driver_change_selects_the_browser_test_file_as_a_browser_step(self):
+        # #2033: PR #2031 broke driver.browser.test.mjs and a green reached run never ran it.
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            tool = repo / "tools" / "journey-driver"
+            tool.mkdir(parents=True)
+            for name in ("driver.test.mjs", "driver.browser.test.mjs"):
+                (tool / name).write_text("", encoding="utf-8")
+            tools = ["node --test tools/journey-driver/driver.browser.test.mjs tools/journey-driver/driver.test.mjs"]
+            records = rt.steps(set(), set(), [], tools, [], repo=repo)
+            self.assertIn({"argv": ["node", "--test", "tools/journey-driver/driver.test.mjs"],
+                           "cwd": ".", "slot": False}, records)
+            self.assertIn({"argv": ["node", "--test", "tools/journey-driver/driver.browser.test.mjs"],
+                           "cwd": ".", "slot": False, "observer": "browser"}, records)
+
     def test_rust_package_and_workspace_guard_commands_bound_test_parallelism(self):
         commands = rt.commands({"graphhelm-cli"}, set(), [])
         self.assertIn("cargo +1.97.1 test --locked -p graphhelm-cli -- --test-threads=2", commands)

@@ -273,9 +273,10 @@ ode_modules`) can be a junction into the
   runner's `--jobs` build jobs (six unless the lane passes another) and two test threads. Fmt, Python, Node, Studio checks and standalone journey tools
   run outside the Cargo slot, serially. Existing root target rules remain authoritative. The
   runner does not install dependencies, clean targets, bypass the queue or add holders.
-  Reached browser observers require `--include-browser` and an installed local toolchain named
-  by `GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT`. Without that explicit opt-in the report is incomplete
-  and lists pending checks; it does not silently skip them or start browsers. Their Cargo test
+  Reached browser observers run by default when `GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT` names an
+  installed local toolchain with `@playwright/test` (#2033). Without it they do not start browsers:
+  the report lists them as skipped with `OBSERVER_MISSING`, shows them UNOBSERVED and stays
+  `incomplete`, never `passed`. `--include-browser` errors when the toolchain is missing. Their Cargo test
   commands retain the slot and thread limits; standalone preview commands stay outside it.
 
   The default 900-second budget (`--budget-seconds`; 180 until #1459, which ended most first runs after one step) starts before planning and includes waiting. The report lists

@@ -132,8 +132,13 @@ preflight checks free disk (10 GB with Cargo steps on the slot root and `CARGO_T
 `CARGO_TARGET_DIR`, configured tool paths that do not exist, and the git identity; a problem stops
 the run as `blocked` (`--skip-preflight` records it and goes on). Stdout is a short summary
 (passed/reused, failed with log path, pending, report path); `--json` prints the full report.
-The report's `measure` block records reused steps and the seconds they saved. Reached browser observers additionally require
-`--include-browser` and a configured local observer toolchain; otherwise the report stays incomplete.
+The report's `measure` block records reused steps and the seconds they saved. Reached browser observers (a
+`tools/<tool>/**` change selects its `*.browser.test.mjs`, plus the Cargo `--ignored` browser cells)
+run by default when `GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT` names a directory with `@playwright/test`
+(#2033); without it they are not run, the report lists them as skipped with `OBSERVER_MISSING`, the
+summary shows them UNOBSERVED and the run is `incomplete`, never `passed`. `--include-browser` still
+errors when the toolchain is missing. With the variable set, driver and replay diffs take longer,
+because those browser cells now run too.
 Broad audits and all-journey coverage remain explicit work,
 not mandatory feedback for every edit.
 

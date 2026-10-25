@@ -46,6 +46,7 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 TOOLCHAIN = "+1.97.1"
 CLI, CLI_BIN = "graphhelm-cli", "graphhelm"
 TEST_THREADS = "-- --test-threads=2"
+EXAMPLE_JOURNEY_CHECK = "graphhelm --json journey validate --all --project "
 GUARD = f"cargo {TOOLCHAIN} test --locked -p graphhelm-protocols --test authored_strings_across_the_workspace {TEST_THREADS}"
 # Files some tests read at run time (not embedded, so the include scan cannot see them): a changed
 # path under the prefix reaches these test files, as (package, test file stem).
@@ -679,6 +680,10 @@ def reach(changed, packages, embedded, repo=None):
             if root is not None and (root / STUDIO_START_SMOKE).is_file():
                 tools.add(f"python -m unittest {STUDIO_START_SMOKE}")
             continue
+        project, marker, flow = path.partition('/.graphhelm/journeys/')
+        if project.startswith("examples/") and marker and '/' not in flow and flow.endswith(('.journey.yaml', '.json')):
+            tools.add(EXAMPLE_JOURNEY_CHECK + json.dumps(project, ensure_ascii=False))
+            hit = True
         for prefix, runtime_readers in RUNTIME_READERS.items():
             if path.startswith(prefix):
                 single |= {t for t in (target_of(packages, pkg, stem) for pkg, stem in runtime_readers) if t}
@@ -1192,6 +1197,12 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
             out.append({"argv": BROWSER_ARGV[:], "cwd": ".", "slot": True, "observer": "browser"})
         elif tool == "graphhelm --json journey validate --all":
             out.append({"argv": ["graphhelm", "--json", "journey", "validate", "--all"], "cwd": ".", "slot": False})
+        elif tool.startswith(EXAMPLE_JOURNEY_CHECK):
+            project = json.loads(tool[len(EXAMPLE_JOURNEY_CHECK):])
+            if not isinstance(project, str) or not project.startswith('examples/'):
+                raise ValueError(f"invalid example journey project: {tool}")
+            out.append({"argv": ["graphhelm", "--json", "journey", "validate", "--all", '--project', project],
+                        "cwd": ".", "slot": False})
         elif tool == LAUNCHER_TESTS:
             out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", CLI, "--bin", "graphhelm",
                                   *TEST_THREADS.split(), "commands::studio::tests::the_launcher_"],

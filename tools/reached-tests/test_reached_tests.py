@@ -407,6 +407,22 @@ class Reach(unittest.TestCase):
         self.assertIn(("graphhelm-cli", "journeys", "journey_scope_guard"), single)
         self.assertIn("graphhelm --json journey validate --all", tools)
 
+    def test_example_project_journeys_have_their_own_offline_validator(self):
+        for project in ('examples/jpd-quickstart', 'examples/a project with spaces'):
+            with self.subTest(project=project):
+                flow = project + '/.graphhelm/journeys/example.journey.yaml'
+                whole, single, studio, tools, validate, other = rt.reach([flow], [], {})
+                self.assertEqual(other, [])
+                self.assertEqual(rt.steps(whole, single, studio, tools, validate), [
+                    {'argv': ['graphhelm', '--json', 'journey', 'validate', '--all', '--project', project],
+                     'cwd': '.', 'slot': False}])
+        for unsupported in ('fixtures/unobserved.journey.yaml',
+                            'examples/jpd-quickstart/.graphhelm/journeys/nested/broken.journey.yaml',
+                            'examples/jpd-quickstart/.graphhelm/journeys/nested/broken.json'):
+            with self.subTest(unsupported=unsupported):
+                *_, other = rt.reach([unsupported], [], {})
+                self.assertEqual(other, [unsupported])
+
     def test_a_studio_change_runs_its_whole_vitest_and_tsc(self):
         # #1818, #1808: the Studio has no related-test map; any change under apps/studio runs its whole
         # suite and tsc in its own folder.

@@ -478,6 +478,52 @@ pub(super) fn prompt(
     ))
 }
 
+/// #2043: what the draft says each step proves and why each check holds, built only from what
+/// the explorer observed (the acts it ran, the screen they led to, the elements the driver found
+/// there), never from model prose. Each sentence opens with `PROPOSED`, so whoever reviews the
+/// draft knows to confirm or rewrite it before approval.
+const PROPOSED: &str = "Proposed by the explorer, to confirm:";
+
+fn bounded(text: String) -> String {
+    text.chars().take(512).collect()
+}
+
+fn proposed_why(acts: &[Value], to_title: &str, seen: &[Value]) -> String {
+    let done: Vec<String> = acts
+        .iter()
+        .map(|act| {
+            format!(
+                "{} the {} \"{}\"",
+                act["kind"].as_str().unwrap_or("act"),
+                act["role"].as_str().unwrap_or("element"),
+                act["name"].as_str().unwrap_or("")
+            )
+        })
+        .collect();
+    let landmark = seen
+        .first()
+        .map(|e| {
+            format!(
+                ", where the {} \"{}\" is visible",
+                e["role"].as_str().unwrap_or("element"),
+                e["name"].as_str().unwrap_or("")
+            )
+        })
+        .unwrap_or_default();
+    bounded(format!(
+        "{PROPOSED} after the user does {}, the \"{to_title}\" screen appears{landmark}",
+        done.join(", then ")
+    ))
+}
+
+fn proposed_because(expect: &Value) -> String {
+    bounded(format!(
+        "{PROPOSED} the explorer saw exactly one visible {} \"{}\" when it first reached this screen",
+        expect["role"].as_str().unwrap_or("element"),
+        expect["name"].as_str().unwrap_or("")
+    ))
+}
+
 fn publish_new(path: &Path, bytes: &[u8]) -> Result<()> {
     if std::fs::symlink_metadata(path).is_ok() {
         return Err(refused("explore.id_conflict", "/publication", 2));
@@ -686,6 +732,17 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
                 json!({"expect":expectations}),
                 "/screens/expect",
             ));
+            // The driver just confirmed these exact role/name pairs; the draft says so.
+            let expectations: Vec<Value> = expectations
+                .iter()
+                .map(|e| {
+                    let mut e = e.clone();
+                    e["because"] = proposed_because(&e).into();
+                    e
+                })
+                .collect();
+            let title = screen["title"].as_str().unwrap_or(id.as_str()).to_owned();
+            let why = proposed_why(&pending, &title, &expectations);
             flow["screens"].as_array_mut().unwrap().push(json!({"id":id,"title":screen["title"],"url":pattern,"state":"stable","expect":expectations,"scope":"unknown"}));
             cache["screens"][&id] =
                 json!({"fingerprint":snapshot["fingerprint"],"controls":snapshot["controls"]});
@@ -704,7 +761,7 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
                 flow["edges"]
                     .as_array_mut()
                     .unwrap()
-                    .push(json!({"id":edge_id,"from":source,"to":id,"acts":pending}));
+                    .push(json!({"id":edge_id,"from":source,"to":id,"why":why,"acts":pending}));
                 flow["paths"]["main"]
                     .as_array_mut()
                     .unwrap()

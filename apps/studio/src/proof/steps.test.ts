@@ -2,7 +2,7 @@ import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow, JourneyRun } from "../runtime/client";
-import { becauseOf, CHANGED, countSteps, earlierVersion, failsOnlyOn, isHeld, isWaitingReview, statusText, journeyScore, journeySteps, lastRunChip, pastAsRun, preparingStatus, readableName, reasonSentence } from "./steps";
+import { becauseOf, CHANGED, checkMarks, countSteps, earlierVersion, failsOnlyOn, isHeld, isWaitingReview, statusText, journeyScore, journeySteps, lastRunChip, pastAsRun, preparingStatus, readableName, reasonSentence } from "./steps";
 
 const flow: JourneyFlow = {
   id: "buy",
@@ -38,6 +38,33 @@ describe("journey steps", () => {
 });
 
 // #1777: a Run proves web and mobile; each step shows both, and a mobile-only break is named.
+describe("a box on what the step checked (#2028)", () => {
+  const rect = { x: 0.1, y: 0.25, w: 0.5, h: 0.1 };
+  const run = (item: Record<string, unknown>): JourneyRun => ({ state: "ready", screens: { list: { frame: true, width: 1280, height: 800, result: "pass" }, item } } as unknown as JourneyRun);
+  const checked = (extra: Record<string, unknown> = {}) => ({ frame: true, width: 1280, height: 800, result: "pass", checks: [{ role: "heading", name: "Sofa", seen: true, closest: null, rect }], ...extra });
+
+  it("places the observer's rect on a cover-top tile and on a contained large frame", () => {
+    const step = journeySteps(flow, run(checked()))[1]!;
+    expect(step.frameSize).toEqual({ width: 1280, height: 800 });
+    // Cover on a wider tile (16:9 vs 16:10): scaled to the tile's width, cut at the bottom.
+    const [thumb] = checkMarks(step, 1694 / 946);
+    expect(thumb!.left).toBe(10);
+    expect(thumb!.width).toBe(50);
+    expect(thumb!.top).toBeCloseTo(25 * (1694 / 946) / 1.6, 1);
+    // Contain in a frame of the frame's own shape: the rect as it is.
+    expect(checkMarks(step, 1.6, "contain")).toEqual([{ left: 10, top: 25, width: 50, height: 10 }]);
+  });
+
+  it("draws no box without a measured rect: no rect, an unseen check, no frame size, a bad rect", () => {
+    const none = (item: Record<string, unknown>) => checkMarks(journeySteps(flow, run(item))[1]!, 1.6);
+    expect(none(checked({ checks: [{ role: "heading", name: "Sofa", seen: true, closest: null }] }))).toEqual([]);
+    expect(none(checked({ checks: [{ role: "heading", name: "Sofa", seen: false, closest: null, rect }] }))).toEqual([]);
+    expect(none(checked({ width: undefined, height: undefined }))).toEqual([]);
+    expect(none(checked({ frame: false }))).toEqual([]);
+    expect(none(checked({ checks: [{ role: "heading", name: "Sofa", seen: true, closest: null, rect: { x: 2, y: 0, w: 0.1, h: 0.1 } }] }))).toEqual([]);
+  });
+});
+
 describe("steps at web and mobile", () => {
   it("reads each viewport's own result and names a step that fails only on mobile", () => {
     const steps = journeySteps(flow, {

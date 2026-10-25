@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 
 import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
-import { CompareFrame } from "./CompareFrame";
+import { CheckMarks, CompareFrame } from "./CompareFrame";
+
+/** #2028: the step thumbnail's shape (`.step-thumb` `aspect-ratio`), for placing its check boxes. */
+const THUMB_ASPECT = 1694 / 946;
 import { decisionOf, offersDecision, rejectNote } from "./decision";
 import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./send-fix";
 import { askedWhen } from "../lanes/asked";
@@ -408,11 +411,11 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           {steps.map((step) => (
             <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${step.status.replace(" ", "-")}${stale ? " stale" : ""}`}>
               <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
-                <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
+                <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <><img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /><CheckMarks step={step} aspect={THUMB_ASPECT} /></> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
                 <span className="step-text">
                   <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{statusText(step.status, run)}</span></span>
                   {stale && <span className="stale-mark" title="From the earlier version of this journey">stale</span>}
-                  <span className="step-label">{step.label}</span>
+                  <span className="step-label" title={step.label}>{step.label}</span>
                   {viewportLine(step)}
                 </span>
               </button>

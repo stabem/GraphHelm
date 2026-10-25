@@ -409,7 +409,7 @@ the run and names, deterministically, each open item's broken stage
 | Stage | When | Who it starts |
 |---|---|---|
 | `request_unclaimed` | a request with no linked issue and no live hand-off, older than `grace.requestSeconds` (900) | author |
-| `author_silent` | a slice before its PR whose lane is silent and no live lane holds the issue | author |
+| `author_silent` | a slice before its PR whose lane is silent and no live lane holds the issue; a slice with a recorded PR, an assigned reviewer or any verdict never reads it (#2027) | author |
 | `review_unassigned` | a recorded PR with no reviewer, idle `grace.reviewSeconds` (600) | reviewer |
 | `reviewer_silent` | the assigned reviewer is silent | reviewer |
 | `block_unanswered` | a BLOCK whose author lane is silent | author |
@@ -419,10 +419,13 @@ For each it appends an owner `operator_note` "auto: starting <role> for <PR #N> 
 `auto-<role>-pr-<N>` / `-issue-<N>` / `-req-<digest>` (id derived from item, stage and attempt, so
 it is done once), then runs `launcher` (argv, placeholders `{lane}`, `{role}`, `{brief}` only)
 hidden, with the role prompt and a JSON brief on stdin. At most `maxConcurrent` (2) agents run;
-an attempt is retried after a failure or `retrySeconds` (1800); after `maxAttempts` (3) the actor
-`graphhelm-autopilot` asks `studio-operator` once, which the Studio lists under Needs action. A
-launcher not found, or an exit code in `pauseExitCodes` (subscription exhausted), pauses it until
-restart with one such note. The agent's environment is an allow list (#2019), not a deny list:
+the next attempt starts `retrySeconds` (1800) after the last, a failed one included (#2027); after
+`maxAttempts` (3) the actor `graphhelm-autopilot` asks `studio-operator` once, which the Studio
+lists under Needs action. A launcher not found, an exit code in `pauseExitCodes` (subscription
+exhausted), or a login failure in the tail of its log (`failed to authenticate`, `oauth session
+expired`, `not logged in`, `please run /login`, `invalid api key`, plus any
+`pauseOutputPatterns`, case-insensitive) pauses it until restart with one such note; a login
+failure's note asks the owner to log the launcher in. The agent's environment is an allow list (#2019), not a deny list:
 only `PATH`, `PATHEXT`, `OS`, `SystemRoot`, `SystemDrive`, `WINDIR`, `COMSPEC`, `ProgramData`,
 `ProgramFiles*`, `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`,
 `USERNAME`, `TEMP`/`TMP`/`TMPDIR`, `TERM`, `LANG`/`LC_*`, `TZ`, `PROCESSOR_*`,
@@ -441,6 +444,7 @@ names, any case. An invalid file stops `serve` from starting.
   "prompts": {"author": "autopilot/author.md", "reviewer": "autopilot/reviewer.md", "merger": "autopilot/merger.md"},
   "workdir": "F:/github/GraphHelm",
   "pauseExitCodes": [],
+  "pauseOutputPatterns": [],
   "env": {"allow": []}
 }
 ```

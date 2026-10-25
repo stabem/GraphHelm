@@ -25,7 +25,7 @@
 //! - **Pause**: a launcher that is not found, that exits with one of `pauseExitCodes` (the
 //!   subscription is exhausted), or that fails with a login failure in its output (#2027: one of
 //!   `LOGIN_FAILURES`, or of the owner's `pauseOutputPatterns`, matched case-insensitively in the
-//!   tail of its log) pauses the autopilot until the Runtime restarts, with one note to the owner
+//!   whole of a startup-sized log, within two minutes of the spawn: #2039) pauses the autopilot until the Runtime restarts, with one note to the owner
 //!   saying why; a login failure asks the owner to log the launcher in. No attempt is spent on it
 //!   again. `"paused": true` in the config starts it paused.
 
@@ -226,19 +226,22 @@ const LOGIN_FAILURES: &[&str] = &[
     "invalid api key",
 ];
 
-/// How much of the end of an attempt's log is searched for a login failure.
-const LOG_TAIL_BYTES: u64 = 64 * 1024;
+/// #2039: a launcher that cannot log in says so at once and writes little. An agent that ran
+/// wrote more, or ran longer, so text it (or `gh`) printed about a login cannot pause the
+/// autopilot. Past either bound the exit is an ordinary failure.
+const STARTUP_LOG_BYTES: u64 = 4 * 1024;
+const STARTUP_SECONDS: u64 = 120;
 
-/// The first login-failure pattern found in the last `LOG_TAIL_BYTES` of `log`.
+/// The first login-failure pattern in `log`, only when the whole log is a startup failure's size.
 fn login_failure(log: &Path, patterns: &[String]) -> Option<String> {
-    use std::io::{Read as _, Seek as _, SeekFrom};
+    use std::io::Read as _;
     let mut file = std::fs::File::open(log).ok()?;
-    let len = file.metadata().ok()?.len();
-    file.seek(SeekFrom::Start(len.saturating_sub(LOG_TAIL_BYTES)))
-        .ok()?;
-    let mut tail = Vec::new();
-    file.read_to_end(&mut tail).ok()?;
-    let text = String::from_utf8_lossy(&tail).to_lowercase();
+    if file.metadata().ok()?.len() > STARTUP_LOG_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes).to_lowercase();
     patterns
         .iter()
         .find(|pattern| text.contains(pattern.as_str()))
@@ -822,7 +825,8 @@ fn run(
         Err(error) => return Err(failed("the launcher could not start", &error)),
     };
     // The deadline starts at the spawn, before any stdin is written (#2016).
-    let deadline = Instant::now() + autopilot.timeout;
+    let started = Instant::now();
+    let deadline = started + autopilot.timeout;
     let mut group = match graphhelm_process_tree::create(&child) {
         Ok(group) => group,
         Err(error) => {
@@ -897,7 +901,11 @@ fn run(
     }
     // #2027: a login failure is no reason to try again; the owner has to log the launcher in.
     // Only the matched pattern (ours or the owner's) reaches the note, never the log's text.
-    if let Some(pattern) = login_failure(&log_path, &autopilot.login_failures) {
+    let early = started.elapsed() < Duration::from_secs(STARTUP_SECONDS);
+    if let Some(pattern) = early
+        .then(|| login_failure(&log_path, &autopilot.login_failures))
+        .flatten()
+    {
         return Err(Ended::Pause(format!(
             "the launcher is not logged in (it exited with {status} and its output says \
              {pattern:?}); log the launcher in, then restart the Runtime"
@@ -1196,6 +1204,17 @@ mod tests {
             "error: token revoked by admin",
         );
         assert!(matches!(&ended, Err(Ended::Pause(_))), "{}", reason(&ended));
+        // #2039: text an agent printed (a long log) is not the launcher's startup failure.
+        let long = format!("{}
+not logged in
+", "agent output
+".repeat(600));
+        let ended = exit_with("", 1, &long);
+        assert!(
+            matches!(&ended, Err(Ended::Failed(_))),
+            "{}",
+            reason(&ended)
+        );
         let ended = exit_with("", 1, "error: the build broke");
         assert!(
             matches!(&ended, Err(Ended::Failed(_))),

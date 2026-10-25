@@ -236,10 +236,10 @@ pub fn classify(
         } else if early && handed_on {
             // Read as the review it waits for, with the review grace from its newest record.
             match &task.current_reviewer {
+                // #2039: only the current head's reviewer counts, as at the review step; one
+                // assigned or heard from for an older head does not review this head.
                 None if task.pr.is_some()
                     && task.pending_reviewer.is_none()
-                    && task.assigned_reviewers.is_empty()
-                    && task.reviewers.is_empty()
                     && idle.is_some_and(|seconds| seconds >= grace.review) =>
                 {
                     Some((Stage::ReviewUnassigned, None))
@@ -538,6 +538,29 @@ mod tests {
                 stages(&[assigned], &[], &["lane-a"]).is_empty(),
                 "{step:?}: a slice with a reviewer assigned is not author_silent"
             );
+        }
+    }
+
+    #[test]
+    fn a_reviewer_of_an_older_head_does_not_hide_review_unassigned_before_the_review_step() {
+        // #2039: the review-step branch ignores assigned/past reviewers; the early branch did not.
+        for step in [TaskStep::Plan, TaskStep::Critic, TaskStep::Implement] {
+            let mut task = with_pr(slice("lane-a", step, OLD));
+            task.assigned_reviewers.push("rev".into());
+            task.reviewers.push("rev".into());
+            assert_eq!(
+                stages(std::slice::from_ref(&task), &[], &[]),
+                [Stage::ReviewUnassigned],
+                "{step:?}"
+            );
+            // The current head's reviewer, gone silent, is reviewer_silent.
+            task.current_reviewer = Some("rev".into());
+            assert_eq!(
+                stages(std::slice::from_ref(&task), &[], &["rev"]),
+                [Stage::ReviewerSilent],
+                "{step:?}"
+            );
+            assert!(stages(&[task], &[], &[]).is_empty(), "{step:?}");
         }
     }
 

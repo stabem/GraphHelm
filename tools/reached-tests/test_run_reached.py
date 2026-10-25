@@ -476,7 +476,7 @@ class RunnerContracts(unittest.TestCase):
         self.assertIn("requires", rr._whole_reason({"packages": ["graphhelm-cli"]}, None))
         self.assertIsNone(rr._whole_reason({"packages": ["graphhelm-cli"]}, "shared parser change"))
 
-    def test_browser_observer_is_skipped_by_default_and_never_started(self):
+    def test_browser_observer_without_toolchain_is_unobserved_not_passed_and_never_started(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
@@ -489,15 +489,15 @@ class RunnerContracts(unittest.TestCase):
             args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
                                       "root": "D:/gh", "lane": "test", "budget_seconds": 180,
                                       "allow_whole_package": None, "plan": False, "include_browser": False})()
-            with patch.object(rr, "_selector", return_value=plan):
-                self.assertEqual(rr.run(args), 0)
+            with patch.object(rr, "_selector", return_value=plan), patch.dict(os.environ, {"GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT": ""}):
+                self.assertNotEqual(rr.run(args), 0)
             report = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(report["completed"], [])
             self.assertEqual(report["pending"], [])
-            self.assertEqual(report["skipped"], [{"index": 0, "reason": "no observer"}])
-            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["skipped"], [{"index": 0, "reason": "OBSERVER_MISSING: GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT"}])
+            self.assertEqual(report["status"], "incomplete")
 
-    def test_browser_observer_is_skipped_by_default_while_plain_steps_run(self):
+    def test_browser_observer_without_toolchain_is_unobserved_while_plain_steps_run(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
             subprocess = __import__("subprocess")
@@ -514,12 +514,12 @@ class RunnerContracts(unittest.TestCase):
             args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
                                       "root": "D:/gh", "lane": "test", "budget_seconds": 180,
                                       "allow_whole_package": None, "plan": False, "include_browser": False, "batch_slot": True})()
-            with patch.object(rr, "_selector", return_value=plan):
-                self.assertEqual(rr.run(args), 0)
+            with patch.object(rr, "_selector", return_value=plan), patch.dict(os.environ, {"GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT": ""}):
+                self.assertNotEqual(rr.run(args), 0)
             report = json.loads(output.read_text(encoding="utf-8"))
-            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["status"], "incomplete")
             self.assertEqual(report["completed"][0]["index"], 1)
-            self.assertEqual(report["skipped"], [{"index": 0, "reason": "no observer"}])
+            self.assertEqual(report["skipped"], [{"index": 0, "reason": "OBSERVER_MISSING: GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT"}])
             self.assertEqual(report["pending"], [])
             self.assertEqual(marker.read_text(encoding="utf-8"), "ran")
 

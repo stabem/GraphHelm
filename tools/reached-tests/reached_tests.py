@@ -17,7 +17,7 @@ From the changed paths and the workspace graph (`cargo metadata --no-deps`, no b
   committed journey flow reaches `journey_scope_guard` and `graphhelm journey validate --all`;
 - a change to the journey driver, replay, explore or live play prints the `#[ignore]` browser
   observers' command (`BROWSER_OBSERVERS`) for a lane with a browser to run;
-- a changed file under `tools/<tool>/` reaches that tool's `test_*.py` / `*.test.mjs` (not browser);
+- a changed file under `tools/<tool>/` reaches that tool's `test_*.py` / `*.test.mjs`; a `*.browser.test.mjs` is a separate observer=browser step (#2033);
 - changed Studio files reach `npx vitest related <files>` and `npx tsc -b`;
 - a change to one `apps/cli/src/commands` module reaches its unit tests (`--bin graphhelm
   commands::<module>::`), the tests that read the crate's own source, and the integration tests
@@ -759,7 +759,7 @@ def reach(changed, packages, embedded, repo=None):
         if path.startswith("tools/") and path.count("/") >= 2 and root is not None:
             tool = root / "/".join(path.split("/")[:2])
             py = sorted(f.relative_to(root).as_posix() for f in tool.glob("test_*.py"))
-            js = sorted(f.relative_to(root).as_posix() for f in tool.glob("*.test.mjs") if ".browser." not in f.name)
+            js = sorted(f.relative_to(root).as_posix() for f in tool.glob("*.test.mjs"))
             tools |= {python_test_tool(root, f) for f in py} | ({f"node --test {' '.join(js)}"} if js else set())
             hit = hit or bool(py or js)
             # #1808: a tool deleted whole leaves no code to observe and no test of its own to run.
@@ -1241,7 +1241,14 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
             if repo is None:
                 raise ValueError("node test paths require the repository root")
             test_paths = _node_test_paths(tool, Path(repo))
-            out.append({"argv": ["node", "--test", *test_paths], "cwd": ".", "slot": False})
+            # #2033: a `*.browser.test.mjs` needs Playwright; it is its own step marked observer=browser so
+            # the runner runs it when the toolchain is present and reports it unobserved when it is not.
+            plain = [t for t in test_paths if ".browser." not in Path(t).name]
+            browser = [t for t in test_paths if ".browser." in Path(t).name]
+            if plain:
+                out.append({"argv": ["node", "--test", *plain], "cwd": ".", "slot": False})
+            if browser:
+                out.append({"argv": ["node", "--test", *browser], "cwd": ".", "slot": False, "observer": "browser"})
         else:
             raise ValueError(f"unrecognised reached-test tool: {tool}")
     for path in validate:

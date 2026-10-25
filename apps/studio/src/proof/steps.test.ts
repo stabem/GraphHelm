@@ -2,7 +2,7 @@ import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow, JourneyRun } from "../runtime/client";
-import { becauseOf, CHANGED, checkMarks, countSteps, earlierVersion, failsOnlyOn, isHeld, isWaitingReview, statusText, journeyScore, journeySteps, lastRunChip, pastAsRun, preparingStatus, readableName, reasonSentence } from "./steps";
+import { isProposed, becauseOf, CHANGED, checkMarks, countSteps, earlierVersion, failsOnlyOn, isHeld, isWaitingReview, statusText, journeyScore, journeySteps, lastRunChip, pastAsRun, preparingStatus, readableName, reasonSentence } from "./steps";
 
 const flow: JourneyFlow = {
   id: "buy",
@@ -227,5 +227,15 @@ describe("readable expectation names", () => {
   it("words a known reason code and leaves an unknown one to be shown as is", () => {
     expect(reasonSentence("page_error")).toBe("The page reported an error during this step.");
     expect(reasonSentence("something_new")).toBeNull();
+  });
+});
+
+// #2048: a why / because the explorer proposed and nobody confirmed is told apart from a written one.
+describe("proposed reasons", () => {
+  it("knows the explorer's proposal, and only that", () => {
+    expect(isProposed("Proposed by the explorer, to confirm: it was seen.")).toBe(true);
+    expect(isProposed("  Proposed by the explorer, to confirm: x")).toBe(true);
+    expect(isProposed("The shopper reaches payment.")).toBe(false);
+    expect(isProposed(null)).toBe(false);
   });
 });

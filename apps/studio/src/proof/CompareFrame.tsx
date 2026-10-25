@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 import type { JourneyPastRun, Runtime } from "../runtime/client";
 import { changedSentence, diffPixels, type CompareMode, type Pixels } from "./compare";
-import { becauseOf, checkMarks, failsOnlyOn, readableName, reasonSentence, type Step } from "./steps";
+import { becauseOf, checkMarks, failsOnlyOn, isProposed, readableName, reasonSentence, type Step } from "./steps";
 import { yamlLines } from "./yaml-view";
 
 const MODES: { mode: CompareMode; label: string }[] = [
@@ -168,7 +168,7 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
         <section aria-label="Why this step" className="action-why">
           <span className="section-label">WHY THIS STEP</span>
           {step.why !== null
-            ? <span>{step.why}</span>
+            ? <span className={isProposed(step.why) ? "muted" : undefined}>{step.why}{isProposed(step.why) && <span className="muted"> (proposed, not confirmed)</span>}</span>
             : <span className="muted">{step.edge === null ? "The journey starts here." : "No reason written for this step."}</span>}
         </section>
         <section aria-label="Compare with an earlier run" className="action-compare">
@@ -226,7 +226,7 @@ function Reason({ code }: { code: string }) {
 
 /** #1955: an assertion's reason, in muted text under it; said plainly when the flow gives none. */
 function Because({ said }: { said: string | null }) {
-  return <span className="muted assertion-because">{said ?? "No reason written for this check."}</span>;
+  return <span className="muted assertion-because">{said ?? "No reason written for this check."}{isProposed(said) && " (proposed, not confirmed)"}</span>;
 }
 
 /** #1914: stdout that parses as JSON reads as indented key: value lines, coloured by type, with a

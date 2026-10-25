@@ -42,6 +42,9 @@ impl Finding {
                 | "flow.weak_journey"
                 // #1955: an approved flow that does not say why is flagged, not broken.
                 | "flow.unexplained"
+                // #2048: the explorer's proposed why/because, approved untouched, is said, not refused.
+                | "flow.why_proposed"
+                | "flow.because_proposed"
                 | "flow.safe_stale"
                 | "flow.approval_unverifiable"
                 // #534 slice 2: an unsigned or unverifiable safe mark is void, not wrong.

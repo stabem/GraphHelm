@@ -972,6 +972,65 @@ fn a_flow_marked_observer_missing_is_refused_by_validate_and_approve() {
     assert!(finding(&reply, "flow.observer_missing"), "{reply}");
 }
 
+/// #2048: the explorer's proposed `why` / `because` (#2043) that is still untouched is said at
+/// validate and at approve, each at its pointer with its own code, and never refuses.
+#[test]
+fn a_still_proposed_why_and_because_warn_at_validate_and_approve() {
+    let proposed = "Proposed by the explorer, to confirm: it was seen.";
+    let flow = EXAMPLE
+        .replace(
+            "why: The shopper can leave the cart and reach the payment step.",
+            &format!("why: \"{proposed}\""),
+        )
+        .replace(
+            "expect: [{role: heading, name: Order placed}]",
+            &format!("expect: [{{role: heading, name: Order placed, because: \"{proposed}\"}}]"),
+        );
+    assert_ne!(flow, EXAMPLE);
+    let dir = committed(&flow);
+    let pointers = |reply: &Value, code: &str| -> Vec<String> {
+        reply["diagnostics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|d| {
+                d["severity"] == "warning"
+                    && d["message"].as_str().is_some_and(|m| m.starts_with(code))
+            })
+            .map(|d| d["path"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    };
+    let (out, checked) = run(dir.path(), &["validate", "--all"]);
+    assert_eq!(out.status.code(), Some(0), "{checked}");
+    assert_eq!(
+        pointers(&checked, "flow.why_proposed"),
+        ["/edges/0/why"],
+        "{checked}"
+    );
+    assert_eq!(
+        pointers(&checked, "flow.because_proposed"),
+        ["/screens/1/expect/0/because"],
+        "{checked}"
+    );
+    let (out, reply) = approve(dir.path());
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    assert_eq!(reply["data"]["status"], "approved", "{reply}");
+    assert_eq!(
+        pointers(&reply, "flow.why_proposed"),
+        ["/edges/0/why"],
+        "{reply}"
+    );
+    assert_eq!(
+        pointers(&reply, "flow.because_proposed"),
+        ["/screens/1/expect/0/because"],
+        "{reply}"
+    );
+    // A confirmed why says nothing.
+    let confirmed = committed(EXAMPLE);
+    let (_, clean) = run(confirmed.path(), &["validate", "--all"]);
+    assert!(pointers(&clean, "flow.why_proposed").is_empty(), "{clean}");
+}
+
 /// #1684: `journey flows` answers "approvable" as approve does. A committed draft with no recorded
 /// passing preview (the gh-team keel-* drafts' state) is not approvable; once the runner's record
 /// exists for its digest and scope commit, it is. Built on the fixture, not a live flow (#1680).

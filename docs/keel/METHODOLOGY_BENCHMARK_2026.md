@@ -51,6 +51,8 @@ never replace a failure or silently tune prompts after inspecting outcomes.
 Each attempt gets a fresh directory containing only the broken source and public test.
 After the model exits, the evaluator copies only the authored module to another fresh
 directory and restores the original public checks before adding hidden checks.
+An unpredictable completion witness is written only after each check finishes; an
+early zero exit is retained as a zero exit but cannot count as accepted evidence.
 Known corrections and hidden checks are never supplied to the subject. Directory
 separation and a prompt are not proof of adversarial OS-enforced oracle secrecy.
 The corpus is executable, reviewed repository code. Do not qualify untrusted case

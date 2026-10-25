@@ -87,9 +87,16 @@ def evaluate(case: dict, source: str, root: Path) -> dict:
     results = {}
     for kind in ("public", "hidden"):
         (root / "check.py").write_text(case[kind], encoding="utf-8")
-        results[kind] = capture([sys.executable, "-I", "-c",
-                                "import sys,runpy;sys.path.insert(0,'.');runpy.run_path('check.py')"],
-                               root, deadline=20)
+        witness = root / (kind + ".completed." + uuid.uuid4().hex)
+        nonce = uuid.uuid4().hex
+        command = ("import sys,runpy,pathlib;sys.path.insert(0,'.');"
+                   "runpy.run_path('check.py');"
+                   f"pathlib.Path({witness.name!r}).write_text({nonce!r},encoding='utf-8')")
+        result = capture([sys.executable, "-I", "-c", command], root, deadline=20)
+        result["completed"] = (witness.is_file() and not witness.is_symlink()
+                               and witness.read_text(encoding="utf-8") == nonce)
+        result["accepted"] = result["exit"] == 0 and result["completed"]
+        results[kind] = result
     return results
 
 
@@ -101,8 +108,8 @@ def qualify(cases: dict, root: Path) -> dict:
         parent = evaluate(case, case["source"], root / (case["id"] + "-parent"))
         fixed = evaluate(case, case["fix"], root / (case["id"] + "-fixed"))
         expected_failure = parent["hidden"]["exit"] == 1 and "AssertionError" in parent["hidden"]["stderr"]
-        passed = (parent["public"]["exit"] == 0 and expected_failure
-                  and all(result["exit"] == 0 for result in fixed.values())
+        passed = (parent["public"]["accepted"] and expected_failure
+                  and all(result["accepted"] for result in fixed.values())
                   and not any(result["timeout"] for result in [*parent.values(), *fixed.values()]))
         results.append({"case": case["id"], "passed": passed, "parent": parent, "fixed": fixed})
     return {"passed": all(row["passed"] for row in results), "cases": results}
@@ -239,7 +246,7 @@ def run_attempt(args: argparse.Namespace) -> dict:
             raise ValueError("Agent source missing, linked or oversized")
         evaluated = evaluate(case, source.read_text(encoding="utf-8"), args.output / (cell["id"] + "-evaluation"))
         result["evaluation"] = evaluated
-        passed = agent["exit"] == 0 and not agent["timeout"] and agent["cleanupConfirmed"] and not agent["truncated"] and all(row["exit"] == 0 for row in evaluated.values())
+        passed = agent["exit"] == 0 and not agent["timeout"] and agent["cleanupConfirmed"] and not agent["truncated"] and all(row["accepted"] for row in evaluated.values())
         result["status"] = "passed" if passed else "failed"
         result["sourceSha256"] = digest(source)
     except (ValueError, OSError, subprocess.SubprocessError) as error:
@@ -304,7 +311,14 @@ def main() -> int:
                 raise ValueError("Freeze requires both native CLI paths and explicit model IDs")
             publish(args.output, freeze(args))
         elif args.command == "run":
-            result = run_attempt(args)
+            args.output.mkdir(parents=True, exist_ok=True)
+            lock = args.output / "cohort.lock"
+            with lock.open("x") as handle:
+                handle.write(str(os.getpid()))
+            try:
+                result = run_attempt(args)
+            finally:
+                lock.unlink()
             return 0 if result["status"] == "passed" else 1
         else:
             print(json.dumps(report(args), indent=2))

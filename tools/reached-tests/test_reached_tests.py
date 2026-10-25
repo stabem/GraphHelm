@@ -416,8 +416,12 @@ class Reach(unittest.TestCase):
                 self.assertEqual(rt.steps(whole, single, studio, tools, validate), [
                     {'argv': ['graphhelm', '--json', 'journey', 'validate', '--all', '--project', project],
                      'cwd': '.', 'slot': False}])
-        *_, other = rt.reach(['fixtures/unobserved.journey.yaml'], [], {})
-        self.assertEqual(other, ['fixtures/unobserved.journey.yaml'])
+        for unsupported in ('fixtures/unobserved.journey.yaml',
+                            'examples/jpd-quickstart/.graphhelm/journeys/nested/broken.journey.yaml',
+                            'examples/jpd-quickstart/.graphhelm/journeys/nested/broken.json'):
+            with self.subTest(unsupported=unsupported):
+                *_, other = rt.reach([unsupported], [], {})
+                self.assertEqual(other, [unsupported])
 
     def test_a_studio_change_runs_its_whole_vitest_and_tsc(self):
         # #1818, #1808: the Studio has no related-test map; any change under apps/studio runs its whole

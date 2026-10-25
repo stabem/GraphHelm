@@ -680,8 +680,8 @@ def reach(changed, packages, embedded, repo=None):
             if root is not None and (root / STUDIO_START_SMOKE).is_file():
                 tools.add(f"python -m unittest {STUDIO_START_SMOKE}")
             continue
-        if path.startswith("examples/") and '/.graphhelm/journeys/' in path and path.endswith(('.journey.yaml', '.json')):
-            project = path.split('/.graphhelm/journeys/', 1)[0]
+        project, marker, flow = path.partition('/.graphhelm/journeys/')
+        if project.startswith("examples/") and marker and '/' not in flow and flow.endswith(('.journey.yaml', '.json')):
             tools.add(EXAMPLE_JOURNEY_CHECK + json.dumps(project, ensure_ascii=False))
             hit = True
         for prefix, runtime_readers in RUNTIME_READERS.items():

@@ -1,7 +1,7 @@
 {
   "name": "graphhelm-jpd",
   "description": "Journey-Proven Development entry skills using GraphHelm public CLI/MCP contracts and schema-bound local advisory artifacts.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": {
     "name": "GraphHelm"
   }

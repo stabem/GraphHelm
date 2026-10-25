@@ -7037,6 +7037,7 @@ fn autopilot_runtime(
         "intervalSeconds": 1,
         "timeoutSeconds": 120,
         "grace": {"requestSeconds": 0, "reviewSeconds": 0, "mergeSeconds": 0},
+        "env": {"allow": ["AUTOPILOT_FAKE_DIR", "AUTOPILOT_FAKE_EXIT"]},
     });
     let config_path = dir.join("autopilot.json");
     std::fs::write(&config_path, config.to_string()).unwrap();

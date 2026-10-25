@@ -422,9 +422,17 @@ hidden, with the role prompt and a JSON brief on stdin. At most `maxConcurrent` 
 an attempt is retried after a failure or `retrySeconds` (1800); after `maxAttempts` (3) the actor
 `graphhelm-autopilot` asks `studio-operator` once, which the Studio lists under Needs action. A
 launcher not found, or an exit code in `pauseExitCodes` (subscription exhausted), pauses it until
-restart with one such note. The agent never inherits `GRAPHHELM_*` keys or tokens nor
-`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`: no paid fallback. An invalid file stops `serve` from
-starting.
+restart with one such note. The agent's environment is an allow list (#2019), not a deny list:
+only `PATH`, `PATHEXT`, `OS`, `SystemRoot`, `SystemDrive`, `WINDIR`, `COMSPEC`, `ProgramData`,
+`ProgramFiles*`, `HOME`, `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`,
+`USERNAME`, `TEMP`/`TMP`/`TMPDIR`, `TERM`, `LANG`/`LC_*`, `TZ`, `PROCESSOR_*`,
+`NUMBER_OF_PROCESSORS`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, the `XDG_*` dirs and non-secret
+`GRAPHHELM_*` names pass; a key of any other name (any provider, gateway or base URL) is dropped:
+no paid fallback. A subscription-logged-in `claude -p` and `codex` need no more: their login lives
+under the home directory (checked 2026-10-25 with `claude -p --help`, `codex --help` and
+`codex login --help`; `claude --bare` is the only mode that reads `ANTHROPIC_API_KEY`). A launcher
+that needs another variable (a proxy, say) gets it from `"env": {"allow": ["HTTPS_PROXY"]}`, exact
+names, any case. An invalid file stops `serve` from starting.
 
 ```json
 {
@@ -432,7 +440,8 @@ starting.
   "launcher": ["C:/Users/<you>/.local/bin/claude.exe", "-p", "--permission-mode", "acceptEdits"],
   "prompts": {"author": "autopilot/author.md", "reviewer": "autopilot/reviewer.md", "merger": "autopilot/merger.md"},
   "workdir": "F:/github/GraphHelm",
-  "pauseExitCodes": []
+  "pauseExitCodes": [],
+  "env": {"allow": []}
 }
 ```
 

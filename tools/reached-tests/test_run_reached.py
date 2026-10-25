@@ -1000,8 +1000,40 @@ class ResumeAndPreflightContracts(unittest.TestCase):
             encoding="utf-8")
         path.chmod(0o755)
 
-    @unittest.skipIf(os.name == "nt", "POSIX executable fixture; native Windows has its own observer")
+    def _native_node_fixture(self, path):
+        import shutil
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("OBSERVER_MISSING: native Node executable fixture")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(node, path)
+
+    @unittest.skipUnless(os.name != "nt" or __import__("shutil").which("node"),
+                         "OBSERVER_MISSING: native Windows Node executable fixture")
     def test_same_version_path_switch_executes_again(self):
+        if os.name == "nt":
+            import shutil
+            first = self.repo.parent / "tools-a" / "proof-tool.exe"
+            second = self.repo.parent / "tools-b" / "proof-tool.exe"
+            self._native_node_fixture(first)
+            second.parent.mkdir(parents=True)
+            shutil.copyfile(first, second)
+            script = (f"require('fs').appendFileSync({json.dumps(str(self.counter))}, "
+                      "JSON.stringify([process.execPath,process.version])+'\\n')")
+            self.steps = [["proof-tool", "-e", script]]
+            original_path = os.environ.get("PATH", "")
+            with patch.dict(os.environ, {"PATH": str(first.parent) + os.pathsep + original_path,
+                                         "PATHEXT": ".EXE;.CMD"}):
+                self.assertEqual(self.run_once()[0], 0)
+                self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+            with patch.dict(os.environ, {"PATH": str(second.parent) + os.pathsep + original_path,
+                                         "PATHEXT": ".EXE;.CMD"}):
+                self.assertFalse(self.run_once()[1]["completed"][0].get("reused"))
+            observed = [json.loads(line) for line in self.counter.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([os.path.normcase(row[0]) for row in observed],
+                             [os.path.normcase(str(first)), os.path.normcase(str(second))])
+            self.assertEqual(observed[0][1], observed[1][1])
+            return
         first = self.repo.parent / "tools-a" / "proof-tool"
         second = self.repo.parent / "tools-b" / "proof-tool"
         self.executable_fixture(first, "A")
@@ -1015,8 +1047,28 @@ class ResumeAndPreflightContracts(unittest.TestCase):
             self.assertFalse(self.run_once()[1]["completed"][0].get("reused"))
         self.assertEqual(self.runs(), ["A", "B"])
 
-    @unittest.skipIf(os.name == "nt", "POSIX executable fixture")
+    @unittest.skipUnless(os.name != "nt" or __import__("shutil").which("node"),
+                         "OBSERVER_MISSING: native Windows Node executable fixture")
     def test_same_path_bytes_change_with_same_version_executes_again(self):
+        if os.name == "nt":
+            executable = self.repo.parent / "tools" / "proof-tool.exe"
+            self._native_node_fixture(executable)
+            script = f"require('fs').appendFileSync({json.dumps(str(self.counter))}, process.version+'\\n')"
+            self.steps = [[str(executable), "-e", script]]
+            code, before = self.run_once()
+            self.assertEqual(code, 0)
+            self.assertTrue(self.run_once()[1]["completed"][0].get("reused"))
+            with executable.open("ab") as stream:
+                stream.write(b"graphhelm-private-fixture-overlay")
+            code, after = self.run_once()
+            self.assertEqual(code, 0)
+            self.assertFalse(after["completed"][0].get("reused"))
+            self.assertEqual(before["fingerprint"]["tree"], after["fingerprint"]["tree"])
+            self.assertEqual(before["fingerprint"]["envSha256"], after["fingerprint"]["envSha256"])
+            self.assertNotEqual(before["fingerprint"]["toolsSha256"], after["fingerprint"]["toolsSha256"])
+            self.assertEqual(len(self.runs()), 2)
+            self.assertEqual(self.runs()[0], self.runs()[1])
+            return
         executable = self.repo.parent / "tools" / "proof-tool"
         self.executable_fixture(executable, "before")
         self.steps = [[str(executable)]]
@@ -1054,8 +1106,22 @@ class ResumeAndPreflightContracts(unittest.TestCase):
                     self.assertFalse(any(e.get("reusable") or e.get("proofKey") for e in report["completed"]))
         self.assertEqual(self.runs(), ["ok", "ok", "bad", "bad"])
 
-    @unittest.skipIf(os.name == "nt", "POSIX executable fixture")
+    @unittest.skipUnless(os.name != "nt" or __import__("shutil").which("node"),
+                         "OBSERVER_MISSING: native Windows Node executable fixture")
     def test_disappearing_required_program_cannot_reuse_saved_pass(self):
+        if os.name == "nt":
+            executable = self.repo.parent / "proof-tool.exe"
+            self._native_node_fixture(executable)
+            script = f"require('fs').appendFileSync({json.dumps(str(self.counter))}, 'once\\n')"
+            self.steps = [[str(executable), "-e", script]]
+            self.assertEqual(self.run_once()[0], 0)
+            executable.unlink()
+            _, report = self.run_once()
+            self.assertEqual(report["status"], "incomplete")
+            self.assertEqual(report["completed"], [])
+            self.assertEqual(report["pending"], [0])
+            self.assertEqual(self.runs(), ["once"])
+            return
         executable = self.repo.parent / "proof-tool"
         self.executable_fixture(executable, "once")
         self.steps = [[str(executable)]]
@@ -1466,7 +1532,7 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         self.assertEqual(self.run_once()[0], 0)
         self.assertEqual(self.runs(), ["correct"])
 
-    @unittest.skipUnless(os.name != "nt" and __import__("shutil").which("node"), "real POSIX Node invocation")
+    @unittest.skipUnless(__import__("shutil").which("node"), "real Node executable required")
     def test_prepared_node_capture_needs_no_unused_npx_npm_or_path_python(self):
         import shutil
         studio = self.repo / "apps/studio"
@@ -1480,10 +1546,18 @@ class ResumeAndPreflightContracts(unittest.TestCase):
         self.git("commit", "-qm", "fixed prepared Node fixture")
         tools = self.repo.parent / "only-needed-tools"
         tools.mkdir()
-        for name in ("node", "git"):
-            (tools / name).symlink_to(shutil.which(name))
+        if os.name == "nt":
+            self._native_node_fixture(tools / "node.exe")
+            git_dir = Path(shutil.which("git")).parent
+            path = str(tools) + os.pathsep + str(git_dir)
+            missing = {name: shutil.which(name, path=path) for name in ("npx", "npm", "python")}
+            self.assertEqual(missing, {"npx": None, "npm": None, "python": None})
+        else:
+            for name in ("node", "git"):
+                (tools / name).symlink_to(shutil.which(name))
+            path = str(tools)
         self.steps = [self.ok, ["npx", "tsc"]]
-        with patch.dict(os.environ, {"PATH": str(tools)}):
+        with patch.dict(os.environ, {"PATH": path}):
             with patch.object(rr, "_install_absent_studio", side_effect=AssertionError("capture must not prepare")):
                 fingerprint = rr._tool_fingerprint(
                     [{"argv": ["npx", "tsc"], "cwd": "apps/studio", "slot": False}], None, self.repo, dict(os.environ))

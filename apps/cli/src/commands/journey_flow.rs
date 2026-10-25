@@ -319,6 +319,7 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
     findings.extend(outcome_elsewhere(value, false));
     findings.extend(unexplained(value, false));
     findings.extend(observer_missing(value, false));
+    findings.extend(proposed_text(value));
     let mut reached = BTreeSet::new();
     for (name, path) in value["paths"].as_object().unwrap() {
         let contract_id = if name == "main" {
@@ -816,6 +817,52 @@ fn unexplained(value: &Value, strict: bool) -> Vec<Finding> {
             )
         })
         .collect()
+}
+
+/// #2048: the opening the explorer writes on a `why` / `because` it proposed (#2043).
+const PROPOSED_PREFIX: &str = "Proposed by the explorer, to confirm:";
+
+/// #2048: approval accepts the explorer's proposed text untouched, so the owner can approve without
+/// confirming why a step exists. Each edge `why` and expect `because` that still opens with the
+/// proposal prefix is a non-blocking warning (`flow.why_proposed`, `flow.because_proposed`) at its
+/// JSON pointer: said at validate and approve, never a refusal.
+fn proposed_text(value: &Value) -> Vec<Finding> {
+    let proposed = |v: &Value| {
+        v.as_str()
+            .is_some_and(|t| t.trim_start().starts_with(PROPOSED_PREFIX))
+    };
+    let mut found = Vec::new();
+    for (i, edge) in value["edges"].as_array().into_iter().flatten().enumerate() {
+        if proposed(&edge["why"]) {
+            found.push(Finding::new(
+                "flow.why_proposed",
+                format!("/edges/{i}/why"),
+                "this `why` is still the explorer's proposal; confirm or rewrite it",
+            ));
+        }
+    }
+    for (i, screen) in value["screens"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        for (j, expect) in screen["expect"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            if proposed(&expect["because"]) {
+                found.push(Finding::new(
+                    "flow.because_proposed",
+                    format!("/screens/{i}/expect/{j}/because"),
+                    "this `because` is still the explorer's proposal; confirm or rewrite it",
+                ));
+            }
+        }
+    }
+    found
 }
 
 fn mark_digest(flow: &Value, edge: &Value) -> String {
@@ -2201,6 +2248,21 @@ pub(crate) fn approve_as(id: &str, project: std::path::PathBuf) -> Outcome {
             } else {
                 "approval output could not be written; earlier writes restored"
             },
+        );
+    }
+    // #2048: proposed text that was approved untouched is said, never refused.
+    findings.retain(|f| f.code == "flow.why_proposed" || f.code == "flow.because_proposed");
+    if !findings.is_empty() {
+        let files = json!({"findings":findings.iter().map(|f|json!({"code":f.code,"pointer":f.pointer,"message":f.message})).collect::<Vec<_>>()});
+        let findings = findings
+            .into_iter()
+            .map(|f| Finding::new(f.code, f.pointer, format!("{}: {}", f.code, f.message)))
+            .collect();
+        return report(
+            COMMAND,
+            vec![files],
+            findings,
+            json!({"id":args.id,"status":"approved","approved":flow["approved"],"written":writes.len()}),
         );
     }
     Outcome::success(

@@ -195,6 +195,14 @@ export function reasonSentence(code: string): string | null {
   return REASONS[code] ?? null;
 }
 
+/** #2048: the opening the explorer writes on a why / because it proposed; the CLI warns on it too. */
+export const PROPOSED_PREFIX = "Proposed by the explorer, to confirm:";
+
+/** #2048: the owner has not confirmed this reason yet. */
+export function isProposed(text: string | null): boolean {
+  return text !== null && text.trimStart().startsWith(PROPOSED_PREFIX);
+}
+
 /** #1955: the flow's reason for a step, when it gives one. */
 function whyOf(edge: JourneyEdge | null): string | null {
   const said = edge?.why;

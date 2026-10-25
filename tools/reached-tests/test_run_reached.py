@@ -2088,6 +2088,24 @@ class SideBySideTestSteps(unittest.TestCase):
             self.assertEqual(marker.read_text(encoding="utf-8"), str(Path(temp) / "t") + ",1.97.1")
             marker.unlink()
 
+    def test_side_by_side_executables_get_the_cargo_config_env(self):
+        # #2018: cargo gives a test the [env] of .cargo/config.toml; the side-by-side run must too,
+        # or every test `serve` loses GRAPHHELM_RUNTIME_DIR and publishes into the home.
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / ".cargo").mkdir()
+            (Path(temp) / ".cargo" / "config.toml").write_text(
+                '[env]\nGH_RELATIVE = { value = "target/rt", relative = true }\nGH_PLAIN = "plain"\n'
+                'GH_KEPT = "config"\nGH_FORCED = { value = "config", force = true }\n', encoding="utf-8")
+            marker = Path(temp).parent / (Path(temp).name + "-cargo-env.txt")
+            code_one = ("import os; open(%r, 'w').write(','.join(os.environ.get(k, '-') for k in "
+                        "('GH_RELATIVE', 'GH_PLAIN', 'GH_KEPT', 'GH_FORCED')))" % str(marker))
+            with patch.dict(os.environ, {"GH_KEPT": "caller", "GH_FORCED": "caller"}):
+                _plan, _calls, code, report = self._run(temp, [code_one, "print('ok')"])
+            self.assertEqual(code, 0, report)
+            self.assertEqual(marker.read_text(encoding="utf-8"),
+                             ",".join([str(Path(temp).resolve() / "target/rt"), "plain", "caller", "config"]))
+            marker.unlink()
+
     def test_a_red_executable_fails_the_run(self):
         with tempfile.TemporaryDirectory() as temp:
             _plan, _calls, code, report = self._run(temp, ["import sys; sys.exit(3)", "print('ok')"])

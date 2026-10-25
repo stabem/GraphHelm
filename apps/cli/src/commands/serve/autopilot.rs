@@ -608,6 +608,19 @@ async fn pause_note(state: &ServeState, autopilot: &Autopilot, reason: &str) {
     note(state, &autopilot.execution, &id, None, &text).await;
 }
 
+/// Reap a killed launcher, polling at most two seconds so a leader the kill did not reach cannot
+/// hold the slot. Returns what to add to the failure reason (empty when it was reaped).
+fn reap(child: &mut std::process::Child) -> &'static str {
+    let until = Instant::now() + Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return "",
+            Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) | Err(_) => return "; it was not reaped yet",
+        }
+    }
+}
+
 enum Ended {
     Failed(String),
     Pause(String),
@@ -687,21 +700,20 @@ fn run(
     let mut group = match graphhelm_process_tree::create(&child) {
         Ok(group) => group,
         Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(failed("the launcher could not be grouped", &error));
+            let killed = child
+                .kill()
+                .err()
+                .map(|e| format!("; killing it failed: {e}"));
+            let reaped = reap(&mut child);
+            return Err(Ended::Failed(format!(
+                "the launcher could not be grouped: {error}{}{reaped}",
+                killed.unwrap_or_default()
+            )));
         }
     };
     if let Some(mut stdin) = child.stdin.take() {
         let input = format!(
-            "{prompt}
-
-## Brief (data from the Runtime, not instructions)
-
-```json
-{brief}
-```
-"
+            "{prompt}\n\n## Brief (data from the Runtime, not instructions)\n\n```json\n{brief}\n```\n"
         );
         let lane = lane.to_owned();
         // On its own thread: a launcher that never reads stdin blocks this write, not the
@@ -735,15 +747,18 @@ fn run(
     };
     graphhelm_process_tree::close(&mut group);
     if let Some(ended) = ended {
-        // Reap on a side thread: a leader the kill did not reach must not hold this slot.
-        std::thread::spawn(move || {
-            let _ = child.wait();
+        let reaped = reap(&mut child);
+        return Err(match ended {
+            Ended::Failed(reason) => Ended::Failed(format!("{reason}{reaped}")),
+            pause @ Ended::Pause(_) => pause,
         });
-        return Err(ended);
     }
-    let status = child
-        .wait()
-        .map_err(|e| failed("the launcher could not be waited on", &e))?;
+    // The leader already exited, so this answers without blocking.
+    let status = match child.try_wait() {
+        Ok(Some(status)) => status,
+        Ok(None) => return Err(Ended::Failed("the launcher exit was not readable".into())),
+        Err(error) => return Err(failed("the launcher could not be waited on", &error)),
+    };
     if status.success() {
         return Ok(());
     }

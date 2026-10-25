@@ -108,6 +108,18 @@ its previous screen did not already show (`flow.outcome_unchecked`): click, clic
 `flow.weak_journey` warnings, and the Studio test view shows the purpose, each step's inputs and
 every check. For a save, end the path on the same page after a reload and expect the saved value.
 
+An outcome is also checked where it shows next (#1785). When a path opens one item's page (a URL
+with a `:param`) by activating a link, list item, row, cell, option, tree item or article that the
+screen before it expects, that screen shows the item too. A `submit` on that item's page must then
+be followed, on some path that plays it, by a visit to a screen at that other screen's URL that
+expects something: "Arrived" turning into "Delivered" on the item page does not prove the item
+left the agenda. The draft writer and `journey approve` refuse the gap as
+`flow.outcome_elsewhere_unchecked`, naming the act and the screen; `validate` and the other
+readers report it as a `flow.weak_journey` warning, and replay, keel and an approved flow's
+status do not change. Close it with a second path that starts at the act and goes back, for
+example `volta: [item.arrived, delivered.agenda]` ending on the agenda with the item `absent`.
+A button is a command, not an item, so a page opened by a button carries no such duty.
+
 A journey also explains itself to whoever approves it (#1955). Every edge carries `why`, and every
 non-obvious expectation carries `because`: one on a screen an `http` or `cli` act leads to, one with
 a backend role (`exit`, `stdout`, `json`), or one that checks `text` or `absent`. The draft writer,

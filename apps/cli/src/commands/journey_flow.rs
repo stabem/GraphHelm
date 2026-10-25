@@ -316,6 +316,7 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
         }
     }
     findings.extend(weak_journey(value, false));
+    findings.extend(outcome_elsewhere(value, false));
     findings.extend(unexplained(value, false));
     findings.extend(observer_missing(value, false));
     let mut reached = BTreeSet::new();
@@ -603,6 +604,145 @@ fn weak_journey(value: &Value, strict: bool) -> Vec<Finding> {
     gaps
 }
 
+/// #1785: a submit's effect is checked where it shows, not only on the page that pressed it.
+///
+/// "Same subject" is read from the flow's own navigation, nothing else: a screen `S` *shows the
+/// subject* of the page at URL `u` when `u` is one item's page (a `:param` segment), `S` is at
+/// another URL, and an edge with no submit leaves `S` for a screen at `u` by `activate`-ing an
+/// element `S` itself expects (same role and name) whose role names a listed thing (a link, list
+/// item, row, cell, option, tree item or article; a button is a command, not a subject). The
+/// flow opened the item's page by clicking the item on `S`, so `S` shows that item. A submit on an edge leaving a screen at `u` then needs some path that plays that edge
+/// and, at it or later, reaches a screen at `S`'s URL that expects something; otherwise the act
+/// is named with `S`. `strict` (the agent's draft writer and approval) refuses it as
+/// `flow.outcome_elsewhere_unchecked`; everywhere else it is a `flow.weak_journey` warning, so an
+/// existing or approved flow is flagged, never broken. Replay, keel and the settled status do
+/// not read it.
+fn outcome_elsewhere(value: &Value, strict: bool) -> Vec<Finding> {
+    // A button is a command; these roles name a thing the screen lists.
+    const ITEM_ROLES: &[&str] = &[
+        "link", "listitem", "row", "cell", "gridcell", "option", "treeitem", "article",
+    ];
+    let screens: BTreeMap<&str, &Value> = value["screens"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| Some((s["id"].as_str()?, s)))
+        .collect();
+    let url = |id: &Value| -> Option<&str> { screens.get(id.as_str()?)?["url"].as_str() };
+    let expects = |id: &Value| -> Vec<(&Value, &Value)> {
+        id.as_str()
+            .and_then(|id| screens.get(id))
+            .and_then(|s| s["expect"].as_array())
+            .into_iter()
+            .flatten()
+            .filter(|e| e["absent"] != true)
+            .map(|e| (&e["role"], &e["name"]))
+            .collect()
+    };
+    let edges: Vec<&Value> = value["edges"].as_array().into_iter().flatten().collect();
+    let acts =
+        |edge: &Value| -> Vec<Value> { edge["acts"].as_array().cloned().unwrap_or_default() };
+    // The screens that show the subject of the page at `u`, each with the act that opened it.
+    let subjects = |u: &str| -> BTreeMap<String, String> {
+        let mut found = BTreeMap::new();
+        for edge in &edges {
+            let (Some(from), Some(to)) = (url(&edge["from"]), url(&edge["to"])) else {
+                continue;
+            };
+            let acts = acts(edge);
+            // One item's page (a `:param` in its URL), opened by an element that names an item.
+            if to != u
+                || from == u
+                || !u.split('/').any(|segment| segment.starts_with(':'))
+                || acts.iter().any(|a| a["kind"] == "submit")
+            {
+                continue;
+            }
+            let shown = expects(&edge["from"]);
+            if let Some(act) = acts.iter().find(|a| {
+                a["kind"] == "activate"
+                    && ITEM_ROLES.contains(&a["role"].as_str().unwrap_or_default())
+                    && shown.contains(&(&a["role"], &a["name"]))
+            }) && let Some(id) = edge["from"].as_str()
+            {
+                found.entry(id.to_owned()).or_insert_with(|| {
+                    format!(
+                        "{} {}",
+                        act["role"].as_str().unwrap_or_default(),
+                        act["name"].as_str().unwrap_or_default()
+                    )
+                });
+            }
+        }
+        found
+    };
+    let paths: Vec<Vec<&Value>> = value["paths"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(_, path)| {
+            path.as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|id| edges.iter().copied().find(|e| e["id"] == *id))
+                .collect()
+        })
+        .collect();
+    // Some path plays `edge` and, at it or later, reaches a screen at `target` that expects.
+    let checked_after = |edge: &Value, target: &str| {
+        paths.iter().any(|path| {
+            path.iter()
+                .position(|e| e["id"] == edge["id"])
+                .is_some_and(|at| {
+                    path[at..]
+                        .iter()
+                        .any(|e| url(&e["to"]) == Some(target) && !expects(&e["to"]).is_empty())
+                })
+        })
+    };
+    let mut found = Vec::new();
+    for (i, edge) in edges.iter().enumerate() {
+        if !paths.iter().flatten().any(|e| e["id"] == edge["id"]) {
+            continue;
+        }
+        let Some(u) = url(&edge["from"]) else {
+            continue;
+        };
+        let Some((a, act)) = acts(edge)
+            .into_iter()
+            .enumerate()
+            .find(|(_, a)| a["kind"] == "submit")
+        else {
+            continue;
+        };
+        for (screen, opened_by) in subjects(u) {
+            let Some(target) = screens.get(screen.as_str()).and_then(|s| s["url"].as_str()) else {
+                continue;
+            };
+            if checked_after(edge, target) {
+                continue;
+            }
+            let message = format!(
+                "`{}` changes what screen {screen} shows (the flow opens {u} from it by \
+                 `{opened_by}`), but no path visits {screen} after this act; add a path that does \
+                 and expects the change there",
+                act["name"].as_str().unwrap_or_default()
+            );
+            let pointer = format!("/edges/{i}/acts/{a}");
+            found.push(if strict {
+                Finding::new("flow.outcome_elsewhere_unchecked", pointer, message)
+            } else {
+                Finding::new(
+                    "flow.weak_journey",
+                    pointer,
+                    format!("flow.outcome_elsewhere_unchecked: {message}"),
+                )
+            });
+        }
+    }
+    found
+}
+
 /// The roles a command or HTTP screen expects (`journey_backend`): an exit code, printed text or a
 /// JSON field is opaque to a person who did not write the flow, so each needs its `because`.
 const BACKEND_ROLES: &[&str] = &["exit", "stdout", "json"];
@@ -809,6 +949,7 @@ pub(super) fn draft_bytes(flow: &Value, project: &Path) -> Result<String, Vec<Fi
         .join(format!("{}.journey.yaml", flow["id"].as_str().unwrap()));
     findings.extend(semantic(&file, flow, project));
     findings.extend(weak_journey(flow, true));
+    findings.extend(outcome_elsewhere(flow, true));
     if let Err(finding) = compile(flow) {
         findings.push(finding);
     }
@@ -1468,6 +1609,8 @@ fn approval_findings(file: &Path, text: &str, flow: &Value, project: &Path) -> V
     // #1287: nothing is approved that does not say what it proves.
     findings.retain(|f| f.code != "flow.weak_journey");
     findings.extend(weak_journey(flow, true));
+    // #1785: nor a submit whose effect is never checked where it shows.
+    findings.extend(outcome_elsewhere(flow, true));
     // #1955: nothing is approved that does not say why each step and check is there.
     findings.retain(|f| f.code != "flow.unexplained");
     findings.extend(unexplained(flow, true));
@@ -2988,6 +3131,50 @@ viewports: [web]
             text.contains("name: Cadastrar novo item\nfeature: Itens\n"),
             "{text}"
         );
+    }
+
+    /// #1785: Zuvemo's `entrega` shape. The item is opened from the agenda, "Chegou" is submitted
+    /// on the item page, and the flow ends on that page's `status Entregue`; the delivered item
+    /// stayed on the agenda and nothing looked. Defects named: that flow passes approval or its
+    /// warning does not name the act and the agenda; a path that goes back to the agenda after the
+    /// act and expects there is still flagged; a flow with no other screen on the item is flagged;
+    /// or validation (non-strict) refuses instead of warning. Cost: in memory only.
+    #[test]
+    fn outcome_elsewhere_names_the_screen_the_act_changes() {
+        let entrega: Value = serde_yaml_ng::from_str(
+            "schema: graphhelm.journey-flow/1\nid: entrega\nstatus: draft\napproved: null\nbase: http://127.0.0.1:3000\nactors: [owner]\nsecrets: []\nrisks: []\nscreens:\n  - {id: agenda, url: /agenda, state: stable, expect: [{role: heading, name: Agenda}, {role: link, name: Sofa}], scope: unknown}\n  - {id: a-caminho, url: /itens/:id, state: stable, expect: [{role: status, name: A caminho}], scope: unknown}\n  - {id: entregue, url: /itens/:id, state: success, expect: [{role: status, name: Entregue}], scope: unknown}\n  - {id: agenda-depois, url: /agenda, state: success, expect: [{role: heading, name: Agenda}, {role: link, name: Sofa, absent: true}], scope: unknown}\nedges:\n  - {id: agenda.abrir, from: agenda, to: a-caminho, acts: [{kind: activate, role: link, name: Sofa}]}\n  - {id: a-caminho.chegou, from: a-caminho, to: entregue, acts: [{kind: submit, role: button, name: Chegou}]}\n  - {id: entregue.agenda, from: entregue, to: agenda-depois, acts: [{kind: activate, role: link, name: Agenda}]}\npaths:\n  main: [agenda.abrir, a-caminho.chegou]\ndrift: []\n",
+        )
+        .unwrap();
+        let strict = outcome_elsewhere(&entrega, true);
+        assert_eq!(strict.len(), 1);
+        assert_eq!(strict[0].code, "flow.outcome_elsewhere_unchecked");
+        assert_eq!(strict[0].pointer, "/edges/1/acts/0");
+        assert!(strict[0].message.contains("`Chegou`") && strict[0].message.contains("agenda"));
+        assert!(!strict[0].is_warning());
+        let warned = outcome_elsewhere(&entrega, false);
+        assert_eq!(warned.len(), 1);
+        assert_eq!(warned[0].code, "flow.weak_journey");
+        assert!(warned[0].is_warning());
+        assert!(
+            warned[0]
+                .message
+                .starts_with("flow.outcome_elsewhere_unchecked: ")
+        );
+
+        let mut back = entrega.clone();
+        back["paths"]["volta"] = json!(["a-caminho.chegou", "entregue.agenda"]);
+        assert!(outcome_elsewhere(&back, true).is_empty());
+
+        // A button is a command, not the item: checkout's "Checkout" or sign-in's "Entrar".
+        let mut command = entrega.clone();
+        command["screens"][0]["expect"][1]["role"] = json!("button");
+        command["edges"][0]["acts"][0]["role"] = json!("button");
+        assert!(outcome_elsewhere(&command, true).is_empty());
+
+        let mut alone = entrega;
+        alone["paths"] = json!({"main": ["a-caminho.chegou"]});
+        alone["edges"] = json!([alone["edges"][1].clone()]);
+        assert!(outcome_elsewhere(&alone, true).is_empty());
     }
 
     /// #1287: a journey that clicks, submits and checks only "success" proves nothing. Defects

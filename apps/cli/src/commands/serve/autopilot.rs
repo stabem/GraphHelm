@@ -13,7 +13,7 @@
 //!   `graphhelm_process::command` (hidden window). The role prompt file and a JSON brief go on
 //!   stdin; the brief is also a file. Owner- or lane-written text (the ask, titles) is never put
 //!   on a command line or through a shell. The child inherits only an allow list (#2019): the OS
-//!   session variables in `ALLOWED_NAMES`, non-secret `GRAPHHELM_*` names and the owner's
+//!   session variables in `ALLOWED_NAMES`, the five `GRAPHHELM_*` names it sets itself (`AUTOPILOT_NAMES`) and the owner's
 //!   `env.allow`; everything else is dropped, whatever its name, so a launcher runs on its
 //!   subscription login or not at all: no paid fallback. `timeoutSeconds` runs from the spawn (the stdin write cannot outlast it); past it
 //!   the launcher's whole process tree is killed and the attempt counts as failed. A launch note
@@ -108,6 +108,16 @@ const ALLOWED_NAMES: [&str; 48] = [
     "FORCE_COLOR",
     "WSLENV",
 ];
+/// The only `GRAPHHELM_*` names a launched agent gets: the five this module sets itself in `run`
+/// (kept here so a same-named inherited variable is not removed after it is set). Any other
+/// `GRAPHHELM_*` name, such as `GRAPHHELM_AGENT_CREDENTIALS`, is dropped.
+const AUTOPILOT_NAMES: [&str; 5] = [
+    "GRAPHHELM_LANE",
+    "GRAPHHELM_AUTOPILOT_ROLE",
+    "GRAPHHELM_AUTOPILOT_STAGE",
+    "GRAPHHELM_AUTOPILOT_BRIEF",
+    "GRAPHHELM_EXECUTION",
+];
 /// Prefixes of allowed families: the CPU description, locale categories.
 const ALLOWED_PREFIXES: [&str; 2] = ["PROCESSOR_", "LC_"];
 
@@ -115,10 +125,8 @@ const ALLOWED_PREFIXES: [&str; 2] = ["PROCESSOR_", "LC_"];
 /// the comparison is. `extra` is the owner's `env.allow`, already upper-cased.
 fn allowed(name: &str, extra: &[String]) -> bool {
     let text = name.to_ascii_uppercase();
-    // The Runtime's own routing names, except anything that reads as a secret.
-    let own = text.starts_with("GRAPHHELM_")
-        && !(text.contains("KEY") || text.contains("TOKEN") || text.contains("SECRET"));
-    own || ALLOWED_NAMES.contains(&text.as_str())
+    ALLOWED_NAMES.contains(&text.as_str())
+        || AUTOPILOT_NAMES.contains(&text.as_str())
         || ALLOWED_PREFIXES
             .iter()
             .any(|prefix| text.starts_with(prefix))
@@ -971,6 +979,10 @@ mod tests {
             "AZURE_OPENAI_API_KEY",
             "SOME_VENDOR_NOBODY_LISTED_KEY",
             "GRAPHHELM_EVENTS_KEY",
+            "GRAPHHELM_AGENT_CREDENTIALS",
+            "graphhelm_agent_credentials",
+            "GRAPHHELM_SOME_FUTURE_NAME",
+            "GRAPHHELM_RUNTIME_DIR",
         ] {
             assert!(!allowed(name, &[]), "{name} must be dropped");
         }
@@ -987,6 +999,10 @@ mod tests {
             "TEMP",
             "CLAUDE_CONFIG_DIR",
             "GRAPHHELM_LANE",
+            "GRAPHHELM_AUTOPILOT_ROLE",
+            "GRAPHHELM_AUTOPILOT_STAGE",
+            "GRAPHHELM_AUTOPILOT_BRIEF",
+            "GRAPHHELM_EXECUTION",
         ] {
             assert!(allowed(name, &[]), "{name} must pass through");
         }

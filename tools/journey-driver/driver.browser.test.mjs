@@ -231,9 +231,29 @@ test('a discover snapshot over the model budget returns the outline and keeps wh
   const outline=discovery.result.ariaYaml;
   assert.ok(Buffer.byteLength(outline)<=6144,`outline is ${Buffer.byteLength(outline)} bytes`);
   assert.match(outline,/- heading "Big page"/);
-  assert.match(outline,/page summarized: \d+ of \d+ lines, text left out/);
-  assert.ok(!outline.includes('Long paragraph text'),'paragraph text is left out');
+  assert.match(outline,/page summarized: \d+ of \d+ lines, \d+ of \d+ text lines kept/);
   assert.equal(discovery.result.fingerprint,full.result.fingerprint,'identity reads the whole page');
+});
+
+// #1783: the drafter reads only this summary, so a busy page's prices and dates must reach it with
+// their digits, or it can never propose a `text` check on them; the secret stays redacted, the
+// budget still bounds the page, and the fingerprint still ignores numbers. Cost: one real page.
+test('a discover summary keeps page text with digits, redacted and bounded, and the fingerprint ignores numbers',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const c=await client(t,{GRAPHHELM_SECRET_PAGE:'CANARY_priced_page_913'});await open(c,f.base+'/priced');
+  const one=await c.send('snapshot',{expect:[],discover:true});
+  assert.equal(one.ok,true,JSON.stringify(one).slice(0,300));
+  const outline=one.result.ariaYaml;
+  assert.ok(Buffer.byteLength(outline)<=6144,`summary is ${Buffer.byteLength(outline)} bytes`);
+  assert.match(outline,/page summarized: /,'the fixture page is over the model budget');
+  for(const seen of ['R$ 246,90','daqui a 1 semana','1 entrega','- button "Open 39"']) assert.ok(outline.includes(seen),`summary lacks ${seen}`);
+  assert.ok(!JSON.stringify(one).includes('CANARY_priced_page_913'),'the secret is redacted');
+  assert.ok(outline.includes('«secret:PAGE»'),'the redaction marker stays visible');
+  const c2=await client(t,{GRAPHHELM_SECRET_PAGE:'CANARY_priced_page_913'});await open(c2,f.base+'/priced?v=2');
+  const two=await c2.send('snapshot',{expect:[],discover:true});
+  assert.equal(two.ok,true,JSON.stringify(two).slice(0,300));
+  assert.ok(two.result.ariaYaml.includes('R$ 319,40'));
+  assert.equal(two.result.fingerprint,one.result.fingerprint,'numbers alone are not drift');
 });
 
 // #356 calibration: an open dialog is part of a screen's identity, so the driver must report it.

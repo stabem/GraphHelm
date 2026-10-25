@@ -823,6 +823,7 @@ class _ExecutableCapture:
                 opened = os.fstat(stream.fileno())
                 if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
                     raise RuntimeError("executable identity changed while opening")
+                opened_metadata = (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
                 while True:
                     self._remaining()
                     chunk = stream.read(1 << 20)
@@ -833,7 +834,11 @@ class _ExecutableCapture:
                         raise RuntimeError("executable identity bytes exceed the capture bound")
                     digest.update(chunk)
                 after = os.fstat(stream.fileno())
-            if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            if opened_metadata != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise RuntimeError("executable identity changed while reading")
+            current = os.stat(target)
+            if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                    != (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns, current.st_ctime_ns)):
                 raise RuntimeError("executable identity changed while reading")
             self.digests[target] = {"digestTarget": target, "sha256": digest.hexdigest()}
         return {"invocationPath": invocation, **self.digests[target]}

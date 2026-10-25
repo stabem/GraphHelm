@@ -2065,15 +2065,15 @@ fn history_ids(history: &Path) -> Vec<String> {
 /// run is the preview route's; this is only what came before it. #1956: a finished run kept for
 /// an earlier version of the flow (its digest or scope commit no longer the flow's) is no longer
 /// the preview route's current run, which reads `none`; it is listed here as the newest entry,
-/// under the id it will be archived with, so its verdict and frames stay readable.
+/// under the id it will be archived with, so its verdict and frames stay readable. #2011: the same
+/// holds for a finished run of the current version: it is listed too, not only after the next run.
 pub(crate) fn history(project: &Path, id: &str) -> Outcome {
     if !plain_id(id) {
         return answer(json!({}), Some(failure("preview.flow_unknown", "/id", 2)));
     }
-    let (_, digest, commit) = match flow_and_key(project, id) {
-        Ok(key) => key,
-        Err(failed) => return answer(json!({}), Some(failed)),
-    };
+    if let Err(failed) = flow_and_key(project, id) {
+        return answer(json!({}), Some(failed));
+    }
     let dir = dir_of(project, id);
     let history = dir.join("history");
     let entry = |run: String, state: Value| {
@@ -2098,7 +2098,7 @@ pub(crate) fn history(project: &Path, id: &str) -> Outcome {
         entry
     };
     let archived = history_ids(&history);
-    let earlier = earlier_version_run(&dir, &digest, &commit)
+    let earlier = slot_run(&dir)
         .filter(|(run, _)| !archived.contains(run))
         .map(|(run, state)| entry(run, state));
     let runs: Vec<Value> = earlier
@@ -2206,10 +2206,10 @@ pub(crate) fn history_frame(
     let dir = flow_dir.join("history").join(run);
     let (dir, state) = match read_state(&dir) {
         Some(state) => (dir, state),
-        // #1956: the earlier version's run the history lists before it is archived.
+        // #2011: the slot's run the history lists before it is archived.
         None => {
-            let (_, digest, commit) = flow_and_key(project, id).ok()?;
-            let (kept, state) = earlier_version_run(&flow_dir, &digest, &commit)?;
+            flow_and_key(project, id).ok()?;
+            let (kept, state) = slot_run(&flow_dir)?;
             (kept == run).then_some((flow_dir, state))?
         }
     };
@@ -2217,14 +2217,13 @@ pub(crate) fn history_frame(
     std::fs::read(file).ok()
 }
 
-/// #1956: the finished run in the journey's current slot when it was kept for another version of
-/// the flow (digest or scope commit), with the history id it will be archived under. `None` when
-/// the slot is empty, still running, or holds the current version's run.
-fn earlier_version_run(dir: &Path, digest: &str, commit: &str) -> Option<(String, Value)> {
+/// #2011: the finished run in the journey's current slot, with the history id it will be archived
+/// under, whether it was kept for this version of the flow or an earlier one (#1956). A run only
+/// moves to `history/` when the next one starts, so until then it would be missing from the
+/// history list although it is the newest run. `None` when the slot is empty or still running.
+fn slot_run(dir: &Path) -> Option<(String, Value)> {
     let state = read_state(dir)?;
-    let finished = matches!(state["state"].as_str(), Some("ready" | "failed"));
-    let current = state["digest"] == digest && state["commit"] == commit;
-    if !finished || current {
+    if !matches!(state["state"].as_str(), Some("ready" | "failed")) {
         return None;
     }
     Some((history_id(&state)?, state))
@@ -3109,7 +3108,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
     /// #1956: a flow edited after its run reads `none` on the preview route, and that run is then
     /// the newest history entry with its frame readable by run id, so Proof shows the earlier
     /// version's result instead of "not run". Defects named: the run vanishes from every route,
-    /// the current version's own run is listed as history, or a running slot is offered.
+    /// the current version's finished run is missing from history, or a running slot is offered.
     #[test]
     fn an_earlier_versions_run_is_the_newest_history_entry() {
         let project = tempfile::tempdir().unwrap();
@@ -3151,10 +3150,16 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             history_frame(project.path(), id, &run, "run", None).unwrap(),
             b"old run"
         );
-        // The current version's run is the preview route's, never history.
+        // #2011: the current version's finished run is the newest history entry too.
         save_state(&dir, &kept(&digest, "ready"));
-        assert_eq!(runs(project.path()), json!([]));
-        assert!(history_frame(project.path(), id, &run, "run", None).is_none());
+        let listed = runs(project.path());
+        assert_eq!(listed.as_array().unwrap().len(), 1, "{listed}");
+        assert_eq!(listed[0]["run"], run.as_str(), "{listed}");
+        assert_eq!(listed[0]["digest"], digest.as_str(), "{listed}");
+        assert_eq!(
+            history_frame(project.path(), id, &run, "run", None).unwrap(),
+            b"old run"
+        );
         // A slot still running is no earlier result.
         save_state(&dir, &kept("sha256:old", "running"));
         assert_eq!(runs(project.path()), json!([]));

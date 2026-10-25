@@ -293,6 +293,7 @@ class Reach(unittest.TestCase):
                 patch.object(rt, "run", return_value="plugins/graphhelm/skills/graphhelm-guide/SKILL.md"), \
                 patch.object(rt, "workspace", return_value=[]), \
                 patch.object(rt, "embeds", return_value={}), \
+                patch.dict(rt.os.environ, {"GRAPHHELM_CLI": ""}), \
                 patch.object(rt.shutil, "which", return_value=None):
             output = io.StringIO()
             with redirect_stdout(output):
@@ -1161,6 +1162,7 @@ class Reach(unittest.TestCase):
             hooks.mkdir(parents=True)
             with patch.object(rt, "run", return_value="plugins/graphhelm/hooks/test_removed.py"), \
                     patch.object(rt, "workspace", return_value=[]), patch.object(rt, "embeds", return_value={}), \
+                    patch.dict(rt.os.environ, {"GRAPHHELM_CLI": ""}), \
                     patch.object(rt.shutil, "which", return_value=None):
                 output = io.StringIO()
                 with redirect_stdout(output):

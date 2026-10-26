@@ -27,6 +27,8 @@ interface ProofViewProps {
   onRan: () => void;
   /** The journey a `?journey=` link opens on; `null` = the first listed. */
   initial?: string | null;
+  /** The owner picked a journey: the URL keeps it, so a Proof view opened again lands on it. */
+  onPicked?: (id: string) => void;
 }
 
 
@@ -45,9 +47,10 @@ function nameOf(flow: JourneyFlow): string {
 
 /** The Proof region (docs/design/studio/Proof.dc.html): the journeys column, then the selected
  * journey's run bar, console, step grid and the selected step's compare and Action panel. */
-export function ProofView({ runtime, journeys, error, executionId, onRan, initial = null }: ProofViewProps) {
+export function ProofView({ runtime, journeys, error, executionId, onRan, initial = null, onPicked }: ProofViewProps) {
   // The journey a deep link named (`studio open --journey`), until the owner picks another.
-  const [picked, setPicked] = useState<string | null>(initial);
+  const [picked, setPickedState] = useState<string | null>(initial);
+  const setPicked = (id: string) => { setPickedState(id); onPicked?.(id); };
   // #1905: bumped after a run is started from the column, so the open panel reads the run again.
   const [reread, setReread] = useState(0);
   // #1914: the run the open panel follows, by journey, so its card reads it before the list is read again.

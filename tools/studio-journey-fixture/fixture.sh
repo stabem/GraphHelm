@@ -472,13 +472,6 @@ FLOW
     curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token" \
       -H "Content-Type: application/json" -H "Idempotency-Key: $id" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent" \
       --data-binary @"$dir/.graphhelm/question.json" > "$dir/.graphhelm/question.out"
-    # #1808: studio2-lanes-reply answers a question at each viewport against this one Runtime, so
-    # it gets a second open question from the same lane: the second viewport answers that one.
-    if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-lanes-reply ]; then
-      id2=$(node -e 'console.log(require("crypto").randomUUID())')
-      printf '{"signal":{"id":"planner-question-%s","source":{"type":"tool","id":"planner"},"type":"operator_note","severity":"low","description":"Which slot should the rebuild use?","evidence":["demo"],"emittedAt":"%s","to":"studio-operator"}}' "$id2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$dir/.graphhelm/question2.json"
-      curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token"         -H "Content-Type: application/json" -H "Idempotency-Key: $id2" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent"         --data-binary @"$dir/.graphhelm/question2.json" > "$dir/.graphhelm/question2.out" || { echo 'fixture: the second question was refused' >&2; exit 1; }
-    fi
     # #1041: one Keel card from the node `deploy` (studio-keel-card). Its evidence is the promise,
     # each scope path and the proof command, in that order (docs/keel/RECORDS.md).
     cid=$(node -e 'console.log(require("crypto").randomUUID())')

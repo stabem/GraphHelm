@@ -17,36 +17,36 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project, journey]
     state: loading
-    expect: [{role: listitem, name: Read the Runtime health, text: running, because: the Runtime still reports the first journey's run as running}]
+    expect: [{role: button, name: Select Follow a request, because: "the owner moved to Follow a request, the card right below the running one, so both cards are on screen"}, {role: listitem, name: Read the Runtime health, text: running, because: the Runtime still reports the first journey's run as running}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
   - id: finished
     title: The first card shows the result the Runtime recorded
     url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project, journey]
     state: success
-    expect: [{role: listitem, name: Read the Runtime health, text: passed, because: "the fixture's health journey always passes, so its card ends on passed"}]
+    expect: [{role: listitem, name: Read the Runtime health, text: passed, because: "the fixture's health journey always passes, so its card ends on passed"}, {role: button, name: Select Follow a request, because: "the other journey is still the selected one: the first card changed without being selected again"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
   - id: journeys
     title: The journey to run is selected
     url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: list, name: Journeys}, {role: button, name: Run Read the Runtime health}, {role: button, name: Select Run a journey}]
+    expect: [{role: list, name: Journeys, because: the Proof view lists every journey the owner can run}, {role: button, name: Run Read the Runtime health, because: the health journey's own card carries the Run the owner presses}, {role: button, name: Select Follow a request, because: the next card down is the one the owner switches to while the run plays}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
 edges:
   - id: elsewhere.finished
     from: elsewhere
     to: finished
-    why: "When the Runtime says that run ended, the first card shows its result without being selected again."
+    why: "The owner keeps working on another journey and still learns how the first run ended, without going back to it."
     acts:
-      - {kind: wait_for, role: list, name: Journeys}
+      - {kind: wait_for, role: listitem, name: Read the Runtime health}
   - id: journeys.elsewhere
     from: journeys
     to: elsewhere
-    why: "Running one journey and selecting another keeps the first card reading running, as the Runtime reports it."
+    why: "The owner starts a run and moves on to another journey at once, so a run must not need him to watch it."
     acts:
       - {kind: activate, role: button, name: Run Read the Runtime health}
-      - {kind: activate, role: button, name: Select Run a journey}
+      - {kind: activate, role: button, name: Select Follow a request}
 paths:
   main: [journeys.elsewhere, elsewhere.finished]
 drift: []

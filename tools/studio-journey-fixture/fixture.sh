@@ -98,13 +98,8 @@ up)
   "$bin" --json init --project "$dir/project" --bind "127.0.0.1:$rport" --harness codex > "$dir/.graphhelm/init.json"
   export GRAPHHELM_FIXTURE_RUNTIME_PORT="$rport" GRAPHHELM_EVENTS_KEY="$(cat "$rt/serve.key")"
   cp -R "$repo/.graphhelm/journeys" "$dir/project/.graphhelm/"
-  # #1905: the Run flows press Run inside this fixture's Studio, which plays the copied flow at its
-  # `base`. An isolated fixture answers on its own port, not the flows' 5184, so the copy names
-  # this fixture's Studio; at 5184 nothing answers and the inner run ends watch.app_down.
-  for f in "$dir/project/.graphhelm/journeys"/studio2-proof-run*.journey.yaml; do
-    [ -f "$f" ] || continue
-    sed "s#^base: http://127.0.0.1:5184\$#base: http://127.0.0.1:$sport#" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-  done
+  # #1905, #2077: every studio2 flow played on this fixture names this fixture's Studio as its base.
+  . "$(dirname "$0")/rebase_flows.sh"; rebase_flows "$dir/project/.graphhelm/journeys" "$sport"
   # #1041: the files the flows name in `scope`, so a fixture preview is not refused flow.scope_path_missing.
   node "$(dirname "$0")/copy_scope.mjs" "$repo" "$dir/project" > /dev/null
   # #1635: an owner approval needs a preview recorded at the flow's scope commit, the last commit
@@ -202,8 +197,8 @@ FLOW
     cat > "$dir/project/.graphhelm/journeys/cli-hello.journey.yaml" <<'FLOW'
 schema: graphhelm.journey-flow/1
 id: cli-hello
-title: Print the Node version
-name: Print the Node version
+title: Print a fixed greeting
+name: Print a fixed greeting
 purpose: "The fixture's draft with one command step, which waits for the owner's confirmation."
 status: draft
 approved: null
@@ -213,10 +208,10 @@ secrets: []
 risks: []
 screens:
   - id: printed
-    title: Node printed its version
+    title: Node printed the fixed greeting
     url: /
     state: success
-    expect: [{role: exit, name: "0", because: node --version succeeds}, {role: stdout, name: v, because: Node prints its version starting with v}]
+    expect: [{role: exit, name: "0", because: the greeting command succeeds}, {role: stdout, name: hello-fixture, because: the command prints the fixed text hello-fixture}]
     scope: unknown
   - id: start
     title: A shell is ready
@@ -240,9 +235,9 @@ edges:
   - id: start.print
     from: start
     to: printed
-    why: Node prints its version once the owner confirms the command.
+    why: Node prints the fixed greeting once the owner confirms the command.
     acts:
-      - {kind: cli, role: exec, name: node --version}
+      - {kind: cli, role: exec, name: node -e console.log('hello-fixture')}
 paths:
   main: [start.print, printed.wait]
   again: [start.print, printed.wait]
@@ -527,18 +522,25 @@ NODE
   fi
   # #1956: studio2-proof-stale needs a journey edited after its run: its run is seeded under the
   # flow's key, then the flow's purpose is edited and committed, so its digest moves and the
-  # preview read answers `none` while that run stays the last one.
+  # preview read answers `none` while that run stays the last one. #2077: that journey is a
+  # FIXTURE-ONLY copy of runtime-health, never studio2-proof-stale itself: previewing the flow
+  # records a run of it, which would replace the stale run the flow looks at.
   if [ "$flow" = studio2-proof-stale ]; then
-    "$bin" --json journey preview "$flow" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
+    stale=health-edited; f="$dir/project/.graphhelm/journeys/$stale.journey.yaml"
+    sed -e 's#^id: runtime-health$#id: health-edited#' -e 's#^title: Read the Runtime health$#title: Read the health edited after its run#' \
+      -e 's#^purpose: The fixture.s Runtime answers its health check\.$#purpose: The fixture copy of the health check whose flow is edited after its recorded run.#' \
+      "$dir/project/.graphhelm/journeys/runtime-health.journey.yaml" > "$f"
+    git -C "$dir/project" add -f -- ".graphhelm/journeys/$stale.journey.yaml"
+    git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: the journey to edit after its run'
+    "$bin" --json journey preview "$stale" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
     key=$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).data||{}; if(d.digest&&d.commit) console.log(d.digest+" "+d.commit)' "$dir/.graphhelm/preview-key.json")
-    [ -n "$key" ] || { echo "fixture: no preview key for $flow" >&2; exit 1; }
-    node "$repo/tools/studio-journey-fixture/seed_run.mjs" "$dir/project" "$flow" $key > /dev/null
-    f="$dir/project/.graphhelm/journeys/$flow.journey.yaml"
-    sed 's#^purpose: "A journey whose flow#purpose: "Edited after its run. A journey whose flow#' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-    git -C "$dir/project" add -f -- ".graphhelm/journeys/$flow.journey.yaml"
+    [ -n "$key" ] || { echo "fixture: no preview key for $stale" >&2; exit 1; }
+    node "$repo/tools/studio-journey-fixture/seed_run.mjs" "$dir/project" "$stale" $key > /dev/null
+    sed 's#^purpose: The fixture copy#purpose: Edited after its run. The fixture copy#' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    git -C "$dir/project" add -f -- ".graphhelm/journeys/$stale.journey.yaml"
     git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: edit the flow after its run'
-    "$bin" --json journey preview "$flow" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
-    grep -q '"state":"none"' "$dir/.graphhelm/preview-key.json" || { echo "fixture: $flow still reads its run after the edit" >&2; exit 1; }
+    "$bin" --json journey preview "$stale" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
+    grep -q '"state":"none"' "$dir/.graphhelm/preview-key.json" || { echo "fixture: $stale still reads its run after the edit" >&2; exit 1; }
   fi
   # #137: the async Runtime driver records delegation; no model executor is wired. No studio2 flow
   # reads it yet; kept for a lanes flow that names a delegated worker.

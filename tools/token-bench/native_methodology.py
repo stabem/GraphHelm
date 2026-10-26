@@ -181,6 +181,9 @@ def candidate_tree_hash(root: Path, declared_paths: list[str] | None = None) -> 
 def _declared_candidate_paths(workflow: dict, root: Path) -> list[str]:
     """Expand declared artifact globs into stable project-relative candidate paths."""
     paths = list(workflow.get("pinnedPublicFiles", []))
+    context = workflow.get("taskContext", {})
+    paths.extend(context.get("scope", []))
+    paths.extend(context.get("allowedTestPaths", []))
     paths.extend(workflow.get("methodAssetDigests", {}).keys())
     for phase in workflow.get("phases", []):
         paths.extend(phase.get("requiredArtifacts", []))

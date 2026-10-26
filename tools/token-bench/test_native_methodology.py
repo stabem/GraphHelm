@@ -233,6 +233,28 @@ class NativeMethodologyContracts(unittest.TestCase):
         self.assertEqual(metrics, {"contextInputTokens": 21134,
                                     "totalProcessedTokens": 21664})
 
+    def test_candidate_hash_includes_declared_production_and_new_regression(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            production = root / "src" / "binding.py"
+            regression = root / "tests" / "test_binding.py"
+            production.parent.mkdir()
+            regression.parent.mkdir()
+            production.write_text("before\n", encoding="utf-8")
+            regression.write_text("test before\n", encoding="utf-8")
+            workflow = {"pinnedPublicFiles": [], "methodAssetDigests": {}, "phases": [],
+                        "taskContext": {"scope": ["src/binding.py"],
+                                        "allowedTestPaths": ["tests/test_binding.py"]}}
+            paths = bench._declared_candidate_paths(workflow, root)
+            self.assertIn("src/binding.py", paths)
+            self.assertIn("tests/test_binding.py", paths)
+            initial = bench.candidate_tree_hash(root, paths)
+            production.write_text("after\n", encoding="utf-8")
+            self.assertNotEqual(initial, bench.candidate_tree_hash(root, paths))
+            production.write_text("before\n", encoding="utf-8")
+            regression.write_text("test after\n", encoding="utf-8")
+            self.assertNotEqual(initial, bench.candidate_tree_hash(root, paths))
+
     def test_methodology_usage_imports_without_legacy_tasks_manifest(self):
         """The native parser must load without run.py, whose startup requires tasks.json."""
         source = Path(__file__).resolve().parent

@@ -94,11 +94,13 @@ it is never used as a fallback for missing native totals. See the official
 [Claude usage documentation](https://code.claude.com/docs/en/agent-sdk/cost-tracking)
 and [result-message scopes](https://code.claude.com/docs/en/agent-sdk/typescript).
 
-Missing or duplicate final results, malformed streams, missing categories, negative,
+Missing or duplicate final results, malformed JSON or native accounting records, missing categories, negative,
 noninteger or boolean counters, and pipeline totals below main-loop totals leave
 `counts` unknown with an explicit `accountingStatus`. Codex retains validated sums
 from completed turns; cached input is a subset of its input count. Observed accounting
 does not establish billed USD or an otherwise missing model identity.
+Malformed assistant-message diagnostics are retained separately; a diagnostic subtotal
+does not override otherwise valid native accounting records.
 
 Historical receipts and manifests stay immutable. To correct a historical analysis,
 read its saved native stdout through the current `usage` parser and write a separate

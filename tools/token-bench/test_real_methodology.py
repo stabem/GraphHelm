@@ -119,6 +119,20 @@ class RealMethodologyContracts(unittest.TestCase):
             second = bench.external_dependency_hashes(task)
             self.assertNotEqual(first, second)
 
+    def test_declared_dependency_mount_is_created_at_exact_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dependency = root / "deps"
+            dependency.mkdir()
+            workspace = root / "workspace"
+            workspace.mkdir()
+            task = {"externalDependencies": [{"path": str(dependency), "kind": "directory",
+                                                "mount": "apps/studio/node_modules"}]}
+            bench.prepare_mounts(task, workspace)
+            target = workspace / "apps" / "studio" / "node_modules"
+            self.assertTrue(target.exists())
+            self.assertEqual(target.resolve(), dependency.resolve())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -173,6 +173,35 @@ def hidden_files(task: dict) -> list[str]:
     return [safe_relative(path) for path in files]
 
 
+def mount_path(root: Path, mount: str) -> Path:
+    relative = safe_relative(mount)
+    target = (root / Path(*PurePosixPath(relative).parts)).resolve()
+    if root.resolve() not in target.parents:
+        raise ValueError(f"dependency mount escapes workspace: {mount}")
+    return target
+
+
+def prepare_mounts(task: dict, root: Path) -> None:
+    """Create only registry-declared read-only dependency junctions in one workspace."""
+    for entry in task.get("externalDependencies", []):
+        if not isinstance(entry, dict) or entry.get("kind") != "directory" or not entry.get("mount"):
+            continue
+        source = Path(entry["path"]).resolve()
+        if source.is_symlink() or not source.is_dir():
+            raise ValueError(f"dependency mount source is missing or linked: {source}")
+        target = mount_path(root, entry["mount"])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() or target.is_symlink():
+            if target.resolve() == source:
+                continue
+            raise ValueError(f"dependency mount target is occupied: {target}")
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(source), str(target))
+        else:
+            target.symlink_to(source, target_is_directory=True)
+
+
 def hidden_command(task: dict) -> list[str]:
     command = task.get("hiddenOracle", {}).get("command")
     if not isinstance(command, list) or not command:
@@ -261,6 +290,7 @@ def qualify(registry: dict, output: Path) -> dict:
                 target = root / label
                 target.mkdir()
                 copy_paths(snapshot_root(task, kind), target, task_paths(task)[1] + task_paths(task)[2])
+                prepare_mounts(task, target)
                 copy_paths(Path(task["hiddenOracle"]["root"]), target, hidden_files(task))
                 public = run_process([sys.executable, "test_public.py"], target, EVALUATOR_DEADLINE)
                 hidden = run_process(hidden_command(task), target, EVALUATOR_DEADLINE)
@@ -372,11 +402,14 @@ def candidate_files(root: Path) -> dict[str, str]:
 
 def validate_external_links(task: dict, candidate: Path) -> None:
     for entry in task.get("externalDependencies", []):
-        if not isinstance(entry, dict) or not entry.get("candidatePath"):
+        if not isinstance(entry, dict):
             continue
-        target = candidate / Path(*PurePosixPath(safe_relative(entry["candidatePath"])).parts)
+        candidate_path = entry.get("candidatePath") or entry.get("mount")
+        if not candidate_path:
+            continue
+        target = mount_path(candidate, candidate_path)
         expected = Path(entry["path"]).resolve()
-        if not target.is_symlink() or target.resolve() != expected:
+        if not target.exists() or target.resolve() != expected:
             raise ValueError(f"candidate dependency link is missing or points elsewhere: {target}")
 
 
@@ -409,6 +442,7 @@ def evaluator(task: dict, candidate: Path, output: Path, frozen_hashes: dict) ->
     root = output / "evaluator"
     root.mkdir()
     copy_paths(snapshot_root(task, "parent"), root, closure + support)
+    prepare_mounts(task, root)
     for relative in scope:
         destination = root / Path(*PurePosixPath(relative).parts)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -453,6 +487,7 @@ def run_attempt(args: argparse.Namespace) -> dict:
         subject.mkdir()
         scope, closure, support = task_paths(task)
         copy_paths(snapshot_root(task, "parent"), subject, closure + support + task["publicTests"])
+        prepare_mounts(task, subject)
         before = candidate_files(subject)
         executable = Path(manifest["identities"][cell["cli"]]["path"])
         current_environment = {key: os.environ.get(key, "") for key in manifest["environment"]}

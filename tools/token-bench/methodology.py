@@ -33,6 +33,7 @@ def native_cli_command(cli: str, executable: Path, model: str) -> list[str]:
         return [str(executable), "exec", "--json", "--ignore-user-config", "--ephemeral",
                 "--skip-git-repo-check", "-c", 'default_permissions=":workspace"',
                 "-c", 'windows.sandbox="elevated"', "-c", "features.prefer_mxc=true",
+                "-c", 'web_search="disabled"',
                 "-m", model, "-c", 'model_reasoning_effort="low"', "-c",
                 "project_doc_max_bytes=0", "--disable", "plugins", "--enable",
                 "skip_host_skill_discovery", "-"]

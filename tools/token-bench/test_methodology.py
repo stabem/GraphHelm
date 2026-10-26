@@ -25,6 +25,7 @@ class MethodologyContracts(unittest.TestCase):
         claude = bench.native_cli_command("claude", Path("claude.exe"), "model")
         self.assertIn("--ignore-user-config", codex)
         self.assertIn("--skip-git-repo-check", codex)
+        self.assertIn('web_search="disabled"', codex)
         self.assertIn("--safe-mode", claude)
         self.assertNotIn("--dangerously-skip-permissions", claude)
 

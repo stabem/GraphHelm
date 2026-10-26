@@ -382,3 +382,67 @@ def claude_owned_tree(stream: Path, child_logs: list[Path], *, project: Path,
                 "semantics": "claude-pipeline-reconciled-persisted-recursive-messages"}
     except (KeyError, TypeError, OSError, ValueError) as error:
         return {"status": "unknown", "reason": str(error), "total": None}
+
+
+def native_skill_load(native_log: Path, *, cli: str, expected_path: Path,
+                      expected_sha256: str, frozen_prompt: str) -> dict:
+    """Observe the native loader's expanded skill, not merely a present skill file.
+
+    Codex records a separate native `<skill>` user message. Claude records a
+    native metadata message with the installed base directory; its frontend
+    removes YAML frontmatter and substitutes the slash command's arguments.
+    Model claims, ordinary file reads and the initial task prompt are insufficient.
+    """
+    try:
+        if "<skill>" in frozen_prompt or "Base directory for this skill:" in frozen_prompt:
+            raise ValueError("frozen task prompt embeds a native loader marker")
+        expected_path = expected_path.resolve()
+        if expected_path.name != "SKILL.md" or _hash(expected_path) != expected_sha256:
+            raise ValueError("selected native skill asset changed or is invalid")
+        source = expected_path.read_text(encoding="utf-8")
+        frontmatter = re.match(r"\A---\s*\n(.*?)\n---", source, re.S)
+        if frontmatter is None:
+            raise ValueError("selected skill has no native frontmatter")
+        metadata_name = re.search(r"^name:\s*(.*?)\s*$", frontmatter[1], re.M)
+        if metadata_name is None:
+            raise ValueError("selected skill has no native name")
+        expected_name = metadata_name[1].strip('"\'')
+        loaded = []
+        for row in records(native_log):
+            if cli == "codex":
+                message = row.get("payload", {})
+                if row.get("type") != "response_item" or message.get("type") != "message" or message.get("role") != "user":
+                    continue
+            elif cli == "claude":
+                if row.get("type") != "user" or row.get("isMeta") is not True:
+                    continue
+                message = row.get("message", {})
+            else:
+                raise ValueError("unsupported native skill loader protocol")
+            content = message.get("content", [])
+            texts = [item.get("text", "") if isinstance(item, dict) else item
+                     for item in content] if isinstance(content, list) else [content]
+            for text in texts:
+                if not isinstance(text, str):
+                    continue
+                if cli == "codex":
+                    for match in re.finditer(r"<skill>\s*<name>(.*?)</name>\s*<path>(.*?)</path>\s*(.*?)</skill>", text, re.S):
+                        path = Path(match[2]).resolve()
+                        loaded.append(str(path))
+                        if path == expected_path and match[1] == expected_name and match[3].strip() == source.strip():
+                            return {"status": "observed", "skillPath": str(path), "skillSha256": expected_sha256,
+                                    "nativeLogSha256": _hash(native_log), "loader": "codex-native-skill-message"}
+                elif text.startswith("Base directory for this skill: "):
+                    header, body = text.split("\n\n", 1)
+                    path = (Path(header.removeprefix("Base directory for this skill: ")) / "SKILL.md").resolve()
+                    loaded.append(str(path))
+                    arguments = frozen_prompt.split(" ", 1)[1] if " " in frozen_prompt else ""
+                    expected = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", source, count=1, flags=re.S)
+                    expected = expected.replace("$ARGUMENTS", arguments)
+                    if path == expected_path and body.strip() == expected.strip():
+                        return {"status": "observed", "skillPath": str(path), "skillSha256": expected_sha256,
+                                "nativeLogSha256": _hash(native_log), "loader": "claude-native-skill-metadata"}
+        return {"status": "incomplete", "reason": "selected skill was not expanded by the native loader",
+                "observedSkillPaths": loaded}
+    except (OSError, ValueError, TypeError, AttributeError) as error:
+        return {"status": "incomplete", "reason": str(error)}

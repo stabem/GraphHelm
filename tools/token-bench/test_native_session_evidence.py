@@ -1,6 +1,7 @@
 """Replay native subscription probes, including forked history and child accounting."""
 import json
 import copy
+import hashlib
 from pathlib import Path
 
 import native_session_evidence as evidence
@@ -170,3 +171,32 @@ def test_recursive_claude_linkage_rejects_foreign_session_and_unqualified_versio
     assert evidence.claude_owned_tree(path, **arguments)["status"] == "unknown"
     assert evidence.claude_owned_tree(FIXTURES / "claude-depth2-stream.jsonl", version="9.9.999",
                                       **arguments)["status"] == "unknown"
+
+
+def test_native_skill_loader_requires_native_metadata_and_pinned_body(tmp_path):
+    skill = tmp_path / "SKILL.md"
+    source = "---\nname: selected-skill\n---\nFollow the actual task. Input: $ARGUMENTS\n"
+    skill.write_text(source, encoding="utf-8")
+    pinned = hashlib.sha256(skill.read_bytes()).hexdigest()
+    log = tmp_path / "native.jsonl"
+    codex = {"type": "response_item", "payload": {"type": "message", "role": "user", "content": [
+        {"type": "input_text", "text": f"<skill>\n<name>selected-skill</name>\n<path>{skill}</path>\n{source}</skill>"}]}}
+    log.write_text(json.dumps(codex) + "\n", encoding="utf-8")
+    arguments = {"cli": "codex", "expected_path": skill, "expected_sha256": pinned,
+                 "frozen_prompt": "$selected-skill public task"}
+    assert evidence.native_skill_load(log, **arguments)["status"] == "observed"
+    injected = {**arguments, "frozen_prompt": codex["payload"]["content"][0]["text"]}
+    assert evidence.native_skill_load(log, **injected)["status"] == "incomplete"
+    codex["payload"]["role"] = "assistant"
+    log.write_text(json.dumps(codex) + "\n", encoding="utf-8")
+    assert evidence.native_skill_load(log, **arguments)["status"] == "incomplete"
+    claude = {"type": "user", "isMeta": True, "message": {"content": [
+        {"type": "text", "text": f"Base directory for this skill: {tmp_path}\n\nFollow the actual task. Input: public task\n"}]}}
+    log.write_text(json.dumps(claude) + "\n", encoding="utf-8")
+    arguments.update(cli="claude", frozen_prompt="/selected-skill public task")
+    assert evidence.native_skill_load(log, **arguments)["status"] == "observed"
+    claude["isMeta"] = False
+    log.write_text(json.dumps(claude) + "\n", encoding="utf-8")
+    assert evidence.native_skill_load(log, **arguments)["status"] == "incomplete"
+    skill.write_text(source + "Unpinned amendment.\n", encoding="utf-8")
+    assert evidence.native_skill_load(log, **arguments)["status"] == "incomplete"

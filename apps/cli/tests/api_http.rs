@@ -4757,6 +4757,122 @@ fn the_tasks_route_folds_the_runs_task_records_into_slices() {
     );
 }
 
+/// #1560: a Runtime that already read the run resumes over only the events appended since
+/// (`read_stream_after`), keeping the run's signals instead of copying the whole stream. Catches a
+/// resumed reply that differs from a whole read: a dropped or doubled record, a plain signal (an
+/// owner note, an ask) lost from the kept signals, a stale head. The control is a second Runtime
+/// started on the same store, whose empty memory reads the whole stream; both replies must be
+/// equal except the instant they were judged at and how many envelopes each opened. Cost: five
+/// CLI signals, two sealed servers, four GETs.
+#[test]
+fn a_resumed_tasks_read_answers_what_a_whole_read_answers() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-tasks-resume";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = events.with_extension("keyring");
+    create_signal_keyring(&keyring);
+    let record = |id: &str, kind: &str, description: &str| {
+        let envelope = serde_json::json!({
+            "id": id,
+            "source": {"type": "user", "id": "owner-cli"},
+            "type": kind,
+            "severity": "low",
+            "description": description,
+            "evidence": ["task"],
+            "emittedAt": "2026-10-13T12:00:00Z"
+        });
+        let path = directory.path().join(format!("{id}.json"));
+        std::fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .env("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)
+            .args(["execution", "signal", "--events"])
+            .arg(&events)
+            .args(["--execution", execution, "--signal"])
+            .arg(&path)
+            .arg("--evidence-out")
+            .arg(directory.path().join(format!("{id}-evidence.json")))
+            .arg("--keyring")
+            .arg(&keyring)
+            .args(["--key-id", "signal-key"])
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["ok"], Value::Bool(true), "{kind}: {reply}");
+    };
+    let lane = "owner-cli";
+    record(
+        "resume-claim",
+        "task.claimed",
+        &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1560", "revision": 1,
+            "at": "2026-10-13T12:00:00Z", "issue": 1560, "lane": lane, "branch": "issue-1560-x",
+            "repo": "stabem/GraphHelm"})
+        .to_string(),
+    );
+    let serve = || {
+        serve_with_env(
+            &events,
+            &[
+                "--keyring",
+                keyring.to_str().unwrap(),
+                "--key-id",
+                "signal-key",
+            ],
+            &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+        )
+    };
+    let comparable = |mut reply: Value| {
+        assert_eq!(reply["ok"], Value::Bool(true), "{reply}");
+        let data = reply["data"].as_object_mut().unwrap();
+        data.remove("now");
+        data.remove("opened");
+        reply["data"].take()
+    };
+    let resumed = {
+        let (_guard, base, token) = serve();
+        let url = format!("{base}/v1/executions/{execution}/tasks?full=1");
+        let first = get_json(&url, Some(&token));
+        assert_eq!(first["data"]["opened"], 1, "{first}");
+        record(
+            "resume-plain",
+            "no_progress",
+            "the deploy stage needs a manual review",
+        );
+        record(
+            "resume-pr",
+            "task.pr_opened",
+            &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-1560", "revision": 3,
+                "at": "2026-10-13T12:10:00Z", "pr": 2130, "headSha": "abcdef01", "journeys": [], "lane": lane})
+            .to_string(),
+        );
+        let resumed = get_json(&url, Some(&token));
+        // Only the one new task envelope is opened: the read resumed, it did not start over.
+        assert_eq!(resumed["data"]["opened"], 1, "{resumed}");
+        assert_eq!(
+            resumed["data"]["headSequence"],
+            head_sequence(&base, &token, execution),
+            "the resumed reply names the store's head"
+        );
+        comparable(resumed)
+    };
+    let (_guard, base, token) = serve();
+    let whole = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks?full=1"),
+        Some(&token),
+    );
+    assert_eq!(
+        whole["data"]["opened"], 2,
+        "control: a fresh Runtime reads the whole stream"
+    );
+    assert_eq!(resumed, comparable(whole));
+    assert_eq!(
+        resumed["records"].as_array().map(Vec::len),
+        Some(2),
+        "{resumed}"
+    );
+}
+
 /// The plan's second Task 3 test: an identical retry (same `Idempotency-Key`, same body) is 200,
 /// not 409, and appends nothing — the store's own `GHE003_IDEMPOTENCY_CONFLICT` on the
 /// freshly-recomputed-sequence collision (the checkpoint this task verified empirically) is

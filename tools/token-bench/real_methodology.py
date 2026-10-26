@@ -181,6 +181,21 @@ def mount_path(root: Path, mount: str) -> Path:
     return target
 
 
+def _is_redirected_directory(path: Path) -> bool:
+    junction_probe = getattr(os.path, "isjunction", None)
+    return path.is_symlink() or bool(junction_probe(path)) if junction_probe else path.is_symlink()
+
+
+def validate_mount_parents(root: Path, target: Path) -> None:
+    """Reject redirected ancestors; the final declared mount may be a junction."""
+    relative = target.relative_to(root)
+    current = root
+    for part in relative.parts[:-1]:
+        current /= part
+        if _is_redirected_directory(current):
+            raise ValueError(f"dependency mount ancestor is redirected: {current}")
+
+
 def prepare_mounts(task: dict, root: Path) -> None:
     """Create only registry-declared read-only dependency junctions in one workspace."""
     for entry in task.get("externalDependencies", []):
@@ -190,6 +205,7 @@ def prepare_mounts(task: dict, root: Path) -> None:
         if source.is_symlink() or not source.is_dir():
             raise ValueError(f"dependency mount source is missing or linked: {source}")
         target = mount_path(root, entry["mount"])
+        validate_mount_parents(root, target)
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists() or target.is_symlink():
             if target.resolve() == source:
@@ -408,6 +424,7 @@ def validate_external_links(task: dict, candidate: Path) -> None:
         if not candidate_path:
             continue
         target = mount_path(candidate, candidate_path)
+        validate_mount_parents(candidate, target)
         expected = Path(entry["path"]).resolve()
         if not target.exists() or target.resolve() != expected:
             raise ValueError(f"candidate dependency link is missing or points elsewhere: {target}")

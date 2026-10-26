@@ -1,5 +1,6 @@
 """Focused contracts for real-project snapshot isolation and truthful outcomes."""
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -127,12 +128,38 @@ class RealMethodologyContracts(unittest.TestCase):
             workspace = root / "workspace"
             workspace.mkdir()
             task = {"externalDependencies": [{"path": str(dependency), "kind": "directory",
-                                                "mount": "apps/studio/node_modules"}]}
+                                                "mount": "apps/studio/node_modules"}],
+                    "scope": ["app.py"], "productionImportClosure": ["app.py"],
+                    "publicTests": ["test.py"], "supportFiles": ["test_public.py"]}
+            for name in ("app.py", "test.py", "test_public.py"):
+                (workspace / name).write_text("# fixture\n", encoding="utf-8")
             bench.prepare_mounts(task, workspace)
             target = workspace / "apps" / "studio" / "node_modules"
             self.assertTrue(target.exists())
             self.assertEqual(target.resolve(), dependency.resolve())
-            bench.validate_external_links(task, workspace)
+            before = bench.candidate_files(workspace)
+            bench.enforce_scope(task, workspace, before)
+
+    def test_declared_mount_rejects_redirected_parent_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dependency = root / "deps"
+            dependency.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            workspace = root / "workspace"
+            workspace.mkdir()
+            redirected = workspace / "apps"
+            if os.name == "nt":
+                import _winapi
+                _winapi.CreateJunction(str(outside), str(redirected))
+            else:
+                redirected.symlink_to(outside, target_is_directory=True)
+            task = {"externalDependencies": [{"path": str(dependency), "kind": "directory",
+                                                "mount": "apps/studio/node_modules"}]}
+            with self.assertRaises(ValueError):
+                bench.prepare_mounts(task, workspace)
+            self.assertFalse((outside / "studio" / "node_modules").exists())
 
 
 if __name__ == "__main__":

@@ -59,6 +59,8 @@ def codex_tree(root_log: Path, child_logs: list[Path], *, project: Path,
             if not metadata or rows[0].get("type") != "session_meta":
                 raise ValueError("native session metadata must be first")
             meta = metadata[0]
+            if meta.get("cli_version") != "0.157.1":
+                raise ValueError("Codex thread inclusion semantics are not qualified for this version")
             thread = meta.get("id")
             if not isinstance(thread, str) or thread in nodes:
                 raise ValueError("missing or duplicate thread")
@@ -92,7 +94,10 @@ def codex_tree(root_log: Path, child_logs: list[Path], *, project: Path,
                         raise ValueError("native completion lacks its own turn counters")
                     completed.add(turn)
                 elif event.get("type") == "token_count":
-                    last_counter = index
+                    info = event.get("info")
+                    if isinstance(info, dict) and isinstance(info.get("total_token_usage"), dict):
+                        counters(info["total_token_usage"])
+                        last_counter = index
             if not started or set(started) != completed:
                 raise ValueError("latest native task has not completed")
             totals = [r["payload"]["info"]["total_token_usage"] for r in rows
@@ -275,3 +280,105 @@ def required_operations(stream: Path, *, cli: str, requirements: list[dict]) -> 
         return {"status": "observed", "operations": matched, "sha256": _hash(stream)}
     except (KeyError, TypeError, OSError, ValueError, re.error) as error:
         return {"status": "incomplete", "reason": str(error)}
+
+
+def claude_owned_tree(stream: Path, child_logs: list[Path], *, project: Path,
+                      session_id: str, version: str = "2.1.310") -> dict:
+    """Reconcile recursive agents using final persisted native assistant usage.
+
+    Forwarded assistant chunks and Agent hand-back usage are insufficient for a
+    multi-turn child. Its private persisted transcript contains finalized usage
+    for every unique native message. The root pipeline must equal the main loop
+    plus those disjoint messages, and all reported children must have completed.
+    """
+    try:
+        if version != "2.1.310":
+            raise ValueError("Claude recursive inclusion semantics are not qualified for this version")
+        rows = records(stream)
+        finals = [r for r in rows if r.get("type") == "result"]
+        if len(finals) != 1 or finals[0].get("session_id") != session_id:
+            raise ValueError("native final session identity mismatch")
+        final = finals[0]
+        stats = final.get("subagent_stats")
+        if not isinstance(stats, dict) or stats.get("spawned") != stats.get("completed"):
+            raise ValueError("native child tree is incomplete")
+        calls = set()
+        answered = set()
+        bindings = {}
+        for row in rows:
+            if row.get("type") in {"user", "assistant"} and row.get("session_id") != session_id:
+                raise ValueError("native linkage event belongs to another session")
+            parent_call, agent = row.get("parent_tool_use_id"), row.get("agent_id")
+            if isinstance(parent_call, str) and isinstance(agent, str):
+                if parent_call in bindings and bindings[parent_call] != agent:
+                    raise ValueError("native agent-call binding changed")
+                bindings[parent_call] = agent
+            message = row.get("message", {})
+            content = message.get("content", []) if isinstance(message, dict) else []
+            for item in content if isinstance(content, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "tool_use" and item.get("name") == "Agent":
+                    call = item.get("id")
+                    if not isinstance(call, str) or call in calls:
+                        raise ValueError("duplicate native Agent call")
+                    calls.add(call)
+                elif item.get("type") == "tool_result" and item.get("tool_use_id") in calls:
+                    call = item["tool_use_id"]
+                    if call in answered or item.get("is_error") is True:
+                        raise ValueError("duplicate or failed native Agent result")
+                    answered.add(call)
+                    result = row.get("tool_use_result")
+                    if isinstance(result, dict) and isinstance(result.get("agentId"), str):
+                        if result.get("status") != "completed":
+                            raise ValueError("native agent has not completed")
+                        if call in bindings and bindings[call] != result["agentId"]:
+                            raise ValueError("native result agent identity mismatch")
+                        bindings[call] = result["agentId"]
+        if calls != answered or set(bindings) != calls or len(set(bindings.values())) != len(calls):
+            raise ValueError("native Agent calls, results and child identities are not bijective")
+        expected = set(bindings.values())
+        if stats.get("spawned") != len(expected) or stats.get("failed", 0) != 0:
+            raise ValueError("native child statistics do not match observed tree")
+        children = {}
+        for path in child_logs:
+            native = records(path)
+            metadata = [r for r in native if r.get("type") in {"user", "assistant"}]
+            if not metadata:
+                raise ValueError("native child transcript is empty")
+            agent = metadata[0].get("agentId")
+            if agent not in expected or agent in children:
+                raise ValueError("unknown or duplicate native child transcript")
+            messages = {}
+            for row in metadata:
+                if (row.get("agentId") != agent or row.get("sessionId") != session_id
+                        or row.get("version") != version or Path(row.get("cwd", "")).resolve() != project.resolve()):
+                    raise ValueError("native child provenance mismatch")
+                if row["type"] == "assistant":
+                    message = row.get("message", {})
+                    identifier = message.get("id")
+                    if not isinstance(identifier, str):
+                        raise ValueError("native assistant message identity missing")
+                    messages[identifier] = counters(message["usage"], claude=True)
+            if not messages:
+                raise ValueError("native child message counters missing")
+            children[agent] = {"usage": _sum(list(messages.values())), "messages": len(messages),
+                               "path": str(path), "sha256": _hash(path)}
+        if set(children) != expected:
+            raise ValueError("native child transcript missing")
+        models = final.get("modelUsage")
+        if not isinstance(models, dict) or not models:
+            raise ValueError("native pipeline counters missing")
+        pipeline = _sum([counters({"input_tokens": v.get("inputTokens"),
+                                   "output_tokens": v.get("outputTokens"),
+                                   "cache_read_input_tokens": v.get("cacheReadInputTokens"),
+                                   "cache_creation_input_tokens": v.get("cacheCreationInputTokens")}, claude=True)
+                         for v in models.values()])
+        main = counters(final["usage"], claude=True)
+        if _sum([main, *[v["usage"] for v in children.values()]]) != pipeline:
+            raise ValueError("native persisted child messages do not reconcile with pipeline")
+        return {"status": "observed", "total": pipeline, "mainLoop": main,
+                "children": children, "sha256": _hash(stream),
+                "semantics": "claude-pipeline-reconciled-persisted-recursive-messages"}
+    except (KeyError, TypeError, OSError, ValueError) as error:
+        return {"status": "unknown", "reason": str(error), "total": None}

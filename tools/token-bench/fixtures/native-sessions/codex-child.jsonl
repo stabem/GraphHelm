@@ -1,4 +1,4 @@
-{"type": "session_meta", "payload": {"id": "01a17672-46f5-7aa3-92fd-9aeab59a9f0c", "parent_thread_id": "01a17672-2f62-7c41-b135-b94ea4c887c0", "cwd": "D:\\gh\\codex-scope-cleanup\\native-2074-probes\\codex-child-001", "agent_path": "/root/native_probe"}}
+{"type": "session_meta", "payload": {"id": "01a17672-46f5-7aa3-92fd-9aeab59a9f0c", "parent_thread_id": "01a17672-2f62-7c41-b135-b94ea4c887c0", "cwd": "D:\\gh\\codex-scope-cleanup\\native-2074-probes\\codex-child-001", "agent_path": "/root/native_probe", "cli_version": "0.157.1"}}
 {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "01a17672-484a-7962-8b16-6536951531ee"}}
 {"type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 21556, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "output_tokens": 9, "reasoning_output_tokens": 0, "total_tokens": 21565}}}}
 {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "01a17672-484a-7962-8b16-6536951531ee"}}

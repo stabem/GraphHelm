@@ -1,4 +1,4 @@
-{"type": "session_meta", "payload": {"id": "01a17678-5676-7271-b89b-70392d5016a5", "cwd": "D:\\gh\\codex-scope-cleanup\\native-2074-probes\\codex-child-002"}}
+{"type": "session_meta", "payload": {"id": "01a17678-5676-7271-b89b-70392d5016a5", "cwd": "D:\\gh\\codex-scope-cleanup\\native-2074-probes\\codex-child-002", "cli_version": "0.157.1"}}
 {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "01a17678-5720-7152-bf10-7707bacdd0d7"}}
 {"type": "response_item", "payload": {"type": "function_call", "name": "spawn_agent", "namespace": "collaboration", "call_id": "call_23ad1ec3888441d4a52f1ee736f01832"}}
 {"type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_23ad1ec3888441d4a52f1ee736f01832", "output": "{\"task_name\":\"/root/native_probe_fork_all\"}"}}

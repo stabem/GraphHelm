@@ -129,6 +129,11 @@ def test_reused_codex_child_must_finish_its_latest_turn(tmp_path):
                                    stdout_usage={"input": 65656, "output": 72, "cacheRead": 43392, "cacheWrite": 0})
 
     assert observe()["status"] == "unknown"
+    rows.extend([{"type": "event_msg", "payload": {"type": "token_count", "info": None}},
+                 {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "followup"}}])
+    assert observe()["status"] == "unknown"
+    rows.pop()
+    rows.pop()
     previous = next(row for row in reversed(rows) if row.get("payload", {}).get("type") == "token_count")
     counter = copy.deepcopy(previous)
     counter["payload"]["info"]["total_token_usage"]["input_tokens"] += 100
@@ -138,3 +143,30 @@ def test_reused_codex_child_must_finish_its_latest_turn(tmp_path):
     assert completed["status"] == "observed"
     assert completed["total"]["input"] == 87312
     assert completed["total"]["output"] == 91
+
+
+def test_claude_recursive_persisted_messages_reconcile_every_child_once():
+    children = list(FIXTURES.glob("claude-depth2-agent-*.jsonl"))
+    result = evidence.claude_owned_tree(FIXTURES / "claude-depth2-stream.jsonl", children,
+                                       project=Path("D:/gh/codex-scope-cleanup/native-2074-probes/claude-child-depth2-001"),
+                                       session_id="4fb1b27b-870f-4a50-9989-754a959cfb5e")
+    assert result["status"] == "observed", result
+    assert result["total"] == {"input": 10, "output": 530, "cacheRead": 9256, "cacheWrite": 11868}
+    assert sorted(child["messages"] for child in result["children"].values()) == [1, 2]
+    missing = evidence.claude_owned_tree(FIXTURES / "claude-depth2-stream.jsonl", children[:1],
+                                        project=Path("D:/gh/codex-scope-cleanup/native-2074-probes/claude-child-depth2-001"),
+                                        session_id="4fb1b27b-870f-4a50-9989-754a959cfb5e")
+    assert missing["status"] == "unknown"
+
+
+def test_recursive_claude_linkage_rejects_foreign_session_and_unqualified_version(tmp_path):
+    rows = evidence.records(FIXTURES / "claude-depth2-stream.jsonl")
+    rows[0]["session_id"] = "FOREIGN-SESSION"
+    path = tmp_path / "foreign.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    arguments = {"child_logs": list(FIXTURES.glob("claude-depth2-agent-*.jsonl")),
+                 "project": Path("D:/gh/codex-scope-cleanup/native-2074-probes/claude-child-depth2-001"),
+                 "session_id": "4fb1b27b-870f-4a50-9989-754a959cfb5e"}
+    assert evidence.claude_owned_tree(path, **arguments)["status"] == "unknown"
+    assert evidence.claude_owned_tree(FIXTURES / "claude-depth2-stream.jsonl", version="9.9.999",
+                                      **arguments)["status"] == "unknown"

@@ -466,7 +466,13 @@ impl ApiClient {
         use std::time::{Duration, Instant};
 
         const HEALTH_TIMEOUT: Duration = Duration::from_secs(1);
-        const HEALTH_BUDGET: Duration = Duration::from_secs(5);
+        // #2059: `GRAPHHELM_MCP_HEALTH_BUDGET_SECONDS` (a positive number) replaces the 5 s budget,
+        // so a test on a loaded machine scales it instead of racing a fixed wall-clock bound.
+        let health_budget = std::env::var("GRAPHHELM_MCP_HEALTH_BUDGET_SECONDS")
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .filter(|seconds| *seconds > 0)
+            .map_or(Duration::from_secs(5), Duration::from_secs);
         let fail = |reason: &str| format!("project Runtime discovery: {reason}");
         let dir = crate::commands::runtime_record::registry_dir()
             .ok_or_else(|| fail("no home directory and no GRAPHHELM_RUNTIME_DIR"))?;
@@ -489,7 +495,7 @@ impl ApiClient {
             })
             .collect();
         let mut live = Vec::new();
-        let deadline = Instant::now() + HEALTH_BUDGET;
+        let deadline = Instant::now() + health_budget;
         let mut budget_exhausted = false;
         for record in records {
             if !is_loopback_url(&record.url) || super::url::validate_base(&record.url).is_err() {

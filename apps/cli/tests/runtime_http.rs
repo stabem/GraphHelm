@@ -6319,9 +6319,10 @@ fn a_send_to_fix_request_is_handed_to_a_free_lane_without_the_owner() {
     let dir = tempfile::tempdir().unwrap();
     let events = dir.path().join("events");
     let mut extra = throwaway_keyring(dir.path());
-    extra
-        .env
-        .push(("GRAPHHELM_DISPATCH_LEASE_SECONDS".into(), "6".into()));
+    extra.env.push((
+        "GRAPHHELM_DISPATCH_LEASE_SECONDS".into(),
+        scaled(Duration::from_secs(6)).as_secs().to_string(),
+    ));
     let run = "dispatch-run";
     {
         let store = graphhelm_events::LocalEventRepository::open(
@@ -6420,7 +6421,7 @@ fn a_send_to_fix_request_is_handed_to_a_free_lane_without_the_owner() {
     // A second request waits: lane-a already holds one, lane-b owes work.
     let (status, reply) = record("fix-second");
     assert_eq!(status, 200, "{reply}");
-    std::thread::sleep(scaled(Duration::from_secs(2)));
+    // The read itself decides the hand-off, so no pause is needed before looking.
     let requests = read();
     assert_eq!(requests.len(), 2, "{requests:?}");
     assert_eq!(requests[0]["dispatchedTo"], "lane-a");
@@ -6430,11 +6431,13 @@ fn a_send_to_fix_request_is_handed_to_a_free_lane_without_the_owner() {
     );
 
     // Past the lease with no link: the hand-off lapses at read time, with no signal at all.
-    let past = Duration::from_secs(7);
-    if let Some(left) = past.checked_sub(handed_at.elapsed()) {
-        std::thread::sleep(left);
+    // Wait for the lapse itself (a scaled hang catcher), not for a fixed wall-clock instant.
+    let lapse_deadline = handed_at + scaled(Duration::from_secs(60));
+    let mut requests = read();
+    while requests[0].get("dispatchedTo").is_some() && Instant::now() < lapse_deadline {
+        std::thread::sleep(Duration::from_millis(100));
+        requests = read();
     }
-    let requests = read();
     assert!(
         requests[0].get("dispatchedTo").is_none(),
         "a hand-off nobody took is not held forever: {requests:?}"

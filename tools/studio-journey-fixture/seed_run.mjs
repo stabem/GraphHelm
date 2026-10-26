@@ -5,7 +5,9 @@
 //
 //   node seed_run.mjs <project dir> <flow id> <digest> <commit>
 //
-// The frames are a fixed 1x1 PNG: the flows judge the controls around a frame, not its pixels.
+// #2085: the frames are real captured Studio frames (frames/before*.png, studio2-open's bad-ticket
+// screen at web and mobile), so a review or compare shows a screen the owner can read. A missing,
+// blank or tiny frame stops the seed: a 1x1 placeholder once passed every img check unseen.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -14,7 +16,16 @@ if (!project || !/^[a-z0-9][a-z0-9._-]{0,127}$/.test(id ?? '') || !/^sha256:[0-9
   console.error('seed_run: usage: node seed_run.mjs <project dir> <flow id> <digest> <commit>');
   process.exit(2);
 }
-const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+function frame(name, minWidth, minHeight) {
+  const bytes = fs.readFileSync(new URL(`./frames/${name}`, import.meta.url));
+  const png = bytes.length > 24 && bytes.toString('latin1', 1, 4) === 'PNG';
+  if (!png || bytes.readUInt32BE(16) < minWidth || bytes.readUInt32BE(20) < minHeight || bytes.length < 4096) {
+    console.error(`seed_run: frames/${name} is not a real captured frame`);
+    process.exit(1);
+  }
+  return bytes;
+}
+const WEB = frame('before.png', 1280, 800), MOBILE = frame('before-mobile.png', 390, 844);
 const flow = fs.readFileSync(path.join(project, '.graphhelm/journeys', `${id}.journey.yaml`), 'utf8').replace(/\r\n/g, '\n');
 const block = flow.slice(flow.indexOf('\nscreens:\n'), flow.indexOf('\nedges:\n'));
 const screens = [...block.matchAll(/^  - id: ([A-Za-z0-9][A-Za-z0-9._-]*)$/gm)].map((m) => m[1]);
@@ -24,8 +35,8 @@ function run(dir, startedAt, current) {
   fs.mkdirSync(path.join(dir, 'frames', 'mobile'), { recursive: true });
   const view = (width, height) => Object.fromEntries(screens.map((s) => [s, { result: 'pass', frame: true, file: `${s}.png`, width, height }]));
   for (const s of screens) {
-    fs.writeFileSync(path.join(dir, 'frames', `${s}.png`), PNG);
-    fs.writeFileSync(path.join(dir, 'frames', 'mobile', `${s}.png`), PNG);
+    fs.writeFileSync(path.join(dir, 'frames', `${s}.png`), WEB);
+    fs.writeFileSync(path.join(dir, 'frames', 'mobile', `${s}.png`), MOBILE);
   }
   const ranAt = new Date(Date.parse(startedAt) + 30000).toISOString();
   const state = {

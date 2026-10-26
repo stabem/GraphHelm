@@ -513,11 +513,35 @@ async function run(r) {
       if (!observed.has(key) && observed.size>=128) continue;
       observed.set(key,{role:match[1],name,count:1,visible:true});
     }
+    // #2085: the frame of this screen is taken after this snapshot, at this scroll position. Bring
+    // the present checks into view first (the page and any scrolling container: a phone's stacked
+    // sidebar, a board that scrolls sideways), so a passing check is on the frame the owner reads.
+    // A forward then a backward pass of minimal ("nearest") scrolls keeps the whole group in view
+    // when it fits and favours the first checks when it does not; a check still outside the
+    // viewport gets no rect below, which is exactly what the frame shows.
+    const present=[];
+    for (const expected of r.expect) {
+      if (expected.absent===true) continue;
+      const locator=page.getByRole(expected.role,{name:expected.name,exact:true});
+      if (await locator.count()===1 && await locator.first().isVisible()) present.push(locator.first());
+    }
+    for (const locator of [...present,...[...present].reverse()]) {
+      await locator.evaluate(el=>el.scrollIntoView({block:'nearest',inline:'nearest'}),undefined,{timeout:TIMEOUT}).catch(()=>{});
+    }
     const rects=new Map();
     for (const expected of r.expect) {
       const locator=page.getByRole(expected.role,{name:expected.name,exact:true});
       const count=await locator.count();
-      const visible=count>0 && await locator.first().isVisible();
+      let visible=count>0 && await locator.first().isVisible();
+      // #2085: an <img> check proves a picture the owner can read, not an element with that alt:
+      // a broken, still-loading or tiny image (a 1x1 placeholder) is not seen.
+      if (visible && expected.role==='img' && expected.absent!==true) {
+        visible=await locator.first().evaluate(async el=>{
+          if (!(el instanceof HTMLImageElement)) return true;
+          if (!el.complete) await Promise.race([el.decode().catch(()=>{}),new Promise(done=>setTimeout(done,5000))]);
+          return el.complete && el.naturalWidth>=16 && el.naturalHeight>=16;
+        },undefined,{timeout:TIMEOUT}).catch(()=>false);
+      }
       const key=JSON.stringify([expected.role,expected.name]);
       observed.set(key,{...expected,count,visible,...(actual.has(key)?{actual:actual.get(key)}:{})});
       // #2028: where the one visible element a present check matched sits on the frame, as

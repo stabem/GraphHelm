@@ -140,9 +140,10 @@ def archive_phase(cli: str, stdout: Path, *, project: Path, archive: Path,
             root_source = _source(roots[0], projects, project)
             native_rows = evidence.records(root_source)
             metadata = [row for row in native_rows if row.get("type") in {"user", "assistant"}]
-            if not metadata or any(row.get("sessionId") != session or row.get("version") != "2.1.310"
+            if (not metadata or Path(metadata[0].get("cwd", "")).resolve() != project
+                    or any(row.get("sessionId") != session or row.get("version") != "2.1.310"
                                    or row.get("isSidechain") is not False or row.get("agentId") is not None
-                                   or Path(row.get("cwd", "")).resolve() != project for row in metadata):
+                                   or not Path(row.get("cwd", "")).resolve().is_relative_to(project) for row in metadata)):
                 raise ValueError("native Claude root transcript provenance mismatch")
             if any(row.get("session_id") != session for row in rows if row.get("type") in {"user", "assistant"}):
                 raise ValueError("native Claude stream linkage session mismatch")

@@ -173,6 +173,28 @@ def test_recursive_claude_linkage_rejects_foreign_session_and_unqualified_versio
                                       **arguments)["status"] == "unknown"
 
 
+def test_native_background_completion_and_project_subdirectory_usage_are_counted_once(tmp_path):
+    children = list(FIXTURES.glob("claude-background-agent-*.jsonl"))
+    stream = FIXTURES / "claude-background-stream.jsonl"
+    arguments = {"child_logs": children, "project": Path("D:/native-fixtures/graphhelm-planning"),
+                 "session_id": "4eb1be7a-8dbb-4da9-b31b-6fccfb55420c"}
+    result = evidence.claude_owned_tree(stream, **arguments)
+    assert result["status"] == "observed", result
+    assert result["total"] == {"input": 84, "output": 42160, "cacheRead": 3033050, "cacheWrite": 214194}
+    rows = evidence.records(stream)
+    # An asynchronous hand-back is not completion: the native callback must
+    # identify the same agent, tool call and run before its counters qualify.
+    missing = [r for r in rows if not (r.get("type") == "system" and r.get("subtype") == "task_notification")]
+    path = tmp_path / "missing.jsonl"
+    path.write_text("".join(json.dumps(r)+"\n" for r in missing), encoding="utf-8")
+    assert evidence.claude_owned_tree(path, **arguments)["status"] == "unknown"
+    child_rows = evidence.records(children[0])
+    child_rows[-1]["cwd"] = "D:/native-fixtures/unrelated-project"
+    foreign = tmp_path / "foreign-child.jsonl"
+    foreign.write_text("".join(json.dumps(r)+"\n" for r in child_rows), encoding="utf-8")
+    assert evidence.claude_owned_tree(stream, **{**arguments, "child_logs": [foreign, children[1]]})["status"] == "unknown"
+
+
 def test_native_skill_loader_requires_native_metadata_and_pinned_body(tmp_path):
     skill = tmp_path / "SKILL.md"
     source = "---\nname: selected-skill\n---\nFollow the actual task. Input: $ARGUMENTS\n"

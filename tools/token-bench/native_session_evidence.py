@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import uuid
 from pathlib import Path
 
 
@@ -18,6 +19,43 @@ def records(path: Path) -> list[dict]:
                 raise ValueError("invalid native event")
             result.append(row)
     return result
+
+
+def native_review(path: Path) -> dict:
+    """Read a terminal review from a real CLI envelope, never a standalone verdict row."""
+    try:
+        rows = records(path)
+        codex = [r for r in rows if r.get("type") == "thread.started"]
+        claude = [r for r in rows if r.get("type") == "system" and r.get("subtype") == "init"]
+        if len(codex) == 1 and not claude:
+            root = codex[0]["thread_id"]
+            finals = [r for r in rows if r.get("type") == "turn.completed"]
+            messages = [r["item"]["text"] for r in rows if r.get("type") == "item.completed"
+                        and r.get("item", {}).get("type") == "agent_message"]
+            if len(finals) != 1 or not messages or any(r.get("type") == "turn.failed" for r in rows):
+                raise ValueError("native Codex review did not complete")
+            body = messages[-1]
+            cli = "codex"
+        elif len(claude) == 1 and not codex:
+            root = claude[0]["session_id"]
+            finals = [r for r in rows if r.get("type") == "result"]
+            if (len(finals) != 1 or finals[0].get("is_error") is not False
+                    or finals[0].get("subtype") != "success" or finals[0].get("session_id") != root):
+                raise ValueError("native Claude review did not complete")
+            body = finals[0]["result"]
+            cli = "claude"
+        else:
+            raise ValueError("native review root is missing or ambiguous")
+        if str(uuid.UUID(root)) != root:
+            raise ValueError("native review root is not a canonical UUID")
+        if isinstance(body, str) and body.startswith("```json\n") and body.endswith("\n```"):
+            body = body[8:-4]
+        verdict = json.loads(body)
+        if not isinstance(verdict, dict) or verdict.get("verdict") not in {"APPROVE", "APPROVE-WITH-RISK", "BLOCK"}:
+            raise ValueError("native terminal response is not a review verdict")
+        return {"status": "observed", "cli": cli, "rootSession": root, "verdict": verdict}
+    except (KeyError, TypeError, OSError, ValueError) as error:
+        return {"status": "unknown", "reason": str(error)}
 
 
 def counters(value: dict, *, claude: bool = False) -> dict:
@@ -258,6 +296,9 @@ def required_operations(stream: Path, *, cli: str, requirements: list[dict]) -> 
             raise ValueError("unsupported native command protocol")
         matched = []
         for requirement in requirements:
+            if (not isinstance(requirement, dict) or not isinstance(requirement.get("commandPattern"), str)
+                    or not isinstance(requirement.get("outputJson", {}), dict)):
+                raise ValueError("native operation requires a command pattern and an optional JSON object")
             candidates = [c for c in completed if re.search(requirement["commandPattern"], c["command"])]
             accepted = []
             for candidate in candidates:
@@ -305,6 +346,20 @@ def claude_owned_tree(stream: Path, child_logs: list[Path], *, project: Path,
         calls = set()
         answered = set()
         bindings = {}
+        starts = {}
+        notifications = {}
+        for row in rows:
+            if row.get("type") != "system" or row.get("session_id") != session_id:
+                continue
+            call = row.get("tool_use_id")
+            if row.get("subtype") == "task_started" and row.get("task_type") == "local_agent":
+                if call in starts:
+                    raise ValueError("duplicate native background agent start")
+                starts[call] = row
+            if row.get("subtype") == "task_notification" and row.get("task_id", "").startswith("a"):
+                if call in notifications:
+                    raise ValueError("duplicate native background agent completion")
+                notifications[call] = row
         for row in rows:
             if row.get("type") in {"user", "assistant"} and row.get("session_id") != session_id:
                 raise ValueError("native linkage event belongs to another session")
@@ -330,7 +385,14 @@ def claude_owned_tree(stream: Path, child_logs: list[Path], *, project: Path,
                     answered.add(call)
                     result = row.get("tool_use_result")
                     if isinstance(result, dict) and isinstance(result.get("agentId"), str):
-                        if result.get("status") != "completed":
+                        if result.get("status") == "async_launched":
+                            start = starts.get(call, {})
+                            done = notifications.get(call, {})
+                            if (result.get("isAsync") is not True or start.get("task_id") != result["agentId"]
+                                    or done.get("task_id") != result["agentId"] or done.get("status") != "completed"
+                                    or not start.get("run_id") or done.get("run_id") != start["run_id"]):
+                                raise ValueError("native background agent has no matching completion")
+                        elif result.get("status") != "completed":
                             raise ValueError("native agent has not completed")
                         if call in bindings and bindings[call] != result["agentId"]:
                             raise ValueError("native result agent identity mismatch")
@@ -352,7 +414,8 @@ def claude_owned_tree(stream: Path, child_logs: list[Path], *, project: Path,
             messages = {}
             for row in metadata:
                 if (row.get("agentId") != agent or row.get("sessionId") != session_id
-                        or row.get("version") != version or Path(row.get("cwd", "")).resolve() != project.resolve()):
+                        or row.get("version") != version
+                        or not Path(row.get("cwd", "")).resolve().is_relative_to(project.resolve())):
                     raise ValueError("native child provenance mismatch")
                 if row["type"] == "assistant":
                     message = row.get("message", {})
@@ -407,8 +470,25 @@ def native_skill_load(native_log: Path, *, cli: str, expected_path: Path,
         if metadata_name is None:
             raise ValueError("selected skill has no native name")
         expected_name = metadata_name[1].strip('"\'')
+        native_rows = records(native_log)
+        arguments_seen = {""}
+        first, _, initial_arguments = frozen_prompt.partition(" ")
+        if first.lstrip("/$").split(":")[-1] == expected_name:
+            arguments_seen.add(initial_arguments)
+        for row in native_rows:
+            message = row.get("message", {})
+            if row.get("type") != "assistant" or not isinstance(message, dict):
+                continue
+            for item in message.get("content", []):
+                if not isinstance(item, dict) or item.get("type") != "tool_use" or item.get("name") != "Skill":
+                    continue
+                selected = item.get("input", {})
+                if (isinstance(selected, dict) and isinstance(selected.get("skill"), str)
+                        and selected["skill"].split(":")[-1] == expected_name
+                        and isinstance(selected.get("args", ""), str)):
+                    arguments_seen.add(selected.get("args", ""))
         loaded = []
-        for row in records(native_log):
+        for row in native_rows:
             if cli == "codex":
                 message = row.get("payload", {})
                 if row.get("type") != "response_item" or message.get("type") != "message" or message.get("role") != "user":
@@ -436,10 +516,12 @@ def native_skill_load(native_log: Path, *, cli: str, expected_path: Path,
                     header, body = text.split("\n\n", 1)
                     path = (Path(header.removeprefix("Base directory for this skill: ")) / "SKILL.md").resolve()
                     loaded.append(str(path))
-                    arguments = frozen_prompt.split(" ", 1)[1] if " " in frozen_prompt else ""
-                    expected = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", source, count=1, flags=re.S)
-                    expected = expected.replace("$ARGUMENTS", arguments)
-                    if path == expected_path and body.strip() == expected.strip():
+                    plain = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", source, count=1, flags=re.S)
+                    expected_bodies = {plain.replace("$ARGUMENTS", arguments).strip() for arguments in arguments_seen}
+                    if "$ARGUMENTS" not in plain:
+                        expected_bodies.update((plain + "\n\nARGUMENTS: " + arguments).strip()
+                                               for arguments in arguments_seen if arguments)
+                    if path == expected_path and body.strip() in expected_bodies:
                         return {"status": "observed", "skillPath": str(path), "skillSha256": expected_sha256,
                                 "nativeLogSha256": _hash(native_log), "loader": "claude-native-skill-metadata"}
         return {"status": "incomplete", "reason": "selected skill was not expanded by the native loader",

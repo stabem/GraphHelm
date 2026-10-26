@@ -225,7 +225,7 @@ def phase_plan(workflow: dict, context: dict, *, plan_id: str, predecessor: str 
                "requiredArtifacts": list(phase.get("requiredArtifacts", [])),
                "requiredOperations": list(phase.get("requiredOperations", [])),
                "requiredArtifactGlobs": list(phase.get("requiredArtifactGlobs", [])),
-               "requiredWitnessKinds": list(phase.get("requiredWitnessKinds", ["native_stream", "native_skill"])),
+               "requiredWitnessKinds": list(phase.get("requiredWitnessKinds", ["native_stream"])),
                "requiredWitnesses": list(phase.get("requiredWitnesses", [])),
                "costKinds": list(phase.get("costKinds", [phase["id"]]))} for phase in workflow["phases"]]
     return {"schema": "native-methodology-plan/1", "planId": _safe_id(plan_id, "plan id"),
@@ -571,16 +571,23 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
         parsed_usage = {**parsed_usage, "counts": archived_total,
                         "rootWireUsage": root_wire_usage.get("counts"),
                         "countsSource": "native-session-archive.total", "accountingStatus": "observed"}
-    skill_load = {"status": "incomplete", "reason": "native skill witness not configured"}
-    skill_witness = next((row for row in phase.get("requiredWitnesses", []) if row.get("kind") == "native_skill"), None)
-    if skill_witness and archived.get("archivedRoot"):
+    skill_witnesses = [row for row in phase.get("requiredWitnesses", [])
+                       if row.get("kind") == "native_skill"]
+    skill_loads = []
+    for skill_witness in skill_witnesses:
         try:
             from native_session_evidence import native_skill_load
-            skill_load = native_skill_load(Path(archived["archivedRoot"]), cli=cli_config["cli"],
-                                           expected_path=Path(skill_witness["path"]),
-                                           expected_sha256=skill_witness["sha256"], frozen_prompt=phase["prompt"])
+            if not archived.get("archivedRoot"):
+                raise ValueError("native session archive missing")
+            loaded = native_skill_load(Path(archived["archivedRoot"]), cli=cli_config["cli"],
+                                       expected_path=Path(skill_witness["path"]),
+                                       expected_sha256=skill_witness["sha256"], frozen_prompt=phase["prompt"])
         except (ImportError, OSError, ValueError, KeyError) as error:
-            skill_load = {"status": "incomplete", "reason": str(error)}
+            loaded = {"status": "incomplete", "reason": str(error)}
+        skill_loads.append(loaded)
+    skill_load = {"status": "observed" if skill_witnesses and all(
+        row.get("status") == "observed" for row in skill_loads) else "incomplete",
+                  "loads": skill_loads}
     # archive_phase discovers and binds owned native sessions automatically;
     # caller-supplied session paths are intentionally not accepted.
     session_evidence = archived
@@ -758,9 +765,16 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         valid = valid and capture.get("cleanupConfirmed") is True and capture.get("truncated") is False
         phase_spec = next((phase for phase in workflow_spec.get("phases", [])
                            if phase.get("id") == planned["phase"]), None) if workflow_spec else None
-        required_kinds = set(phase_spec.get("requiredWitnessKinds", ["native_stream", "native_skill"])) if phase_spec else set()
+        required_kinds = set(phase_spec.get("requiredWitnessKinds", ["native_stream"])) if phase_spec else set()
         if "native_skill" in required_kinds:
-            valid = valid and row.get("skillLoad", {}).get("status") == "observed"
+            expected_skills = [w for w in phase_spec.get("requiredWitnesses", [])
+                               if w.get("kind") == "native_skill"] if phase_spec else []
+            loads = row.get("skillLoad", {}).get("loads")
+            valid = valid and bool(expected_skills) and isinstance(loads, list)
+            valid = valid and len(loads) == len(expected_skills) and all(
+                isinstance(load, dict) and load.get("status") == "observed"
+                and load.get("skillSha256") == witness.get("sha256")
+                for load, witness in zip(loads, expected_skills))
         if phase_spec and phase_spec.get("requiredOperations"):
             valid = valid and row.get("operations", {}).get("status") == "observed"
         valid = valid and row.get("quotaBefore", {}).get("allowed") is True
@@ -987,6 +1001,9 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
         receipt["candidateBeforeSha256"] = candidate_before
         receipt["candidateAfterSha256"] = candidate_tree_hash(project_root,
                                                                _declared_candidate_paths(workflow, project_root))
+        if phase["id"] == "review" and receipt["candidateAfterSha256"] != candidate_before:
+            receipt["status"] = "incomplete"
+            receipt["error"] = "independent reviewer mutated the candidate"
         destination.mkdir(parents=True, exist_ok=False)
         base.publish(receipt_path, receipt)
         predecessor = receipt.get("requiredArtifactHashes", {})

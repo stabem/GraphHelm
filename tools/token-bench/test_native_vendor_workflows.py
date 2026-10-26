@@ -39,8 +39,11 @@ class NativeVendorWorkflowContracts(unittest.TestCase):
                 executable=Path(__file__), stages=[("constitution", "speckit-constitution", [], []),
                 ("plan", "speckit-plan", [], [])], task_brief="bounded task", approval_policy="local only",
                 task_context_root=root, public_files=["request.md"], public_tests=[], scope=["subject.py"])
-            witnesses = [Path(p["requiredWitnesses"][0]["path"]) for p in workflow["phases"]]
+            witnesses = [Path(p["requiredWitnesses"][0]["path"]) for p in workflow["phases"]
+                         if p["requiredWitnesses"]]
             self.assertEqual(witnesses, [other, skill])
+            self.assertEqual(workflow["phases"][-1]["id"], "review")
+            self.assertEqual(workflow["phases"][-1]["requiredWitnessKinds"], ["native_stream"])
             self.assertEqual(workflow["pinnedPublicFiles"], ["request.md"])
             self.assertEqual(workflow["taskContext"]["scope"], ["subject.py"])
             # Feed the assembled contract to the actual evidence consumer. A malformed

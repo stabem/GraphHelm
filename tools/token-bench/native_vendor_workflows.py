@@ -63,6 +63,16 @@ def _workflow(*, method_id: str, framework: str, project_root: Path,
                      task_brief=task_brief, approval_policy=approval_policy,
                      project_root=project_root, operations=ops, output_globs=globs)
               for phase_id, skill, ops, globs in stages]
+    phases.append({"id": "review", "command": [], "nativeEntrypoint": None,
+                   "prompt": ("Fresh independent review of task " + task_ref + ". Read the public task, "
+                              "method artifacts, actual Git diff and focused source. Run the public "
+                              "and submitted observers. Do not edit any project file. Return only a "
+                              "reasoned APPROVE, APPROVE-WITH-RISK, or BLOCK verdict with findings. "
+                              "No author conversation or expected verdict is available."),
+                   "frameworkStage": "independent-review", "requiredOperations": [],
+                   "requiredArtifactGlobs": [], "requiredArtifacts": [],
+                   "requiredWitnessKinds": ["native_stream"], "requiredWitnesses": [],
+                   "costKinds": ["native_cli", "independent_review"]})
     return {"id": f"native-{method_id}", "version": f"pinned-{PINNED[method_id]}",
             "framework": framework, "maxFixAttempts": 1,
             "projectRoot": str(project_root.resolve()), "taskRefs": [task_ref],
@@ -103,12 +113,12 @@ def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path
     bmad = [
         ("setup", "bmad", ["run installed knowledge command; do not infer workflow"], ["_bmad/**"]),
         ("build", "bmad-build", ["run uv render_skill.py exactly once; stop on HALT or failure"], ["_bmad-output/**"]),
-        ("review", "bmad-code-review", ["follow rendered review route; preserve independent reviewer"], ["_bmad-output/**"]),]
+        ("method_review", "bmad-code-review", ["follow rendered review route; preserve independent reviewer"], ["_bmad-output/**"]),]
     superpowers = [
         ("entry", "using-superpowers", ["invoke applicable skills before response or action"], [".agents/skills/**"]),
         ("debug", "systematic-debugging", ["investigate the root cause before proposing a fix"], ["tools/task-record/task_record.py"]),
         ("implement", "test-driven-development", ["write failing test; observe red; implement minimal green"], ["**/*"]),
-        ("review", "requesting-code-review", ["request independent review with exact diff and tests"], ["docs/superpowers/**"]),
+        ("request_review", "requesting-code-review", ["request independent review with exact diff and tests"], ["docs/superpowers/**"]),
         ("verify", "verification-before-completion", ["run fresh verification before any completion claim"], ["**/*"]),]
     common = dict(cli=cli, executable=executable, task_brief=task_brief,
                   approval_policy=approval_policy, task_context_root=project_root,

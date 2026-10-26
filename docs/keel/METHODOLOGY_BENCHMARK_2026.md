@@ -160,3 +160,135 @@ sorted relative paths, lengths and content hashes; declared cache paths are the 
 ignored entries, and links/reparse points are rejected unless they resolve to the exact
 declared candidate target. This validation costs O(external dependency bytes) and is
 control/setup time, not agent time; dependencies are not copied into each candidate.
+
+## Native framework workflows
+
+The native workflow instrument is `tools/token-bench/native_methodology.py`. A versioned
+registry names each framework's real phases and native stage names. The common records are
+only evidence boundaries: a Spec Kit workflow may use specify/plan/tasks/converge, an
+OpenSpec workflow may use explore/propose/apply/verify/archive, and another framework may
+have a different sequence. The instrument does not turn these stages into one invented
+uniform process.
+
+Each phase receives a fresh directory, a new stream, an immutable plan, and a phase attempt
+record. Retries link to the earlier attempt; they never replace it. Raw native results and
+their SHA-256 hashes are retained, and a later phase must carry the predecessor hashes.
+The accepted endpoint is an independently reviewed patch in local Git. It is not a public
+GitHub merge or a deployment.
+
+Before the independent review, the operator commits the candidate in the isolated task
+repository. The controller records the frozen baseline head, candidate head, and SHA-256 of
+their binary Git diff in `.native-observations/review-binding.json`. The reviewer reads that
+binding and returns a machine-readable verdict; the external endpoint checks the actual Git
+bytes again. An uncommitted candidate, missing binding, prose-only verdict, or reviewer
+without a separate native session cannot qualify. Method planning artifacts remain in the
+method evidence and are excluded from the product patch unless the public task requests them.
+
+Native CLI configuration keeps project instructions, installed skills, plugins, and native
+session logs enabled. Provider keys and endpoint overrides are still removed from child
+environments. Authentication and quota are checked before every phase. Cleanup, native
+usage, phase costs (setup, planner, author, independent review, fix, verify, archive), and
+the declared maximum fix budget are separate evidence. Missing or uncertain evidence leaves
+the phase incomplete and preserves the prior phase result.
+
+Fidelity requires an observed native stream, CLI invocation, skill initialization/rollout,
+or native artifact with a hash. Model prose claiming that a framework ran is not a witness.
+Owned child sessions must be enumerated and reconciled with unique usage records; missing,
+duplicate, overlapping, or unowned records keep totals unknown. Task context is limited to
+public schema fields and never carries provider credentials, hidden oracles, or private
+source paths.
+
+The operator freezes the complete public project tree and common product context before
+the first native phase, then gives each arm the same tree and only its selected method assets.
+Every attempt, denied operation, retry, author child, and independent review contributes to
+the processed-token total. Claude's processed input includes new input, cache reads, and
+cache writes; Codex's reported input already includes cached input, so cache reads are not
+added again. These are provider wire counters, not a subscription bill. A single successful
+pilot is evidence of feasibility, not an estimate of a methodology gain.
+
+For multi-session qualification pilots, run `native_pilot_ledger.py` with `--cli`,
+`--project`, and the complete private `runs/` directory (or an explicit
+comma-separated set of phase prefixes). It
+discovers every matching attempt, including failed setup and linked retries, verifies
+raw stream and owned archive hashes, replays native counters, and refuses a total if
+any attempt lacks counters. Codex cached input is already within reported input;
+Claude cache read and write counters are added to new input.
+Claude may emit more than one successful `result` for a continued native session.
+The parser accepts that case only when every result has the same session and
+identical cumulative `modelUsage`; it sums the separate main-loop usages and
+reconciles the cumulative pipeline against persisted child messages. A later
+accounting fix may add `accounting-replay-001.json` beside an immutable failed
+receipt. The ledger verifies its link to the original receipt and raw stream,
+then replays the archived root and every child from their hash-checked files.
+It counts that attempt once and retains its original phase status.
+The ledger does not certify method fidelity or an accepted endpoint. A phase marked
+`observed` only proves that phase's witnesses; method completion also requires every
+native boundary and the independent quality endpoint.
+For BMAD, setup must run its installed setup script. The method review must run
+its render script and produce at least two completed, archived native reviewer
+agents. Loading `bmad-code-review` alone does not prove that review happened.
+The frozen-manifest report refuses a total and an accepted result if extra native
+attempt directories exist outside its planned phase receipts. Use the pilot ledger
+to account for those attempts before interpreting any cost result.
+
+## GraphHelm JPD + Keel local lifecycle probe (2026-10-26)
+
+`tools/token-bench/graphhelm_full_flow.py` audits a complete local Runtime execution
+against its event journal, JPD journey steps, Keel signals, every planned claim and
+clearance, a Git-bound independent native review, the external public/hidden
+evaluator, and all native subscription attempt receipts. Give it a private manifest
+with `attemptsRoot`, `attemptPrefix`, every `attempts[].receipt`, `provider=claude`,
+`graphhelmCli`, `runtimeGraph`, `runtimeEvents`, `runtimeStatus`, `journal`,
+`journey`, `endpoint`, `executionId`, and `candidateHead`. The auditor replays
+the journal through the pinned local CLI; it refuses a different execution or
+receipt outside the attempt directory. The manifest
+also records `manualIntervention`, `prStageReviewed`, and `reachedStatus`. Run:
+
+```powershell
+python tools/token-bench/graphhelm_full_flow.py --manifest <private-manifest.json> --output <private-audit.json>
+```
+
+The first integration probe used the full 1,824-file public task context, the
+pinned native GraphHelm/JPD/Keel plugins, five Claude subscription sessions
+(including failed attempts), an isolated local Runtime, and a separate native
+Claude review. Runtime finished five nodes and recorded one journey, eight
+obligations, one Keel card, and one Keel proof. The exact-head public and
+submitted observers passed; the external evaluator passed 11 public and 28
+hidden assertions. The accepted local patch endpoint verified the Git diff,
+review session, and evaluator again. The five native sessions processed
+4,002,491 tokens in aggregate across input, output, cache reads, and cache
+writes; this is not a billed-dollar figure.
+
+This probe is **not comparison eligible**. A controller corrected a URL-encoding
+defect after an independent `BLOCK`, outside the native author session. The
+review was local rather than the GraphHelm PR-stage blind review. The reached
+observer was unobserved because its inventory-only mirror has no Git base;
+public, submitted, and hidden checks do not turn that into a reached pass.
+The Runtime used external native-agent claim/clear evidence, not an automatic
+Runtime model/tool executor. Keep this result as an integration probe; a
+balanced, controller-free cohort with the same full context and observer
+boundaries is still required before any gain claim.
+
+## Comparison eligibility and preflight (2026-10-26)
+
+`graphhelm_full_flow.py` (audit schema `/2`) no longer reads `reachedStatus` or
+`prStageReviewed` from the manifest. `comparisonEligible` is recomputed from two receipts
+whose SHA-256 the manifest freezes (`reachedReceipt`/`reachedReceiptSha256`,
+`prReviewReceipt`/`prReviewReceiptSha256`):
+
+- the reached receipt is a `run_reached.py` report with `status: passed`, `headBefore` and
+  `headAfter` equal to `candidateHead`, at least one step, every step exit 0, and no pending,
+  unsupported or untracked work;
+- the review receipt is the GitHub issue-comment JSON of a pull request comment whose identity
+  line names the candidate head, that cites the full head, carries exactly one verdict
+  (`APPROVE` or `APPROVE-WITH-RISK`), and was not written by the patch author bound in the
+  accepted endpoint.
+
+Any absent, swapped or contradicting receipt, a declared or undeclared manual intervention, or
+an incomplete integration leaves the cell ineligible; the reasons are listed in `limitations`.
+
+`native_preflight.py` runs before a native session spends tokens. It checks project permission
+deny rules, subscription login with no API key in the environment, connected MCP servers, a
+writable logs root, an observer Git mirror clean on the candidate head, and the reached runner
+against a frozen digest. Verdicts: `ready`, `OBSERVER_MISSING` (only observer checks failed) or
+`config_error`; both refusals exit 2 and the cell is recorded, not launched.

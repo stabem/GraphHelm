@@ -1,0 +1,69 @@
+[
+  {
+    "type": "system",
+    "subtype": "init",
+    "apiKeySource": "none"
+  },
+  {
+    "type": "rate_limit_event",
+    "rate_limit_info": {
+      "status": "allowed",
+      "isUsingOverage": false,
+      "overageStatus": "rejected",
+      "overageDisabledReason": "org_level_disabled"
+    }
+  },
+  {
+    "type": "result",
+    "usage": {
+      "input_tokens": 4,
+      "cache_creation_input_tokens": 6288,
+      "cache_read_input_tokens": 5842,
+      "output_tokens": 344,
+      "output_tokens_details": {
+        "thinking_tokens": 0
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 6288,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 128,
+          "cache_read_input_tokens": 5842,
+          "cache_creation_input_tokens": 446,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 446
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "modelUsage": {
+      "claude-sonnet-5-5": {
+        "inputTokens": 10,
+        "outputTokens": 530,
+        "cacheReadInputTokens": 9256,
+        "cacheCreationInputTokens": 11868,
+        "webSearchRequests": 0,
+        "costUSD": 0.045347599999999995,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 0,
+        "canonicalModel": "claude-sonnet-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    }
+  }
+]

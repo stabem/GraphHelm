@@ -18,15 +18,25 @@ HOME = Path(__file__).resolve().parent
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 API_ENV = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
            "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENROUTER_API_KEY", "CODEX_API_KEY"}
+HOST_BINDING_ENV = {"CODEX_APP_TOOLS_PIPE_PATH", "CODEX_THREAD_ID", "CODEX_SESSION_ID",
+                    "CODEX_TOOL_CALL_ID", "CODEX_TASK_WORKSPACE_VERIFYING_IDENTITY",
+                    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE"}
 PROVIDER_ERROR_TERMS = ("rate limit", "usage limit", "quota", "unauthorized",
                         "authentication", "not logged in", "login required")
 
 
-def child_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
+def child_environment(environment: dict[str, str] | None = None,
+                      graphhelm_overrides: dict[str, str] | None = None) -> dict[str, str]:
     """Remove provider credentials and endpoint overrides from one owned child."""
     source = os.environ if environment is None else environment
-    return {key: value for key, value in source.items()
-            if key.upper() not in API_ENV and not key.upper().endswith(("_API_KEY", "_BASE_URL", "_ENDPOINT"))}
+    cleaned = {key: value for key, value in source.items()
+               if key.upper() not in API_ENV and not key.upper().endswith(("_API_KEY", "_BASE_URL", "_ENDPOINT"))
+               and key.upper() not in HOST_BINDING_ENV and not key.upper().startswith("GRAPHHELM_")}
+    for key, value in (graphhelm_overrides or {}).items():
+        if key not in {"GRAPHHELM_ACTOR", "GRAPHHELM_RUNTIME_URL", "GRAPHHELM_EXECUTION_ID"}:
+            raise ValueError("only non-secret cell GraphHelm overrides are allowed")
+        cleaned[key] = value
+    return cleaned
 
 
 def native_cli_command(cli: str, executable: Path, model: str) -> list[str]:
@@ -139,9 +149,10 @@ def publish(path: Path, value: dict) -> None:
 
 
 def capture(argv: list[str], cwd: Path, *, deadline: int, prompt: str = "",
-            environment: dict[str, str] | None = None) -> dict:
+            environment: dict[str, str] | None = None,
+            graphhelm_overrides: dict[str, str] | None = None) -> dict:
     """Own each child; preserve its timeout rather than retrying or using another provider."""
-    environment = child_environment(environment)
+    environment = child_environment(environment, graphhelm_overrides)
     started = time.monotonic()
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         child = subprocess.Popen(argv, cwd=cwd, env=environment, stdin=subprocess.PIPE,
@@ -300,7 +311,7 @@ def usage(cli: str, raw: str) -> dict:
         return {"counts": counts, "observedModels": models, "parseErrors": parse_errors,
                 "countsSource": "codex.turn.completed", "accountingStatus": "observed" if counts is not None else "unobserved"}
     else:
-        from run import sum_transcript_usage
+        from native_usage import sum_transcript_usage
         diagnostic_error = ("invalid-assistant-diagnostic" if any(
             row.get("type") == "assistant" and not isinstance(row.get("message"), dict)
             for row in records) else None)
@@ -317,14 +328,20 @@ def usage(cli: str, raw: str) -> dict:
                   "countsSource": "claude.result.modelUsage", "accountingStatus": "unobserved",
                   "transcriptCounts": parsed, "transcriptDiagnosticError": diagnostic_error,
                   "mainLoopCounts": None, "accountingModels": []}
-        terminal = [row for row in records if row.get("type") == "result"]
-        if parse_errors or len(terminal) != 1:
+        from native_session_evidence import claude_final_results
+        try:
+            terminal = claude_final_results(records)
+        except ValueError:
+            terminal = []
+        if parse_errors or not terminal:
             result["accountingStatus"] = "invalid-stream-or-result-count"
             return result
         fields = {"input": "input_tokens", "output": "output_tokens", "cacheRead": "cache_read_input_tokens", "cacheWrite": "cache_creation_input_tokens"}
-        main = token_counts(terminal[0].get("usage"), fields)
+        main_rows = [token_counts(row.get("usage"), fields) for row in terminal]
+        main = ({key: sum(row[key] for row in main_rows) for key in fields}
+                if all(row is not None for row in main_rows) else None)
         result["mainLoopCounts"] = main
-        pipeline = terminal[0].get("modelUsage")
+        pipeline = terminal[-1].get("modelUsage")
         if main is None or not isinstance(pipeline, dict) or not pipeline or any(not isinstance(key, str) or not key for key in pipeline):
             result["accountingStatus"] = "native-usage-missing-or-invalid"
             return result

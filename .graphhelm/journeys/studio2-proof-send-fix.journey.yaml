@@ -13,56 +13,68 @@ risks: [critical_ux, irreversible_effect]
 viewports: [web, mobile]
 screens:
   - id: asked
-    title: The request shows in WHAT I ASKED and Needs action
+    title: The request shows in WHAT I ASKED and as a Hand off item in Needs action
     url: /?session=studio-fixture&run=demo&view=lanes&journey=health-broken
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: list, name: Owner requests, text: Fix Broken health check, because: "the request is named after the failing journey, Broken health check"}, {role: region, name: Needs action, text: Your request waits for a lane, because: "no lane has taken the request yet, so Needs action says it waits for a lane"}]
+    expect: [{role: list, name: Owner requests, text: Fix Broken health check, because: "the request is named after the failing journey, Broken health check"}, {role: list, name: Needs action items, text: "Your request waits for a lane: Fix Broken health check", because: "no lane has taken the request yet, so Needs action lists it as an item that waits for a lane"}, {role: button, name: Hand off a free lane, because: "a request no issue was opened for is a Hand off item; the only lane, planner, waits on the owner, so the item offers it to a free lane"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/asked.ts]
   - id: failed
     title: The run drifted and offers Send to fix with a note
     url: /?session=studio-fixture&run=demo&view=proof&journey=health-broken
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: status, name: Drifted}, {role: textbox, name: Note for the fix}, {role: button, name: Send to fix}]
+    expect: [{role: status, name: Drifted, because: "the fixture's broken health check expects ok=false and the Runtime answers ok=true, so the run drifts"}, {role: textbox, name: Note for the fix, because: the owner may say what he thinks is wrong before sending}, {role: button, name: Send to fix, because: a failed run offers to hand the failure to a lane}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/send-fix.ts, apps/studio/src/proof/steps.ts]
   - id: journeys
     title: The failing journey is selected
     url: /?session=studio-fixture&run=demo&view=proof&journey=health-broken
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: list, name: Journeys}, {role: button, name: Run Broken health check}]
+    expect: [{role: button, name: Run Broken health check, because: the failing journey's own card carries the Run the owner presses}, {role: list, name: Journeys, because: the Proof view lists every journey the owner can run}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/send-fix.ts, apps/studio/src/proof/steps.ts]
+  - id: noted
+    title: The owner's note is written beside Send to fix
+    url: /?session=studio-fixture&run=demo&view=proof&journey=health-broken
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: textbox, name: Note for the fix, text: The health check expects the wrong answer., because: the note box holds what the owner wrote and it goes with the request}, {role: button, name: Send to fix, because: the note is written but not sent yet}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/send-fix.ts]
   - id: sent
     title: The button says Sent with its time
     url: /?session=studio-fixture&run=demo&view=proof&journey=health-broken
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Sent to fix, text: Sent, because: "after sending, the status reads Sent with the time it was sent"}, {role: button, name: Send to fix, absent: true, because: "the Send to fix button is replaced by the Sent status, so it cannot be pressed twice"}]
+    expect: [{role: status, name: Sent to fix, text: Sent · just now, because: "the status reads Sent with the time the Runtime recorded the request, which for a request sent a moment ago reads just now"}, {role: button, name: Send to fix, absent: true, because: "the Send to fix button is replaced by the Sent status, so it cannot be pressed twice"}, {role: textbox, name: Note for the fix, absent: true, because: the note left with the request and its box is gone}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/send-fix.ts, apps/studio/src/runtime/client.ts]
 edges:
-  - id: failed.sent
+  - id: failed.noted
     from: failed
-    to: sent
-    why: "Send to fix with a note records the owner's request, and the button turns into Sent."
+    to: noted
+    why: "The owner adds what he already knows, so the lane that fixes it does not start from nothing."
     acts:
       - {kind: enter_text, role: textbox, name: Note for the fix, text: The health check expects the wrong answer.}
-      - {kind: activate, role: button, name: Send to fix}
-      - {kind: wait_for, role: status, name: Sent to fix}
   - id: journeys.failed
     from: journeys
     to: failed
-    why: "Running the broken health check fails, and the failed run offers Send to fix."
+    why: "The owner runs a journey to learn whether it holds; when it fails he wants to hand the failure on, not debug it himself."
     acts:
       - {kind: activate, role: button, name: Run Broken health check}
       - {kind: wait_for, role: button, name: Send to fix}
+  - id: noted.sent
+    from: noted
+    to: sent
+    why: The owner sends the failure once and moves on; the time tells him when he asked.
+    acts:
+      - {kind: activate, role: button, name: Send to fix}
+      - {kind: wait_for, role: status, name: Sent to fix}
   - id: sent.asked
     from: sent
     to: asked
-    why: "The request shows in WHAT I ASKED and waits in Needs action, so a lane can pick it up."
+    why: The owner checks that his request reached the team board and waits for a lane to take it.
     acts:
       - {kind: activate, role: tab, name: Lanes}
       - {kind: wait_for, role: list, name: Owner requests}
 paths:
-  main: [journeys.failed, failed.sent, sent.asked]
+  main: [journeys.failed, failed.noted, noted.sent, sent.asked]
 drift: []

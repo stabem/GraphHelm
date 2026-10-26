@@ -48,6 +48,35 @@ class FixturePortTest(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 10)
 
 
+    def test_every_studio2_flow_based_on_the_fixture_studio_names_this_fixtures_port(self):
+        # #2077: the rewrite covered only studio2-proof-run*, so confirm, send-fix and stale ended
+        # watch.app_down on an isolated fixture (Studio not on 5184). Run on the real journeys:
+        # every studio2 flow based on 5184 must name the fixture's port, other bases stay.
+        import shutil
+
+        root = pathlib.Path(__file__).resolve().parents[2]
+        shell = r"C:\Program Files\Git\bin\bash.exe" if os.name == "nt" else "bash"
+        source = root / ".graphhelm" / "journeys"
+        default = "base: http://127.0.0.1:5184\n"
+        with tempfile.TemporaryDirectory() as parent:
+            journeys = pathlib.Path(parent) / "journeys"
+            shutil.copytree(source, journeys)
+            before = {f.name: f.read_text(encoding="utf-8") for f in journeys.glob("*.journey.yaml")}
+            on_default = {n for n, t in before.items() if n.startswith("studio2-") and default in t}
+            for flow in ("studio2-proof-confirm", "studio2-proof-send-fix", "studio2-proof-stale"):
+                self.assertIn(f"{flow}.journey.yaml", on_default, "control: the flow is based on 5184")
+            result = subprocess.run(
+                [shell, "-c", '. "$1"; rebase_flows "$2" 5341', "rebase",
+                 (root / "tools/studio-journey-fixture/rebase_flows.sh").as_posix(), journeys.as_posix()],
+                capture_output=True, text=True, timeout=60, check=False, creationflags=NO_WINDOW)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for name, text in before.items():
+                after = (journeys / name).read_text(encoding="utf-8")
+                if name in on_default:
+                    self.assertEqual(after, text.replace(default, "base: http://127.0.0.1:5341\n"), name)
+                else:
+                    self.assertEqual(after, text, f"{name} must not change")
+
     def test_the_fixture_project_carries_every_file_its_flows_scope(self):
         # #1041: fixture.sh copies the journeys into a disposable project (#585) and the Runtime
         # resolves each screen `scope` path against that project, so without the scoped files

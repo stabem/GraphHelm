@@ -14,25 +14,26 @@ viewports: [web]
 screens:
   - id: changed
     title: The header reads changed since the last run and the steps show the earlier frames marked stale
-    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-stale
-    ignoreQuery: [session, project]
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
+    ignoreQuery: [session, project, journey]
     state: stable
-    expect: [{role: status, name: Changed since last run}, {role: region, name: Journey run, text: from the earlier version, because: the kept run was played on the flow before its edit and the header says so}, {role: button, name: Run}, {role: img, name: Step 1 frame}, {role: img, name: Step 2 frame}, {role: list, name: Steps, text: stale, because: each frame comes from the earlier version and is marked stale}]
+    expect: [{role: status, name: Changed since last run, because: "the fixture edits that journey after its recorded run, so the header must say the run is of an earlier version"}, {role: status, name: Passed, absent: true, because: "a run of an earlier version proves nothing about this one, so the header never reads passed"}, {role: region, name: Journey run, text: from the earlier version, because: the kept run was played on the flow before its edit and the header says so}, {role: button, name: Run Read the health edited after its run, because: the journey's own Run is how the owner proves the current version}, {role: img, name: Step 1 frame, because: "the earlier run's first frame is kept, so the owner still sees what was proven before"}, {role: img, name: Step 2 frame, because: the earlier run's second frame is kept too}, {role: list, name: Steps, text: STALE, because: "each frame comes from the earlier version, and each step is marked STALE"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
   - id: open
-    title: The journey's card reads changed since the last run
-    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-stale
+    title: Another journey is selected and the edited journey's card reads changed since the last run
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: listitem, name: Edited since its last run, text: Changed since last run, because: the fixture edits this flow after its recorded run so the card must not read passed}]
+    expect: [{role: listitem, name: Read the health edited after its run, text: Changed since last run, because: "the fixture edits that journey after its recorded run, so the card must not read passed"}, {role: button, name: Select Read the health edited after its run, because: the owner opens the edited journey from its card}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts]
 edges:
   - id: open.changed
     from: open
     to: changed
-    why: "Opening a journey edited since its run shows that run's frames as stale, never as a pass for the current version."
+    why: "The owner opens a journey he edited to see whether it still holds, and must not mistake the old run for proof of the new version."
     acts:
-      - {kind: wait_for, role: img, name: Step 1 frame}
+      - {kind: activate, role: button, name: Select Read the health edited after its run}
+      - {kind: wait_for, role: status, name: Changed since last run}
 paths:
   main: [open.changed]
 drift: []

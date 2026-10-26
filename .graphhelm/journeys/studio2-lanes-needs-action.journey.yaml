@@ -3,7 +3,7 @@ id: studio2-lanes-needs-action
 title: Clear the Needs action list
 name: Clear needs action
 feature: Studio
-purpose: "Needs action orders items oldest first, and each item's button does its action: Answer, Assign, Merge, Archive or Reassign."
+purpose: "Needs action lists the planner's question (the oldest wait) before PR #801 (the newest), and each item's button does its action: Answer opens the reply, and Assign, Merge, Archive and Reassign each take their item off the list."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -13,46 +13,46 @@ risks: [critical_ux]
 viewports: [web, mobile]
 screens:
   - id: answered
-    title: Answer acts on its item
+    title: Answer opens the reply to the asking lane
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Answering, because: the Studio records the Answer action as Answering}]
+    expect: [{role: status, name: Last action, text: Answering, because: the Studio says the owner is now answering the planner}, {role: textbox, name: Reply, because: "Answer opens the planner's panel with its reply box, where the answer is typed"}, {role: button, name: Send reply, because: "the panel is replying to the planner's open question, not sending a plain message"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: archived
-    title: Archive acts on its item
+    title: Archive takes the silent reviewer off the list
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Archived, because: the Studio records the Archive action as Archived}]
+    expect: [{role: status, name: Last action, text: Archived, because: the Runtime recorded lane-gone as archived}, {role: button, name: Archive lane-gone, absent: true, because: "an archived lane owes nothing more, so its item leaves Needs action"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: assigned
-    title: Assign acts on its item
+    title: Assign takes the unreviewed PR off the list
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Assigned, because: the Studio records the Assign action as Assigned}]
+    expect: [{role: status, name: Last action, text: Assigned, because: "the Runtime recorded a reviewer for PR #801"}, {role: button, name: Assign lane-author, absent: true, because: "PR #801 now has a reviewer, so its item leaves Needs action"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: list
     title: Needs action lists items oldest first
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Needs action, text: oldest first, because: "Needs action lists the oldest item first, and its header says so"}, {role: list, name: Needs action items}, {role: listitem, name: Needs action item 1}]
+    expect: [{role: region, name: Needs action, text: oldest first, because: the header tells the owner how the list is ordered}, {role: listitem, name: Needs action item 1, text: planner asks you, because: "the planner's question was recorded before every other item, so it is first"}, {role: listitem, name: Needs action item 3, text: "PR #801 has no reviewer", because: "PR #801 was opened after the question and after lane-quiet went silent, so it comes after them"}, {role: button, name: Archive lane-gone, because: "lane-gone reviews PR #804 and has gone silent, so it waits on the owner too"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: merged
-    title: Merge acts on its item
+    title: Merge takes the approved PR off the list
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Merge requested, because: "the Studio records the Merge action as Merge requested, since the merge itself is the lane's"}]
+    expect: [{role: status, name: Last action, text: Merge requested, because: "the Studio asks the lane to merge PR #802; the merge itself is the lane's"}, {role: button, name: Merge lane-author, absent: true, because: "the merge was requested, so the approved PR no longer waits on the owner"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: reassigned
-    title: Reassign acts on its item
+    title: Reassign takes the quiet lane's slice off the list
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Reassigned, because: the Studio records the Reassign action as Reassigned}]
+    expect: [{role: status, name: Last action, text: Reassigned, because: "the Runtime recorded #803 as handed from lane-quiet to lane-free"}, {role: button, name: Reassign lane-quiet, absent: true, because: "#803 has a live owner again, so its item leaves Needs action"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
 edges:
   - id: answered.assigned

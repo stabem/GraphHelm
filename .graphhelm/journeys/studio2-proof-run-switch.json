@@ -1,0 +1,157 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "A journey's card keeps reading running after another is selected",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-proof-run-switch",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "journeys.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows list \"Journeys\", button \"Run Read the Runtime health\", button \"Select Follow a request\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "journeys"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "elsewhere.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows heading \"Follow a request\", no heading \"Read the Runtime health\", listitem \"Read the Runtime health\" saying \"running\"",
+      "statesToObserve": [
+        "loading"
+      ],
+      "stepId": "elsewhere"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "finished.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows listitem \"Read the Runtime health\" saying \"passed\", heading \"Follow a request\", no heading \"Read the Runtime health\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "finished"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "recovery"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen journeys not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/steps.ts"
+        ],
+        "screenId": "journeys",
+        "title": "The journey to run is selected"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=proof&journey=runtime-health"
+        }
+      },
+      "stepId": "journeys"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "loading"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen elsewhere not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/steps.ts"
+        ],
+        "screenId": "elsewhere",
+        "title": "Another journey is selected and the first card still reads running"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Select Follow a request"
+        }
+      },
+      "stepId": "elsewhere"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen finished not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/steps.ts"
+        ],
+        "screenId": "finished",
+        "title": "The first card shows the result the Runtime recorded"
+      },
+      "semanticAction": {
+        "kind": "wait_for",
+        "target": {
+          "geometryClaim": false,
+          "role": "listitem",
+          "strategy": "accessible_name",
+          "value": "Read the Runtime health"
+        }
+      },
+      "stepId": "finished"
+    }
+  ],
+  "taskScope": "journey-flow studio2-proof-run-switch path main",
+  "title": "A journey's card keeps reading running after another is selected",
+  "version": 1
+}

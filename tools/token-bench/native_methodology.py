@@ -404,10 +404,27 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     stderr.write_text(captured["stderr"], encoding="utf-8")
     parsed_usage = base.usage(cli_config["cli"], captured["stdout"])
     provider_error = base.native_provider_error(cli_config["cli"], captured["stdout"], captured["stderr"])
+    session_evidence = None
+    evidence_path = cli_config.get("sessionEvidencePath")
+    if evidence_path:
+        try:
+            from native_session_evidence import claude_pipeline, codex_tree
+            if cli_config["cli"] == "claude":
+                session_evidence = claude_pipeline(Path(evidence_path))
+            else:
+                session_evidence = codex_tree(Path(evidence_path),
+                    [Path(item) for item in cli_config.get("childSessionEvidence", [])],
+                    project=project_root, root_thread=cli_config.get("rootThread", ""),
+                    stdout_usage=parsed_usage.get("counts") or {})
+            if session_evidence.get("status") != "observed":
+                parsed_usage = {**parsed_usage, "counts": None, "accountingStatus": "native-session-evidence-unknown"}
+        except (ImportError, OSError, ValueError, KeyError) as error:
+            session_evidence = {"status": "unknown", "reason": str(error)}
+            parsed_usage = {**parsed_usage, "counts": None, "accountingStatus": "native-session-evidence-unknown"}
     required = artifact_hashes(project_root, phase.get("requiredArtifacts", [])) if phase.get("requiredArtifacts") else {}
     receipt = {"attempt": attempt, "ordinal": ordinal, "argv": frozen_argv, "capture": {key: captured[key] for key in
                ("exit", "seconds", "timeout", "cleanupConfirmed", "truncated")},
-               "usage": parsed_usage, "providerError": provider_error,
+               "usage": parsed_usage, "sessionEvidence": session_evidence, "providerError": provider_error,
                "stdoutPath": stdout.name, "stderrPath": stderr.name,
                "rawSha256": {stdout.name: base.digest(stdout), stderr.name: base.digest(stderr)},
                "requiredArtifactHashes": required, "predecessorArtifacts": predecessor_artifacts}
@@ -462,7 +479,8 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
             continue
         row = base.read(receipt)
         valid = isinstance(row.get("attempt"), dict) and row["attempt"].get("planSha256") and isinstance(row.get("capture"), dict)
-        raw_dir = receipt.parent.parent
+        attempt_id = row.get("attempt", {}).get("attemptId", "")
+        raw_dir = attempts_root / f"phase-{planned['phase']}-{attempt_id}"
         for raw_name, raw_hash in row.get("rawSha256", {}).items():
             raw_file = raw_dir / raw_name
             valid = valid and raw_file.is_file() and base.digest(raw_file) == raw_hash
@@ -470,9 +488,9 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
             valid = valid and row.get("fidelity", {}).get("status") == "observed" and isinstance(row.get("usage"), dict)
         rows.append({**planned, **row, "status": row.get("status", "incomplete") if valid else "incomplete"})
     collection_complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] != "incomplete" for row in rows)
-    quality_accepted = collection_complete and all(row["status"] in {"complete", "failed"} for row in rows)
+    quality_accepted = collection_complete and all(row["status"] == "complete" for row in rows)
     complete = quality_accepted and all(row["status"] == "complete" for row in rows)
-    endpoint_ok = endpoint is None or endpoint.get("status") == "observed"
+    endpoint_ok = endpoint is not None and endpoint.get("status") == "observed"
     return {"schema": "native-methodology-report/2", "complete": complete and endpoint_ok,
             "collectionComplete": collection_complete, "qualityAccepted": quality_accepted, "attempts": rows,
             "acceptedEndpoint": endpoint, "winner": None,
@@ -529,7 +547,7 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
         base.publish(receipt_path, receipt)
         predecessor = receipt.get("requiredArtifactHashes", {})
         results.append(receipt)
-        if receipt.get("status") == "incomplete":
+        if receipt.get("status") != "complete":
             break
     return results
 

@@ -440,6 +440,24 @@ class NativeMethodologyContracts(unittest.TestCase):
             self.assertIsNone(duplicate["usageAggregate"])
             self.assertFalse(duplicate["qualityAccepted"])
             phase_spec = workflow["phases"][0]
+            phase_spec["requiredArtifacts"] = ["report/required-but-missing.json"]
+            receipt["attempt"]["planSha256"] = bench.phase_plan(
+                workflow, {**workflow["taskContext"], "phase": "setup"},
+                plan_id="spec-kit-frozen")["planSha256"]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            receipt["manifestSha256"] = bench._json_hash(manifest)
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            missing_artifact = bench.report_manifest(manifest_path, output)
+            self.assertEqual(missing_artifact["attempts"][0]["status"], "incomplete")
+            phase_spec["requiredArtifacts"] = []
+            receipt["attempt"]["planSha256"] = plan["planSha256"]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            receipt["manifestSha256"] = bench._json_hash(manifest)
+            receipt["requiredArtifactGlobHashes"]["report/removed.json"] = "0" * 64
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            removed_artifact = bench.report_manifest(manifest_path, output)
+            self.assertEqual(removed_artifact["attempts"][0]["status"], "incomplete")
+            receipt["requiredArtifactGlobHashes"].pop("report/removed.json")
             phase_spec["minNativeReviewerAgents"] = 2
             receipt["attempt"]["planSha256"] = bench.phase_plan(
                 workflow, {**workflow["taskContext"], "phase": "setup"},

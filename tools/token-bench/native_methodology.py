@@ -48,8 +48,11 @@ def artifact_hashes(root: Path, relative_paths: Iterable[str]) -> dict[str, str]
     root = root.resolve()
     result = {}
     for relative in sorted(set(relative_paths)):
-        path = (root / Path(relative)).resolve()
-        if root not in path.parents or path.is_symlink() or not path.is_file():
+        candidate = root / Path(relative)
+        path = candidate.resolve()
+        if (root not in path.parents or candidate.is_symlink() or
+                any(parent.is_symlink() for parent in candidate.parents if parent != root and root in parent.parents)
+                or not path.is_file()):
             raise ValueError(f"phase artifact is missing, linked, or outside root: {relative}")
         result[relative.replace("\\", "/")] = base.digest(path)
     return result
@@ -972,17 +975,23 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         if workflow_spec is None:
             valid = False
         else:
-            glob_hashes = row.get("requiredArtifactGlobHashes")
-            for pattern in next((phase.get("requiredArtifactGlobs", [])
-                                 for phase in workflow_spec["phases"] if phase["id"] == planned["phase"]), []):
+            project_root = Path(workflow_spec["projectRoot"])
+            declared = phase_spec.get("requiredArtifacts", []) if phase_spec else []
+            if declared:
+                try:
+                    valid = valid and row.get("requiredArtifactHashes") == artifact_hashes(project_root, declared)
+                except (OSError, ValueError, TypeError):
+                    valid = False
+            patterns = phase_spec.get("requiredArtifactGlobs", []) if phase_spec else []
+            actual_globs = {}
+            for pattern in patterns:
                 matches = [path for path in Path(workflow_spec["projectRoot"]).glob(pattern)
                            if path.is_file() and not path.is_symlink()]
                 valid = valid and bool(matches)
-                if isinstance(glob_hashes, dict):
-                    valid = valid and all(glob_hashes.get(path.relative_to(Path(workflow_spec["projectRoot"])).as_posix())
-                                          == base.digest(path) for path in matches)
-                else:
-                    valid = False
+                for path in matches:
+                    actual_globs[path.relative_to(project_root).as_posix()] = base.digest(path)
+            if patterns:
+                valid = valid and row.get("requiredArtifactGlobHashes") == actual_globs
         rows.append({**planned, **row, "status": row.get("status", "incomplete") if valid else "incomplete"})
         if isinstance(row.get("candidateAfterSha256"), str):
             candidate_chain[planned["workflow"]] = row["candidateAfterSha256"]

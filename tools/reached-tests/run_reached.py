@@ -41,7 +41,7 @@ _BATCH_STOP_REASONS = {"exhausted", "leaseBoundary", "deadline", "childFailure",
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True,
-                          stdin=subprocess.DEVNULL, creationflags=NO_WINDOW).stdout.strip()
+                          stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, timeout=300).stdout.strip()
 
 
 def _tail(path: Path) -> str:
@@ -1026,7 +1026,7 @@ def _preflight(repo: Path, output: Path, steps: list[dict[str, Any]],
             problems.append(f"env: {name}={value} does not exist")
     for key in ("user.name", "user.email"):
         if subprocess.run(["git", "config", key], cwd=repo, capture_output=True, text=True,
-                          stdin=subprocess.DEVNULL, creationflags=NO_WINDOW).returncode != 0:
+                          stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, timeout=30).returncode != 0:
             warnings.append(f"identity: git {key} is not set; steps that commit will fail")
     return problems, warnings
 
@@ -1270,12 +1270,29 @@ def run(args: argparse.Namespace) -> int:
                 if payload is not None:
                     env["GRAPHHELM_SLOT_BATCH"] = json.dumps(payload, separators=(",", ":"))
                 step_started = time.monotonic()
+                timed_out = False
                 with logfile.open("w", encoding="utf-8") as stream:
-                    proc = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT,
-                                          text=True, env=env, stdin=subprocess.DEVNULL,
-                                          creationflags=NO_WINDOW)
+                    try:
+                        proc = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT,
+                                              text=True, env=env, stdin=subprocess.DEVNULL,
+                                              creationflags=NO_WINDOW, timeout=max(0.001, remaining_budget))
+                    except subprocess.TimeoutExpired:
+                        timed_out = True
+                        proc = None
                 step_seconds = round(time.monotonic() - step_started, 3)
                 elapsed = time.monotonic() - started
+                if timed_out:
+                    index = entry["index"]
+                    tail = _tail(logfile)
+                    report["pending"].remove(index)
+                    report["completed"].append({"index": index, "argv": entry["argv"], "cwd": entry["cwd"],
+                                                 "slot": entry["slot"], "returncode": None, "timedOut": True,
+                                                 "late": True, "stepSeconds": step_seconds, "proofKey": keys[index],
+                                                 "log": str(logfile), "tail": tail,
+                                                 "error": "step exceeded the remaining runner budget"})
+                    report["status"] = "budgetExceeded"
+                    report["error"] = f"step {index} exceeded the remaining runner budget"
+                    break
                 # #1892: name the slow step as it finishes, not only in the JSON report.
                 print(f"[reached-tests] steps {indices}: {step_seconds:.1f}s (exit {proc.returncode}; "
                       f"total {elapsed:.1f}s)", file=sys.stderr, flush=True)

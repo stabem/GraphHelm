@@ -100,11 +100,12 @@ def newer_copy(tree, own):
     return None
 
 
-def reexec(copy, argv, env=None):
+def reexec(copy, argv, timeout, env=None):
     """Run main's copy of this script in place of the stale one (hidden child); returns its exit code."""
     env = dict(os.environ if env is None else env, MAIN_WHOLE_RUN_REEXEC="1")
     return subprocess.run([sys.executable, str(copy), *argv], env=env,
-                          stdin=subprocess.DEVNULL, creationflags=NO_WINDOW).returncode
+                          stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                          timeout=timeout).returncode
 
 
 def post(args, body):
@@ -183,7 +184,11 @@ def main(argv=None):
         copy = newer_copy(work / "tree", __file__)
         if copy:
             print(f"main_whole_run: running main's copy {copy}")
-            return reexec(copy, raw_argv)
+            try:
+                return reexec(copy, raw_argv, args.timeout)
+            except subprocess.TimeoutExpired:
+                print("main_whole_run: re-exec exceeded its deadline; receipt is incomplete")
+                return 1
     run, reason = due(state, sha, now, args.min_interval)
     print(f"main_whole_run: {'run' if run else 'skip'} ({reason}); main {sha[:8]}")
     if not run:

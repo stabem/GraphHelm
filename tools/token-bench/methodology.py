@@ -17,7 +17,32 @@ import uuid
 HOME = Path(__file__).resolve().parent
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 API_ENV = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
-           "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENROUTER_API_KEY"}
+           "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENROUTER_API_KEY", "CODEX_API_KEY"}
+
+
+def child_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
+    """Remove provider credentials and endpoint overrides from one owned child."""
+    source = os.environ if environment is None else environment
+    return {key: value for key, value in source.items()
+            if key.upper() not in API_ENV and not key.upper().endswith(("_API_KEY", "_BASE_URL", "_ENDPOINT"))}
+
+
+def native_cli_command(cli: str, executable: Path, model: str) -> list[str]:
+    """Build the frozen subscription CLI argv without shell shims or permission bypasses."""
+    if cli == "codex":
+        return [str(executable), "exec", "--json", "--ignore-user-config", "--ephemeral",
+                "--skip-git-repo-check", "-c", 'default_permissions=":workspace"',
+                "-c", 'windows.sandbox="elevated"', "-c", "features.prefer_mxc=true",
+                "-m", model, "-c", 'model_reasoning_effort="low"', "-c",
+                "project_doc_max_bytes=0", "--disable", "plugins", "--enable",
+                "skip_host_skill_discovery", "-"]
+    if cli == "claude":
+        return [str(executable), "-p", "--output-format", "stream-json", "--verbose",
+                "--safe-mode", "--restricted", "--tools", "Read,Edit,Write,Bash,Glob,Grep",
+                "--allowedTools", "Bash(python test_public.py)", "--permission-mode",
+                "acceptEdits", "--permission-prompts", "none", "--no-session-persistence",
+                "--model", model, "--effort", "low"]
+    raise ValueError(f"unsupported CLI: {cli}")
 
 
 def digest(path: Path) -> str:
@@ -44,10 +69,10 @@ def publish(path: Path, value: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def capture(argv: list[str], cwd: Path, *, deadline: int, prompt: str = "") -> dict:
+def capture(argv: list[str], cwd: Path, *, deadline: int, prompt: str = "",
+            environment: dict[str, str] | None = None) -> dict:
     """Own each child; preserve its timeout rather than retrying or using another provider."""
-    environment = {key: value for key, value in os.environ.items()
-                   if key.upper() not in API_ENV}
+    environment = child_environment(environment)
     started = time.monotonic()
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         child = subprocess.Popen(argv, cwd=cwd, env=environment, stdin=subprocess.PIPE,

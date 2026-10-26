@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import random
-import shlex
 import shutil
 import subprocess
 import sys
@@ -15,24 +14,17 @@ import tempfile
 import time
 import uuid
 
+import methodology as base
+
 HOME = Path(__file__).resolve().parent
 MAX_JSON = 2_000_000
-MAX_FILE = 200_000
+MAX_FILE = 2_000_000
 DEADLINE = 300
 EVALUATOR_DEADLINE = 90
-API_ENV_SUFFIXES = ("_API_KEY", "_API_TOKEN", "_BASE_URL", "_ENDPOINT")
-API_ENV_NAMES = {"CODEX_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
-                 "OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_BASE_URL",
-                 "OPENAI_BASE_URL", "OPENROUTER_BASE_URL"}
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def tree_digest(root: Path, paths: list[str]) -> dict[str, str]:
-    return {path: digest(safe_file(root, path)) for path in sorted(paths)}
 
 
 def read(path: Path) -> dict:
@@ -48,7 +40,6 @@ def read(path: Path) -> dict:
 
 
 def publish(path: Path, value: dict) -> None:
-    """Append an outcome once; a duplicate ID can never replace its first result."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
@@ -78,47 +69,10 @@ def safe_file(root: Path, relative: str) -> Path:
     return path
 
 
-def child_env() -> dict[str, str]:
-    return {key: value for key, value in os.environ.items()
-            if key not in API_ENV_NAMES and not key.upper().endswith(API_ENV_SUFFIXES)}
-
-
-def capture(argv: list[str], cwd: Path, *, deadline: int, prompt: str = "") -> dict:
-    started = time.monotonic()
-    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
-        child = subprocess.Popen(argv, cwd=cwd, env=child_env(), stdin=subprocess.PIPE,
-                                 stdout=output, stderr=errors, creationflags=NO_WINDOW,
-                                 start_new_session=os.name != "nt")
-        timed_out = False
-        cleanup = True
-        try:
-            child.communicate(prompt.encode("utf-8"), timeout=deadline)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            if os.name == "nt":
-                killed = subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
-                                        capture_output=True, timeout=15, creationflags=NO_WINDOW)
-                cleanup = killed.returncode == 0
-            else:
-                child.kill()
-            try:
-                child.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                cleanup = False
-        output.seek(0)
-        errors.seek(0)
-        stdout = output.read(8_000_001)
-        stderr = errors.read(8_000_001)
-    return {"exit": child.returncode, "seconds": time.monotonic() - started,
-            "timeout": timed_out, "cleanupConfirmed": cleanup,
-            "truncated": len(stdout) > 8_000_000 or len(stderr) > 8_000_000,
-            "stdout": stdout[:8_000_000].decode("utf-8", errors="replace"),
-            "stderr": stderr[:8_000_000].decode("utf-8", errors="replace")}
-
-
 def snapshot_root(task: dict, kind: str) -> Path:
-    key = "parentSnapshot" if kind == "parent" else "fixSnapshot"
-    value = task.get(key) or task.get("snapshots", {}).get(kind)
+    value = task.get("parentSnapshot" if kind == "parent" else "fixSnapshot")
+    if not isinstance(value, str):
+        value = task.get("snapshots", {}).get(kind)
     if not isinstance(value, str):
         raise ValueError(f"task {task.get('id')} has no {kind} snapshot")
     root = Path(value).resolve()
@@ -127,15 +81,25 @@ def snapshot_root(task: dict, kind: str) -> Path:
     return root
 
 
-def task_paths(task: dict) -> tuple[list[str], list[str]]:
+def task_paths(task: dict) -> tuple[list[str], list[str], list[str]]:
     scope = [safe_relative(path) for path in task.get("scope", [])]
     closure = [safe_relative(path) for path in task.get("productionImportClosure", scope)]
-    if not scope or not set(scope).issubset(closure):
-        raise ValueError(f"task {task.get('id')} has invalid production scope")
     public = [safe_relative(path) for path in task.get("publicTests", [])]
-    if len(public) != 1:
-        raise ValueError("each task needs exactly one public test file")
-    return scope, sorted(set(closure + public))
+    support = [safe_relative(path) for path in task.get("supportFiles", [])]
+    if not scope or not public or not set(scope).issubset(closure):
+        raise ValueError(f"task {task.get('id')} has invalid scope or public tests")
+    if "test_public.py" not in support:
+        raise ValueError("supportFiles must include immutable test_public.py")
+    return scope, sorted(set(closure)), sorted(set(public + support))
+
+
+def all_snapshot_paths(task: dict) -> list[str]:
+    scope, closure, support = task_paths(task)
+    return sorted(set(closure + support + task["scope"] + task["publicTests"]))
+
+
+def tree_hashes(root: Path, paths: list[str]) -> dict[str, str]:
+    return {path: digest(safe_file(root, path)) for path in paths}
 
 
 def copy_paths(source: Path, target: Path, paths: list[str]) -> None:
@@ -146,168 +110,114 @@ def copy_paths(source: Path, target: Path, paths: list[str]) -> None:
         shutil.copy2(source_file, destination)
 
 
-def command_for(cli: str, executable: Path, model: str) -> list[str]:
-    if cli == "codex":
-        return [str(executable), "exec", "--json", "--ignore-user-config", "--ephemeral",
-                "--skip-git-repo-check", "-c", 'default_permissions=":workspace"',
-                "-c", 'windows.sandbox="elevated"', "-c", "features.prefer_mxc=true",
-                "-m", model, "-c", 'model_reasoning_effort="low"', "-c",
-                "project_doc_max_bytes=0", "--disable", "plugins", "--enable",
-                "skip_host_skill_discovery", "-"]
-    if cli == "claude":
-        return [str(executable), "-p", "--output-format", "stream-json", "--verbose",
-                "--safe-mode", "--restricted", "--tools", "Read,Edit,Write,Bash,Glob,Grep",
-                "--allowedTools", "Bash(python test_public.py)", "--permission-mode",
-                "acceptEdits", "--permission-prompts", "none", "--no-session-persistence",
-                "--model", model, "--effort", "low"]
-    raise ValueError(f"unsupported CLI: {cli}")
+def hidden_files(task: dict) -> list[str]:
+    oracle = task["hiddenOracle"]
+    files = oracle.get("files", [])
+    if not files and oracle.get("file"):
+        files = [oracle["file"]]
+    return [safe_relative(path) for path in files]
 
 
-def verify_identity(executable: Path, cli: str, root: Path) -> dict:
-    """Require the already-installed first-party subscription before a cohort starts."""
-    version = capture([str(executable), "--version"], root, deadline=30)
-    status_args = ["login", "status"] if cli == "codex" else ["auth", "status"]
-    auth = capture([str(executable), *status_args], root, deadline=30)
-    text = auth["stdout"] + auth["stderr"]
-    if cli == "codex":
-        subscribed = "Logged in using ChatGPT" in text
-    else:
-        try:
-            data = json.loads(auth["stdout"])
-            subscribed = (data.get("loggedIn") is True and data.get("authMethod") == "claude.ai"
-                          and data.get("apiProvider") == "firstParty")
-        except json.JSONDecodeError:
-            subscribed = False
-    if version["exit"] != 0 or auth["exit"] != 0 or not subscribed:
-        raise ValueError(f"{cli}: first-party subscription authentication could not be verified")
-    return {"path": str(executable.resolve()), "sha256": digest(executable),
-            "version": version["stdout"].strip(), "subscription": True}
+def hidden_command(task: dict) -> list[str]:
+    command = task.get("hiddenOracle", {}).get("command")
+    if not isinstance(command, list) or not command:
+        raise ValueError("hidden oracle command must be a nonempty argv")
+    return [str(item) for item in command]
 
 
-def public_command() -> list[str]:
-    return [sys.executable, "test_public.py"]
-
-
-def run_public(root: Path, deadline: int = EVALUATOR_DEADLINE) -> dict:
-    return capture(public_command(), root, deadline=deadline)
-
-
-def hidden_command(task: dict, root: Path) -> list[str]:
-    hidden = task.get("hiddenOracle")
-    if not isinstance(hidden, dict) or not isinstance(hidden.get("command"), (list, str)):
-        raise ValueError(f"task {task.get('id')} requires a private argv hidden oracle")
-    command = ([str(item) for item in hidden["command"]] if isinstance(hidden["command"], list)
-               else shlex.split(hidden["command"], posix=os.name != "nt"))
-    if not command:
-        raise ValueError("hidden oracle command cannot be empty")
-    if any(".." in PurePosixPath(item.replace("\\", "/")).parts for item in command if not item.startswith("-")):
-        raise ValueError("hidden oracle command escapes its evaluator")
-    return command
-
-
-def evaluate(task: dict, candidate: Path, output: Path) -> dict:
-    scope, closure_and_public = task_paths(task)
-    parent = snapshot_root(task, "parent")
-    fixed = snapshot_root(task, "fix")
-    result = {}
-    for label, source in (("public", parent), ("hidden", fixed)):
-        root = output / label
-        root.mkdir(parents=True)
-        # Baseline is the frozen parent closure. Only declared production scope comes from agent.
-        copy_paths(parent, root, closure_and_public)
-        for relative in scope:
-            source_file = safe_file(candidate, relative)
-            destination = root / Path(*PurePosixPath(relative).parts)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_file, destination)
-        if label == "public":
-            command = public_command()
-        else:
-            hidden = task["hiddenOracle"]
-            oracle_root = Path(hidden["root"]).resolve()
-            if oracle_root.is_symlink() or not oracle_root.is_dir():
-                raise ValueError("hidden oracle root missing or linked")
-            copy_paths(oracle_root, root, [safe_relative(hidden["file"])])
-            command = hidden_command(task, root)
-        observed = capture(command, root, deadline=EVALUATOR_DEADLINE)
-        result[label] = {"exit": observed["exit"], "seconds": observed["seconds"],
-                         "timeout": observed["timeout"], "cleanupConfirmed": observed["cleanupConfirmed"],
-                         "accepted": observed["exit"] == 0 and not observed["timeout"]
-                         and observed["cleanupConfirmed"], "stderr": observed["stderr"]}
+def run_process(argv: list[str], cwd: Path, deadline: int) -> dict:
+    result = base.capture(argv, cwd, deadline=deadline)
+    result["cwd"] = str(cwd)
     return result
 
 
-def enforce_candidate_scope(candidate: Path, task: dict, before: dict[str, str]) -> None:
-    scope, _ = task_paths(task)
-    allowed = set(scope) | {safe_relative(task["publicTests"][0]), "test_public.py"}
-    observed = {}
-    for path in candidate.rglob("*"):
-        if not path.is_file() or path.is_symlink():
-            continue
-        relative = path.relative_to(candidate).as_posix()
-        if relative not in allowed:
-            raise ValueError(f"agent changed file outside declared scope: {relative}")
-        if path.stat().st_size > MAX_FILE:
-            raise ValueError(f"agent file is oversized: {relative}")
-        observed[relative] = digest(path)
-    for relative, original in before.items():
-        if observed.get(relative) != original:
-            continue
-    if any(relative not in observed for relative in scope):
-        raise ValueError("agent removed a declared production file")
+def wrapper_completed(task: dict, result: dict, phase: str) -> tuple[bool, str]:
+    if result["exit"] != 0 or result["timeout"] or not result["cleanupConfirmed"]:
+        return False, "wrapper did not complete successfully"
+    completion = task.get("completion", {}).get(phase, {})
+    marker = completion.get("stdoutMarker")
+    file_name = completion.get("file")
+    if not marker and not file_name:
+        return False, "trusted completion evidence is not configured"
+    if marker and marker not in result["stdout"]:
+        return False, "trusted completion marker missing"
+    if file_name and not (Path(result["cwd"]) / safe_relative(file_name)).is_file():
+        return False, "trusted completion file missing"
+    return True, "completed"
+
+
+def classify_hidden_red(result: dict) -> tuple[bool, str]:
+    text = result["stdout"] + result["stderr"]
+    if result["timeout"] or not result["cleanupConfirmed"]:
+        return False, "timeout or cleanup failure"
+    if result["exit"] == 0:
+        return False, "oracle unexpectedly passed"
+    if "AssertionError" in text or "assertion" in text.lower() or "FAILED" in text:
+        return True, "intended assertion failure"
+    return False, "infrastructure or tool failure"
 
 
 def validate_task(task: dict) -> None:
     identifier = task.get("id")
     if not isinstance(identifier, str) or not identifier.replace("-", "").isalnum():
         raise ValueError("task IDs must be safe")
-    scope, paths = task_paths(task)
+    scope, closure, support = task_paths(task)
     for kind in ("parent", "fix"):
         root = snapshot_root(task, kind)
-        for relative in paths:
+        for relative in sorted(set(closure + support)):
             safe_file(root, relative)
+    oracle = task.get("hiddenOracle")
+    if not isinstance(oracle, dict) or not isinstance(oracle.get("root"), str):
+        raise ValueError(f"task {identifier} requires a private hidden oracle")
+    oracle_root = Path(oracle["root"]).resolve()
+    if oracle_root.is_symlink() or not oracle_root.is_dir():
+        raise ValueError("oracle root missing or linked")
+    for relative in hidden_files(task):
+        safe_file(oracle_root, relative)
     for key in ("parentSha", "knownFixSha"):
         if not isinstance(task.get(key), str) or len(task[key]) != 40:
             raise ValueError(f"task {identifier} requires {key}")
     if not isinstance(task.get("request"), str) or not task["request"].strip():
         raise ValueError(f"task {identifier} requires a request")
-    hidden = task.get("hiddenOracle")
-    if not isinstance(hidden, dict) or not isinstance(hidden.get("root"), str):
-        raise ValueError(f"task {identifier} requires private hidden oracle root")
-    oracle_root = Path(hidden["root"]).resolve()
-    safe_file(oracle_root, safe_relative(hidden["file"]))
 
 
 def qualify(registry: dict, output: Path) -> dict:
     tasks = registry.get("tasks")
     if not isinstance(tasks, list) or len(tasks) != 3:
-        raise ValueError("qualification requires exactly three real-project tasks")
+        raise ValueError("qualification requires exactly three tasks")
     rows = []
     for task in tasks:
         validate_task(task)
+        row = {"task": task["id"], "passed": False, "reasons": []}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            parent = root / "parent"
-            fixed = root / "fixed"
-            scope, paths = task_paths(task)
-            copy_paths(snapshot_root(task, "parent"), parent, paths)
-            copy_paths(snapshot_root(task, "fix"), fixed, paths)
-            hidden = task["hiddenOracle"]
-            oracle_root = Path(hidden["root"]).resolve()
-            hidden_file = safe_relative(hidden["file"])
-            copy_paths(oracle_root, parent, [hidden_file])
-            copy_paths(oracle_root, fixed, [hidden_file])
-            parent_result = {"public": run_public(parent),
-                             "hidden": capture(hidden_command(task, parent), parent, deadline=EVALUATOR_DEADLINE)}
-            fixed_result = {"public": run_public(fixed),
-                            "hidden": capture(hidden_command(task, fixed), fixed, deadline=EVALUATOR_DEADLINE)}
-        expected_red = parent_result["hidden"]["exit"] != 0
-        passed = (parent_result["public"]["exit"] == 0 and expected_red
-                  and fixed_result["public"]["exit"] == 0 and fixed_result["hidden"]["exit"] == 0)
-        rows.append({"task": task["id"], "passed": passed,
-                     "parent": {key: value["exit"] for key, value in parent_result.items()},
-                     "fixed": {key: value["exit"] for key, value in fixed_result.items()}})
-    result = {"schema": "real-methodology-qualification/1", "passed": all(row["passed"] for row in rows), "tasks": rows}
+            for label, kind in (("parent", "parent"), ("fixed", "fix")):
+                target = root / label
+                target.mkdir()
+                copy_paths(snapshot_root(task, kind), target, task_paths(task)[1] + task_paths(task)[2])
+                copy_paths(Path(task["hiddenOracle"]["root"]), target, hidden_files(task))
+                public = run_process([sys.executable, "test_public.py"], target, EVALUATOR_DEADLINE)
+                hidden = run_process(hidden_command(task), target, EVALUATOR_DEADLINE)
+                hidden_red, reason = classify_hidden_red(hidden)
+                row[label] = {"public": public, "hidden": hidden, "hiddenReason": reason}
+                if public["exit"] != 0:
+                    row["reasons"].append(f"{label} public failed")
+                if label == "parent" and not hidden_red:
+                    row["reasons"].append(f"parent hidden: {reason}")
+                if label == "fixed" and hidden["exit"] != 0:
+                    row["reasons"].append("known fix hidden failed")
+                if public["exit"] == 0 and not wrapper_completed(task, public, "public")[0]:
+                    row["reasons"].append("public trusted completion missing")
+                if label == "fixed" and hidden["exit"] == 0 and not wrapper_completed(task, hidden, "hidden")[0]:
+                    row["reasons"].append("hidden trusted completion missing")
+        row["passed"] = not row["reasons"]
+        for label in ("parent", "fixed"):
+            for phase in ("public", "hidden"):
+                row[label][phase].pop("cwd", None)
+                row[label][phase].pop("stdout", None)
+                row[label][phase].pop("stderr", None)
+        rows.append(row)
+    result = {"schema": "real-methodology-qualification/2", "passed": all(row["passed"] for row in rows), "tasks": rows}
     publish(output, result)
     return result
 
@@ -319,122 +229,194 @@ def load_registry(path: Path) -> dict:
     return registry
 
 
+def registry_hashes(registry: dict) -> dict:
+    result = {}
+    for task in registry["tasks"]:
+        validate_task(task)
+        for kind in ("parent", "fix"):
+            result[f"{task['id']}:{kind}"] = tree_hashes(snapshot_root(task, kind), all_snapshot_paths(task))
+        result[f"{task['id']}:oracle"] = tree_hashes(Path(task["hiddenOracle"]["root"]), hidden_files(task))
+    return result
+
+
 def freeze(args: argparse.Namespace) -> dict:
     registry = load_registry(args.registry)
-    tasks = registry.get("tasks", [])
-    profiles = registry.get("profiles", [])
+    tasks, profiles = registry.get("tasks", []), registry.get("profiles", [])
     if len(tasks) != 3 or len(profiles) != 7:
         raise ValueError("freeze requires three tasks and seven profiles")
-    for task in tasks:
-        validate_task(task)
-    with tempfile.TemporaryDirectory() as directory:
-        calibration = qualify(registry, Path(directory) / "qualification.json")
+    calibration = qualify(registry, args.output.with_suffix(".qualification.json"))
     if not calibration["passed"]:
-        raise ValueError("qualification failed; parent/fix evidence is not frozen")
-    ids = [task["id"] for task in tasks]
-    if len(set(ids)) != len(ids) or len({profile.get("id") for profile in profiles}) != 7:
-        raise ValueError("task and profile IDs must be unique")
+        raise ValueError("qualification failed; inspect qualification receipt")
+    with tempfile.TemporaryDirectory() as directory:
+        identities = {cli: base.identity(executable, cli, Path(directory)) for cli, executable in
+                      (("codex", args.codex), ("claude", args.claude))}
     order = []
     for task_index in random.Random(2051).sample(range(3), 3):
         for profile_index in range(7):
-            profile = profiles[(profile_index + task_index) % 7]
             for cli in (("codex", "claude") if task_index % 2 == 0 else ("claude", "codex")):
-                order.append({"id": f"{len(order):03d}", "task": ids[task_index],
-                              "profile": profile["id"], "cli": cli})
-    identities = {}
-    with tempfile.TemporaryDirectory() as directory:
-        identity_root = Path(directory)
-        for cli, executable in (("codex", args.codex), ("claude", args.claude)):
-            if executable.is_symlink() or not executable.is_file() or executable.suffix.lower() in {".cmd", ".bat", ".ps1"}:
-                raise ValueError("freeze requires native CLI executables")
-            identities[cli] = verify_identity(executable, cli, identity_root)
-    return {"schema": "real-methodology-manifest/1", "studyType": "real_project_methodology",
+                order.append({"id": f"{len(order):03d}", "task": tasks[task_index]["id"],
+                              "profile": profiles[(profile_index + task_index) % 7]["id"], "cli": cli})
+    return {"schema": "real-methodology-manifest/2", "studyType": "real_project_methodology",
             "registry": {"path": str(args.registry.resolve()), "sha256": digest(args.registry)},
-            "instrumentSha256": digest(Path(__file__)), "identities": identities,
-            "models": {"codex": args.codex_model, "claude": args.claude_model},
-            "profiles": profiles, "tasks": tasks, "plannedAttempts": order,
+            "registryFiles": registry_hashes(registry), "instrumentSha256": digest(Path(__file__)),
+            "parserSha256": digest(HOME / "methodology.py"), "identities": identities,
+            "models": {"codex": args.codex_model, "claude": args.claude_model}, "profiles": profiles,
+            "tasks": tasks, "plannedAttempts": order,
+            "argv": {cli: base.native_cli_command(cli, identities[cli]["path"], model) for cli, model in
+                     (("codex", args.codex_model), ("claude", args.claude_model))},
+            "python": {"path": sys.executable, "sha256": digest(Path(sys.executable))},
+            "environment": {key: os.environ.get(key, "") for key in ("PATH", "PATHEXT", "PYTHONPATH", "PYTEST_DISABLE_PLUGIN_AUTOLOAD")},
             "deadlineSeconds": DEADLINE, "evaluatorDeadlineSeconds": EVALUATOR_DEADLINE,
-            "repeats": 1, "calibrationPassed": True, "winner": None}
+            "calibrationPassed": True, "winner": None}
 
 
 def load_frozen(path: Path) -> dict:
     manifest = read(path)
-    if manifest.get("instrumentSha256") != digest(Path(__file__)):
-        raise ValueError("instrument changed after freeze")
+    if manifest.get("instrumentSha256") != digest(Path(__file__)) or manifest.get("parserSha256") != digest(HOME / "methodology.py"):
+        raise ValueError("instrument or parser changed after freeze")
     registry_path = Path(manifest["registry"]["path"])
     if digest(registry_path) != manifest["registry"]["sha256"]:
         raise ValueError("registry changed after freeze")
+    registry = load_registry(registry_path)
+    if registry_hashes(registry) != manifest["registryFiles"]:
+        raise ValueError("snapshot or oracle files changed after freeze")
+    if digest(Path(manifest["python"]["path"])) != manifest["python"]["sha256"]:
+        raise ValueError("Python changed after freeze")
     return manifest
+
+
+def candidate_files(root: Path) -> dict[str, str]:
+    return {path.relative_to(root).as_posix(): digest(path) for path in root.rglob("*")
+            if path.is_file() and not path.is_symlink() and "__pycache__" not in path.parts
+            and ".pytest_cache" not in path.parts}
+
+
+def enforce_scope(task: dict, candidate: Path, before: dict[str, str]) -> None:
+    scope, closure, support = task_paths(task)
+    allowed_changes = set(scope) | set(task["publicTests"])
+    now = candidate_files(candidate)
+    for relative, value in now.items():
+        if relative in allowed_changes:
+            continue
+        if before.get(relative) != value:
+            raise ValueError(f"agent changed file outside declared scope: {relative}")
+    for relative in scope + task["publicTests"]:
+        if relative not in now:
+            raise ValueError(f"agent removed declared file: {relative}")
+
+
+def evaluator(task: dict, candidate: Path, output: Path, frozen_hashes: dict) -> dict:
+    scope, closure, support = task_paths(task)
+    current = registry_hashes({"tasks": [task]})
+    expected = {key: value for key, value in frozen_hashes.items() if key.startswith(task["id"] + ":")}
+    if current != expected:
+        raise ValueError("snapshot or oracle drifted before evaluation")
+    output.mkdir(parents=True, exist_ok=True)
+    root = output / "evaluator"
+    root.mkdir()
+    copy_paths(snapshot_root(task, "parent"), root, closure + support)
+    for relative in scope:
+        destination = root / Path(*PurePosixPath(relative).parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(safe_file(candidate, relative), destination)
+    # Always restore original public tests; agent edits cannot weaken evaluation.
+    copy_paths(snapshot_root(task, "parent"), root, task["publicTests"])
+    public = run_process([sys.executable, "test_public.py"], root, EVALUATOR_DEADLINE)
+    copy_paths(Path(task["hiddenOracle"]["root"]), root, hidden_files(task))
+    hidden = run_process(hidden_command(task), root, EVALUATOR_DEADLINE)
+    return {"public": public, "hidden": hidden}
 
 
 def run_attempt(args: argparse.Namespace) -> dict:
     manifest = load_frozen(args.manifest)
-    cells = [cell for cell in manifest["plannedAttempts"] if cell["id"] == args.attempt]
-    if len(cells) != 1:
+    cells = manifest["plannedAttempts"]
+    selected = [cell for cell in cells if cell["id"] == args.attempt]
+    if len(selected) != 1:
         raise ValueError("select one planned attempt ID")
-    cell = cells[0]
-    receipt = args.output / (cell["id"] + ".json")
-    if receipt.exists() or (args.output / (cell["id"] + ".reserved")).exists():
-        raise ValueError("attempt ID already reserved or completed")
+    cell = selected[0]
     args.output.mkdir(parents=True, exist_ok=True)
-    publish(args.output / (cell["id"] + ".reserved"), {"manifestSha256": digest(args.manifest), "reserved": True})
+    receipt = args.output / (cell["id"] + ".json")
+    reservation = args.output / (cell["id"] + ".reserved")
+    if receipt.exists() or reservation.exists():
+        raise ValueError("attempt ID already reserved or completed")
+    for earlier in cells[:cells.index(cell)]:
+        if not (args.output / (earlier["id"] + ".json")).is_file():
+            raise ValueError("frozen cell order has an earlier missing result")
+    if (args.output / "provider-stop.json").exists():
+        raise ValueError("provider-stop exists; cohort is stopped")
+    lock = args.output / "cohort.lock"
+    try:
+        with lock.open("x", encoding="utf-8") as handle:
+            handle.write(str(os.getpid()))
+    except FileExistsError as error:
+        raise ValueError("cohort is already running") from error
+    publish(reservation, {"manifestSha256": digest(args.manifest), "reserved": True})
     task = next(task for task in manifest["tasks"] if task["id"] == cell["task"])
     profile = next(profile for profile in manifest["profiles"] if profile["id"] == cell["profile"])
-    result = {**cell, "manifestSha256": digest(args.manifest), "status": "incomplete", "billedUsd": None}
-    with tempfile.TemporaryDirectory() as directory:
-        subject = Path(directory) / "subject"
+    result = {**cell, "manifestSha256": digest(args.manifest), "status": "incomplete", "measurementStatus": "unknown", "billedUsd": None}
+    subject = args.output / (cell["id"] + "-candidate")
+    try:
         subject.mkdir()
-        scope, paths = task_paths(task)
-        parent = snapshot_root(task, "parent")
-        copy_paths(parent, subject, paths)
-        public_source = safe_file(parent, task["publicTests"][0])
-        shutil.copy2(public_source, subject / "test_public.py")
-        before = {relative: digest(safe_file(subject, relative)) for relative in scope}
+        scope, closure, support = task_paths(task)
+        copy_paths(snapshot_root(task, "parent"), subject, closure + support + task["publicTests"])
+        before = candidate_files(subject)
         executable = Path(manifest["identities"][cell["cli"]]["path"])
-        if digest(executable) != manifest["identities"][cell["cli"]]["sha256"]:
-            raise ValueError("CLI identity changed after freeze")
-        prompt = ("Work only in this directory. Edit only the declared production files and public test. "
+        current_environment = {key: os.environ.get(key, "") for key in manifest["environment"]}
+        if current_environment != manifest["environment"]:
+            raise ValueError("frozen environment changed after freeze")
+        if base.native_cli_command(cell["cli"], executable, manifest["models"][cell["cli"]]) != manifest["argv"][cell["cli"]]:
+            raise ValueError("frozen CLI argv changed after freeze")
+        if base.identity(executable, cell["cli"], subject) != manifest["identities"][cell["cli"]]:
+            raise ValueError("CLI identity or authentication changed after freeze")
+        prompt = ("Work only in this directory. Edit only declared production files and original public test files. "
                   "Do not inspect other directories, use network, delegate, install packages, or change settings. "
                   "Run python test_public.py.\nRequest: " + task["request"] + "\nProfile: " + profile.get("prompt", ""))
-        agent = capture(command_for(cell["cli"], executable, manifest["models"][cell["cli"]]), subject,
-                        deadline=manifest["deadlineSeconds"], prompt=prompt)
-        result["agent"] = {key: value for key, value in agent.items() if key not in {"stdout", "stderr"}}
-        from methodology import usage
-        result["usage"] = usage(cell["cli"], agent["stdout"])
-        enforce_candidate_scope(subject, task, before)
-        source_ok = all(not safe_file(subject, path).is_symlink() for path in scope)
-        result["evaluation"] = evaluate(task, subject, args.output / (cell["id"] + "-evaluation")) if source_ok else {}
-        passed = (agent["exit"] == 0 and not agent["timeout"] and agent["cleanupConfirmed"]
-                  and all(row["accepted"] for row in result["evaluation"].values()))
-        result["status"] = "passed" if passed else "failed"
-        result["sourceSha256"] = tree_digest(subject, scope)
-        text = (agent["stdout"] + agent["stderr"]).lower()
-        if any(term in text for term in ("rate limit", "usage limit", "quota", "unauthorized", "authentication")):
-            publish(args.output / "provider-stop.json", {"attempt": cell["id"], "reason": "provider-or-quota-failure"})
-    publish(receipt, result)
+        started = time.monotonic()
+        agent = base.capture(base.native_cli_command(cell["cli"], executable, manifest["models"][cell["cli"]]), subject,
+                             deadline=manifest["deadlineSeconds"], prompt=prompt)
+        result["elapsedSeconds"] = time.monotonic() - started
+        result["agent"] = agent
+        result["usage"] = base.usage(cell["cli"], agent["stdout"])
+        observed = result["usage"].get("observedModels", [])
+        result["modelStatus"] = "unobserved" if not observed else ("matched" if observed == [manifest["models"][cell["cli"]]] else "mismatch")
+        result["measurementStatus"] = "observed" if result["usage"].get("counts") is not None else "unknown"
+        if result["modelStatus"] == "mismatch":
+            raise ValueError("observed model differs from requested model")
+        if agent["truncated"] or not agent["cleanupConfirmed"]:
+            raise ValueError("agent output truncated or cleanup uncertain")
+        enforce_scope(task, subject, before)
+        result["evaluation"] = evaluator(task, subject, args.output / (cell["id"] + "-evaluation"), manifest["registryFiles"])
+        public_complete, public_reason = wrapper_completed(task, result["evaluation"]["public"], "public")
+        hidden_complete, hidden_reason = wrapper_completed(task, result["evaluation"]["hidden"], "hidden")
+        result["evaluationStatus"] = {"public": public_reason, "hidden": hidden_reason}
+        result["status"] = "passed" if agent["exit"] == 0 and public_complete and hidden_complete and all(row["exit"] == 0 for row in result["evaluation"].values()) else "failed"
+        result["sourceSha256"] = {relative: digest(safe_file(subject, relative)) for relative in scope}
+    except Exception as error:
+        result["error"] = str(error)
+        if any(word in str(error).lower() for word in ("authentication", "quota", "cleanup", "identity")):
+            publish(args.output / "provider-stop.json", {"attempt": cell["id"], "reason": str(error)})
+    finally:
+        publish(receipt, result)
+        lock.unlink(missing_ok=True)
     return result
 
 
 def report(args: argparse.Namespace) -> dict:
     manifest = load_frozen(args.manifest)
-    manifest_hash = digest(args.manifest)
-    attempts = []
+    rows = []
     for cell in manifest["plannedAttempts"]:
         path = args.output / (cell["id"] + ".json")
         if not path.exists():
-            status = "incomplete" if (args.output / (cell["id"] + ".reserved")).exists() else "not-run"
-            attempts.append({**cell, "status": status})
+            rows.append({**cell, "status": "incomplete" if (args.output / (cell["id"] + ".reserved")).exists() else "not-run"})
             continue
         row = read(path)
-        if row.get("manifestSha256") != manifest_hash or any(row.get(key) != cell[key] for key in cell):
+        if row.get("manifestSha256") != digest(args.manifest) or any(row.get(key) != cell[key] for key in cell):
             raise ValueError("receipt does not match frozen cell")
-        attempts.append(row)
-    return {"schema": "real-methodology-report/1", "studyType": manifest["studyType"],
-            "complete": all(row["status"] in {"passed", "failed"} for row in attempts),
-            "attempts": attempts, "winner": None,
-            "limitations": ["Neutral exploratory cohort; no statistical superiority claim",
-                            "Native framework fidelity and method adherence remain unobserved",
-                            "Missing usage or model identity is unknown, never zero"]}
+        rows.append(row)
+    return {"schema": "real-methodology-report/2", "studyType": manifest["studyType"],
+            "complete": all(row["status"] in {"passed", "failed"} for row in rows),
+            "attempts": rows, "winner": None,
+            "limitations": ["Neutral exploratory cohort; no statistical superiority claim", "Missing usage is unknown, never free"]}
 
 
 def main() -> int:
@@ -451,8 +433,6 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "qualify":
-            if not args.registry:
-                raise ValueError("qualify requires --registry")
             return 0 if qualify(load_registry(args.registry), args.output)["passed"] else 1
         if args.command == "freeze":
             if not all((args.registry, args.codex, args.claude, args.codex_model, args.claude_model)):

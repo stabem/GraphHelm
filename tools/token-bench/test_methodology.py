@@ -11,6 +11,23 @@ import methodology as bench
 
 
 class MethodologyContracts(unittest.TestCase):
+    def test_child_environment_removes_provider_keys_and_endpoints(self):
+        environment = {"CODEX_API_KEY": "secret", "CUSTOM_API_KEY": "secret",
+                       "OPENAI_BASE_URL": "https://example", "SAFE_SETTING": "kept"}
+        filtered = bench.child_environment(environment)
+        self.assertNotIn("CODEX_API_KEY", filtered)
+        self.assertNotIn("CUSTOM_API_KEY", filtered)
+        self.assertNotIn("OPENAI_BASE_URL", filtered)
+        self.assertEqual(filtered["SAFE_SETTING"], "kept")
+
+    def test_native_cli_command_has_frozen_non_bypass_controls(self):
+        codex = bench.native_cli_command("codex", Path("codex.exe"), "model")
+        claude = bench.native_cli_command("claude", Path("claude.exe"), "model")
+        self.assertIn("--ignore-user-config", codex)
+        self.assertIn("--skip-git-repo-check", codex)
+        self.assertIn("--safe-mode", claude)
+        self.assertNotIn("--dangerously-skip-permissions", claude)
+
     def claude_stream(self, *, auxiliary=False):
         usage = {"input_tokens": 6, "output_tokens": 1184,
                  "cache_read_input_tokens": 20971, "cache_creation_input_tokens": 2542}

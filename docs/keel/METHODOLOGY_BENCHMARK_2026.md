@@ -132,3 +132,24 @@ identity drift leave the cell failed or incomplete; they do not become a passing
 The report preserves `passed`, `failed`, `incomplete` and `not-run` separately and emits
 no winner. The cohort is neutral and exploratory: it cannot establish statistical or
 comparative superiority.
+
+The real-project manifest freezes every snapshot, support, public-test and oracle file,
+the parser revision, native Python and CLI identities, exact argv, and relevant environment.
+Each attempt rechecks those hashes, first-party authentication and version, frozen order,
+cohort lock and provider-stop marker before launching. A reserved cell always receives a
+receipt, including setup, cleanup, output-capture or evaluation failure; raw candidate,
+stdout and stderr evidence remain in the private results directory.
+
+The agent may edit only declared production scope and original public-test files. The
+immutable root `test_public.py` wrapper is copied from support files and runs the real
+nested public test. Evaluation restores original public tests and support files into a
+clean parent template, overlays only declared production files, and excludes caches and
+unrelated candidate files. Trusted wrappers must provide completion evidence (for example,
+JUnit or Vitest JSON completion); exit code zero alone is not acceptance. Qualification
+requires the broken parent to fail for the intended assertion, not an import, tool,
+timeout or cleanup error.
+
+Native Claude accounting remains sourced from final `result.modelUsage` totals. The
+separate final `usage` scope and transcript diagnostics are retained. Missing native usage
+is `unknown`, never free. An empty observed-model list is `unobserved`; a non-empty list
+that differs from the frozen requested model stops the cohort.

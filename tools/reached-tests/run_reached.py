@@ -480,6 +480,38 @@ def _test_executables(log: Path, package: str, targets: list[tuple[str, str]]) -
     return [found[target] for target in targets]
 
 
+def _cargo_config_env(start: Path, environ: dict[str, str]) -> dict[str, str]:
+    """#2018: the `[env]` cargo would give a test it runs from `start`, for an executable run
+    outside cargo. Every `.cargo/config.toml` (or `.cargo/config`) from `start` upward counts, the
+    nearest winning; a value already in `environ` is kept unless the entry says `force`, and a
+    `relative` value is resolved against the directory holding that `.cargo`, as cargo does.
+    Without it the side-by-side run lost GRAPHHELM_RUNTIME_DIR and every test `serve` published
+    into the home (#1449)."""
+    import tomllib
+    found: dict[str, str] = {}
+    for directory in [start.resolve(), *start.resolve().parents]:
+        for name in ("config.toml", "config"):
+            path = directory / ".cargo" / name
+            if not path.is_file():
+                continue
+            try:
+                table = tomllib.loads(path.read_text(encoding="utf-8")).get("env") or {}
+            except (OSError, tomllib.TOMLDecodeError):
+                break
+            for key, entry in table.items():
+                if key in found:
+                    continue
+                value, force, relative = entry, False, False
+                if isinstance(entry, dict):
+                    value = entry.get("value")
+                    force, relative = bool(entry.get("force")), bool(entry.get("relative"))
+                if not isinstance(value, str) or (key in environ and not force):
+                    continue
+                found[key] = str(directory / value) if relative else value
+            break
+    return found
+
+
 def _run_parallel(jobs: list[dict[str, Any]], limit: int, env: dict[str, str],
                   reserve_gb: float = 0.0, free_gb: Any = None) -> None:
     """Run every job's executables, at most `limit` processes at once; fill returncode and seconds.
@@ -1351,6 +1383,7 @@ def run(args: argparse.Namespace) -> int:
                                 job["extraEnv"] = {"CARGO_TARGET_DIR": str(target_dir)} if target_dir else {}
                                 if len(argv0) > 1 and argv0[1].startswith("+"):
                                     job["extraEnv"]["RUSTUP_TOOLCHAIN"] = argv0[1][1:]
+                                job["extraEnv"].update(_cargo_config_env(repo / steps[job["index"]]["cwd"], child_env))
                             # A step whose executables the log does not name runs again the old way.
                             fallback = [job for job in deferred if job["executables"] is None]
                             built.extend(job for job in deferred if job["executables"] is not None)

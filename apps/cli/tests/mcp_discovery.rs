@@ -522,6 +522,8 @@ fn project_discovery_skips_superseded_and_tokenless_records_before_probing() {
 }
 
 /// Delayed candidates must share one health-probing budget instead of stacking one-second waits.
+/// #2018: the proof is how many silent candidates were probed, not how long the reply took; a
+/// six-second ceiling on the reply failed whenever the suite loaded the machine.
 /// Cost: one disposable Runtime, MCP client and eight local loopback listeners; about six seconds.
 #[test]
 fn project_discovery_refuses_when_health_probe_budget_expires() {
@@ -553,6 +555,7 @@ fn project_discovery_refuses_when_health_probe_budget_expires() {
         serde_json::from_slice(&std::fs::read(&live_path).unwrap()).unwrap();
 
     let stop_servers = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let contacted = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut servers = Vec::new();
     for index in 0..8_u32 {
         let stale_instance = format!("{index:032x}");
@@ -562,13 +565,15 @@ fn project_discovery_refuses_when_health_probe_budget_expires() {
         let project_id = project_id.clone();
         let stale_instance_for_server = stale_instance.clone();
         let stop_server = std::sync::Arc::clone(&stop_servers);
+        let contacted = std::sync::Arc::clone(&contacted);
         servers.push(std::thread::spawn(move || {
-            let deadline = Instant::now() + scaled(Duration::from_secs(30));
+            let deadline = Instant::now() + scaled(Duration::from_secs(90));
             while !stop_server.load(std::sync::atomic::Ordering::Relaxed)
                 && Instant::now() < deadline
             {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        contacted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         stream
                             .set_write_timeout(Some(scaled(Duration::from_secs(1))))
                             .unwrap();
@@ -583,8 +588,15 @@ fn project_discovery_refuses_when_health_probe_budget_expires() {
                         {
                             return;
                         }
-                        std::thread::sleep(Duration::from_millis(900));
-                        let _ = stream.write_all(body.as_bytes());
+                        // #2018: the body never comes, so each probe lasts at least its own
+                        // timeout however loaded the machine is: at most five fill the shared
+                        // five-second budget, while a budget per candidate would reach all eight.
+                        // A wall-clock ceiling on the reply failed under full-suite load.
+                        while !stop_server.load(std::sync::atomic::Ordering::Relaxed)
+                            && Instant::now() < deadline
+                        {
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
                         return;
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -639,14 +651,13 @@ fn project_discovery_refuses_when_health_probe_budget_expires() {
     stdin.flush().unwrap();
     let startup = lines_rx.recv_timeout(scaled(Duration::from_secs(30)));
     let startup_succeeded = startup.is_ok();
-    let (reply, elapsed) = if startup_succeeded {
+    let reply = if startup_succeeded {
         writeln!(
             stdin,
             "{}",
             serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"})
         )
         .unwrap();
-        let started = Instant::now();
         writeln!(
             stdin,
             "{}",
@@ -654,15 +665,10 @@ fn project_discovery_refuses_when_health_probe_budget_expires() {
         )
         .unwrap();
         stdin.flush().unwrap();
-        (
-            lines_rx.recv_timeout(Duration::from_secs(6)),
-            started.elapsed(),
-        )
+        // A hang catcher, not a speed bound: the count of contacted candidates below is the proof.
+        lines_rx.recv_timeout(scaled(Duration::from_secs(60)))
     } else {
-        (
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout),
-            Duration::ZERO,
-        )
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
     };
     drop(stdin);
     drop(guard);
@@ -682,9 +688,12 @@ fn project_discovery_refuses_when_health_probe_budget_expires() {
             .is_ok_and(|line| line.contains("health probing budget exhausted")),
         "discovery must refuse an incompletely checked candidate set: {reply:?}"
     );
+    // Each probe of a silent candidate lasts at least its one-second timeout, so one shared
+    // five-second budget reaches at most five of the eight; this holds on any machine speed.
+    let contacted = contacted.load(std::sync::atomic::Ordering::SeqCst);
     assert!(
-        elapsed <= Duration::from_secs(6),
-        "the tools/call health probing window exceeded its six-second observer allowance: {elapsed:?}"
+        contacted <= 5,
+        "one shared budget reaches at most five of eight silent candidates; {contacted} were probed"
     );
 }
 
@@ -921,38 +930,54 @@ fn serve_started_by_a_test_registers_under_target_not_the_home() {
     let home = scratch.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let events = scratch.path().join("events.jsonl");
-    let port = free_port();
-    let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
-        .args(["serve", "--events", events.to_str().unwrap(), "--bind"])
-        .arg(format!("127.0.0.1:{port}"))
-        .env("USERPROFILE", &home)
-        .env("HOME", &home)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let runtime = Killed(child);
-    let in_home = home
-        .join(".graphhelm")
-        .join("runtime")
-        .join(format!("{port}.json"));
     let configured = std::env::var_os("GRAPHHELM_RUNTIME_DIR").map(std::path::PathBuf::from);
-    let deadline = Instant::now() + scaled(Duration::from_secs(60));
-    let published = loop {
-        if in_home.is_file() {
-            break in_home.clone();
-        }
-        if let Some(record) = configured
-            .as_ref()
-            .map(|dir| dir.join(format!("{port}.json")))
-            .filter(|record| record.is_file())
-        {
-            break record;
-        }
-        assert!(Instant::now() < deadline, "serve never published on {port}");
-        std::thread::sleep(Duration::from_millis(100));
+    // #2018: the registry under target is shared by every test process, past and concurrent, and
+    // its records are keyed by port alone; another test binary may also take the port this one
+    // picked. So a record counts only when it names this test's events, and a `serve` that exits
+    // (it lost the port) is restarted on another port rather than waited on until the deadline.
+    let names_our_events = |path: &Path| {
+        std::fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .is_some_and(|record| record["events"].as_str().map(Path::new) == Some(&events))
     };
-    stop(runtime, port);
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
+    let (mut runtime, in_home, published) = 'attempt: loop {
+        let port = free_port();
+        let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["serve", "--events", events.to_str().unwrap(), "--bind"])
+            .arg(format!("127.0.0.1:{port}"))
+            .env("USERPROFILE", &home)
+            .env("HOME", &home)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut runtime = Killed(child);
+        let in_home = home
+            .join(".graphhelm")
+            .join("runtime")
+            .join(format!("{port}.json"));
+        loop {
+            if in_home.is_file() {
+                break 'attempt (runtime, in_home.clone(), in_home);
+            }
+            if let Some(record) = configured
+                .as_ref()
+                .map(|dir| dir.join(format!("{port}.json")))
+                .filter(|record| names_our_events(record))
+            {
+                break 'attempt (runtime, in_home, record);
+            }
+            assert!(Instant::now() < deadline, "serve never published on {port}");
+            if runtime.0.try_wait().unwrap().is_some() {
+                continue 'attempt;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+    let _ = runtime.0.kill();
+    let _ = runtime.0.wait();
     assert!(
         !in_home.exists(),
         "a test Runtime registered in the home: {}",
@@ -964,6 +989,6 @@ fn serve_started_by_a_test_registers_under_target_not_the_home() {
         "{}",
         configured.display()
     );
-    assert_eq!(published, configured.join(format!("{port}.json")));
+    assert_eq!(published.parent(), Some(configured.as_path()));
     let _ = std::fs::remove_file(&published);
 }

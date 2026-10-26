@@ -485,6 +485,14 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
                                  environment=base.child_environment(environment, cli_config.get("graphhelmEnv")))
     except (ImportError, OSError, ValueError, KeyError) as error:
         archived = {"status": "unknown", "reason": str(error)}
+    root_wire_usage = parsed_usage
+    archived_total = _usage_total(archived.get("total")) if archived.get("status") == "observed" else None
+    if archived_total is None:
+        parsed_usage = {**parsed_usage, "counts": None, "accountingStatus": "archived-native-usage-unknown"}
+    else:
+        parsed_usage = {**parsed_usage, "counts": archived_total,
+                        "rootWireUsage": root_wire_usage.get("counts"),
+                        "countsSource": "native-session-archive.total", "accountingStatus": "observed"}
     skill_load = {"status": "incomplete", "reason": "native skill witness not configured"}
     skill_witness = next((row for row in phase.get("requiredWitnesses", []) if row.get("kind") == "native_skill"), None)
     if skill_witness and archived.get("archivedRoot"):
@@ -495,27 +503,13 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
                                            expected_sha256=skill_witness["sha256"], frozen_prompt=phase["prompt"])
         except (ImportError, OSError, ValueError, KeyError) as error:
             skill_load = {"status": "incomplete", "reason": str(error)}
-    session_evidence = None
-    evidence_path = cli_config.get("sessionEvidencePath")
-    if evidence_path:
-        try:
-            from native_session_evidence import claude_pipeline, codex_tree
-            if cli_config["cli"] == "claude":
-                session_evidence = claude_pipeline(Path(evidence_path))
-            else:
-                session_evidence = codex_tree(Path(evidence_path),
-                    [Path(item) for item in cli_config.get("childSessionEvidence", [])],
-                    project=project_root, root_thread=cli_config.get("rootThread", ""),
-                    stdout_usage=parsed_usage.get("counts") or {})
-            if session_evidence.get("status") != "observed":
-                parsed_usage = {**parsed_usage, "counts": None, "accountingStatus": "native-session-evidence-unknown"}
-        except (ImportError, OSError, ValueError, KeyError) as error:
-            session_evidence = {"status": "unknown", "reason": str(error)}
-            parsed_usage = {**parsed_usage, "counts": None, "accountingStatus": "native-session-evidence-unknown"}
+    # archive_phase discovers and binds owned native sessions automatically;
+    # caller-supplied session paths are intentionally not accepted.
+    session_evidence = archived
     required = artifact_hashes(project_root, phase.get("requiredArtifacts", [])) if phase.get("requiredArtifacts") else {}
     receipt = {"attempt": attempt, "ordinal": ordinal, "argv": frozen_argv, "capture": {key: captured[key] for key in
                ("exit", "seconds", "timeout", "cleanupConfirmed", "truncated")},
-               "usage": parsed_usage, "sessionEvidence": session_evidence, "providerError": provider_error,
+               "usage": parsed_usage, "rootWireUsage": root_wire_usage, "sessionEvidence": session_evidence, "providerError": provider_error,
                "quotaBefore": quota_before, "quotaAfter": quota_after, "archivedSession": archived,
                "skillLoad": skill_load,
                "operations": operations, "requiredArtifactFiles": sorted(required_globs),
@@ -561,6 +555,24 @@ def _quota_observation(cli_config: dict, cwd: Path, *, stdout: str | None = None
         return codex_allowance(Path(executable), cwd, timeout=20, cutoff=80)
     except (ImportError, OSError, ValueError, subprocess.SubprocessError) as error:
         return {"allowed": False, "reason": "quota-observer-error", "detail": str(error)}
+
+
+def _usage_total(value: object) -> dict | None:
+    """Normalize the archived native pipeline total without adding cache subsets."""
+    if not isinstance(value, dict):
+        return None
+    aliases = {"input": ("input", "input_tokens"), "output": ("output", "output_tokens"),
+               "cacheRead": ("cacheRead", "cache_read_input_tokens"),
+               "cacheWrite": ("cacheWrite", "cache_creation_input_tokens")}
+    result = {}
+    for target, keys in aliases.items():
+        found = next((value[key] for key in keys if key in value), None)
+        if type(found) is not int or found < 0:
+            return None
+        result[target] = found
+    if result["cacheRead"] > result["input"]:
+        return None
+    return result
 
 
 def freeze(registry_path: Path, *, cli_paths: dict[str, Path], models: dict[str, str], output: Path) -> dict:
@@ -612,8 +624,18 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
     quality_accepted = collection_complete and all(row["status"] == "complete" for row in rows)
     complete = quality_accepted and all(row["status"] == "complete" for row in rows)
     endpoint_ok = endpoint is not None and endpoint.get("status") == "observed"
+    aggregate = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+    aggregate_known = True
+    for row in rows:
+        counts = _usage_total(row.get("usage", {}).get("counts"))
+        if counts is None:
+            aggregate_known = False
+            break
+        for key in aggregate:
+            aggregate[key] += counts[key]
     return {"schema": "native-methodology-report/2", "complete": complete and endpoint_ok,
             "collectionComplete": collection_complete, "qualityAccepted": quality_accepted, "attempts": rows,
+            "usageAggregate": aggregate if aggregate_known else None,
             "acceptedEndpoint": endpoint, "winner": None,
             "limitations": [] if complete and endpoint_ok else ["missing or incomplete native phase evidence"]}
 

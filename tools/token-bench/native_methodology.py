@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 import methodology as base
+from real_methodology import evaluator as evaluate_real_project
+from real_methodology import registry_hashes as pinned_registry_hashes
 
 
 SCHEMA = "native-methodology-workflow/1"
@@ -15,6 +17,17 @@ PHASES = ("setup", "planner", "author", "independent-review", "fix", "verify", "
 PUBLIC_CONTEXT_KEYS = {"task", "scope", "publicTests", "request", "workflow", "phase"}
 NATIVE_WITNESS_KINDS = {"native_stream", "native_cli", "native_artifact", "native_skill"}
 REQUIRED_COSTS = {"setup", "planner", "author", "independent-review", "fix", "verify", "archive"}
+
+# Shared observers remain single-sourced in the existing pilot/evaluator modules.
+capture = base.capture
+identity = base.identity
+usage = base.usage
+native_provider_error = base.native_provider_error
+
+
+def native_cli_command(cli: str, executable: Path, model: str) -> list[str]:
+    """Return the native workflow argv while retaining project configuration and logs."""
+    return native_cli_config(cli, executable, model)["argv"]
 
 
 def _safe_id(value: object, label: str) -> str:

@@ -1142,6 +1142,13 @@ impl ProjectionGeneration {
         &self.projection
     }
 
+    /// #1721: a reader resumed from a seal checkpoint bounds what THIS read walks, not the
+    /// stream since genesis, so it restarts the aggregate byte and reference counts there.
+    pub(crate) fn restart_walk_bounds(&mut self) {
+        self.aggregate_bytes = 0;
+        self.aggregate_references = 0;
+    }
+
     /// Applies one bounded contiguous source page without opening Evidence.
     pub fn apply_page(&mut self, events: &[EventEnvelope]) -> Result<(), ReplayError> {
         if events.len() > crate::limits::MAX_READ_PAGE {

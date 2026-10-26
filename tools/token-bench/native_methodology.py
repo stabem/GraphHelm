@@ -907,7 +907,8 @@ def main() -> int:
         if not args.phase:
             results = run_workflow(manifest, workflow_id=args.workflow, cli_config=config, output=args.output,
                                    prompt_override=args.prompt or None)
-            return 0 if results and all(row.get("status") != "incomplete" for row in results) else 1
+            return 0 if (len(results) == len(workflow["phases"])
+                         and all(row.get("status") == "complete" for row in results)) else 1
         task_context = workflow.get("taskContext", {"task": args.workflow + "-task",
             "scope": workflow["pinnedPublicFiles"], "publicTests": workflow["pinnedPublicFiles"],
             "request": args.prompt or "native workflow phase"})

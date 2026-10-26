@@ -142,14 +142,15 @@ class NativeMethodologyContracts(unittest.TestCase):
             reviewer_session = root / "review-session.jsonl"
             git_root = root / "review-repo"
             git_root.mkdir()
-            subprocess.run(["git", "init", "--quiet"], cwd=git_root, check=True)
-            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=git_root, check=True)
-            subprocess.run(["git", "config", "user.name", "native-test"], cwd=git_root, check=True)
+            subprocess.run(["git", "init", "--quiet"], cwd=git_root, check=True, creationflags=bench.base.NO_WINDOW)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=git_root, check=True, creationflags=bench.base.NO_WINDOW)
+            subprocess.run(["git", "config", "user.name", "native-test"], cwd=git_root, check=True, creationflags=bench.base.NO_WINDOW)
             (git_root / "candidate.txt").write_text("candidate\n", encoding="utf-8")
-            subprocess.run(["git", "add", "candidate.txt"], cwd=git_root, check=True)
-            subprocess.run(["git", "commit", "--quiet", "-m", "candidate"], cwd=git_root, check=True)
+            subprocess.run(["git", "add", "candidate.txt"], cwd=git_root, check=True, creationflags=bench.base.NO_WINDOW)
+            subprocess.run(["git", "commit", "--quiet", "-m", "candidate"], cwd=git_root, check=True, creationflags=bench.base.NO_WINDOW)
             head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=git_root,
-                                  check=True, capture_output=True, text=True).stdout.strip()
+                                  check=True, capture_output=True, text=True,
+                                  creationflags=bench.base.NO_WINDOW).stdout.strip()
             patch.write_text("local patch\n", encoding="utf-8")
             reviewer_session.write_text('{"type":"session_meta","rootSessionId":"review-root"}\n{"verdict":"APPROVE","reviewer":"reviewer","taskId":"task-1","gitHead":"%s","rootSessionId":"review-root"}\n' % head, encoding="utf-8")
             review.write_text('{"verdict":"APPROVE","reviewer":"reviewer","patchSha256":"%s","taskId":"task-1","gitHead":"%s","reviewerSessionSha256":"%s","reviewerRootSessionId":"review-root","authorRootSessionId":"author-root"}' % (bench.base.digest(patch), head, bench.base.digest(reviewer_session)), encoding="utf-8")

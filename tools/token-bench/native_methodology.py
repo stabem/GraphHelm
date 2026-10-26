@@ -485,6 +485,16 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
                                  environment=base.child_environment(environment, cli_config.get("graphhelmEnv")))
     except (ImportError, OSError, ValueError, KeyError) as error:
         archived = {"status": "unknown", "reason": str(error)}
+    skill_load = {"status": "incomplete", "reason": "native skill witness not configured"}
+    skill_witness = next((row for row in phase.get("requiredWitnesses", []) if row.get("kind") == "native_skill"), None)
+    if skill_witness and archived.get("archivedRoot"):
+        try:
+            from native_session_evidence import native_skill_load
+            skill_load = native_skill_load(Path(archived["archivedRoot"]), cli=cli_config["cli"],
+                                           expected_path=Path(skill_witness["path"]),
+                                           expected_sha256=skill_witness["sha256"], frozen_prompt=phase["prompt"])
+        except (ImportError, OSError, ValueError, KeyError) as error:
+            skill_load = {"status": "incomplete", "reason": str(error)}
     session_evidence = None
     evidence_path = cli_config.get("sessionEvidencePath")
     if evidence_path:
@@ -507,6 +517,7 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
                ("exit", "seconds", "timeout", "cleanupConfirmed", "truncated")},
                "usage": parsed_usage, "sessionEvidence": session_evidence, "providerError": provider_error,
                "quotaBefore": quota_before, "quotaAfter": quota_after, "archivedSession": archived,
+               "skillLoad": skill_load,
                "operations": operations, "requiredArtifactFiles": sorted(required_globs),
                "stdoutPath": stdout.name, "stderrPath": stderr.name,
                "rawSha256": {stdout.name: base.digest(stdout), stderr.name: base.digest(stderr)},
@@ -523,6 +534,7 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
                        and captured["cleanupConfirmed"] and not captured["truncated"]
                        and parsed_usage.get("counts") is not None
                        and receipt["fidelity"].get("status") == "observed"
+                       and skill_load.get("status") == "observed"
                        and archived.get("status") == "observed"
                        and operations.get("status") == "observed" and artifacts_observed
                        and (quota_before is not None and quota_after is not None

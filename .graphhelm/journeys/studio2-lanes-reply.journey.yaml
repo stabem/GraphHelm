@@ -18,14 +18,14 @@ screens:
     ignoreQuery: [session, project]
     state: success
     expect: [{role: status, name: Reply sent, because: the Runtime accepted the reply as the owner's answer to the planner's question}, {role: region, name: Question, absent: true, because: "the planner's only open question is answered, so its card no longer shows a question"}, {role: button, name: Send reply, absent: true, because: with no question left the panel offers a plain Send for a new message instead of a reply}, {role: list, name: Needs action items, absent: true, because: the answered question was the only item waiting on the owner}]
-    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts]
+    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/drafts.ts]
   - id: asking
     title: The agent's question is shown
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: stable
     expect: [{role: region, name: Question, text: staging first, because: "the planner's card shows its open question, which asks whether the deploy goes to staging first"}, {role: textbox, name: Reply, because: the planner's panel offers a box to answer the question}, {role: listitem, name: Needs action item 1, text: planner asks you, because: "the open question waits on the owner, so it is listed in Needs action"}]
-    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts]
+    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/drafts.ts]
 edges:
   - id: asking.answered
     from: asking

@@ -31,19 +31,31 @@ def _phase(*, phase_id: str, skill: str, cli: str, task_ref: str,
     prompt = (f"{prefix}{skill} {task_brief}\n"
               f"Task ref: {task_ref}. Phase boundary: execute only {phase_id}; "
               f"stop after its declared artifacts. Approval policy: {approval_policy}.")
-    return {"id": phase_id, "command": ["--add-dir", str(project_root.resolve())],
+    patterns = {"specify": r"(?:resolve-template|create-new-feature)\.ps1",
+                "plan": r"setup-plan\.ps1\s+-Json",
+                "tasks": r"check-prerequisites\.ps1\s+-Json\s+-RequireTasks\s+-IncludeTasks",
+                "explore": r"openspec\s+list\s+--json",
+                "propose": r"openspec\s+(?:new\s+change|instructions)",
+                "sync": r"openspec\s+sync\s+specs", "archive": r"openspec\s+archive",
+                "setup": r"knowledge\.py\s+--content\s+--root",
+                "build": r"uv\s+run\s+--no-cache.*render_skill\.py"}
+    required = [] if phase_id not in patterns else [{"name": phase_id,
+        "commandPattern": patterns[phase_id], "outputJson": True}]
+    skill_path = project_root / (".claude/skills" if cli == "claude" else ".agents/skills") / skill / "SKILL.md"
+    return {"id": phase_id, "command": [], "nativeEntrypoint": f"{prefix}{skill}",
             "prompt": prompt, "frameworkStage": skill,
-            "requiredOperations": [{"name": operation, "commandPattern": operation,
-                                     "outputJSON": False} for operation in operations],
+            "requiredOperations": required,
             "requiredArtifactGlobs": output_globs,
             "requiredArtifacts": [], "requiredWitnessKinds": ["native_stream", "native_skill"],
+            "requiredWitnesses": [{"kind": "native_skill", "path": str(skill_path),
+                                    "sha256": _digest(skill_path)}],
             "costKinds": ["native_cli", skill]}
 
 def _workflow(*, method_id: str, framework: str, project_root: Path,
               task_ref: str, skill_root: str, cli: str, executable: Path,
               stages: list[tuple[str, str, list[str], list[str]]],
               task_brief: str, approval_policy: str,
-              task_context_root: Path, public_files: list[str]) -> dict:
+              task_context_root: Path, public_files: list[str], public_tests: list[str]) -> dict:
     if not project_root.is_dir() or not executable.is_file():
         raise ValueError("native project fixture or executable is missing")
     phases = [_phase(phase_id=phase_id, skill=skill, cli=cli, task_ref=task_ref,
@@ -58,7 +70,7 @@ def _workflow(*, method_id: str, framework: str, project_root: Path,
             "pinnedPublicFiles": [str(first).replace("\\", "/")],
             "methodAssetDigests": _asset_digests(project_root / skill_root),
             "taskContext": {"task": task_ref, "scope": list(public_files),
-                             "publicTests": list(public_files), "request": task_brief},
+                             "publicTests": list(public_tests), "request": task_brief},
             "native": {"cli": cli, "executable": str(executable.resolve()),
                         "integration": "native-project-skills",
                         "taskContextRoot": str(task_context_root.resolve()),
@@ -71,8 +83,8 @@ def _workflow(*, method_id: str, framework: str, project_root: Path,
 
 def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path,
                           project_roots: dict[str, Path],
-                          cli: str, executable: Path, public_files: list[str],
-                          task_brief: str = "Implement issue-2074 while preserving repository gates.",
+                          cli: str, executable: Path, public_files: list[str], public_tests: list[str],
+                          task_brief: str,
                           approval_policy: str = "read-only inspection is automatic; writes require fixture approval") -> dict:
     """Build four independent project-local method fixtures; never execute them."""
     if not task_ref or "<" in task_ref or ">" in task_ref:
@@ -111,7 +123,7 @@ def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path
         ("verify", "verification-before-completion", ["run fresh verification before any completion claim"], ["**/*"]),]
     common = dict(cli=cli, executable=executable, task_brief=task_brief,
                   approval_policy=approval_policy, task_context_root=project_root,
-                  public_files=public_files)
+                  public_files=public_files, public_tests=public_tests)
     workflows = [
         _workflow(method_id="speckit", framework="SpecKit", project_root=roots["speckit"], task_ref=task_ref, skill_root=skill_root, stages=speckit, **common),
         _workflow(method_id="openspec", framework="OpenSpec", project_root=roots["openspec"], task_ref=task_ref, skill_root=skill_root, stages=openspec, **common),

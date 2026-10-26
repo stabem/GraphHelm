@@ -111,8 +111,8 @@ def validate_registry(registry: dict) -> dict:
             if phase["id"] in phase_ids:
                 raise ValueError("phase ids must be unique within a workflow")
             phase_ids.add(phase["id"])
-            if not isinstance(phase.get("command"), list) or not phase["command"]:
-                raise ValueError("each phase needs a native command")
+            if not isinstance(phase.get("command"), list):
+                raise ValueError("each phase needs a native command list")
             if not isinstance(phase.get("prompt"), str) or not phase["prompt"].strip():
                 raise ValueError("each phase needs a frozen prompt")
             for operation in phase.get("requiredOperations", []):
@@ -286,7 +286,11 @@ def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path
     if len(head) != 40 or any(char not in "0123456789abcdef" for char in head.lower()) or head != reviewer_head:
         return {"status": "incomplete", "reason": "local Git head is not bound to accepted patch"}
     return {"status": "observed", "patchPath": str(patch), "patchSha256": patch_sha,
-            "reviewPath": str(review), "evaluatorPath": str(evaluator), "published": False}
+            "reviewPath": str(review), "evaluatorPath": str(evaluator), "taskId": task_id,
+            "gitHead": reviewer_head, "reviewerSessionSha256": review_data["reviewerSessionSha256"],
+            "reviewerRootSessionId": review_data["reviewerRootSessionId"],
+            "authorRootSessionId": review_data["authorRootSessionId"],
+            "evaluatorStatus": evaluator_data["status"], "published": False}
 
 
 def reconcile_nested_usage(records: object, *, expected_sessions: list[str], parent_usage: dict | None = None) -> dict:
@@ -498,7 +502,7 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     except (ImportError, OSError, ValueError, KeyError) as error:
         archived = {"status": "unknown", "reason": str(error)}
     root_wire_usage = parsed_usage
-    archived_total = _usage_total(archived.get("total")) if archived.get("status") == "observed" else None
+    archived_total = _usage_total(archived.get("total"), cli=cli_config["cli"]) if archived.get("status") == "observed" else None
     if archived_total is None:
         parsed_usage = {**parsed_usage, "counts": None, "accountingStatus": "archived-native-usage-unknown"}
     else:
@@ -521,7 +525,8 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     required = artifact_hashes(project_root, phase.get("requiredArtifacts", [])) if phase.get("requiredArtifacts") else {}
     receipt = {"attempt": attempt, "ordinal": ordinal, "argv": frozen_argv, "capture": {key: captured[key] for key in
                ("exit", "seconds", "timeout", "cleanupConfirmed", "truncated")},
-               "usage": parsed_usage, "rootWireUsage": root_wire_usage, "sessionEvidence": session_evidence, "providerError": provider_error,
+               "usage": parsed_usage, "rootWireUsage": root_wire_usage, "cli": cli_config["cli"],
+               "sessionEvidence": session_evidence, "providerError": provider_error,
                "quotaBefore": quota_before, "quotaAfter": quota_after, "archivedSession": archived,
                "skillLoad": skill_load,
                "operations": operations, "requiredArtifactFiles": sorted(required_globs),
@@ -583,7 +588,7 @@ def _quota_observation(cli_config: dict, cwd: Path, *, stdout: str | None = None
         return {"allowed": False, "reason": "quota-observer-error", "detail": str(error)}
 
 
-def _usage_total(value: object) -> dict | None:
+def _usage_total(value: object, *, cli: str | None = None) -> dict | None:
     """Normalize the archived native pipeline total without adding cache subsets."""
     if not isinstance(value, dict):
         return None
@@ -596,7 +601,7 @@ def _usage_total(value: object) -> dict | None:
         if type(found) is not int or found < 0:
             return None
         result[target] = found
-    if result["cacheRead"] > result["input"]:
+    if cli != "claude" and result["cacheRead"] > result["input"]:
         return None
     return result
 
@@ -646,7 +651,12 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
             rows.append({**planned, "status": "incomplete"})
             continue
         row = base.read(receipt)
-        valid = isinstance(row.get("attempt"), dict) and row["attempt"].get("planSha256") and isinstance(row.get("capture"), dict)
+        valid = (isinstance(row.get("attempt"), dict) and row["attempt"].get("planSha256")
+                 and row.get("manifestSha256") == _json_hash(manifest)
+                 and isinstance(row.get("capture"), dict)
+                 and isinstance(row.get("rawSha256"), dict) and bool(row["rawSha256"])
+                 and isinstance(row.get("candidateBeforeSha256"), str)
+                 and isinstance(row.get("candidateAfterSha256"), str))
         attempt_id = row.get("attempt", {}).get("attemptId", "")
         raw_dir = attempts_root / f"phase-{planned['phase']}-{attempt_id}"
         for raw_name, raw_hash in row.get("rawSha256", {}).items():
@@ -654,8 +664,8 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
             valid = valid and raw_file.is_file() and base.digest(raw_file) == raw_hash
         if row.get("status") in {"complete", "failed"}:
             valid = valid and row.get("fidelity", {}).get("status") == "observed" and isinstance(row.get("usage"), dict)
-        archived_total = _usage_total(row.get("archivedSession", {}).get("total"))
-        recorded_total = _usage_total(row.get("usage", {}).get("counts"))
+        archived_total = _usage_total(row.get("archivedSession", {}).get("total"), cli=row.get("cli"))
+        recorded_total = _usage_total(row.get("usage", {}).get("counts"), cli=row.get("cli"))
         if archived_total is None or recorded_total != archived_total:
             valid = False
         rows.append({**planned, **row, "status": row.get("status", "incomplete") if valid else "incomplete"})
@@ -666,7 +676,7 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
     aggregate = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
     aggregate_known = True
     for row in rows:
-        counts = _usage_total(row.get("usage", {}).get("counts"))
+        counts = _usage_total(row.get("usage", {}).get("counts"), cli=row.get("cli"))
         if counts is None:
             aggregate_known = False
             break
@@ -762,6 +772,9 @@ def main() -> int:
     parser.add_argument("--patch")
     parser.add_argument("--review")
     parser.add_argument("--evaluator")
+    parser.add_argument("--reviewer-session")
+    parser.add_argument("--git-head")
+    parser.add_argument("--task-id")
     parser.add_argument("--archive-root", type=Path)
     parser.add_argument("--author", default="native-author")
     parser.add_argument("--reviewer", default="native-reviewer")
@@ -786,8 +799,12 @@ def main() -> int:
             if args.patch or args.review or args.evaluator:
                 if not all((args.patch, args.review, args.evaluator)):
                     raise ValueError("endpoint requires patch, review and evaluator receipts")
+                if not all((args.reviewer_session, args.git_head, args.task_id)):
+                    raise ValueError("endpoint requires reviewer session, Git HEAD and task id")
                 endpoint = accepted_patch_endpoint(patch_path=args.patch, review_path=args.review,
-                    evaluator_path=args.evaluator, author=args.author, reviewer=args.reviewer, local_git=True)
+                    evaluator_path=args.evaluator, author=args.author, reviewer=args.reviewer, local_git=True,
+                    reviewer_session_path=args.reviewer_session, git_head_path=args.git_head,
+                    task_id=args.task_id)
             result = report_manifest(args.manifest, args.output, endpoint=endpoint)
             print(json.dumps(result, indent=2))
             return 0 if result["complete"] else 1
@@ -800,11 +817,6 @@ def main() -> int:
         pinned_identity = manifest["identities"][args.cli]
         if str(args.executable.resolve()) != pinned_identity["path"] or args.model != manifest["models"][args.cli]:
             raise ValueError("native executable or model differs from frozen manifest")
-        task_context = workflow.get("taskContext", {"task": args.workflow + "-task",
-            "scope": workflow["pinnedPublicFiles"], "publicTests": workflow["pinnedPublicFiles"],
-            "request": args.prompt or "native workflow phase"})
-        plan = phase_plan(workflow, {**task_context, "phase": args.phase},
-                         plan_id=f"{args.workflow}-frozen")
         identity_record = pinned_identity
         config = native_cli_config(args.cli, Path(identity_record["path"]), manifest["models"][args.cli])
         config["identity"] = identity_record
@@ -815,6 +827,11 @@ def main() -> int:
             results = run_workflow(manifest, workflow_id=args.workflow, cli_config=config, output=args.output,
                                    prompt_override=args.prompt or None)
             return 0 if results and all(row.get("status") != "incomplete" for row in results) else 1
+        task_context = workflow.get("taskContext", {"task": args.workflow + "-task",
+            "scope": workflow["pinnedPublicFiles"], "publicTests": workflow["pinnedPublicFiles"],
+            "request": args.prompt or "native workflow phase"})
+        plan = phase_plan(workflow, {**task_context, "phase": args.phase},
+                         plan_id=f"{args.workflow}-frozen")
         phase = next(row for row in plan["phases"] if row["id"] == args.phase)
         receipt = execute_native_phase(plan, args.phase, args.attempt, cli_config=config,
                                       prompt=phase["prompt"], root=args.output,

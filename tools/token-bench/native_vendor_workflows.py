@@ -61,7 +61,10 @@ def _workflow(*, method_id: str, framework: str, project_root: Path,
                         "taskContextRoot": str(task_context_root.resolve()),
                         "publicTaskFiles": list(public_files), "skillRoot": skill_root,
                         "assetRoot": str((project_root / skill_root).resolve()),
-                        "pin": PINNED[method_id]}, "phases": phases}
+                        "pin": PINNED[method_id]}, "phases": [
+                            {**phase, "requiredWitnesses": [{"kind": "native_skill", "path": str(first),
+                                                              "sha256": _digest(first)}]}
+                            for phase in phases]}
 
 def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path,
                           project_roots: dict[str, Path],

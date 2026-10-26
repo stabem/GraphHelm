@@ -64,13 +64,13 @@ edges:
   - id: archived.reassigned
     from: archived
     to: reassigned
-    why: Reassign moves a quiet lane's work to another lane.
+    why: Work stuck with a quiet lane gets moving again once it is handed to a free lane.
     acts:
       - {kind: activate, role: button, name: Reassign lane-quiet}
   - id: assigned.merged
     from: assigned
     to: merged
-    why: Merge asks for the approved pull request to be merged.
+    why: "The owner lands approved work without opening GitHub, so a finished pull request stops waiting on him."
     acts:
       - {kind: activate, role: button, name: Merge lane-author}
   - id: list.answered
@@ -82,7 +82,7 @@ edges:
   - id: merged.archived
     from: merged
     to: archived
-    why: Archive clears a lane that has gone silent from the list.
+    why: "A silent lane will never answer, so archiving it stops it holding a pull request's review and clears the list."
     acts:
       - {kind: activate, role: button, name: Archive lane-gone}
 paths:

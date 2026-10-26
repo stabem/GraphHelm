@@ -4,8 +4,8 @@ title: Open the Studio on a project
 name: Open the Studio
 feature: Studio
 purpose: "The owner runs graphhelm studio open in the demo project and lands in the Studio logged in, with demo as one sidebar card (no run list) and its team run, Produzir build implantável., opened by itself in Graph; a wrong ticket opens nothing."
-status: draft
-approved: null
+status: approved
+approved: {revision: 2f07e2e15c159a490a4a371eac35e53e5afdba08, digest: sha256:6a2dc512dc06dc11ac932de0e7bd798041483095bcad96b132a442b06249af9e}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

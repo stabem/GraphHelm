@@ -4,8 +4,8 @@ title: See journeys in a project with no team run
 name: Start from no run
 feature: Studio
 purpose: "In the demo project, which has no team run yet, the owner still sees its journeys in Proof, and starts one with Start a team run in the top bar, giving it the objective Check the journeys.; the new run then opens with that objective."
-status: draft
-approved: null
+status: approved
+approved: {revision: 2f07e2e15c159a490a4a371eac35e53e5afdba08, digest: sha256:c1644d87279c9632a1e5f881f21c185ee5685108a9c8da6ac02ef07a2c2dc3d7}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

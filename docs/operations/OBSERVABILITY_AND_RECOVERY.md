@@ -399,7 +399,19 @@ Stop writers or otherwise hold the repository stable, then write a new archive p
 graphhelm events backup --repository LOCAL_REPOSITORY --output LOCAL_ARCHIVE
 ```
 
-The local archive contains the journal and regular-file blobs. Backup refuses non-regular blob entries. The archive does not contain repository layout files, Runtime configuration, or bearer tokens. `--output` must not exist. Copy configuration and other deployment state separately.
+The local archive contains the journal and regular-file blobs. For a segmented store (see "Local journal segments" below) the archived journal is the segments concatenated in order, which is the single-file journal they were cut from, so a restore produces an unsegmented store. Backup refuses non-regular blob entries. The archive does not contain repository layout files, Runtime configuration, or bearer tokens. `--output` must not exist. Copy configuration and other deployment state separately.
+
+#### Local journal segments
+
+A local store's journal is a chain of sealed segments plus one active segment (#1714, #1721). `journal.jsonl` is segment 0 and is never renamed or rewritten. Before an append, once the active segment holds `MAX_JOURNAL_BYTES / 2` bytes or 100,000 events, the store seals it under the exclusive lock and appends to the next one, `segments/<n>.jsonl`. A store that existed as a single file is migrated in place by that first rotation: its `journal.jsonl` becomes sealed segment 0, byte for byte.
+
+A seal (`segments/<n>.seal.json`) records the segment's length and SHA-256, the previous seal's SHA-256 and the digest of a state file (`segments/<n>.<sha>.state.json`) holding the verifier's state at the end of the segment, without the batch bodies. An open checks the seal chain and the sealed segments' lengths, starts from the last seal's state and walks only the active segment, so its cost does not grow with history. A reader that needs history reads the sealed segments it needs and checks each one against its seal's digest first. A tail read skips the segments its cursor has passed.
+
+A rotation never renames or truncates a data file. The state file, then the seal, then the next empty segment are made durable in that order. A crash before the seal leaves an unreferenced state file and an unchanged active segment. A crash after it leaves a sealed store whose next segment is created by the next open.
+
+Binaries older than this layout refuse a store that has a `segments/` entry (`GHE007_UNSUPPORTED_FORMAT`), so every `graphhelm` binary on a machine must be upgraded before the Runtime's first rotation. Downgrade is lossless: concatenating `journal.jsonl` and `segments/1..n` in order reproduces the single-file journal exactly, and `events backup` archives that concatenation, so `events restore` into an empty path gives an unsegmented store an older binary opens, provided the history fits within that binary's single-file limits.
+
+Reader checkpoints are not part of this layout: a full replay of one stream still reads every sealed segment that stream touches and is still bounded by `MAX_READ_ALL` events.
 
 Restore into a path that does not exist or is empty:
 

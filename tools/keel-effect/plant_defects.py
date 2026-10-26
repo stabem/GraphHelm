@@ -41,19 +41,17 @@ DEFECTS: tuple[Defect, ...] = (
     Defect(
         "drop-dedup",
         "an append never looks for an earlier batch with the same idempotency keys",
-        "            if !requested_keys.is_disjoint(&batch_keys) {",
-        "            if false && !requested_keys.is_disjoint(&batch_keys) {",
+        "            &requested_keys,\n        )? {",
+        "            &requested_keys,\n        )?.filter(|_| false) {",
     ),
     Defect(
         "reuse-key",
         "a divergent reuse of an idempotency key is accepted instead of refused",
-        "                return Err(EventRepositoryError::IdempotencyConflict);\n"
-        "            }\n"
+        "            return Err(EventRepositoryError::IdempotencyConflict);\n"
         "        }\n"
         "\n"
         "        validate_graph_successors(request, &state)?;",
-        "                continue;\n"
-        "            }\n"
+        "            drop(batch);\n"
         "        }\n"
         "\n"
         "        validate_graph_successors(request, &state)?;",
@@ -61,8 +59,8 @@ DEFECTS: tuple[Defect, ...] = (
     Defect(
         "lose-ack",
         "a resume after a lost ack does not return the batch the first attempt committed",
-        "                if batch.request_digest == request_digest && batch_keys == requested_keys {",
-        "                if false && batch.request_digest == request_digest && batch_keys == requested_keys {",
+        "            if batch.request_digest == request_digest && batch_keys == requested_keys {",
+        "            if false && batch.request_digest == request_digest && batch_keys == requested_keys {",
     ),
     Defect(
         "concurrent-writers",

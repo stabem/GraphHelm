@@ -226,8 +226,14 @@ fn capture_local(
     root: &Path,
     list: BlobLister<'_>,
 ) -> Result<(String, serde_json::Map<String, serde_json::Value>), Failure> {
-    let journal = read_regular_file(&root.join("journal.jsonl"))
-        .map_err(|_| local_error("the repository journal could not be read"))?;
+    // #1721: a segmented store archives its segments concatenated in order, which is exactly the
+    // single-file journal they were cut from, so the archive format and `restore` are unchanged.
+    // The store's own child opens refuse a linked segment as `read_regular_file` refuses a linked
+    // journal.
+    let journal = graphhelm_events::concatenated_journal(root)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| local_error("the repository journal could not be read"))?;
 
     let mut blobs = serde_json::Map::new();
     // The DIRECTORY is judged before it is walked. `read_dir` follows a symlinked `blobs`, so a

@@ -59,7 +59,7 @@ impl SecretFileError {
 /// `LocalEventRepository::open` treats the events directory as its own exclusively-owned
 /// namespace: `classify_layout` in `core/events/src/local.rs` enumerates the directory's entries
 /// against a closed allowlist (`blobs`, `.tmp`, `active`, `format.json`, `journal.jsonl`,
-/// `repository.lock`) and refuses the *entire* repository with `GHE007_UNSUPPORTED_FORMAT` the
+/// `repository.lock`, and `segments` once the journal has rotated) and refuses the *entire* repository with `GHE007_UNSUPPORTED_FORMAT` the
 /// moment it finds anything else — a deliberate integrity guard, not a bug to work around from the
 /// inside. Milestone 05a Task 1 originally wrote the token to `events/token`, which satisfies that
 /// guard only until a real repository also exists there; from that point on, *every* command

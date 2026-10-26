@@ -251,7 +251,9 @@ pub(super) fn durations(
             "/execution",
         );
     }
-    let mut path = format!("/v1/executions/{execution}/tasks");
+    // #2125: the open board trims merged rows from `durations.slices`; `full=1` keeps them, so
+    // each merged slice carries its `merged_at` and its implement/review_wait/merge_wait spans.
+    let mut path = format!("/v1/executions/{execution}/tasks?full=1");
     if let Some(since) = since {
         // The Runtime parses the same RFC 3339 instant; refusing here keeps the query unencoded.
         if graphhelm_protocols::PersistedTimestamp::parse(since).is_err()
@@ -264,7 +266,7 @@ pub(super) fn durations(
                 "/since",
             );
         }
-        path.push_str(&format!("?since={since}"));
+        path.push_str(&format!("&since={since}"));
     }
     let token_file = token_file
         .map(Path::to_path_buf)

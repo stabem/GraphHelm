@@ -16,6 +16,8 @@ const SNAPSHOT = 32768, SNAPSHOT_DISCOVER = 6144;
 // The supervisor gives each request 30 s (Rust OP_BUDGET). A screen wait that used the whole
 // TIMEOUT raced that deadline and surfaced as replay.timeout instead of expectation_failed (#398).
 const SCREEN_WAIT = TIMEOUT - 5000;
+// #2101: the tallest viewport a screen is laid out in so its checks share one frame (CSS px).
+const GROWN_MAX = 8192;
 // #1777: the one mobile profile a Run proves, pinned here and nowhere else: no device list is read
 // and nothing is fetched. A request names it only as `device: "mobile"`, with its 390x844 size.
 const MOBILE = Object.freeze({
@@ -32,6 +34,7 @@ const roles = new Set(['dialog','alertdialog','banner','complementary','contenti
 const landmarks = new Set(['banner','complementary','contentinfo','form','main','navigation','region','search']);
 const secrets = Object.entries(process.env).filter(([key]) => /^GRAPHHELM_SECRET_[A-Za-z0-9_]+$/.test(key));
 let browser, context, page, baseOrigin, allowed = new Set(), hostRefused = false, networkFailure;
+let grownFrom = null;
 let requestId = 0, opened = false, closed = false, headed = false, survive = false, showing = false;
 let coverageEnabled = false, coverageStarted = false, coverageStopped = false, mainframeNavigations = 0, coverageCdp;
 // A headed (live) session survives an observation failure so the owner sees where the journey
@@ -467,6 +470,8 @@ async function run(r) {
     } catch (err) { if (err.code) throw err; fail('driver.observer_missing'); }
     return writeCoverageArtifact(coverageArtifact(entries, ['JavaScript page coverage only', 'backend, CSS, and worker coverage is not collected']));
   }
+  // #2101: any request other than the capture that follows a grown snapshot meets the owner's viewport.
+  if (grownFrom && r.op !== 'capture') { const owner=grownFrom; grownFrom=null; await page.setViewportSize(owner); }
   if (r.op === 'snapshot') {
     // Wait concurrently against one shared budget; one absent control must not consume a wait
     // for every later assertion. Playwright calls may still exceed this nominal deadline.
@@ -527,6 +532,36 @@ async function run(r) {
     }
     for (const locator of [...present,...[...present].reverse()]) {
       await locator.evaluate(el=>el.scrollIntoView({block:'nearest',inline:'nearest'}),undefined,{timeout:TIMEOUT});
+    }
+    // #2101: when the present checks do not fit one viewport (a phone's stacked board scrolled
+    // inside its own container), no scroll position shows them all. The screen is then laid out
+    // in a viewport tall enough for its scrolled content, so the frame captured right after holds
+    // every seen check; capture puts the owner's viewport back once the frame is taken.
+    const outside=async()=>{
+      for (const locator of present) {
+        const box=await locator.boundingBox({timeout:TIMEOUT}).catch(()=>null);
+        if (box && !viewportRect(box,page.viewportSize())) return true;
+      }
+      return false;
+    };
+    if (grownFrom===null && await outside()) {
+      const viewport=page.viewportSize();
+      const overflow=await page.evaluate(()=>{
+        let most=Math.max(0,document.documentElement.scrollHeight-innerHeight);
+        for (const el of document.querySelectorAll('*')) {
+          const style=getComputedStyle(el);
+          if (!/(auto|scroll)/.test(style.overflowY) || el.scrollHeight<=el.clientHeight) continue;
+          most=Math.max(most,el.scrollHeight-el.clientHeight);
+          el.scrollTop=0;
+        }
+        scrollTo(scrollX,0);
+        return most;
+      });
+      grownFrom=viewport;
+      await page.setViewportSize({width:viewport.width,height:Math.min(GROWN_MAX,viewport.height+Math.ceil(overflow))});
+      for (const locator of [...present,...[...present].reverse()]) {
+        await locator.evaluate(el=>el.scrollIntoView({block:'nearest',inline:'nearest'}),undefined,{timeout:TIMEOUT});
+      }
     }
     const rects=new Map();
     for (const expected of r.expect) {
@@ -652,10 +687,12 @@ async function run(r) {
     // selectors. Refuse rather than claim their entire rendered area is covered.
     if (await page.locator('iframe,frame').count() !== page.frames().length-1) fail('driver.capture_refused');
     for (const [,value] of secrets) if (value) mask.push(page.getByText(value,{exact:false}));
-    await page.screenshot({path:target,fullPage:false,mask,maskColor:'#FF00FF',timeout:TIMEOUT});
+    const size=page.viewportSize();
+    try { await page.screenshot({path:target,fullPage:false,mask,maskColor:'#FF00FF',timeout:TIMEOUT}); }
+    finally { if (grownFrom) { const owner=grownFrom; grownFrom=null; await page.setViewportSize(owner); } }
     if (await page.locator('iframe,frame').count() !== page.frames().length-1) fail('driver.capture_refused');
     checkHost();
-    return {path:r.path,width:page.viewportSize().width,height:page.viewportSize().height,masked:true};
+    return {path:r.path,width:size.width,height:size.height,masked:true};
   }
   fail('driver.protocol_invalid');
 }

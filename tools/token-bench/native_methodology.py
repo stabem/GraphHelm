@@ -695,6 +695,7 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
            for name, digest in manifest.get("instrumentSources", {}).items()):
         raise ValueError("native instrument dependency changed after freeze")
     rows = []
+    workflow_specs = {row["id"]: row for row in manifest.get("workflows", [])}
     for planned in manifest.get("plannedPhases", []):
         key = f"{planned['workflow']}--{planned['phase']}"
         receipt = attempts_root / key / "phase-receipt.json"
@@ -702,16 +703,28 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
             rows.append({**planned, "status": "incomplete"})
             continue
         row = base.read(receipt)
-        valid = (isinstance(row.get("attempt"), dict) and row["attempt"].get("planSha256")
+        workflow_spec = next((item for item in manifest.get("workflows", [])
+                              if item.get("id") == planned["workflow"]), None)
+        expected_plan = None
+        if workflow_spec is not None:
+            try:
+                context = {**workflow_spec["taskContext"], "phase": planned["phase"]}
+                expected_plan = phase_plan(workflow_spec, context,
+                                           plan_id=f"{planned['workflow']}-frozen")["planSha256"]
+            except (KeyError, TypeError, ValueError):
+                expected_plan = None
+        valid = (expected_plan is not None and isinstance(row.get("attempt"), dict)
+                 and row["attempt"].get("planSha256") == expected_plan
                  and row.get("manifestSha256") == _json_hash(manifest)
                  and isinstance(row.get("capture"), dict)
                  and isinstance(row.get("rawSha256"), dict) and bool(row["rawSha256"])
                  and isinstance(row.get("candidateBeforeSha256"), str)
                  and isinstance(row.get("candidateAfterSha256"), str))
         capture = row.get("capture", {})
-        valid = valid and all(key in capture for key in ("exit", "cleanupConfirmed", "truncated"))
+        valid = valid and all(key in capture for key in ("exit", "timeout", "cleanupConfirmed", "truncated"))
         attempt_id = row.get("attempt", {}).get("attemptId", "")
         raw_dir = attempts_root / f"phase-{planned['phase']}-{attempt_id}"
+        valid = valid and set(row.get("rawSha256", {})) == {"native.stdout.jsonl", "native.stderr.log"}
         for raw_name, raw_hash in row.get("rawSha256", {}).items():
             raw_file = raw_dir / raw_name
             valid = valid and raw_file.is_file() and base.digest(raw_file) == raw_hash
@@ -730,10 +743,40 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
             valid = valid and all((archive_root / relative).is_file()
                                   and base.digest(archive_root / relative) == digest
                                   for relative, digest in archive_hashes.items())
+            try:
+                from native_session_evidence import codex_tree, claude_pipeline, claude_owned_tree, counters
+                cli = row.get("cli")
+                project = Path(workflow_spec["projectRoot"]) if workflow_spec else None
+                root_log = Path(archive["archivedRoot"])
+                child_logs = sorted(archive_root.glob("child-*.jsonl"))
+                if not project or not project.is_dir() or not root_log.is_file():
+                    raise ValueError("archived native project is missing")
+                if cli == "codex":
+                    wire = row.get("rootWireUsage", {})
+                    root_wire = {"input_tokens": wire.get("input", 0),
+                                 "output_tokens": wire.get("output", 0),
+                                 "cached_input_tokens": wire.get("cacheRead", 0),
+                                 "cache_write_input_tokens": wire.get("cacheWrite", 0)}
+                    parsed_archive = codex_tree(root_log, child_logs, project=project,
+                                                root_thread=archive["rootSession"],
+                                                stdout_usage=counters(root_wire))
+                elif cli == "claude":
+                    if child_logs:
+                        parsed_archive = claude_owned_tree(root_log, child_logs, project=project,
+                                                           session_id=archive["rootSession"])
+                    else:
+                        parsed_archive = claude_pipeline(root_log)
+                else:
+                    raise ValueError("unsupported archived native provider")
+                parsed_total = _usage_total(parsed_archive.get("total"), cli=cli)
+                valid = valid and parsed_archive.get("status") == "observed" and parsed_total == archived_total
+            except (ImportError, KeyError, OSError, TypeError, ValueError):
+                valid = False
         rows.append({**planned, **row, "status": row.get("status", "incomplete") if valid else "incomplete"})
     collection_complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] != "incomplete" for row in rows)
     quality_accepted = collection_complete and all(row["status"] == "complete" for row in rows)
     complete = quality_accepted and all(row["status"] == "complete" for row in rows)
+    workflow_ids = {row.get("workflow") for row in rows if row.get("workflow")}
     rebound = None
     if endpoint is not None and endpoint.get("status") == "observed":
         try:
@@ -745,8 +788,21 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                 git_head_path=endpoint["gitHeadPath"], task_id=endpoint["taskId"])
         except (KeyError, OSError, ValueError, subprocess.SubprocessError):
             rebound = None
-    endpoint_ok = (rebound is not None and rebound.get("status") == "observed"
+    endpoint_workflow = endpoint.get("workflow") if endpoint else None
+    single_workflow = len(workflow_ids) == 1 and (endpoint_workflow in {None, next(iter(workflow_ids), None)})
+    expected_task = ""
+    expected_project = None
+    if single_workflow:
+        spec = workflow_specs.get(next(iter(workflow_ids)))
+        expected_task = spec.get("taskContext", {}).get("task", "") if spec else ""
+        expected_project = Path(spec["projectRoot"]).resolve() if spec else None
+    endpoint_project = Path(endpoint["gitHeadPath"]).resolve() if endpoint and endpoint.get("gitHeadPath") else None
+    final_candidate = rows[-1].get("candidateAfterSha256") if rows else None
+    endpoint_ok = (single_workflow and rebound is not None and rebound.get("status") == "observed"
                    and isinstance(endpoint.get("taskId"), str) and bool(endpoint["taskId"])
+                   and endpoint.get("taskId") == expected_task
+                   and endpoint_project == expected_project
+                   and endpoint.get("candidateAfterSha256") == final_candidate
                    and isinstance(endpoint.get("gitHead"), str) and len(endpoint["gitHead"]) == 40
                    and isinstance(endpoint.get("patchSha256"), str) and len(endpoint["patchSha256"]) == 64
                    and isinstance(endpoint.get("reviewerSessionSha256"), str)
@@ -757,7 +813,6 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
     aggregate = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
     aggregate_known = True
     usage_groups = {}
-    workflow_specs = {row["id"]: row for row in manifest.get("workflows", [])}
     for row in rows:
         cli = row.get("cli")
         counts = _usage_total(row.get("usage", {}).get("counts"), cli=cli)

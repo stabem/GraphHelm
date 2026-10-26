@@ -1,0 +1,298 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Compare Before and Now on a step",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-proof-compare",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "step.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Compare with an earlier run\", button \"Side by side\", button \"Overlay\", button \"Changes\", region \"Compare frame\" saying \"1280 × 800\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "step"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "side.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows group \"Before and Now side by side\" saying \"Before\", img \"Step 1 before\", img \"Step 1 now\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "side"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "overlay.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows slider \"Now opacity\" saying \"50\", img \"Step 1 before\", img \"Step 1 now\", no group \"Before and Now side by side\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "overlay"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "moved.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows slider \"Now opacity\" saying \"100\", img \"Step 1 before\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "moved"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "changes.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows img \"Now, changed regions highlighted\", region \"Compare frame\" saying \"1280 × 800\", region \"Compare with an earlier run\" saying \"25% of the screen changed (in red).\", no slider \"Now opacity\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "changes"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "mobile.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows img \"Now, changed regions highlighted\", region \"Compare with an earlier run\" saying \"25% of the screen changed (in red).\", region \"Compare frame\" saying \"390 × 844\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "mobile"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "accessibility"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen step not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/CompareFrame.tsx",
+          "apps/studio/src/proof/compare.ts"
+        ],
+        "screenId": "step",
+        "title": "A step with history offers the compare"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=proof&journey=runtime-health"
+        }
+      },
+      "stepId": "step"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen side not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/CompareFrame.tsx",
+          "apps/studio/src/proof/compare.ts"
+        ],
+        "screenId": "side",
+        "title": "Before and Now side by side"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Side by side"
+        }
+      },
+      "stepId": "side"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen overlay not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/CompareFrame.tsx",
+          "apps/studio/src/proof/compare.ts"
+        ],
+        "screenId": "overlay",
+        "title": "Now over Before with a slider"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Overlay"
+        }
+      },
+      "stepId": "overlay"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen moved not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/CompareFrame.tsx",
+          "apps/studio/src/proof/compare.ts"
+        ],
+        "screenId": "moved",
+        "title": "Moving the slider changes how much of Now shows"
+      },
+      "semanticAction": {
+        "kind": "enter_text",
+        "target": {
+          "geometryClaim": false,
+          "role": "slider",
+          "strategy": "accessible_name",
+          "value": "Now opacity"
+        }
+      },
+      "stepId": "moved"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen changes not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/CompareFrame.tsx",
+          "apps/studio/src/proof/compare.ts"
+        ],
+        "screenId": "changes",
+        "title": "Now with the changed regions highlighted, on the web frame"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Changes"
+        }
+      },
+      "stepId": "changes"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen mobile not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/CompareFrame.tsx",
+          "apps/studio/src/proof/compare.ts"
+        ],
+        "screenId": "mobile",
+        "title": "The same compare on the mobile frame"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Mobile"
+        }
+      },
+      "stepId": "mobile"
+    }
+  ],
+  "taskScope": "journey-flow studio2-proof-compare path main",
+  "title": "Compare Before and Now on a step",
+  "version": 1
+}

@@ -4,8 +4,8 @@ title: Compare Before and Now on a step
 name: Compare a step
 feature: Studio
 purpose: "On a step with an earlier run (the fixture's runtime-health, run now and an hour ago, whose earlier frame has a blue block where Now is green), Side by side, Overlay with its slider and Changes show Before against Now, and Changes says how much of the screen differs, for the web frame and for the mobile frame."
-status: draft
-approved: null
+status: approved
+approved: {revision: 136a7beb3c935f8df90004993f734215287a24f9, digest: sha256:e1ffb2b4b434eb89fc5d74bf0981307084aa6923c435869674cf614f69d37a2e}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

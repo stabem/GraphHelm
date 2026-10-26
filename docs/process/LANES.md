@@ -468,4 +468,4 @@ wake merely because a lease exists. Reload the installed plugin to use the new S
 ## 6. Never
 
 - GitHub Actions: do not enable, run or rely on a workflow.
-- Approving a journey. Only the owner approves journeys.
+- Approving a journey. Only the owner approves journeys, except the `keel-journey-qa` skill acting on the owner's explicit delegation, which approves only when all seven points pass.

@@ -17,7 +17,7 @@ part any project can adopt with the `graphhelm` CLI; the full design is
    needs, the answer is `OBSERVER_MISSING`, never a weaker check silently counted as proof.
 3. **A journey must catch a break.** Green on good code is half the proof; a sabotage patch must
    come back `caught`.
-4. **Only the owner approves.** A draft journey is never proof and never runs a command or a
+4. **Only the owner approves** (an agent never does, except the `keel-journey-qa` skill acting on the owner's explicit delegation, which approves only when all seven points pass). A draft journey is never proof and never runs a command or a
    mutating request.
 5. **Failures are kept.** A later green run does not erase an earlier failure.
 

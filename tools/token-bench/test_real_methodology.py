@@ -101,6 +101,24 @@ class RealMethodologyContracts(unittest.TestCase):
                               "productionImportClosure": ["../secret.py"],
                               "publicTests": ["test.py"], "supportFiles": ["test_public.py"]})
 
+    def test_source_snapshot_rejects_oversized_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "large.py"
+            path.write_bytes(b"x" * (bench.MAX_FILE + 1))
+            with self.assertRaises(ValueError):
+                bench.safe_file(Path(directory), "large.py")
+
+    def test_external_directory_fingerprint_changes_when_dependency_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "node_modules"
+            root.mkdir()
+            (root / "package.json").write_text("{}", encoding="utf-8")
+            task = {"externalDependencies": [{"path": str(root), "kind": "directory"}]}
+            first = bench.external_dependency_hashes(task)
+            (root / "package.json").write_text("{\"changed\":true}", encoding="utf-8")
+            second = bench.external_dependency_hashes(task)
+            self.assertNotEqual(first, second)
+
 
 if __name__ == "__main__":
     unittest.main()

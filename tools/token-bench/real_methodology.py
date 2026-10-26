@@ -21,6 +21,9 @@ import methodology as base
 HOME = Path(__file__).resolve().parent
 MAX_JSON = 2_000_000
 MAX_FILE = 2_000_000
+MAX_NATIVE_FILE = 256 * 1024 * 1024
+MAX_EXTERNAL_FILES = 50_000
+MAX_EXTERNAL_BYTES = 2 * 1024 * 1024 * 1024
 DEADLINE = 300
 EVALUATOR_DEADLINE = 90
 
@@ -108,10 +111,45 @@ def all_snapshot_paths(task: dict) -> list[str]:
 def external_dependency_hashes(task: dict) -> dict[str, str]:
     result = {}
     for entry in task.get("externalDependencies", []):
-        path = Path(entry["path"] if isinstance(entry, dict) else entry).resolve()
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_FILE:
-            raise ValueError(f"external dependency is missing, linked or oversized: {path}")
-        result[str(path)] = digest(path)
+        definition = entry if isinstance(entry, dict) else {"path": entry, "kind": "file"}
+        path = Path(definition["path"]).resolve()
+        kind = definition.get("kind", "file")
+        if path.is_symlink():
+            raise ValueError(f"external dependency is linked: {path}")
+        if kind == "file":
+            if not path.is_file() or path.stat().st_size > MAX_NATIVE_FILE:
+                raise ValueError(f"external dependency is missing or oversized: {path}")
+            result[str(path)] = digest(path)
+            continue
+        if kind != "directory" or not path.is_dir():
+            raise ValueError(f"invalid external dependency: {path}")
+        ignored = {safe_relative(item).rstrip("/") for item in definition.get("ignore", [])}
+        files, total = [], 0
+        for current, directories, names in os.walk(path, followlinks=False):
+            current_path = Path(current)
+            directories[:] = [name for name in directories
+                              if name not in ignored and not (current_path / name).is_symlink()]
+            for name in names:
+                file_path = current_path / name
+                if file_path.is_symlink():
+                    raise ValueError(f"external dependency contains linked file: {file_path}")
+                relative = file_path.relative_to(path).as_posix()
+                if any(relative == item or relative.startswith(item + "/") for item in ignored):
+                    continue
+                size = file_path.stat().st_size
+                total += size
+                if len(files) >= MAX_EXTERNAL_FILES or total > MAX_EXTERNAL_BYTES:
+                    raise ValueError(f"external dependency directory exceeds bounds: {path}")
+                files.append((relative, size, digest(file_path)))
+        tree = hashlib.sha256()
+        for relative, size, content_hash in sorted(files):
+            tree.update(relative.encode("utf-8"))
+            tree.update(b"\0")
+            tree.update(str(size).encode("ascii"))
+            tree.update(b"\0")
+            tree.update(content_hash.encode("ascii"))
+            tree.update(b"\n")
+        result[str(path)] = tree.hexdigest()
     return result
 
 
@@ -332,8 +370,19 @@ def candidate_files(root: Path) -> dict[str, str]:
     return files
 
 
+def validate_external_links(task: dict, candidate: Path) -> None:
+    for entry in task.get("externalDependencies", []):
+        if not isinstance(entry, dict) or not entry.get("candidatePath"):
+            continue
+        target = candidate / Path(*PurePosixPath(safe_relative(entry["candidatePath"])).parts)
+        expected = Path(entry["path"]).resolve()
+        if not target.is_symlink() or target.resolve() != expected:
+            raise ValueError(f"candidate dependency link is missing or points elsewhere: {target}")
+
+
 def enforce_scope(task: dict, candidate: Path, before: dict[str, str]) -> None:
     scope, closure, support = task_paths(task)
+    validate_external_links(task, candidate)
     allowed_changes = set(scope) | set(task["publicTests"])
     now = candidate_files(candidate)
     for relative, value in now.items():

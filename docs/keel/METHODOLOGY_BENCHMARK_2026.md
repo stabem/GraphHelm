@@ -153,3 +153,10 @@ Native Claude accounting remains sourced from final `result.modelUsage` totals. 
 separate final `usage` scope and transcript diagnostics are retained. Missing native usage
 is `unknown`, never free. An empty observed-model list is `unobserved`; a non-empty list
 that differs from the frozen requested model stops the cohort.
+
+Pinned external native binaries and dependency directories are fingerprinted before
+freeze and before each cell. Directory fingerprints are bounded, deterministic hashes of
+sorted relative paths, lengths and content hashes; declared cache paths are the only
+ignored entries, and links/reparse points are rejected unless they resolve to the exact
+declared candidate target. This validation costs O(external dependency bytes) and is
+control/setup time, not agent time; dependencies are not copied into each candidate.

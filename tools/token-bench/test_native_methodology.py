@@ -384,6 +384,11 @@ class NativeMethodologyContracts(unittest.TestCase):
             report = bench.report_manifest(manifest_path, output)
             self.assertEqual(report["attempts"][0]["status"], "complete")
             self.assertEqual(report["usageAggregate"], counts)
+            injected = project / "injected.txt"
+            injected.write_text("unexpected new context\n", encoding="utf-8")
+            added = bench.report_manifest(manifest_path, output)
+            self.assertEqual(added["attempts"][0]["status"], "incomplete")
+            injected.unlink()
             contract.write_text("changed context\n", encoding="utf-8")
             drifted = bench.report_manifest(manifest_path, output)
             self.assertEqual(drifted["attempts"][0]["status"], "incomplete")

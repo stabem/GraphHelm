@@ -521,7 +521,8 @@ def native_skill_load(native_log: Path, *, cli: str, expected_path: Path,
                     if "$ARGUMENTS" not in plain:
                         expected_bodies.update((plain + "\n\nARGUMENTS: " + arguments).strip()
                                                for arguments in arguments_seen if arguments)
-                    if path == expected_path and body.strip() in expected_bodies:
+                    normalized_body = body.replace("\r\n", "\n").replace("\r", "\n").strip()
+                    if path == expected_path and normalized_body in expected_bodies:
                         return {"status": "observed", "skillPath": str(path), "skillSha256": expected_sha256,
                                 "nativeLogSha256": _hash(native_log), "loader": "claude-native-skill-metadata"}
         return {"status": "incomplete", "reason": "selected skill was not expanded by the native loader",

@@ -189,16 +189,13 @@ def _public_tree_unchanged(frozen: dict, workflow: dict, root: Path) -> bool:
     context = workflow.get("taskContext", {})
     mutable = set(context.get("scope", [])) | set(context.get("allowedTestPaths", []))
     prefixes = tuple(prefix.rstrip("/") + "/" for prefix in workflow.get("methodArtifactPrefixes", []))
-    for relative, expected in frozen.items():
-        if relative in mutable or relative.startswith(prefixes):
-            continue
-        path = root / relative
-        try:
-            if not path.is_file() or path.is_symlink() or base.digest(path) != expected:
-                return False
-        except OSError:
-            return False
-    return True
+    def immutable(entries: dict[str, str]) -> dict[str, str]:
+        return {relative: digest for relative, digest in entries.items()
+                if relative not in mutable and not relative.startswith(prefixes)}
+    try:
+        return immutable(_public_tree(root)) == immutable(frozen)
+    except (OSError, ValueError):
+        return False
 
 
 def candidate_tree_hash(root: Path, declared_paths: list[str] | None = None) -> str:

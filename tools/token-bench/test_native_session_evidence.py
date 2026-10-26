@@ -253,3 +253,29 @@ def test_claude_native_skill_without_argument_macro_appends_exact_footer(tmp_pat
     row["message"]["content"][0]["text"] = row["message"]["content"][0]["text"].replace("task-a", "task-b")
     log.write_text(json.dumps(row) + "\n", encoding="utf-8")
     assert evidence.native_skill_load(log, **args)["status"] == "incomplete"
+
+
+def test_claude_initial_slash_skill_receives_full_multiline_arguments(tmp_path):
+    skill = tmp_path / "SKILL.md"
+    skill.write_text("---\nname: graphhelm-resume\n---\nResume $ARGUMENTS\n", encoding="utf-8")
+    pinned = hashlib.sha256(skill.read_bytes()).hexdigest()
+    log = tmp_path / "native.jsonl"
+    row = {"type": "user", "isMeta": True, "message": {"content": [{"type": "text",
+        "text": f"Base directory for this skill: {tmp_path}\n\nResume task-record-binding\nRead the task context."}]}}
+    log.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    args = {"cli": "claude", "expected_path": skill, "expected_sha256": pinned,
+            "frozen_prompt": "/graphhelm:graphhelm-resume task-record-binding\nRead the task context."}
+    assert evidence.native_skill_load(log, **args)["status"] == "observed"
+
+
+def test_claude_native_skill_crlf_expansion_matches_pinned_lf_source(tmp_path):
+    skill = tmp_path / "SKILL.md"
+    skill.write_text("---\nname: selected-skill\n---\nRead task context.\n", encoding="utf-8")
+    pinned = hashlib.sha256(skill.read_bytes()).hexdigest()
+    log = tmp_path / "native.jsonl"
+    row = {"type": "user", "isMeta": True, "message": {"content": [{"type": "text",
+        "text": f"Base directory for this skill: {tmp_path}\n\nRead task context.\r\n\r\n\r\nARGUMENTS: public task"}]}}
+    log.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    args = {"cli": "claude", "expected_path": skill, "expected_sha256": pinned,
+            "frozen_prompt": "/selected-skill public task"}
+    assert evidence.native_skill_load(log, **args)["status"] == "observed"

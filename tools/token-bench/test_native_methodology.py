@@ -45,6 +45,19 @@ class NativeMethodologyContracts(unittest.TestCase):
             bench.validate_public_context(context)
         self.assertEqual(bench.fidelity_witnesses([{"kind": "model_text", "path": "claim"}])["status"], "incomplete")
 
+    def test_fidelity_requires_real_native_stream_and_artifact_hashes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stream = root / "native.jsonl"
+            artifact = root / "skill-rollout.json"
+            stream.write_text('{"type":"tool_use","name":"Read"}\n{"type":"result"}\n', encoding="utf-8")
+            artifact.write_text('{"skill":"specify","loaded":true}\n', encoding="utf-8")
+            witnesses = [{"kind": "native_stream", "path": str(stream), "sha256": bench.base.digest(stream)},
+                         {"kind": "native_skill", "path": str(artifact), "sha256": bench.base.digest(artifact)}]
+            self.assertEqual(bench.fidelity_witnesses(witnesses)["status"], "observed")
+            stream.write_text('{"type":"result"}\n', encoding="utf-8")
+            self.assertEqual(bench.fidelity_witnesses(witnesses)["status"], "incomplete")
+
     def test_missing_or_duplicate_owned_child_records_keep_usage_unknown(self):
         records = [{"sessionId": "child-a", "owned": True, "usage": {"input": 1, "output": 2}},
                    {"sessionId": "child-a", "owned": True, "usage": {"input": 3, "output": 4}}]
@@ -52,6 +65,14 @@ class NativeMethodologyContracts(unittest.TestCase):
         self.assertEqual(result["status"], "unknown")
         self.assertIsNone(result["total"])
         self.assertTrue(result["duplicateSessions"])
+
+    def test_child_usage_rejects_boolean_and_negative_counters(self):
+        result = bench.reconcile_nested_usage([{"sessionId": "child-a", "owned": True,
+                                                "rawSha256": "a" * 64,
+                                                "usage": {"input": True, "output": 1, "cacheRead": 0, "cacheWrite": 0}}],
+                                              expected_sessions=["child-a"])
+        self.assertEqual(result["status"], "unknown")
+        self.assertIsNone(result["total"])
 
     def test_completion_is_incomplete_until_all_controls_and_costs_are_observed(self):
         attempt = bench.phase_attempt(self.plan(), "author", "attempt-1")
@@ -73,10 +94,22 @@ class NativeMethodologyContracts(unittest.TestCase):
             self.assertTrue((root / "phase-setup-attempt-1" / "native-result.json").is_file())
 
     def test_local_reviewed_patch_endpoint_never_claims_published_merge(self):
-        result = bench.accepted_patch_endpoint(patch_path=".git/accepted.patch", patch_sha256="a" * 64,
-                                               reviewed=True, local_git=True)
-        self.assertEqual(result["status"], "observed")
-        self.assertFalse(result["published"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            patch = root / "accepted.patch"
+            review = root / "review.json"
+            evaluator = root / "evaluator.json"
+            patch.write_text("local patch\n", encoding="utf-8")
+            review.write_text('{"verdict":"APPROVE","reviewer":"reviewer","patchSha256":"%s"}' % bench.base.digest(patch), encoding="utf-8")
+            evaluator.write_text('{"status":"passed"}', encoding="utf-8")
+            result = bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
+                                                   evaluator_path=str(evaluator), author="author",
+                                                   reviewer="reviewer", local_git=True)
+            self.assertEqual(result["status"], "observed")
+            self.assertFalse(result["published"])
+            review.write_text('{"verdict":"APPROVE","reviewer":"author","patchSha256":"%s"}' % bench.base.digest(patch), encoding="utf-8")
+            self.assertEqual(bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
+                             evaluator_path=str(evaluator), author="author", reviewer="author", local_git=True)["status"], "incomplete")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import argparse
 from pathlib import Path
+import subprocess
+import tempfile
+import shutil
 from typing import Callable, Iterable
 
 import methodology as base
@@ -13,7 +17,6 @@ from real_methodology import registry_hashes as pinned_registry_hashes
 
 
 SCHEMA = "native-methodology-workflow/1"
-PHASES = ("setup", "planner", "author", "independent-review", "fix", "verify", "archive")
 PUBLIC_CONTEXT_KEYS = {"task", "scope", "publicTests", "request", "workflow", "phase"}
 NATIVE_WITNESS_KINDS = {"native_stream", "native_cli", "native_artifact", "native_skill"}
 REQUIRED_COSTS = {"setup", "planner", "author", "independent-review", "fix", "verify", "archive"}
@@ -90,10 +93,12 @@ def validate_registry(registry: dict) -> dict:
         phases = workflow.get("phases")
         if not isinstance(phases, list) or not phases:
             raise ValueError("workflow phases are required")
+        phase_ids = set()
         for phase in phases:
             _safe_id(phase.get("id"), "phase id")
-            if phase["id"] not in PHASES:
-                raise ValueError(f"unsupported phase: {phase['id']}")
+            if phase["id"] in phase_ids:
+                raise ValueError("phase ids must be unique within a workflow")
+            phase_ids.add(phase["id"])
             if not isinstance(phase.get("command"), list) or not phase["command"]:
                 raise ValueError("each phase needs a native command")
     return registry
@@ -150,13 +155,27 @@ def phase_attempt(plan: dict, phase_id: str, attempt_id: str, *, retry_of: str |
             "fidelity": "unknown", "completeness": "unknown"}
 
 
-def accepted_patch_endpoint(*, patch_path: str, patch_sha256: str, reviewed: bool,
-                            local_git: bool, published: bool = False) -> dict:
-    """Describe the independently reviewed local patch endpoint; publishing is never implied."""
-    if not patch_path or not patch_sha256 or not reviewed or not local_git or published:
+def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path: str,
+                            author: str, reviewer: str, local_git: bool, published: bool = False) -> dict:
+    """Verify an independent local review and evaluator receipt; booleans cannot self-attest."""
+    patch = Path(patch_path)
+    review = Path(review_path)
+    evaluator = Path(evaluator_path)
+    if published or not local_git or not patch.is_file() or not review.is_file() or not evaluator.is_file():
         return {"status": "incomplete", "reason": "accepted patch endpoint is not independently reviewed local Git"}
-    return {"status": "observed", "patchPath": patch_path, "patchSha256": patch_sha256,
-            "reviewed": True, "localGit": True, "published": False}
+    try:
+        review_data = base.read(review)
+        evaluator_data = base.read(evaluator)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"status": "incomplete", "reason": "review or evaluator receipt is invalid"}
+    patch_sha = base.digest(patch)
+    if (review_data.get("verdict") not in {"APPROVE", "APPROVE-WITH-RISK"}
+            or review_data.get("reviewer") != reviewer or reviewer == author
+            or review_data.get("patchSha256") != patch_sha
+            or evaluator_data.get("status") != "passed"):
+        return {"status": "incomplete", "reason": "review/evaluator receipt is not bound to this patch"}
+    return {"status": "observed", "patchPath": str(patch), "patchSha256": patch_sha,
+            "reviewPath": str(review), "evaluatorPath": str(evaluator), "published": False}
 
 
 def reconcile_nested_usage(records: object, *, expected_sessions: list[str]) -> dict:
@@ -165,7 +184,15 @@ def reconcile_nested_usage(records: object, *, expected_sessions: list[str]) -> 
         raise ValueError("nested usage records must be a list")
     by_id = {row.get("sessionId"): row for row in records if isinstance(row.get("sessionId"), str)}
     missing = sorted(set(expected_sessions) - set(by_id))
-    invalid = sorted(row.get("sessionId", "") for row in records if row.get("usage") is None or row.get("owned") is not True)
+    invalid = []
+    for row in records:
+        values = row.get("usage")
+        if row.get("owned") is not True or row.get("rawSha256") is None or row.get("includedInParent") is True:
+            invalid.append(row.get("sessionId", ""))
+            continue
+        if (not isinstance(values, dict) or any(type(values.get(key)) is not int or values[key] < 0
+                                                for key in ("input", "output", "cacheRead", "cacheWrite"))):
+            invalid.append(row.get("sessionId", ""))
     duplicates = len(by_id) != len(records)
     overlap = any(row.get("overlaps") for row in records)
     complete = not missing and not invalid and not duplicates and not overlap
@@ -182,9 +209,22 @@ def fidelity_witnesses(witnesses: object) -> dict:
     """Require observable native evidence; prose claiming fidelity is not evidence."""
     if not isinstance(witnesses, list):
         return {"status": "incomplete", "reason": "fidelity witnesses missing"}
-    valid = [row for row in witnesses if isinstance(row, dict) and row.get("kind") in NATIVE_WITNESS_KINDS
-             and isinstance(row.get("path"), str) and row.get("sha256")]
-    if not valid:
+    valid = []
+    for row in witnesses:
+        if not isinstance(row, dict) or row.get("kind") not in NATIVE_WITNESS_KINDS:
+            continue
+        path = Path(row.get("path", ""))
+        if not path.is_file() or path.is_symlink() or not isinstance(row.get("sha256"), str):
+            continue
+        if base.digest(path) != row["sha256"]:
+            continue
+        if row["kind"] == "native_stream":
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if not any(token in text for token in ("turn.completed", "tool_use", '"type": "result"')):
+                continue
+        valid.append({**row, "sha256": base.digest(path)})
+    kinds = {row["kind"] for row in valid}
+    if not valid or not (kinds & {"native_stream", "native_cli"}) or not (kinds & {"native_artifact", "native_skill"}):
         return {"status": "incomplete", "reason": "native fidelity witness missing"}
     return {"status": "observed", "witnesses": valid}
 
@@ -223,10 +263,133 @@ def broker_phase(plan: dict, phase_id: str, attempt_id: str, *, runner: Callable
     return {**attempt, **result, "artifactHashes": artifact}
 
 
+def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_config: dict,
+                         prompt: str, root: Path, environment: dict[str, str] | None = None) -> dict:
+    """Execute one real native CLI phase, retaining stdout/stderr and native usage evidence."""
+    executable = Path(cli_config["executable"])
+    if base.identity(executable, cli_config["cli"], root) != cli_config["identity"]:
+        raise ValueError("native CLI identity changed before phase")
+    stage = root / f"phase-{phase_id}-{attempt_id}"
+    stage.mkdir(parents=True, exist_ok=False)
+    attempt = phase_attempt(plan, phase_id, attempt_id, stage_root=str(stage))
+    captured = base.capture(cli_config["argv"], stage, deadline=int(cli_config.get("deadlineSeconds", 300)),
+                            prompt=prompt, environment=environment)
+    stdout = stage / "native.stdout.jsonl"
+    stderr = stage / "native.stderr.log"
+    stdout.write_text(captured["stdout"], encoding="utf-8")
+    stderr.write_text(captured["stderr"], encoding="utf-8")
+    parsed_usage = base.usage(cli_config["cli"], captured["stdout"])
+    provider_error = base.native_provider_error(cli_config["cli"], captured["stdout"], captured["stderr"])
+    receipt = {"attempt": attempt, "capture": {key: captured[key] for key in
+               ("exit", "seconds", "timeout", "cleanupConfirmed", "truncated")},
+               "usage": parsed_usage, "providerError": provider_error,
+               "stdoutPath": stdout.name, "stderrPath": stderr.name}
+    base.publish(stage / "phase-receipt.json", receipt)
+    witnesses = [{"kind": "native_stream", "path": str(stdout), "sha256": base.digest(stdout)},
+                 {"kind": "native_cli", "path": str(stage / "phase-receipt.json"),
+                  "sha256": base.digest(stage / "phase-receipt.json")}]
+    receipt["fidelity"] = fidelity_witnesses(witnesses)
+    receipt["status"] = "failed" if provider_error or captured["exit"] != 0 else "incomplete"
+    if captured["timeout"] or not captured["cleanupConfirmed"] or captured["truncated"]:
+        receipt["status"] = "incomplete"
+    return receipt
+
+
+def freeze(registry_path: Path, *, cli_paths: dict[str, Path], models: dict[str, str], output: Path) -> dict:
+    """Freeze registry, native executable identities, and phase order before any scored run."""
+    registry = load_registry(registry_path)
+    with tempfile.TemporaryDirectory() as directory:
+        identity_map = {cli: base.identity(path, cli, Path(directory)) for cli, path in cli_paths.items()}
+    workflows = registry["workflows"]
+    manifest = {"schema": "native-methodology-manifest/1", "registry": {"path": str(registry_path.resolve()),
+                "sha256": base.digest(registry_path)}, "registryHash": _json_hash(registry),
+                "workflows": workflows, "identities": identity_map, "models": models,
+                "instrumentSha256": base.digest(Path(__file__)), "plannedPhases":
+                [{"workflow": row["id"], "phase": phase["id"]} for row in workflows for phase in row["phases"]],
+                "winner": None}
+    base.publish(output, manifest)
+    return manifest
+
+
+def report_manifest(manifest_path: Path, attempts_root: Path) -> dict:
+    """Read only receipts matching the frozen manifest; missing planned phases remain incomplete."""
+    manifest = base.read(manifest_path)
+    if manifest.get("instrumentSha256") != base.digest(Path(__file__)):
+        raise ValueError("native instrument changed after freeze")
+    rows = []
+    for planned in manifest.get("plannedPhases", []):
+        key = f"{planned['workflow']}--{planned['phase']}"
+        receipt = attempts_root / key / "phase-receipt.json"
+        if not receipt.is_file():
+            rows.append({**planned, "status": "incomplete"})
+            continue
+        row = base.read(receipt)
+        rows.append({**planned, **row, "status": row.get("status", "incomplete")})
+    complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] == "complete" for row in rows)
+    return {"schema": "native-methodology-report/2", "complete": complete, "attempts": rows,
+            "winner": None, "limitations": [] if complete else ["missing or incomplete native phase evidence"]}
+
+
 def report_attempts(manifest: dict, attempts: list[dict]) -> dict:
     """Report phase outcomes without collapsing failed, incomplete, or unknown evidence."""
+    planned = {(row["workflow"], row["phase"]) for row in manifest.get("plannedPhases", [])}
+    observed = {(row.get("workflow"), row.get("phase")) for row in attempts}
     statuses = {row.get("status", "incomplete") for row in attempts}
-    complete = bool(attempts) and statuses <= {"complete"}
+    complete = bool(planned) and observed == planned and statuses <= {"complete"}
     return {"schema": "native-methodology-report/1", "workflow": manifest.get("workflow"),
             "complete": complete, "attempts": attempts, "winner": None,
             "limitations": [] if complete else ["Native fidelity, nested ownership, quota, cleanup, or usage evidence is incomplete"]}
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", choices=("qualify", "freeze", "run", "report"))
+    parser.add_argument("--registry", type=Path)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--workflow")
+    parser.add_argument("--phase")
+    parser.add_argument("--attempt")
+    parser.add_argument("--cli")
+    parser.add_argument("--executable", type=Path)
+    parser.add_argument("--model")
+    parser.add_argument("--prompt", default="")
+    args = parser.parse_args()
+    try:
+        if args.command == "qualify":
+            validate_registry(load_registry(args.registry))
+            base.publish(args.output, {"schema": "native-methodology-qualification/1", "passed": True,
+                                       "registrySha256": base.digest(args.registry)})
+            return 0
+        if args.command == "freeze":
+            if not all((args.registry, args.cli, args.executable, args.model)):
+                raise ValueError("freeze requires registry, executable, cli and model")
+            freeze(args.registry, cli_paths={args.cli: args.executable}, models={args.cli: args.model}, output=args.output)
+            return 0
+        if args.command == "report":
+            result = report_manifest(args.manifest, args.output)
+            print(json.dumps(result, indent=2))
+            return 0 if result["complete"] else 1
+        if not all((args.manifest, args.workflow, args.phase, args.attempt, args.cli, args.executable, args.model)):
+            raise ValueError("run requires manifest, workflow, phase, attempt, cli, executable and model")
+        manifest = base.read(args.manifest)
+        workflow = next(row for row in manifest["workflows"] if row["id"] == args.workflow)
+        plan = phase_plan(workflow, {"task": "native-task", "scope": [], "publicTests": [],
+                                    "request": args.prompt or "native workflow phase", "phase": args.phase},
+                         plan_id=f"{args.workflow}-frozen")
+        identity_record = manifest["identities"][args.cli]
+        config = native_cli_config(args.cli, args.executable, args.model)
+        config["identity"] = identity_record
+        receipt = execute_native_phase(plan, args.phase, args.attempt, cli_config=config,
+                                      prompt=args.prompt, root=args.output)
+        destination = args.output / f"{args.workflow}--{args.phase}"
+        destination.mkdir(parents=True, exist_ok=False)
+        base.publish(destination / "phase-receipt.json", {"workflow": args.workflow, "phase": args.phase, **receipt})
+        return 0 if receipt.get("status") == "complete" else 1
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        print(f"BENCHMARK_REFUSED: {error}", file=__import__("sys").stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

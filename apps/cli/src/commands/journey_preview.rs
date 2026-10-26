@@ -869,7 +869,9 @@ fn record_refusal(flow: &Value, state: &mut Value, code: &str, pointer: &str) {
     let (Some(kind @ ("screens" | "edges")), Some(step)) = (parts.next(), parts.next()) else {
         return;
     };
-    let steps = flow[kind].as_array().unwrap();
+    let Some(steps) = flow[kind].as_array() else {
+        return;
+    };
     let stopped = if kind == "edges" && parts.next() == Some("acts") {
         step.parse::<usize>()
             .ok()

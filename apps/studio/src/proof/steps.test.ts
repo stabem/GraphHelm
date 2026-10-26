@@ -2,7 +2,7 @@ import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow, JourneyRun } from "../runtime/client";
-import { isProposed, becauseOf, CHANGED, checkMarks, countSteps, earlierVersion, failsOnlyOn, isHeld, isWaitingReview, statusText, journeyScore, journeySteps, lastRunChip, pastAsRun, preparingStatus, readableName, reasonSentence } from "./steps";
+import { isProposed, becauseOf, CHANGED, checkMarks, countSteps, earlierVersion, failsOnlyOn, isHeld, isWaitingReview, statusText, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, compareSentence, staleCountsText, stepStatusText, STALE_STEP, preparingStatus, readableName, reasonSentence } from "./steps";
 
 const flow: JourneyFlow = {
   id: "buy",
@@ -124,6 +124,29 @@ describe("a journey changed since its last run", () => {
     const steps = journeySteps(flow, pastAsRun(past));
     expect(steps.map((step) => step.status)).toEqual(["passed", "passed", "passed"]);
     expect(steps.map((step) => step.frame)).toEqual([true, true, false]);
+  });
+
+  // #2086: QA saw "2 passed", step cards "passed" and "passed then, passed now" on a stale run.
+  it("never reports the earlier version's pass as this version's result", () => {
+    const steps = journeySteps(flow, pastAsRun(past));
+    expect(steps.map((step) => stepStatusText(step.status, null, true))).toEqual(steps.map((step) => (step.status === "precondition" ? "precondition" : STALE_STEP)));
+    expect(staleCountsText(steps)).not.toMatch(/passed/);
+    expect(compareSentence("passed", "passed", true)).toBe("This step passed on the earlier version; this version has not run.");
+    expect(stepStatusText("passed", null, false)).toBe("passed");
+    expect(compareSentence("passed", "failed", false)).toBe("This step passed then, failed now.");
+  });
+});
+
+// #2086: QA saw a draft waiting for review read "failed · preview, not proof" on its card.
+describe("a run that waits", () => {
+  it("reads its wait on the card, never failed", () => {
+    const review = { state: "ready" as const, result: "fail" as const, kind: "preview" as const, edges: { "list.item": { result: "skipped" as const, reason: "review_needed" } } };
+    expect(liveCard(flow, review)?.text).toBe("waits for review");
+    const held = { ...review, edges: { "list.item": { result: "skipped" as const, reason: "confirm_needed" } } };
+    expect(liveCard(flow, held)?.text).toBe("waits for your confirmation");
+    const last = { ranAt: "t", reason: null, kind: "preview" as const, flowChanged: false, status: "failed" as const };
+    expect(lastRunChip({ ...last, failingStep: { kind: "edge", id: "list.item", result: "skipped", reason: "review_needed" } }).text).toBe("waits for review");
+    expect(lastRunChip({ ...last, failingStep: { kind: "edge", id: "list.item", result: "fail", reason: null } }).text).toBe("✕ failed · preview, not proof");
   });
 });
 

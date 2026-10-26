@@ -11,7 +11,7 @@ import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./
 import { askedWhen } from "../lanes/asked";
 import { OWNER } from "../runtime/client";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
-import { countSteps, failsOnlyOn, isHeld, isWaitingReview, statusText,journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, staleCountsText, stepStatusText, isHeld, isWaitingReview, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 import { Empty, Loading, ReadFailure } from "../states/ViewState";
 import { When } from "../time/Stamp";
@@ -313,14 +313,15 @@ function verdict(run: JourneyRun | null): string | null {
 }
 
 /** #1777: each viewport's mark on a step card, and the line that says a break is mobile-only. */
-function viewportLine(step: Step) {
-  const mark = (viewport: Viewport) => (step.viewports[viewport] === "not run" ? "not run" : MARK[step.viewports[viewport]]);
-  const tone = (viewport: Viewport) => step.viewports[viewport].replace(" ", "-");
+function viewportLine(step: Step, stale: boolean) {
+  // #2086: a stale run's marks are the earlier version's; this version ran on neither viewport.
+  const mark = (viewport: Viewport) => (stale || step.viewports[viewport] === "not run" ? "not run" : MARK[step.viewports[viewport]]);
+  const tone = (viewport: Viewport) => (stale ? "not-run" : step.viewports[viewport].replace(" ", "-"));
   const only = failsOnlyOn(step);
   return (
     <>
       <span className="step-viewports">web <b className={tone("web")}>{mark("web")}</b> · mobile <b className={tone("mobile")}>{mark("mobile")}</b></span>
-      {only !== null && <span className="fails-only">Fails only on {only}</span>}
+      {only !== null && !stale && <span className="fails-only">Fails only on {only}</span>}
     </>
   );
 }
@@ -353,7 +354,9 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           <KindBadge flow={flow} />
           {busy && <span className="chip running" aria-label="Journey running">● running</span>}
           <span className="mono run-counts" aria-label="Step counts">
-            <span className="pass">{counts.passed} passed</span> <span className="wait">{counts.waits} waits for you</span> <span className="fail">{counts.failed} failed</span> <span className="idle">{counts.notRun} not run</span>
+            {stale
+              ? <span className="idle">{staleCountsText(steps)}</span>
+              : <><span className="pass">{counts.passed} passed</span> <span className="wait">{counts.waits} waits for you</span> <span className="fail">{counts.failed} failed</span> <span className="idle">{counts.notRun} not run</span></>}
           </span>
         </div>
         {flow.purpose && <p><span className="section-label">PROVES</span> {flow.purpose}</p>}
@@ -389,7 +392,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           </span>
         )}
         {steps.length > 0 && (
-          <span className="run-segments" aria-hidden="true">{steps.map((step) => <span key={step.n} className={step.status.replace(" ", "-")} />)}</span>
+          <span className="run-segments" aria-hidden="true">{steps.map((step) => <span key={step.n} className={stale ? "not-run" : step.status.replace(" ", "-")} />)}</span>
         )}
       </section>
       {error !== null && <p className="error">{error}</p>}
@@ -409,14 +412,14 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
       <div className="steps-card">
         <ol className="steps" aria-label="Steps">
           {steps.map((step) => (
-            <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${step.status.replace(" ", "-")}${stale ? " stale" : ""}`}>
+            <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${stale ? "not-run stale" : step.status.replace(" ", "-")}`}>
               <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
                 <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <><img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /><CheckMarks step={step} aspect={THUMB_ASPECT} /></> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
                 <span className="step-text">
-                  <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{statusText(step.status, run)}</span></span>
+                  <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{stepStatusText(step.status, run, stale)}</span></span>
                   {stale && <span className="stale-mark" title="From the earlier version of this journey">stale</span>}
                   <span className="step-label" title={step.label}>{step.label}</span>
-                  {viewportLine(step)}
+                  {viewportLine(step, stale)}
                 </span>
               </button>
             </li>

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 import type { JourneyPastRun, Runtime } from "../runtime/client";
 import { changedSentence, diffPixels, type CompareMode, type Pixels } from "./compare";
-import { becauseOf, checkMarks, failsOnlyOn, isProposed, readableName, reasonSentence, type Step } from "./steps";
+import { becauseOf, checkMarks, compareSentence, failsOnlyOn, isProposed, readableName, reasonSentence, type Step } from "./steps";
 import { yamlLines } from "./yaml-view";
 
 const MODES: { mode: CompareMode; label: string }[] = [
@@ -92,7 +92,6 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
       : before.error ?? (before.url === null ? "Reading the earlier run's frame…" : null);
 
   const pastResult = earlier?.screens?.[step.screen]?.result;
-  const nowWord = step.status === "drift" ? "drifted" : step.status;
   const only = failsOnlyOn(step);
   const mobileReason = step.viewportReasons.mobile ?? step.reason;
   const assertMark = step.status === "passed" ? "✓" : step.status === "failed" || step.status === "drift" ? "·" : "○";
@@ -133,8 +132,8 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
             <span className="mono">{step.url}</span>
           </span>
           <div role="group" aria-label="Viewport" className="seg-group">
-            <button type="button" aria-label="Web" className={`seg${shownViewport === "web" ? " on" : ""}`} aria-pressed={shownViewport === "web"} disabled={!webOn} onClick={() => setViewport("web")}>Web 1280 <ViewportMark status={step.viewports.web} /></button>
-            <button type="button" aria-label="Mobile" className={`seg${shownViewport === "mobile" ? " on" : ""}`} aria-pressed={shownViewport === "mobile"} disabled={!mobileOn} aria-describedby={mobileOn ? undefined : "compare-mobile-note"} onClick={() => setViewport("mobile")}>Mobile 390 <ViewportMark status={step.viewports.mobile} /></button>
+            <button type="button" aria-label="Web" className={`seg${shownViewport === "web" ? " on" : ""}`} aria-pressed={shownViewport === "web"} disabled={!webOn} onClick={() => setViewport("web")}>Web 1280 <ViewportMark status={staleRun ? "not run" : step.viewports.web} /></button>
+            <button type="button" aria-label="Mobile" className={`seg${shownViewport === "mobile" ? " on" : ""}`} aria-pressed={shownViewport === "mobile"} disabled={!mobileOn} aria-describedby={mobileOn ? undefined : "compare-mobile-note"} onClick={() => setViewport("mobile")}>Mobile 390 <ViewportMark status={staleRun ? "not run" : step.viewports.mobile} /></button>
           </div>
           <div role="group" aria-label="Compare mode" className="seg-group">
             {MODES.map(({ mode: each, label }) => (
@@ -175,7 +174,7 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
           <span className="section-label">{staleRun ? "EARLIER VERSION'S RUN · " : ""}{earlier === null ? "NO EARLIER RUN" : `COMPARE WITH ${when}`}</span>
           {offReason !== null && <span>{offReason}</span>}
           {changes.sentence !== null && <span className="compare-changed">{changes.sentence}</span>}
-          {pastResult !== undefined && <span className="compare-changed">This step {PAST[pastResult]} then, {nowWord} now.</span>}
+          {pastResult !== undefined && <span className="compare-changed">{compareSentence(PAST[pastResult], step.status, staleRun)}</span>}
           {comparable && (
             <>
               <div className="action-thumbs">

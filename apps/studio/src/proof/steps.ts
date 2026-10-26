@@ -3,6 +3,32 @@ import type { CliOutput, JourneyEdge, JourneyFlow, JourneyLastRun, JourneyPastRu
 /** How one step stands in the open run. `running` is the screen the Runtime is playing now. */
 export type StepStatus = "passed" | "failed" | "drift" | "skipped" | "running" | "waiting" | "precondition" | "not run";
 
+/** #2086: a stale run is what an earlier version did. Its step cards, counts and compare line never
+ * report that result as this version's: the current version has not run. */
+export const STALE_STEP = "not run on this version";
+
+export function stepStatusText(status: StepStatus, run: JourneyRun | null, stale: boolean): string {
+  return stale && status !== "precondition" ? STALE_STEP : statusText(status, run);
+}
+
+/** #2086: the header counts of a stale run: every step is stale, none is passed. */
+export function staleCountsText(steps: Step[]): string {
+  return `${steps.filter((step) => step.status !== "precondition").length} stale · this version never ran`;
+}
+
+/** #2086: the compare line for one step; on a stale run "now" is this version, which has not run. */
+export function compareSentence(then: string, status: StepStatus, staleRun: boolean): string {
+  if (staleRun) return `This step ${then} on the earlier version; this version has not run.`;
+  return `This step ${then} then, ${status === "drift" ? "drifted" : status} now.`;
+}
+
+/** #2086: a run that stopped to wait (review or confirmation) reads that wait on its card. */
+function waitingCardText(run: JourneyRun): string | null {
+  if (isWaitingReview(run)) return "waits for review";
+  if (isHeld(run)) return "waits for your confirmation";
+  return null;
+}
+
 /** #1909: what a step's status says on its card. */
 export const STATUS_TEXT: Record<StepStatus, string> = {
   passed: "passed", failed: "failed", drift: "drift", skipped: "skipped", running: "running",
@@ -405,6 +431,8 @@ export function liveCard(flow: JourneyFlow, run: JourneyRun | null): { text: str
   const bar = steps.map((step): BarCell => (step.status === "passed" ? "pass" : step.status === "failed" || step.status === "drift" ? "fail" : "none"));
   const total = steps.length;
   if (run.state === "running") return { text: "● running", tone: "wait", passed, total, bar };
+  const waits = waitingCardText(run);
+  if (waits !== null) return { text: waits, tone: "idle", passed, total, bar };
   const ok = run.state === "ready" && run.result === "pass";
   const mark = ok ? "✓ passed" : "✕ failed";
   const tail = run.kind === "replay" ? "" : " · preview, not proof";
@@ -418,6 +446,10 @@ export function lastRunChip(lastRun: JourneyLastRun | undefined): { text: string
   if (lastRun.status === "not_run") return { text: "○ not run", tone: "idle" };
   // #1956: a run of an earlier version of the flow proves nothing about this one.
   if (lastRun.flowChanged === true) return { text: CHANGED, tone: "idle" };
+  // #2086: a run that stopped before a draft's commands waits; it did not fail.
+  const stop = lastRun.failingStep?.reason;
+  if (stop === "review_needed") return { text: "waits for review", tone: "idle" };
+  if (stop === "confirm_needed") return { text: "waits for your confirmation", tone: "idle" };
   const mark = lastRun.status === "passed" ? "✓ passed" : "✕ failed";
   if (lastRun.kind !== "replay") return { text: `${mark} · preview, not proof`, tone: "idle" };
   return { text: mark, tone: lastRun.status === "passed" ? "pass" : "fail" };

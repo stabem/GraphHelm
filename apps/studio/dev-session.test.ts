@@ -119,6 +119,27 @@ describe("dev server add-folder (#1833)", () => {
     expect((await call("/__studio/identity", "GET", {})).body.projectIds).toHaveLength(1);
   });
 
+  it("registers a second project with its own ticket and logs it in only with that project's credential (#1767)", async () => {
+    const second = project(root, "second", "second-token");
+    ticketFor(second, "second-ticket");
+    expect(await call("/__studio/register?nonce=wrong", "POST", {}, { path: second })).toEqual({ status: 404, body: { ok: false } });
+    const registered = await call("/__studio/register?nonce=second-ticket", "POST", {}, { path: second });
+    expect(registered.status).toBe(200);
+    // The registration reply carries the non-secret id only: no token, key or folder.
+    expect(Object.keys(registered.body).sort()).toEqual(["ok", "projectId"]);
+    const id = registered.body.projectId as string;
+    expect((await call("/__studio/identity", "GET", {})).body.projectIds).toContain(id);
+    // The first project's launch nonce and key never open the second project.
+    for (const nonce of ["n", stableKey("first-token")]) {
+      expect(await call(`/__studio/session?project=${id}&nonce=${encodeURIComponent(nonce)}`, "GET", {})).toEqual({ status: 404, body: { ok: false } });
+    }
+    const session = await call(`/__studio/session?project=${id}&nonce=second-ticket`, "GET", {});
+    expect(session.status).toBe(200);
+    expect(session.body.token).toBe("second-token");
+    expect(session.body.base).toBe(`/p/${id}`);
+    expect(logged.join(" ")).not.toContain("second");
+  });
+
   it("answers the folder only inside a session reply", async () => {
     const session = await call("/__studio/session?nonce=n", "GET", {});
     expect(typeof session.body.folder).toBe("string");

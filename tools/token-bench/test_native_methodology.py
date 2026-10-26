@@ -407,6 +407,38 @@ class NativeMethodologyContracts(unittest.TestCase):
             report = bench.report_manifest(manifest_path, output)
             self.assertEqual(report["attempts"][0]["status"], "complete")
             self.assertEqual(report["usageAggregate"], counts)
+            dup_manifest = json.loads(json.dumps(manifest))
+            dup_workflow = dup_manifest["workflows"][0]
+            second_phase = json.loads(json.dumps(dup_workflow["phases"][0]))
+            second_phase["id"] = "setup2"
+            dup_workflow["phases"].append(second_phase)
+            dup_manifest["plannedPhases"].append({**dup_manifest["plannedPhases"][0],
+                                                   "phase": "setup2"})
+            dup_output = root / "duplicate-output"
+            shutil.copytree(output, dup_output)
+            shutil.copytree(raw, dup_output / "phase-setup2-attempt-2")
+            second_receipt = json.loads(json.dumps(receipt))
+            second_receipt["phase"] = "setup2"
+            second_receipt["attempt"].update({"phase": "setup2", "attemptId": "attempt-2",
+                "planSha256": bench.phase_plan(dup_workflow,
+                    {**dup_workflow["taskContext"], "phase": "setup2"},
+                    plan_id="spec-kit-frozen")["planSha256"]})
+            first_receipt = json.loads(json.dumps(receipt))
+            first_receipt["attempt"]["planSha256"] = bench.phase_plan(dup_workflow,
+                {**dup_workflow["taskContext"], "phase": "setup"},
+                plan_id="spec-kit-frozen")["planSha256"]
+            dup_manifest_path = root / "duplicate-manifest.json"
+            dup_manifest_path.write_text(json.dumps(dup_manifest), encoding="utf-8")
+            for copy_receipt, copy_phase in ((first_receipt, "setup"), (second_receipt, "setup2")):
+                copy_receipt["manifestSha256"] = bench._json_hash(dup_manifest)
+                copy_dir = dup_output / ("spec-kit--" + copy_phase)
+                copy_dir.mkdir(exist_ok=True)
+                (copy_dir / "phase-receipt.json").write_text(json.dumps(copy_receipt), encoding="utf-8")
+            duplicate = bench.report_manifest(dup_manifest_path, dup_output)
+            self.assertEqual([row["status"] for row in duplicate["attempts"]],
+                             ["incomplete", "incomplete"])
+            self.assertIsNone(duplicate["usageAggregate"])
+            self.assertFalse(duplicate["qualityAccepted"])
             phase_spec = workflow["phases"][0]
             phase_spec["minNativeReviewerAgents"] = 2
             receipt["attempt"]["planSha256"] = bench.phase_plan(

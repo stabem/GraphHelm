@@ -986,6 +986,17 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         rows.append({**planned, **row, "status": row.get("status", "incomplete") if valid else "incomplete"})
         if isinstance(row.get("candidateAfterSha256"), str):
             candidate_chain[planned["workflow"]] = row["candidateAfterSha256"]
+    # A native root is one paid session even if receipts claim two phase names.
+    roots = {}
+    for index, row in enumerate(rows):
+        session = row.get("archivedSession", {}).get("rootSession")
+        if isinstance(session, str) and session:
+            key = (row.get("cli"), session)
+            roots.setdefault(key, []).append(index)
+    for indices in roots.values():
+        if len(indices) > 1:
+            for index in indices:
+                rows[index]["status"] = "incomplete"
     collection_complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] != "incomplete" for row in rows)
     quality_accepted = collection_complete and all(row["status"] == "complete" for row in rows)
     complete = quality_accepted and all(row["status"] == "complete" for row in rows)

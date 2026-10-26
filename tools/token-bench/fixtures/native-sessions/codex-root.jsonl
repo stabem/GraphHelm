@@ -1,0 +1,8 @@
+{"type": "session_meta", "payload": {"id": "01a17672-2f62-7c41-b135-b94ea4c887c0", "cwd": "D:\\gh\\codex-scope-cleanup\\native-2074-probes\\codex-child-001"}}
+{"type": "event_msg", "payload": {"type": "task_started", "turn_id": "01a17672-33d0-7f41-9c58-47d1e34d66d2"}}
+{"type": "response_item", "payload": {"type": "function_call", "name": "spawn_agent", "namespace": "collaboration", "call_id": "call_90e2d254741e48689d7f65c1135b7036"}}
+{"type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_90e2d254741e48689d7f65c1135b7036", "output": "{\"task_name\":\"/root/native_probe\"}"}}
+{"type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 21815, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "output_tokens": 42, "reasoning_output_tokens": 0, "total_tokens": 21857}}}}
+{"type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 43693, "cached_input_tokens": 21632, "cache_write_input_tokens": 0, "output_tokens": 63, "reasoning_output_tokens": 0, "total_tokens": 43756}}}}
+{"type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 65656, "cached_input_tokens": 43392, "cache_write_input_tokens": 0, "output_tokens": 72, "reasoning_output_tokens": 0, "total_tokens": 65728}}}}
+{"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "01a17672-33d0-7f41-9c58-47d1e34d66d2"}}

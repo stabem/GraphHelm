@@ -1,0 +1,7 @@
+{"type": "session_meta", "payload": {"id": "01a17678-65f2-70c3-925d-87bd8abdc85a", "parent_thread_id": "01a17678-5676-7271-b89b-70392d5016a5", "cwd": "D:\\gh\\codex-scope-cleanup\\native-2074-probes\\codex-child-002", "agent_path": "/root/native_probe_fork_all"}}
+{"type": "session_meta", "payload": {"id": "01a17678-5676-7271-b89b-70392d5016a5", "cwd": "D:\\gh\\codex-scope-cleanup\\native-2074-probes\\codex-child-002"}}
+{"type": "event_msg", "payload": {"type": "task_started", "turn_id": "01a17678-5720-7152-bf10-7707bacdd0d7"}}
+{"type": "event_msg", "payload": {"type": "thread_settings_applied", "thread_id": "01a17678-65f2-70c3-925d-87bd8abdc85a"}}
+{"type": "event_msg", "payload": {"type": "task_started", "turn_id": "01a17678-66dd-7eb3-92ae-562048bff03e"}}
+{"type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 26953, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "output_tokens": 9, "reasoning_output_tokens": 0, "total_tokens": 26962}}}}
+{"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "01a17678-66dd-7eb3-92ae-562048bff03e"}}

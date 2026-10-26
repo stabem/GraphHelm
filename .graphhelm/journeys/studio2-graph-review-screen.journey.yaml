@@ -17,7 +17,7 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: button, name: "Issue #721", text: in review, because: "the fixture's issue #721 has an open PR, so its card shows it in review"}, {role: group, name: "Pull request of #721", text: "PR #721 waits for a reviewer", because: "the card's PR waits for a reviewer, which is what the owner is about to review"}, {role: complementary, name: Journeys with work, text: "1 of 24", because: "the journey list has loaded, so the card is tagged with its journey title"}]
+    expect: [{role: button, name: "Issue #721", text: in review, because: "the fixture's issue #721 has an open PR, so its card shows it in review"}, {role: group, name: "Pull request of #721", text: "PR #721 waits for a reviewer", because: "the card's PR waits for a reviewer, which is what the owner is about to review"}, {role: complementary, name: Journeys with work, text: 1 of 24, because: "the journey list has loaded, so the card is tagged with its journey title"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: changes
     title: Changes shows only the pixels that moved

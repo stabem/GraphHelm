@@ -178,6 +178,18 @@ def candidate_tree_hash(root: Path, declared_paths: list[str] | None = None) -> 
     return _json_hash(entries)
 
 
+def _declared_candidate_paths(workflow: dict, root: Path) -> list[str]:
+    """Expand declared artifact globs into stable project-relative candidate paths."""
+    paths = list(workflow.get("pinnedPublicFiles", []))
+    paths.extend(workflow.get("methodAssetDigests", {}).keys())
+    for phase in workflow.get("phases", []):
+        paths.extend(phase.get("requiredArtifacts", []))
+        for pattern in phase.get("requiredArtifactGlobs", []):
+            paths.extend(path.relative_to(root).as_posix() for path in sorted(root.glob(pattern))
+                          if path.is_file() and not path.is_symlink())
+    return paths
+
+
 def native_cli_config(cli: str, executable: Path, model: str, *, project_doc: Path | None = None,
                       extra: list[str] | None = None,
                       graphhelm_env: dict[str, str] | None = None) -> dict:
@@ -526,9 +538,15 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
         except (ImportError, OSError, ValueError, KeyError) as error:
             operations = {"status": "unknown", "reason": str(error)}
     required_globs = []
+    required_glob_hashes = {}
+    artifacts_observed = True
     for pattern in phase.get("requiredArtifactGlobs", []):
-        required_globs.extend(str(path) for path in project_root.glob(pattern) if path.is_file())
-    artifacts_observed = bool(required_globs) if phase.get("requiredArtifactGlobs") else True
+        matches = [path for path in project_root.glob(pattern) if path.is_file() and not path.is_symlink()]
+        if not matches:
+            artifacts_observed = False
+        for path in matches:
+            required_globs.append(str(path))
+            required_glob_hashes[path.relative_to(project_root).as_posix()] = base.digest(path)
     archive_root = cli_config.get("archiveRoot")
     if not archive_root:
         raise ValueError("native session archive root is required")
@@ -569,6 +587,7 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
                "quotaBefore": quota_before, "quotaAfter": quota_after, "archivedSession": archived,
                "skillLoad": skill_load,
                "operations": operations, "requiredArtifactFiles": sorted(required_globs),
+               "requiredArtifactGlobHashes": required_glob_hashes,
                "stdoutPath": stdout.name, "stderrPath": stderr.name,
                "rawSha256": {stdout.name: base.digest(stdout), stderr.name: base.digest(stderr)},
                "requiredArtifactHashes": required, "predecessorArtifacts": predecessor_artifacts}
@@ -755,11 +774,13 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                 cli = row.get("cli")
                 project = Path(workflow_spec["projectRoot"]) if workflow_spec else None
                 root_log = Path(archive["archivedRoot"])
+                stdout_file = raw_dir / "native.stdout.jsonl"
                 child_logs = sorted(archive_root.glob("child-*.jsonl"))
-                if not project or not project.is_dir() or not root_log.is_file():
+                if not project or not project.is_dir() or not root_log.is_file() or not stdout_file.is_file():
                     raise ValueError("archived native project is missing")
                 if cli == "codex":
-                    wire = row.get("rootWireUsage", {})
+                    wire_envelope = row.get("rootWireUsage", {})
+                    wire = wire_envelope.get("counts", wire_envelope) if isinstance(wire_envelope, dict) else {}
                     root_wire = {"input_tokens": wire.get("input", 0),
                                  "output_tokens": wire.get("output", 0),
                                  "cached_input_tokens": wire.get("cacheRead", 0),
@@ -769,16 +790,30 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                                                 stdout_usage=counters(root_wire))
                 elif cli == "claude":
                     if child_logs:
-                        parsed_archive = claude_owned_tree(root_log, child_logs, project=project,
+                        parsed_archive = claude_owned_tree(stdout_file, child_logs, project=project,
                                                            session_id=archive["rootSession"])
                     else:
-                        parsed_archive = claude_pipeline(root_log)
+                        parsed_archive = claude_pipeline(stdout_file)
                 else:
                     raise ValueError("unsupported archived native provider")
                 parsed_total = _usage_total(parsed_archive.get("total"), cli=cli)
                 valid = valid and parsed_archive.get("status") == "observed" and parsed_total == archived_total
             except (ImportError, KeyError, OSError, TypeError, ValueError):
                 valid = False
+        if workflow_spec is None:
+            valid = False
+        else:
+            glob_hashes = row.get("requiredArtifactGlobHashes")
+            for pattern in next((phase.get("requiredArtifactGlobs", [])
+                                 for phase in workflow_spec["phases"] if phase["id"] == planned["phase"]), []):
+                matches = [path for path in Path(workflow_spec["projectRoot"]).glob(pattern)
+                           if path.is_file() and not path.is_symlink()]
+                valid = valid and bool(matches)
+                if isinstance(glob_hashes, dict):
+                    valid = valid and all(glob_hashes.get(path.relative_to(Path(workflow_spec["projectRoot"])).as_posix())
+                                          == base.digest(path) for path in matches)
+                else:
+                    valid = False
         rows.append({**planned, **row, "status": row.get("status", "incomplete") if valid else "incomplete"})
         if isinstance(row.get("candidateAfterSha256"), str):
             candidate_chain[planned["workflow"]] = row["candidateAfterSha256"]
@@ -807,12 +842,9 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         expected_task = spec.get("taskContext", {}).get("task", "") if spec else ""
         expected_project = Path(spec["projectRoot"]).resolve() if spec else None
         if spec:
-            candidate_paths = list(spec.get("pinnedPublicFiles", []))
-            candidate_paths.extend(spec.get("methodAssetDigests", {}).keys())
-            candidate_paths.extend(artifact for phase in spec.get("phases", [])
-                                  for artifact in phase.get("requiredArtifacts", []))
             try:
-                expected_candidate = candidate_tree_hash(expected_project, candidate_paths)
+                expected_candidate = candidate_tree_hash(expected_project,
+                                                         _declared_candidate_paths(spec, expected_project))
             except (OSError, ValueError):
                 expected_candidate = None
     endpoint_project = Path(endpoint["gitHeadPath"]).resolve() if endpoint and endpoint.get("gitHeadPath") else None
@@ -887,10 +919,7 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
     results = []
     predecessor = None
     predecessor_candidate = None
-    declared_candidate_paths = list(workflow.get("pinnedPublicFiles", []))
-    declared_candidate_paths.extend(workflow.get("methodAssetDigests", {}).keys())
-    for phase_spec in phases:
-        declared_candidate_paths.extend(phase_spec.get("requiredArtifacts", []))
+    declared_candidate_paths = _declared_candidate_paths(workflow, Path(workflow["projectRoot"]))
     fix_attempts = 0
     for ordinal, phase in enumerate(phases):
         if phase["id"] == "fix":

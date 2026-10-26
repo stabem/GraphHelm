@@ -5,6 +5,7 @@ import sys
 import subprocess
 import importlib.util
 import shutil
+import json
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -251,6 +252,73 @@ class NativeMethodologyContracts(unittest.TestCase):
             self.assertEqual(result["accountingStatus"], "observed")
             self.assertEqual(result["counts"], {"input": 10, "output": 530,
                                                  "cacheRead": 9256, "cacheWrite": 11868})
+
+    def test_report_replays_captured_claude_stdout_and_archive(self):
+        """A captured native stream and archived root transcript produce an observed phase."""
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "native-sessions"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "attempts"
+            raw = output / "phase-setup-attempt-1"
+            raw.mkdir(parents=True)
+            stream = fixtures / "claude-child.jsonl"
+            stdout = raw / "native.stdout.jsonl"
+            stderr = raw / "native.stderr.log"
+            stdout.write_bytes(stream.read_bytes())
+            stderr.write_text("", encoding="utf-8")
+            archive_root = root / "archive" / "setup-attempt-1"
+            archive_root.mkdir(parents=True)
+            archived_root = archive_root / "root.jsonl"
+            archived_root.write_bytes(stream.read_bytes())
+            workflow = self.workflow()
+            workflow["phases"] = [workflow["phases"][0]]
+            project = root / "project"
+            (project / "report").mkdir(parents=True)
+            artifact = project / "report" / "result.json"
+            artifact.write_text('{"ok":true}\n', encoding="utf-8")
+            workflow["projectRoot"] = str(project)
+            workflow["phases"][0]["requiredArtifactGlobs"] = ["report/*.json"]
+            plan = bench.phase_plan(workflow, {**workflow["taskContext"], "phase": "setup"},
+                                    plan_id="spec-kit-frozen")
+            archive_result = evidence.claude_pipeline(archived_root)
+            counts = archive_result["total"]
+            candidate = bench.candidate_tree_hash(Path(workflow["projectRoot"]),
+                                                   bench._declared_candidate_paths(workflow, project))
+            receipt = {"workflow": "spec-kit", "phase": "setup", "manifestSha256": "",
+                       "attempt": {"attemptId": "attempt-1", "planId": "spec-kit-frozen",
+                                    "planSha256": plan["planSha256"], "phase": "setup"},
+                       "capture": {"exit": 0, "timeout": False, "cleanupConfirmed": True, "truncated": False},
+                       "rawSha256": {"native.stdout.jsonl": bench.base.digest(stdout),
+                                     "native.stderr.log": bench.base.digest(stderr)},
+                       "candidateBeforeSha256": candidate, "candidateAfterSha256": candidate,
+                       "requiredArtifactGlobHashes": {"report/result.json": bench.base.digest(artifact)},
+                       "status": "complete", "fidelity": {"status": "observed"},
+                       "cli": "claude", "usage": {"counts": counts},
+                       "rootWireUsage": {"counts": counts},
+                       "archivedSession": {"status": "observed", "total": counts,
+                                            "rootSession": "child-session",
+                                            "archivedRoot": str(archived_root),
+                                            "archive": {"root.jsonl": bench.base.digest(archived_root)}}}
+            manifest = {"schema": "native-methodology-manifest/1", "workflows": [workflow],
+                        "inputs": {}, "models": {"claude": "claude-sonnet-5-5"},
+                        "instrumentSha256": bench.base.digest(Path(bench.__file__)),
+                        "instrumentSources": {name: bench.base.digest(Path(bench.__file__).parent / name)
+                                               for name in ("methodology.py", "native_usage.py", "real_methodology.py",
+                                                            "native_methodology.py", "native_session_evidence.py",
+                                                            "native_session_capture.py", "native_quota.py")},
+                        "plannedPhases": [{"workflow": "spec-kit", "phase": "setup",
+                                           "promptSha256": bench._json_hash("setup"), "requiredArtifacts": [],
+                                           "requiredWitnesses": [], "requiredOperations": [],
+                                           "requiredArtifactGlobs": []}], "winner": None}
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            receipt["manifestSha256"] = bench._json_hash(manifest)
+            destination = output / "spec-kit--setup"
+            destination.mkdir()
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            report = bench.report_manifest(manifest_path, output)
+            self.assertEqual(report["attempts"][0]["status"], "complete")
+            self.assertEqual(report["usageAggregate"], counts)
 
 
 if __name__ == "__main__":

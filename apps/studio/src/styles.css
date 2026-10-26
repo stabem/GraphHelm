@@ -118,8 +118,8 @@ button { font: inherit; }
 .project.other { background: none; border-color: transparent; padding: 0; }
 .project.other a { display: flex; align-items: center; gap: var(--s2); padding: 8px 10px; border-radius: 10px; color: var(--muted); text-decoration: none; }
 .project.other a:hover, .project.other a:focus-visible { background: var(--card); color: var(--text); }
-.project.other.closed { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); padding: 8px 10px; color: var(--muted); }
-.project.other.closed .closed-hint { flex-basis: 100%; min-width: 0; font-size: 11px; line-height: 1.4; overflow-wrap: normal; word-break: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.project.other.closed { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--s2); padding: 8px 10px; color: var(--muted); }
+.project.other.closed .closed-hint { grid-column: 1 / -1; min-width: 0; font-size: 11px; line-height: 1.4; overflow-wrap: normal; word-break: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .project.other.closed .closed-hint code { white-space: normal; }
 
 /* #1833: project subtitles and "Add project folder". */

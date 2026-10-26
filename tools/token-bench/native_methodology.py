@@ -864,6 +864,7 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         requested_model = row.get("requestedModel")
         served_models = row.get("servedModels")
         valid = valid and isinstance(requested_model, str) and isinstance(served_models, list)
+        valid = valid and requested_model == manifest.get("models", {}).get(row.get("cli"))
         valid = valid and served_models == [requested_model]
         usage_models = sorted(set(row.get("usage", {}).get("observedModels", []))
                               | set(row.get("usage", {}).get("accountingModels", [])))
@@ -874,6 +875,16 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         for raw_name, raw_hash in row.get("rawSha256", {}).items():
             raw_file = raw_dir / raw_name
             valid = valid and raw_file.is_file() and base.digest(raw_file) == raw_hash
+        if phase_spec and phase_spec.get("requiredOperations"):
+            try:
+                from native_session_evidence import required_operations
+                replayed_operations = required_operations(
+                    raw_dir / "native.stdout.jsonl", cli=row.get("cli"),
+                    requirements=phase_spec["requiredOperations"])
+                valid = (valid and replayed_operations.get("status") == "observed"
+                         and replayed_operations.get("sha256") == row.get("operations", {}).get("sha256"))
+            except (OSError, ValueError, TypeError, KeyError):
+                valid = False
         if row.get("status") in {"complete", "failed"}:
             valid = valid and row.get("fidelity", {}).get("status") == "observed" and isinstance(row.get("usage"), dict)
         archived_total = _usage_total(row.get("archivedSession", {}).get("total"), cli=row.get("cli"))
@@ -899,6 +910,14 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                                      *archive_root.glob("agent-*.jsonl")])
                 if not project or not project.is_dir() or not root_log.is_file() or not stdout_file.is_file():
                     raise ValueError("archived native project is missing")
+                replayed_wire = base.usage(cli, stdout_file.read_text(encoding="utf-8"))
+                replayed_models = sorted(set(replayed_wire.get("observedModels", []))
+                                         | set(replayed_wire.get("accountingModels", [])))
+                valid = (valid and replayed_wire.get("accountingStatus") == "observed"
+                         and replayed_wire.get("counts") == row.get("rootWireUsage", {}).get("counts")
+                         and replayed_models == served_models
+                         and replayed_wire.get("observedModels") == row.get("usage", {}).get("observedModels")
+                         and replayed_wire.get("accountingModels", []) == row.get("usage", {}).get("accountingModels", []))
                 if cli == "codex":
                     wire_envelope = row.get("rootWireUsage", {})
                     wire = wire_envelope.get("counts", wire_envelope) if isinstance(wire_envelope, dict) else {}
@@ -919,6 +938,18 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                     raise ValueError("unsupported archived native provider")
                 parsed_total = _usage_total(parsed_archive.get("total"), cli=cli)
                 valid = valid and parsed_archive.get("status") == "observed" and parsed_total == archived_total
+                if "native_skill" in required_kinds and phase_spec:
+                    from native_session_evidence import native_skill_load
+                    expected_skills = [w for w in phase_spec.get("requiredWitnesses", [])
+                                       if w.get("kind") == "native_skill"]
+                    stated_loads = row.get("skillLoad", {}).get("loads", [])
+                    replayed_loads = [native_skill_load(root_log, cli=cli,
+                        expected_path=Path(w["path"]), expected_sha256=w["sha256"],
+                        frozen_prompt=phase_spec["prompt"]) for w in expected_skills]
+                    valid = valid and len(replayed_loads) == len(stated_loads) and all(
+                        replayed.get("status") == "observed"
+                        and replayed.get("skillSha256") == stated.get("skillSha256")
+                        for replayed, stated in zip(replayed_loads, stated_loads))
             except (ImportError, KeyError, OSError, TypeError, ValueError):
                 valid = False
         if workflow_spec is None:
@@ -1016,7 +1047,8 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
             aggregate_known = False
             break
         workflow = row.get("workflow", "")
-        model = manifest.get("models", {}).get(cli, row.get("model", ""))
+        served = row.get("servedModels")
+        model = served[0] if isinstance(served, list) and len(served) == 1 else "unobserved"
         task = row.get("taskContext", {}).get("task") or workflow_specs.get(workflow, {}).get("taskContext", {}).get("task", "")
         group_key = json.dumps([cli, model, workflow, task], separators=(",", ":"))
         group = usage_groups.setdefault(group_key, {"cli": cli, "model": model,

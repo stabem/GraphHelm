@@ -384,6 +384,62 @@ class NativeMethodologyContracts(unittest.TestCase):
             report = bench.report_manifest(manifest_path, output)
             self.assertEqual(report["attempts"][0]["status"], "complete")
             self.assertEqual(report["usageAggregate"], counts)
+            phase_spec = workflow["phases"][0]
+            phase_spec["requiredOperations"] = [{"name": "setup", "commandPattern": "missing-native-command"}]
+            receipt["attempt"]["planSha256"] = bench.phase_plan(
+                workflow, {**workflow["taskContext"], "phase": "setup"},
+                plan_id="spec-kit-frozen")["planSha256"]
+            receipt["operations"] = {"status": "observed", "sha256": "forged"}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            receipt["manifestSha256"] = bench._json_hash(manifest)
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            operation_forgery = bench.report_manifest(manifest_path, output)
+            self.assertEqual(operation_forgery["attempts"][0]["status"], "incomplete")
+            phase_spec["requiredOperations"] = []
+            receipt["attempt"]["planSha256"] = plan["planSha256"]
+            receipt.pop("operations")
+            manifest["models"]["claude"] = "different-frozen-model"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            receipt["manifestSha256"] = bench._json_hash(manifest)
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            model_forgery = bench.report_manifest(manifest_path, output)
+            self.assertEqual(model_forgery["attempts"][0]["status"], "incomplete")
+            self.assertEqual(model_forgery["usageGroups"][0]["model"], "claude-sonnet-5-5")
+            receipt["requestedModel"] = "different-frozen-model"
+            receipt["servedModels"] = ["different-frozen-model"]
+            receipt["usage"]["accountingModels"] = ["different-frozen-model"]
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            model_wire_forgery = bench.report_manifest(manifest_path, output)
+            self.assertEqual(model_wire_forgery["attempts"][0]["status"], "incomplete")
+            receipt["requestedModel"] = "claude-sonnet-5-5"
+            receipt["servedModels"] = ["claude-sonnet-5-5"]
+            receipt["usage"]["accountingModels"] = ["claude-sonnet-5-5"]
+            manifest["models"]["claude"] = "claude-sonnet-5-5"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            receipt["manifestSha256"] = bench._json_hash(manifest)
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            skill = root / "native-skill.md"
+            skill.write_text("pinned native skill", encoding="utf-8")
+            phase_spec["requiredWitnessKinds"] = ["native_stream", "native_skill"]
+            phase_spec["requiredWitnesses"] = [{"kind": "native_skill", "path": str(skill),
+                                                  "sha256": bench.base.digest(skill)}]
+            receipt["attempt"]["planSha256"] = bench.phase_plan(
+                workflow, {**workflow["taskContext"], "phase": "setup"},
+                plan_id="spec-kit-frozen")["planSha256"]
+            receipt["skillLoad"] = {"status": "observed", "loads": [
+                {"status": "observed", "skillSha256": bench.base.digest(skill)}]}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            receipt["manifestSha256"] = bench._json_hash(manifest)
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            skill_forgery = bench.report_manifest(manifest_path, output)
+            self.assertEqual(skill_forgery["attempts"][0]["status"], "incomplete")
+            phase_spec["requiredWitnessKinds"] = ["native_stream"]
+            phase_spec["requiredWitnesses"] = []
+            receipt["attempt"]["planSha256"] = plan["planSha256"]
+            receipt["skillLoad"] = {"status": "observed"}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            receipt["manifestSha256"] = bench._json_hash(manifest)
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
             extra = output / "phase-setup-retry-1"
             extra.mkdir()
             retried = bench.report_manifest(manifest_path, output)

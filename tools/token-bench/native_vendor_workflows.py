@@ -124,3 +124,51 @@ def write_registry(path: Path, **kwargs) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return registry
+
+
+def write_real_cell_registry(cells_path: Path, output: Path, *, executable: Path) -> dict:
+    """Render a workflow registry from the four real public-parent pilot cells."""
+    source = json.loads(cells_path.read_text(encoding="utf-8"))
+    if source.get("schema") != "native-real-pilot-preparation/1" or len(source.get("cells", [])) != 4:
+        raise ValueError("real pilot preparation must contain exactly four public cells")
+    workflows = []
+    for cell in source["cells"]:
+        task = cell["publicTask"]
+        project = Path(cell["projectRoot"])
+        if not project.is_dir() or not cell.get("baselineHead"):
+            raise ValueError(f"real cell baseline missing: {cell.get('id')}")
+        public_files = list(task.get("publicTests", [])) + list(task.get("canonicalContracts", []))
+        public_files = [path for path in public_files if (project / path).is_file()]
+        if not public_files:
+            raise ValueError(f"real cell has no public observer files: {cell['id']}")
+        phases = [
+            {"id": "setup", "command": ["--add-dir", str(project)], "prompt": task["request"],
+             "frameworkStage": "native-setup", "requiredOperations": [], "requiredArtifactGlobs": [],
+             "requiredArtifacts": [], "requiredWitnessKinds": ["native_stream"], "costKinds": ["setup"]},
+            {"id": "implement", "command": ["--add-dir", str(project)], "prompt": task["request"],
+             "frameworkStage": "native-implement", "requiredOperations": [], "requiredArtifactGlobs": [],
+             "requiredArtifacts": [], "requiredWitnessKinds": ["native_stream"], "costKinds": ["author"]},
+            {"id": "verify", "command": ["--add-dir", str(project)], "prompt": "Run the declared public tests and preserve the accepted local patch endpoint.",
+             "frameworkStage": "native-verify", "requiredOperations": [], "requiredArtifactGlobs": public_files,
+             "requiredArtifacts": [], "requiredWitnessKinds": ["native_stream"], "costKinds": ["verify"]},
+        ]
+        assets = {}
+        for asset, digest in cell.get("methodAssets", {}).items():
+            candidate = project / asset
+            if not candidate.is_file() or _digest(candidate) != digest:
+                candidate = project / ".native-method" / asset
+            if candidate.is_file() and _digest(candidate) == digest:
+                assets[str(candidate.relative_to(project)).replace("\\", "/")] = digest
+        workflows.append({"id": cell["id"], "version": "real-" + cell["baselineHead"],
+            "framework": cell["method"], "maxFixAttempts": 1, "projectRoot": str(project.resolve()),
+            "taskRefs": [cell["id"]], "pinnedPublicFiles": public_files,
+            "methodAssetDigests": assets,
+            "taskContext": {"task": task["task"], "scope": task["scope"],
+                            "publicTests": task["publicTests"], "request": task["request"]},
+            "native": {"cli": cell["cli"], "executable": str(executable.resolve()),
+                       "baselineHead": cell["baselineHead"], "datasetRegistrySha256": cell["sourceInventorySha256"]},
+            "phases": phases})
+    registry = {"schema": SCHEMA, "version": "real-pilot-1", "workflows": workflows}
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return registry

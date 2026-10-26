@@ -38,7 +38,7 @@ screens:
     url: /?session=studio-fixture
     ignoreQuery: [session, project, run]
     state: stable
-    expect: [{role: region, name: Project proj-two, text: second-run, because: "proj-two joined as its own sidebar card, naming its own team run, second-run"}, {role: banner, name: Top bar, text: proj-two / second-run, because: the top bar reads project / run for the project just added}, {role: region, name: Graph, text: RUN second-run STATUS, because: "Graph shows proj-two's own run, not demo's"}, {role: link, name: demo, because: "demo is still in the same Studio as its own card, so the owner can switch back"}, {role: list, name: Runs in proj-two, absent: true, because: each project is one card with no run list under it}]
+    expect: [{role: region, name: Project proj-two, text: second-run, because: "proj-two joined as its own sidebar card, naming its own team run, second-run"}, {role: banner, name: Top bar, text: proj-two / second-run, because: the top bar reads project / run for the project just added}, {role: region, name: Graph, text: RUN second-run STATUS, because: "Graph shows proj-two's own run, not demo's"}, {role: link, name: demo, because: "demo is still in the same Studio as its own card, so the owner can switch back"}, {role: list, name: Runs in proj-two, absent: true, because: each project is one card with no run list under it}, {role: region, name: Error, absent: true, because: "proj-two's own Runtime serves its run's requests, so the Graph opens without an error box"}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
 edges:
   - id: first.refused

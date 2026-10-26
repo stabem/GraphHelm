@@ -678,6 +678,10 @@ NODE
       git -C "$second" add -A && git -C "$second" -c user.email=demo@example.com -c user.name=demo commit -qm init
     fi
     "$bin" --json init --project "$second" --bind "127.0.0.1:$p2" --harness codex > "$dir/.graphhelm/init-second.json"
+    # #2076: proj-two's Runtime opens its own sealed keyring with its own key. The inherited
+    # GRAPHHELM_EVENTS_KEY is demo's, and with it proj-two's Graph read "the sealed keyring could
+    # not be opened".
+    GRAPHHELM_EVENTS_KEY="$(cat "$rt2/serve.key")" \
     nohup "$bin" serve --events "$rt2/events" --bind "127.0.0.1:$p2" --project "$second" \
       --keyring "$rt2/keyring" --key-id studio > "$dir/.graphhelm/serve-second.out" 2> "$dir/.graphhelm/serve-second.err" &
     echo "serve-second $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"

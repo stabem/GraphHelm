@@ -576,7 +576,9 @@ NODE
     "$bin" --json journey preview "$seeded" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
     key=$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).data||{}; if(d.digest&&d.commit) console.log(d.digest+" "+d.commit)' "$dir/.graphhelm/preview-key.json")
     [ -n "$key" ] || { echo "fixture: no preview key for $seeded" >&2; exit 1; }
-    node "$repo/tools/studio-journey-fixture/seed_run.mjs" "$dir/project" "$seeded" $key > /dev/null
+    # studio2-proof-compare needs Before to differ from Now, so Changes has a region to highlight.
+    differs=; [ "$flow" = studio2-proof-compare ] && differs=--earlier-differs
+    node "$repo/tools/studio-journey-fixture/seed_run.mjs" "$dir/project" "$seeded" $key $differs > /dev/null
   fi
   # #1956: studio2-proof-stale needs a journey edited after its run: its run is seeded under the
   # flow's key, then the flow's purpose is edited and committed, so its digest moves and the
@@ -642,7 +644,10 @@ NODE
   # are signed by the existing planner actor, like studio-work-graph's. The slot holder is a real
   # `workspace slot` running a real `cargo build` of a one-file crate whose build script waits
   # while `slot.hold` exists; `down` removes it and ends the tree, so nothing is faked.
-  if [ "$flow" = studio2-lanes-board ] || [ "$flow" = studio2-lanes-control ]; then
+  # studio2-lanes-reply: the asking planner holds this same open slice, so answering its question
+  # moves it from Blocked to Implement; a lane holding nothing leaves the board once it asks
+  # nothing (#1986), which is not what that flow shows. It needs no slot holder.
+  if [ "$flow" = studio2-lanes-board ] || [ "$flow" = studio2-lanes-control ] || [ "$flow" = studio2-lanes-reply ]; then
     node - "$dir" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "http://127.0.0.1:$rport" "$rt/events.token" <<'NODE'
 const fs = require('fs');
 const [dir, at, runtimeUrl, tokenFile] = process.argv.slice(2);
@@ -678,6 +683,8 @@ const token = fs.readFileSync(tokenFile, 'utf8').trim();
   }
 })().catch(() => { console.error('fixture: task record refused; stop without widening permissions'); process.exit(1); });
 NODE
+  fi
+  if [ "$flow" = studio2-lanes-board ] || [ "$flow" = studio2-lanes-control ]; then
     holder="$dir/slot-holder"
     mkdir -p "$holder/src"
     printf '[package]\nname = "lanes-fixture-holder"\nversion = "0.0.0"\nedition = "2021"\nbuild = "build.rs"\n\n[workspace]\n' > "$holder/Cargo.toml"

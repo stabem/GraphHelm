@@ -91,6 +91,27 @@ test('a text expectation proves what the element says, waits for it, and names w
   assert.equal(both.code,'driver.protocol_invalid');
 });
 
+// #2050: the three waits (present, text, absent) share one screen deadline. Before, a text that
+// never matched, a missing element and a banner that never left each waited their own 25 s, so the
+// screen ended in replay.timeout with nothing seen. Now it fails inside the budget and names all.
+// Cost: one real browser page, ~26 s (the shared deadline itself).
+test('a never-matching text, a missing element and a lingering absent share one screen deadline and all get named',async t=>{
+  const server=createServer((_,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<h2>Agenda para daqui a 1 semana</h2><div role="alert" aria-label="Aviso">ainda aqui</div>');});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const c=await client(t);
+  await open(c,`http://127.0.0.1:${server.address().port}/`);
+  const r=await c.send('snapshot',{expect:[
+    {role:'heading',name:'Agenda para daqui a 1 semana',text:'daqui a 2 dias'},
+    {role:'button',name:'Nao existe'},
+    {role:'alert',name:'Aviso',absent:true}]});
+  assert.equal(r.ok,false,JSON.stringify(r));assert.equal(r.code,'driver.expectation_failed');
+  const [text,missing,lingering]=r.details.checks;
+  assert.equal(text.actual,'Agenda para daqui a 1 semana');assert.equal(text.text,'daqui a 2 dias');assert.equal(text.seen,false);
+  assert.equal(missing.name,'Nao existe');assert.equal(missing.seen,false);
+  assert.equal(lingering.name,'Aviso');
+});
+
 test('exact names, ambiguity, contextual cache and actual supported actions',async t=>{
   const f=await startFixture();t.after(()=>f.close());
   const c=await client(t);await open(c,f.base+'/controls');

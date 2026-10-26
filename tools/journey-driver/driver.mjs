@@ -474,10 +474,14 @@ async function run(r) {
   if (grownFrom && r.op !== 'capture') { const owner=grownFrom; grownFrom=null; await page.setViewportSize(owner); }
   if (r.op === 'snapshot') {
     // Wait concurrently against one shared budget; one absent control must not consume a wait
-    // for every later assertion. Playwright calls may still exceed this nominal deadline.
+    // for every later assertion. #2050: the three phases (present, text, absent) share ONE screen
+    // deadline too, so a never-matching text plus a missing element still end in a finding that
+    // names both, not in replay.timeout. Playwright calls may still exceed this nominal deadline.
+    const screenEnd=Date.now()+SCREEN_WAIT;
+    const left=()=>Math.max(1,screenEnd-Date.now());
     await Promise.all(r.expect.filter(expected => expected.absent !== true).map(async expected => {
       const target=page.getByRole(expected.role,{name:expected.name,exact:true});
-      try { await target.first().waitFor({state:'visible',timeout:SCREEN_WAIT}); }
+      try { await target.first().waitFor({state:'visible',timeout:left()}); }
       catch (err) { if (err.code || err.name!=='TimeoutError') throw err; }
     }));
     // #1781: a present expectation with `text` also waits, on the same budget, until its element
@@ -485,7 +489,7 @@ async function run(r) {
     const actual=new Map();
     await Promise.all(r.expect.filter(expected => typeof expected.text === 'string').map(async expected => {
       const target=page.getByRole(expected.role,{name:expected.name,exact:true}).first();
-      const deadline=Date.now()+SCREEN_WAIT;
+      const deadline=screenEnd;
       for (;;) {
         let held=null;
         try { held=await target.evaluate(el => el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement ? el.value : el.innerText,undefined,{timeout:1000}); }
@@ -500,7 +504,7 @@ async function run(r) {
     // to go away (a banner still closing), so absence is never judged before the page rendered.
     await Promise.all(r.expect.filter(expected => expected.absent === true).map(async expected => {
       const target=page.getByRole(expected.role,{name:expected.name,exact:true});
-      try { await target.first().waitFor({state:'hidden',timeout:SCREEN_WAIT}); }
+      try { await target.first().waitFor({state:'hidden',timeout:left()}); }
       catch (err) { if (err.code || err.name!=='TimeoutError') throw err; }
     }));
     const rawAria=await page.locator('body').ariaSnapshot({timeout:TIMEOUT});

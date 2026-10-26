@@ -81,7 +81,9 @@ fn on_path(program: &str) -> bool {
 
 /// Where Playwright keeps browsers: `PLAYWRIGHT_BROWSERS_PATH`, else the per-OS cache under `home`.
 fn browser_roots(project: &Path, home: &Path) -> Vec<PathBuf> {
-    let local = project.join(TOOLCHAIN_DIR).join("node_modules/playwright-core/.local-browsers");
+    let local = project
+        .join(TOOLCHAIN_DIR)
+        .join("node_modules/playwright-core/.local-browsers");
     if let Some(path) = std::env::var_os("PLAYWRIGHT_BROWSERS_PATH") {
         if path == "0" {
             return vec![local];

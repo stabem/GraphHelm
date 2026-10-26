@@ -207,7 +207,9 @@ def usage(cli: str, raw: str) -> dict:
                 "countsSource": "codex.turn.completed", "accountingStatus": "observed" if counts is not None else "unobserved"}
     else:
         from run import sum_transcript_usage
-        diagnostic_error = None
+        diagnostic_error = ("invalid-assistant-diagnostic" if any(
+            row.get("type") == "assistant" and not isinstance(row.get("message"), dict)
+            for row in records) else None)
         try:
             parsed = sum_transcript_usage(raw.splitlines())
             if parsed.get("parseErrors"):

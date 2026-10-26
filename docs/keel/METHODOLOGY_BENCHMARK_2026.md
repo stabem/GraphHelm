@@ -107,3 +107,28 @@ read its saved native stdout through the current `usage` parser and write a sepa
 derived artifact containing the original manifest/receipt hashes and the new parser's
 revision and digest. Do not rerun models, overwrite old receipts, relabel their first
 outcomes, or present the new parser as the parser used during the original collection.
+
+## Real-project benchmark
+
+`tools/token-bench/real_methodology.py` is a separate, offline instrument for a small
+exploratory cohort of real project defects. It does not replace this subscription pilot
+or reuse its toy cases. A private registry names exactly three frozen task snapshots,
+their production scope and import closure, the original public test, and a private hidden
+oracle. Snapshot roots and oracle roots are external to the checkout; the registry is
+hashed into the frozen manifest.
+
+Qualification must show the parent snapshot's public command green and hidden oracle red,
+then the known-fix snapshot green on both. A weakened or missing oracle fails qualification.
+Each planned cell is one fresh task directory, one of seven profiles, and one native CLI;
+the seeded order is 3 tasks × 7 profiles × 2 CLIs × 1 repeat = 42 cells. The public command
+is always `[sys.executable, "test_public.py"]`. The evaluator restores the original public
+test and copies only declared production scope from the candidate into a clean parent
+template, so changing tests cannot make a result pass. Hidden oracle files and known fixes
+never enter the agent directory.
+
+The runner reserves an attempt ID before invoking a child and never retries or overwrites
+that ID. Provider authentication, quota, cleanup, malformed output, missing usage and
+identity drift leave the cell failed or incomplete; they do not become a passing result.
+The report preserves `passed`, `failed`, `incomplete` and `not-run` separately and emits
+no winner. The cohort is neutral and exploratory: it cannot establish statistical or
+comparative superiority.

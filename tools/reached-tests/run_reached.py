@@ -40,7 +40,8 @@ _BATCH_STOP_REASONS = {"exhausted", "leaseBoundary", "deadline", "childFailure",
 
 
 def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip()
+    return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, creationflags=NO_WINDOW).stdout.strip()
 
 
 def _tail(path: Path) -> str:
@@ -83,7 +84,8 @@ def _selector(repo: Path, base: str, head: str, log: Path, graphhelm: Path | Non
         env["PATH"] = str(graphhelm.parent) + os.pathsep + env.get("PATH", "")
     proc = subprocess.run(
         [sys.executable, str(selector), "--repo", str(repo), "--base", base, "--head", head, "--json"],
-        cwd=repo, capture_output=True, text=True, env=env, creationflags=NO_WINDOW
+        cwd=repo, capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL,
+        creationflags=NO_WINDOW
     )
     log.write_text(proc.stdout + ("\n[selector stderr]\n" + proc.stderr if proc.stderr else ""), encoding="utf-8")
     if proc.returncode:
@@ -214,7 +216,8 @@ def _install_absent_studio(repo: Path, studio: Path) -> None:
     print(f"[reached-tests] {app}/node_modules is absent: npm ci in {studio}", file=sys.stderr, flush=True)
     try:
         proc = subprocess.run([npm, "ci"], cwd=studio, capture_output=True, text=True,
-                              timeout=STUDIO_INSTALL_TIMEOUT, creationflags=NO_WINDOW)
+                              timeout=STUDIO_INSTALL_TIMEOUT, stdin=subprocess.DEVNULL,
+                              creationflags=NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(f"npm ci in {app} failed ({type(exc).__name__})") from exc
     if proc.returncode != 0:
@@ -505,7 +508,8 @@ def _run_parallel(jobs: list[dict[str, Any]], limit: int, env: dict[str, str],
             stream.flush()
             try:
                 proc = subprocess.Popen([exe["executable"], *job["args"]], cwd=exe["cwd"], env=child_env,
-                                        stdout=stream, stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+                                        stdin=subprocess.DEVNULL, stdout=stream,
+                                        stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
             except OSError as exc:
                 stream.write(f"spawn failed: {exc}\n")
                 stream.close()
@@ -665,8 +669,8 @@ def _discovery_output(argv: list[str], cwd: Path, env: dict[str, str], timeout: 
     deadline = time.monotonic() + timeout
     output = bytearray()
     overflow = threading.Event()
-    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
 
     def read():
         try:
@@ -1021,7 +1025,8 @@ def _preflight(repo: Path, output: Path, steps: list[dict[str, Any]],
         if value and not Path(value).exists():
             problems.append(f"env: {name}={value} does not exist")
     for key in ("user.name", "user.email"):
-        if subprocess.run(["git", "config", key], cwd=repo, capture_output=True, text=True, creationflags=NO_WINDOW).returncode != 0:
+        if subprocess.run(["git", "config", key], cwd=repo, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, creationflags=NO_WINDOW).returncode != 0:
             warnings.append(f"identity: git {key} is not set; steps that commit will fail")
     return problems, warnings
 
@@ -1266,7 +1271,9 @@ def run(args: argparse.Namespace) -> int:
                     env["GRAPHHELM_SLOT_BATCH"] = json.dumps(payload, separators=(",", ":"))
                 step_started = time.monotonic()
                 with logfile.open("w", encoding="utf-8") as stream:
-                    proc = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, text=True, env=env, creationflags=NO_WINDOW)
+                    proc = subprocess.run(command, cwd=cwd, stdout=stream, stderr=subprocess.STDOUT,
+                                          text=True, env=env, stdin=subprocess.DEVNULL,
+                                          creationflags=NO_WINDOW)
                 step_seconds = round(time.monotonic() - step_started, 3)
                 elapsed = time.monotonic() - started
                 # #1892: name the slow step as it finishes, not only in the JSON report.

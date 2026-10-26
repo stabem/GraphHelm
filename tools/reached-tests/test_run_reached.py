@@ -336,6 +336,47 @@ class RunnerContracts(unittest.TestCase):
                                           "cwd": ".", "slot": False}]})
         self.assertIn("shell syntax", error)
 
+    @unittest.skipUnless(os.name == "nt", "Windows invalid standard-handle contract")
+    def test_runner_closes_invalid_scheduled_stdin_before_step_spawn(self):
+        """A scheduled pythonw parent with an invalid stdin still runs a child step and writes its log."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            (repo / "fixture.txt").write_text("fixture\n", encoding="utf-8")
+            subprocess.run(["git", "add", "fixture.txt"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@invalid",
+                            "commit", "-qm", "fixture"], cwd=repo, check=True, creationflags=NO_WINDOW)
+            output = root / "report.json"
+            runner = Path(rr.__file__).resolve()
+            step = json.dumps([sys.executable, "-c", "print('step ok')"])
+            code = f"""
+import ctypes, importlib.util, json, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('isolated_runner', {str(runner)!r})
+rr = importlib.util.module_from_spec(spec); spec.loader.exec_module(rr)
+ctypes.windll.kernel32.SetStdHandle(-10, ctypes.c_void_p(0xDEADBEEF))
+rr._selector = lambda *args: {{'steps': [{{'argv': {step}, 'cwd': '.', 'slot': False}}]}}
+rr._git = lambda _repo, *args: 'HEAD' if args and args[0] == 'rev-parse' else ''
+rr._fingerprint = lambda *args: {{'tree': 't', 'tools': {{}}, 'toolsSha256': 'a', 'envSha256': 'b'}}
+rr._preflight = lambda *args: ([], [])
+rr._reusable_results = lambda *args: ({{}}, None)
+args = type('Args', (), {{'repo': {str(repo)!r}, 'output': {str(output)!r}, 'base': 'HEAD', 'head': 'HEAD',
+    'root': {str(root)!r}, 'lane': 'test', 'budget_seconds': 30, 'allow_whole_package': None,
+    'plan': False, 'batch_slot': False, 'keep_going': False, 'parallel_steps': False,
+    'test_threads': 1, 'resume': False, 'skip_preflight': False}})()
+raise SystemExit(rr.run(args))
+"""
+            done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                                  timeout=30, creationflags=NO_WINDOW)
+            self.assertEqual(done.returncode, 0, done.stderr or done.stdout or
+                             (output.read_text(encoding="utf-8") if output.exists() else "no report"))
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["completed"][0]["returncode"], 0)
+            self.assertIn("step ok", (root / "report-steps" / "step-0.log").read_text(encoding="utf-8"))
+
     def test_only_fixed_no_window_powershell_observer_is_admitted(self):
         allowed = {"argv": ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                             "-File", "tools/no-window/test_observe.ps1"], "cwd": ".", "slot": False}

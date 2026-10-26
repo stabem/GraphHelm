@@ -120,6 +120,8 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
   const gone = picked !== null && shownAgent.current?.lane === picked ? { ...shownAgent.current, questions: [], moreQuestions: 0 } : null;
   const selected = all.find((agent) => agent.lane === picked) ?? gone ?? asking[0] ?? all[0] ?? null;
   shownAgent.current = selected;
+  // #2108: a filter that hides the selected agent closes its panel; an agent that left the board (a reply) keeps it.
+  const panelAgent = selected !== null && (!all.some((agent) => agent.lane === selected.lane) || shown.some((agent) => agent.lane === selected.lane)) ? selected : null;
   const pick = (lane: string, focus = false) => {
     setPicked(lane);
     if (focus) requestAnimationFrame(() => replyBox.current?.focus());
@@ -183,20 +185,20 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
         </ul>
         <LanesPanels runtime={runtime} executionId={executionId} board={board} requests={requests ?? []} actions={actions} onAnswer={(lane) => pick(lane, true)} onSent={read} />
       </div>
-      {selected !== null && collapsed && (
+      {panelAgent !== null && collapsed && (
         <aside aria-label="Agent" className="agent-rail">
           <button type="button" className="b rail-toggle" aria-label="Open agent panel" aria-expanded="false" onClick={toggle}><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 4l-4 4 4 4" /></svg></button>
-          <span className={`agent-dot ${selected.questions.length > 0 ? "asks" : idleTone(selected.idleMinutes) === "late" ? "quiet" : "on"}`} title={selected.lane} />
+          <span className={`agent-dot ${panelAgent.questions.length > 0 ? "asks" : idleTone(panelAgent.idleMinutes) === "late" ? "quiet" : "on"}`} title={panelAgent.lane} />
         </aside>
       )}
-      {selected !== null && !collapsed && (
+      {panelAgent !== null && !collapsed && (
         <AgentPanel
           onCollapse={toggle}
-          key={selected.lane}
+          key={panelAgent.lane}
           runtime={runtime}
           executionId={executionId}
-          agent={selected}
-          actions={actions[selected.lane]?.rows ?? null}
+          agent={panelAgent}
+          actions={actions[panelAgent.lane]?.rows ?? null}
           journeys={journeys}
           replyBox={replyBox}
           drafts={drafts.current}

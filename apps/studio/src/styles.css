@@ -501,8 +501,8 @@ button { font: inherit; }
 .cap-fill.slow { background: var(--accent); }
 .cap-fill.late { background: #ff6b6b; }
 .feed li { display: flex; gap: 8px; font-size: 11px; min-width: 0; }
-.feed-who { flex: none; width: 88px; overflow-wrap: anywhere; font-size: var(--fs-meta); }
-.feed li > .muted { overflow-wrap: anywhere; min-width: 0; }
+.feed-who { flex: none; width: 88px; overflow-wrap: break-word; font-size: var(--fs-meta); }
+.feed li > .muted { overflow-wrap: break-word; min-width: 0; }
 @media (max-width: 1100px) { .lane-panels { grid-template-columns: 1fr; } }
 
 /* #1801: the Graph region's owner requests and Kanban. */
@@ -517,7 +517,7 @@ button { font: inherit; }
 .result-merged strong { color: #8b7cff; }
 .result-in-progress strong { color: #ff8a3d; }
 .kanban { display: flex; gap: var(--s3); min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
-.kanban-col { flex: 1 1 var(--col-min); min-width: var(--col-min); display: flex; flex-direction: column; gap: var(--s2); }
+.kanban-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); }
 .kanban-col ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
 .kanban-card { display: flex; flex-direction: column; gap: var(--card-gap); padding: var(--card-pad); border: 1px solid var(--edge); border-radius: var(--card-radius); background: var(--card); overflow-wrap: anywhere; }
 @media (max-width: 760px) {
@@ -537,6 +537,10 @@ button { font: inherit; }
 .review-pickers { display: flex; flex-wrap: wrap; gap: 12px; }
 .review-frame { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .review-frame img { max-width: 100%; height: auto; border: 1px solid var(--edge); }
+/* #2108: a phone frame keeps its own aspect, fitted to the modal height; the toolbar stays on screen while the frame scrolls. */
+.review-frame.phone-fit img { width: auto; max-height: 56vh; }
+.review-frame > .compare-bar { position: sticky; top: -14px; z-index: 1; background: var(--bg); }
+.seg-group .compare-size { flex: none; align-self: center; padding: 0 8px; white-space: nowrap; font-size: 11px; color: var(--muted); }
 .review-url { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
 /* #1903: the Graph view of the approved design (docs/design/studio/Graph.dc.html). */

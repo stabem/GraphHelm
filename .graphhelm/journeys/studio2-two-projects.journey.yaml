@@ -4,8 +4,8 @@ title: Switch between two projects
 name: Switch projects
 feature: Studio
 purpose: "The owner adds a second project folder, proj-two, with the ticket graphhelm studio open --project minted for it; it appears as its own sidebar card in the same Studio with its own team run, second-run, and switching back to demo opens demo's run again, with no run list; a wrong ticket adds nothing."
-status: draft
-approved: null
+status: approved
+approved: {revision: c749e21e07e5083437e360c56a23d0bd6c6d3d32, digest: sha256:888aa66e68c18be1c27a003b6d91210629b45c9b93664d06b5c0a590589164a1}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: [proj_two_folder, proj_two_ticket]

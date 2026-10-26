@@ -578,11 +578,11 @@ button { font: inherit; }
 .gv-bar { display: flex; gap: 3px; flex-wrap: wrap; }
 .gv-sq { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 .gv-sq.small { width: 8px; height: 8px; }
-.gv-issue { width: 24.038%; height: 108px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--edge-strong); background: var(--card); display: flex; flex-direction: column; gap: 4px; text-align: left; }
+.gv-issue { width: 24.038%; min-height: 108px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--edge-strong); background: var(--card); display: flex; flex-direction: column; gap: 4px; text-align: left; }
 .gv-issue[aria-pressed="true"] { border-color: var(--accent); }
 .gv-agent { margin-left: 4px; color: var(--faint); }
 .gv-ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gv-clamp2 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: break-word; line-height: 1.3; }
+.gv-wrap { overflow-wrap: break-word; line-height: 1.3; }
 .gv-jname { font-size: var(--fs-meta); color: var(--faint); gap: 5px; }
 .gv-pr { width: 17.308%; min-height: 52px; padding: 8px 10px; border-radius: 10px; border: 1px solid #2a3b5c; background: #151517; display: flex; flex-direction: column; gap: 2px; }
 .gv-pr.none { border: 1px dashed var(--edge-strong); }
@@ -601,7 +601,6 @@ button { font: inherit; }
   .gv-canvas { padding: 12px; }
   .gv-cols, .gv-links { display: none; }
   .gv-cols, .gv-request { min-width: 0; }
-  .gv-clamp2 { display: block; }
   .gv-request { width: auto; height: auto; display: flex; flex-direction: column; gap: 8px; }
   .gv-node { position: static; }
   .gv-ask, .gv-issue { width: 100%; }
@@ -649,5 +648,6 @@ button { font: inherit; }
 .state-detail summary { cursor: pointer; color: var(--muted); }
 .state-detail summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .state-detail pre { margin: var(--s2) 0 0; font-size: var(--fs-meta); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
-.gv-issue { overflow: hidden; }
-.gv-issue > .gv-row { min-width: 0; overflow: hidden; }
+.gv-pr .gv-ellipsis, .gv-res .gv-ellipsis, .gv-issue .gv-ellipsis { white-space: normal; overflow-wrap: anywhere; }
+.gv-issue > .gv-row { min-width: 0; flex-wrap: wrap; }
+.project.other > .project-folder, .project.other > .project-counts { padding-left: 30px; }

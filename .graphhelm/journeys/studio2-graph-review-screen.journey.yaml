@@ -59,7 +59,7 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: img, name: bad-ticket before, because: the left frame is the bad-ticket screen from the main run}, {role: img, name: bad-ticket now, because: "the right frame is the same screen captured at the PR head, so both can be read at once"}]
+    expect: [{role: img, name: bad-ticket before, because: the left frame is the bad-ticket screen from the main run}, {role: img, name: bad-ticket now, because: "the right frame is the same screen captured at the PR head, so both can be read at once"}, {role: combobox, name: Review screen, text: bad-ticket, because: "both frames are of the screen picked here, studio2-open's bad-ticket"}, {role: figure, name: "Now · PR #721 at 721abcde", because: "the Now frame is the one the fixture recorded for PR #721 at head 721abcde"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
 edges:
   - id: board.modal

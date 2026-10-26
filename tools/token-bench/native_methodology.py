@@ -130,8 +130,19 @@ def frozen_inputs(workflow: dict) -> dict:
         if not path.is_file() or path.is_symlink() or not isinstance(expected, str) or base.digest(path) != expected:
             raise ValueError(f"method asset changed or missing: {path_text}")
         assets[str(path.resolve())] = expected
+    witnesses = []
+    for phase in workflow["phases"]:
+        for witness in phase.get("requiredWitnesses", []):
+            path = Path(witness.get("path", ""))
+            if not path.is_absolute():
+                path = project / path
+            expected = witness.get("sha256")
+            if not path.is_file() or path.is_symlink() or not isinstance(expected, str) or base.digest(path) != expected:
+                raise ValueError(f"required native witness changed or missing: {path}")
+            witnesses.append({"phase": phase["id"], "kind": witness.get("kind"),
+                              "path": str(path.resolve()), "sha256": expected})
     return {"projectRoot": str(project.resolve()), "publicFiles": public, "methodAssets": assets,
-            "taskRefs": list(workflow["taskRefs"])}
+            "taskRefs": list(workflow["taskRefs"]), "requiredWitnesses": witnesses}
 
 
 def native_cli_config(cli: str, executable: Path, model: str, *, project_doc: Path | None = None,
@@ -165,6 +176,7 @@ def phase_plan(workflow: dict, context: dict, *, plan_id: str, predecessor: str 
                "prompt": phase["prompt"], "promptSha256": _json_hash(phase["prompt"]),
                "requiredArtifacts": list(phase.get("requiredArtifacts", [])),
                "requiredWitnessKinds": list(phase.get("requiredWitnessKinds", ["native_stream", "native_skill"])),
+               "requiredWitnesses": list(phase.get("requiredWitnesses", [])),
                "costKinds": list(phase.get("costKinds", [phase["id"]]))} for phase in workflow["phases"]]
     return {"schema": "native-methodology-plan/1", "planId": _safe_id(plan_id, "plan id"),
             "workflow": workflow["id"], "workflowVersion": workflow["version"],
@@ -190,12 +202,18 @@ def phase_attempt(plan: dict, phase_id: str, attempt_id: str, *, retry_of: str |
 
 
 def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path: str,
-                            author: str, reviewer: str, local_git: bool, published: bool = False) -> dict:
+                            author: str, reviewer: str, local_git: bool, published: bool = False,
+                            reviewer_session_path: str | None = None, git_head_path: str | None = None,
+                            task_id: str | None = None) -> dict:
     """Verify an independent local review and evaluator receipt; booleans cannot self-attest."""
     patch = Path(patch_path)
     review = Path(review_path)
     evaluator = Path(evaluator_path)
-    if published or not local_git or not patch.is_file() or not review.is_file() or not evaluator.is_file():
+    reviewer_session = Path(reviewer_session_path) if reviewer_session_path else None
+    git_head = Path(git_head_path) if git_head_path else None
+    if (published or not local_git or not patch.is_file() or not review.is_file() or not evaluator.is_file()
+            or (reviewer_session is not None and not reviewer_session.is_file())
+            or (git_head is not None and not git_head.is_file())):
         return {"status": "incomplete", "reason": "accepted patch endpoint is not independently reviewed local Git"}
     try:
         review_data = base.read(review)
@@ -208,6 +226,14 @@ def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path
             or review_data.get("patchSha256") != patch_sha
             or evaluator_data.get("status") != "passed"):
         return {"status": "incomplete", "reason": "review/evaluator receipt is not bound to this patch"}
+    if task_id is not None and (review_data.get("taskId") != task_id or evaluator_data.get("taskId") != task_id):
+        return {"status": "incomplete", "reason": "review/evaluator task mismatch"}
+    if reviewer_session is not None:
+        if review_data.get("reviewerSessionSha256") != base.digest(reviewer_session):
+            return {"status": "incomplete", "reason": "review session is not bound to verdict"}
+    if git_head is not None:
+        if git_head.read_text(encoding="utf-8").strip() != patch_sha:
+            return {"status": "incomplete", "reason": "local Git head is not bound to accepted patch"}
     return {"status": "observed", "patchPath": str(patch), "patchSha256": patch_sha,
             "reviewPath": str(review), "evaluatorPath": str(evaluator), "published": False}
 
@@ -389,12 +415,15 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     witnesses = [{"kind": "native_stream", "path": str(stdout), "sha256": base.digest(stdout)},
                  {"kind": "native_cli", "path": str(stage / "phase-receipt.json"),
                   "sha256": base.digest(stage / "phase-receipt.json")}]
-    receipt["fidelity"] = fidelity_witnesses(witnesses + [
+    configured_witnesses = list(phase.get("requiredWitnesses", []))
+    receipt["fidelity"] = fidelity_witnesses(witnesses + configured_witnesses + [
         {"kind": "native_artifact", "path": str(project_root / relative), "sha256": digest}
         for relative, digest in required.items()], required_kinds=set(phase["requiredWitnessKinds"]))
-    receipt["status"] = "failed" if provider_error or captured["exit"] != 0 else "incomplete"
-    if captured["timeout"] or not captured["cleanupConfirmed"] or captured["truncated"]:
-        receipt["status"] = "incomplete"
+    native_complete = (not provider_error and captured["exit"] == 0 and not captured["timeout"]
+                       and captured["cleanupConfirmed"] and not captured["truncated"]
+                       and parsed_usage.get("counts") is not None
+                       and receipt["fidelity"].get("status") == "observed")
+    receipt["status"] = "complete" if native_complete else ("failed" if provider_error or captured["exit"] != 0 else "incomplete")
     return receipt
 
 
@@ -411,14 +440,15 @@ def freeze(registry_path: Path, *, cli_paths: dict[str, Path], models: dict[str,
                 "instrumentSha256": base.digest(Path(__file__)), "plannedPhases":
                 [{"workflow": row["id"], "phase": phase["id"],
                   "promptSha256": _json_hash(phase["prompt"]),
-                  "requiredArtifacts": list(phase.get("requiredArtifacts", []))}
+                  "requiredArtifacts": list(phase.get("requiredArtifacts", [])),
+                  "requiredWitnesses": list(phase.get("requiredWitnesses", []))}
                  for row in workflows for phase in row["phases"]],
                 "winner": None}
     base.publish(output, manifest)
     return manifest
 
 
-def report_manifest(manifest_path: Path, attempts_root: Path) -> dict:
+def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict | None = None) -> dict:
     """Read only receipts matching the frozen manifest; missing planned phases remain incomplete."""
     manifest = base.read(manifest_path)
     if manifest.get("instrumentSha256") != base.digest(Path(__file__)):
@@ -442,9 +472,11 @@ def report_manifest(manifest_path: Path, attempts_root: Path) -> dict:
     collection_complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] != "incomplete" for row in rows)
     quality_accepted = collection_complete and all(row["status"] in {"complete", "failed"} for row in rows)
     complete = quality_accepted and all(row["status"] == "complete" for row in rows)
-    return {"schema": "native-methodology-report/2", "complete": complete,
+    endpoint_ok = endpoint is None or endpoint.get("status") == "observed"
+    return {"schema": "native-methodology-report/2", "complete": complete and endpoint_ok,
             "collectionComplete": collection_complete, "qualityAccepted": quality_accepted, "attempts": rows,
-            "winner": None, "limitations": [] if complete else ["missing or incomplete native phase evidence"]}
+            "acceptedEndpoint": endpoint, "winner": None,
+            "limitations": [] if complete and endpoint_ok else ["missing or incomplete native phase evidence"]}
 
 
 def report_attempts(manifest: dict, attempts: list[dict]) -> dict:
@@ -515,6 +547,11 @@ def main() -> int:
     parser.add_argument("--executable", type=Path)
     parser.add_argument("--model")
     parser.add_argument("--prompt", default="")
+    parser.add_argument("--patch")
+    parser.add_argument("--review")
+    parser.add_argument("--evaluator")
+    parser.add_argument("--author", default="native-author")
+    parser.add_argument("--reviewer", default="native-reviewer")
     args = parser.parse_args()
     try:
         if args.command == "qualify":
@@ -532,7 +569,13 @@ def main() -> int:
             freeze(args.registry, cli_paths={args.cli: args.executable}, models={args.cli: args.model}, output=args.output)
             return 0
         if args.command == "report":
-            result = report_manifest(args.manifest, args.output)
+            endpoint = None
+            if args.patch or args.review or args.evaluator:
+                if not all((args.patch, args.review, args.evaluator)):
+                    raise ValueError("endpoint requires patch, review and evaluator receipts")
+                endpoint = accepted_patch_endpoint(patch_path=args.patch, review_path=args.review,
+                    evaluator_path=args.evaluator, author=args.author, reviewer=args.reviewer, local_git=True)
+            result = report_manifest(args.manifest, args.output, endpoint=endpoint)
             print(json.dumps(result, indent=2))
             return 0 if result["complete"] else 1
         if not all((args.manifest, args.workflow, args.cli, args.executable, args.model)):

@@ -160,3 +160,32 @@ sorted relative paths, lengths and content hashes; declared cache paths are the 
 ignored entries, and links/reparse points are rejected unless they resolve to the exact
 declared candidate target. This validation costs O(external dependency bytes) and is
 control/setup time, not agent time; dependencies are not copied into each candidate.
+
+## Native framework workflows
+
+The native workflow instrument is `tools/token-bench/native_methodology.py`. A versioned
+registry names each framework's real phases and native stage names. The common records are
+only evidence boundaries: a Spec Kit workflow may use specify/plan/tasks/converge, an
+OpenSpec workflow may use explore/propose/apply/verify/archive, and another framework may
+have a different sequence. The instrument does not turn these stages into one invented
+uniform process.
+
+Each phase receives a fresh directory, a new stream, an immutable plan, and a phase attempt
+record. Retries link to the earlier attempt; they never replace it. Raw native results and
+their SHA-256 hashes are retained, and a later phase must carry the predecessor hashes.
+The accepted endpoint is an independently reviewed patch in local Git. It is not a public
+GitHub merge or a deployment.
+
+Native CLI configuration keeps project instructions, installed skills, plugins, and native
+session logs enabled. Provider keys and endpoint overrides are still removed from child
+environments. Authentication and quota are checked before every phase. Cleanup, native
+usage, phase costs (setup, planner, author, independent review, fix, verify, archive), and
+the declared maximum fix budget are separate evidence. Missing or uncertain evidence leaves
+the phase incomplete and preserves the prior phase result.
+
+Fidelity requires an observed native stream, CLI invocation, skill initialization/rollout,
+or native artifact with a hash. Model prose claiming that a framework ran is not a witness.
+Owned child sessions must be enumerated and reconciled with unique usage records; missing,
+duplicate, overlapping, or unowned records keep totals unknown. Task context is limited to
+public schema fields and never carries provider credentials, hidden oracles, or private
+source paths.

@@ -132,6 +132,7 @@ class RealMethodologyContracts(unittest.TestCase):
             target = workspace / "apps" / "studio" / "node_modules"
             self.assertTrue(target.exists())
             self.assertEqual(target.resolve(), dependency.resolve())
+            bench.validate_external_links(task, workspace)
 
 
 if __name__ == "__main__":

@@ -175,8 +175,8 @@ def hidden_files(task: dict) -> list[str]:
 
 def mount_path(root: Path, mount: str) -> Path:
     relative = safe_relative(mount)
-    target = (root / Path(*PurePosixPath(relative).parts)).resolve()
-    if root.resolve() not in target.parents:
+    target = root / Path(*PurePosixPath(relative).parts)
+    if root not in target.parents and target != root:
         raise ValueError(f"dependency mount escapes workspace: {mount}")
     return target
 

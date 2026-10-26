@@ -4,8 +4,8 @@ title: "Wake, reassign or stop an agent"
 name: Control an agent
 feature: Studio
 purpose: "On the blocked planner (holding #1556), Stop then Keep running leaves it on the board, Wake records a nudge, Reassign takes #1556 off its card, and Stop then Confirm stop removes it from the board."
-status: draft
-approved: null
+status: approved
+approved: {revision: 2ccdccd8e46b7f76acf42a9698d717247a83d79f, digest: sha256:0dc827ced0008c99f95962f7d20ee5fc107b67e0e98511452f2b68612b7a7cbf}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

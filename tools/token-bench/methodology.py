@@ -207,16 +207,20 @@ def usage(cli: str, raw: str) -> dict:
                 "countsSource": "codex.turn.completed", "accountingStatus": "observed" if counts is not None else "unobserved"}
     else:
         from run import sum_transcript_usage
+        diagnostic_error = None
         try:
             parsed = sum_transcript_usage(raw.splitlines())
+            if parsed.get("parseErrors"):
+                diagnostic_error = "invalid-assistant-diagnostic"
         except (TypeError, ValueError, AttributeError):
             parsed = None
-            parse_errors += 1
+            diagnostic_error = "invalid-assistant-diagnostic"
         models = sorted({row["message"]["model"] for row in records if row.get("type") == "assistant"
                          and isinstance(row.get("message"), dict) and isinstance(row["message"].get("model"), str)})
         result = {"counts": None, "observedModels": models, "parseErrors": parse_errors,
                   "countsSource": "claude.result.modelUsage", "accountingStatus": "unobserved",
-                  "transcriptCounts": parsed, "mainLoopCounts": None, "accountingModels": []}
+                  "transcriptCounts": parsed, "transcriptDiagnosticError": diagnostic_error,
+                  "mainLoopCounts": None, "accountingModels": []}
         terminal = [row for row in records if row.get("type") == "result"]
         if parse_errors or len(terminal) != 1:
             result["accountingStatus"] = "invalid-stream-or-result-count"

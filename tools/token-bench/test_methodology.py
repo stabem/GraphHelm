@@ -42,6 +42,20 @@ class MethodologyContracts(unittest.TestCase):
         self.assertEqual(observed["accountingModels"], ["auxiliary-model", "coding-model"])
         self.assertEqual(observed["observedModels"], ["coding-model"])
 
+    def test_invalid_assistant_diagnostics_do_not_mask_valid_native_totals(self):
+        bad_counter = self.claude_stream()
+        bad_counter[0]["message"]["usage"]["output_tokens"] = "bad"
+        bad_shape = self.claude_stream()
+        bad_shape[0]["message"] = []
+        for stream in (bad_counter, bad_shape):
+            with self.subTest(stream=stream):
+                observed = bench.usage("claude", "\n".join(map(json.dumps, stream)))
+                self.assertEqual(observed["counts"]["output"], 1184)
+                self.assertEqual(observed["mainLoopCounts"]["output"], 1184)
+                self.assertEqual(observed["parseErrors"], 0)
+                self.assertEqual(observed["accountingStatus"], "observed")
+                self.assertEqual(observed["transcriptDiagnosticError"], "invalid-assistant-diagnostic")
+
     def test_claude_incomplete_or_conflicting_native_totals_never_use_transcript_fallback(self):
         missing = self.claude_stream()[:-1]
         duplicate = self.claude_stream()

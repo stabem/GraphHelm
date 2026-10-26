@@ -145,6 +145,18 @@ def frozen_inputs(workflow: dict) -> dict:
             "taskRefs": list(workflow["taskRefs"]), "requiredWitnesses": witnesses}
 
 
+def candidate_tree_hash(root: Path) -> str:
+    """Hash the evolving project candidate without including its Git metadata."""
+    root = root.resolve()
+    entries = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or ".git" in path.parts or path.is_symlink():
+            continue
+        relative = path.relative_to(root).as_posix()
+        entries.append((relative, base.digest(path)))
+    return _json_hash(entries)
+
+
 def native_cli_config(cli: str, executable: Path, model: str, *, project_doc: Path | None = None,
                       extra: list[str] | None = None,
                       graphhelm_env: dict[str, str] | None = None) -> dict:
@@ -534,6 +546,7 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
     output.mkdir(parents=True, exist_ok=True)
     results = []
     predecessor = None
+    predecessor_candidate = None
     fix_attempts = 0
     for ordinal, phase in enumerate(phases):
         if phase["id"] == "fix":
@@ -548,10 +561,14 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
             raise ValueError(f"phase already reserved or completed: {key}")
         base.publish(reservation, {"workflow": workflow_id, "phase": phase["id"], "ordinal": ordinal,
                                    "manifestSha256": _json_hash(manifest)})
-        plan = phase_plan(workflow, {"task": workflow_id + "-task", "scope": workflow["pinnedPublicFiles"],
-                                    "publicTests": workflow["pinnedPublicFiles"],
-                                    "request": prompt_override or phase["prompt"], "phase": phase["id"]},
+        task_context = workflow.get("taskContext", {"task": workflow_id + "-task",
+            "scope": workflow["pinnedPublicFiles"], "publicTests": workflow["pinnedPublicFiles"],
+            "request": prompt_override or phase["prompt"]})
+        plan = phase_plan(workflow, {**task_context, "phase": phase["id"]},
                          plan_id=workflow_id + "-frozen")
+        candidate_before = candidate_tree_hash(Path(workflow["projectRoot"]))
+        if predecessor_candidate is not None and candidate_before != predecessor_candidate:
+            raise ValueError("candidate changed outside a recorded native phase")
         receipt = execute_native_phase(plan, phase["id"], f"{ordinal:03d}", cli_config=cli_config,
                                       prompt=phase["prompt"], root=output,
                                       project_root=Path(workflow["projectRoot"]), ordinal=ordinal,
@@ -559,9 +576,12 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
         receipt["workflow"] = workflow_id
         receipt["phase"] = phase["id"]
         receipt["manifestSha256"] = _json_hash(manifest)
+        receipt["candidateBeforeSha256"] = candidate_before
+        receipt["candidateAfterSha256"] = candidate_tree_hash(Path(workflow["projectRoot"]))
         destination.mkdir(parents=True, exist_ok=False)
         base.publish(receipt_path, receipt)
         predecessor = receipt.get("requiredArtifactHashes", {})
+        predecessor_candidate = receipt["candidateAfterSha256"]
         results.append(receipt)
         if receipt.get("status") != "complete":
             break
@@ -621,8 +641,10 @@ def main() -> int:
         pinned_identity = manifest["identities"][args.cli]
         if str(args.executable.resolve()) != pinned_identity["path"] or args.model != manifest["models"][args.cli]:
             raise ValueError("native executable or model differs from frozen manifest")
-        plan = phase_plan(workflow, {"task": args.workflow + "-task", "scope": workflow["pinnedPublicFiles"], "publicTests": workflow["pinnedPublicFiles"],
-                                    "request": args.prompt or "native workflow phase", "phase": args.phase},
+        task_context = workflow.get("taskContext", {"task": args.workflow + "-task",
+            "scope": workflow["pinnedPublicFiles"], "publicTests": workflow["pinnedPublicFiles"],
+            "request": args.prompt or "native workflow phase"})
+        plan = phase_plan(workflow, {**task_context, "phase": args.phase},
                          plan_id=f"{args.workflow}-frozen")
         identity_record = pinned_identity
         config = native_cli_config(args.cli, Path(identity_record["path"]), manifest["models"][args.cli])

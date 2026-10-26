@@ -1,0 +1,120 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Open the Studio on a project",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-open",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "login.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Project demo\" saying \"demo · 0 agents\", heading \"demo\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "login"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "graph.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows heading \"Produzir build implantável.\", region \"Graph\" saying \"RUN demo STATUS running\", banner \"Top bar\" saying \"demo / demo\", no list \"Runs in demo\", no heading \"Open the Studio from your project\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "graph"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "authentication"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen login not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/sidebar/Sidebar.tsx",
+          "apps/studio/src/sidebar/project-summary.ts",
+          "apps/studio/src/topbar/Topbar.tsx",
+          "apps/studio/src/login/session.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "login",
+        "title": "The ticket opens the demo project"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture"
+        }
+      },
+      "stepId": "login"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen graph not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/sidebar/Sidebar.tsx",
+          "apps/studio/src/sidebar/project-summary.ts",
+          "apps/studio/src/topbar/Topbar.tsx",
+          "apps/studio/src/login/session.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "graph",
+        "title": "The demo team run is open in Graph"
+      },
+      "semanticAction": {
+        "kind": "wait_for",
+        "target": {
+          "geometryClaim": false,
+          "role": "heading",
+          "strategy": "accessible_name",
+          "value": "Produzir build implantável."
+        }
+      },
+      "stepId": "graph"
+    }
+  ],
+  "taskScope": "journey-flow studio2-open path main",
+  "title": "Open the Studio on a project",
+  "version": 1
+}

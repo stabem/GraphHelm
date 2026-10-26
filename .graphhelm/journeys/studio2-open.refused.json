@@ -1,0 +1,114 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Open the Studio on a project",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-open.refused",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "bad-ticket.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows heading \"Open the Studio from your project\"",
+      "statesToObserve": [
+        "error"
+      ],
+      "stepId": "bad-ticket"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "refused.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows heading \"Open the Studio from your project\", no region \"Project demo\", no banner \"Top bar\", no region \"Graph\"",
+      "statesToObserve": [
+        "error"
+      ],
+      "stepId": "refused"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "authentication"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "error"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen bad-ticket not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/login/session.ts",
+          "apps/studio/src/topbar/Topbar.tsx"
+        ],
+        "screenId": "bad-ticket",
+        "title": "A wrong ticket shows how to open the Studio"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=not-a-ticket"
+        }
+      },
+      "stepId": "bad-ticket"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "error"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen refused not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/login/session.ts",
+          "apps/studio/src/topbar/Topbar.tsx"
+        ],
+        "screenId": "refused",
+        "title": "Nothing opens with a wrong ticket"
+      },
+      "semanticAction": {
+        "kind": "inspect",
+        "target": {
+          "geometryClaim": false,
+          "role": "heading",
+          "strategy": "accessible_name",
+          "value": "Open the Studio from your project"
+        }
+      },
+      "stepId": "refused"
+    }
+  ],
+  "taskScope": "journey-flow studio2-open path refused",
+  "title": "Open the Studio on a project",
+  "version": 1
+}

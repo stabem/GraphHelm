@@ -249,7 +249,7 @@ def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path
     if (published or not local_git or not task_id or not reviewer_session_path or not git_head_path
             or not patch.is_file() or not review.is_file() or not evaluator.is_file()
             or (reviewer_session is not None and not reviewer_session.is_file())
-            or (git_head is not None and not git_head.is_file())):
+            or (git_head is not None and not (git_head.is_dir() or git_head.is_file()))):
         return {"status": "incomplete", "reason": "accepted patch endpoint is not independently reviewed local Git"}
     try:
         review_data = base.read(review)
@@ -259,6 +259,17 @@ def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path
     patch_sha = base.digest(patch)
     reviewer_head = review_data.get("gitHead")
     evaluator_head = evaluator_data.get("gitHead")
+    session_rows = []
+    try:
+        for line in reviewer_session.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                session_rows.append(json.loads(line))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"status": "incomplete", "reason": "review session is not valid native JSONL"}
+    session_root_ids = {row.get("rootSessionId") or row.get("session_id")
+                        for row in session_rows if isinstance(row, dict)}
+    native_verdict = next((row for row in session_rows
+                           if isinstance(row, dict) and row.get("verdict") in {"APPROVE", "APPROVE-WITH-RISK"}), None)
     if (review_data.get("verdict") not in {"APPROVE", "APPROVE-WITH-RISK"}
             or review_data.get("reviewer") != reviewer or reviewer == author
             or review_data.get("patchSha256") != patch_sha
@@ -269,28 +280,36 @@ def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path
             or not isinstance(review_data.get("reviewerSessionSha256"), str)
             or not isinstance(review_data.get("reviewerRootSessionId"), str)
             or not isinstance(review_data.get("authorRootSessionId"), str)
-            or review_data["reviewerRootSessionId"] == review_data["authorRootSessionId"]):
+            or review_data["reviewerRootSessionId"] == review_data["authorRootSessionId"]
+            or not isinstance(native_verdict, dict)
+            or native_verdict.get("reviewer") != reviewer
+            or native_verdict.get("taskId") != task_id
+            or native_verdict.get("gitHead") != reviewer_head
+            or native_verdict.get("rootSessionId") not in session_root_ids
+            or native_verdict.get("rootSessionId") != review_data.get("reviewerRootSessionId")):
         return {"status": "incomplete", "reason": "review/evaluator receipt is not bound to this patch"}
     if review_data.get("taskId") != task_id or evaluator_data.get("taskId") != task_id:
         return {"status": "incomplete", "reason": "review/evaluator task mismatch"}
-    if evaluator_data.get("patchSha256") not in {None, patch_sha}:
+    if evaluator_data.get("patchSha256") != patch_sha:
         return {"status": "incomplete", "reason": "evaluator patch digest mismatch"}
     if review_data.get("reviewerSessionSha256") != base.digest(reviewer_session):
         return {"status": "incomplete", "reason": "review session is not bound to verdict"}
-    if git_head.is_dir():
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=git_head,
-                              capture_output=True, text=True, timeout=15,
-                              creationflags=base.NO_WINDOW).stdout.strip()
-    else:
-        head = git_head.read_text(encoding="utf-8").strip()
+    if not git_head.is_dir():
+        return {"status": "incomplete", "reason": "Git HEAD binding must name a repository"}
+    completed = subprocess.run(["git", "rev-parse", "HEAD"], cwd=git_head,
+                               capture_output=True, text=True, timeout=15,
+                               creationflags=base.NO_WINDOW, check=False)
+    head = completed.stdout.strip() if completed.returncode == 0 else ""
     if len(head) != 40 or any(char not in "0123456789abcdef" for char in head.lower()) or head != reviewer_head:
         return {"status": "incomplete", "reason": "local Git head is not bound to accepted patch"}
     return {"status": "observed", "patchPath": str(patch), "patchSha256": patch_sha,
-            "reviewPath": str(review), "evaluatorPath": str(evaluator), "taskId": task_id,
+            "reviewPath": str(review), "evaluatorPath": str(evaluator),
+            "reviewerSessionPath": str(reviewer_session), "gitHeadPath": str(git_head), "taskId": task_id,
             "gitHead": reviewer_head, "reviewerSessionSha256": review_data["reviewerSessionSha256"],
             "reviewerRootSessionId": review_data["reviewerRootSessionId"],
             "authorRootSessionId": review_data["authorRootSessionId"],
-            "evaluatorStatus": evaluator_data["status"], "published": False}
+            "evaluatorStatus": evaluator_data["status"], "author": author, "reviewer": reviewer,
+            "published": False}
 
 
 def reconcile_nested_usage(records: object, *, expected_sessions: list[str], parent_usage: dict | None = None) -> dict:
@@ -657,6 +676,8 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                  and isinstance(row.get("rawSha256"), dict) and bool(row["rawSha256"])
                  and isinstance(row.get("candidateBeforeSha256"), str)
                  and isinstance(row.get("candidateAfterSha256"), str))
+        capture = row.get("capture", {})
+        valid = valid and all(key in capture for key in ("exit", "cleanupConfirmed", "truncated"))
         attempt_id = row.get("attempt", {}).get("attemptId", "")
         raw_dir = attempts_root / f"phase-{planned['phase']}-{attempt_id}"
         for raw_name, raw_hash in row.get("rawSha256", {}).items():
@@ -668,11 +689,31 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         recorded_total = _usage_total(row.get("usage", {}).get("counts"), cli=row.get("cli"))
         if archived_total is None or recorded_total != archived_total:
             valid = False
+        archive = row.get("archivedSession", {})
+        archive_root = Path(archive["archivedRoot"]).parent if isinstance(archive.get("archivedRoot"), str) else None
+        archive_hashes = archive.get("archive")
+        if not archive_root or not isinstance(archive_hashes, dict) or not archive_hashes:
+            valid = False
+        else:
+            valid = valid and all((archive_root / relative).is_file()
+                                  and base.digest(archive_root / relative) == digest
+                                  for relative, digest in archive_hashes.items())
         rows.append({**planned, **row, "status": row.get("status", "incomplete") if valid else "incomplete"})
     collection_complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] != "incomplete" for row in rows)
     quality_accepted = collection_complete and all(row["status"] == "complete" for row in rows)
     complete = quality_accepted and all(row["status"] == "complete" for row in rows)
-    endpoint_ok = (endpoint is not None and endpoint.get("status") == "observed"
+    rebound = None
+    if endpoint is not None and endpoint.get("status") == "observed":
+        try:
+            rebound = accepted_patch_endpoint(
+                patch_path=endpoint["patchPath"], review_path=endpoint["reviewPath"],
+                evaluator_path=endpoint["evaluatorPath"], author=endpoint["author"],
+                reviewer=endpoint["reviewer"], local_git=True,
+                reviewer_session_path=endpoint["reviewerSessionPath"],
+                git_head_path=endpoint["gitHeadPath"], task_id=endpoint["taskId"])
+        except (KeyError, OSError, ValueError, subprocess.SubprocessError):
+            rebound = None
+    endpoint_ok = (rebound is not None and rebound.get("status") == "observed"
                    and isinstance(endpoint.get("taskId"), str) and bool(endpoint["taskId"])
                    and isinstance(endpoint.get("gitHead"), str) and len(endpoint["gitHead"]) == 40
                    and isinstance(endpoint.get("patchSha256"), str) and len(endpoint["patchSha256"]) == 64

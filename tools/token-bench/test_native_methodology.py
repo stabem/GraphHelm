@@ -2,6 +2,7 @@
 import tempfile
 from pathlib import Path
 import sys
+import subprocess
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -139,25 +140,43 @@ class NativeMethodologyContracts(unittest.TestCase):
             review = root / "review.json"
             evaluator = root / "evaluator.json"
             reviewer_session = root / "review-session.jsonl"
-            head_file = root / "HEAD"
+            git_root = root / "review-repo"
+            git_root.mkdir()
+            subprocess.run(["git", "init", "--quiet"], cwd=git_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=git_root, check=True)
+            subprocess.run(["git", "config", "user.name", "native-test"], cwd=git_root, check=True)
+            (git_root / "candidate.txt").write_text("candidate\n", encoding="utf-8")
+            subprocess.run(["git", "add", "candidate.txt"], cwd=git_root, check=True)
+            subprocess.run(["git", "commit", "--quiet", "-m", "candidate"], cwd=git_root, check=True)
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=git_root,
+                                  check=True, capture_output=True, text=True).stdout.strip()
             patch.write_text("local patch\n", encoding="utf-8")
-            reviewer_session.write_text('{"session":"review"}\n', encoding="utf-8")
-            head_file.write_text("a" * 40, encoding="utf-8")
-            review.write_text('{"verdict":"APPROVE","reviewer":"reviewer","patchSha256":"%s","taskId":"task-1","gitHead":"%s","reviewerSessionSha256":"%s","reviewerRootSessionId":"review-root","authorRootSessionId":"author-root"}' % (bench.base.digest(patch), "a" * 40, bench.base.digest(reviewer_session)), encoding="utf-8")
-            evaluator.write_text('{"status":"passed","taskId":"task-1","patchSha256":"%s","gitHead":"%s"}' % (bench.base.digest(patch), "a" * 40), encoding="utf-8")
+            reviewer_session.write_text('{"type":"session_meta","rootSessionId":"review-root"}\n{"verdict":"APPROVE","reviewer":"reviewer","taskId":"task-1","gitHead":"%s","rootSessionId":"review-root"}\n' % head, encoding="utf-8")
+            review.write_text('{"verdict":"APPROVE","reviewer":"reviewer","patchSha256":"%s","taskId":"task-1","gitHead":"%s","reviewerSessionSha256":"%s","reviewerRootSessionId":"review-root","authorRootSessionId":"author-root"}' % (bench.base.digest(patch), head, bench.base.digest(reviewer_session)), encoding="utf-8")
+            evaluator.write_text('{"status":"passed","taskId":"task-1","patchSha256":"%s","gitHead":"%s"}' % (bench.base.digest(patch), head), encoding="utf-8")
             result = bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
                                                    evaluator_path=str(evaluator), author="author",
                                                    reviewer="reviewer", local_git=True,
-                                                   reviewer_session_path=str(reviewer_session), git_head_path=str(head_file), task_id="task-1")
+                                                   reviewer_session_path=str(reviewer_session), git_head_path=str(git_root), task_id="task-1")
             self.assertEqual(result["status"], "observed")
             self.assertFalse(result["published"])
             self.assertEqual(result["taskId"], "task-1")
-            self.assertEqual(result["gitHead"], "a" * 40)
+            self.assertEqual(result["gitHead"], head)
             self.assertEqual(result["evaluatorStatus"], "passed")
-            review.write_text('{"verdict":"APPROVE","reviewer":"author","patchSha256":"%s","taskId":"task-1","gitHead":"%s","reviewerSessionSha256":"%s","reviewerRootSessionId":"author-root","authorRootSessionId":"author-root"}' % (bench.base.digest(patch), "a" * 40, bench.base.digest(reviewer_session)), encoding="utf-8")
+            evaluator.write_text('{"status":"passed","taskId":"task-1","patchSha256":null,"gitHead":"%s"}' % head, encoding="utf-8")
+            self.assertEqual(bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
+                             evaluator_path=str(evaluator), author="author", reviewer="reviewer", local_git=True,
+                             reviewer_session_path=str(reviewer_session), git_head_path=str(git_root), task_id="task-1")["status"], "incomplete")
+            fake_head = root / "fake-head"
+            fake_head.write_text(head, encoding="utf-8")
+            evaluator.write_text('{"status":"passed","taskId":"task-1","patchSha256":"%s","gitHead":"%s"}' % (bench.base.digest(patch), head), encoding="utf-8")
+            self.assertEqual(bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
+                             evaluator_path=str(evaluator), author="author", reviewer="reviewer", local_git=True,
+                             reviewer_session_path=str(reviewer_session), git_head_path=str(fake_head), task_id="task-1")["status"], "incomplete")
+            review.write_text('{"verdict":"APPROVE","reviewer":"author","patchSha256":"%s","taskId":"task-1","gitHead":"%s","reviewerSessionSha256":"%s","reviewerRootSessionId":"author-root","authorRootSessionId":"author-root"}' % (bench.base.digest(patch), head, bench.base.digest(reviewer_session)), encoding="utf-8")
             self.assertEqual(bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
                              evaluator_path=str(evaluator), author="author", reviewer="author", local_git=True,
-                             reviewer_session_path=str(reviewer_session), git_head_path=str(head_file), task_id="task-1")["status"], "incomplete")
+                             reviewer_session_path=str(reviewer_session), git_head_path=str(git_root), task_id="task-1")["status"], "incomplete")
 
     def test_claude_archived_total_allows_cache_context_above_new_input(self):
         """The real Claude nested-session fixture has cache context larger than new input.

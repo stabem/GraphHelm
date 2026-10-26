@@ -4,8 +4,8 @@ title: Run a journey in Proof
 name: Run a journey
 feature: Studio
 purpose: "Pressing Run on the fixture's studio-home journey shows Preparing the browser with a readable log, then the steps run and each step card shows its frame and a pass verdict for web and for mobile."
-status: draft
-approved: null
+status: approved
+approved: {revision: d747031829659af960ca02d926a90691436a1ae5, digest: sha256:113f5a92004083fe471b799eeae0c3a4f93db26b1aabe1d2cf6ca95c7e39c183}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

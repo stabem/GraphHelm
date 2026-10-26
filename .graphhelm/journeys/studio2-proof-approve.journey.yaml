@@ -3,7 +3,7 @@ id: studio2-proof-approve
 title: Approve or reject a run journey
 name: Approve a journey
 feature: Studio
-purpose: Approve and Reject on a fully run journey record the decision and update the journey's status.
+purpose: "On the fully run runtime-health journey, Reject without a reason records nothing, Reject with a reason records the rejection and shows the reason, and a later Approve records the approval; each time the runtime-health row in the journey list shows the new status."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -17,25 +17,38 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Approved}, {role: list, name: Journeys, text: approved, because: "the journey list shows the new status, approved"}]
+    expect: [{role: status, name: Approved, because: the decision bar shows the owner's approval once the Runtime recorded it}, {role: listitem, name: Read the Runtime health, text: approved, because: runtime-health's own row in the journey list now carries the approved status}, {role: button, name: Reject, absent: true, because: an approved journey offers no further decision until its content changes}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/decision.ts]
   - id: ran
     title: A fully run journey offers the decision
     url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: button, name: Approve}, {role: button, name: Reject}]
+    expect: [{role: button, name: Approve, because: "runtime-health has a finished, recorded run and no decision yet, so Approve is offered"}, {role: button, name: Reject, because: the owner can refuse the journey instead of approving it}, {role: textbox, name: Reason for rejecting, because: "a rejection needs a reason, so the bar asks for one beside Reject"}, {role: status, name: Rejected, absent: true, because: each viewport starts from a fixture where runtime-health is undecided}, {role: status, name: Approved, absent: true, because: each viewport starts from a fixture where runtime-health is undecided}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/decision.ts]
+  - id: refused
+    title: Reject without a reason records nothing
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
+    ignoreQuery: [session, project]
+    state: error
+    expect: [{role: status, name: Rejected, absent: true, because: "a rejection with no reason is refused before it reaches the Runtime, so nothing is recorded"}, {role: button, name: Reject, because: the decision is still open after the refusal}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/decision.ts]
   - id: rejected
-    title: A rejected journey shows as rejected
+    title: "A rejected journey shows as rejected, with its reason"
     url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Rejected}, {role: list, name: Journeys, text: rejected, because: "the journey list shows the new status, rejected"}]
+    expect: [{role: status, name: Rejected, text: wrong page, because: "the decision bar shows the rejection with the reason the owner typed, so a later reader knows why"}, {role: listitem, name: Read the Runtime health, text: rejected, because: runtime-health's own row in the journey list now carries the rejected status}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/decision.ts]
 edges:
-  - id: ran.rejected
+  - id: ran.refused
     from: ran
+    to: refused
+    why: "Reject with an empty reason is refused, so a rejection is never recorded without saying why."
+    acts:
+      - {kind: activate, role: button, name: Reject}
+  - id: refused.rejected
+    from: refused
     to: rejected
     why: "Reject with a reason records the owner's rejection, and the journey shows as rejected."
     acts:
@@ -49,5 +62,5 @@ edges:
     acts:
       - {kind: activate, role: button, name: Approve}
 paths:
-  main: [ran.rejected, rejected.approved]
+  main: [ran.refused, refused.rejected, rejected.approved]
 drift: []

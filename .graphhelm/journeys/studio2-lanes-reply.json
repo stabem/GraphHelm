@@ -1,0 +1,114 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Reply to an asking agent",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-lanes-reply",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "asking.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Question\" saying \"staging first\", textbox \"Reply\", listitem \"Needs action item 1\" saying \"planner asks you\", list \"Blocked\" saying \"planner\", button \"1 agent\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "asking"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "answered.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Reply sent\", list \"Implement\" saying \"planner\", button \"1 agent\", no region \"Question\", no button \"Send reply\", no list \"Needs action items\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "answered"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "irreversible_effect"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen asking not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/LanesPanels.tsx",
+          "apps/studio/src/lanes/drafts.ts"
+        ],
+        "screenId": "asking",
+        "title": "The agent's question is shown"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=lanes"
+        }
+      },
+      "stepId": "asking"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen answered not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/LanesPanels.tsx",
+          "apps/studio/src/lanes/drafts.ts"
+        ],
+        "screenId": "answered",
+        "title": "The reply is recorded and the question is gone"
+      },
+      "semanticAction": {
+        "kind": "submit",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Send reply"
+        }
+      },
+      "stepId": "answered"
+    }
+  ],
+  "taskScope": "journey-flow studio2-lanes-reply path main",
+  "title": "Reply to an asking agent",
+  "version": 1
+}

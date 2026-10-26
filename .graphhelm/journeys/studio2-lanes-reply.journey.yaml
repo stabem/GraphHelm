@@ -4,8 +4,8 @@ title: Reply to an asking agent
 name: Reply to an agent
 feature: Studio
 purpose: "Replying to the planner's open question records the owner's answer for it, and the question leaves the planner's card, its panel and Needs action, while the planner, still holding its open slice, moves from Blocked to Implement on the board."
-status: draft
-approved: null
+status: approved
+approved: {revision: 136a7beb3c935f8df90004993f734215287a24f9, digest: sha256:44eab8ddb8bee6fcaf98b90ee250e5c2f267d1090b2ff22801a5af698a7afa81}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

@@ -3590,14 +3590,21 @@ fn execute_events_tail(
     limit: usize,
 ) -> Result<serde_json::Value, execution::Failure> {
     let store = event_store(events_dir).map_err(|error| execution::repository_failure(&error))?;
-    let (_, _, history) = execution::resolve_stream(&store, Some(execution_id))?;
-    let head = history.last().map_or(0, |event| event.sequence);
-    let page: Vec<_> = history
-        .iter()
-        .filter(|event| event.sequence > after)
-        .take(limit)
-        .collect();
-    Ok(serde_json::json!({ "events": page, "head": head }))
+    let (scope, stream_id) = execution::stream_of(execution_id)?;
+    // #1560: borrow the stream and clone only the page. Copying the whole history first made
+    // every page cost the same as the full stream (about 250 ms on a 40k-event run, whatever
+    // `after` and `limit` were), and the Studio pages it about 160 times per load.
+    store
+        .scan_replay_stream(&scope, &stream_id, |history| {
+            let head = history.last().map_or(0, |event| event.sequence);
+            let page: Vec<_> = history
+                .iter()
+                .filter(|event| event.sequence > after)
+                .take(limit)
+                .collect();
+            serde_json::json!({ "events": page, "head": head })
+        })
+        .map_err(|error| execution::repository_failure(&error))
 }
 
 /// Hand-parsed rather than axum's `Query` extractor: a malformed value must still reply the
@@ -8252,6 +8259,77 @@ pub(super) mod tests {
         };
         let message = setup_message(error);
         assert_eq!(message, "the configured manifest could not be read");
+    }
+
+    /// #1560: an events page clones only its page, and answers exactly what slicing the full
+    /// history answered. Credible regression: a page built from a full copy of the stream, which
+    /// made every page cost the whole history (about 250 ms per page on the live 40k-event run).
+    /// The equality is the assertion; the printed timings are the bench (run with `--nocapture`,
+    /// release), never asserted.
+    #[test]
+    fn an_events_page_equals_the_full_history_slice_without_copying_it() {
+        let directory = tempfile::tempdir().unwrap();
+        crate::commands::execution::status::tests::seed(directory.path(), 20_000);
+        // Serve's own setting: warm opens reuse the verified journal, so what a page pays is
+        // the page, not the verification.
+        crate::commands::enable_shared_prefix_cache();
+        let old = |after: u64, limit: usize| {
+            let store = crate::commands::event_store(directory.path()).unwrap();
+            let (_, _, history) =
+                crate::commands::execution::resolve_stream(&store, Some("execution-budget"))
+                    .unwrap_or_else(|_| panic!("the seeded stream resolves"));
+            let head = history.last().map_or(0, |event| event.sequence);
+            let page: Vec<_> = history
+                .iter()
+                .filter(|event| event.sequence > after)
+                .take(limit)
+                .collect();
+            serde_json::json!({ "events": page, "head": head })
+        };
+        let new = |after: u64, limit: usize| {
+            super::execute_events_tail(directory.path(), "execution-budget", after, limit)
+                .unwrap_or_else(|_| panic!("the seeded stream pages"))
+        };
+        for (after, limit) in [
+            (0, 1),
+            (0, 1000),
+            (12_345, 10),
+            (19_999, 1000),
+            (20_000, 10),
+            (u64::MAX, 5),
+        ] {
+            assert_eq!(
+                new(after, limit),
+                old(after, limit),
+                "after={after} limit={limit}"
+            );
+        }
+        assert_eq!(new(0, 1)["head"], 20_000);
+        // Unknown stream: an empty page at head 0, as before.
+        let unknown = super::execute_events_tail(directory.path(), "execution-absent", 0, 10)
+            .unwrap_or_else(|_| panic!("an unknown stream pages empty"));
+        assert_eq!(unknown, serde_json::json!({ "events": [], "head": 0 }));
+        let started = std::time::Instant::now();
+        for _ in 0..20 {
+            drop(crate::commands::event_store(directory.path()).unwrap());
+        }
+        eprintln!("events-page bench open-only: {:?}", started.elapsed() / 20);
+        for (name, read) in [
+            (
+                "full-copy",
+                &old as &dyn Fn(u64, usize) -> serde_json::Value,
+            ),
+            ("borrowed", &new),
+        ] {
+            let started = std::time::Instant::now();
+            for _ in 0..20 {
+                read(19_990, 10);
+            }
+            eprintln!(
+                "events-page bench {name}: {:?} per page over 20k events",
+                started.elapsed() / 20
+            );
+        }
     }
 }
 

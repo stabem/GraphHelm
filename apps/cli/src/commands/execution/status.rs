@@ -777,7 +777,7 @@ fn write_snapshot(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -816,7 +816,7 @@ mod tests {
         }
     }
 
-    fn seed(directory: &std::path::Path, count: u64) {
+    pub(crate) fn seed(directory: &std::path::Path, count: u64) {
         let scope = RepositoryScope::new(
             WorkspaceId::parse(super::super::WORKSPACE).unwrap(),
             ProjectId::parse(super::super::PROJECT).unwrap(),

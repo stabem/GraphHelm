@@ -384,11 +384,24 @@ export function journeyScore(flow: JourneyFlow): { passed: number | null; total:
   const last = flow.lastRun;
   if (last === undefined) return { passed: null, total, bar: none };
   if (last.status === "not_run") return { passed: 0, total, bar: none };
+  // A run of an earlier version, or one that stopped to wait, failed nothing on this version.
+  if (last.flowChanged === true) return { passed: 0, total, bar: none };
   if (last.status === "passed") return { passed: total, total, bar: steps.map((): BarCell => "pass") };
   const failing = last.failingStep;
+  const waits = failing?.reason === "review_needed" || failing?.reason === "confirm_needed";
   const index = failing === null ? -1 : steps.findIndex((step) => (failing.kind === "edge" ? step.edge === failing.id : step.screen === failing.id));
   if (index < 0) return { passed: null, total, bar: none };
-  return { passed: index, total, bar: steps.map((_, i): BarCell => (i < index ? "pass" : i === index ? "fail" : "none")) };
+  return { passed: index, total, bar: steps.map((_, i): BarCell => (i < index ? "pass" : i === index && !waits ? "fail" : "none")) };
+}
+
+/** A HISTORY chip: a run of an earlier version reads stale, a run that stopped before a draft's
+ * commands reads its wait, and only the rest read their pass or failure. */
+export function historyChip(past: JourneyPastRun, stale: boolean): { mark: string; tone: "pass" | "fail" | "idle"; label: string } {
+  if (stale) return { mark: "○", tone: "idle", label: "stale" };
+  const reasons = [past.reason, ...Object.values(past.edges ?? {}).map((edge) => edge.reason)];
+  if (reasons.includes("review_needed")) return { mark: "⏸", tone: "idle", label: "waits for review" };
+  if (reasons.includes("confirm_needed")) return { mark: "⏸", tone: "idle", label: "waits for your confirmation" };
+  return past.result === "pass" ? { mark: "✓", tone: "pass", label: "passed" } : { mark: "✕", tone: "fail", label: "failed" };
 }
 
 /** #1914: the live runs without the one of a panel that went away, so its card reads the list again. */

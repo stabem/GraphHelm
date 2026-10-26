@@ -17,7 +17,7 @@ screens:
     url: /?session=studio-fixture&run=demo&view=lanes&journey=health-broken
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: list, name: Owner requests, text: Fix Broken health check, because: "the request is named after the failing journey, Broken health check"}, {role: list, name: Needs action items, text: "Your request waits for a lane: Fix Broken health check", because: "no lane has taken the request yet, so Needs action lists it as an item that waits for a lane"}, {role: button, name: Hand off a free lane, because: "a request no issue was opened for is a Hand off item; the only lane, planner, waits on the owner, so the item offers it to a free lane"}]
+    expect: [{role: list, name: Owner requests, text: Fix Broken health check, because: "the request is named after the failing journey, Broken health check"}, {role: list, name: Needs action items, text: "Your request waits for a lane: Fix Broken health check", because: "no lane has taken the request yet, so Needs action lists it as an item that waits for a lane"}, {role: button, name: Hand off helper, because: "a request no issue was opened for is a Hand off item; helper is a live lane that holds nothing, so the item names it as the lane to hand the request to"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/asked.ts]
   - id: failed
     title: The run drifted and offers Send to fix with a note

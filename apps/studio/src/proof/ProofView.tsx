@@ -11,7 +11,7 @@ import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./
 import { askedWhen } from "../lanes/asked";
 import { OWNER } from "../runtime/client";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
-import { countSteps, failsOnlyOn, staleCountsText, stepStatusText, isHeld, isWaitingReview, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, staleCountsText, stepStatusText, isHeld, isWaitingReview, journeyKind, journeyScore, journeySteps, lastRunChip, historyChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 import { Empty, Loading, ReadFailure } from "../states/ViewState";
 import { When } from "../time/Stamp";
@@ -384,11 +384,11 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           <pre role="log" aria-label="Run console" className="run-log">{log.length > 0 ? log.join("\n") : busy ? "Waiting for the Runtime's first line…" : NO_LOG}</pre>
         )}
         {history.length > 0 && (
-          <span className="run-history" aria-label="History">
+          <span className="run-history" role="group" aria-label="History">
             <span className="section-label">HISTORY</span>
-            {history.map((past, index) => (
-              <span key={past.run} className={`history-chip${index === 0 ? " newest" : ""}`}><b className={past.result === "pass" ? "pass" : "fail"}>{past.result === "pass" ? "✓" : "✕"}</b> {past.ranAt ? <When at={past.ranAt} /> : past.run}</span>
-            ))}
+            {history.map((past, index) => {
+              const chip = historyChip(past, stale); return <span key={past.run} className={`history-chip${index === 0 ? " newest" : ""}`} title={chip.label}><b className={chip.tone}>{chip.mark}</b>{chip.tone === "idle" ? ` ${chip.label}` : ""} {past.ranAt ? <When at={past.ranAt} /> : past.run}</span>;
+            })}
           </span>
         )}
         {steps.length > 0 && (
@@ -408,7 +408,9 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           <button type="button" className="b act" onClick={() => { setPicked(null); start(run.cliConfirm!.digest); }}>Confirm and run</button>
         </section>
       )}
-      <DecisionBar runtime={runtime} flow={flow} runFinished={finished} stale={stale} onDecided={onRan} />
+      {/* #1956/#2082: an earlier version's run, or a run that stopped to wait, proves nothing about
+          this version: Approve is offered only once this version's commands ran. */}
+      <DecisionBar runtime={runtime} flow={flow} runFinished={finished && !isHeld(run) && !isWaitingReview(run)} stale={stale} onDecided={onRan} />
       <div className="steps-card">
         <ol className="steps" aria-label="Steps">
           {steps.map((step) => (
@@ -499,8 +501,6 @@ function DecisionBar({ runtime, flow, runFinished, stale = false, onDecided }: {
     <div className="decision-bar">
       {decision === "approved" && <span role="status" aria-label="Approved" className="chip pass">Approved</span>}
       {decision === "rejected" && <span role="status" aria-label="Rejected" className="chip fail">Rejected{flow.rejected?.note ? ` · ${flow.rejected.note}` : ""}</span>}
-      {/* #1956: an earlier version's run proves nothing about this one: Approve waits for a Run. */}
-      {stale && <button type="button" className="b act" disabled title="Approve needs a run of the current version">Approve</button>}
       {!stale && offersDecision(flow, runFinished) && (
         <>
           <button type="button" className="b act" disabled={busy} onClick={() => act(() => runtime.approveJourney(flow.id))}>Approve</button>

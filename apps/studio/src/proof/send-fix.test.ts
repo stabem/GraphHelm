@@ -30,6 +30,8 @@ describe("send to fix", () => {
     expect(offersFix({ state: "running" })).toBe(false);
     expect(offersFix({ state: "failed", reason: "app down" })).toBe(false);
     expect(offersFix(null)).toBe(false);
+    // A run that stopped before a draft's commands waits; it failed nothing to fix (#2082).
+    expect(offersFix({ ...failed, edges: { ...failed.edges, "item.done": { result: "skipped", reason: "review_needed" } } })).toBe(false);
   });
 
   it("names one request per run, so the same run is never sent twice", () => {

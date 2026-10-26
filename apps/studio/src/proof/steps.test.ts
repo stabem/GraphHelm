@@ -2,7 +2,7 @@ import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow, JourneyRun } from "../runtime/client";
-import { isProposed, becauseOf, CHANGED, checkMarks, countSteps, earlierVersion, failsOnlyOn, isHeld, isWaitingReview, statusText, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, compareSentence, staleCountsText, stepStatusText, STALE_STEP, preparingStatus, readableName, reasonSentence } from "./steps";
+import { isProposed, becauseOf, CHANGED, checkMarks, countSteps, earlierVersion, failsOnlyOn, historyChip, isHeld, isWaitingReview, statusText, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, compareSentence, staleCountsText, stepStatusText, STALE_STEP, preparingStatus, readableName, reasonSentence } from "./steps";
 
 const flow: JourneyFlow = {
   id: "buy",
@@ -210,6 +210,17 @@ describe("step counts and journey score", () => {
     expect(journeyScore({ ...flow, lastRun: { ...last, status: "failed", failingStep: null } }).passed).toBeNull();
     expect(journeyScore({ ...flow, lastRun: { ...last, status: "passed", failingStep: null } }).passed).toBe(3);
     expect(journeyScore({ ...flow, lastRun: undefined }).passed).toBeNull();
+    // A wait or an earlier version's run marks no step failed (#2082, #1956).
+    const waited = journeyScore({ ...flow, lastRun: { ...last, status: "failed", failingStep: { kind: "edge", id: "item.done", result: "skipped", reason: "review_needed" } } });
+    expect(waited.bar).toEqual(["pass", "pass", "none"]);
+    expect(journeyScore({ ...flow, lastRun: { ...last, status: "passed", flowChanged: true, failingStep: null } }).bar).toEqual(["none", "none", "none"]);
+  });
+
+  it("reads a HISTORY chip as stale, a wait, or the run's own result", () => {
+    expect(historyChip({ run: "r1", result: "pass" }, true)).toMatchObject({ tone: "idle", label: "stale" });
+    expect(historyChip({ run: "r1", result: "fail", edges: { a: { result: "skipped", reason: "review_needed" } } }, false)).toMatchObject({ tone: "idle", label: "waits for review" });
+    expect(historyChip({ run: "r1", result: "pass" }, false)).toMatchObject({ mark: "✓", tone: "pass" });
+    expect(historyChip({ run: "r1", result: "fail" }, false)).toMatchObject({ mark: "✕", tone: "fail" });
   });
 });
 

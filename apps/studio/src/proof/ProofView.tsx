@@ -505,7 +505,7 @@ function DecisionBar({ runtime, flow, runFinished, stale = false, onDecided }: {
           <button type="button" className="b ghost" disabled={busy} onClick={reject}>Reject</button>
         </>
       )}
-      {refusal !== null && <p className="error">{refusal}</p>}
+      {refusal !== null && <p role="alert" aria-label={refusal} className="error">{refusal}</p>}
     </div>
   );
 }

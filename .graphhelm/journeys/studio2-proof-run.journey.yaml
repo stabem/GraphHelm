@@ -9,9 +9,16 @@ approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
-risks: [critical_ux, recovery]
+risks: [critical_ux]
 viewports: [web, mobile]
 screens:
+  - id: framed
+    title: Step 1 has its first frame while the run goes on
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio-home
+    ignoreQuery: [session, project]
+    state: loading
+    expect: [{role: img, name: Step 1 frame, because: "the first viewport reached step 1 and captured it, so its card shows the frame before the whole run ends"}, {role: log, name: Run console, text: Browser observer ready, because: the console the owner opened stays open while the run plays}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
   - id: journeys
     title: A journey is selected and has not run
     url: /?session=studio-fixture&run=demo&view=proof&journey=studio-home
@@ -41,20 +48,24 @@ screens:
     expect: [{role: img, name: Step 1 frame, because: "the finished run captured step 1, and its card shows that frame"}, {role: listitem, name: Step 1, text: web ✓, because: "step 1 passed at the web width, and the card marks web with a check instead of not run"}, {role: listitem, name: Step 1, text: mobile ✓, because: "step 1 passed at the mobile width too, and the card marks mobile with a check"}, {role: status, name: Passed, because: the run bar gives the run's verdict once both widths finished}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
 edges:
+  - id: framed.ran
+    from: framed
+    to: ran
+    why: "When the second viewport finishes too the run bar says Passed and step 1's card marks web and mobile with a check, so the owner knows both widths passed."
+    acts:
+      - {kind: wait_for, role: status, name: Passed}
   - id: journeys.preparing
     from: journeys
     to: preparing
     why: "Run first prepares the browser and says so, so the owner knows the run started."
     acts:
       - {kind: activate, role: button, name: Run}
-  - id: log.ran
+  - id: log.framed
     from: log
-    to: ran
-    why: When the run ends each step card holds its frame and its verdict for web and for mobile.
+    to: framed
+    why: "The run plays step 1 and its card gets the captured frame, so the owner sees progress without reading the log."
     acts:
-      - {kind: wait_for, role: status, name: Running}
       - {kind: wait_for, role: img, name: Step 1 frame}
-      - {kind: wait_for, role: status, name: Passed}
   - id: preparing.log
     from: preparing
     to: log
@@ -62,5 +73,5 @@ edges:
     acts:
       - {kind: activate, role: button, name: Show log}
 paths:
-  main: [journeys.preparing, preparing.log, log.ran]
+  main: [journeys.preparing, preparing.log, log.framed, framed.ran]
 drift: []

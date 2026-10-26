@@ -1,0 +1,113 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "A journey edited since its last run reads changed and keeps that run's frames",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-proof-stale",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "open.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows listitem \"Read the health edited after its run\" saying \"Changed since last run\", button \"Select Read the health edited after its run\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "open"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "changed.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Changed since last run\", list \"Steps\" saying \"STALE\", button \"Run Read the health edited after its run\", img \"Step 1 frame\", region \"Journey run\" saying \"2 stale · this version never ran\", region \"Compare with an earlier run\" saying \"passed on the earlier version; this version has not run\", no button \"Approve\", group \"History\" saying \"stale\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "changed"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen open not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/steps.ts"
+        ],
+        "screenId": "open",
+        "title": "Another journey is selected and the edited journey's card reads changed since the last run"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=proof&journey=runtime-health"
+        }
+      },
+      "stepId": "open"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen changed not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/CompareFrame.tsx",
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/steps.ts",
+          "apps/studio/src/proof/use-journey-run.ts"
+        ],
+        "screenId": "changed",
+        "title": "The header reads changed since the last run and the steps show the earlier frames marked stale"
+      },
+      "semanticAction": {
+        "kind": "wait_for",
+        "target": {
+          "geometryClaim": false,
+          "role": "status",
+          "strategy": "accessible_name",
+          "value": "Changed since last run"
+        }
+      },
+      "stepId": "changed"
+    }
+  ],
+  "taskScope": "journey-flow studio2-proof-stale path main",
+  "title": "A journey edited since its last run reads changed and keeps that run's frames",
+  "version": 1
+}

@@ -4,8 +4,8 @@ title: Clear the Needs action list
 name: Clear needs action
 feature: Studio
 purpose: "Needs action lists the planner's question (the oldest wait) before PR #801 (the newest), and each item's button does its action: Answer opens the reply, and Assign, Merge, Archive and Reassign each take their item off the list."
-status: draft
-approved: null
+status: approved
+approved: {revision: 715d1cbd09203211ceaeb397b4c546f733df88e8, digest: sha256:ec6cc940a4072f9364e64ae930b848160168ddbd9854782f8f1a41d45e0a88d5}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

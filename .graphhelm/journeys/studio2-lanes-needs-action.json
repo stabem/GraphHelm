@@ -1,0 +1,309 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Clear the Needs action list",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-lanes-needs-action",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "list.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Needs action\" saying \"oldest first\", listitem \"Needs action item 1\" saying \"planner asks you\", listitem \"Needs action item 3\" saying \"PR #801 has no reviewer\", button \"Archive lane-gone\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "list"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "answered.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Last action\" saying \"Answering\", textbox \"Reply\", button \"Send reply\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "answered"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "assigned.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Last action\" saying \"Assigned\", no button \"Assign lane-author\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "assigned"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "merged.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Last action\" saying \"Merge requested\", no button \"Merge lane-author\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "merged"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "archived.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Last action\" saying \"Archived\", no button \"Archive lane-gone\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "archived"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "reassigned.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Last action\" saying \"Reassigned\", no button \"Reassign lane-quiet\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "reassigned"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen list not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/LanesPanels.tsx",
+          "apps/studio/src/lanes/panels.ts",
+          "apps/studio/src/lanes/board.ts",
+          "apps/studio/src/lanes/drafts.ts"
+        ],
+        "screenId": "list",
+        "title": "Needs action lists items oldest first"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=lanes"
+        }
+      },
+      "stepId": "list"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen answered not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/LanesPanels.tsx",
+          "apps/studio/src/lanes/panels.ts",
+          "apps/studio/src/lanes/board.ts",
+          "apps/studio/src/lanes/drafts.ts"
+        ],
+        "screenId": "answered",
+        "title": "Answer opens the reply to the asking lane"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Answer planner"
+        }
+      },
+      "stepId": "answered"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen assigned not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/LanesPanels.tsx",
+          "apps/studio/src/lanes/panels.ts",
+          "apps/studio/src/lanes/board.ts",
+          "apps/studio/src/lanes/drafts.ts"
+        ],
+        "screenId": "assigned",
+        "title": "Assign takes the unreviewed PR off the list"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Assign lane-author"
+        }
+      },
+      "stepId": "assigned"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen merged not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/LanesPanels.tsx",
+          "apps/studio/src/lanes/panels.ts",
+          "apps/studio/src/lanes/board.ts",
+          "apps/studio/src/lanes/drafts.ts"
+        ],
+        "screenId": "merged",
+        "title": "Merge takes the approved PR off the list"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Merge lane-author"
+        }
+      },
+      "stepId": "merged"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen archived not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/LanesPanels.tsx",
+          "apps/studio/src/lanes/panels.ts",
+          "apps/studio/src/lanes/board.ts",
+          "apps/studio/src/lanes/drafts.ts"
+        ],
+        "screenId": "archived",
+        "title": "Archive takes the silent reviewer off the list"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Archive lane-gone"
+        }
+      },
+      "stepId": "archived"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen reassigned not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/LanesPanels.tsx",
+          "apps/studio/src/lanes/panels.ts",
+          "apps/studio/src/lanes/board.ts",
+          "apps/studio/src/lanes/drafts.ts"
+        ],
+        "screenId": "reassigned",
+        "title": "Reassign takes the quiet lane's slice off the list"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Reassign lane-quiet"
+        }
+      },
+      "stepId": "reassigned"
+    }
+  ],
+  "taskScope": "journey-flow studio2-lanes-needs-action path main",
+  "title": "Clear the Needs action list",
+  "version": 1
+}

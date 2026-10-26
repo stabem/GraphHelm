@@ -124,6 +124,44 @@ test('fingerprint matches independent skeleton and number normalization',async t
   assert.equal((await c.send('close')).ok,true);
 });
 
+// #2085: a passing check below the fold or inside a sideways-scrolling board must be on the frame
+// the Runtime captures next. The frame's pixels are decoded by a second browser: the green
+// checked button must be where its rect says, not only measured somewhere.
+test('checked elements outside the viewport are scrolled into the captured frame',async t=>{
+  const server=createServer((_,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<body style="margin:0"><h1>Board</h1><div style="height:2400px"></div><div style="overflow-x:auto;width:600px"><div style="width:3000px;height:60px;position:relative"><button style="position:absolute;left:2600px;width:200px;height:60px;background:#00ff00;border:0">Far card</button></div></div><div style="height:2400px"></div></body>`);});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const c=await client(t);
+  await open(c,`http://127.0.0.1:${server.address().port}/`);
+  const snap=await c.send('snapshot',{expect:[{role:'button',name:'Far card'}]});
+  assert.equal(snap.ok,true,JSON.stringify(snap));
+  const rect=snap.result.checks[0].rect;assertRect(rect);
+  assert.equal((await c.send('capture',{path:'far.png',maskSecrets:true})).ok,true);
+  const bytes=await readFile(join(c.output,'far.png'));
+  const {chromium}=createRequire(join(project,'package.json'))('@playwright/test');
+  const browser=await chromium.launch({headless:true});t.after(()=>browser.close());
+  const page=await browser.newPage();
+  const pixel=await page.evaluate(async ([data,cx,cy])=>{const image=new Image();image.src='data:image/png;base64,'+data;await image.decode();const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);return Array.from(ctx.getImageData(Math.floor(cx*image.width),Math.floor(cy*image.height),1,1).data);},[bytes.toString("base64"),rect.x+rect.w*0.05,rect.y+rect.h*0.15]);
+  assert.deepEqual(pixel,[0,255,0,255]);
+  assert.equal((await c.send('close')).ok,true);
+});
+
+// #2085: an <img> check stands for a picture the owner can read. A 1x1 placeholder with the right
+// alt is not seen; a real-size image is.
+test('an img check fails on a tiny placeholder and passes on a real image',async t=>{
+  const tiny='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const real=`<svg xmlns='http://www.w3.org/2000/svg' width='64' height='48'><rect width='64' height='48' fill='%23336'/></svg>`;
+  const server=createServer((_,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<img alt="before" src="data:image/png;base64,${tiny}"><img alt="now" src="data:image/svg+xml,${real}">`);});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const c=await client(t);
+  await open(c,`http://127.0.0.1:${server.address().port}/`,[],{survive:true});
+  const failed=await c.send('snapshot',{expect:[{role:'img',name:'before'},{role:'img',name:'now'}]});
+  assert.equal(failed.ok,false);assert.equal(failed.code,'driver.expectation_failed');
+  assert.deepEqual(failed.details.checks.map(check=>check.seen),[false,true]);
+  assert.equal((await c.send('close')).ok,true);
+});
+
 test('secret fill is observed, text is redacted and independently decoded pixels are masked',async t=>{
   const f=await startFixture();t.after(()=>f.close());
   const secret='CANARY_secret_928147';

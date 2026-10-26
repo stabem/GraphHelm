@@ -504,9 +504,9 @@ FLOW
   if [ "$flow" = studio2-graph-requests ] || [ "$flow" = studio2-graph-review-screen ] || [ "$flow" = studio2-lanes-board ]; then
     # #721 task records use the existing planner actor, so these rows do not create fake agents.
     # Every refusal stops the seed; the fixture token's permissions are never widened.
-    node - "$dir" "$now" "http://127.0.0.1:$rport" "$rt/events.token" <<'NODE'
+    node - "$dir" "$now" "http://127.0.0.1:$rport" "$rt/events.token" "$(cd "$repo" && { pwd -W 2>/dev/null || pwd; })" <<'NODE'
 const fs = require('fs');
-const [dir, at, runtimeUrl, tokenFile] = process.argv.slice(2);
+const [dir, at, runtimeUrl, tokenFile, repoDir] = process.argv.slice(2);
 const runtime = new URL(runtimeUrl);
 if (runtime.protocol !== 'http:' || runtime.hostname !== '127.0.0.1' || !runtime.port || runtime.port === '8793' || runtime.pathname !== '/') {
   throw new Error('fixture: unsafe Runtime URL');
@@ -537,7 +537,13 @@ if (journey[0] === 'studio2-graph-requests') {
 }
 // #1808: the review's Now is the PR head's captured frame (#1839); one for the first screen the\n// modal opens on, studio2-open's bad-ticket (screens are listed by id).
 if (flowId === 'studio2-graph-review-screen') {
-  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  // #2085: a real captured frame, visibly different from the Before (the logged-in Studio against
+  // the bad-ticket refusal), so the modal compares two readable screens. A tiny one stops the seed.
+  const bytes = fs.readFileSync(`${repoDir}/tools/studio-journey-fixture/frames/now.png`);
+  if (bytes.toString('latin1', 1, 4) !== 'PNG' || bytes.readUInt32BE(16) < 1280 || bytes.readUInt32BE(20) < 800 || bytes.length < 4096) {
+    throw new Error('fixture: frames/now.png is not a real captured frame');
+  }
+  const png = bytes.toString('base64');
   records.push(['now-frames', 'task.journey_frames', { taskId: 'issue-721-open', pr: 721, headSha: '721abcde', journey: journey[0],
     result: 'pass', ranAt: at, screens: ['bad-ticket'], lane: 'planner' }, [{ mediaType: 'image/png', base64: png }]]);
 }

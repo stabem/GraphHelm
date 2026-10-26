@@ -55,10 +55,19 @@ export function finishedLanes(board: TasksBoard, includeRequestOnly = true): Set
   // slice (merged or released ones count), owes nothing and asks nothing, so it is no card of the
   // board. It is keyed on what the lane holds, not on missing kind/model (#1986).
   for (const row of includeRequestOnly ? board.liveness.lanes : []) {
-    const touched = board.tasks.some((task) => task.lane === row.lane || task.currentReviewer === row.lane);
+    const touched = board.tasks.some((task) => task.lane === row.lane || task.currentReviewer === row.lane || task.reassignedTo === row.lane);
     if (!touched && !row.owes && !board.waiting.some((ask) => ask.lane === row.lane)) finished.add(row.lane);
   }
   return finished;
+}
+
+/** The newest slice the owner reassigned to `lane` that the lane has not claimed yet: it shows on
+ * the lane's card from the moment the Runtime recorded the reassign. */
+function handedTo(board: TasksBoard, lane: string): BoardTask | null {
+  const claimed = (task: BoardTask) => board.tasks.some((other) => other.lane === lane && other.issue === task.issue && other.releasedBy === undefined && other.lastSequence > task.lastSequence);
+  return board.tasks
+    .filter((task) => task.releasedBy !== undefined && task.reassignedTo === lane && !claimed(task))
+    .sort((a, b) => b.lastSequence - a.lastSequence)[0] ?? null;
 }
 
 /** The board read as one card per lane, in lane order. A lane is any lane the liveness verdicts,
@@ -72,12 +81,13 @@ export function agents(board: TasksBoard): Agent[] {
     if (task.currentReviewer) names.add(task.currentReviewer);
   }
   for (const row of board.waiting) names.add(row.lane);
+  for (const task of board.tasks) if (task.reassignedTo && task.releasedBy !== undefined) names.add(task.reassignedTo);
   const now = Date.parse(board.now);
   const done = finishedLanes(board);
   return [...names].filter((lane) => !done.has(lane)).sort().map((lane) => {
     const owned = board.tasks.filter((task) => open(task) && task.lane === lane).sort((a, b) => b.lastSequence - a.lastSequence);
     const reviewing = board.tasks.filter((task) => open(task) && task.currentReviewer === lane);
-    const task = owned[0] ?? reviewing[0] ?? null;
+    const task = owned[0] ?? reviewing[0] ?? handedTo(board, lane);
     const questions = board.waiting.filter((row) => row.lane === lane);
     const total = questions.reduce((most, row) => Math.max(most, row.laneTotal), 0);
     const liveness = live.get(lane);

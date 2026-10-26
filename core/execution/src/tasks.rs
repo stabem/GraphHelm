@@ -271,6 +271,9 @@ pub struct TaskEventRecord {
     /// sequence, so a slice with no claim (a plan or a PR recorded first) can be released.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slice_key: Option<String>,
+    /// An owner release by slice key may name the lane the work goes to (`reassignedTo`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reassigned_to: Option<String>,
     /// `task.lane_retired`: the lanes it names, and whether it retires (`true`) or restores them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lanes: Option<Vec<String>>,
@@ -472,6 +475,7 @@ impl TaskEventRecord {
             lease_seconds: None,
             released_by: None,
             slice_key: None,
+            reassigned_to: None,
             lanes: None,
             retired: None,
             occurred_at: None,
@@ -831,6 +835,10 @@ pub fn parse_task_event(
             record.lane = Some(text(field("lane"), 128)?);
             record.reason = Some(text(field("reason"), 1000)?);
             record.slice_key = Some(slice_key);
+            record.reassigned_to = match document.get("reassignedTo") {
+                None => None,
+                Some(_) => Some(text(field("reassignedTo"), 128)?),
+            };
             record.released_by = Some(actor_id.to_owned());
         }
         TaskEventKind::RequestRecorded => {
@@ -1418,6 +1426,10 @@ pub struct TaskState {
     /// owner, and the work is free for another lane. Omitted while false.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub orphaned: bool,
+    /// The lane the owner reassigned this released slice to; omitted otherwise. The new lane's
+    /// claim is its own record, so until then this is the only place the hand-over shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reassigned_to: Option<String>,
     /// #1193: the Runtime's time of this slice's original claim, and that claim's lease in
     /// seconds; the overdue state is computed where the Runtime's clock is, never here. Not in
     /// the Studio's type: omitted when absent so the reply adds nothing the fold never writes.
@@ -1539,6 +1551,7 @@ fn new_state(event: &TaskEventRecord) -> TaskState {
         claim_sequence: None,
         released_by: None,
         orphaned: false,
+        reassigned_to: None,
         claimed_at: None,
         lease_seconds: None,
         paths: Vec::new(),
@@ -1915,6 +1928,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             if let Some(index) = found {
                 let slice = &mut slices[index];
                 slice.state.released_by = event.released_by.clone();
+                slice.state.reassigned_to = event.reassigned_to.clone();
                 reset_review_context(&mut slice.state, event.sequence);
                 routes.push(Route {
                     sequence: event.sequence,

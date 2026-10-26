@@ -59,6 +59,9 @@ pub struct TasksView {
     pub retired_lanes: Vec<String>,
     /// #1794 (Studio v2 R3): every question a lane asked that no reply answers yet, oldest first.
     pub waiting: Vec<LaneWaiting>,
+    /// The owner's Needs action and wake notes, so the Studio drops an item once its action is
+    /// recorded.
+    pub owner_notes: Vec<OwnerNote>,
     /// #1981: the owner dispatch notes on the journal (signal id to the lane it names), read from
     /// plaintext. Not served on the tasks routes; the requests route reads it.
     #[serde(skip)]
@@ -96,6 +99,44 @@ pub fn dispatch_notes(
                             at: event.occurred_at.clone(),
                         },
                     )
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Signal-id prefixes of the owner notes the Studio's Needs action reads back: its own Assign,
+/// Merge and Hand off messages, and the Runtime's lane wake.
+pub const OWNER_NOTE_PREFIXES: [&str; 2] = ["studio-need-", "lane-wake-"];
+
+/// One owner note of `OWNER_NOTE_PREFIXES`: its signal id, the lane it names and when the Runtime
+/// appended it. No envelope is opened.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnerNote {
+    pub signal_id: String,
+    pub to: String,
+    pub at: PersistedTimestamp,
+}
+
+/// Every owner `operator_note` whose signal id carries one of `OWNER_NOTE_PREFIXES`, oldest first.
+pub fn owner_notes(history: &[graphhelm_protocols::EventEnvelope]) -> Vec<OwnerNote> {
+    use graphhelm_protocols::PersistedActorType;
+    history
+        .iter()
+        .filter(|event| event.actor.actor_type() == PersistedActorType::Owner)
+        .filter_map(|event| match &event.kind {
+            EventKind::SignalRecorded(record)
+                if record.kind == "operator_note"
+                    && OWNER_NOTE_PREFIXES
+                        .iter()
+                        .any(|prefix| record.signal_id.as_str().starts_with(prefix)) =>
+            {
+                record.to.as_ref().map(|to| OwnerNote {
+                    signal_id: record.signal_id.as_str().to_owned(),
+                    to: to.as_str().to_owned(),
+                    at: event.occurred_at.clone(),
                 })
             }
             _ => None,
@@ -198,6 +239,8 @@ pub struct OpenTasksView {
     pub durations: TaskDurations,
     /// #1794: the open questions, as in the full view.
     pub waiting: Vec<LaneWaiting>,
+    /// The owner's Needs action and wake notes, as in the full view.
+    pub owner_notes: Vec<OwnerNote>,
 }
 
 /// #1516: the `?since=` window of a read: an RFC 3339 instant.
@@ -390,6 +433,7 @@ impl TasksView {
                     backlog: self.backlog,
                     durations,
                     waiting: self.waiting,
+                    owner_notes: self.owner_notes,
                 })
             }
         };
@@ -1239,6 +1283,7 @@ pub(crate) fn read_history(
         backlog,
         retired_lanes: fold.retired_lanes,
         waiting,
+        owner_notes: owner_notes(history),
         dispatch_notes: dispatch_notes(history),
     })
 }

@@ -458,6 +458,50 @@ def report_attempts(manifest: dict, attempts: list[dict]) -> dict:
             "limitations": [] if complete else ["Native fidelity, nested ownership, quota, cleanup, or usage evidence is incomplete"]}
 
 
+def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: Path,
+                 prompt_override: str | None = None) -> list[dict]:
+    """Execute every frozen phase once in order, preserving retries and predecessor hashes."""
+    workflow = next(row for row in manifest["workflows"] if row["id"] == workflow_id)
+    if frozen_inputs(workflow) != manifest["inputs"][workflow_id]:
+        raise ValueError("frozen project or method assets changed")
+    phases = workflow["phases"]
+    output.mkdir(parents=True, exist_ok=True)
+    results = []
+    predecessor = None
+    fix_attempts = 0
+    for ordinal, phase in enumerate(phases):
+        if phase["id"] == "fix":
+            fix_attempts += 1
+            if fix_attempts > workflow["maxFixAttempts"]:
+                raise ValueError("workflow fix budget exceeded")
+        key = f"{workflow_id}--{phase['id']}"
+        destination = output / key
+        receipt_path = destination / "phase-receipt.json"
+        reservation = output / (key + ".reserved")
+        if receipt_path.exists() or reservation.exists():
+            raise ValueError(f"phase already reserved or completed: {key}")
+        base.publish(reservation, {"workflow": workflow_id, "phase": phase["id"], "ordinal": ordinal,
+                                   "manifestSha256": _json_hash(manifest)})
+        plan = phase_plan(workflow, {"task": workflow_id + "-task", "scope": workflow["pinnedPublicFiles"],
+                                    "publicTests": workflow["pinnedPublicFiles"],
+                                    "request": prompt_override or phase["prompt"], "phase": phase["id"]},
+                         plan_id=workflow_id + "-frozen")
+        receipt = execute_native_phase(plan, phase["id"], f"{ordinal:03d}", cli_config=cli_config,
+                                      prompt=phase["prompt"], root=output,
+                                      project_root=Path(workflow["projectRoot"]), ordinal=ordinal,
+                                      predecessor_artifacts=predecessor)
+        receipt["workflow"] = workflow_id
+        receipt["phase"] = phase["id"]
+        receipt["manifestSha256"] = _json_hash(manifest)
+        destination.mkdir(parents=True, exist_ok=False)
+        base.publish(receipt_path, receipt)
+        predecessor = receipt.get("requiredArtifactHashes", {})
+        results.append(receipt)
+        if receipt.get("status") == "incomplete":
+            break
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("qualify", "freeze", "run", "report"))
@@ -491,8 +535,8 @@ def main() -> int:
             result = report_manifest(args.manifest, args.output)
             print(json.dumps(result, indent=2))
             return 0 if result["complete"] else 1
-        if not all((args.manifest, args.workflow, args.phase, args.attempt, args.cli, args.executable, args.model)):
-            raise ValueError("run requires manifest, workflow, phase, attempt, cli, executable and model")
+        if not all((args.manifest, args.workflow, args.cli, args.executable, args.model)):
+            raise ValueError("run requires manifest, workflow, cli, executable and model")
         manifest = base.read(args.manifest)
         workflow = next(row for row in manifest["workflows"] if row["id"] == args.workflow)
         if frozen_inputs(workflow) != manifest["inputs"][args.workflow]:
@@ -506,6 +550,10 @@ def main() -> int:
         identity_record = pinned_identity
         config = native_cli_config(args.cli, Path(identity_record["path"]), manifest["models"][args.cli])
         config["identity"] = identity_record
+        if not args.phase:
+            results = run_workflow(manifest, workflow_id=args.workflow, cli_config=config, output=args.output,
+                                   prompt_override=args.prompt or None)
+            return 0 if results and all(row.get("status") != "incomplete" for row in results) else 1
         phase = next(row for row in plan["phases"] if row["id"] == args.phase)
         receipt = execute_native_phase(plan, args.phase, args.attempt, cli_config=config,
                                       prompt=phase["prompt"], root=args.output,

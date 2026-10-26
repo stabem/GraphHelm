@@ -534,7 +534,8 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
                        and captured["cleanupConfirmed"] and not captured["truncated"]
                        and parsed_usage.get("counts") is not None
                        and receipt["fidelity"].get("status") == "observed"
-                       and skill_load.get("status") == "observed"
+                       and ("native_skill" not in phase["requiredWitnessKinds"]
+                            or skill_load.get("status") == "observed")
                        and archived.get("status") == "observed"
                        and operations.get("status") == "observed" and artifacts_observed
                        and (quota_before is not None and quota_after is not None

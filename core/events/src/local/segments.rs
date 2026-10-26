@@ -41,6 +41,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::sync::Arc;
 
+mod checkpoints;
+
 /// The root entry that holds every segment after the first.
 pub(super) const SEGMENTS_DIR: &str = "segments";
 /// The active segment is sealed before an append once it holds this many bytes. Half of
@@ -136,6 +138,8 @@ enum SegmentEntry {
     Segment(u64),
     Seal(u64),
     State(u64),
+    /// A derived projection checkpoint (#1721 step 2), never read by an open.
+    Checkpoint(u64),
 }
 
 /// Classifies one name under `segments/`. Anything else refuses the store, exactly as an
@@ -160,6 +164,16 @@ fn classify_segment_entry(name: &str) -> Result<SegmentEntry, EventRepositoryErr
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
     {
         return Ok(SegmentEntry::State(index));
+    }
+    if let Some(stem) = name.strip_suffix(".checkpoint.json")
+        && let Some((index, hex)) = stem.split_once('.')
+        && let Some(index) = digits(index)
+        && hex.len() == 64
+        && hex
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Ok(SegmentEntry::Checkpoint(index));
     }
     if let Some(stem) = name.strip_suffix(".jsonl")
         && let Some(index) = digits(stem)
@@ -196,6 +210,7 @@ fn segment_entries(
                 SegmentEntry::Segment(index) => (index, 0),
                 SegmentEntry::Seal(index) => (index, 1),
                 SegmentEntry::State(index) => (index, 2),
+                SegmentEntry::Checkpoint(index) => (index, 3),
             })
         })
         .collect()
@@ -738,31 +753,38 @@ impl LocalEventRepository {
         bytes: &[u8],
     ) -> Result<(), EventRepositoryError> {
         let (temp_name, mut file) = self.create_unique_temp("segment")?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        let path = self.root.join(SEGMENTS_DIR);
-        match link_retained_file_between(
-            &file,
-            &self.temp_handle,
-            &self.root.join(".tmp"),
-            &temp_name,
-            directory,
-            &path,
-            name,
-        ) {
-            Ok(()) => {}
-            Err(EventRepositoryError::IdempotencyConflict) => {
-                let mut existing = open_child_file(directory, &path, name, false, false)?;
-                if read_bounded_file(&mut existing, MAX_SEAL_STATE_BYTES)? != bytes {
-                    return Err(EventRepositoryError::IntegrityAt(
-                        "rotate:segment-file-conflict",
-                    ));
+        // The temp file is removed on EVERY outcome: one left in `.tmp` refuses the next open
+        // of the whole store, so a failed publish must not outlive itself (#1721).
+        let published = (|| {
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            let path = self.root.join(SEGMENTS_DIR);
+            match link_retained_file_between(
+                &file,
+                &self.temp_handle,
+                &self.root.join(".tmp"),
+                &temp_name,
+                directory,
+                &path,
+                name,
+            ) {
+                Ok(()) => Ok(()),
+                Err(EventRepositoryError::IdempotencyConflict) => {
+                    let mut existing = open_child_file(directory, &path, name, false, false)?;
+                    if read_bounded_file(&mut existing, MAX_SEAL_STATE_BYTES)? == bytes {
+                        Ok(())
+                    } else {
+                        Err(EventRepositoryError::IntegrityAt(
+                            "rotate:segment-file-conflict",
+                        ))
+                    }
                 }
+                Err(error) => Err(error),
             }
-            Err(error) => return Err(error),
-        }
+        })();
         remove_planned_file(&self.temp_handle, &self.root.join(".tmp"), &temp_name, file)?;
-        sync_directory_handle(&self.temp_handle)
+        sync_directory_handle(&self.temp_handle)?;
+        published
     }
 }
 

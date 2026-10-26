@@ -482,3 +482,140 @@ impl LocalEventRepository {
         Self::inspect_repository(self.root()).unwrap()
     }
 }
+
+fn checkpoint_names(root: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root.join(SEGMENTS_DIR)) else {
+        return Vec::new();
+    };
+    let mut names = entries
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.ends_with(".checkpoint.json"))
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+/// #1721 step 2: the checkpointed projection of a segmented stream is the full replay's, and
+/// once its checkpoint exists a read never opens the sealed segments behind it again. Segment 0
+/// is overwritten at its sealed length below, so the open still passes and every reader that
+/// walks from genesis is refused at its digest; only the checkpoint can answer.
+#[test]
+fn a_projection_resumes_from_its_seal_checkpoint_without_reading_older_segments() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = rotating(directory.path(), 2);
+    append_batches(&repository, 1, 7);
+    let expected = crate::replay(&scope(), "stream-1", &replay(&repository)).unwrap();
+
+    assert_eq!(
+        repository.project_stream(&scope(), "stream-1").unwrap(),
+        (expected.clone(), 7),
+        "the checkpointed fold equals the replay from genesis"
+    );
+    assert_eq!(
+        checkpoint_names(directory.path()).len(),
+        1,
+        "one checkpoint per stream: each newer seal's checkpoint retires the older one"
+    );
+    drop(repository);
+
+    let journal = directory.path().join("journal.jsonl");
+    let length = std::fs::metadata(&journal).unwrap().len();
+    std::fs::write(&journal, vec![b'x'; usize::try_from(length).unwrap()]).unwrap();
+
+    let reopened = rotating(directory.path(), 2);
+    assert!(
+        reopened.read_replay_stream(&scope(), "stream-1").is_err(),
+        "a reader from genesis meets the overwritten segment 0"
+    );
+    assert_eq!(
+        reopened.project_stream(&scope(), "stream-1").unwrap(),
+        (expected, 7),
+        "the checkpoint answers without segment 0"
+    );
+
+    // The tail past the checkpoint is still folded, event by event.
+    reopened
+        .append_atomic(&request(8, "request-8", 'b'))
+        .unwrap();
+    let (projection, head) = reopened.project_stream(&scope(), "stream-1").unwrap();
+    assert_eq!(head, 8);
+    assert_eq!(projection.stream_id.as_deref(), Some("stream-1"));
+}
+
+/// Checkpoints are disposable: deleted, or corrupted on disk, the next read folds the sealed
+/// segments from the events again and answers exactly what the replay answers.
+#[test]
+fn a_missing_or_corrupt_checkpoint_rebuilds_from_the_events() {
+    let directory = tempfile::tempdir().unwrap();
+    let repository = rotating(directory.path(), 2);
+    append_batches(&repository, 1, 7);
+    let expected = crate::replay(&scope(), "stream-1", &replay(&repository)).unwrap();
+    repository.project_stream(&scope(), "stream-1").unwrap();
+    let names = checkpoint_names(directory.path());
+    assert_eq!(names.len(), 1);
+    let path = directory.path().join(SEGMENTS_DIR).join(&names[0]);
+
+    std::fs::write(&path, b"{}").unwrap();
+    assert_eq!(
+        repository.project_stream(&scope(), "stream-1").unwrap(),
+        (expected.clone(), 7),
+        "a corrupt checkpoint is ignored, never trusted"
+    );
+
+    std::fs::remove_file(&path).unwrap();
+    let reopened = open(directory.path());
+    assert_eq!(
+        reopened.project_stream(&scope(), "stream-1").unwrap(),
+        (expected, 7),
+        "with no checkpoint the fold starts from the first event"
+    );
+    assert_eq!(
+        checkpoint_names(directory.path()),
+        names,
+        "and writes the same checkpoint again"
+    );
+}
+
+/// A handle opened BEFORE another handle rotated the journal follows the new active segment:
+/// its next append lands after the seal, in order, and a fresh open reads one history.
+#[test]
+fn a_handle_opened_before_another_handles_rotation_appends_to_the_new_segment() {
+    let directory = tempfile::tempdir().unwrap();
+    let rotator = rotating(directory.path(), 2);
+    let stale = open(directory.path());
+    append_batches(&rotator, 1, 3);
+    assert_eq!(
+        sealed_names(directory.path()),
+        ["00000000.seal.json"],
+        "the other handle sealed segment 0 after this one was opened"
+    );
+
+    stale.append_atomic(&request(4, "request-4", 'a')).unwrap();
+    drop((rotator, stale));
+
+    let reopened = open(directory.path());
+    let history = replay(&reopened);
+    assert_eq!(
+        history
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        [1, 2, 3, 4]
+    );
+    let segment_one = std::fs::read_to_string(
+        directory
+            .path()
+            .join(SEGMENTS_DIR)
+            .join(segment_file_name(1)),
+    )
+    .unwrap();
+    assert!(
+        segment_one.contains("request-4"),
+        "the stale handle's append is in segment 1, not in the sealed segment 0"
+    );
+    assert!(
+        !std::fs::read_to_string(directory.path().join("journal.jsonl"))
+            .unwrap()
+            .contains("request-4")
+    );
+}

@@ -623,3 +623,107 @@ fn a_backup_is_not_blocked_by_another_reader() {
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["data"]["lockHeld"], json!(true), "{value}");
 }
+
+/// #1721: a SEGMENTED local store backs up through the CLI to the single-file history its
+/// segments add up to, and that archive restores to a store that opens with every event.
+///
+/// The store rotates for real: no test seam reaches this crate, so the fixture appends past the
+/// production threshold (100,000 events in the active segment) and one more batch seals it.
+/// That costs about six minutes in a debug build, so it is opt-in: run it with `--ignored`
+/// when backup, restore or the segment layout changes.
+#[test]
+#[ignore = "rotates for real at 100,000 events: about six minutes in a debug build"]
+fn a_segmented_store_round_trips_through_backup_and_restore() {
+    struct Ids(std::sync::atomic::AtomicU64);
+    impl graphhelm_protocols::IdGenerator for Ids {
+        fn next_id(&self, prefix: &'static str) -> String {
+            let next = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            format!("{prefix}-{next}")
+        }
+    }
+    let open = |root: &Path| {
+        graphhelm_events::LocalEventRepository::open(
+            root,
+            std::sync::Arc::new(graphhelm_protocols::FixedClock(
+                chrono::DateTime::parse_from_rfc3339("2026-10-26T12:00:00Z")
+                    .unwrap()
+                    .into(),
+            )),
+            std::sync::Arc::new(Ids(std::sync::atomic::AtomicU64::new(1))),
+        )
+        .unwrap()
+    };
+    let scope = graphhelm_protocols::RepositoryScope::new(
+        graphhelm_protocols::WorkspaceId::parse("workspace-1").unwrap(),
+        graphhelm_protocols::ProjectId::parse("project-1").unwrap(),
+        Some(graphhelm_protocols::ExecutionId::parse("execution-1").unwrap()),
+    );
+    let event = |key: String| {
+        graphhelm_protocols::NewEvent::new(
+            graphhelm_protocols::OpaqueId::parse(key).unwrap(),
+            graphhelm_protocols::PersistedActor::new(
+                graphhelm_protocols::PersistedActorType::System,
+                graphhelm_protocols::ActorId::parse("system-1").unwrap(),
+            ),
+            graphhelm_protocols::Sensitivity::Internal,
+            graphhelm_protocols::EventKind::GraphImported(graphhelm_protocols::GraphImported {
+                source_sha256: graphhelm_protocols::RawSha256::parse("a".repeat(64)).unwrap(),
+                source_kind: graphhelm_protocols::GraphSourceKind::GraphDocument,
+            }),
+            vec![],
+            vec![],
+        )
+    };
+
+    let directory = TempDir::new().unwrap();
+    let source = directory.path().join("source");
+    let store = open(&source);
+    let mut next = 1_u64;
+    // 100 events a batch: a batch must stay under the store's per-batch validation budget.
+    for batch in 0..1_001_u64 {
+        let size = if batch == 1_000 { 1 } else { 100 };
+        let events = (0..size)
+            .map(|offset| event(format!("request-{}", next + offset)))
+            .collect();
+        let request = graphhelm_events::PreparedAppend::new(
+            scope.clone(),
+            graphhelm_protocols::OpaqueId::parse("stream-1").unwrap(),
+            next,
+            events,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        store
+            .append_atomic(&request)
+            .unwrap_or_else(|error| panic!("batch {batch}: {error:?}"));
+        next += size;
+    }
+    let expected = store.read_replay_stream(&scope, "stream-1").unwrap();
+    drop(store);
+    assert_eq!(expected.len(), 100_001);
+    assert!(
+        source.join("segments").join("00000000.seal.json").is_file(),
+        "HARNESS-BROKE: the source never rotated, so this would back up a single-file store"
+    );
+
+    let archive = directory.path().join("store.ghbak");
+    let (code, value) = back_up(&source, &archive);
+    assert_eq!(code, 0, "{value}");
+    let restored = directory.path().join("restored");
+    let (code, value) = restore(&restored, &archive);
+    assert_eq!(code, 0, "{value}");
+
+    assert_eq!(
+        fs::read(restored.join("journal.jsonl")).unwrap(),
+        graphhelm_events::concatenated_journal(&source).unwrap(),
+        "the archive holds the segments concatenated in order"
+    );
+    assert_eq!(
+        open(&restored)
+            .read_replay_stream(&scope, "stream-1")
+            .unwrap(),
+        expected,
+        "the restored store opens and replays every event of the segmented source"
+    );
+}

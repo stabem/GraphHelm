@@ -24,7 +24,7 @@ use graphhelm_protocols::{
     Sensitivity, SimulationStatus,
 };
 
-use super::{Failure, RecordedOutcome, execution_state, replay_failure, repository_failure};
+use super::{Failure, RecordedOutcome, execution_state, repository_failure};
 use crate::commands::UuidIds;
 
 /// The nodes a `resume` held and the actor whose decision releasing them is.
@@ -361,10 +361,12 @@ fn reread(
     scope: &RepositoryScope,
     stream: &str,
 ) -> Result<ExecutionProjection, Failure> {
-    let history = store
-        .read_replay_stream(scope, stream)
-        .map_err(|error| repository_failure(&error))?;
-    graphhelm_events::replay(scope, stream, &history).map_err(|error| replay_failure(&error))
+    // #1721: resumed from the stream's newest seal checkpoint, so a pass never refolds sealed
+    // history and a stream past `MAX_READ_ALL` is still driven.
+    store
+        .project_stream(scope, stream)
+        .map(|(projection, _)| projection)
+        .map_err(|error| repository_failure(&error))
 }
 
 fn append_event(

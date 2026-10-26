@@ -39,8 +39,12 @@ class MethodologyContracts(unittest.TestCase):
                                                             "message": "authentication required"}})
         claude = json.dumps({"type": "result", "is_error": True,
                              "subtype": "error_during_execution", "result": "rate limit reached"})
+        claude_errors = json.dumps({"type": "result", "is_error": True,
+                                    "subtype": "error_during_execution",
+                                    "errors": ["Rate limit reached"]})
         self.assertEqual(bench.native_provider_error("codex", codex, "")["code"], "unauthorized")
         self.assertEqual(bench.native_provider_error("claude", claude, "")["code"], "error_during_execution")
+        self.assertEqual(bench.native_provider_error("claude", claude_errors, "")["code"], "error_during_execution")
 
     def claude_stream(self, *, auxiliary=False):
         usage = {"input_tokens": 6, "output_tokens": 1184,

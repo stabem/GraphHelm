@@ -75,6 +75,9 @@ def native_provider_error(cli: str, stdout: str, stderr: str) -> dict | None:
                     code = details.get("code")
                 elif kind == "result" and record.get("is_error") is True:
                     message = record.get("result", "")
+                    errors = record.get("errors")
+                    if isinstance(errors, list):
+                        message = " ".join(str(item) for item in errors)
                     code = record.get("subtype")
                 else:
                     continue

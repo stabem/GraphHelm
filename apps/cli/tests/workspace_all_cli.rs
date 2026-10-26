@@ -41,18 +41,19 @@ fn link_dir(link: &Path, target: &Path) {
     std::os::unix::fs::symlink(target, link).unwrap();
 }
 
-/// A long-lived hidden child whose current directory is `dir`.
+/// A long-lived hidden child whose current directory is `dir`: it outlives any loaded run (the test
+/// kills it), so its own exit never reads as the sweep stopping it.
 fn hold(dir: &Path) -> std::process::Child {
     #[cfg(windows)]
     let mut command = {
         let mut c = graphhelm_process::command("ping");
-        c.args(["-n", "120", "127.0.0.1"]);
+        c.args(["-n", "1200", "127.0.0.1"]);
         c
     };
     #[cfg(not(windows))]
     let mut command = {
         let mut c = graphhelm_process::command("sleep");
-        c.arg("120");
+        c.arg("1200");
         c
     };
     command

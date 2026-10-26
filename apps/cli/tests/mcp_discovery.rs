@@ -177,6 +177,25 @@ impl Bridge {
         Self::from_child(child)
     }
 
+    fn start_project_with_budget(project: &Path, registry: &Path, budget: Duration) -> Self {
+        let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["mcp", "--discover", "--project"])
+            .arg(project)
+            .args(["--actor", "project-discovery-test"])
+            .env("GRAPHHELM_RUNTIME_DIR", registry)
+            .env(
+                "GRAPHHELM_MCP_HEALTH_BUDGET_SECONDS",
+                budget.as_secs().to_string(),
+            )
+            .env_remove("GRAPHHELM_API_TOKEN")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        Self::from_child(child)
+    }
+
     fn start_in_project_cwd(project: &Path, registry: &Path) -> Self {
         let child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
             .args(["mcp", "--discover", "--actor", "project-discovery-test"])
@@ -513,7 +532,9 @@ fn project_discovery_skips_superseded_and_tokenless_records_before_probing() {
         )
         .unwrap();
     }
-    let mut bridge = Bridge::start_project(&project, &registry);
+    // The proof is which records are probed, not a speed: a scaled budget cannot expire on load.
+    let mut bridge =
+        Bridge::start_project_with_budget(&project, &registry, scaled(Duration::from_secs(60)));
     let reply = bridge.list();
     assert!(
         authorized(&reply),

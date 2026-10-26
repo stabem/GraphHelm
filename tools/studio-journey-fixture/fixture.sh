@@ -522,9 +522,11 @@ NODE
   # #1808: the Proof compare and the review's Before read a finished run of the
   # flow kept in the project; seed_run.mjs writes one (current + one earlier), bound to the flow's
   # digest and commit as the preview route reports them.
-  if [ "$flow" = studio2-graph-review-screen ] || [ "$flow" = studio2-proof-compare ]; then
-    # #2076: the review flow's issue names studio2-open (above), so that is the run it compares.
-    seeded=$flow; [ "$flow" = studio2-graph-review-screen ] && seeded=studio2-open
+  # #2076: the review flow's issue names studio2-open (above), so that is the run it compares.
+  # studio2-proof-compare reads the seeded run of runtime-health, never its own: previewing the flow
+  # replaces its own run, so it would compare against the run that is playing it.
+  seeded=; case "$flow" in studio2-graph-review-screen) seeded=studio2-open ;; studio2-proof-compare) seeded=runtime-health ;; esac
+  if [ -n "$seeded" ]; then
     "$bin" --json journey preview "$seeded" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
     key=$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).data||{}; if(d.digest&&d.commit) console.log(d.digest+" "+d.commit)' "$dir/.graphhelm/preview-key.json")
     [ -n "$key" ] || { echo "fixture: no preview key for $seeded" >&2; exit 1; }

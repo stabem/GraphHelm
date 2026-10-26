@@ -3,7 +3,7 @@ id: studio2-proof-compare
 title: Compare Before and Now on a step
 name: Compare a step
 feature: Studio
-purpose: "On a step with history, Overlay with the slider, Side by side and Changes show Before against Now, at web and at mobile."
+purpose: "On a step with an earlier run (the fixture's runtime-health, run now and an hour ago), Side by side, Overlay with its slider and Changes show Before against Now, for the web frame and for the mobile frame."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -13,54 +13,66 @@ risks: [critical_ux, accessibility]
 viewports: [web, mobile]
 screens:
   - id: changes
-    title: "Now with the changed regions highlighted, at web width"
-    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-compare
+    title: "Now with the changed regions highlighted, on the web frame"
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: img, name: "Now, changed regions highlighted"}, {role: region, name: Compare frame, text: "800", because: "the web frame is 1280 by 800, and the frame label shows the 800"}]
+    expect: [{role: img, name: "Now, changed regions highlighted", because: "Changes draws the Now frame with the regions that differ from Before marked, so the owner sees what moved without flipping images"}, {role: region, name: Compare frame, text: 1280 × 800, because: "the web frame was captured at 1280 by 800, and the frame label names that size, so the owner knows which capture is shown"}, {role: slider, name: Now opacity, absent: true, because: the opacity slider belongs to Overlay only; Changes replaced it}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
   - id: mobile
-    title: The same compare at mobile width
-    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-compare
+    title: The same compare on the mobile frame
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: img, name: "Now, changed regions highlighted"}, {role: region, name: Compare frame, text: "844", because: "the mobile frame is 390 by 844, and the frame label shows the 844"}]
+    expect: [{role: img, name: "Now, changed regions highlighted", because: the Changes mode stays on when the owner switches to the mobile frame}, {role: region, name: Compare frame, text: 390 × 844, because: "the mobile frame was captured at 390 by 844, and the frame label now names that size instead of 1280 × 800"}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
+  - id: moved
+    title: Moving the slider changes how much of Now shows
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: slider, name: Now opacity, text: "100", because: "the owner moved the slider to the end, so Now covers Before completely; a slider that ignored the move would still read 50"}, {role: img, name: Step 1 before, because: Before stays under Now while the slider moves}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
   - id: overlay
     title: Now over Before with a slider
-    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-compare
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: slider, name: Now opacity}]
+    expect: [{role: slider, name: Now opacity, text: "50", because: "Overlay opens with Now half see-through over Before, so both are visible at once"}, {role: img, name: Step 1 before, because: Overlay draws the earlier run's frame underneath}, {role: img, name: Step 1 now, because: Overlay draws this run's frame on top of Before}, {role: group, name: Before and Now side by side, absent: true, because: Overlay replaces the side-by-side pair with one stacked frame}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
   - id: side
     title: Before and Now side by side
-    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-compare
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: group, name: Before and Now side by side}]
+    expect: [{role: group, name: Before and Now side by side, text: Before, because: "the pair is labelled, so the owner knows which half is the earlier run"}, {role: img, name: Step 1 before, because: the left half is step 1 as the earlier run captured it}, {role: img, name: Step 1 now, because: the right half is step 1 as this run captured it}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
   - id: step
     title: A step with history offers the compare
-    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-compare
+    url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Compare with an earlier run}, {role: button, name: Frame}, {role: button, name: Side by side}, {role: button, name: Overlay}, {role: button, name: Changes}]
+    expect: [{role: region, name: Compare with an earlier run, because: "runtime-health has an earlier run, so the step offers a comparison with it"}, {role: button, name: Side by side, because: Side by side is one of the three ways to compare Before and Now}, {role: button, name: Overlay, because: Overlay is one of the three ways to compare Before and Now}, {role: button, name: Changes, because: Changes is one of the three ways to compare Before and Now}, {role: region, name: Compare frame, text: 1280 × 800, because: "the compare opens on the web frame, captured at 1280 by 800"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/CompareFrame.tsx, apps/studio/src/proof/compare.ts]
 edges:
   - id: changes.mobile
     from: changes
     to: mobile
-    why: "Mobile shows the same compare at phone width, so a change is checked on both sizes."
+    why: "The Mobile frame button shows the same compare on the mobile capture, so a change is checked at both sizes the run recorded."
     acts:
       - {kind: activate, role: button, name: Mobile}
-      - {kind: wait_for, role: img, name: "Now, changed regions highlighted"}
-  - id: overlay.changes
-    from: overlay
+  - id: moved.changes
+    from: moved
     to: changes
     why: Changes highlights the regions that differ between Before and Now.
     acts:
       - {kind: activate, role: button, name: Changes}
+  - id: overlay.moved
+    from: overlay
+    to: moved
+    why: "Dragging the slider to the end shows only Now, so the owner can flick between Before and Now in place."
+    acts:
+      - {kind: enter_text, role: slider, name: Now opacity, text: "100"}
   - id: side.overlay
     from: side
     to: overlay
@@ -74,5 +86,5 @@ edges:
     acts:
       - {kind: activate, role: button, name: Side by side}
 paths:
-  main: [step.side, side.overlay, overlay.changes, changes.mobile]
+  main: [step.side, side.overlay, overlay.moved, moved.changes, changes.mobile]
 drift: []

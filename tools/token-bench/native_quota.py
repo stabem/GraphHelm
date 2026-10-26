@@ -131,11 +131,12 @@ def codex_allowance(executable: Path, cwd: Path, *, timeout: float = 20, cutoff:
         return {"allowed": False, "reason": str(error), "paidFallbackAuthorized": False}
     finally:
         if process is not None:
+            cleanup_error = None
             if process.stdin:
                 try:
                     process.stdin.close()
-                except OSError:
-                    pass
+                except OSError as error:
+                    cleanup_error = error
             try:
                 process.wait(timeout=3)
             except subprocess.TimeoutExpired:
@@ -145,3 +146,5 @@ def codex_allowance(executable: Path, cwd: Path, *, timeout: float = 20, cutoff:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=3)
+            if cleanup_error is not None:
+                raise cleanup_error

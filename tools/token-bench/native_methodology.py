@@ -239,7 +239,11 @@ def phase_attempt(plan: dict, phase_id: str, attempt_id: str, *, retry_of: str |
                   stage_root: str | None = None) -> dict:
     """Reserve one fresh phase stream; retry links point to a prior attempt and never replace it."""
     _safe_id(attempt_id, "attempt id")
-    phase = next((item for item in plan["phases"] if item["id"] == phase_id), None)
+    phase = None
+    for planned_phase in plan["phases"]:
+        if planned_phase["id"] == phase_id:
+            phase = planned_phase
+            break
     if phase is None:
         raise ValueError(f"phase is not in plan: {phase_id}")
     if retry_of == attempt_id:
@@ -669,7 +673,11 @@ def _usage_total(value: object, *, cli: str | None = None) -> dict | None:
                "cacheWrite": ("cacheWrite", "cache_creation_input_tokens")}
     result = {}
     for target, keys in aliases.items():
-        found = next((value[key] for key in keys if key in value), None)
+        found = None
+        for key in keys:
+            if key in value:
+                found = value[key]
+                break
         if type(found) is not int or found < 0:
             return None
         result[target] = found
@@ -872,12 +880,13 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         except (KeyError, OSError, ValueError, subprocess.SubprocessError):
             rebound = None
     endpoint_workflow = endpoint.get("workflow") if endpoint else None
-    single_workflow = len(workflow_ids) == 1 and (endpoint_workflow in {None, next(iter(workflow_ids), None)})
+    only_workflow_id = list(workflow_ids)[0] if len(workflow_ids) == 1 else None
+    single_workflow = only_workflow_id is not None and endpoint_workflow in {None, only_workflow_id}
     expected_task = ""
     expected_project = None
     expected_candidate = None
     if single_workflow:
-        spec = workflow_specs.get(next(iter(workflow_ids)))
+        spec = workflow_specs.get(only_workflow_id)
         expected_task = spec.get("taskContext", {}).get("task", "") if spec else ""
         expected_project = Path(spec["projectRoot"]).resolve() if spec else None
         if spec:

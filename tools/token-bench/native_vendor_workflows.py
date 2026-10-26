@@ -92,29 +92,21 @@ def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path
     speckit = [
         ("constitution", "speckit-constitution", ["read constitution; preserve gates"], [".specify/memory/constitution.md"]),
         ("specify", "speckit-specify", ["run setup checks; resolve template; write spec.md and feature.json"], ["specs/*/spec.md", ".specify/feature.json"]),
-        ("clarify", "speckit-clarify", ["read spec; record bounded clarifications"], ["specs/*/spec.md", "specs/*/checklists/requirements.md"]),
         ("plan", "speckit-plan", ["run setup-plan.ps1 -Json; read spec and constitution; write design artifacts"], ["specs/*/plan.md", "specs/*/research.md", "specs/*/data-model.md", "specs/*/contracts/**"]),
-        ("tasks", "speckit-tasks", ["run check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks; write tasks.md"], ["specs/*/tasks.md"]),
+        ("tasks", "speckit-tasks", ["run setup-tasks.ps1 -Json; read the returned feature directory and task template; write tasks.md"], ["specs/*/tasks.md"]),
         ("implement", "speckit-implement", ["read tasks, plan, contracts and checklists; implement and run declared tests"], ["**/*"]),
-        ("converge", "speckit-converge", ["assess implementation against spec, plan and tasks; append remaining tasks"], ["specs/*/tasks.md"]),
-        ("review", "speckit-checklist", ["scan checklists; never mark unchecked items"], ["specs/*/checklists/*"]),]
+        ]
     openspec = [
         ("explore", "openspec-explore", ["run openspec list --json; keep exploration read-only"], ["openspec/changes/*/**"]),
-        ("propose", "openspec-propose", ["confirm local root; create proposal, specs, design and tasks"], ["openspec/changes/*/proposal.md", "openspec/changes/*/tasks.md"]),
-        ("apply", "openspec-apply-change", ["read apply instructions and every context file; implement and validate"], ["**/*"]),
-        ("sync", "openspec-sync-specs", ["read delta specs; edit main specs only after approval"], ["openspec/specs/**"]),
-        ("review", "openspec-explore", ["inspect status and artifacts without writing"], ["openspec/changes/*/**"]),
-        ("archive", "openspec-archive-change", ["validate; archive only a completed change"], ["openspec/changes/archive/**"]),]
+        ("propose", "openspec-propose", ["confirm local root; create proposal, specs, design and tasks; stop at the native planning boundary"], ["openspec/changes/*/proposal.md", "openspec/changes/*/tasks.md"]),
+        ("apply", "openspec-apply-change", ["start a new native request after proposal review; read apply instructions and every context file; implement and validate"], ["**/*"]),]
     bmad = [
         ("setup", "bmad", ["run installed knowledge command; do not infer workflow"], ["_bmad/**"]),
         ("build", "bmad-build", ["run uv render_skill.py exactly once; stop on HALT or failure"], ["_bmad-output/**"]),
-        ("review", "bmad-code-review", ["follow rendered review route; preserve independent reviewer"], ["_bmad-output/**"]),
-        ("verify", "bmad-qa-generate-e2e-tests", ["generate or run only declared QA evidence"], ["_bmad-output/**"]),]
+        ("review", "bmad-code-review", ["follow rendered review route; preserve independent reviewer"], ["_bmad-output/**"]),]
     superpowers = [
         ("entry", "using-superpowers", ["invoke applicable skills before response or action"], [".agents/skills/**"]),
         ("debug", "systematic-debugging", ["investigate the root cause before proposing a fix"], ["tools/task-record/task_record.py"]),
-        ("brainstorm", "brainstorming", ["brainstorm before implementation; record decisions"], ["docs/superpowers/**"]),
-        ("plan", "writing-plans", ["write a bite-sized plan before code"], ["docs/superpowers/plans/**"]),
         ("implement", "test-driven-development", ["write failing test; observe red; implement minimal green"], ["**/*"]),
         ("review", "requesting-code-review", ["request independent review with exact diff and tests"], ["docs/superpowers/**"]),
         ("verify", "verification-before-completion", ["run fresh verification before any completion claim"], ["**/*"]),]

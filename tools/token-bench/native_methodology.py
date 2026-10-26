@@ -649,6 +649,7 @@ def main() -> int:
     parser.add_argument("--patch")
     parser.add_argument("--review")
     parser.add_argument("--evaluator")
+    parser.add_argument("--archive-root", type=Path)
     parser.add_argument("--author", default="native-author")
     parser.add_argument("--reviewer", default="native-reviewer")
     args = parser.parse_args()
@@ -694,6 +695,9 @@ def main() -> int:
         identity_record = pinned_identity
         config = native_cli_config(args.cli, Path(identity_record["path"]), manifest["models"][args.cli])
         config["identity"] = identity_record
+        if not args.archive_root:
+            raise ValueError("run requires private --archive-root outside the project")
+        config["archiveRoot"] = str(args.archive_root.resolve())
         if not args.phase:
             results = run_workflow(manifest, workflow_id=args.workflow, cli_config=config, output=args.output,
                                    prompt_override=args.prompt or None)

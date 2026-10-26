@@ -30,13 +30,18 @@ use crate::repository::{
 };
 use crate::{EventRepositoryError, SealedEvidence, WrappedKey, evidence::validate_sealed_metadata};
 
+mod segments;
+use segments::SEGMENTS_DIR;
+pub use segments::concatenated_journal;
+
 const FORMAT_BYTES: &[u8] = b"{\"formatVersion\":\"1.0.0\"}\n";
 const FORMAT_VERSION: &str = "1.0.0";
 const MAX_STORED_EVIDENCE_BYTES: u64 = 2 * (16 * 1024 * 1024 + 16) + 64 * 1024;
 const MAX_REPOSITORY_ENTRIES: usize = 100_000;
 const MAX_REPOSITORY_NAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_REPOSITORY_METADATA_BYTES: u64 = 1024 * 1024 * 1024;
-const MAX_ROOT_ENTRIES: usize = 6;
+/// The six 1.0.0 entries plus `segments/` (#1721), which appears at a store's first rotation.
+const MAX_ROOT_ENTRIES: usize = 7;
 /// Scaled with `MAX_READ_ALL` (#1721 stopgap: 100k → 250k events, 800k → 2M units), so the work
 /// budget never binds before the event count it was sized for.
 const MAX_LOAD_WORK_UNITS: usize = 2_000_000;
@@ -327,7 +332,9 @@ pub struct LocalEventRepository {
     active_handle: Arc<File>,
     active_identity: FileIdentity,
     journal: Arc<Mutex<File>>,
-    journal_identity: FileIdentity,
+    /// #1721: which segment `journal` is and the identity it was opened with. A rotation by this
+    /// handle swaps both; one by another handle is noticed by `validate_anchors` under the lock.
+    active: Arc<Mutex<ActiveSegment>>,
     lock: Arc<Mutex<File>>,
     lock_identity: FileIdentity,
     operation_gate: Arc<Mutex<()>>,
@@ -376,6 +383,10 @@ pub struct LocalEventRepository {
     #[cfg(test)]
     full_walk_delay: Option<std::time::Duration>,
     failpoint: Option<LocalFailpoint>,
+    /// #1721 test seam: rotation thresholds (bytes, events) instead of the production ones, so a
+    /// test can rotate a handful of batches.
+    #[cfg(test)]
+    rotate_at: Option<(u64, usize)>,
     /// ADR-046: whether THIS handle may trim an unacknowledged torn journal tail. Only the
     /// Runtime's start-up open sets it; every other open refuses the tail and names who recovers it.
     recover_torn_tail: bool,
@@ -752,7 +763,8 @@ impl LocalEventRepository {
         let temp_identity = file_identity(&temp_handle)?;
         let active_handle = open_child_directory(&root_handle, &root, "active")?;
         let active_identity = file_identity(&active_handle)?;
-        let journal = open_child_file(&root_handle, &root, "journal.jsonl", true, false)?;
+        let active_index = segments::sealed_count(&root_handle, &root)?;
+        let journal = segments::open_active_segment(&root_handle, &root, active_index)?;
         if file_identity(&open_directory(&root)?)? != root_identity {
             return Err(EventRepositoryError::IntegrityAt(
                 "open:root-identity-after-children",
@@ -785,7 +797,10 @@ impl LocalEventRepository {
             active_handle: Arc::new(active_handle),
             active_identity,
             journal: Arc::new(Mutex::new(journal)),
-            journal_identity,
+            active: Arc::new(Mutex::new(ActiveSegment {
+                identity: journal_identity,
+                index: active_index,
+            })),
             lock: Arc::new(Mutex::new(lock)),
             lock_identity,
             operation_gate: Arc::new(Mutex::new(())),
@@ -812,6 +827,8 @@ impl LocalEventRepository {
             #[cfg(test)]
             full_walk_delay: prefix_cache.and_then(|cache| cache.walk_delay),
             failpoint,
+            #[cfg(test)]
+            rotate_at: None,
             recover_torn_tail,
             recovered_tail: Arc::new(Mutex::new(None)),
             schemas,
@@ -857,15 +874,8 @@ impl LocalEventRepository {
                 }
                 other => Some(other?),
             };
-            let published_in = |state: &LoadedState| {
-                state
-                    .batches
-                    .iter()
-                    .flat_map(|batch| &batch.events)
-                    .filter(|event| matches!(event.kind, EventKind::GraphVersionPublished(_)))
-                    .cloned()
-                    .collect::<Vec<_>>()
-            };
+            // #1721: the sealed segments' publications come from the last seal's state.
+            let published_in = Self::history_publications;
             // The journal sync happens exactly ONCE per open, on whichever branch runs
             // (the resync-once contract a recovery guard pins): after the read-only
             // clean checks on the fast path, or inside the redo on the upgrade path,
@@ -1101,14 +1111,9 @@ impl LocalEventRepository {
                     })
                 })
                 .transpose()?;
-            let events = state
-                .batches
-                .iter()
-                .filter(|batch| &batch.scope == scope && batch.stream_id == stream_id)
-                .flat_map(|batch| batch.events.iter())
-                .filter(|event| event.sequence > after)
-                .cloned()
-                .collect::<Vec<_>>();
+            // #1721: only the segments past `after` are read.
+            let events =
+                self.stream_events_after(&state, scope, stream_id, after, MAX_READ_ALL + 1)?;
             if events.len() > MAX_READ_ALL {
                 return Err(EventRepositoryError::LimitExceeded);
             }
@@ -1137,16 +1142,24 @@ impl LocalEventRepository {
         OpaqueId::parse(stream_id).map_err(|_| EventRepositoryError::Invalid)?;
         self.with_shared_lock(|| {
             let state = self.load_state("scan_replay_stream")?;
-            let events = state
-                .batches
-                .iter()
-                .filter(|batch| &batch.scope == scope && batch.stream_id == stream_id)
-                .flat_map(|batch| batch.events.iter())
-                .collect::<Vec<_>>();
-            if events.len() > MAX_READ_ALL {
+            if state.sealed.is_empty() {
+                let events = state
+                    .batches
+                    .iter()
+                    .filter(|batch| &batch.scope == scope && batch.stream_id == stream_id)
+                    .flat_map(|batch| batch.events.iter())
+                    .collect::<Vec<_>>();
+                if events.len() > MAX_READ_ALL {
+                    return Err(EventRepositoryError::LimitExceeded);
+                }
+                return Ok(visit(&events));
+            }
+            // #1721: sealed segments are read from disk, so their events are owned here.
+            let owned = self.stream_events_after(&state, scope, stream_id, 0, MAX_READ_ALL + 1)?;
+            if owned.len() > MAX_READ_ALL {
                 return Err(EventRepositoryError::LimitExceeded);
             }
-            Ok(visit(&events))
+            Ok(visit(&owned.iter().collect::<Vec<_>>()))
         })
     }
 
@@ -1156,13 +1169,7 @@ impl LocalEventRepository {
     ) -> Result<(crate::RepositoryStream, Vec<EventEnvelope>), EventRepositoryError> {
         self.with_shared_lock(|| {
             let state = self.load_state("read_unique_replay_stream")?;
-            let mut streams = BTreeMap::new();
-            for batch in &state.batches {
-                streams.insert(
-                    stream_key(&batch.scope, &batch.stream_id)?,
-                    (batch.scope.clone(), batch.stream_id.clone()),
-                );
-            }
+            let streams = Self::history_streams(&state)?;
             if streams.len() != 1 {
                 return Err(EventRepositoryError::StreamSelectionRequired);
             }
@@ -1170,12 +1177,8 @@ impl LocalEventRepository {
                 .into_iter()
                 .next()
                 .ok_or(EventRepositoryError::StreamSelectionRequired)?;
-            let events = state
-                .batches
-                .iter()
-                .filter(|batch| batch.scope == scope && batch.stream_id == stream_id)
-                .flat_map(|batch| batch.events.iter().cloned())
-                .collect::<Vec<_>>();
+            let events =
+                self.stream_events_after(&state, &scope, &stream_id, 0, MAX_READ_ALL + 1)?;
             if events.len() > MAX_READ_ALL {
                 return Err(EventRepositoryError::LimitExceeded);
             }
@@ -1189,13 +1192,7 @@ impl LocalEventRepository {
     pub fn list_streams(&self) -> Result<Vec<crate::RepositoryStream>, EventRepositoryError> {
         self.with_shared_lock(|| {
             let state = self.load_state("list_streams")?;
-            let mut streams = BTreeMap::new();
-            for batch in &state.batches {
-                streams.insert(
-                    stream_key(&batch.scope, &batch.stream_id)?,
-                    (batch.scope.clone(), batch.stream_id.clone()),
-                );
-            }
+            let streams = Self::history_streams(&state)?;
             Ok(streams
                 .into_values()
                 .map(|(scope, stream_id)| crate::RepositoryStream { scope, stream_id })
@@ -1330,28 +1327,45 @@ impl LocalEventRepository {
         let blobs_path = open_child_directory(&self.root_handle, &self.root, "blobs")?;
         let temp_path = open_child_directory(&self.root_handle, &self.root, ".tmp")?;
         let active_path = open_child_directory(&self.root_handle, &self.root, "active")?;
-        let journal_path =
-            open_child_file(&self.root_handle, &self.root, "journal.jsonl", true, false)?;
         let root_path_identity = file_identity(&root_path)?;
         let lock_path_identity = file_identity(&lock_path)?;
-        let journal_guard = self
-            .journal
-            .lock()
-            .map_err(|_| EventRepositoryError::StorageAt {
-                site: "validate-anchors:journal-mutex-poisoned",
-                os: None,
-            })?;
+        let mut journal_guard =
+            self.journal
+                .lock()
+                .map_err(|_| EventRepositoryError::StorageAt {
+                    site: "validate-anchors:journal-mutex-poisoned",
+                    os: None,
+                })?;
+        // #1721: another handle may have sealed this handle's active segment since it was
+        // opened. Under the lock that is settled, so follow it: the sealed file stays as it is,
+        // and this handle appends to and verifies the segment that is active now.
+        let sealed_now = segments::sealed_count(&self.root_handle, &self.root)?;
+        let mut active = self.active_segment()?;
+        if sealed_now != active.index {
+            if sealed_now < active.index {
+                return Err(EventRepositoryError::IntegrityAt(
+                    "validate-anchors:seal-chain-shrank",
+                ));
+            }
+            let next = segments::open_active_segment(&self.root_handle, &self.root, sealed_now)?;
+            let identity = file_identity(&next)?;
+            *journal_guard = next;
+            self.set_active_segment(identity, sealed_now)?;
+            active = self.active_segment()?;
+        }
+        let journal_path =
+            segments::open_active_segment(&self.root_handle, &self.root, active.index)?;
         if root_path_identity != self.root_identity
             || file_identity(&self.root_handle)? != self.root_identity
             || lock_path_identity != self.lock_identity
             || file_identity(&blobs_path)? != self.blobs_identity
             || file_identity(&temp_path)? != self.temp_identity
             || file_identity(&active_path)? != self.active_identity
-            || file_identity(&journal_path)? != self.journal_identity
+            || file_identity(&journal_path)? != active.identity
             || file_identity(&self.blobs_handle)? != self.blobs_identity
             || file_identity(&self.temp_handle)? != self.temp_identity
             || file_identity(&self.active_handle)? != self.active_identity
-            || file_identity(&journal_guard)? != self.journal_identity
+            || file_identity(&journal_guard)? != active.identity
         {
             return Err(EventRepositoryError::Integrity);
         }
@@ -1385,8 +1399,14 @@ impl LocalEventRepository {
         &self,
         request: &PreparedAppend,
     ) -> Result<Vec<EventEnvelope>, EventRepositoryError> {
-        let state = self.load_state("append")?;
+        let mut state = self.load_state("append")?;
         self.sync_loaded_journal(&state)?;
+        // #1721: a full active segment is sealed BEFORE this append, so what an open walks stays
+        // bounded by one segment however long the history grows.
+        if self.should_rotate(&state)? {
+            self.rotate_segment(&state)?;
+            state = self.load_state("append")?;
+        }
         validate_request_preflight(request, &state)?;
         self.validate_reference_availability(request, &state)?;
         let request_digest = crate::prepared_append_digest(request)?;
@@ -1396,22 +1416,23 @@ impl LocalEventRepository {
             .iter()
             .map(|event| event.idempotency_key.as_str())
             .collect::<BTreeSet<_>>();
-        for batch in &state.batches {
-            if batch.scope != *request.scope() || batch.stream_id != request.stream_id().as_str() {
-                continue;
-            }
+        // #1721: across every segment; a key the verified set has never seen opens nothing.
+        if let Some(batch) = self.batch_holding_keys(
+            &state,
+            request.scope(),
+            request.stream_id().as_str(),
+            &requested_keys,
+        )? {
             let batch_keys = batch
                 .events
                 .iter()
                 .map(|event| event.idempotency_key.as_str())
                 .collect::<BTreeSet<_>>();
-            if !requested_keys.is_disjoint(&batch_keys) {
-                if batch.request_digest == request_digest && batch_keys == requested_keys {
-                    self.publish_active_marker(&batch.events)?;
-                    return Ok(batch.events.clone());
-                }
-                return Err(EventRepositoryError::IdempotencyConflict);
+            if batch.request_digest == request_digest && batch_keys == requested_keys {
+                self.publish_active_marker(&batch.events)?;
+                return Ok(batch.events);
             }
+            return Err(EventRepositoryError::IdempotencyConflict);
         }
 
         validate_graph_successors(request, &state)?;
@@ -1992,7 +2013,9 @@ impl LocalEventRepository {
         }
         let release = Release(Arc::clone(flag));
         let slot = Arc::clone(&self.verified);
-        let identity = self.journal_identity;
+        let Ok(ActiveSegment { identity, .. }) = self.active_segment() else {
+            return;
+        };
         let mut auditor = self.clone();
         auditor.verified = Arc::new(Mutex::new(None));
         auditor.prefix_audit = None;
@@ -2035,9 +2058,10 @@ impl LocalEventRepository {
     /// #1618: verifies the journal's first `length` bytes from genesis through a fresh read
     /// handle, without the store lock (see [`Self::start_prefix_audit`] for why that is sound).
     fn audit_prefix(&self, length: u64) -> Result<(), EventRepositoryError> {
+        let active = self.active_segment()?;
         let mut journal =
-            open_child_file(&self.root_handle, &self.root, "journal.jsonl", false, false)?;
-        if file_identity(&journal)? != self.journal_identity {
+            segments::open_active_segment(&self.root_handle, &self.root, active.index)?;
+        if file_identity(&journal)? != active.identity {
             return Err(EventRepositoryError::IntegrityAt(
                 "audit-prefix:journal-replaced",
             ));
@@ -2048,7 +2072,7 @@ impl LocalEventRepository {
                 "audit-prefix:prefix-unterminated",
             ));
         }
-        let mut ctx = VerifyCtx::fresh();
+        let mut ctx = self.seeded_ctx()?;
         let mut consumed = 0_u64;
         self.verify_lines(&bytes, &mut ctx, &mut consumed)
     }
@@ -2092,7 +2116,7 @@ impl LocalEventRepository {
                 "load_state:journal-tail-oversized",
             ));
         }
-        let mut ctx = VerifyCtx::fresh();
+        let mut ctx = self.seeded_ctx()?;
         let mut consumed = 0_u64;
         self.verify_lines(&bytes[..cut], &mut ctx, &mut consumed)?;
 
@@ -2217,8 +2241,9 @@ impl LocalEventRepository {
         // far behind pays a long read with the mutex held and every sibling operation
         // waits — a CONTENTION exposure distinct from the staleness one above, arriving
         // at the same commit.
+        let journal_identity = self.active_segment()?.identity;
         let reusable = verified.take().filter(|prefix| {
-            prefix.journal_identity == self.journal_identity && prefix.verified_offset <= length
+            prefix.journal_identity == journal_identity && prefix.verified_offset <= length
         });
         // #506: a walk from genesis still in progress (cut by a read budget) is never expired:
         // its age starts when it completes.
@@ -2266,7 +2291,8 @@ impl LocalEventRepository {
                 self.full_load_count.fetch_add(1, Ordering::SeqCst);
                 #[cfg(test)]
                 self.record_load_kind(kind, LoadPath::Full);
-                (VerifyCtx::fresh(), 0, std::time::Instant::now(), true)
+                // #1721: from the last seal's state, so only the active segment is walked.
+                (self.seeded_ctx()?, 0, std::time::Instant::now(), true)
             }
         };
         let bytes = read_bounded_range(&mut journal, offset, length)?;
@@ -2286,7 +2312,7 @@ impl LocalEventRepository {
             Err(error @ EventRepositoryError::ReadBudgetExceeded { .. }) => {
                 if consumed > 0 {
                     *verified = Some(ctx.into_prefix(
-                        self.journal_identity,
+                        journal_identity,
                         offset + consumed,
                         full_verified_at,
                         genesis_walk,
@@ -2306,7 +2332,7 @@ impl LocalEventRepository {
         } else {
             full_verified_at
         };
-        *verified = Some(ctx.into_prefix(self.journal_identity, length, full_verified_at, false));
+        *verified = Some(ctx.into_prefix(journal_identity, length, full_verified_at, false));
         Ok(state)
     }
 
@@ -2780,10 +2806,23 @@ fn inspect_layout_with_directory_opener(
         if name == "format.json" {
             continue;
         }
-        if !allowed.contains(name) {
+        if !allowed.contains(name) && name != SEGMENTS_DIR {
             return Err(EventRepositoryError::UnsupportedFormat);
         }
         match name.as_str() {
+            // #1721: optional, and only beside a declared format.
+            SEGMENTS_DIR => {
+                if !format_declared {
+                    return Err(EventRepositoryError::UnsupportedFormat);
+                }
+                let directory = map_inspection_slot_open(
+                    directory_opener(root_handle, root, name),
+                    format_declared,
+                )?;
+                if file_identity(&directory)? != *expected_identity {
+                    return Err(EventRepositoryError::Integrity);
+                }
+            }
             "blobs" | ".tmp" | "active" => {
                 let directory = map_inspection_slot_open(
                     directory_opener(root_handle, root, name),
@@ -2812,6 +2851,10 @@ fn inspect_layout_with_directory_opener(
         }
     }
     if format_declared {
+        let names = names
+            .into_iter()
+            .filter(|name| name != SEGMENTS_DIR)
+            .collect::<BTreeSet<_>>();
         if names == allowed {
             return Ok(LayoutState::Complete);
         }
@@ -2906,14 +2949,7 @@ impl EventRepository for LocalEventRepository {
                 })
                 .transpose()?;
             let start = cursor_start(cursor, scope, stream_id)?;
-            let matching = state
-                .batches
-                .iter()
-                .filter(|batch| &batch.scope == scope && batch.stream_id == stream_id)
-                .flat_map(|batch| batch.events.iter().cloned())
-                .filter(|event| event.sequence > start)
-                .take(limit + 1)
-                .collect::<Vec<_>>();
+            let matching = self.stream_events_after(&state, scope, stream_id, start, limit + 1)?;
             let has_more = matching.len() > limit;
             let events = matching.into_iter().take(limit).collect::<Vec<_>>();
             let next_cursor = if has_more {
@@ -2940,12 +2976,7 @@ impl EventRepository for LocalEventRepository {
         OpaqueId::parse(stream_id).map_err(|_| EventRepositoryError::Invalid)?;
         self.with_shared_lock(|| {
             let state = self.load_state("read_replay_stream")?;
-            let events = state
-                .batches
-                .iter()
-                .filter(|batch| &batch.scope == scope && batch.stream_id == stream_id)
-                .flat_map(|batch| batch.events.iter().cloned())
-                .collect::<Vec<_>>();
+            let events = self.stream_events_after(&state, scope, stream_id, 0, MAX_READ_ALL + 1)?;
             if events.len() > MAX_READ_ALL {
                 return Err(EventRepositoryError::LimitExceeded);
             }
@@ -3017,18 +3048,14 @@ impl EventRepository for LocalEventRepository {
         self.with_shared_lock(|| {
             let state = self.load_state("committed_events_for_idempotency")?;
             self.sync_loaded_journal(&state)?;
-            Ok(state
-                .batches
-                .iter()
-                .find(|batch| {
-                    &batch.scope == scope
-                        && batch.stream_id == stream_id
-                        && batch
-                            .events
-                            .iter()
-                            .any(|event| event.idempotency_key == *idempotency_key)
-                })
-                .map(|batch| batch.events.clone()))
+            Ok(self
+                .batch_holding_keys(
+                    &state,
+                    scope,
+                    stream_id,
+                    &BTreeSet::from([idempotency_key.as_str()]),
+                )?
+                .map(|batch| batch.events))
         })
     }
 }
@@ -3043,6 +3070,19 @@ struct LoadedState {
     active_versions: BTreeMap<String, ActiveVersion>,
     seen_idempotency: BTreeSet<String>,
     expected_markers: BTreeMap<String, StoredActiveMarker>,
+    /// #1721: the verified seal chain; `batches` holds only the active segment's batches.
+    sealed: Arc<Vec<segments::SealedSegment>>,
+    /// #1721: the graph publications of the sealed segments.
+    sealed_publications: Arc<Vec<EventEnvelope>>,
+    /// #1721: every (scope, stream) of the sealed segments, by stream key.
+    sealed_streams: Arc<BTreeMap<String, (RepositoryScope, String)>>,
+}
+
+/// #1721: the segment a handle appends to, and the identity it was opened with.
+#[derive(Clone, Copy, Debug)]
+struct ActiveSegment {
+    identity: FileIdentity,
+    index: u64,
 }
 
 /// Per-kind load accounting map (#87): operation name -> (full, suffix, hit) counts.
@@ -3184,6 +3224,14 @@ fn walk_before_lock(
     #[cfg(test)] walk_delay: Option<std::time::Duration>,
 ) -> Option<Result<VerifiedPrefix, (EventRepositoryError, Option<VerifiedPrefix>)>> {
     let blobs_handle = open_child_directory(root_handle, root, "blobs").ok()?;
+    // #1721: a segmented store's walk starts from its last seal, which the locked load reads;
+    // that walk is bounded by one segment, so there is no genesis walk to move out of the lock.
+    if segments::open_segments_dir(root_handle, root)
+        .ok()?
+        .is_some()
+    {
+        return None;
+    }
     let mut journal = open_child_file(root_handle, root, "journal.jsonl", false, false).ok()?;
     let identity = file_identity(&journal).ok()?;
     let length = journal.metadata().ok()?.len();
@@ -3524,11 +3572,10 @@ impl LineVerifier<'_> {
                     return Err(EventRepositoryError::Integrity);
                 }
                 let idempotency_identity = format!("{key}:{}", event.idempotency_key);
+                // Bounded per walk by the load budget's event count. The keys of sealed segments
+                // arrive from the last seal (#1721) and are not walked again.
                 if !state.seen_idempotency.insert(idempotency_identity) {
                     return Err(EventRepositoryError::Integrity);
-                }
-                if state.seen_idempotency.len() > MAX_READ_ALL {
-                    return Err(EventRepositoryError::LimitExceeded);
                 }
                 previous_hash = event.event_hash.to_string();
                 for reference in &event.evidence_refs {
@@ -3538,6 +3585,21 @@ impl LineVerifier<'_> {
                         counted_evidence.insert(identity.clone());
                     }
                     let path = blob_path_in(self.root, &event.scope, reference.evidence_id())?;
+                    // #1721: evidence registered in a sealed segment is reachable from the seal's
+                    // state but was not verified by this walk; verify its blob once, as its own
+                    // registration did, before the reference is judged against it.
+                    if !verified_evidence.contains_key(&identity)
+                        && state.reachable_evidence.contains(&path)
+                    {
+                        let sealed = read_verified_blob_in(
+                            self.blobs_handle,
+                            self.root,
+                            &path,
+                            &event.scope,
+                            reference,
+                        )?;
+                        verified_evidence.insert(identity.clone(), evidence_digest(&sealed));
+                    }
                     if verified_evidence.get(&identity).is_none_or(|digest| {
                         digest.scope != event.scope || digest.reference != *reference
                     }) {
@@ -4113,11 +4175,24 @@ fn classify_layout(root: &Path, root_handle: &File) -> Result<LayoutState, Event
         "journal.jsonl".to_owned(),
         "repository.lock".to_owned(),
     ]);
+    let names_required = names
+        .iter()
+        .filter(|name| name.as_str() != SEGMENTS_DIR)
+        .cloned()
+        .collect::<BTreeSet<_>>();
     for name in &names {
-        if !allowed.contains(name) {
+        if !allowed.contains(name) && name != SEGMENTS_DIR {
             return Err(EventRepositoryError::UnsupportedFormat);
         }
         match name.as_str() {
+            // #1721: optional, only beside a declared format; its entries are judged by the
+            // seal chain reader.
+            SEGMENTS_DIR => {
+                let _ = open_child_directory(root_handle, root, name)?;
+                if !has_format {
+                    return Err(EventRepositoryError::UnsupportedFormat);
+                }
+            }
             "blobs" | ".tmp" | "active" => {
                 let directory = open_child_directory(root_handle, root, name)?;
                 if !has_format {
@@ -4143,14 +4218,14 @@ fn classify_layout(root: &Path, root_handle: &File) -> Result<LayoutState, Event
         }
     }
     if has_format {
-        if names == allowed {
+        if names_required == allowed {
             return Ok(LayoutState::Complete);
         }
         // Every name present is already known to be allowed (the loop above refuses anything
         // else), so the difference is exactly what the layout is missing. Only the transient
         // workspace directories may be missing and still be recoverable.
         if allowed
-            .difference(&names)
+            .difference(&names_required)
             .all(|name| name == ".tmp" || name == "active")
         {
             return Ok(LayoutState::RecoverableDirs);

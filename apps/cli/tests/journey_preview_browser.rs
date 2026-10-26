@@ -300,6 +300,9 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
         "status": "draft",
         "approved": null,
         "base": base,
+        // One fixed viewport: the default plays a desktop and a mobile run, and the owner's one
+        // confirmation would then reach the app once per viewport.
+        "viewport": {"width": 1280, "height": 800},
         "actors": ["owner"],
         "secrets": [],
         "risks": ["irreversible_effect"],
@@ -311,6 +314,7 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
         ],
         "edges": [
             {"id":"account.delete","from":"account","to":"deleted",
+             "intent":"Submits the delete form as-is: it has no fields, only the confirmation",
              "why":"Confirming the delete is what removes the account for the owner",
              "acts":[{"kind":"submit","role":"button","name":"Delete account"}]}
         ],

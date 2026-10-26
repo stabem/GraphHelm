@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 SCHEMA = "native-methodology-workflow/1"
 PINNED = {
@@ -23,6 +24,17 @@ def _digest(path: Path) -> str:
 def _asset_digests(root: Path) -> dict[str, str]:
     return {str(path): _digest(path) for path in sorted(root.rglob("*"))
             if path.is_file() and not path.is_symlink()}
+
+
+def _baseline_head(root: Path) -> str | None:
+    try:
+        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
+                                text=True, timeout=15,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    head = result.stdout.strip()
+    return head if result.returncode == 0 and len(head) == 40 else None
 
 def _phase(*, phase_id: str, skill: str, cli: str, task_ref: str,
            task_brief: str, approval_policy: str, project_root: Path,
@@ -66,16 +78,29 @@ def _workflow(*, method_id: str, framework: str, project_root: Path,
     phases.append({"id": "review", "command": [], "nativeEntrypoint": None,
                    "prompt": ("Fresh independent review of task " + task_ref + ". Read the public task, "
                               "method artifacts, actual Git diff and focused source. Run the public "
-                              "and submitted observers. Do not edit any project file. Return only a "
-                              "reasoned APPROVE, APPROVE-WITH-RISK, or BLOCK verdict with findings. "
+                              "and submitted observers. Do not edit any project file. Review the "
+                              "committed candidate at the Git head in "
+                              ".native-observations/review-binding.json, which the benchmark controller "
+                              "creates before this phase. "
+                              "Return only a JSON object with reviewer, taskId, gitHead, patchSha256, "
+                              "verdict (APPROVE, APPROVE-WITH-RISK, or BLOCK), and findings. "
+                              "Use reviewer=native-reviewer and taskId=" + task_ref + ". "
+                              "The controller verifies the patch digest against Git independently; "
+                              "BLOCK if the candidate cannot be inspected or a finding prevents approval. "
                               "No author conversation or expected verdict is available."),
                    "frameworkStage": "independent-review", "requiredOperations": [],
                    "requiredArtifactGlobs": [], "requiredArtifacts": [],
                    "requiredWitnessKinds": ["native_stream"], "requiredWitnesses": [],
                    "costKinds": ["native_cli", "independent_review"]})
+    artifact_prefixes = {"speckit": [".native-artifacts", ".specify/memory", "specs"],
+                         "openspec": [".native-artifacts", "openspec/changes"],
+                         "bmad": [".native-artifacts", "_bmad-output"],
+                         "superpowers": [".native-artifacts", "docs/superpowers"]}
     return {"id": f"native-{method_id}", "version": f"pinned-{PINNED[method_id]}",
             "framework": framework, "maxFixAttempts": 1,
             "projectRoot": str(project_root.resolve()), "taskRefs": [task_ref],
+            "baselineHead": _baseline_head(project_root),
+            "methodArtifactPrefixes": artifact_prefixes[method_id],
             "pinnedPublicFiles": list(dict.fromkeys(public_tests + public_files)),
             "methodAssetDigests": _asset_digests(project_root / skill_root),
             "taskContext": {"task": task_ref, "scope": list(scope),

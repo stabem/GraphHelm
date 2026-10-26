@@ -176,6 +176,14 @@ their SHA-256 hashes are retained, and a later phase must carry the predecessor 
 The accepted endpoint is an independently reviewed patch in local Git. It is not a public
 GitHub merge or a deployment.
 
+Before the independent review, the operator commits the candidate in the isolated task
+repository. The controller records the frozen baseline head, candidate head, and SHA-256 of
+their binary Git diff in `.native-observations/review-binding.json`. The reviewer reads that
+binding and returns a machine-readable verdict; the external endpoint checks the actual Git
+bytes again. An uncommitted candidate, missing binding, prose-only verdict, or reviewer
+without a separate native session cannot qualify. Method planning artifacts remain in the
+method evidence and are excluded from the product patch unless the public task requests them.
+
 Native CLI configuration keeps project instructions, installed skills, plugins, and native
 session logs enabled. Provider keys and endpoint overrides are still removed from child
 environments. Authentication and quota are checked before every phase. Cleanup, native
@@ -189,3 +197,11 @@ Owned child sessions must be enumerated and reconciled with unique usage records
 duplicate, overlapping, or unowned records keep totals unknown. Task context is limited to
 public schema fields and never carries provider credentials, hidden oracles, or private
 source paths.
+
+The operator freezes the complete public project tree and common product context before
+the first native phase, then gives each arm the same tree and only its selected method assets.
+Every attempt, denied operation, retry, author child, and independent review contributes to
+the processed-token total. Claude's processed input includes new input, cache reads, and
+cache writes; Codex's reported input already includes cached input, so cache reads are not
+added again. These are provider wire counters, not a subscription bill. A single successful
+pilot is evidence of feasibility, not an estimate of a methodology gain.

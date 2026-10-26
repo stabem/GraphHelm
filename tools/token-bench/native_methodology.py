@@ -156,8 +156,49 @@ def frozen_inputs(workflow: dict) -> dict:
                 raise ValueError(f"required native witness changed or missing: {path}")
             witnesses.append({"phase": phase["id"], "kind": witness.get("kind"),
                               "path": str(path.resolve()), "sha256": expected})
-    return {"projectRoot": str(project.resolve()), "publicFiles": public, "methodAssets": assets,
+    return {"projectRoot": str(project.resolve()), "publicFiles": public,
+            "publicTree": _public_tree(project), "methodAssets": assets,
             "taskRefs": list(workflow["taskRefs"]), "requiredWitnesses": witnesses}
+
+
+def _public_tree(root: Path) -> dict[str, str]:
+    """Freeze every available public project file, including untracked source context."""
+    ignored = {".git", ".native-observations", "target", "node_modules", ".pytest_cache",
+               "__pycache__", ".venv", "events", "cache"}
+    result = {}
+    total_bytes = 0
+    for path in sorted(root.rglob("*")):
+        if any(part in ignored for part in path.relative_to(root).parts):
+            continue
+        if path.is_symlink():
+            raise ValueError("public project tree contains a linked path")
+        if not path.is_file():
+            continue
+        if path.name.startswith(".env") or path.name.endswith((".token", ".key")):
+            continue
+        total_bytes += path.stat().st_size
+        if len(result) >= 10000 or total_bytes > 256 * 1024 * 1024:
+            raise ValueError("public project tree exceeds frozen context bounds")
+        result[path.relative_to(root).as_posix()] = base.digest(path)
+    return result
+
+
+def _public_tree_unchanged(frozen: dict, workflow: dict, root: Path) -> bool:
+    if not isinstance(frozen, dict) or not frozen:
+        return False
+    context = workflow.get("taskContext", {})
+    mutable = set(context.get("scope", [])) | set(context.get("allowedTestPaths", []))
+    prefixes = tuple(prefix.rstrip("/") + "/" for prefix in workflow.get("methodArtifactPrefixes", []))
+    for relative, expected in frozen.items():
+        if relative in mutable or relative.startswith(prefixes):
+            continue
+        path = root / relative
+        try:
+            if not path.is_file() or path.is_symlink() or base.digest(path) != expected:
+                return False
+        except OSError:
+            return False
+    return True
 
 
 def candidate_tree_hash(root: Path, declared_paths: list[str] | None = None) -> str:
@@ -191,6 +232,28 @@ def _declared_candidate_paths(workflow: dict, root: Path) -> list[str]:
             paths.extend(path.relative_to(root).as_posix() for path in sorted(root.glob(pattern))
                           if path.is_file() and not path.is_symlink())
     return paths
+
+
+def _write_native_review_binding(workflow: dict, project: Path) -> Path:
+    """Pin a committed candidate before the independent native review starts."""
+    baseline = workflow.get("baselineHead")
+    if not isinstance(baseline, str) or len(baseline) != 40 or any(c not in "0123456789abcdef" for c in baseline):
+        raise ValueError("native review has no frozen Git baseline")
+    flags = base.NO_WINDOW
+    head_result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=project, capture_output=True,
+                                 text=True, timeout=15, creationflags=flags, check=False)
+    head = head_result.stdout.strip() if head_result.returncode == 0 else ""
+    if len(head) != 40 or head == baseline:
+        raise ValueError("native review requires a committed candidate after the frozen baseline")
+    diff = subprocess.run(["git", "-c", "core.autocrlf=false", "diff", "--binary", baseline, head],
+                          cwd=project, capture_output=True, timeout=15, creationflags=flags, check=False)
+    if diff.returncode != 0 or not diff.stdout:
+        raise ValueError("native review cannot bind a nonempty committed patch")
+    path = project / ".native-observations/review-binding.json"
+    base.publish(path, {"schema": "native-review-binding/1", "taskId": workflow["taskRefs"][0],
+                        "reviewer": "native-reviewer", "baseHead": baseline, "gitHead": head,
+                        "patchSha256": hashlib.sha256(diff.stdout).hexdigest()})
+    return path
 
 
 def native_cli_config(cli: str, executable: Path, model: str, *, project_doc: Path | None = None,
@@ -737,6 +800,9 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         raise ValueError("native instrument dependency changed after freeze")
     rows = []
     workflow_specs = {row["id"]: row for row in manifest.get("workflows", [])}
+    context_integrity = {identifier: _public_tree_unchanged(
+        manifest.get("inputs", {}).get(identifier, {}).get("publicTree"), workflow,
+        Path(workflow["projectRoot"])) for identifier, workflow in workflow_specs.items()}
     candidate_chain = {}
     for planned in manifest.get("plannedPhases", []):
         key = f"{planned['workflow']}--{planned['phase']}"
@@ -756,6 +822,7 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
             except (KeyError, TypeError, ValueError):
                 expected_plan = None
         valid = (expected_plan is not None and isinstance(row.get("attempt"), dict)
+                 and context_integrity.get(planned["workflow"]) is True
                  and row["attempt"].get("planSha256") == expected_plan
                  and row["attempt"].get("planId") == f"{planned['workflow']}-frozen"
                  and row["attempt"].get("phase") == planned["phase"]
@@ -773,6 +840,16 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         valid = valid and capture.get("cleanupConfirmed") is True and capture.get("truncated") is False
         phase_spec = next((phase for phase in workflow_spec.get("phases", [])
                            if phase.get("id") == planned["phase"]), None) if workflow_spec else None
+        if planned["phase"] == "review" and workflow_spec:
+            review_path = Path(workflow_spec["projectRoot"]) / ".native-observations/review-binding.json"
+            try:
+                binding = base.read(review_path)
+                valid = valid and base.digest(review_path) == row.get("reviewBindingSha256")
+                valid = valid and binding.get("baseHead") == workflow_spec.get("baselineHead")
+                valid = valid and binding.get("taskId") == workflow_spec["taskRefs"][0]
+                valid = valid and binding.get("reviewer") == "native-reviewer"
+            except (OSError, ValueError, TypeError, KeyError):
+                valid = False
         required_kinds = set(phase_spec.get("requiredWitnessKinds", ["native_stream"])) if phase_spec else set()
         if "native_skill" in required_kinds:
             expected_skills = [w for w in phase_spec.get("requiredWitnesses", [])
@@ -997,6 +1074,7 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
             "request": prompt_override or phase["prompt"]})
         plan = phase_plan(workflow, {**task_context, "phase": phase["id"]},
                          plan_id=workflow_id + "-frozen")
+        review_binding = _write_native_review_binding(workflow, project_root) if phase["id"] == "review" else None
         candidate_before = candidate_tree_hash(project_root, _declared_candidate_paths(workflow, project_root))
         if predecessor_candidate is not None and candidate_before != predecessor_candidate:
             raise ValueError("candidate changed outside a recorded native phase")
@@ -1010,6 +1088,8 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
         receipt["candidateBeforeSha256"] = candidate_before
         receipt["candidateAfterSha256"] = candidate_tree_hash(project_root,
                                                                _declared_candidate_paths(workflow, project_root))
+        if review_binding is not None:
+            receipt["reviewBindingSha256"] = base.digest(review_binding)
         if phase["id"] == "review" and receipt["candidateAfterSha256"] != candidate_before:
             receipt["status"] = "incomplete"
             receipt["error"] = "independent reviewer mutated the candidate"

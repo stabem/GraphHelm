@@ -14,6 +14,37 @@ import native_session_evidence as evidence
 
 
 class NativeMethodologyContracts(unittest.TestCase):
+    def test_review_binding_requires_committed_patch_and_pins_git_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args):
+                result = subprocess.run(["git", *args], cwd=root, capture_output=True,
+                                        text=True, check=True,
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                return result.stdout.strip()
+            git("init", "-q")
+            git("config", "user.name", "Benchmark")
+            git("config", "user.email", "benchmark@example.invalid")
+            subject = root / "subject.py"
+            subject.write_text("old\n", encoding="utf-8")
+            git("add", "subject.py")
+            git("commit", "-qm", "baseline")
+            baseline = git("rev-parse", "HEAD")
+            workflow = {"baselineHead": baseline, "taskRefs": ["task-1"]}
+            subject.write_text("new\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "committed candidate"):
+                bench._write_native_review_binding(workflow, root)
+            git("add", "subject.py")
+            git("commit", "-qm", "candidate")
+            path = bench._write_native_review_binding(workflow, root)
+            binding = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(binding["gitHead"], git("rev-parse", "HEAD"))
+            patch = subprocess.run(["git", "-c", "core.autocrlf=false", "diff", "--binary",
+                                    baseline, binding["gitHead"]], cwd=root, capture_output=True,
+                                   check=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+            import hashlib
+            self.assertEqual(binding["patchSha256"], hashlib.sha256(patch).hexdigest())
+
     def workflow(self):
         return {"id": "spec-kit", "version": "v1", "framework": "SpecKit", "maxFixAttempts": 2,
                 "projectRoot": str(Path.cwd()), "taskRefs": ["task-1"], "pinnedPublicFiles": [], "methodAssetDigests": {},
@@ -296,6 +327,8 @@ class NativeMethodologyContracts(unittest.TestCase):
             workflow["phases"] = [workflow["phases"][0]]
             project = root / "project"
             (project / "report").mkdir(parents=True)
+            contract = project / "PROJECT_CONTRACT.md"
+            contract.write_text("frozen public context\n", encoding="utf-8")
             before_dynamic = bench.candidate_tree_hash(project, bench._declared_candidate_paths(workflow, project))
             artifact = project / "report" / "result.json"
             artifact.write_text('{"ok":true}\n', encoding="utf-8")
@@ -331,7 +364,8 @@ class NativeMethodologyContracts(unittest.TestCase):
                                             "archivedRoot": str(archived_root),
                                             "archive": {"root.jsonl": bench.base.digest(archived_root)}}}
             manifest = {"schema": "native-methodology-manifest/1", "workflows": [workflow],
-                        "inputs": {}, "models": {"claude": "claude-sonnet-5-5"},
+                        "inputs": {"spec-kit": {"publicTree": bench._public_tree(project)}},
+                        "models": {"claude": "claude-sonnet-5-5"},
                         "instrumentSha256": bench.base.digest(Path(bench.__file__)),
                         "instrumentSources": {name: bench.base.digest(Path(bench.__file__).parent / name)
                                                for name in ("methodology.py", "native_usage.py", "real_methodology.py",
@@ -350,6 +384,10 @@ class NativeMethodologyContracts(unittest.TestCase):
             report = bench.report_manifest(manifest_path, output)
             self.assertEqual(report["attempts"][0]["status"], "complete")
             self.assertEqual(report["usageAggregate"], counts)
+            contract.write_text("changed context\n", encoding="utf-8")
+            drifted = bench.report_manifest(manifest_path, output)
+            self.assertEqual(drifted["attempts"][0]["status"], "incomplete")
+            contract.write_text("frozen public context\n", encoding="utf-8")
             receipt["capture"]["timeout"] = True
             (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
             forged = bench.report_manifest(manifest_path, output)

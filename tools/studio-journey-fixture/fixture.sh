@@ -401,6 +401,53 @@ FLOW
   done
   grep -q '"recorded":true' "$dir/.graphhelm/observer-preview.out"     || echo "fixture: the observer preview did not record (see $dir/.graphhelm/observer-preview.out)" >&2
   fi
+  # studio2-proof-run presses Run on studio-home, a short browser draft of this fixture's Studio,
+  # never on itself: a run of studio2-proof-run would press Run on the run that is playing it and
+  # never finish. The observer is warm (the preview above set it up), so the run says "Preparing
+  # the browser" until its first screen, not while installing: an install downloads Chromium and
+  # outlasts every wait a flow can make.
+  if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-proof-run ]; then
+    cat > "$dir/project/.graphhelm/journeys/studio-home.journey.yaml" <<FLOW
+schema: graphhelm.journey-flow/1
+id: studio-home
+title: Open the Studio and its Lanes
+purpose: The fixture's Studio opens on its project and switches to Lanes.
+status: draft
+approved: null
+base: http://127.0.0.1:$sport
+actors: [owner]
+secrets: []
+risks: []
+screens:
+  - id: home
+    title: The Studio opens on the project
+    url: /?session=studio-fixture
+    ignoreQuery: [session, project, run, view]
+    state: stable
+    expect: [{role: tab, name: Lanes, because: the Studio offers its three views as tabs}]
+    scope: unknown
+  - id: lanes
+    title: The Lanes view is open
+    url: /?session=studio-fixture
+    ignoreQuery: [session, project, run, view]
+    state: success
+    expect: [{role: region, name: Lanes, because: the Lanes tab opens the lanes board}]
+    scope: unknown
+edges:
+  - id: open
+    from: home
+    to: lanes
+    why: The Lanes tab opens the lanes board.
+    acts:
+      - {kind: activate, role: tab, name: Lanes}
+paths:
+  main: [open]
+drift: []
+FLOW
+    "$bin" --json journey compile studio-home --fmt --include-draft --project "$dir/project" > /dev/null 2>&1 || true
+    git -C "$dir/project" add -f -- .graphhelm/journeys
+    git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: studio-home' || true
+  fi
   for pid in $(fixture_listeners record "$rport"); do
     if [ -r /proc/$$/winpid ]; then echo "serve-listener 0 $pid"; else echo "serve-listener $pid"; fi >> "$pids"
   done
@@ -425,13 +472,6 @@ FLOW
     curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token" \
       -H "Content-Type: application/json" -H "Idempotency-Key: $id" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent" \
       --data-binary @"$dir/.graphhelm/question.json" > "$dir/.graphhelm/question.out"
-    # #1808: studio2-lanes-reply answers a question at each viewport against this one Runtime, so
-    # it gets a second open question from the same lane: the second viewport answers that one.
-    if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-lanes-reply ]; then
-      id2=$(node -e 'console.log(require("crypto").randomUUID())')
-      printf '{"signal":{"id":"planner-question-%s","source":{"type":"tool","id":"planner"},"type":"operator_note","severity":"low","description":"Which slot should the rebuild use?","evidence":["demo"],"emittedAt":"%s","to":"studio-operator"}}' "$id2" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$dir/.graphhelm/question2.json"
-      curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token"         -H "Content-Type: application/json" -H "Idempotency-Key: $id2" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent"         --data-binary @"$dir/.graphhelm/question2.json" > "$dir/.graphhelm/question2.out" || { echo 'fixture: the second question was refused' >&2; exit 1; }
-    fi
     # #1041: one Keel card from the node `deploy` (studio-keel-card). Its evidence is the promise,
     # each scope path and the proof command, in that order (docs/keel/RECORDS.md).
     cid=$(node -e 'console.log(require("crypto").randomUUID())')
@@ -522,9 +562,11 @@ NODE
   # #1808: the Proof compare and the review's Before read a finished run of the
   # flow kept in the project; seed_run.mjs writes one (current + one earlier), bound to the flow's
   # digest and commit as the preview route reports them.
-  if [ "$flow" = studio2-graph-review-screen ] || [ "$flow" = studio2-proof-compare ]; then
-    # #2076: the review flow's issue names studio2-open (above), so that is the run it compares.
-    seeded=$flow; [ "$flow" = studio2-graph-review-screen ] && seeded=studio2-open
+  # #2076: the review flow's issue names studio2-open (above), so that is the run it compares.
+  # studio2-proof-compare reads the seeded run of runtime-health, never its own: previewing the flow
+  # replaces its own run, so it would compare against the run that is playing it.
+  seeded=; case "$flow" in studio2-graph-review-screen) seeded=studio2-open ;; studio2-proof-compare) seeded=runtime-health ;; esac
+  if [ -n "$seeded" ]; then
     "$bin" --json journey preview "$seeded" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
     key=$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).data||{}; if(d.digest&&d.commit) console.log(d.digest+" "+d.commit)' "$dir/.graphhelm/preview-key.json")
     [ -n "$key" ] || { echo "fixture: no preview key for $seeded" >&2; exit 1; }

@@ -4,8 +4,8 @@ title: A running journey still reads running after the Proof view is opened agai
 name: "Run, then open the Studio again"
 feature: Studio
 purpose: "A journey started from the Proof view reads running on a Proof view opened afterwards, which never pressed Run and has another journey selected, because the Runtime's journey list reports the run in flight; then the card shows the result once the run ends (#1953)."
-status: draft
-approved: null
+status: approved
+approved: {revision: 136a7beb3c935f8df90004993f734215287a24f9, digest: sha256:983f6acf06754df26f9750899c8df2f4126fa47cf0d843a142520eef4c095b8e}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

@@ -1,0 +1,252 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Send a failed journey to be fixed",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-proof-send-fix",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "journeys.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"Run Broken health check\", list \"Journeys\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "journeys"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "failed.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Drifted\", textbox \"Note for the fix\", button \"Send to fix\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "failed"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "noted.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows textbox \"Note for the fix\" saying \"The health check expects the wrong answer.\", button \"Send to fix\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "noted"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "sent.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Sent to fix\" saying \"Sent · just now\", no button \"Send to fix\", no textbox \"Note for the fix\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "sent"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "asked.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows list \"Owner requests\" saying \"Fix Broken health check\", list \"Owner requests\" saying \"Handed to helper, not yet taken\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "asked"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "irreversible_effect"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen journeys not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/send-fix.ts",
+          "apps/studio/src/proof/steps.ts"
+        ],
+        "screenId": "journeys",
+        "title": "The failing journey is selected"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=proof&journey=health-broken"
+        }
+      },
+      "stepId": "journeys"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen failed not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/send-fix.ts",
+          "apps/studio/src/proof/steps.ts"
+        ],
+        "screenId": "failed",
+        "title": "The run drifted and offers Send to fix with a note"
+      },
+      "semanticAction": {
+        "kind": "wait_for",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Send to fix"
+        }
+      },
+      "stepId": "failed"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen noted not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/send-fix.ts"
+        ],
+        "screenId": "noted",
+        "title": "The owner's note is written beside Send to fix"
+      },
+      "semanticAction": {
+        "kind": "enter_text",
+        "target": {
+          "geometryClaim": false,
+          "role": "textbox",
+          "strategy": "accessible_name",
+          "value": "Note for the fix"
+        }
+      },
+      "stepId": "noted"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen sent not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/send-fix.ts",
+          "apps/studio/src/runtime/client.ts"
+        ],
+        "screenId": "sent",
+        "title": "The button says Sent with its time"
+      },
+      "semanticAction": {
+        "kind": "wait_for",
+        "target": {
+          "geometryClaim": false,
+          "role": "status",
+          "strategy": "accessible_name",
+          "value": "Sent to fix"
+        }
+      },
+      "stepId": "sent"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen asked not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/LanesPanels.tsx",
+          "apps/studio/src/lanes/panels.ts",
+          "apps/studio/src/lanes/asked.ts"
+        ],
+        "screenId": "asked",
+        "title": "The request shows in WHAT I ASKED, handed to the free lane"
+      },
+      "semanticAction": {
+        "kind": "wait_for",
+        "target": {
+          "geometryClaim": false,
+          "role": "list",
+          "strategy": "accessible_name",
+          "value": "Owner requests"
+        }
+      },
+      "stepId": "asked"
+    }
+  ],
+  "taskScope": "journey-flow studio2-proof-send-fix path main",
+  "title": "Send a failed journey to be fixed",
+  "version": 1
+}

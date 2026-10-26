@@ -1,0 +1,252 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Wake, reassign or stop an agent",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-lanes-control",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "agent.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"Wake\", button \"Reassign\", button \"Stop\", list \"Blocked\" saying \"#1556\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "agent"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "kept.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows list \"Blocked\" saying \"planner\", button \"Stop\", no status \"Agent stopped\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "kept"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "woken.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Wake sent\", listitem \"Recent controls\" saying \"planner woken\", list \"Blocked\" saying \"#1556\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "woken"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "reassigned.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Work reassigned\", list \"Blocked\" saying \"no task\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "reassigned"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "stopped.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Agent stopped\", listitem \"Blocked, empty\", no list \"Blocked\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "stopped"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "irreversible_effect"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen agent not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/drafts.ts",
+          "apps/studio/src/lanes/board.ts"
+        ],
+        "screenId": "agent",
+        "title": "The agent panel offers its controls"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=lanes"
+        }
+      },
+      "stepId": "agent"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen kept not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/drafts.ts",
+          "apps/studio/src/lanes/board.ts"
+        ],
+        "screenId": "kept",
+        "title": "Keep running leaves the agent on the board"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Keep running"
+        }
+      },
+      "stepId": "kept"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen woken not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/drafts.ts",
+          "apps/studio/src/lanes/board.ts"
+        ],
+        "screenId": "woken",
+        "title": "Wake is recorded and the work stays put"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Wake"
+        }
+      },
+      "stepId": "woken"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen reassigned not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/drafts.ts",
+          "apps/studio/src/lanes/board.ts"
+        ],
+        "screenId": "reassigned",
+        "title": "Reassign takes the work off the agent's card"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Reassign"
+        }
+      },
+      "stepId": "reassigned"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen stopped not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/drafts.ts",
+          "apps/studio/src/lanes/board.ts"
+        ],
+        "screenId": "stopped",
+        "title": "The stopped agent leaves the board"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Confirm stop"
+        }
+      },
+      "stepId": "stopped"
+    }
+  ],
+  "taskScope": "journey-flow studio2-lanes-control path main",
+  "title": "Wake, reassign or stop an agent",
+  "version": 1
+}

@@ -792,17 +792,28 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
     single_workflow = len(workflow_ids) == 1 and (endpoint_workflow in {None, next(iter(workflow_ids), None)})
     expected_task = ""
     expected_project = None
+    expected_candidate = None
     if single_workflow:
         spec = workflow_specs.get(next(iter(workflow_ids)))
         expected_task = spec.get("taskContext", {}).get("task", "") if spec else ""
         expected_project = Path(spec["projectRoot"]).resolve() if spec else None
+        if spec:
+            candidate_paths = list(spec.get("pinnedPublicFiles", []))
+            candidate_paths.extend(spec.get("methodAssetDigests", {}).keys())
+            candidate_paths.extend(artifact for phase in spec.get("phases", [])
+                                  for artifact in phase.get("requiredArtifacts", []))
+            try:
+                expected_candidate = candidate_tree_hash(expected_project, candidate_paths)
+            except (OSError, ValueError):
+                expected_candidate = None
     endpoint_project = Path(endpoint["gitHeadPath"]).resolve() if endpoint and endpoint.get("gitHeadPath") else None
     final_candidate = rows[-1].get("candidateAfterSha256") if rows else None
     endpoint_ok = (single_workflow and rebound is not None and rebound.get("status") == "observed"
                    and isinstance(endpoint.get("taskId"), str) and bool(endpoint["taskId"])
                    and endpoint.get("taskId") == expected_task
                    and endpoint_project == expected_project
-                   and endpoint.get("candidateAfterSha256") == final_candidate
+                   and expected_candidate is not None
+                   and final_candidate == expected_candidate
                    and isinstance(endpoint.get("gitHead"), str) and len(endpoint["gitHead"]) == 40
                    and isinstance(endpoint.get("patchSha256"), str) and len(endpoint["patchSha256"]) == 64
                    and isinstance(endpoint.get("reviewerSessionSha256"), str)

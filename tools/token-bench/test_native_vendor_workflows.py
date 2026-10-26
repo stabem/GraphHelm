@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import sys
+import json
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -11,6 +12,21 @@ import native_session_evidence as evidence
 
 
 class NativeVendorWorkflowContracts(unittest.TestCase):
+    def test_openspec_windows_command_is_a_native_observed_operation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stream = Path(directory) / "native.jsonl"
+            stream.write_text("\n".join(json.dumps(row) for row in (
+                {"type": "assistant", "message": {"content": [{"type": "tool_use",
+                    "id": "tool-1", "name": "PowerShell", "input": {
+                    "command": "D:/fixture/openspec.cmd new change binding"}}]}},
+                {"type": "user", "message": {"content": [{"type": "tool_result",
+                    "tool_use_id": "tool-1", "content": "Created change", "is_error": False}]},
+                    "tool_use_result": {"exitCode": 0}})) + "\n", encoding="utf-8")
+            required = [{"name": "propose", "commandPattern":
+                         r"openspec(?:\.cmd)?\s+(?:new\s+change|instructions)"}]
+            self.assertEqual(evidence.required_operations(stream, cli="claude",
+                                                            requirements=required)["status"], "observed")
+
     def test_openspec_explore_requires_native_read_without_writing_artifacts(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -61,6 +61,7 @@ def _attempt(path: Path, *, cli: str, project: Path) -> dict:
             metadata = [row for row in native_root if row.get("type") in {"user", "assistant"}]
             if not metadata or any(row.get("sessionId") != archive["rootSession"]
                                    or not Path(row.get("cwd", "")).resolve().is_relative_to(project.resolve())
+                                   or row.get("version") != "2.1.310"
                                    or row.get("isSidechain") is not False
                                    or row.get("agentId") is not None for row in metadata):
                 raise ValueError("Claude archived root provenance differs")
@@ -69,7 +70,17 @@ def _attempt(path: Path, *, cli: str, project: Path) -> dict:
                                                  session_id=archive["rootSession"])
                       if children else evidence.claude_pipeline(stdout))
         elif cli == "codex":
+            import methodology as base
+            native_stream = evidence.records(stdout)
+            starts = [row for row in native_stream if row.get("type") == "thread.started"]
+            if len(starts) != 1 or starts[0].get("thread_id") != archive.get("rootSession"):
+                raise ValueError("Codex root thread does not match native stream")
             wire = receipt["wire"]["counts"]
+            parsed_wire = base.usage("codex", stdout.read_text(encoding="utf-8"))
+            if parsed_wire.get("accountingStatus") != "observed" or parsed_wire.get("counts") != {
+                "input_tokens": wire["input"], "output_tokens": wire["output"],
+                "cached_input_tokens": wire["cacheRead"]}:
+                raise ValueError("Codex native stdout counters differ from receipt")
             replay = evidence.codex_tree(root_log, sorted(archive_root.glob("child-*.jsonl")),
                 project=project, root_thread=archive["rootSession"],
                 stdout_usage=evidence.counters({"input_tokens": wire["input"],

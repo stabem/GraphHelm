@@ -26,7 +26,8 @@ def _write_attempt(root: Path, name: str, session: str) -> None:
     archive = stage / "archive"
     archive.mkdir()
     (archive / "root.jsonl").write_text(json.dumps({"type": "user", "sessionId": session_id,
-        "cwd": str(root), "isSidechain": False, "agentId": None}) + "\n", encoding="utf-8")
+        "cwd": str(root), "version": "2.1.310", "isSidechain": False,
+        "agentId": None}) + "\n", encoding="utf-8")
     digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
     (stage / "receipt.json").write_text(json.dumps({
         "status": "incomplete" if "retry" not in name else "observed",
@@ -83,3 +84,53 @@ def test_codex_cache_is_a_subset_of_input():
     counts = {"input": 100, "output": 20, "cacheRead": 80, "cacheWrite": 0}
     assert ledger._processed(counts, cli="codex") == 120
     assert ledger._processed(counts, cli="claude") == 200
+
+
+def test_claude_unqualified_archived_version_refuses_total():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        _write_attempt(root, "review", "one")
+        native = root / "review/archive/root.jsonl"
+        row = json.loads(native.read_text(encoding="utf-8"))
+        row.pop("version")
+        native.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        receipt = root / "review/receipt.json"
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        data["archive"]["archive"]["root.jsonl"] = hashlib.sha256(native.read_bytes()).hexdigest()
+        receipt.write_text(json.dumps(data), encoding="utf-8")
+        result = ledger.summarize(root, prefix="review", cli="claude", project=root)
+        assert result["accountingStatus"] == "unknown"
+
+
+def test_codex_empty_stdout_cannot_borrow_archive_counters():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        stage = root / "author"
+        archive = stage / "archive"
+        archive.mkdir(parents=True)
+        fixtures = Path(__file__).parent / "fixtures/native-sessions"
+        source_root = fixtures / "codex-root.jsonl"
+        old_cwd = json.loads(source_root.read_text(encoding="utf-8").splitlines()[0])["payload"]["cwd"]
+        for name, source in (("root.jsonl", source_root),
+                             ("child.jsonl", fixtures / "codex-child.jsonl")):
+            (archive / name).write_text(source.read_text(encoding="utf-8").replace(
+                json.dumps(old_cwd)[1:-1], json.dumps(str(root))[1:-1]), encoding="utf-8")
+        stdout = stage / "native.stdout.jsonl"
+        stderr = stage / "native.stderr.log"
+        stdout.write_text("", encoding="utf-8")
+        stderr.write_text("", encoding="utf-8")
+        archive_hashes = {name: hashlib.sha256((archive / name).read_bytes()).hexdigest()
+                          for name in ("root.jsonl", "child.jsonl")}
+        usage = {"input": 87212, "output": 81, "cacheRead": 43392, "cacheWrite": 0}
+        (stage / "receipt.json").write_text(json.dumps({
+            "status": "observed", "stdoutSha256": hashlib.sha256(stdout.read_bytes()).hexdigest(),
+            "stderrSha256": hashlib.sha256(stderr.read_bytes()).hexdigest(),
+            "wire": {"counts": {"input": 65656, "output": 72,
+                                "cacheRead": 43392, "cacheWrite": 0}},
+            "archive": {"status": "observed", "rootSession":
+                        "01a17672-2f62-7c41-b135-b94ea4c887c0",
+                        "archivedRoot": str(archive / "root.jsonl"),
+                        "archive": archive_hashes, "total": usage}}), encoding="utf-8")
+        result = ledger.summarize(root, prefix="author", cli="codex", project=root)
+        assert result["accountingStatus"] == "unknown"
+        assert result["totalProcessedTokens"] is None

@@ -854,6 +854,48 @@ fn failed_reason(code: &str) -> &'static str {
     }
 }
 
+/// Stores a run that ended refused: `failed`, its `detail` (code and pointer, never driver output
+/// or page text), and the step the pointer names, at the top level and in the viewport that was
+/// playing. A refusal that names a step is that step's failure, so the run's `reason` is
+/// `preview.step_failed` and `detail.code` says which: a step timeout used to read `internal`,
+/// and the viewport kept the failed edge as `not_reached`, so nothing named the cause.
+fn record_refusal(flow: &Value, state: &mut Value, code: &str, pointer: &str) {
+    state["state"] = "failed".into();
+    let detail = json!({"code":code,"pointer":pointer});
+    state["detail"] = detail.clone();
+    state["reason"] = failed_reason(code).into();
+    // The pointer may name a flow array index (preflight) or a stable step id (play).
+    let mut parts = pointer.split('/').skip(1);
+    let (Some(kind @ ("screens" | "edges")), Some(step)) = (parts.next(), parts.next()) else {
+        return;
+    };
+    let steps = flow[kind].as_array().unwrap();
+    let stopped = if kind == "edges" && parts.next() == Some("acts") {
+        step.parse::<usize>()
+            .ok()
+            .and_then(|index| steps.get(index))
+    } else {
+        steps.iter().find(|entry| entry["id"] == step)
+    };
+    let Some(id) = stopped.and_then(|entry| entry["id"].as_str()) else {
+        return;
+    };
+    let mut entry = json!({"result":"fail","reason":step_reason(code),"detail":detail});
+    if kind == "screens" {
+        entry["frame"] = false.into();
+    }
+    if state["reason"] == "internal" {
+        state["reason"] = "preview.step_failed".into();
+    }
+    if let Some(view) = state["viewport"].as_str().map(str::to_owned)
+        && state["viewports"][&view].is_object()
+    {
+        state["viewports"][&view][kind][id] = entry.clone();
+        state["viewports"][&view]["result"] = "fail".into();
+    }
+    state[kind][id] = entry;
+}
+
 /// A screen entry carrying the driver's per-assertion judgement (#1286). The entry is the
 /// captured frame when there is one, else the same `{"frame":false}` a bare screen records.
 fn with_checks(frame: Option<Value>, checks: Option<Value>) -> Option<Value> {
@@ -1295,8 +1337,6 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             app
         }
         Err((code, pointer, _)) => {
-            run.state["state"] = "failed".into();
-            run.state["reason"] = failed_reason(code).into();
             if let Some(log) = super::journey_live::take_launch_log() {
                 run.state["launchLog"] = log;
             }
@@ -1304,29 +1344,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             if let Some(log) = super::journey_replay::take_driver_log() {
                 run.state["driverLog"] = log;
             }
-            let detail = json!({"code":code,"pointer":pointer});
-            run.state["detail"] = detail.clone();
-            // The pointer may name a flow array index (preflight) or a stable step id (play).
-            // Keep only the refusal's code and pointer, never driver output or page text.
-            let mut parts = pointer.split('/').skip(1);
-            if let (Some(kind @ ("screens" | "edges")), Some(step)) = (parts.next(), parts.next()) {
-                let steps = flow[kind].as_array().unwrap();
-                let stopped = if kind == "edges" && parts.next() == Some("acts") {
-                    step.parse::<usize>()
-                        .ok()
-                        .and_then(|index| steps.get(index))
-                } else {
-                    steps.iter().find(|entry| entry["id"] == step)
-                };
-                if let Some(id) = stopped.and_then(|entry| entry["id"].as_str()) {
-                    let mut entry =
-                        json!({"result":"fail","reason":step_reason(code),"detail":detail});
-                    if kind == "screens" {
-                        entry["frame"] = false.into();
-                    }
-                    run.state[kind][id] = entry;
-                }
-            }
+            record_refusal(&flow, &mut run.state, code, &pointer);
             None
         }
     };
@@ -3692,6 +3710,34 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let (live, reads) = answer(vec![running(std::process::id())]);
         assert_eq!(live["state"], "running", "{live}");
         assert_eq!(reads, 1, "a live runner's state is read once");
+    }
+
+    /// A step that times out during play names its cause: the run's reason is
+    /// `preview.step_failed` (not `internal`), `detail.code` is the driver's code, and the
+    /// viewport that was playing records the failed edge instead of `not_reached`. Seen on
+    /// `studio2-proof-compare`: `failed / internal`, empty runner.log, the edge `not_reached` in
+    /// `viewports.web`. A preflight refusal keeps its own reason. Cost: microseconds.
+    #[test]
+    fn a_step_refusal_names_the_step_and_its_cause() {
+        let flow = json!({"screens":[{"id":"step"},{"id":"side"}],
+            "edges":[{"id":"step.side"}]});
+        let mut state = json!({"state":"running","viewport":"web",
+            "screens":{"step":{"result":"pass"}},
+            "edges":{"step.side":{"result":null,"reason":"not_reached"}},
+            "viewports":{"web":{"result":"fail","screens":{},
+                "edges":{"step.side":{"result":null,"reason":"not_reached"}}}}});
+        super::record_refusal(&flow, &mut state, "replay.timeout", "/edges/step.side/read");
+        assert_eq!(state["state"], "failed", "{state}");
+        assert_eq!(state["reason"], "preview.step_failed", "{state}");
+        assert_eq!(state["detail"]["code"], "replay.timeout", "{state}");
+        assert_eq!(state["edges"]["step.side"]["reason"], "timeout", "{state}");
+        let web = &state["viewports"]["web"]["edges"]["step.side"];
+        assert_eq!(web["result"], "fail", "{state}");
+        assert_eq!(web["reason"], "timeout", "{state}");
+
+        let mut refused = json!({"state":"running","screens":{},"edges":{}});
+        super::record_refusal(&flow, &mut refused, "driver.secret_missing", "/secrets/0");
+        assert_eq!(refused["reason"], "driver.secret_missing", "{refused}");
     }
 
     /// #586: a flow the preview refuses before any browser starts says why, in the refusal's own

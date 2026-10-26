@@ -77,7 +77,7 @@ export function journeyMeta(card: JourneyCard): string {
 }
 
 /** Row height of one issue in the graph (the design's `ROW`). */
-export const ROW = 96;
+export const ROW = 120; // v20: tall enough for a two-line issue title
 
 /** The YOU ASKED card at its tallest without a legend: padding, the time line, a title clamped to
  * three lines, the chip and percent, the bar and the "no issue" line (#1947). */
@@ -198,7 +198,7 @@ export function graphRequests(
     const cy = askY + 60;
     const links: GraphRequest["links"] = [];
     for (const item of items) {
-      const iy = item.y + 42;
+      const iy = item.y + 54;
       links.push({ d: `M240 ${cy} C 270 ${cy}, 270 ${iy}, 300 ${iy}`, color: "#ff8a3d", dashed: false });
       links.push({ d: `M550 ${iy} L 600 ${iy}`, color: item.pr !== null ? "#4ea1ff" : "#45454e", dashed: item.pr === null });
       links.push({ d: `M780 ${iy} L 840 ${iy}`, color: done(item) ? "#d08cff" : "#45454e", dashed: !done(item) });

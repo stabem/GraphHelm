@@ -120,13 +120,13 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
             ) : (
               <>
                 <div className="mono gv-cols" aria-hidden="true">
-                  <span style={{ left: 0 }}>ASKED</span><span style={{ left: 300 }}>ISSUES THE ORCHESTRATOR OPENED</span><span style={{ left: 600 }}>PULL REQUESTS</span><span style={{ left: 840 }}>RESULT</span>
+                  <span style={{ left: 0 }}>ASKED</span><span style={{ left: "28.846%" }}>ISSUES</span><span style={{ left: "57.692%" }}>PULL REQUESTS</span><span style={{ left: "80.769%" }}>RESULT</span>
                 </div>
                 <ul aria-label="Owner requests" className="gv-requests">
                   {graph.map((row) => (
                     <li key={row.request.requestId} data-chip={row.chip.key} aria-label={row.request.title ?? row.request.ask} className="gv-request" style={{ "--h": `${row.height}px` } as CSSProperties}>
-                      <svg aria-hidden="true" className="gv-links" width="1040" height={row.height}>
-                        {row.links.map((link, index) => <path key={index} d={link.d} fill="none" stroke={link.color} strokeWidth="1.5" strokeDasharray={link.dashed ? "4 4" : undefined} />)}
+                      <svg aria-hidden="true" className="gv-links" viewBox={`0 0 1040 ${row.height}`} preserveAspectRatio="none" height={row.height}>
+                        {row.links.map((link, index) => <path key={index} vectorEffect="non-scaling-stroke" d={link.d} fill="none" stroke={link.color} strokeWidth="1.5" strokeDasharray={link.dashed ? "4 4" : undefined} />)}
                       </svg>
                       <div className="gv-ask gv-node rq" style={{ "--x": "0px", "--y": `${row.askY}px`, "--rq": requestColor(row.request.requestId) } as CSSProperties}>
                         <span className="mono gv-ask-when">YOU ASKED · {row.when}</span>
@@ -141,13 +141,13 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
                             className="b gv-issue gv-node rq"
                             aria-pressed={chosen?.item.issue === item.issue}
                             aria-label={`Issue #${item.issue}`}
-                            style={{ "--x": "300px", "--y": `${item.y}px`, "--rq": requestColor(row.request.requestId) } as CSSProperties}
+                            style={{ "--x": "28.846%", "--y": `${item.y}px`, "--rq": requestColor(row.request.requestId) } as CSSProperties}
                             onClick={() => {
                               setSelected(item.issue);
                               if (item.task !== null && item.column !== null && reviewable(item.column, item.pr)) setReviewing(item.task);
                             }}
                           >
-                            <span className="gv-row"><span className="mono gv-muted">#{item.issue}</span><span className="gv-grow gv-ellipsis">{item.title}</span></span>
+                            <span className="gv-row"><span className="mono gv-muted">#{item.issue}</span><span className="gv-grow gv-clamp2">{item.title}</span></span>
                             <span className="gv-row" aria-label={`Steps ${item.blocks.filter((b) => b.color === "#3ddc97").length} of ${item.blocks.length}`}>
                               {item.blocks.map((block) => <span key={block.step} title={block.step} className={`gv-sq small${block.color === LIVE && (item.column === "implementing" || item.column === "review") ? " curstep" : ""}`} style={{ background: block.color }} />)}
                               <span className="mono gv-meta gv-agent">{item.lane ?? "no lane"}</span>
@@ -155,11 +155,11 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
                             <span className="mono gv-meta gv-ellipsis">{item.last}</span>
                             <span className="gv-row gv-jname"><span className="gv-swatch small" style={{ background: item.journey?.color ?? "#45454e" }} />{item.journey?.title ?? "no journey"}</span>
                           </button>
-                          <div role="group" aria-label={`Pull request of #${item.issue}`} className={`gv-pr gv-node${item.pr === null ? " none" : ""}`} style={{ "--x": "600px", "--y": `${item.y + 16}px` } as CSSProperties}>
+                          <div role="group" aria-label={`Pull request of #${item.issue}`} className={`gv-pr gv-node${item.pr === null ? " none" : ""}`} style={{ "--x": "57.692%", "--y": `${item.y + 28}px` } as CSSProperties}>
                             <span className="mono" style={{ color: item.pr === null ? "#8a8a96" : "#4ea1ff" }}>{item.pr === null ? "no PR yet" : `PR #${item.pr}`}</span>
                             <span className="mono gv-meta gv-ellipsis">{item.prLine}</span>
                           </div>
-                          <div role="group" aria-label={`Result of #${item.issue}`} className="gv-res gv-node" style={{ "--x": "840px", "--y": `${item.y + 16}px`, borderColor: item.result.color === "#d08cff" ? "#5a3a6a" : undefined } as CSSProperties}>
+                          <div role="group" aria-label={`Result of #${item.issue}`} className="gv-res gv-node" style={{ "--x": "80.769%", "--y": `${item.y + 28}px`, borderColor: item.result.color === "#d08cff" ? "#5a3a6a" : undefined } as CSSProperties}>
                             <span style={{ color: item.result.color }}>{item.result.word}</span>
                             <span className="mono gv-meta">{item.result.detail}</span>
                           </div>

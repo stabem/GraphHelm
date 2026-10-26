@@ -9,7 +9,10 @@
 <x-dc>
 <helmet>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
-<style>body{margin:0}</style>
+<style>body{margin:0}
+/* QA fix 4: the unopened-project hint wraps to 2 lines on spaces (never mid-word), then ends in an ellipsis; the full text is in its tooltip. */
+.hint2{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;min-width:0;overflow-wrap:normal;word-break:normal;line-height:1.4}
+</style>
 </helmet>
 <nav aria-label="Projects" style="font-family: 'Space Grotesk', system-ui, sans-serif; color: #f5f5f6; font-size: 12px; width: 232px; min-height: 900px; height: 100%; box-sizing: border-box; background: #0f0f11; border-right: 1px solid #2a2a30; padding: 14px 12px; display: flex; flex-direction: column; gap: 14px">
 <div style="display: flex; align-items: center; gap: 8px">
@@ -25,7 +28,15 @@
 </details>
 
 <div style="display: flex; flex-direction: column; gap: 6px">
-<div style="display: flex; align-items: center"><span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">PROJECTS</span><span style="flex: 1"></span><button aria-label="Add project folder" style="all: unset; cursor: pointer; width: 22px; height: 22px; border-radius: 6px; border: 1px solid #2a2a30; text-align: center; line-height: 20px; color: #a2a2ad">+</button></div>
+<div style="display: flex; align-items: center"><span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">PROJECTS</span><span style="flex: 1"></span><button aria-label="Add project folder" aria-expanded="{{addExpanded}}" onClick="{{toggleAdd}}" style="all: unset; cursor: pointer; width: 22px; height: 22px; border-radius: 6px; border: 1px solid #2a2a30; text-align: center; line-height: 20px; color: #a2a2ad">+</button></div>
+
+<!-- QA fix 5: when open, the Add-folder form is its own full-width row under the PROJECTS header (a sibling of the header row, not inside it), so it never sits beside the header. -->
+<sc-if value="{{addOpen}}" hint-placeholder-val="{{ false }}">
+<form onSubmit="{{toggleAdd}}" aria-label="Add project folder" style="width: 100%; box-sizing: border-box; border-radius: 10px; background: #1e1e22; border: 1px solid #34343c; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px">
+<label style="display: flex; flex-direction: column; gap: 4px"><span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">FOLDER PATH</span><input type="text" placeholder="~/code/my-project" style="width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid #34343c; background: #0a0a0b; color: #f5f5f6; font: inherit"></label>
+<div style="display: flex; gap: 6px"><button type="submit" style="all: unset; cursor: pointer; padding: 6px 10px; border-radius: 6px; background: #ff8a3d; color: #241004; font-weight: 600">Add</button><button type="button" onClick="{{toggleAdd}}" style="all: unset; cursor: pointer; padding: 6px 10px; border-radius: 6px; border: 1px solid #34343c">Cancel</button></div>
+</form>
+</sc-if>
 
 <div style="border-radius: 10px; background: #1e1e22; border: 1px solid #34343c; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px">
 <div style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f5f5f6" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"></path></svg><strong>zuvemo</strong><span style="flex: 1"></span><span style="width: 7px; height: 7px; border-radius: 50%; background: #3ddc97"></span></div>
@@ -39,6 +50,8 @@
 <div style="border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; border: 1px solid transparent">
 <div style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#a2a2ad" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"></path></svg><span>GraphHelm</span><span style="flex: 1"></span><span style="width: 7px; height: 7px; border-radius: 50%; background: #45454e"></span></div>
 <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #8a8a96">~/code/GraphHelm · no run</span>
+<!-- QA fix 4: wraps to 2 lines, then an ellipsis; full text in the tooltip. -->
+<span class="hint2" title="Not opened yet. Open it with: graphhelm studio open ~/code/GraphHelm" style="font-size: 10px; color: #8a8a96">open with graphhelm studio open ~/code/GraphHelm</span>
 </div>
 </div>
 
@@ -53,7 +66,8 @@
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":232,"height":900}}'>
 class Component extends DCLogic {
-renderVals() { return {}; }
+constructor(p){ super(p); this.state = { add: false }; }
+renderVals() { return { addOpen: this.state.add, addExpanded: this.state.add ? 'true' : 'false', toggleAdd: (e) => { if (e && e.preventDefault) e.preventDefault(); this.setState({ add: !this.state.add }); } }; }
 }
 </script>
 </body>

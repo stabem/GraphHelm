@@ -118,6 +118,12 @@ def load_registry(path: Path) -> dict:
     return validate_registry(registry)
 
 
+def build_vendor_registry(**kwargs) -> dict:
+    """Build the pinned vendor registry without coupling the worker to assets."""
+    from native_vendor_workflows import build_vendor_registry as factory
+    return validate_registry(factory(**kwargs))
+
+
 def frozen_inputs(workflow: dict) -> dict:
     """Hash the project files and pinned method assets that every native cell must reuse."""
     project = Path(workflow["projectRoot"])
@@ -421,6 +427,9 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
         raise ValueError("phase prompt changed after freeze")
     if predecessor_artifacts and not isinstance(predecessor_artifacts, dict):
         raise ValueError("predecessor artifact hashes are invalid")
+    quota_before = _quota_observation(cli_config, project_root)
+    if quota_before is not None and not quota_before.get("allowed"):
+        raise ValueError("native quota guard refused phase before capture")
     attempt = phase_attempt(plan, phase_id, attempt_id, stage_root=str(stage))
     frozen_argv = list(cli_config["argv"]) + list(phase["command"])
     captured = base.capture(frozen_argv, project_root, deadline=int(cli_config.get("deadlineSeconds", 300)),
@@ -432,6 +441,7 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     stderr.write_text(captured["stderr"], encoding="utf-8")
     parsed_usage = base.usage(cli_config["cli"], captured["stdout"])
     provider_error = base.native_provider_error(cli_config["cli"], captured["stdout"], captured["stderr"])
+    quota_after = _quota_observation(cli_config, project_root)
     session_evidence = None
     evidence_path = cli_config.get("sessionEvidencePath")
     if evidence_path:
@@ -453,6 +463,7 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     receipt = {"attempt": attempt, "ordinal": ordinal, "argv": frozen_argv, "capture": {key: captured[key] for key in
                ("exit", "seconds", "timeout", "cleanupConfirmed", "truncated")},
                "usage": parsed_usage, "sessionEvidence": session_evidence, "providerError": provider_error,
+               "quotaBefore": quota_before, "quotaAfter": quota_after,
                "stdoutPath": stdout.name, "stderrPath": stderr.name,
                "rawSha256": {stdout.name: base.digest(stdout), stderr.name: base.digest(stderr)},
                "requiredArtifactHashes": required, "predecessorArtifacts": predecessor_artifacts}
@@ -467,9 +478,25 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     native_complete = (not provider_error and captured["exit"] == 0 and not captured["timeout"]
                        and captured["cleanupConfirmed"] and not captured["truncated"]
                        and parsed_usage.get("counts") is not None
-                       and receipt["fidelity"].get("status") == "observed")
+                       and receipt["fidelity"].get("status") == "observed"
+                       and (quota_before is not None and quota_after is not None
+                            and quota_before.get("allowed") is True and quota_after.get("allowed") is True))
     receipt["status"] = "complete" if native_complete else ("failed" if provider_error or captured["exit"] != 0 else "incomplete")
     return receipt
+
+
+def _quota_observation(cli_config: dict, cwd: Path) -> dict | None:
+    """Read the native allowance guard without mutating account state."""
+    if cli_config.get("cli") != "codex":
+        return cli_config.get("quotaObservation")
+    executable = cli_config.get("executable")
+    if not executable:
+        return None
+    try:
+        from native_quota import codex_allowance
+        return codex_allowance(Path(executable), cwd, timeout=20, cutoff=80)
+    except (ImportError, OSError, ValueError, subprocess.SubprocessError) as error:
+        return {"allowed": False, "reason": "quota-observer-error", "detail": str(error)}
 
 
 def freeze(registry_path: Path, *, cli_paths: dict[str, Path], models: dict[str, str], output: Path) -> dict:

@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use graphhelm_events::{EvidenceOpener, EvidenceRead};
 use graphhelm_execution::tasks::{
@@ -814,11 +814,19 @@ pub(crate) struct TaskRecordCache {
     outcomes: BTreeMap<u64, Option<TaskEventRecord>>,
     /// The last walked head: its sequence and event id.
     head: Option<(u64, String)>,
+    /// #1560: the stream's `signal_recorded` events up to `signals_tip`, the only events the
+    /// tasks reply reads, so a later read appends the events chained after the tip
+    /// (`read_stream_after`) instead of copying the whole stream. Shared (`Arc`), so handing the
+    /// memory to a read copies nothing until something is appended.
+    signals: Arc<Vec<graphhelm_protocols::EventEnvelope>>,
+    /// The last event `signals` covers (sequence and event hash) and how many events of every
+    /// kind the stream holds up to it; `None` until a whole read kept them.
+    signals_tip: Option<(u64, graphhelm_protocols::EventHash, usize)>,
 }
 
 impl TaskRecordCache {
     /// Folds a cache that read the same execution (possibly concurrently) into this one: the
-    /// union of outcomes, and the later head.
+    /// union of outcomes, and the later head and signals.
     pub(crate) fn absorb(&mut self, other: TaskRecordCache) {
         self.outcomes.extend(other.outcomes);
         let later = other.head.as_ref().map(|(sequence, _)| *sequence)
@@ -826,6 +834,80 @@ impl TaskRecordCache {
         if later {
             self.head = other.head;
         }
+        let tip = |kept: &Option<(u64, graphhelm_protocols::EventHash, usize)>| {
+            kept.as_ref().map(|(at, _, _)| *at)
+        };
+        if other.signals_tip.is_some() && tip(&other.signals_tip) >= tip(&self.signals_tip) {
+            self.signals = other.signals;
+            self.signals_tip = other.signals_tip;
+        }
+    }
+
+    /// Keeps the signals of a whole `history` and its tip.
+    fn keep(&mut self, history: &[graphhelm_protocols::EventEnvelope]) {
+        let Some(last) = history.last() else {
+            return;
+        };
+        self.signals = Arc::new(
+            history
+                .iter()
+                .filter(|event| matches!(event.kind, EventKind::SignalRecorded(_)))
+                .cloned()
+                .collect(),
+        );
+        self.signals_tip = Some((last.sequence, last.event_hash.clone(), history.len()));
+    }
+
+    /// The kept signals advanced over the events appended since their tip: the new head
+    /// sequence and the stream's event count. `None` when there is no tip, or the store does not
+    /// continue exactly from it (the status digest's chain check, #2129: first sequence and
+    /// previous hash, then the store head), or more than a page was appended; the caller then
+    /// reads the whole stream, so every refusal is the whole read's own.
+    fn resume(
+        &mut self,
+        store: &graphhelm_events::LocalEventRepository,
+        scope: &graphhelm_protocols::RepositoryScope,
+        stream: &str,
+    ) -> Result<Option<(u64, usize)>, Failure> {
+        let Some((last, last_hash, len)) = self.signals_tip.clone() else {
+            return Ok(None);
+        };
+        let (tail, head) = super::timing::phase("stream.tail", || {
+            store.read_stream_after(scope, stream, last)
+        })
+        .map_err(|e| super::repository_failure(&e))?;
+        let Some(head) = head else {
+            return Ok(None);
+        };
+        let (end, end_hash) = match tail.last() {
+            Some(event) => (event.sequence, &event.event_hash),
+            None => (last, &last_hash),
+        };
+        let continues = tail
+            .first()
+            .is_none_or(|first| first.sequence == last + 1 && first.previous_hash == last_hash)
+            && head.next_sequence == end + 1
+            && &head.last_event_hash == end_hash;
+        if !continues
+            || tail.len() > graphhelm_events::MAX_READ_PAGE
+            || len + tail.len() > graphhelm_events::MAX_READ_ALL
+        {
+            return Ok(None);
+        }
+        let end_hash = end_hash.clone();
+        let len = len + tail.len();
+        if let Some(event) = tail.last() {
+            self.head = Some((event.sequence, event.event_id.as_str().to_owned()));
+        }
+        let mut appended = tail
+            .into_iter()
+            .filter(|event| matches!(event.kind, EventKind::SignalRecorded(_)))
+            .peekable();
+        if appended.peek().is_some() {
+            Arc::make_mut(&mut self.signals).extend(appended);
+        }
+        self.signals_tip = Some((end, end_hash, len));
+        Ok(Some((end, len)))
     }
 }
 
@@ -1078,11 +1160,29 @@ pub(crate) fn read_cached(
     // read the clock (`check_now`), since envelope opens are not events the walk counts.
     let store = super::timing::phase("store.open", || event_store(events))
         .map_err(|e| super::repository_failure(&e))?;
+    // #1560: a kept memory resumes over only the events chained after its tip; the chain is
+    // the remembered outcomes' identity, so no whole history is copied to recheck it.
+    let (scope, stream) = super::stream_of(execution)?;
+    if let Some((head_sequence, walked)) = cache.resume(&store, &scope, &stream)? {
+        let signals = Arc::clone(&cache.signals);
+        return fold_signals(
+            &store,
+            &scope,
+            &signals,
+            head_sequence,
+            walked as u64,
+            execution,
+            keyring,
+            budget,
+            cache,
+        );
+    }
     let (scope, _, history) =
         super::timing::phase("stream.read", || resolve_stream(&store, Some(execution)))?;
     if history.is_empty() {
         return Err(super::not_found());
     }
+    cache.keep(&history);
     read_history(&store, &scope, &history, execution, keyring, budget, cache)
 }
 
@@ -1121,6 +1221,41 @@ pub(crate) fn read_history(
     if let Some(last) = history.last() {
         cache.head = Some((last.sequence, last.event_id.as_str().to_owned()));
     }
+    fold_signals(
+        store,
+        scope,
+        history,
+        history.last().map_or(0, |event| event.sequence),
+        walked,
+        execution,
+        keyring,
+        budget,
+        cache,
+    )
+}
+
+/// The fold over `history`, which may hold only the stream's `signal_recorded` events (the
+/// kept memory's), since nothing below reads another kind; `head_sequence` and `walked` are the
+/// whole stream's.
+#[allow(clippy::too_many_arguments)]
+fn fold_signals(
+    store: &graphhelm_events::LocalEventRepository,
+    scope: &graphhelm_protocols::RepositoryScope,
+    history: &[graphhelm_protocols::EventEnvelope],
+    head_sequence: u64,
+    walked: u64,
+    execution: &str,
+    keyring: &SignalKeyring,
+    budget: &graphhelm_events::ReadBudget,
+    cache: &mut TaskRecordCache,
+) -> Result<TasksView, Failure> {
+    let exceeded = |exceeded: graphhelm_events::ReadBudgetExceeded| {
+        super::replay_failure(&graphhelm_events::ReplayError::BudgetExceeded {
+            walked: exceeded.walked,
+            limit_millis: exceeded.limit_millis,
+        })
+    };
+    budget.check_now(walked).map_err(exceeded)?;
     let opener = super::signal::open_sealer(keyring)?;
     let generation = super::signal::sealer_generation(keyring)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1269,7 +1404,7 @@ pub(crate) fn read_history(
     budget.check_now(walked).map_err(exceeded)?;
     Ok(TasksView {
         execution_id: execution.to_owned(),
-        head_sequence: history.last().map_or(0, |event| event.sequence),
+        head_sequence,
         tasks: fold.tasks,
         records,
         rejected,

@@ -24,9 +24,6 @@
 
 use std::path::Path;
 
-use graphhelm_events::ExecutionProjection;
-use graphhelm_protocols::{EventEnvelope, EventKind, NodeState};
-
 use super::{Failure, argument, finish, render, repository_failure};
 use crate::commands::event_store;
 use crate::output::Outcome;
@@ -64,7 +61,8 @@ pub(crate) fn execute(
         return Err(argument("after is not a valid execution id", "/after"));
     }
 
-    let store = event_store(events).map_err(|error| repository_failure(&error))?;
+    let store = super::timing::phase("store.open", || event_store(events))
+        .map_err(|error| repository_failure(&error))?;
     let mut streams = store
         .list_streams()
         .map_err(|error| repository_failure(&error))?;
@@ -93,29 +91,34 @@ pub(crate) fn execute(
 
     let mut rows = Vec::new();
     for stream in remaining.into_iter().take(limit) {
-        let history = super::timing::phase("stream.read", || {
-            store.read_replay_stream(&stream.scope, &stream.stream_id)
-        })
+        // #1560: the stream's projection and history digest, resumed in serve over only what
+        // was appended since the last read rather than copied and walked whole per row.
+        let glance = super::status::glance(
+            &store,
+            events,
+            &stream.scope,
+            &stream.stream_id,
+            &graphhelm_events::ReadBudget::unbounded(),
+        )
         .map_err(|error| repository_failure(&error))?;
-        let head = super::at_sequence(&history);
+        let digest = &glance.digest;
+        let head = digest.at_sequence();
         // A stream whose fold refuses is REPORTED, not skipped and not fatal: one corrupt stream
         // must not make the whole index unreadable, and a silently dropped row would read as
         // "that execution does not exist". `attention` is `unknown` there because that is the
         // honest verdict when the projection could not be built at all.
-        let row = match super::timing::phase("fold", || {
-            super::status::replay_cached(events, &stream.scope, &stream.stream_id, &history)
-        }) {
+        let row = match glance.projection {
             Ok(projection) => {
                 // Budgets derived, not passed (#176).
                 let inputs = graphhelm_execution::AttentionInputs::for_surface(
                     &projection,
-                    super::node_silence_seconds(&history, chrono::Utc::now()),
+                    digest.node_silence_seconds(chrono::Utc::now()),
                     head,
                 );
                 let full = render(
                     &projection,
                     &inputs,
-                    &super::Liveness::measured(&history),
+                    &digest.liveness(),
                     // #134: `list` holds no graph, so no dispatch gate is published here.
                     None,
                 );
@@ -128,7 +131,7 @@ pub(crate) fn execute(
                     &full,
                     head,
                     objective,
-                    unverified_result_count(&projection, &history),
+                    digest.unverified_result_count(&projection),
                 )
             }
             Err(_) => unreadable_row(&stream.stream_id, head),
@@ -229,63 +232,6 @@ fn unreadable_row(stream_id: &str, head_sequence: Option<u64>) -> serde_json::Va
     })
 }
 
-/// Counts succeeded node results that do not have a passing typed gate verdict in the same replay.
-///
-/// A successful lifecycle outcome is only an executor result. The Studio's review marker is
-/// cleared by a later node outcome and by a later gate verdict, then restored only when the gate
-/// passes for a result whose evidence identifies a judge or gate. Replaying the already-loaded
-/// history here preserves that distinction without issuing a second read per execution.
-fn unverified_result_count(
-    projection: &ExecutionProjection,
-    history: &[EventEnvelope],
-) -> Option<usize> {
-    if history.is_empty() {
-        return None;
-    }
-
-    #[derive(Default)]
-    struct ResultReview {
-        succeeded: bool,
-        eligible_for_verification: bool,
-        verified: bool,
-    }
-
-    let mut reviews = std::collections::BTreeMap::<String, ResultReview>::new();
-    for event in history {
-        match &event.kind {
-            EventKind::NodeOutcomeRecorded(payload) => {
-                let node = payload.node_id.to_string();
-                let eligible = payload.next_state == NodeState::Succeeded
-                    && event.evidence_refs.iter().any(|reference| {
-                        let id = reference.evidence_id().as_str();
-                        id.ends_with("-judgment") || id.ends_with("-verdict")
-                    });
-                let review = reviews.entry(node).or_default();
-                review.succeeded = payload.next_state == NodeState::Succeeded;
-                review.eligible_for_verification = eligible;
-                review.verified = false;
-            }
-            EventKind::GateVerdict(payload) => {
-                let review = reviews.entry(payload.node_id.to_string()).or_default();
-                review.verified = false;
-                if payload.passed && review.succeeded && review.eligible_for_verification {
-                    review.verified = true;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Some(
-        projection
-            .node_states
-            .iter()
-            .filter(|(_, state)| **state == NodeState::Succeeded)
-            .filter(|(node, _)| !reviews.get(*node).is_some_and(|review| review.verified))
-            .count(),
-    )
-}
-
 pub fn run(events: &Path, after: Option<&str>, limit: Option<usize>) -> Outcome {
     finish(
         COMMAND,
@@ -297,6 +243,8 @@ pub fn run(events: &Path, after: Option<&str>, limit: Option<usize>) -> Outcome 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graphhelm_events::ExecutionProjection;
+    use graphhelm_protocols::{EventEnvelope, EventKind, NodeState};
 
     fn status_like(execution: &str, attention: &str) -> serde_json::Value {
         serde_json::json!({
@@ -505,7 +453,10 @@ mod tests {
             event(3, succeeded("reviewed"), vec![evidence]),
             event(4, passed("reviewed"), vec![]),
         ];
-        assert_eq!(unverified_result_count(&projection, &history), Some(1));
+        assert_eq!(
+            super::super::digest::HistoryDigest::of(&history).unverified_result_count(&projection),
+            Some(1)
+        );
     }
 
     /// #1083 F7: the row carries the declared objective, bounded, and `null` when there is none -

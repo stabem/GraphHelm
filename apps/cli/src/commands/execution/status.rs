@@ -132,6 +132,13 @@ pub(crate) fn execute_within(
     budget: graphhelm_events::ReadBudget,
     graph: Option<&GraphVersion>,
 ) -> Result<serde_json::Value, Failure> {
+    // #1560: the read an operator polls names its run and no graph, so it renders from the
+    // stream's digest instead of walking the whole history (`glance`).
+    if graph.is_none()
+        && let Some(execution) = execution
+    {
+        return glance_status(events, execution, budget, chrono::Utc::now());
+    }
     let read = read_known_within(events, execution, budget.clone())?;
     // #134 TAKEOVER PLACEMENT: this resolution lived in `read_within` on the branch, but main
     // split that function and `graph` is a parameter of THIS one. Moved rather than duplicated:
@@ -206,42 +213,115 @@ pub(crate) fn execute_within(
 }
 
 fn render_read(read: &Read, spec: Option<&GraphSpec>) -> serde_json::Value {
-    let mut value = render(
+    let leases = read.history.iter().filter_map(|event| match &event.kind {
+        EventKind::WakeLease(lease) => Some((
+            event.sequence,
+            lease.session_id.as_str(),
+            event.actor.id().as_str(),
+        )),
+        _ => None,
+    });
+    render_parts(
         &read.projection,
         &read.inputs,
         &super::Liveness::measured(&read.history),
         spec,
-    );
+        read.at_sequence,
+        leases,
+        chrono::Utc::now(),
+    )
+}
+
+/// The status reply from its parts, whether they were measured over the whole history
+/// (`render_read`) or kept as a digest (`glance_status`). `leases` is every `WakeLease` event of
+/// the history as `(sequence, session id, arming actor id)`.
+fn render_parts<'a>(
+    projection: &graphhelm_events::ExecutionProjection,
+    inputs: &graphhelm_execution::AttentionInputs,
+    liveness: &super::Liveness,
+    spec: Option<&GraphSpec>,
+    at_sequence: Option<u64>,
+    leases: impl Iterator<Item = (u64, &'a str, &'a str)>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> serde_json::Value {
+    let mut value = render(projection, inputs, liveness, spec);
     // The WIRE field keeps its existing shape on purpose, zero and all: `headSequence` is a
     // different contract from `at_sequence`, read by clients that already treat 0 as "nothing
     // yet", and widening it to null is a wire change that needs its own justification. The
     // flattening is left here DECLARED rather than silently carried into the seam.
-    value["headSequence"] = serde_json::json!(read.at_sequence.unwrap_or(0));
+    value["headSequence"] = serde_json::json!(at_sequence.unwrap_or(0));
     // A live lease means armed and not consumed, just as wake status reports. Its actor
     // comes from the arming envelope, not its opaque session id or a display alias.
-    let now = chrono::Utc::now();
-    let listeners: std::collections::BTreeSet<_> = read
-        .history
-        .iter()
-        .filter_map(|event| {
-            let graphhelm_protocols::EventKind::WakeLease(lease) = &event.kind else {
-                return None;
-            };
-            read.projection
-                .wake_leases
-                .get(lease.session_id.as_str())
-                .filter(|live| {
-                    live.armed_at_sequence == event.sequence
-                        && live
-                            .matures_at
-                            .as_ref()
-                            .is_none_or(|at| at.as_datetime() > &now)
-                })
-                .map(|_| event.actor.id().as_str())
+    let listeners: std::collections::BTreeSet<_> = leases
+        .filter(|(sequence, session, _)| {
+            projection.wake_leases.get(*session).is_some_and(|live| {
+                live.armed_at_sequence == *sequence
+                    && live
+                        .matures_at
+                        .as_ref()
+                        .is_none_or(|at| at.as_datetime() > &now)
+            })
         })
+        .map(|(_, _, actor)| actor)
         .collect();
     value["wakeListeners"] = serde_json::json!(listeners);
     value
+}
+
+/// The status reply of a [`Glance`]: [`render_read`] with every history-measured part taken from
+/// the digest.
+fn render_glance(
+    projection: &graphhelm_events::ExecutionProjection,
+    digest: &super::digest::HistoryDigest,
+    now: chrono::DateTime<chrono::Utc>,
+) -> serde_json::Value {
+    let at_sequence = digest.at_sequence();
+    let inputs = graphhelm_execution::AttentionInputs::for_surface(
+        projection,
+        digest.node_silence_seconds(now),
+        at_sequence,
+    );
+    render_parts(
+        projection,
+        &inputs,
+        &digest.liveness(),
+        None,
+        at_sequence,
+        digest.wake_leases(),
+        now,
+    )
+}
+
+/// #1560: [`execute_within`] for a named run and no graph, rendered from [`glance`]. Refuses
+/// as `read_known_within` does, in the same order: the open, the fold, the unknown id, then the
+/// budget read again after the render.
+fn glance_status(
+    events: &Path,
+    execution: &str,
+    budget: graphhelm_events::ReadBudget,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<serde_json::Value, Failure> {
+    let store = super::timing::phase("store.open", || {
+        crate::commands::budgeted_event_store(events, budget.clone())
+    })
+    .map_err(|error| repository_failure(&error))?;
+    let (scope, stream) = super::stream_of(execution)?;
+    let glance = glance(&store, events, &scope, &stream, &budget)
+        .map_err(|error| repository_failure(&error))?;
+    let projection = glance.projection.map_err(|error| replay_failure(&error))?;
+    if glance.digest.len == 0 {
+        return Err(super::not_found());
+    }
+    let value = render_glance(&projection, &glance.digest, now);
+    budget
+        .check_now(glance.digest.len as u64)
+        .map_err(|exceeded| {
+            replay_failure(&graphhelm_events::ReplayError::BudgetExceeded {
+                walked: exceeded.walked,
+                limit_millis: exceeded.limit_millis,
+            })
+        })?;
+    Ok(value)
 }
 
 /// [`read_within`] for a read an operator is WAITING on: an explicit id whose stream holds no
@@ -322,6 +402,8 @@ struct Fold {
 #[derive(Default)]
 struct FoldCacheInner {
     folds: std::sync::Mutex<std::collections::BTreeMap<FoldKey, Fold>>,
+    /// #1560: each stream's history digest, kept beside its generation and evicted with it.
+    digests: std::sync::Mutex<std::collections::BTreeMap<FoldKey, super::digest::HistoryDigest>>,
     /// Streams a background fold is already finishing, so a burst of refused reads starts one.
     warming: std::sync::Mutex<std::collections::BTreeSet<FoldKey>>,
     /// #1721: single-flight claims taken, so a test counts the folds a burst of cold reads paid.
@@ -364,6 +446,35 @@ impl FoldCache {
         let fold = folds.get_mut(key)?;
         fold.used = std::time::Instant::now();
         Some(fold.generation.clone())
+    }
+
+    /// `read` over a stream's kept generation, in place: no copy of the generation itself.
+    fn read<T>(
+        &self,
+        key: &FoldKey,
+        read: impl FnOnce(&graphhelm_events::ProjectionGeneration) -> T,
+    ) -> Option<T> {
+        let mut folds = self.0.folds.lock().ok()?;
+        let fold = folds.get_mut(key)?;
+        fold.used = std::time::Instant::now();
+        Some(read(&fold.generation))
+    }
+
+    fn digest(&self, key: &FoldKey) -> Option<super::digest::HistoryDigest> {
+        self.0.digests.lock().ok()?.get(key).cloned()
+    }
+
+    /// Kept only while the stream's generation is: the generation's eviction decides for both.
+    fn store_digest(&self, key: &FoldKey, digest: super::digest::HistoryDigest) {
+        let Ok(folds) = self.0.folds.lock() else {
+            return;
+        };
+        if let Ok(mut digests) = self.0.digests.lock() {
+            if folds.contains_key(key) {
+                digests.insert(key.clone(), digest);
+            }
+            digests.retain(|key, _| folds.contains_key(key));
+        }
     }
 
     fn store(&self, key: &FoldKey, generation: graphhelm_events::ProjectionGeneration) {
@@ -521,6 +632,132 @@ pub(crate) fn replay_cached(
         ),
         None => graphhelm_events::replay(scope, stream, history),
     }
+}
+
+/// One stream as a status or list read needs it: the projection (or why it would not fold) and
+/// the [`HistoryDigest`](super::digest::HistoryDigest) of the same history.
+pub(crate) struct Glance {
+    pub(crate) projection:
+        Result<graphhelm_events::ExecutionProjection, graphhelm_events::ReplayError>,
+    pub(crate) digest: super::digest::HistoryDigest,
+}
+
+/// #1560: one stream's projection and digest. In serve, a stream read before resumes from the
+/// kept generation and digest over only the events appended since, read with
+/// `read_stream_after`: no copy of the whole history and no walk over it. Anything that does not
+/// continue exactly where both stopped (no entry, a head or chain that does not match, more than
+/// a page appended, a fold that refuses) reads the whole history as before, so every refusal is
+/// the full read's own.
+pub(crate) fn glance(
+    store: &graphhelm_events::LocalEventRepository,
+    events: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+    budget: &graphhelm_events::ReadBudget,
+) -> Result<Glance, graphhelm_events::EventRepositoryError> {
+    if let Some(cache) = SHARED_FOLDS.get()
+        && let Some(kept) = glance_kept(cache, store, events, scope, stream)?
+    {
+        return Ok(kept);
+    }
+    glance_whole(SHARED_FOLDS.get(), store, events, scope, stream, budget)
+}
+
+/// [`glance`] over the whole history, keeping its digest when `cache` is on and the fold answered.
+fn glance_whole(
+    cache: Option<&FoldCache>,
+    store: &graphhelm_events::LocalEventRepository,
+    events: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+    budget: &graphhelm_events::ReadBudget,
+) -> Result<Glance, graphhelm_events::EventRepositoryError> {
+    let history = super::timing::phase("stream.read", || store.read_replay_stream(scope, stream))?;
+    let digest = super::digest::HistoryDigest::of(&history);
+    let projection = super::timing::phase("fold", || match cache {
+        Some(cache) => fold_cached(cache, events, scope, stream, &history, budget),
+        None => graphhelm_events::replay_within(scope, stream, &history, budget),
+    });
+    if let (Some(cache), Ok(_)) = (cache, &projection)
+        && let Ok(key) = fold_key(events, scope, stream)
+    {
+        cache.store_digest(&key, digest.clone());
+    }
+    Ok(Glance { projection, digest })
+}
+
+/// [`glance`]'s resumed read, or `None` when it cannot resume exactly.
+fn glance_kept(
+    cache: &FoldCache,
+    store: &graphhelm_events::LocalEventRepository,
+    events: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+) -> Result<Option<Glance>, graphhelm_events::EventRepositoryError> {
+    let Ok(key) = fold_key(events, scope, stream) else {
+        return Ok(None);
+    };
+    let Some(mut digest) = cache.digest(&key) else {
+        return Ok(None);
+    };
+    let Some((last, last_hash)) = digest.head.clone() else {
+        return Ok(None);
+    };
+    let aligned = |generation: &graphhelm_events::ProjectionGeneration| {
+        generation.watermark().last_sequence() == last
+            && generation.watermark().last_event_hash() == Some(&last_hash)
+    };
+    if cache.read(&key, aligned) != Some(true) {
+        return Ok(None);
+    }
+    let (tail, head) = super::timing::phase("stream.tail", || {
+        store.read_stream_after(scope, stream, last)
+    })?;
+    let Some(head) = head else {
+        return Ok(None);
+    };
+    let (end, end_hash) = match tail.last() {
+        Some(event) => (event.sequence, &event.event_hash),
+        None => (last, &last_hash),
+    };
+    let continues = tail
+        .first()
+        .is_none_or(|first| first.sequence == last + 1 && first.previous_hash == last_hash)
+        && head.next_sequence == end + 1
+        && &head.last_event_hash == end_hash;
+    if !continues
+        || tail.len() > graphhelm_events::MAX_READ_PAGE
+        || digest.len + tail.len() > graphhelm_events::MAX_READ_ALL
+    {
+        return Ok(None);
+    }
+    // Nothing appended, the common poll: one copy of the projection, not of the generation too.
+    let projection = if tail.is_empty() {
+        cache
+            .read(&key, |generation| {
+                aligned(generation).then(|| generation.projection().clone())
+            })
+            .flatten()
+    } else {
+        cache
+            .get(&key)
+            .filter(|generation| aligned(generation))
+            .and_then(|mut generation| {
+                super::timing::phase("fold", || generation.apply_page(&tail)).ok()?;
+                digest.advance(&tail);
+                let projection = generation.projection().clone();
+                cache.store(&key, generation);
+                cache.store_digest(&key, digest.clone());
+                Some(projection)
+            })
+    };
+    let Some(projection) = projection else {
+        return Ok(None);
+    };
+    Ok(Some(Glance {
+        projection: Ok(projection),
+        digest,
+    }))
 }
 
 /// The cached generation is reused only when the history still holds the event it stopped at, by
@@ -817,6 +1054,11 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn seed(directory: &std::path::Path, count: u64) {
+        seed_range(directory, 1, count, "implementation");
+    }
+
+    /// Appends sequences `first..=last` of the seeded stream, its signals sourced at `source`.
+    fn seed_range(directory: &std::path::Path, first: u64, last: u64, source: &str) {
         let scope = RepositoryScope::new(
             WorkspaceId::parse(super::super::WORKSPACE).unwrap(),
             ProjectId::parse(super::super::PROJECT).unwrap(),
@@ -826,15 +1068,13 @@ pub(crate) mod tests {
             PersistedActorType::System,
             ActorId::parse("system-test").unwrap(),
         );
-        let store = LocalEventRepository::open(
-            directory,
-            Arc::new(frozen_clock()),
-            Arc::new(Ids::default()),
-        )
-        .unwrap();
-        let mut next = 1_u64;
-        while next <= count {
-            let size = 50.min(count - next + 1);
+        // A later range draws its ids from its own block, so no event id repeats.
+        let ids = Ids(AtomicU64::new(if first == 1 { 0 } else { first * 1_000 }));
+        let store =
+            LocalEventRepository::open(directory, Arc::new(frozen_clock()), Arc::new(ids)).unwrap();
+        let mut next = first;
+        while next <= last {
+            let size = 50.min(last - next + 1);
             let mut events = Vec::new();
             if next == 1 {
                 events.push(NewEvent::new(
@@ -863,7 +1103,7 @@ pub(crate) mod tests {
                         execution_id: OpaqueId::parse("execution-budget").unwrap(),
                         signal_id: OpaqueId::parse(format!("signal-{index}")).unwrap(),
                         source_kind: SignalSourceKind::Node,
-                        source_id: OpaqueId::parse("implementation").unwrap(),
+                        source_id: OpaqueId::parse(source).unwrap(),
                         kind: "no_progress".to_owned(),
                         severity: SignalSeverity::High,
                         envelope_sha256: RawSha256::parse("a".repeat(64)).unwrap(),
@@ -1319,6 +1559,104 @@ pub(crate) mod tests {
                 .err(),
             full.err(),
             "the cache answers what a full replay of the rewritten history answers"
+        );
+    }
+
+    /// #1560: a stream read once and then appended to resumes from the kept generation and
+    /// digest over the tail alone, and renders the reply the whole history renders through the
+    /// functions that measure it whole. Credible regression: the digest drifting from those
+    /// functions (instants, node silence, head, unverified count) or the tail fold skipping or
+    /// repeating an event.
+    #[test]
+    fn a_resumed_glance_renders_what_the_whole_history_renders() {
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 120);
+        let folds = super::FoldCache::default();
+        let budget = ReadBudget::unbounded();
+        let Ok((scope, stream)) = super::super::stream_of("execution-budget") else {
+            panic!("the seeded stream is addressable");
+        };
+        let store = crate::commands::event_store(directory.path()).unwrap();
+        super::glance_whole(
+            Some(&folds),
+            &store,
+            directory.path(),
+            &scope,
+            &stream,
+            &budget,
+        )
+        .unwrap();
+        seed_range(directory.path(), 121, 150, "review");
+
+        let store = crate::commands::event_store(directory.path()).unwrap();
+        let kept = super::glance_kept(&folds, &store, directory.path(), &scope, &stream)
+            .unwrap()
+            .expect("an appended stream resumes");
+        assert_eq!(kept.digest.len, 150);
+        let history = store.read_replay_stream(&scope, &stream).unwrap();
+        let projection = graphhelm_events::replay(&scope, &stream, &history).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 9, 3, 13, 0, 0).unwrap();
+        let at_sequence = super::super::at_sequence(&history);
+        let inputs = graphhelm_execution::AttentionInputs::for_surface(
+            &projection,
+            super::super::node_silence_seconds(&history, now),
+            at_sequence,
+        );
+        let whole = super::render_parts(
+            &projection,
+            &inputs,
+            &super::super::Liveness::measured(&history),
+            None,
+            at_sequence,
+            std::iter::empty(),
+            now,
+        );
+        let kept_projection = kept.projection.as_ref().unwrap();
+        assert_eq!(
+            serde_json::to_value(kept_projection).unwrap(),
+            serde_json::to_value(&projection).unwrap()
+        );
+        assert_eq!(
+            super::render_glance(kept_projection, &kept.digest, now),
+            whole
+        );
+        assert_eq!(
+            kept.digest.unverified_result_count(kept_projection),
+            super::super::digest::HistoryDigest::of(&history).unverified_result_count(&projection)
+        );
+    }
+
+    /// #1560: a store replaced under the same path by a different history, even a longer one
+    /// whose head still advances, is not resumed: the tail does not chain to the kept head.
+    /// Credible regression: continuity judged by sequence and head alone.
+    #[test]
+    fn a_glance_is_not_resumed_over_a_different_history() {
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 120);
+        let folds = super::FoldCache::default();
+        let budget = ReadBudget::unbounded();
+        let Ok((scope, stream)) = super::super::stream_of("execution-budget") else {
+            panic!("the seeded stream is addressable");
+        };
+        let store = crate::commands::event_store(directory.path()).unwrap();
+        super::glance_whole(
+            Some(&folds),
+            &store,
+            directory.path(),
+            &scope,
+            &stream,
+            &budget,
+        )
+        .unwrap();
+
+        let other = tempfile::tempdir().unwrap();
+        seed_range(other.path(), 1, 150, "review");
+        let replaced = crate::commands::event_store(other.path()).unwrap();
+        assert!(
+            super::glance_kept(&folds, &replaced, directory.path(), &scope, &stream)
+                .unwrap()
+                .is_none(),
+            "a tail that does not chain to the kept head reads the whole history"
         );
     }
 

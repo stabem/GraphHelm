@@ -8,6 +8,7 @@ pub(super) mod claim;
 pub(super) mod clear;
 pub(crate) mod collisions;
 pub(crate) mod delivery;
+mod digest;
 pub(super) mod documents;
 mod driver;
 pub(super) mod list;
@@ -806,27 +807,43 @@ pub(crate) fn node_last_event_at(
 ) -> BTreeMap<String, chrono::DateTime<chrono::Utc>> {
     let mut newest: BTreeMap<String, chrono::DateTime<chrono::Utc>> = BTreeMap::new();
     for event in events {
-        let kind = serde_json::to_value(&event.kind).unwrap_or(serde_json::Value::Null);
-        if let Some(node) = kind["data"]["nodeId"].as_str() {
-            let at = *event.occurred_at.as_datetime();
-            newest
-                .entry(node.to_owned())
-                .and_modify(|current| {
-                    if at > *current {
-                        *current = at;
-                    }
-                })
-                .or_insert(at);
-        }
+        note_node_event(&mut newest, event);
     }
     newest
+}
+
+/// One step of [`node_last_event_at`], shared with the incremental `digest` (#1560).
+fn note_node_event(
+    newest: &mut BTreeMap<String, chrono::DateTime<chrono::Utc>>,
+    event: &EventEnvelope,
+) {
+    let kind = serde_json::to_value(&event.kind).unwrap_or(serde_json::Value::Null);
+    if let Some(node) = kind["data"]["nodeId"].as_str() {
+        let at = *event.occurred_at.as_datetime();
+        newest
+            .entry(node.to_owned())
+            .and_modify(|current| {
+                if at > *current {
+                    *current = at;
+                }
+            })
+            .or_insert(at);
+    }
 }
 
 pub(crate) fn node_silence_seconds(
     events: &[EventEnvelope],
     now: chrono::DateTime<chrono::Utc>,
 ) -> BTreeMap<String, u64> {
-    node_last_event_at(events)
+    silence_since(node_last_event_at(events), now)
+}
+
+/// The subtraction itself, over a map of last instants already measured.
+fn silence_since(
+    newest: BTreeMap<String, chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> BTreeMap<String, u64> {
+    newest
         .into_iter()
         .map(|(node, at)| {
             // A clock that ran backwards (skew, a restored backup) must not report a

@@ -2320,6 +2320,14 @@ pub(crate) fn last_run(project: &Path, id: &str, flow: Option<&Value>) -> Value 
     } else {
         first_failing(&state, flow)
     };
+    // #2086: a run held before an act (review_needed / confirm_needed) failed no step: its
+    // `skipped` edge is not a fail, so `first_failing` found none and the Studio card read
+    // "failed" while the panel read the wait. The held edge is the step it stopped at.
+    if let Some(edge) = state["held"]["edge"].as_str() {
+        let entry = &state["edges"][edge];
+        failing = json!({"kind": "edge", "id": edge, "result": entry["result"],
+            "reason": entry["reason"].as_str().map_or(Value::Null, Value::from)});
+    }
     if failing.is_object() {
         let at = &state[if failing["kind"] == "screen" {
             "screens"
@@ -2452,6 +2460,30 @@ mod tests {
         reap_lost, reap_lost_from, reap_lost_from_with, runner_liveness, runner_liveness_with,
         save_state, severity, step_reason, unsealed_proof, watch_budget, with_checks,
     };
+
+    /// #2086: a draft held for review is listed with the held edge as its `failingStep`, reason
+    /// `review_needed`, so the Studio card reads the wait instead of "failed" (QA and the PR #2091
+    /// reviewer saw the card say failed once the journey list replaced the live run).
+    #[test]
+    fn a_held_run_lists_the_edge_it_waits_at() {
+        use super::*;
+        let flow = json!({"screens": [{"id": "start"}, {"id": "ran"}], "edges": [{"id": "start.ran", "from": "start", "to": "ran"}],
+            "paths": {"main": ["start.ran"]}});
+        let project = tempfile::tempdir().unwrap();
+        let dir = dir_of(project.path(), "cli-edited");
+        std::fs::create_dir_all(&dir).unwrap();
+        save_state(
+            &dir,
+            &json!({"state": "ready", "result": "fail", "kind": "preview",
+            "screens": {"start": {"result": "skipped", "reason": "review_needed"}, "ran": {"result": "not_reached"}},
+            "edges": {"start.ran": {"result": "skipped", "reason": "review_needed"}},
+            "held": {"edge": "start.ran", "act": "node --version", "base": "main"}}),
+        );
+        let last = last_run(project.path(), "cli-edited", Some(&flow));
+        assert_eq!(last["status"], "failed");
+        assert_eq!(last["failingStep"]["id"], "start.ran");
+        assert_eq!(last["failingStep"]["reason"], "review_needed");
+    }
 
     /// #1795: the "Before = main" run is the newest FINISHED one: a run still in progress is
     /// skipped for the newest archived run, and a finished current run is served at the current

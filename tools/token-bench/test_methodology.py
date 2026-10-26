@@ -11,6 +11,70 @@ import methodology as bench
 
 
 class MethodologyContracts(unittest.TestCase):
+    def claude_stream(self, *, auxiliary=False):
+        usage = {"input_tokens": 6, "output_tokens": 1184,
+                 "cache_read_input_tokens": 20971, "cache_creation_input_tokens": 2542}
+        model = {"inputTokens": 6, "outputTokens": 1184,
+                 "cacheReadInputTokens": 20971, "cacheCreationInputTokens": 2542}
+        models = {"coding-model": model}
+        if auxiliary:
+            models["auxiliary-model"] = {"inputTokens": 2, "outputTokens": 7,
+                                         "cacheReadInputTokens": 0, "cacheCreationInputTokens": 3}
+        return [{"type": "assistant", "message": {"id": "same-response", "model": "coding-model",
+                 "content": [], "usage": {**usage, "output_tokens": 490}}},
+                {"type": "assistant", "message": {"id": "same-response", "model": "coding-model",
+                 "content": [], "usage": {**usage, "output_tokens": 490}}},
+                {"type": "result", "usage": usage, "modelUsage": models}]
+
+    def test_claude_output_comes_from_native_result_not_message_start_placeholders(self):
+        observed = bench.usage("claude", "\n".join(map(json.dumps, self.claude_stream())))
+        self.assertEqual(observed["counts"]["output"], 1184)
+        self.assertEqual(observed["transcriptCounts"]["output"], 490)
+        self.assertEqual(observed["mainLoopCounts"]["output"], 1184)
+        self.assertEqual(observed["countsSource"], "claude.result.modelUsage")
+        self.assertEqual(observed["accountingStatus"], "observed")
+        self.assertEqual(observed["observedModels"], ["coding-model"])
+
+    def test_claude_pipeline_includes_auxiliary_model_without_changing_coding_identity(self):
+        observed = bench.usage("claude", "\n".join(map(json.dumps, self.claude_stream(auxiliary=True))))
+        self.assertEqual(observed["counts"], {"input": 8, "output": 1191, "cacheRead": 20971, "cacheWrite": 2545})
+        self.assertEqual(observed["mainLoopCounts"]["output"], 1184)
+        self.assertEqual(observed["accountingModels"], ["auxiliary-model", "coding-model"])
+        self.assertEqual(observed["observedModels"], ["coding-model"])
+
+    def test_claude_incomplete_or_conflicting_native_totals_never_use_transcript_fallback(self):
+        missing = self.claude_stream()[:-1]
+        duplicate = self.claude_stream()
+        duplicate.append(duplicate[-1])
+        invalid_cases = [missing, duplicate]
+        for field in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"):
+            for value in (None, -1, True, "1"):
+                stream = self.claude_stream()
+                stream[-1]["modelUsage"]["coding-model"][field] = value
+                invalid_cases.append(stream)
+        inconsistent = self.claude_stream()
+        inconsistent[-1]["modelUsage"]["coding-model"]["outputTokens"] = 1
+        invalid_cases.append(inconsistent)
+        no_models = self.claude_stream()
+        del no_models[-1]["modelUsage"]
+        invalid_cases.append(no_models)
+        no_loop = self.claude_stream()
+        del no_loop[-1]["usage"]
+        invalid_cases.append(no_loop)
+        for stream in invalid_cases:
+            with self.subTest(stream=stream):
+                observed = bench.usage("claude", "\n".join(map(json.dumps, stream)))
+                self.assertIsNone(observed["counts"])
+                self.assertNotEqual(observed["accountingStatus"], "observed")
+
+    def test_corrupt_stream_and_invalid_codex_counters_are_unknown(self):
+        raw = "\n".join(map(json.dumps, self.claude_stream())) + "\n{broken"
+        self.assertIsNone(bench.usage("claude", raw)["counts"])
+        for counts in ({"input_tokens": 10, "cached_input_tokens": 11, "output_tokens": 2},
+                       {"input_tokens": True, "cached_input_tokens": 0, "output_tokens": 2},
+                       {"input_tokens": 10, "cached_input_tokens": 0, "output_tokens": -1}):
+            self.assertIsNone(bench.usage("codex", json.dumps({"type": "turn.completed", "usage": counts}))["counts"])
+
     def test_pagination_oracle_rejects_unbounded_otherwise_working_candidate(self):
         case = next(row for row in bench.read(bench.HOME / "methodology_cases.json")["cases"]
                     if row["id"] == "pagination")

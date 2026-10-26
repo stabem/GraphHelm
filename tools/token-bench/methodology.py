@@ -176,25 +176,72 @@ def load_frozen(path: Path) -> tuple[dict, dict, dict]:
     return manifest, read(Path(manifest["cases"]["path"])), read(Path(manifest["profiles"]["path"]))
 
 
+def token_counts(values: object, fields: dict[str, str]) -> dict | None:
+    """Accept complete native counters; booleans and missing categories are not counts."""
+    if not isinstance(values, dict) or any(type(values.get(key)) is not int or values[key] < 0 for key in fields.values()):
+        return None
+    return {name: values[key] for name, key in fields.items()}
+
+
 def usage(cli: str, raw: str) -> dict:
     records = []
     parse_errors = 0
     for line in raw.splitlines():
+        if not line.strip():
+            continue
         try:
             value = json.loads(line)
-            if isinstance(value, dict): records.append(value)
+            if isinstance(value, dict):
+                records.append(value)
+            else:
+                parse_errors += 1
         except json.JSONDecodeError:
             parse_errors += 1
     if cli == "codex":
-        turns = [row["usage"] for row in records if row.get("type") == "turn.completed" and isinstance(row.get("usage"), dict)]
-        counts = {key: sum(row[key] for row in turns) for key in ("input_tokens", "cached_input_tokens", "output_tokens")} if turns and all(all(key in row for key in ("input_tokens", "cached_input_tokens", "output_tokens")) for row in turns) else None
+        fields = {key: key for key in ("input_tokens", "cached_input_tokens", "output_tokens")}
+        turns = [token_counts(row.get("usage"), fields) for row in records if row.get("type") == "turn.completed"]
+        valid = turns and all(row is not None and row["cached_input_tokens"] <= row["input_tokens"] for row in turns)
+        counts = {key: sum(row[key] for row in turns) for key in fields} if valid and not parse_errors else None
         models = sorted({row["model"] for row in records if isinstance(row.get("model"), str)})
+        return {"counts": counts, "observedModels": models, "parseErrors": parse_errors,
+                "countsSource": "codex.turn.completed", "accountingStatus": "observed" if counts is not None else "unobserved"}
     else:
         from run import sum_transcript_usage
-        parsed = sum_transcript_usage(raw.splitlines())
-        counts = parsed if any(row.get("type") == "assistant" and row.get("message", {}).get("usage") for row in records) else None
-        models = sorted({row["message"]["model"] for row in records if row.get("type") == "assistant" and isinstance(row.get("message", {}).get("model"), str)})
-    return {"counts": counts, "observedModels": models, "parseErrors": parse_errors}
+        try:
+            parsed = sum_transcript_usage(raw.splitlines())
+        except (TypeError, ValueError, AttributeError):
+            parsed = None
+            parse_errors += 1
+        models = sorted({row["message"]["model"] for row in records if row.get("type") == "assistant"
+                         and isinstance(row.get("message"), dict) and isinstance(row["message"].get("model"), str)})
+        result = {"counts": None, "observedModels": models, "parseErrors": parse_errors,
+                  "countsSource": "claude.result.modelUsage", "accountingStatus": "unobserved",
+                  "transcriptCounts": parsed, "mainLoopCounts": None, "accountingModels": []}
+        terminal = [row for row in records if row.get("type") == "result"]
+        if parse_errors or len(terminal) != 1:
+            result["accountingStatus"] = "invalid-stream-or-result-count"
+            return result
+        fields = {"input": "input_tokens", "output": "output_tokens", "cacheRead": "cache_read_input_tokens", "cacheWrite": "cache_creation_input_tokens"}
+        main = token_counts(terminal[0].get("usage"), fields)
+        result["mainLoopCounts"] = main
+        pipeline = terminal[0].get("modelUsage")
+        if main is None or not isinstance(pipeline, dict) or not pipeline or any(not isinstance(key, str) or not key for key in pipeline):
+            result["accountingStatus"] = "native-usage-missing-or-invalid"
+            return result
+        model_fields = {"input": "inputTokens", "output": "outputTokens", "cacheRead": "cacheReadInputTokens", "cacheWrite": "cacheCreationInputTokens"}
+        per_model = {model: token_counts(value, model_fields) for model, value in pipeline.items()}
+        result["accountingModels"] = sorted(per_model)
+        result["perModelCounts"] = per_model
+        if any(value is None for value in per_model.values()):
+            result["accountingStatus"] = "native-model-usage-invalid"
+            return result
+        counts = {key: sum(value[key] for value in per_model.values()) for key in fields}
+        # Result usage is main-loop scope; modelUsage also includes auxiliary query calls.
+        if any(counts[key] < main[key] for key in fields):
+            result["accountingStatus"] = "native-usage-conflict"
+            return result
+        result.update(counts=counts, accountingStatus="observed")
+        return result
 
 
 def run_attempt(args: argparse.Namespace) -> dict:

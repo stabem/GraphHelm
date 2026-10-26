@@ -206,10 +206,13 @@ cache writes; Codex's reported input already includes cached input, so cache rea
 added again. These are provider wire counters, not a subscription bill. A single successful
 pilot is evidence of feasibility, not an estimate of a methodology gain.
 
-For multi-session qualification pilots, run `native_pilot_ledger.py` over the complete
-private `runs/` directory (or an explicit comma-separated set of phase prefixes). It
+For multi-session qualification pilots, run `native_pilot_ledger.py` with `--cli`,
+`--project`, and the complete private `runs/` directory (or an explicit
+comma-separated set of phase prefixes). It
 discovers every matching attempt, including failed setup and linked retries, verifies
-raw stream and owned archive hashes, and refuses a total if any attempt lacks counters.
+raw stream and owned archive hashes, replays native counters, and refuses a total if
+any attempt lacks counters. Codex cached input is already within reported input;
+Claude cache read and write counters are added to new input.
 The ledger does not certify method fidelity or an accepted endpoint. A phase marked
 `observed` only proves that phase's witnesses; method completion also requires every
 native boundary and the independent quality endpoint.

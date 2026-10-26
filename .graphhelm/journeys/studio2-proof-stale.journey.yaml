@@ -4,8 +4,8 @@ title: A journey edited since its last run reads changed and keeps that run's fr
 name: Edited since its last run
 feature: Studio
 purpose: "A journey whose flow was edited after its run reads 'Changed since last run' on its card and in the header, never passed, and the panel shows that run's frames dimmed with a stale mark, from the earlier version, with Run to prove the current one (#1956)."
-status: draft
-approved: null
+status: approved
+approved: {revision: 715d1cbd09203211ceaeb397b4c546f733df88e8, digest: sha256:39a540cff0a06147ce852618933b3ad0676329e0db034f005ae13521250f0bec}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

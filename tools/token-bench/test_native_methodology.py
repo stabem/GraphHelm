@@ -100,6 +100,17 @@ class NativeMethodologyContracts(unittest.TestCase):
         self.assertEqual(result["status"], "unknown")
         self.assertIsNone(result["total"])
 
+    def test_denied_native_method_operation_is_incomplete(self):
+        denied = bench.validate_method_operation_witness(
+            {"toolCall": "resolve-template", "toolResult": {"is_error": True}},
+            expected_command="resolve-template", expected_artifact="constitution")
+        self.assertEqual(denied["status"], "incomplete")
+        observed = bench.validate_method_operation_witness(
+            {"toolCall": "resolve-template", "toolResult": {"status": "completed",
+             "artifact": "constitution", "artifactChanged": True}},
+            expected_command="resolve-template", expected_artifact="constitution")
+        self.assertEqual(observed["status"], "observed")
+
     def test_completion_is_incomplete_until_all_controls_and_costs_are_observed(self):
         attempt = bench.phase_attempt(self.plan(), "author", "attempt-1")
         result = bench.complete_attempt(attempt, auth=True, quota=True, cleanup=True,

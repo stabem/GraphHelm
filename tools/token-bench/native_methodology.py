@@ -274,6 +274,23 @@ def collect_owned_child_usage(cli: str, raw_records: object, *, parent_session: 
     return reconcile_nested_usage(rows, expected_sessions=sorted(set(expected)), parent_usage=parent_usage)
 
 
+def validate_method_operation_witness(observation: object, *, expected_command: str,
+                                     expected_artifact: str | None = None) -> dict:
+    """Validate a real native method operation and its result artifact."""
+    if not isinstance(observation, dict):
+        return {"status": "incomplete", "reason": "native operation observation missing"}
+    call = observation.get("toolCall") or observation.get("command")
+    result = observation.get("toolResult") or observation.get("result")
+    if call != expected_command or not isinstance(result, dict):
+        return {"status": "incomplete", "reason": "native operation command/result mismatch"}
+    if result.get("is_error") is True or result.get("status") in {"denied", "permission_denied"}:
+        return {"status": "incomplete", "reason": "native method operation was denied"}
+    artifact = result.get("artifact")
+    if expected_artifact and (artifact != expected_artifact or not result.get("artifactChanged")):
+        return {"status": "incomplete", "reason": "native operation artifact mismatch"}
+    return {"status": "observed", "command": expected_command, "artifact": artifact}
+
+
 def fidelity_witnesses(witnesses: object, *, required_kinds: set[str] | None = None) -> dict:
     """Require observable native evidence; prose claiming fidelity is not evidence."""
     if not isinstance(witnesses, list):

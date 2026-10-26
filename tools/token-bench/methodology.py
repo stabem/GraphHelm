@@ -93,6 +93,31 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def python_identity() -> dict:
+    """Fingerprint a readable interpreter, resolving Windows execution aliases."""
+    candidates = [Path(sys.executable)]
+    base = getattr(sys, "_base_executable", "")
+    if base:
+        candidates.append(Path(base))
+    if os.name == "nt":
+        import ctypes
+
+        buffer = ctypes.create_unicode_buffer(32768)
+        get_module_filename = ctypes.windll.kernel32.GetModuleFileNameW
+        get_module_filename.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint]
+        get_module_filename.restype = ctypes.c_uint
+        length = get_module_filename(ctypes.c_void_p(0), buffer, ctypes.c_uint(len(buffer)))
+        if length:
+            candidates.append(Path(buffer.value[:length]))
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+            return {"path": str(resolved), "sha256": digest(resolved)}
+        except (OSError, ValueError):
+            continue
+    raise ValueError("Python executable is not readable")
+
+
 def read(path: Path) -> dict:
     if path.is_symlink() or path.stat().st_size > 2_000_000:
         raise ValueError(f"Unsafe or oversized input: {path.name}")

@@ -1,0 +1,209 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Follow each owner request to its result",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-graph-requests",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "graph.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows listitem \"Show the work graph for the fixture run\" saying \"In progress · 0 of 1\", button \"Issue #721\" saying \"Observe issue graph and work kanban\", group \"Pull request of #721\" saying \"PR #721 waits for a reviewer\", group \"Result of #721\" saying \"Not merged\", listitem \"Prove a regression test for the fixture run\" saying \"no issue opened yet\", heading \"Work in flight, all journeys\", complementary \"Journeys with work\" saying \"1 of 24\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "graph"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "filtered.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows heading \"Follow each owner request to its result\", listitem \"Show the work graph for the fixture run\", no listitem \"Prove a regression test for the fixture run\", no heading \"Work in flight, all journeys\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "filtered"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "kanban.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows list \"In review\" saying \"Observe issue graph and work kanban\", heading \"In review 1\", no list \"Owner requests\", heading \"Merged, waits proof 0\", heading \"Proven 0\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "kanban"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "graph-again.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows listitem \"Show the work graph for the fixture run\" saying \"In progress · 0 of 1\", group \"Result of #721\" saying \"Not merged\", no region \"Kanban\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "graph-again"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen graph not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/requests.ts",
+          "apps/studio/src/graph/layout.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "graph",
+        "title": "The request is drawn with its issue, PR and result"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo"
+        }
+      },
+      "stepId": "graph"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen filtered not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/requests.ts",
+          "apps/studio/src/graph/layout.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "filtered",
+        "title": "Only the picked journey's work is shown"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Follow each owner request to its result 1 issue · 1 PR planner"
+        }
+      },
+      "stepId": "filtered"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen kanban not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/requests.ts",
+          "apps/studio/src/graph/layout.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "kanban",
+        "title": "The same work as Kanban columns"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "tab",
+          "strategy": "accessible_name",
+          "value": "Kanban view"
+        }
+      },
+      "stepId": "kanban"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen graph-again not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/requests.ts",
+          "apps/studio/src/graph/layout.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "graph-again",
+        "title": "Graph again shows the request and its issue"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "tab",
+          "strategy": "accessible_name",
+          "value": "Graph view"
+        }
+      },
+      "stepId": "graph-again"
+    }
+  ],
+  "taskScope": "journey-flow studio2-graph-requests path main",
+  "title": "Follow each owner request to its result",
+  "version": 1
+}

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { judgeExpectations, viewportRect } from './judge.mjs';
@@ -112,9 +112,16 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     ['x'.repeat(65537), 'driver.frame_too_large'],
     ['{"protocol":', 'driver.protocol_invalid'],
   ];
-  // The `observer_missing` cases need a project where Playwright does not resolve; the test's own
-  // cwd is not one when a parent directory has a node_modules with it (#2038).
+  // The `observer_missing` cases need a project where Playwright does not resolve. Node resolves
+  // upward through every ancestor, so an empty temp dir is not one when any ancestor (here the
+  // OS temp dir itself) holds a stray `node_modules/@playwright/test` (#2038, #2097). The project
+  // therefore carries its own nearest `@playwright/test` that cannot load: the driver then reads
+  // Playwright as unavailable whatever the host has installed above it.
   const bare = mkdtempSync(join(tmpdir(), 'gh-driver-bare-'));
+  const unloadable = join(bare, 'node_modules', '@playwright', 'test');
+  mkdirSync(unloadable, { recursive: true });
+  writeFileSync(join(unloadable, 'package.json'), '{"name":"@playwright/test","main":"index.js"}');
+  writeFileSync(join(unloadable, 'index.js'), "throw new Error('not installed in this project');");
   for (const [request, code] of cases) {
     const child = spawn(process.execPath, [driver, '--project', bare, '--output-dir', bare], {
       env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, GRAPHHELM_SECRET_PASSWORD: 'canary' },

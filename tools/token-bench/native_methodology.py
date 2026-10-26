@@ -90,6 +90,14 @@ def validate_registry(registry: dict) -> dict:
             raise ValueError("workflow framework is required")
         if type(workflow.get("maxFixAttempts")) is not int or workflow["maxFixAttempts"] < 0:
             raise ValueError("workflow must declare a nonnegative maxFixAttempts")
+        if not isinstance(workflow.get("projectRoot"), str) or not Path(workflow["projectRoot"]).is_dir():
+            raise ValueError("workflow projectRoot must name an existing project")
+        if not isinstance(workflow.get("taskRefs"), list) or not workflow["taskRefs"]:
+            raise ValueError("workflow taskRefs are required")
+        if not isinstance(workflow.get("pinnedPublicFiles"), list):
+            raise ValueError("workflow pinnedPublicFiles are required")
+        if not isinstance(workflow.get("methodAssetDigests"), dict):
+            raise ValueError("workflow methodAssetDigests are required")
         phases = workflow.get("phases")
         if not isinstance(phases, list) or not phases:
             raise ValueError("workflow phases are required")
@@ -101,12 +109,30 @@ def validate_registry(registry: dict) -> dict:
             phase_ids.add(phase["id"])
             if not isinstance(phase.get("command"), list) or not phase["command"]:
                 raise ValueError("each phase needs a native command")
+            if not isinstance(phase.get("prompt"), str) or not phase["prompt"].strip():
+                raise ValueError("each phase needs a frozen prompt")
     return registry
 
 
 def load_registry(path: Path) -> dict:
     registry = base.read(path)
     return validate_registry(registry)
+
+
+def frozen_inputs(workflow: dict) -> dict:
+    """Hash the project files and pinned method assets that every native cell must reuse."""
+    project = Path(workflow["projectRoot"])
+    public = artifact_hashes(project, workflow["pinnedPublicFiles"])
+    assets = {}
+    for path_text, expected in workflow["methodAssetDigests"].items():
+        path = Path(path_text)
+        if not path.is_absolute():
+            path = project / path
+        if not path.is_file() or path.is_symlink() or not isinstance(expected, str) or base.digest(path) != expected:
+            raise ValueError(f"method asset changed or missing: {path_text}")
+        assets[str(path.resolve())] = expected
+    return {"projectRoot": str(project.resolve()), "publicFiles": public, "methodAssets": assets,
+            "taskRefs": list(workflow["taskRefs"])}
 
 
 def native_cli_config(cli: str, executable: Path, model: str, *, project_doc: Path | None = None,
@@ -131,7 +157,9 @@ def phase_plan(workflow: dict, context: dict, *, plan_id: str, predecessor: str 
     validate_registry({"schema": SCHEMA, "version": workflow["version"], "workflows": [workflow]})
     public = validate_public_context({**context, "workflow": workflow["id"]})
     phases = [{"id": phase["id"], "command": list(phase["command"]),
-               "frameworkStage": phase.get("frameworkStage", phase["id"])} for phase in workflow["phases"]]
+               "frameworkStage": phase.get("frameworkStage", phase["id"]),
+               "prompt": phase["prompt"], "promptSha256": _json_hash(phase["prompt"]),
+               "requiredArtifacts": list(phase.get("requiredArtifacts", []))} for phase in workflow["phases"]]
     return {"schema": "native-methodology-plan/1", "planId": _safe_id(plan_id, "plan id"),
             "workflow": workflow["id"], "workflowVersion": workflow["version"],
             "predecessorPlan": predecessor, "maxFixAttempts": workflow["maxFixAttempts"],
@@ -264,15 +292,22 @@ def broker_phase(plan: dict, phase_id: str, attempt_id: str, *, runner: Callable
 
 
 def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_config: dict,
-                         prompt: str, root: Path, environment: dict[str, str] | None = None) -> dict:
+                         prompt: str, root: Path, project_root: Path,
+                         environment: dict[str, str] | None = None, ordinal: int = 0,
+                         predecessor_artifacts: dict[str, str] | None = None) -> dict:
     """Execute one real native CLI phase, retaining stdout/stderr and native usage evidence."""
     executable = Path(cli_config["executable"])
     if base.identity(executable, cli_config["cli"], root) != cli_config["identity"]:
         raise ValueError("native CLI identity changed before phase")
     stage = root / f"phase-{phase_id}-{attempt_id}"
     stage.mkdir(parents=True, exist_ok=False)
+    phase = next(row for row in plan["phases"] if row["id"] == phase_id)
+    if _json_hash(prompt) != phase["promptSha256"]:
+        raise ValueError("phase prompt changed after freeze")
+    if predecessor_artifacts and not isinstance(predecessor_artifacts, dict):
+        raise ValueError("predecessor artifact hashes are invalid")
     attempt = phase_attempt(plan, phase_id, attempt_id, stage_root=str(stage))
-    captured = base.capture(cli_config["argv"], stage, deadline=int(cli_config.get("deadlineSeconds", 300)),
+    captured = base.capture(cli_config["argv"], project_root, deadline=int(cli_config.get("deadlineSeconds", 300)),
                             prompt=prompt, environment=environment)
     stdout = stage / "native.stdout.jsonl"
     stderr = stage / "native.stderr.log"
@@ -280,15 +315,19 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     stderr.write_text(captured["stderr"], encoding="utf-8")
     parsed_usage = base.usage(cli_config["cli"], captured["stdout"])
     provider_error = base.native_provider_error(cli_config["cli"], captured["stdout"], captured["stderr"])
-    receipt = {"attempt": attempt, "capture": {key: captured[key] for key in
+    required = artifact_hashes(project_root, phase.get("requiredArtifacts", [])) if phase.get("requiredArtifacts") else {}
+    receipt = {"attempt": attempt, "ordinal": ordinal, "capture": {key: captured[key] for key in
                ("exit", "seconds", "timeout", "cleanupConfirmed", "truncated")},
                "usage": parsed_usage, "providerError": provider_error,
-               "stdoutPath": stdout.name, "stderrPath": stderr.name}
+               "stdoutPath": stdout.name, "stderrPath": stderr.name,
+               "requiredArtifactHashes": required, "predecessorArtifacts": predecessor_artifacts}
     base.publish(stage / "phase-receipt.json", receipt)
     witnesses = [{"kind": "native_stream", "path": str(stdout), "sha256": base.digest(stdout)},
                  {"kind": "native_cli", "path": str(stage / "phase-receipt.json"),
                   "sha256": base.digest(stage / "phase-receipt.json")}]
-    receipt["fidelity"] = fidelity_witnesses(witnesses)
+    receipt["fidelity"] = fidelity_witnesses(witnesses + [
+        {"kind": "native_artifact", "path": str(project_root / relative), "sha256": digest}
+        for relative, digest in required.items()])
     receipt["status"] = "failed" if provider_error or captured["exit"] != 0 else "incomplete"
     if captured["timeout"] or not captured["cleanupConfirmed"] or captured["truncated"]:
         receipt["status"] = "incomplete"
@@ -303,9 +342,13 @@ def freeze(registry_path: Path, *, cli_paths: dict[str, Path], models: dict[str,
     workflows = registry["workflows"]
     manifest = {"schema": "native-methodology-manifest/1", "registry": {"path": str(registry_path.resolve()),
                 "sha256": base.digest(registry_path)}, "registryHash": _json_hash(registry),
-                "workflows": workflows, "identities": identity_map, "models": models,
+                "workflows": workflows, "inputs": {row["id"]: frozen_inputs(row) for row in workflows},
+                "identities": identity_map, "models": models,
                 "instrumentSha256": base.digest(Path(__file__)), "plannedPhases":
-                [{"workflow": row["id"], "phase": phase["id"]} for row in workflows for phase in row["phases"]],
+                [{"workflow": row["id"], "phase": phase["id"],
+                  "promptSha256": _json_hash(phase["prompt"]),
+                  "requiredArtifacts": list(phase.get("requiredArtifacts", []))}
+                 for row in workflows for phase in row["phases"]],
                 "winner": None}
     base.publish(output, manifest)
     return manifest
@@ -325,8 +368,11 @@ def report_manifest(manifest_path: Path, attempts_root: Path) -> dict:
             continue
         row = base.read(receipt)
         rows.append({**planned, **row, "status": row.get("status", "incomplete")})
-    complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] == "complete" for row in rows)
-    return {"schema": "native-methodology-report/2", "complete": complete, "attempts": rows,
+    collection_complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] != "incomplete" for row in rows)
+    quality_accepted = collection_complete and all(row["status"] in {"complete", "failed"} for row in rows)
+    complete = quality_accepted and all(row["status"] == "complete" for row in rows)
+    return {"schema": "native-methodology-report/2", "complete": complete,
+            "collectionComplete": collection_complete, "qualityAccepted": quality_accepted, "attempts": rows,
             "winner": None, "limitations": [] if complete else ["missing or incomplete native phase evidence"]}
 
 
@@ -357,9 +403,13 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "qualify":
-            validate_registry(load_registry(args.registry))
-            base.publish(args.output, {"schema": "native-methodology-qualification/1", "passed": True,
-                                       "registrySha256": base.digest(args.registry)})
+            registry = load_registry(args.registry)
+            evidence = []
+            for workflow in registry["workflows"]:
+                evidence.append({"workflow": workflow["id"], "projectRoot": workflow["projectRoot"],
+                                 "inputs": frozen_inputs(workflow)})
+            base.publish(args.output, {"schema": "native-methodology-qualification/2", "passed": bool(evidence),
+                                       "registrySha256": base.digest(args.registry), "evidence": evidence})
             return 0
         if args.command == "freeze":
             if not all((args.registry, args.cli, args.executable, args.model)):
@@ -374,14 +424,21 @@ def main() -> int:
             raise ValueError("run requires manifest, workflow, phase, attempt, cli, executable and model")
         manifest = base.read(args.manifest)
         workflow = next(row for row in manifest["workflows"] if row["id"] == args.workflow)
-        plan = phase_plan(workflow, {"task": "native-task", "scope": [], "publicTests": [],
+        if frozen_inputs(workflow) != manifest["inputs"][args.workflow]:
+            raise ValueError("frozen project or method assets changed")
+        pinned_identity = manifest["identities"][args.cli]
+        if str(args.executable.resolve()) != pinned_identity["path"] or args.model != manifest["models"][args.cli]:
+            raise ValueError("native executable or model differs from frozen manifest")
+        plan = phase_plan(workflow, {"task": args.workflow + "-task", "scope": workflow["pinnedPublicFiles"], "publicTests": workflow["pinnedPublicFiles"],
                                     "request": args.prompt or "native workflow phase", "phase": args.phase},
                          plan_id=f"{args.workflow}-frozen")
-        identity_record = manifest["identities"][args.cli]
-        config = native_cli_config(args.cli, args.executable, args.model)
+        identity_record = pinned_identity
+        config = native_cli_config(args.cli, Path(identity_record["path"]), manifest["models"][args.cli])
         config["identity"] = identity_record
+        phase = next(row for row in plan["phases"] if row["id"] == args.phase)
         receipt = execute_native_phase(plan, args.phase, args.attempt, cli_config=config,
-                                      prompt=args.prompt, root=args.output)
+                                      prompt=phase["prompt"], root=args.output,
+                                      project_root=Path(workflow["projectRoot"]), ordinal=0)
         destination = args.output / f"{args.workflow}--{args.phase}"
         destination.mkdir(parents=True, exist_ok=False)
         base.publish(destination / "phase-receipt.json", {"workflow": args.workflow, "phase": args.phase, **receipt})

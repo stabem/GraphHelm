@@ -11,14 +11,15 @@ import native_methodology as bench
 class NativeMethodologyContracts(unittest.TestCase):
     def workflow(self):
         return {"id": "spec-kit", "version": "v1", "framework": "SpecKit", "maxFixAttempts": 2,
+                "projectRoot": str(Path.cwd()), "taskRefs": ["task-1"], "pinnedPublicFiles": [], "methodAssetDigests": {},
                 "phases": [
-                    {"id": "setup", "command": ["native", "init"], "frameworkStage": "specify"},
-                    {"id": "planner", "command": ["native", "plan"], "frameworkStage": "plan"},
-                    {"id": "author", "command": ["native", "implement"], "frameworkStage": "tasks"},
-                    {"id": "independent-review", "command": ["native", "review"], "frameworkStage": "review"},
-                    {"id": "fix", "command": ["native", "fix"], "frameworkStage": "converge"},
-                    {"id": "verify", "command": ["native", "verify"], "frameworkStage": "verify"},
-                    {"id": "archive", "command": ["native", "archive"], "frameworkStage": "archive"},
+                    {"id": "setup", "command": ["native", "init"], "prompt": "setup", "frameworkStage": "specify"},
+                    {"id": "planner", "command": ["native", "plan"], "prompt": "plan", "frameworkStage": "plan"},
+                    {"id": "author", "command": ["native", "implement"], "prompt": "implement", "frameworkStage": "tasks"},
+                    {"id": "independent-review", "command": ["native", "review"], "prompt": "review", "frameworkStage": "review"},
+                    {"id": "fix", "command": ["native", "fix"], "prompt": "fix", "frameworkStage": "converge"},
+                    {"id": "verify", "command": ["native", "verify"], "prompt": "verify", "frameworkStage": "verify"},
+                    {"id": "archive", "command": ["native", "archive"], "prompt": "archive", "frameworkStage": "archive"},
                 ]}
 
     def plan(self):
@@ -37,6 +38,12 @@ class NativeMethodologyContracts(unittest.TestCase):
         plan = self.plan()
         self.assertEqual([row["frameworkStage"] for row in plan["phases"]],
                          ["specify", "plan", "tasks", "review", "converge", "verify", "archive"])
+
+    def test_registry_cannot_qualify_from_schema_only(self):
+        workflow = self.workflow()
+        workflow.pop("pinnedPublicFiles")
+        with self.assertRaises(ValueError):
+            bench.validate_registry({"schema": bench.SCHEMA, "version": "v1", "workflows": [workflow]})
 
     def test_private_context_and_self_reported_fidelity_are_rejected(self):
         context = {"task": "task-1", "scope": [], "publicTests": [], "request": "x",

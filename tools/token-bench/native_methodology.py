@@ -317,6 +317,22 @@ def validate_method_operation_witness(observation: object, *, expected_command: 
     return {"status": "observed", "command": expected_command, "artifact": artifact}
 
 
+def evaluate_accepted_candidate(task: dict, candidate: Path, output: Path,
+                                frozen_hashes: dict) -> dict:
+    """Run the real-project evaluator at the candidate endpoint and persist its receipt."""
+    result = evaluate_real_project(task, candidate, output, frozen_hashes)
+    public = result.get("public", {})
+    hidden = result.get("hidden", {})
+    passed = (public.get("exit") == 0 and hidden.get("exit") == 0
+              and not public.get("timeout") and not hidden.get("timeout")
+              and public.get("cleanupConfirmed") and hidden.get("cleanupConfirmed"))
+    receipt = {"schema": "native-methodology-evaluator/1", "taskId": task.get("id"),
+               "status": "passed" if passed else "failed", "result": result,
+               "candidate": str(candidate.resolve())}
+    base.publish(output / "evaluator-receipt.json", receipt)
+    return receipt
+
+
 def fidelity_witnesses(witnesses: object, *, required_kinds: set[str] | None = None) -> dict:
     """Require observable native evidence; prose claiming fidelity is not evidence."""
     if not isinstance(witnesses, list):

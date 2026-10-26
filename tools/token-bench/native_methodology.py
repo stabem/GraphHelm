@@ -672,7 +672,15 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
     collection_complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] != "incomplete" for row in rows)
     quality_accepted = collection_complete and all(row["status"] == "complete" for row in rows)
     complete = quality_accepted and all(row["status"] == "complete" for row in rows)
-    endpoint_ok = endpoint is not None and endpoint.get("status") == "observed"
+    endpoint_ok = (endpoint is not None and endpoint.get("status") == "observed"
+                   and isinstance(endpoint.get("taskId"), str) and bool(endpoint["taskId"])
+                   and isinstance(endpoint.get("gitHead"), str) and len(endpoint["gitHead"]) == 40
+                   and isinstance(endpoint.get("patchSha256"), str) and len(endpoint["patchSha256"]) == 64
+                   and isinstance(endpoint.get("reviewerSessionSha256"), str)
+                   and isinstance(endpoint.get("reviewerRootSessionId"), str)
+                   and isinstance(endpoint.get("authorRootSessionId"), str)
+                   and endpoint["reviewerRootSessionId"] != endpoint["authorRootSessionId"]
+                   and endpoint.get("evaluatorStatus") == "passed")
     aggregate = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
     aggregate_known = True
     for row in rows:

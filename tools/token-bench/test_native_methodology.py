@@ -6,6 +6,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import native_methodology as bench
+import native_session_evidence as evidence
 
 
 class NativeMethodologyContracts(unittest.TestCase):
@@ -150,10 +151,31 @@ class NativeMethodologyContracts(unittest.TestCase):
                                                    reviewer_session_path=str(reviewer_session), git_head_path=str(head_file), task_id="task-1")
             self.assertEqual(result["status"], "observed")
             self.assertFalse(result["published"])
+            self.assertEqual(result["taskId"], "task-1")
+            self.assertEqual(result["gitHead"], "a" * 40)
+            self.assertEqual(result["evaluatorStatus"], "passed")
             review.write_text('{"verdict":"APPROVE","reviewer":"author","patchSha256":"%s","taskId":"task-1","gitHead":"%s","reviewerSessionSha256":"%s","reviewerRootSessionId":"author-root","authorRootSessionId":"author-root"}' % (bench.base.digest(patch), "a" * 40, bench.base.digest(reviewer_session)), encoding="utf-8")
             self.assertEqual(bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
                              evaluator_path=str(evaluator), author="author", reviewer="author", local_git=True,
                              reviewer_session_path=str(reviewer_session), git_head_path=str(head_file), task_id="task-1")["status"], "incomplete")
+
+    def test_claude_archived_total_allows_cache_context_above_new_input(self):
+        """The real Claude nested-session fixture has cache context larger than new input.
+
+        This protects the provider boundary: Claude reports cache context separately, while
+        Codex cache-read remains a subset constraint. Existing tests did not exercise the
+        methodology normalizer with an actual archived Claude total.
+        """
+        fixtures = Path(__file__).resolve().parent / "fixtures" / "native-sessions"
+        children = sorted(fixtures.glob("claude-depth2-agent-*.jsonl"))
+        archived = evidence.claude_owned_tree(
+            fixtures / "claude-depth2-stream.jsonl", children,
+            project=Path("D:/gh/codex-scope-cleanup/native-2074-probes/claude-child-depth2-001"),
+            session_id="4fb1b27b-870f-4a50-9989-754a959cfb5e",
+        )
+        self.assertEqual(archived["status"], "observed")
+        self.assertEqual(bench._usage_total(archived["total"], cli="claude"), archived["total"])
+        self.assertIsNone(bench._usage_total(archived["total"], cli="codex"))
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ id: studio2-graph-requests
 title: Follow each owner request to its result
 name: Follow a request
 feature: Studio
-purpose: "Graph is the approved design (docs/design/studio/Graph.dc.html): the JOURNEYS WITH WORK column, the header counts with the Kanban | Graph tabs, each owner request drawn with lines to its issues, their PRs and the result, and the selected issue's NOW and HISTORY panel."
+purpose: "On the demo run's Graph the owner follows the request Show the work graph for the fixture run to issue #721, its PR #721 and its result, Not merged; picks that request's journey in the left column to see only its work; and switches to Kanban and back to Graph without losing the request."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -13,46 +13,47 @@ risks: [critical_ux]
 viewports: [web, mobile]
 screens:
   - id: filtered
-    title: All journeys is picked in the JOURNEYS WITH WORK column
+    title: Only the picked journey's work is shown
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: complementary, name: Journeys with work, text: JOURNEYS WITH WORK, because: the left column is headed JOURNEYS WITH WORK in the approved Graph design}, {role: button, name: All journeys}, {role: list, name: Owner requests}]
+    expect: [{role: heading, name: Follow each owner request to its result, because: the work header names the journey the owner picked instead of all journeys}, {role: listitem, name: Show the work graph for the fixture run, because: "this request's issue #721 belongs to the picked journey, so it stays"}, {role: listitem, name: Prove a regression test for the fixture run, absent: true, because: "this request has no issue in the picked journey, so the filter hides it"}, {role: heading, name: "Work in flight, all journeys", absent: true, because: the header no longer claims to show every journey once one is picked}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: graph
-    title: "Requests are drawn with their issues, PRs and result"
+    title: "The request is drawn with its issue, PR and result"
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Request graph, text: YOU ASKED, because: each owner request is drawn as a YOU ASKED card in the approved Graph design}, {role: list, name: Owner requests, text: no issue opened yet, because: "the fixture records one request, Prove a regression test, with no issue linked, and the graph says so"}, {role: tab, name: Graph view}, {role: complementary, name: Selected work, text: HISTORY, because: the selected work panel has a HISTORY section in the approved design}, {role: link, name: Open the journey in Proof}]
+    expect: [{role: listitem, name: Show the work graph for the fixture run, text: In progress · 0 of 1, because: the fixture records this request with one linked issue that is not delivered yet}, {role: button, name: "Issue #721", text: Observe issue graph and work kanban, because: "issue #721, Observe issue graph and work kanban, is the issue the fixture opened for that request"}, {role: group, name: "Pull request of #721", text: "PR #721 waits for a reviewer", because: "the issue's PR #721 is open and nobody has reviewed it yet in the fixture"}, {role: group, name: "Result of #721", text: Not merged, because: "the PR is not merged, so the request has no result yet"}, {role: listitem, name: Prove a regression test for the fixture run, text: no issue opened yet, because: "the fixture's second request has no issue linked, and the graph says so instead of hiding it"}, {role: heading, name: "Work in flight, all journeys", because: before any pick the graph shows the work of every journey}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: graph-again
-    title: Graph again shows the requests
+    title: Graph again shows the request and its issue
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Request graph}, {role: list, name: Owner requests}, {role: region, name: Kanban, absent: true, because: "back in Graph view the Kanban board must be gone, or both views would show at once"}]
+    expect: [{role: listitem, name: Show the work graph for the fixture run, text: In progress · 0 of 1, because: "back in Graph the same request is drawn again, nothing was lost by switching"}, {role: group, name: "Result of #721", text: Not merged, because: "its issue still leads to the same result, Not merged"}, {role: region, name: Kanban, absent: true, because: "back in Graph view the Kanban board must be gone, or both views would show at once"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: kanban
     title: The same work as Kanban columns
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Kanban}, {role: tab, name: Graph view}, {role: list, name: Owner requests, absent: true, because: in Kanban view the request graph's list is replaced by the columns}]
+    expect: [{role: list, name: In review, text: Observe issue graph and work kanban, because: "issue #721's PR waits for a reviewer, so its card sits in the In review column"}, {role: heading, name: In review 1, because: the In review column counts the one card in it}, {role: list, name: Owner requests, absent: true, because: in Kanban view the request graph's list is replaced by the columns}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
 edges:
   - id: filtered.kanban
     from: filtered
     to: kanban
-    why: "The Kanban tab shows the same work as columns, so the owner can switch how the work is drawn."
+    why: "The Kanban tab shows the same work as columns by step, so the owner sees where issue #721 stands without reading the graph."
     acts:
       - {kind: activate, role: tab, name: Kanban view}
   - id: graph.filtered
     from: graph
     to: filtered
-    why: "Picking All journeys in the left column shows every request, so the owner can see all the work at once."
+    why: "Picking a journey in the left column narrows the work to that journey, so the owner can follow one promise without the other requests in the way."
     acts:
-      - {kind: activate, role: button, name: All journeys}
+      - {kind: wait_for, role: button, name: Follow each owner request to its result 1 issue · 1 PR planner}
+      - {kind: activate, role: button, name: Follow each owner request to its result 1 issue · 1 PR planner}
   - id: kanban.graph-again
     from: kanban
     to: graph-again

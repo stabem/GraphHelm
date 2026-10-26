@@ -414,6 +414,10 @@ FLOW
     "$bin" --json execution delivery --events "$rt/events" --execution demo --node deploy \
       --delivery "$dir/.graphhelm/delivery.json" --project-directory "$dir/project" \
       --keyring "$rt/keyring" --key-id studio > "$dir/.graphhelm/delivery.out"
+    # #2076: demo is the project's team run, named the way a real project names it (#1901). Without
+    # it the Studio opens the most recently active run, and every preview's record moves that to
+    # graphhelm-owner, so studio2-open passed once and then opened the wrong run.
+    printf '%s\n' '{"executionId":"demo"}' > "$rt/team.json"
     # One unanswered question from the bot `planner` to the owner (studio-answer-question).
     token=$(head -1 "$rt/events.token"); id=$(node -e 'console.log(require("crypto").randomUUID())')
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -468,7 +472,11 @@ if (runtime.protocol !== 'http:' || runtime.hostname !== '127.0.0.1' || !runtime
   throw new Error('fixture: unsafe Runtime URL');
 }
 const common = { schema: 'graphhelm-task-event-v1', revision: 1, at };
-const journey = [process.env.GRAPHHELM_JOURNEY_FLOW || 'studio2-graph-requests'];
+// #2076: the review modal compares the issue's journey's own kept run, and a preview of
+// studio2-graph-review-screen replaces its own run while it plays, so that flow reviews
+// studio2-open's seeded run instead of its own.
+const flowId = process.env.GRAPHHELM_JOURNEY_FLOW || 'studio2-graph-requests';
+const journey = [flowId === 'studio2-graph-review-screen' ? 'studio2-open' : flowId];
 const records = [
   ['merged-claimed', 'task.claimed', { taskId: 'issue-721-merged', issue: 721, lane: 'planner', branch: 'issue-721-merged-fixture', journeys: journey, title: 'Merged fixture row' }],
   ['merged-pr', 'task.pr_opened', { taskId: 'issue-721-merged', pr: 722, lane: 'planner', headSha: '722abcde', journeys: journey, title: 'Merged fixture row' }],
@@ -487,11 +495,11 @@ const records = [
 if (journey[0] === 'studio2-graph-requests') {
   records.push(['request-empty', 'task.request_recorded', { taskId: 'request-empty', requestId: 'empty', ask: 'Prove a regression test for the fixture run', recordedBy: 'planner' }]);
 }
-// #1808: the review's Now is the PR head's captured frame (#1839); one for the first screen.
-if (journey[0] === 'studio2-graph-review-screen') {
+// #1808: the review's Now is the PR head's captured frame (#1839); one for the first screen the\n// modal opens on, studio2-open's bad-ticket (screens are listed by id).
+if (flowId === 'studio2-graph-review-screen') {
   const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
   records.push(['now-frames', 'task.journey_frames', { taskId: 'issue-721-open', pr: 721, headSha: '721abcde', journey: journey[0],
-    result: 'pass', ranAt: at, screens: ['board'], lane: 'planner' }, [{ mediaType: 'image/png', base64: png }]]);
+    result: 'pass', ranAt: at, screens: ['bad-ticket'], lane: 'planner' }, [{ mediaType: 'image/png', base64: png }]]);
 }
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
 (async () => {
@@ -515,10 +523,12 @@ NODE
   # flow kept in the project; seed_run.mjs writes one (current + one earlier), bound to the flow's
   # digest and commit as the preview route reports them.
   if [ "$flow" = studio2-graph-review-screen ] || [ "$flow" = studio2-proof-compare ]; then
-    "$bin" --json journey preview "$flow" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
+    # #2076: the review flow's issue names studio2-open (above), so that is the run it compares.
+    seeded=$flow; [ "$flow" = studio2-graph-review-screen ] && seeded=studio2-open
+    "$bin" --json journey preview "$seeded" --project "$dir/project" --read > "$dir/.graphhelm/preview-key.json" 2>/dev/null || true
     key=$(node -e 'const d=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).data||{}; if(d.digest&&d.commit) console.log(d.digest+" "+d.commit)' "$dir/.graphhelm/preview-key.json")
-    [ -n "$key" ] || { echo "fixture: no preview key for $flow" >&2; exit 1; }
-    node "$repo/tools/studio-journey-fixture/seed_run.mjs" "$dir/project" "$flow" $key > /dev/null
+    [ -n "$key" ] || { echo "fixture: no preview key for $seeded" >&2; exit 1; }
+    node "$repo/tools/studio-journey-fixture/seed_run.mjs" "$dir/project" "$seeded" $key > /dev/null
   fi
   # #1956: studio2-proof-stale needs a journey edited after its run: its run is seeded under the
   # flow's key, then the flow's purpose is edited and committed, so its digest moves and the

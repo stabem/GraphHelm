@@ -3,7 +3,7 @@ id: studio2-graph-review-screen
 title: Review a card's screens in the large modal
 name: Review a screen
 feature: Studio
-purpose: "Clicking a card in review or merged opens the large modal with Frame, Side by side, Overlay with a slider, Changes, and Web/Mobile; Close shuts it."
+purpose: "The owner opens issue #721's card, in review, and gets a large modal comparing a screen of its journey, Open the Studio on a project (bad-ticket), before and now: as one frame, side by side, as changes, as an overlay with a slider, and at mobile width; Close shuts it and leaves the card in review."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -13,66 +13,92 @@ risks: [critical_ux, accessibility]
 viewports: [web, mobile]
 screens:
   - id: board
-    title: A card is in review
+    title: "Issue #721 is in review"
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Graph}, {role: tab, name: Kanban view}, {role: complementary, name: Journeys with work}]
+    expect: [{role: button, name: "Issue #721", text: in review, because: "the fixture's issue #721 has an open PR, so its card shows it in review"}, {role: group, name: "Pull request of #721", text: "PR #721 waits for a reviewer", because: "the card's PR waits for a reviewer, which is what the owner is about to review"}]
+    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
+  - id: changes
+    title: Changes shows only the pixels that moved
+    url: /?session=studio-fixture&run=demo
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: figure, name: "Changes: Now against Before (unchanged pixels are black)", because: "Changes compares Now against Before and blacks out what did not change, so the owner spots the difference"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: closed
-    title: Close shuts the modal
+    title: Close shuts the modal and the card is still in review
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Graph}, {role: dialog, name: Review, absent: true, because: after Close the review dialog must be gone}]
+    expect: [{role: dialog, name: Review, absent: true, because: after Close the review dialog must be gone}, {role: list, name: In review, text: Observe issue graph and work kanban, because: "looking at the screens changes nothing, so the card stays in the In review column"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: mobile
     title: Mobile shows the main run's mobile frame (a PR head capture is web only)
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Review frame, text: "390", because: "the mobile frame is 390 pixels wide, and the frame label says so"}, {role: button, name: Frame}]
+    expect: [{role: group, name: Viewport, text: 390 × 844, because: "the mobile frame is captured at 390 by 844, and the viewport label says so"}, {role: img, name: bad-ticket before, because: "the main run kept a mobile frame of the bad-ticket screen, so the owner checks the phone layout too"}, {role: img, name: bad-ticket now, absent: true, because: "the PR head was captured on web only, so there is no Now frame to show at mobile"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: modal
-    title: The review modal compares the screens
+    title: "The review modal opens on issue #721's journey screen"
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: dialog, name: Review}, {role: button, name: Frame}, {role: button, name: Side by side}, {role: button, name: Overlay}, {role: button, name: Changes}, {role: button, name: Web}, {role: button, name: Mobile}]
+    expect: [{role: dialog, name: Review, text: Observe issue graph and work kanban, because: "the modal is for the card the owner opened, issue #721 Observe issue graph and work kanban"}, {role: img, name: bad-ticket before, because: "the modal starts on the first screen of issue #721's journey, Open the Studio on a project: bad-ticket, showing its frame from the last run"}, {role: group, name: Viewport, text: 1280 × 800, because: the frame is shown at the web size it was captured at}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: overlay
-    title: Overlay shows the opacity slider at web width
+    title: Overlay lays Now over Before with a slider
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: slider, name: Now opacity}, {role: region, name: Review frame, text: "1280", because: "the web frame is 1280 pixels wide, and the frame label says so"}]
+    expect: [{role: slider, name: Now opacity, because: the slider fades Now over Before so the owner can see what moved}, {role: figure, name: Now over Before at 50%, because: "the overlay opens at half opacity, the slider's starting point"}]
+    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
+  - id: side
+    title: Side by side shows Before and Now together
+    url: /?session=studio-fixture&run=demo
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: img, name: bad-ticket before, because: the left frame is the bad-ticket screen from the main run}, {role: img, name: bad-ticket now, because: "the right frame is the same screen captured at the PR head, so both can be read at once"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
 edges:
   - id: board.modal
     from: board
     to: modal
-    why: "Opening a card in review shows the large review modal, so the owner can compare its screens."
+    why: "Opening the card in review shows the large review modal, so the owner can compare its screens before deciding."
     acts:
       - {kind: activate, role: tab, name: Kanban view}
       - {kind: activate, role: button, name: Open review}
-  - id: mobile.closed
-    from: mobile
-    to: closed
-    why: Close shuts the modal and returns to the board.
-    acts:
-      - {kind: activate, role: button, name: Close review}
-  - id: modal.overlay
-    from: modal
+  - id: changes.overlay
+    from: changes
     to: overlay
     why: "Overlay lays Now over Before with a slider, so the owner sees what moved."
     acts:
       - {kind: activate, role: button, name: Overlay}
+  - id: mobile.closed
+    from: mobile
+    to: closed
+    why: Close shuts the modal and returns the owner to the board without changing the card.
+    acts:
+      - {kind: activate, role: button, name: Close review}
+  - id: modal.side
+    from: modal
+    to: side
+    why: "Side by side puts Before next to Now, so the owner reads both versions of the screen at once."
+    acts:
+      - {kind: activate, role: button, name: Side by side}
   - id: overlay.mobile
     from: overlay
     to: mobile
-    why: "Mobile shows the same review at phone width, so a change is checked on both sizes."
+    why: "Mobile shows the same screen at phone width, so a change is checked on both sizes."
     acts:
       - {kind: activate, role: button, name: Mobile}
+  - id: side.changes
+    from: side
+    to: changes
+    why: "Changes shows only what differs, so a small change is not missed."
+    acts:
+      - {kind: activate, role: button, name: Changes}
 paths:
-  main: [board.modal, modal.overlay, overlay.mobile, mobile.closed]
+  main: [board.modal, modal.side, side.changes, changes.overlay, overlay.mobile, mobile.closed]
 drift: []

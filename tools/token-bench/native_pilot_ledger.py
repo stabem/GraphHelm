@@ -53,6 +53,17 @@ def _attempt(path: Path, *, cli: str, project: Path) -> dict:
         import native_session_evidence as evidence
         root_log = Path(archive["archivedRoot"])
         if cli == "claude":
+            native_stream = evidence.records(stdout)
+            finals = [row for row in native_stream if row.get("type") == "result"]
+            if len(finals) != 1 or finals[0].get("session_id") != archive.get("rootSession"):
+                raise ValueError("Claude root session does not match native stream")
+            native_root = evidence.records(root_log)
+            metadata = [row for row in native_root if row.get("type") in {"user", "assistant"}]
+            if not metadata or any(row.get("sessionId") != archive["rootSession"]
+                                   or not Path(row.get("cwd", "")).resolve().is_relative_to(project.resolve())
+                                   or row.get("isSidechain") is not False
+                                   or row.get("agentId") is not None for row in metadata):
+                raise ValueError("Claude archived root provenance differs")
             children = sorted(archive_root.glob("agent-*.jsonl"))
             replay = (evidence.claude_owned_tree(stdout, children, project=project,
                                                  session_id=archive["rootSession"])

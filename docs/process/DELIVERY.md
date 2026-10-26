@@ -196,6 +196,12 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
 - The review's first line names the reviewer and the head sha it read:
   `Session: <ListAgents name [ref]> · Head: <sha8>`, with `(blind subagent)` after the session
   name when a subagent reviews.
+- **The review is dispatched in the turn the author returns (#1772).** An orchestrator that gets a
+  subagent author's report with an open PR spawns the blind reviewer in that same turn, with the PR
+  number and the head sha from the report, and records `review_assigned`; it does not park the PR
+  until its next scheduled check. Measured on the last 40 merged PRs (2026-10-26), median
+  open-to-first-verdict was 5 min (p90 39 min), but 3 PRs (#2058, #2060, #2079) waited 2 to 5.4 h with the author
+  already finished: that idle dispatch, not review work, set the review_wait p90.
 - **A BLOCK stands for the head it names.** The author answers it by pushing a fix (a new head) or
   by replying on the PR with why it does not hold; only then may a new reviewer be asked. Asking
   another reviewer about the same head until one approves is not a review.

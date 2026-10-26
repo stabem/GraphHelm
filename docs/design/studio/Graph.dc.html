@@ -24,6 +24,15 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 .fillrun::after{content:'';position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(255,255,255,.55);animation:dcfill 1.8s ease-in-out infinite}
 @keyframes dcfill{0%{width:0;opacity:1}85%{width:100%;opacity:1}100%{width:100%;opacity:0}}
 @media (prefers-reduced-motion: reduce){.fillrun::after{animation:none;width:60%}}
+/* QA fix 1 + 2 (phone, 390x844): Kanban columns stack vertically, an empty one folds to a 44px one-line strip;
+   the request graph swaps to a vertical chain per request (asked > issue > PR > result). Desktop is unchanged. */
+.gr-phone{display:none}
+@media (max-width: 640px){
+.kb-grid{grid-template-columns:1fr!important;min-height:0!important;overflow-x:visible!important}
+.kb-fold{min-height:44px!important;box-sizing:border-box;padding:0 12px!important;justify-content:center}
+.gr-desk{display:none!important}
+.gr-phone{display:flex!important}
+}
 </style>
 </helmet>
 <div style="display: flex; min-height: 900px; background: #0a0a0b">
@@ -58,9 +67,10 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 </div>
 
 <sc-if value="{{isKanban}}" hint-placeholder-val="{{ true }}">
-<div style="display: grid; grid-template-columns: repeat(5, minmax(220px, 1fr)); gap: 12px; min-height: 640px; min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain">
+<!-- QA fix 1: .kb-grid is one column on a phone; .kb-fold (no cards) is a 44px strip -->
+<div class="kb-grid" style="display: grid; grid-template-columns: repeat(5, minmax(220px, 1fr)); gap: 12px; min-height: 640px; min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain">
 <sc-for list="{{cols}}" as="col" hint-placeholder-count="5">
-<section style="border: 1px solid #2a2a30; border-radius: 10px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<section class="{{col.cls}}" style="border: 1px solid #2a2a30; border-radius: 10px; background: #111113; padding: 12px; display: flex; flex-direction: column; gap: 8px">
 <div style="display: flex; gap: 8px; align-items: center; min-height: 24px"><span style="width: 8px; height: 8px; border-radius: 50%; background: {{col.c}}"></span><strong class="mono" style="font-size: 11px">{{col.name}}</strong><span style="flex: 1"></span><span class="mono" style="padding: 0 8px; border-radius: 999px; background: #1e1e22; font-size: 11px; line-height: 20px; color: #8a8a96">{{col.n}}</span></div>
 <sc-for list="{{col.cards}}" as="k">
 <button class="b" onClick="{{k.pick}}" style="padding: 12px; border-radius: 10px; border: 1px solid {{k.edge}}; background: #1e1e22; display: flex; flex-direction: column; gap: 8px">
@@ -83,16 +93,17 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 </sc-if>
 
 <sc-if value="{{isGraph}}" hint-placeholder-val="{{ false }}">
-<div style="min-height: 640px; border: 1px solid #2a2a30; border-radius: 10px; background-color: #111113; background-image: radial-gradient(#26262c 1px, transparent 1px); background-size: 18px 18px; padding: 24px; display: flex; flex-direction: column; gap: 16px; overflow: auto">
-<div class="mono" style="position: relative; width: 1040px; height: 14px; font-size: 11px; color: #8a8a96">
-<span style="position: absolute; left: 0">ASKED</span><span style="position: absolute; left: 300px">ISSUES THE ORCHESTRATOR OPENED</span><span style="position: absolute; left: 600px">PULL REQUESTS</span><span style="position: absolute; left: 840px">RESULT</span>
+<!-- QA fix 2: the four columns are percentages of the panel (min 600px) so Result is never clipped at 1280; phone uses the chain below -->
+<div class="gr-desk" style="min-height: 640px; border: 1px solid #2a2a30; border-radius: 10px; background-color: #111113; background-image: radial-gradient(#26262c 1px, transparent 1px); background-size: 18px 18px; padding: 24px; display: flex; flex-direction: column; gap: 16px; overflow: auto">
+<div class="mono" style="position: relative; width: 100%; min-width: 600px; height: 14px; font-size: 11px; color: #8a8a96">
+<span style="position: absolute; left: 0">ASKED</span><span style="position: absolute; left: 28.846%">ISSUES</span><span style="position: absolute; left: 57.692%">PULL REQUESTS</span><span style="position: absolute; left: 80.769%">RESULT</span>
 </div>
 <sc-for list="{{reqs}}" as="r" hint-placeholder-count="3">
-<section aria-label="{{r.ask}}" style="position: relative; width: 1040px; height: {{r.h}}px; flex: none">
-<svg aria-hidden="true" width="1040" height="{{r.h}}" style="position: absolute; left: 0; top: 0">
-<sc-for list="{{r.links}}" as="l"><path d="{{l.d}}" fill="none" stroke="{{l.c}}" stroke-width="1.5" stroke-dasharray="{{l.dash}}"></path></sc-for>
+<section aria-label="{{r.ask}}" style="position: relative; width: 100%; min-width: 600px; height: {{r.h}}px; flex: none">
+<svg aria-hidden="true" viewBox="0 0 1040 {{r.h}}" preserveAspectRatio="none" style="position: absolute; left: 0; top: 0; width: 100%; height: {{r.h}}px">
+<sc-for list="{{r.links}}" as="l"><path vector-effect="non-scaling-stroke" d="{{l.d}}" fill="none" stroke="{{l.c}}" stroke-width="1.5" stroke-dasharray="{{l.dash}}"></path></sc-for>
 </svg>
-<div style="position: absolute; left: 0; top: {{r.ry}}px; width: 240px; padding: 12px; box-sizing: border-box; border-radius: 10px; border: 1px solid {{r.rc}}; background: #1e1e22; display: flex; flex-direction: column; gap: 8px">
+<div style="position: absolute; left: 0; top: {{r.ry}}px; width: 23.077%; padding: 12px; box-sizing: border-box; border-radius: 10px; border: 1px solid {{r.rc}}; background: #1e1e22; display: flex; flex-direction: column; gap: 8px">
 <span class="mono" style="font-size: 11px; color: {{r.rc}}">YOU ASKED · {{r.when}}</span>
 <span style="font-size: 13px; font-weight: 500; line-height: 1.35">{{r.ask}}</span>
 <div style="display: flex; align-items: center; gap: 8px"><span class="mono" style="padding: 4px 8px; border-radius: 999px; border: 1px solid {{r.chipEdge}}; color: {{r.chipC}}; font-size: 11px">{{r.chip}}</span><span style="flex: 1"></span><span class="mono" style="font-size: 11px; color: #f5f5f6">{{r.pct}}</span></div>
@@ -100,18 +111,52 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 <div style="display: flex; flex-wrap: wrap; gap: 4px 12px"><sc-for list="{{r.legend}}" as="g"><span class="mono" style="display: inline-flex; gap: 4px; align-items: center; font-size: 11px; color: #a2a2ad"><span style="width: 7px; height: 7px; border-radius: 2px; background: {{g.c}}"></span>{{g.n}} {{g.label}}</span></sc-for></div>
 </div>
 <sc-for list="{{r.items}}" as="it">
-<button class="b" onClick="{{it.open}}" aria-label="Open the screen for #{{it.issue}}" style="position: absolute; left: 300px; top: {{it.y}}px; width: 250px; height: 84px; padding: 8px 12px; box-sizing: border-box; border-radius: 10px; border: 1px solid {{it.rc}}; background: #1e1e22; display: flex; flex-direction: column; gap: 4px">
-<div style="display: flex; gap: 8px"><span class="mono" style="color: #a2a2ad">#{{it.issue}}</span><span style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{it.title}}</span></div>
+<button class="b" onClick="{{it.open}}" aria-label="Open the screen for #{{it.issue}}" style="position: absolute; left: 28.846%; top: {{it.y}}px; width: 24.038%; height: 108px; padding: 8px 12px; box-sizing: border-box; border-radius: 10px; border: 1px solid {{it.rc}}; background: #1e1e22; display: flex; flex-direction: column; gap: 4px">
+<div style="display: flex; gap: 8px"><span class="mono" style="color: #a2a2ad">#{{it.issue}}</span><span style="flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: break-word; line-height: 1.3">{{it.title}}</span></div>
 <div style="display: flex; gap: 4px; align-items: center"><sc-for list="{{it.blocks}}" as="q"><span class="{{q.k}}" style="width: 8px; height: 8px; border-radius: 2px; background: {{q.c}}"></span></sc-for><span class="mono" style="font-size: 11px; color: #8a8a96; margin-left: 4px">{{it.agent}}</span></div>
 <span class="mono" style="font-size: 11px; color: #a2a2ad; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{it.lastMsg}}</span>
 <span style="display: inline-flex; gap: 4px; align-items: center; font-size: 11px; color: #8a8a96"><span style="width: 7px; height: 7px; border-radius: 2px; background: {{it.jc}}"></span>{{it.journey}}</span>
 </button>
-<div style="position: absolute; left: 600px; top: {{it.py}}px; width: 180px; height: 52px; padding: 8px 12px; box-sizing: border-box; border-radius: 10px; border: 1px {{it.prBorder}} {{it.prEdge}}; background: #151517; display: flex; flex-direction: column; gap: 4px">
+<div style="position: absolute; left: 57.692%; top: {{it.py}}px; width: 17.308%; min-height: 52px; padding: 8px 12px; box-sizing: border-box; border-radius: 10px; border: 1px {{it.prBorder}} {{it.prEdge}}; background: #151517; display: flex; flex-direction: column; gap: 4px">
 <span class="mono" style="color: {{it.prC}}">{{it.prLabel}}</span>
 <span class="mono" style="font-size: 11px; color: #8a8a96; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{it.reviewerLine}}</span>
 </div>
-<div style="position: absolute; left: 840px; top: {{it.py}}px; width: 190px; height: 52px; padding: 8px 12px; box-sizing: border-box; border-radius: 10px; border: 1px solid {{it.resEdge}}; background: #151517; display: flex; flex-direction: column; gap: 4px">
-<span style="color: {{it.resC}}; font-size: 12px">{{it.res}}</span>
+<div style="position: absolute; left: 80.769%; top: {{it.py}}px; width: 18.269%; min-height: 52px; padding: 8px 12px; box-sizing: border-box; border-radius: 10px; border: 1px solid {{it.resEdge}}; background: #151517; display: flex; flex-direction: column; gap: 4px">
+<span style="color: {{it.resC}}; font-size: 12px; overflow-wrap: break-word">{{it.res}}</span>
+<span class="mono" style="font-size: 11px; color: #8a8a96">{{it.resSub}}</span>
+</div>
+</sc-for>
+</section>
+</sc-for>
+</div>
+
+
+<!-- QA fix 2 (phone): one vertical chain per request, asked > issue > PR > result, each step full width. -->
+<div class="gr-phone" style="flex-direction: column; gap: 24px; min-width: 0">
+<sc-for list="{{reqs}}" as="r" hint-placeholder-count="3">
+<section aria-label="{{r.ask}}" style="display: flex; flex-direction: column; min-width: 0">
+<div style="padding: 12px; border-radius: 10px; border: 1px solid {{r.rc}}; background: #1e1e22; display: flex; flex-direction: column; gap: 8px">
+<span class="mono" style="font-size: 11px; color: {{r.rc}}">YOU ASKED · {{r.when}}</span>
+<span style="font-size: 13px; font-weight: 500; line-height: 1.35; overflow-wrap: break-word">{{r.ask}}</span>
+<div style="display: flex; align-items: center; gap: 8px"><span class="mono" style="padding: 4px 8px; border-radius: 999px; border: 1px solid {{r.chipEdge}}; color: {{r.chipC}}; font-size: 11px">{{r.chip}}</span><span style="flex: 1"></span><span class="mono" style="font-size: 11px; color: #f5f5f6">{{r.pct}}</span></div>
+</div>
+<sc-for list="{{r.items}}" as="it">
+<div style="margin-left: 24px; width: 0; height: 16px; border-left: 2px solid #ff8a3d"></div>
+<button class="b" onClick="{{it.open}}" aria-label="Open the screen for #{{it.issue}}" style="padding: 12px; border-radius: 10px; border: 1px solid {{it.rc}}; background: #1e1e22; display: flex; flex-direction: column; gap: 4px; width: 100%; min-width: 0">
+<span class="mono" style="font-size: 11px; color: #8a8a96">ISSUE</span>
+<div style="display: flex; gap: 8px"><span class="mono" style="color: #a2a2ad">#{{it.issue}}</span><span style="flex: 1; min-width: 0; overflow-wrap: break-word; line-height: 1.3">{{it.title}}</span></div>
+<span class="mono" style="font-size: 11px; color: #8a8a96">{{it.agent}}</span>
+</button>
+<div style="margin-left: 24px; width: 0; height: 16px; border-left: 2px {{it.prBorder}} {{it.prC}}"></div>
+<div style="padding: 8px 12px; border-radius: 10px; border: 1px {{it.prBorder}} {{it.prEdge}}; background: #151517; display: flex; flex-direction: column; gap: 4px; min-width: 0">
+<span class="mono" style="font-size: 11px; color: #8a8a96">PULL REQUEST</span>
+<span class="mono" style="color: {{it.prC}}">{{it.prLabel}}</span>
+<span class="mono" style="font-size: 11px; color: #8a8a96; overflow-wrap: break-word">{{it.reviewerLine}}</span>
+</div>
+<div style="margin-left: 24px; width: 0; height: 16px; border-left: 2px solid {{it.resC}}"></div>
+<div style="padding: 8px 12px; border-radius: 10px; border: 1px solid {{it.resEdge}}; background: #151517; display: flex; flex-direction: column; gap: 4px; min-width: 0">
+<span class="mono" style="font-size: 11px; color: #8a8a96">RESULT</span>
+<span style="color: {{it.resC}}; font-size: 12px; overflow-wrap: break-word">{{it.res}}</span>
 <span class="mono" style="font-size: 11px; color: #8a8a96">{{it.resSub}}</span>
 </div>
 </sc-for>
@@ -245,7 +290,7 @@ const card = (w) => ({ ...w, rc: rcOf(w.issue), blocks: blocks(w), stageName: SN
 ageC: /h/.test(w.age) ? '#ff6b6b' : '#8a8a96', edge: this.state.sel === w.issue ? '#f5f5f6' : rcOf(w.issue),
 canView: w.col >= 2 && !!w.pr, pick: () => this.setState({ sel: w.issue, modal: (w.col >= 2 && w.pr) ? w.issue : null }) });
 const W2 = W.map((w) => w.issue === '1779' ? { ...w, col: 3 } : w);
-const cols = C.map((c, i) => { const cards = W2.filter(w => (this.state.j < 0 || w.j === this.state.j) && w.col === i).map(card); return { name: c[0], c: c[1], n: cards.length, cards }; });
+const cols = C.map((c, i) => { const cards = W2.filter(w => (this.state.j < 0 || w.j === this.state.j) && w.col === i).map(card); return { name: c[0], c: c[1], n: cards.length, cards, cls: cards.length ? 'kb-col' : 'kb-col kb-fold' }; });
 const stateName = ['stalled', 'implementing', 'in review', 'merged', 'proven'];
 const stateC = ['#ff6b6b', '#ff8a3d', '#8ab4ff', '#8b7cff', '#3ddc97'];
 const rows = J.map((x, i) => ({ journey: x.title, c: JC[i], items: W2.filter(w => w.j === i).map(w => ({ ...w, hasPr: !!w.pr, noPr: !w.pr, state: stateName[w.col], sc: stateC[w.col], lineC: w.pr ? '#45454e' : 'transparent' })) }))
@@ -262,19 +307,19 @@ const RQ = [
 { ask: 'Admin sets the affiliate tag per store and sees clicks', when: '21 Oct 18:30', issues: ['1781', '1779'] },
 { ask: 'Delivery list copies the message for whoever receives', when: '21 Oct 17:50', issues: ['1752'] }
 ];
-const ROW = 96;
+const ROW = 120; // QA fix 2: taller rows so a 2-line title fits
 const reqs = RQ.map((r, ri) => { const rc = RC[ri % RC.length];
 const its = r.issues.map(id => W2.find(w => w.issue === id)).filter(w => w && (this.state.j < 0 || w.j === this.state.j));
-const h = Math.max(Math.max(its.length, 1) * ROW + 8, 190);
-const ry = Math.max(0, (h - 170) / 2);
+const h = Math.max(Math.max(its.length, 1) * ROW + 8, 250);
+const ry = Math.max(0, (h - 210) / 2);
 const items = its.map((w, k) => { const y = k * ROW; const merged = w.col >= 3; const stalled = w.col === 0;
-return { ...w, rc: rcOf(w.issue), open: () => this.setState({ sel: w.issue, modal: (w.col >= 2 && w.pr) ? w.issue : null }), y, py: y + 16, blocks: blocks(w), lastMsg: w.last[0] + '  ' + w.last[1], jc: JC[w.j], journey: J[w.j].title,
+return { ...w, rc: rcOf(w.issue), open: () => this.setState({ sel: w.issue, modal: (w.col >= 2 && w.pr) ? w.issue : null }), y, py: y + 28, blocks: blocks(w), lastMsg: w.last[0] + '  ' + w.last[1], jc: JC[w.j], journey: J[w.j].title,
 prLabel: w.pr ? 'PR #' + w.pr : 'no PR yet', prC: w.pr ? '#8ab4ff' : '#8a8a96', prEdge: w.pr ? '#2a3b5c' : '#34343c', prBorder: w.pr ? 'solid' : 'dashed', reviewerLine: w.pr ? w.reviewer : 'author still working',
 res: merged ? 'Merged · waits proof' : (stalled ? 'Stalled' : 'Not merged'), resC: merged ? '#8b7cff' : (stalled ? '#ff6b6b' : '#8a8a96'), resEdge: merged ? '#3a3466' : '#2a2a30',
 resSub: merged ? 'replay will prove it' : (stalled ? 'no record for 2 h' : '—') }; });
-const cy = ry + 60;
+const cy = ry + 70;
 const links = [];
-items.forEach((it) => { const iy = it.y + 42;
+items.forEach((it) => { const iy = it.y + 54;
 links.push({ d: 'M240 ' + cy + ' C 270 ' + cy + ', 270 ' + iy + ', 300 ' + iy, c: '#ff8a3d', dash: '' });
 links.push({ d: 'M550 ' + iy + ' L 600 ' + iy, c: it.pr ? '#8ab4ff' : '#45454e', dash: it.pr ? '' : '4 4' });
 links.push({ d: 'M780 ' + iy + ' L 840 ' + iy, c: it.col >= 3 ? '#8b7cff' : '#45454e', dash: it.col >= 3 ? '' : '4 4' }); });

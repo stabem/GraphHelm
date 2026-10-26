@@ -113,8 +113,10 @@ export function Sidebar({ projects, closed, current, view, live, onProject, onAd
       )}
       <div className="section-head">
         <span className="section-label">PROJECTS</span>
-        {onAdd !== null && <AddFolder onAdd={onAdd} open={adding} setOpen={setAdding} />}
+        {onAdd !== null && !adding && <AddFolder onAdd={onAdd} open={false} setOpen={setAdding} />}
       </div>
+      {/* v20: the open form is its own full-width row under PROJECTS, never beside the header. */}
+      {onAdd !== null && adding && <AddFolder onAdd={onAdd} open setOpen={setAdding} />}
       <div className="projects">
         {projects.map((project) => project.key === current ? (
           <section key={project.key} className="project" aria-label={`Project ${project.name}`}>
@@ -146,7 +148,7 @@ export function Sidebar({ projects, closed, current, view, live, onProject, onAd
           <div key={id} className="project other closed">
             <Folder stroke="#6b6b76" />
             <span>project {id.slice(0, 8)}</span>
-            <span className="closed-hint">open with <code className="mono">graphhelm studio open</code></span>
+            <span className="closed-hint" title="Not opened yet. Open it with: graphhelm studio open">open with <code className="mono">graphhelm studio open</code></span>
           </div>
         ))}
       </div>

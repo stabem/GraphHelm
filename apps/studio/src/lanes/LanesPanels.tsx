@@ -184,7 +184,7 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
               <li key={`${row.lane}:${row.action.sequence}`}>
                 <When className="mono faint" at={row.action.occurredAt} />
                 <span className="mono feed-who">{row.lane}</span>
-                <span className="muted">{actionText(row.action)}</span>
+                <span className="muted">{breakable(actionText(row.action))}</span>
               </li>
             ))}
           </ul>
@@ -192,4 +192,10 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
       </section>
     </div>
   );
+}
+
+/** Event names like `task.request_linked` have no spaces; offer a line break after each `.` and `_`
+ * so a narrow feed wraps between name parts instead of mid-word. */
+function breakable(text: string) {
+  return text.split(/(?<=[._])/).flatMap((part, i) => (i === 0 ? [part] : [<wbr key={i} />, part]));
 }

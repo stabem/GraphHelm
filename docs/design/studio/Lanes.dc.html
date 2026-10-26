@@ -93,7 +93,7 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 <span class="mono" style="font-size: 11px; color: {{a.idleC}}">{{a.idle}}</span>
 </div>
 <span><span class="mono" style="color: #a2a2ad">#{{a.issue}}</span> {{a.task}}</span>
-<span style="font-size: 11px; color: #ff8a3d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">for: {{a.reqShort}}</span>
+<span style="font-size: 11px; color: #ff8a3d; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2">for: {{a.reqShort}}</span>
 <div style="display: flex; gap: 4px; align-items: center"><sc-for list="{{a.blocks}}" as="q"><span class="{{q.k}}" style="width: 9px; height: 9px; border-radius: 2px; background: {{q.c}}"></span></sc-for></div>
 <span class="mono" style="font-size: 11px; color: #a2a2ad; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{a.lastAct}}</span>
 </button>

@@ -23,14 +23,15 @@ class RealMethodologyContracts(unittest.TestCase):
                 "import runpy\nrunpy.run_path('tests/test_actual.py', run_name='__main__')\nprint('BENCHMARK_COMPLETE')\n",
                 encoding="utf-8")
         (oracle / "test_hidden.py").write_text(
-            "from subject import VALUE\nassert VALUE == 2\nprint('BENCHMARK_COMPLETE')\n", encoding="utf-8")
+            "from subject import VALUE\ntry:\n    assert VALUE == 2\nexcept AssertionError:\n    print('BENCH_ASSERTION_FAILURE')\n    raise\nprint('BENCHMARK_COMPLETE')\n", encoding="utf-8")
         return {"id": identifier, "parentSha": "a" * 40, "knownFixSha": "b" * 40,
                 "parentSnapshot": str(parent), "fixSnapshot": str(fixed),
                 "scope": ["subject.py"], "productionImportClosure": ["subject.py"],
                 "publicTests": ["tests/test_actual.py"], "supportFiles": ["test_public.py"],
                 "request": "Set VALUE to 2.",
                 "completion": {"public": {"stdoutMarker": "BENCHMARK_COMPLETE"},
-                               "hidden": {"stdoutMarker": "BENCHMARK_COMPLETE"}},
+                               "hidden": {"stdoutMarker": "BENCHMARK_COMPLETE",
+                                          "assertionMarker": "BENCH_ASSERTION_FAILURE"}},
                 "hiddenOracle": {"root": str(oracle), "files": ["test_hidden.py"],
                                  "command": [sys.executable, "test_hidden.py"]}}
 

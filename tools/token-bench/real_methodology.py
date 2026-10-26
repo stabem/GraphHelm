@@ -16,6 +16,8 @@ import uuid
 
 import methodology as base
 
+# These names are the shared pilot boundaries; this runner does not fork them.
+
 HOME = Path(__file__).resolve().parent
 MAX_JSON = 2_000_000
 MAX_FILE = 2_000_000
@@ -23,11 +25,11 @@ DEADLINE = 300
 EVALUATOR_DEADLINE = 90
 
 
-def digest(path: Path) -> str:
+def _legacy_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def read(path: Path) -> dict:
+def _legacy_read(path: Path) -> dict:
     if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_JSON:
         raise ValueError(f"unsafe or oversized JSON: {path}")
     try:
@@ -39,7 +41,7 @@ def read(path: Path) -> dict:
     return value
 
 
-def publish(path: Path, value: dict) -> None:
+def _legacy_publish(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
     try:
@@ -50,6 +52,11 @@ def publish(path: Path, value: dict) -> None:
         os.link(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+digest = base.digest
+read = base.read
+publish = base.publish
 
 
 def safe_relative(value: str) -> str:
@@ -96,6 +103,16 @@ def task_paths(task: dict) -> tuple[list[str], list[str], list[str]]:
 def all_snapshot_paths(task: dict) -> list[str]:
     scope, closure, support = task_paths(task)
     return sorted(set(closure + support + task["scope"] + task["publicTests"]))
+
+
+def external_dependency_hashes(task: dict) -> dict[str, str]:
+    result = {}
+    for entry in task.get("externalDependencies", []):
+        path = Path(entry["path"] if isinstance(entry, dict) else entry).resolve()
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_FILE:
+            raise ValueError(f"external dependency is missing, linked or oversized: {path}")
+        result[str(path)] = digest(path)
+    return result
 
 
 def tree_hashes(root: Path, paths: list[str]) -> dict[str, str]:
@@ -146,15 +163,25 @@ def wrapper_completed(task: dict, result: dict, phase: str) -> tuple[bool, str]:
     return True, "completed"
 
 
-def classify_hidden_red(result: dict) -> tuple[bool, str]:
+def classify_hidden_red(result: dict, assertion_marker: str | None = None) -> tuple[bool, str]:
     text = result["stdout"] + result["stderr"]
     if result["timeout"] or not result["cleanupConfirmed"]:
         return False, "timeout or cleanup failure"
     if result["exit"] == 0:
         return False, "oracle unexpectedly passed"
-    if "AssertionError" in text or "assertion" in text.lower() or "FAILED" in text:
+    if assertion_marker and assertion_marker not in result["stdout"]:
+        return False, "intended assertion marker missing"
+    if "AssertionError" in text or "assertion" in text.lower():
         return True, "intended assertion failure"
     return False, "infrastructure or tool failure"
+
+
+def task_prompt(task: dict, profile: dict) -> str:
+    return ("Work only in this directory. Edit only declared production files and original public test files. "
+            "Do not inspect other directories, use network, delegate, install packages, or change settings. "
+            "Run python test_public.py.\nDeclared production scope: " + json.dumps(task["scope"], sort_keys=True) +
+            "\nDeclared public tests: " + json.dumps(task["publicTests"], sort_keys=True) +
+            "\nRequest: " + task["request"] + "\nProfile: " + profile.get("prompt", ""))
 
 
 def validate_task(task: dict) -> None:
@@ -174,6 +201,7 @@ def validate_task(task: dict) -> None:
         raise ValueError("oracle root missing or linked")
     for relative in hidden_files(task):
         safe_file(oracle_root, relative)
+    external_dependency_hashes(task)
     for key in ("parentSha", "knownFixSha"):
         if not isinstance(task.get(key), str) or len(task[key]) != 40:
             raise ValueError(f"task {identifier} requires {key}")
@@ -198,7 +226,7 @@ def qualify(registry: dict, output: Path) -> dict:
                 copy_paths(Path(task["hiddenOracle"]["root"]), target, hidden_files(task))
                 public = run_process([sys.executable, "test_public.py"], target, EVALUATOR_DEADLINE)
                 hidden = run_process(hidden_command(task), target, EVALUATOR_DEADLINE)
-                hidden_red, reason = classify_hidden_red(hidden)
+                hidden_red, reason = classify_hidden_red(hidden, task.get("completion", {}).get("hidden", {}).get("assertionMarker"))
                 row[label] = {"public": public, "hidden": hidden, "hiddenReason": reason}
                 if public["exit"] != 0:
                     row["reasons"].append(f"{label} public failed")
@@ -214,8 +242,6 @@ def qualify(registry: dict, output: Path) -> dict:
         for label in ("parent", "fixed"):
             for phase in ("public", "hidden"):
                 row[label][phase].pop("cwd", None)
-                row[label][phase].pop("stdout", None)
-                row[label][phase].pop("stderr", None)
         rows.append(row)
     result = {"schema": "real-methodology-qualification/2", "passed": all(row["passed"] for row in rows), "tasks": rows}
     publish(output, result)
@@ -236,6 +262,7 @@ def registry_hashes(registry: dict) -> dict:
         for kind in ("parent", "fix"):
             result[f"{task['id']}:{kind}"] = tree_hashes(snapshot_root(task, kind), all_snapshot_paths(task))
         result[f"{task['id']}:oracle"] = tree_hashes(Path(task["hiddenOracle"]["root"]), hidden_files(task))
+        result[f"{task['id']}:external"] = external_dependency_hashes(task)
     return result
 
 
@@ -254,12 +281,16 @@ def freeze(args: argparse.Namespace) -> dict:
     for task_index in random.Random(2051).sample(range(3), 3):
         for profile_index in range(7):
             for cli in (("codex", "claude") if task_index % 2 == 0 else ("claude", "codex")):
-                order.append({"id": f"{len(order):03d}", "task": tasks[task_index]["id"],
-                              "profile": profiles[(profile_index + task_index) % 7]["id"], "cli": cli})
+                profile = profiles[(profile_index + task_index) % 7]
+                cell = {"id": f"{len(order):03d}", "task": tasks[task_index]["id"],
+                        "profile": profile["id"], "cli": cli}
+                cell["promptSha256"] = hashlib.sha256(task_prompt(tasks[task_index], profile).encode()).hexdigest()
+                order.append(cell)
     return {"schema": "real-methodology-manifest/2", "studyType": "real_project_methodology",
             "registry": {"path": str(args.registry.resolve()), "sha256": digest(args.registry)},
             "registryFiles": registry_hashes(registry), "instrumentSha256": digest(Path(__file__)),
-            "parserSha256": digest(HOME / "methodology.py"), "identities": identities,
+            "parserSha256": digest(HOME / "methodology.py"),
+            "runParserSha256": digest(HOME / "run.py"), "identities": identities,
             "models": {"codex": args.codex_model, "claude": args.claude_model}, "profiles": profiles,
             "tasks": tasks, "plannedAttempts": order,
             "argv": {cli: base.native_cli_command(cli, identities[cli]["path"], model) for cli, model in
@@ -272,7 +303,9 @@ def freeze(args: argparse.Namespace) -> dict:
 
 def load_frozen(path: Path) -> dict:
     manifest = read(path)
-    if manifest.get("instrumentSha256") != digest(Path(__file__)) or manifest.get("parserSha256") != digest(HOME / "methodology.py"):
+    if (manifest.get("instrumentSha256") != digest(Path(__file__))
+            or manifest.get("parserSha256") != digest(HOME / "methodology.py")
+            or manifest.get("runParserSha256") != digest(HOME / "run.py")):
         raise ValueError("instrument or parser changed after freeze")
     registry_path = Path(manifest["registry"]["path"])
     if digest(registry_path) != manifest["registry"]["sha256"]:
@@ -286,9 +319,17 @@ def load_frozen(path: Path) -> dict:
 
 
 def candidate_files(root: Path) -> dict[str, str]:
-    return {path.relative_to(root).as_posix(): digest(path) for path in root.rglob("*")
-            if path.is_file() and not path.is_symlink() and "__pycache__" not in path.parts
-            and ".pytest_cache" not in path.parts}
+    files = {}
+    for current, directories, names in os.walk(root, followlinks=False):
+        directories[:] = [name for name in directories
+                          if name not in {"__pycache__", ".pytest_cache", "node_modules", ".vite"}
+                          and not (Path(current) / name).is_symlink()]
+        for name in names:
+            path = Path(current) / name
+            if path.is_symlink():
+                continue
+            files[path.relative_to(root).as_posix()] = digest(path)
+    return files
 
 
 def enforce_scope(task: dict, candidate: Path, before: dict[str, str]) -> None:
@@ -303,6 +344,10 @@ def enforce_scope(task: dict, candidate: Path, before: dict[str, str]) -> None:
     for relative in scope + task["publicTests"]:
         if relative not in now:
             raise ValueError(f"agent removed declared file: {relative}")
+    immutable = set(closure + support) - allowed_changes
+    for relative in immutable:
+        if relative not in now:
+            raise ValueError(f"agent removed immutable dependency/support file: {relative}")
 
 
 def evaluator(task: dict, candidate: Path, output: Path, frozen_hashes: dict) -> dict:
@@ -368,15 +413,18 @@ def run_attempt(args: argparse.Namespace) -> dict:
             raise ValueError("frozen CLI argv changed after freeze")
         if base.identity(executable, cell["cli"], subject) != manifest["identities"][cell["cli"]]:
             raise ValueError("CLI identity or authentication changed after freeze")
-        prompt = ("Work only in this directory. Edit only declared production files and original public test files. "
-                  "Do not inspect other directories, use network, delegate, install packages, or change settings. "
-                  "Run python test_public.py.\nRequest: " + task["request"] + "\nProfile: " + profile.get("prompt", ""))
+        prompt = task_prompt(task, profile)
+        if hashlib.sha256(prompt.encode()).hexdigest() != cell["promptSha256"]:
+            raise ValueError("frozen prompt changed after freeze")
         started = time.monotonic()
         agent = base.capture(base.native_cli_command(cell["cli"], executable, manifest["models"][cell["cli"]]), subject,
                              deadline=manifest["deadlineSeconds"], prompt=prompt)
         result["elapsedSeconds"] = time.monotonic() - started
         result["agent"] = agent
         result["usage"] = base.usage(cell["cli"], agent["stdout"])
+        native_error = (agent["stdout"] + agent["stderr"]).lower()
+        if any(term in native_error for term in ("rate limit", "usage limit", "quota", "unauthorized", "authentication", "not logged in")):
+            raise ValueError("native provider control error observed")
         observed = result["usage"].get("observedModels", [])
         result["modelStatus"] = "unobserved" if not observed else ("matched" if observed == [manifest["models"][cell["cli"]]] else "mismatch")
         result["measurementStatus"] = "observed" if result["usage"].get("counts") is not None else "unknown"
@@ -389,12 +437,13 @@ def run_attempt(args: argparse.Namespace) -> dict:
         public_complete, public_reason = wrapper_completed(task, result["evaluation"]["public"], "public")
         hidden_complete, hidden_reason = wrapper_completed(task, result["evaluation"]["hidden"], "hidden")
         result["evaluationStatus"] = {"public": public_reason, "hidden": hidden_reason}
-        result["status"] = "passed" if agent["exit"] == 0 and public_complete and hidden_complete and all(row["exit"] == 0 for row in result["evaluation"].values()) else "failed"
+        result["status"] = "passed" if agent["exit"] == 0 and not agent["timeout"] and public_complete and hidden_complete and all(row["exit"] == 0 for row in result["evaluation"].values()) else "failed"
         result["sourceSha256"] = {relative: digest(safe_file(subject, relative)) for relative in scope}
+        if result["measurementStatus"] == "unknown":
+            publish(args.output / "provider-stop.json", {"attempt": cell["id"], "reason": "native accounting missing after quality outcome"})
     except Exception as error:
         result["error"] = str(error)
-        if any(word in str(error).lower() for word in ("authentication", "quota", "cleanup", "identity")):
-            publish(args.output / "provider-stop.json", {"attempt": cell["id"], "reason": str(error)})
+        publish(args.output / "provider-stop.json", {"attempt": cell["id"], "reason": str(error)})
     finally:
         publish(receipt, result)
         lock.unlink(missing_ok=True)

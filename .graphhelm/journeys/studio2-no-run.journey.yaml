@@ -3,7 +3,7 @@ id: studio2-no-run
 title: See journeys in a project with no team run
 name: Start from no run
 feature: Studio
-purpose: A project with no team run still shows its journeys in Proof and a working Start a team run button in the top bar.
+purpose: "In the demo project, which has no team run yet, the owner still sees its journeys in Proof, and starts one with Start a team run in the top bar, giving it the objective Check the journeys.; the new run then opens with that objective."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -17,34 +17,34 @@ screens:
     url: /?session=studio-fixture
     ignoreQuery: [session, project]
     state: empty
-    expect: [{role: tab, name: Proof}]
+    expect: [{role: heading, name: No team run yet, because: "the fixture project has no run at all, and Graph says so instead of an empty board"}, {role: banner, name: Top bar, text: / no run, because: "the top bar reads project / run, and with no run it says no run"}, {role: banner, name: Top bar, text: Start a team run, because: "with no run the top bar offers to start one, so a new project is never stuck"}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/start-run/StartRun.tsx, apps/studio/src/proof/ProofView.tsx, apps/studio/src/views/Views.tsx]
   - id: proof
     title: Proof lists the project's journeys
     url: /?session=studio-fixture&view=proof
     ignoreQuery: [session, project]
     state: empty
-    expect: [{role: list, name: Journeys}]
+    expect: [{role: listitem, name: Accept in-scope work and refuse work outside the Keel card, because: "Accept in-scope work and refuse work outside the Keel card is one of the project's journeys, and Proof lists it even with no run"}, {role: listitem, name: A reviewer verdict belongs to the exact Git head, because: "a second journey of the project is listed too, so Proof shows the whole list, not one item"}, {role: heading, name: No team run yet, absent: true, because: "Proof does not need a run, so it shows the journeys instead of the no-run notice"}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/start-run/StartRun.tsx, apps/studio/src/proof/ProofView.tsx, apps/studio/src/views/Views.tsx]
   - id: started
-    title: A team run has started
+    title: The new team run is open with its objective
     url: /?session=studio-fixture
-    ignoreQuery: [session, project, run]
+    ignoreQuery: [session, project, run, view]
     state: stable
-    expect: [{role: region, name: Graph}, {role: button, name: Start a team run, absent: true, because: once a run has started the Start a team run button leaves the top bar}]
+    expect: [{role: heading, name: Check the journeys., because: "the run the owner just started has the objective Check the journeys., and Graph opens it"}, {role: button, name: Start a team run, absent: true, because: once a run has started the Start a team run button leaves the top bar}, {role: heading, name: No team run yet, absent: true, because: "the project now has a run, so the no-run notice is gone"}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/start-run/StartRun.tsx, apps/studio/src/proof/ProofView.tsx, apps/studio/src/views/Views.tsx]
 edges:
   - id: empty.proof
     from: empty
     to: proof
-    why: A project with no team run still lists its journeys in Proof.
+    why: "Proof does not depend on a run, so the owner of a brand-new project can already see and run its journeys."
     acts:
       - {kind: activate, role: tab, name: Proof}
   - id: proof.started
     from: proof
     to: started
     intent: "Opens the new-run form, writes the objective and starts the run."
-    why: "Start a team run in the top bar starts a run, so a new project can begin work."
+    why: "Start a team run in the top bar starts a run with the owner's objective, so a new project can begin work."
     acts:
       - {kind: activate, role: button, name: Start a team run}
       - {kind: enter_text, role: textbox, name: What should the team do?, text: Check the journeys.}

@@ -3,7 +3,7 @@ id: studio2-lanes-board
 title: See every agent on the Lanes board
 name: See the lanes
 feature: Studio
-purpose: "Lanes shows WHAT I ASKED with the owner's requests and one card per agent in its column, with idle time, its request, progress blocks and last action; an asking agent shows its question."
+purpose: "On Lanes the owner sees WHAT I ASKED with the request Show the work graph for the fixture run, and the planner agent's card in the Blocked column with its request #1556, the ask it serves and its last action; the planner is asking a question, so the card shows it and Reply opens the reply box addressed to planner."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -13,26 +13,26 @@ risks: [critical_ux]
 viewports: [web, mobile]
 screens:
   - id: asking
-    title: An asking agent shows its question
+    title: The planner's question is shown and the reply box is addressed to it
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Question, text: "?", because: "the fixture's planner asks a question, and a question ends with a question mark"}, {role: button, name: Reply}]
+    expect: [{role: region, name: Question, text: "Should the deploy go to staging first, or straight to production?", because: "this is the question the fixture's planner sent the owner, shown on its card so the owner reads it without opening anything"}, {role: complementary, name: Agent, text: REPLY TO planner, because: "Reply opens the agent panel's reply box for the agent that asked, planner, so the answer reaches the right lane"}, {role: textbox, name: Reply, because: the owner types the answer here}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/asked.ts, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
   - id: lanes
-    title: "One card per agent, in its column"
+    title: The planner's card is in the Blocked column
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: tab, name: Lanes}, {role: list, name: Agent board}, {role: region, name: What I asked, text: Show the work graph for the fixture run In progress, because: "the fixture records the request Show the work graph for the fixture run, and its linked issue is still in progress"}, {role: list, name: Owner requests}, {role: group, name: Idle time}, {role: group, name: Request, text: "#", because: "a card's request is shown with its issue number, which starts with #"}, {role: group, name: Progress}, {role: group, name: Last action}]
+    expect: [{role: region, name: What I asked, text: Show the work graph for the fixture run In progress · 0 of 1, because: "the fixture records the request Show the work graph for the fixture run, and its one linked issue is not delivered yet"}, {role: list, name: Blocked, text: planner, because: "the planner waits for the owner's answer, so its card sits in the Blocked column"}, {role: heading, name: Blocked 1, because: the planner is the only blocked agent in the fixture}, {role: listitem, name: "Implement, empty", because: "no agent is implementing, so the Implement column says it is empty instead of hiding"}, {role: group, name: Request, text: "#1556 Show what each lane is doing", because: "the planner's card names the issue it works on, #1556 Show what each lane is doing"}, {role: group, name: For request, text: "for: Show the work graph for the fixture run", because: "the card names the owner's ask that work serves, so the owner ties the agent to the request"}, {role: group, name: Last action, text: planned, because: "the planner's last record is planned, and the card shows it"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/asked.ts, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
 edges:
   - id: lanes.asking
     from: lanes
     to: asking
-    why: "An agent that asks the owner something shows its question on its card, so the owner sees it without opening anything."
+    why: "Reply on the asking card opens the reply box addressed to that agent, so the owner can answer straight from the board."
     acts:
-      - {kind: inspect, role: region, name: Question}
+      - {kind: activate, role: button, name: Reply}
 paths:
   main: [lanes.asking]
 drift: []

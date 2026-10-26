@@ -3,7 +3,7 @@ id: studio2-open
 title: Open the Studio on a project
 name: Open the Studio
 feature: Studio
-purpose: "graphhelm studio open in a project opens the Studio logged in, with that project as one card in the sidebar (no run list), its team run opened by itself and the Graph view shown."
+purpose: "The owner runs graphhelm studio open in the demo project and lands in the Studio logged in, with demo as one sidebar card (no run list) and its team run, Produzir build implantável., opened by itself in Graph; a wrong ticket opens nothing."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -12,28 +12,50 @@ secrets: []
 risks: [critical_ux, authentication]
 viewports: [web, mobile]
 screens:
+  - id: bad-ticket
+    title: A wrong ticket shows how to open the Studio
+    url: /?session=not-a-ticket
+    ignoreQuery: [session, project]
+    state: error
+    expect: [{role: heading, name: Open the Studio from your project, because: "a ticket the dev server does not know is refused, and the page tells the owner to run graphhelm studio open instead"}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/login/session.ts, apps/studio/src/topbar/Topbar.tsx]
   - id: graph
-    title: The project is listed and Graph is shown
+    title: The demo team run is open in Graph
     url: /?session=studio-fixture
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Project demo, text: journeys, because: the project card in the sidebar counts its journeys}, {role: list, name: Runs in demo, absent: true, because: "the sidebar shows the project as one card, with no run list under it"}, {role: banner, name: Top bar, text: demo, because: "the top bar names the open project, demo"}, {role: tab, name: Graph}, {role: region, name: Graph}, {role: heading, name: Open the Studio from your project, absent: true, because: the how-to-open help is shown only when no project is open}]
+    expect: [{role: heading, name: Produzir build implantável., because: "Produzir build implantável. is the objective of demo, the team run the fixture project names, so this heading proves that run opened by itself"}, {role: region, name: Graph, text: RUN demo STATUS running, because: "the Graph view's run header names the open run, demo, and its live status, so the owner sees which run the Studio picked"}, {role: banner, name: Top bar, text: demo / demo, because: "the top bar reads project / run, and both are demo: the project the ticket opened and its own team run"}, {role: list, name: Runs in demo, absent: true, because: "the sidebar shows the project as one card, with no run list under it to pick from"}, {role: heading, name: Open the Studio from your project, absent: true, because: the how-to-open help is shown only when the ticket opened no project}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/login/session.ts, apps/studio/src/views/Views.tsx]
   - id: login
-    title: The Studio opens from its login ticket
+    title: The ticket opens the demo project
     url: /?session=studio-fixture
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: navigation, name: Projects}, {role: banner, name: Top bar}]
+    expect: [{role: region, name: Project demo, text: demo · 0 agents, because: "the sidebar card is demo's own, with its live agent count, which a page with no project open never shows"}, {role: heading, name: demo, because: "the top bar's heading names the project the ticket opened, demo"}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/login/session.ts, apps/studio/src/views/Views.tsx]
+  - id: refused
+    title: Nothing opens with a wrong ticket
+    url: /?session=not-a-ticket
+    ignoreQuery: [session, project]
+    state: error
+    expect: [{role: heading, name: Open the Studio from your project, because: the refusal stays on screen while the owner reads it}, {role: region, name: Project demo, absent: true, because: "a refused ticket must not open the demo project's card, or anyone holding a wrong link would see it"}, {role: banner, name: Top bar, absent: true, because: "no project is open, so there is no top bar naming a project or run"}, {role: region, name: Graph, absent: true, because: no team run is opened for a refused ticket}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/login/session.ts, apps/studio/src/topbar/Topbar.tsx]
 edges:
+  - id: bad-ticket.refused
+    from: bad-ticket
+    to: refused
+    intent: The owner opened a link with a wrong ticket; nothing to click.
+    why: "A ticket the dev server never minted opens no project, so a guessed or leaked link logs nobody in."
+    acts:
+      - {kind: inspect, role: heading, name: Open the Studio from your project}
   - id: login.graph
     from: login
     to: graph
     intent: The owner arrived from the CLI; nothing to click.
-    why: graphhelm studio open logs the owner in and opens the project's team run in Graph by itself.
+    why: "graphhelm studio open logs the owner in and opens the project's team run in Graph by itself, so the owner never has to pick a run."
     acts:
-      - {kind: wait_for, role: region, name: Graph}
+      - {kind: wait_for, role: heading, name: Produzir build implantável.}
 paths:
   main: [login.graph]
+  refused: [bad-ticket.refused]
 drift: []

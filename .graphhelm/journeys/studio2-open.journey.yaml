@@ -18,7 +18,7 @@ screens:
     ignoreQuery: [session, project]
     state: error
     expect: [{role: heading, name: Open the Studio from your project, because: "a ticket the dev server does not know is refused, and the page tells the owner to run graphhelm studio open instead"}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/login/session.ts]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/login/session.ts, apps/studio/src/topbar/Topbar.tsx]
   - id: graph
     title: The demo team run is open in Graph
     url: /?session=studio-fixture
@@ -39,7 +39,7 @@ screens:
     ignoreQuery: [session, project]
     state: error
     expect: [{role: heading, name: Open the Studio from your project, because: the refusal stays on screen while the owner reads it}, {role: region, name: Project demo, absent: true, because: "a refused ticket must not open the demo project's card, or anyone holding a wrong link would see it"}, {role: banner, name: Top bar, absent: true, because: "no project is open, so there is no top bar naming a project or run"}, {role: region, name: Graph, absent: true, because: no team run is opened for a refused ticket}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/login/session.ts]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/login/session.ts, apps/studio/src/topbar/Topbar.tsx]
 edges:
   - id: bad-ticket.refused
     from: bad-ticket

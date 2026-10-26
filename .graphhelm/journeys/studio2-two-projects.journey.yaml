@@ -32,7 +32,7 @@ screens:
     ignoreQuery: [session, project]
     state: error
     expect: [{role: form, name: Add project folder, text: The Studio refused to add that folder., because: "a ticket the second project never minted is refused, and the form says so instead of failing silently"}, {role: region, name: Project proj-two, absent: true, because: "a refused ticket must not add proj-two's card, or a wrong ticket would expose that project"}, {role: banner, name: Top bar, text: demo / demo, because: "nothing changed: demo and its run stay open"}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/login/session.ts]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/login/session.ts, apps/studio/src/topbar/Topbar.tsx]
   - id: second
     title: The added project opens with its own run
     url: /?session=studio-fixture

@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 
@@ -22,6 +24,72 @@ def read(path: str | Path) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"expected a JSON object: {path}")
     return value
+
+
+VERDICTS = {"APPROVE", "APPROVE-WITH-RISK"}
+IDENTITY = re.compile(r"^Session: (?P<session>.+?) · Head: (?P<head>[0-9a-f]{8})\s*$")
+
+
+def pinned(manifest: dict, key: str) -> tuple[dict, bytes]:
+    """Read a receipt whose SHA-256 the manifest froze before the audit."""
+    path = Path(manifest[key])
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != manifest.get(key + "Sha256"):
+        raise ValueError(f"{key} differs from its frozen SHA-256")
+    value = json.loads(data.decode("utf-8-sig"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{key} is not a JSON object")
+    return value, data
+
+
+def reached_receipt(manifest: dict, head: str) -> list[str]:
+    """A run_reached.py output proves the reached suite only on the exact candidate head."""
+    try:
+        run, _ = pinned(manifest, "reachedReceipt")
+    except (KeyError, OSError, ValueError) as error:
+        return [f"reached receipt: {error}"]
+    problems = []
+    if run.get("schema") != "graphhelm-reached-run/1" or run.get("status") != "passed":
+        problems.append("reached run did not pass")
+    if run.get("headBefore") != head or run.get("headAfter") != head:
+        problems.append("reached run is not pinned to the candidate head")
+    steps = run.get("completed")
+    if (not isinstance(steps, list) or not steps
+            or any(not isinstance(step, dict) or step.get("returncode") != 0 for step in steps)):
+        problems.append("reached run has no passing steps")
+    for field in ("pending", "unsupported", "untracked"):
+        if run.get(field) != []:
+            problems.append(f"reached run left {field} work")
+    if (run.get("preflight") or {}).get("problems") != []:
+        problems.append("reached run preflight reported problems")
+    return problems
+
+
+def review_receipt(manifest: dict, head: str, author: str) -> list[str]:
+    """A captured GitHub comment proves one approving review of the exact head by another actor."""
+    try:
+        comment, _ = pinned(manifest, "prReviewReceipt")
+        body = comment["body"]
+        url = comment["html_url"]
+    except (KeyError, OSError, TypeError, ValueError) as error:
+        return [f"PR review receipt: {error}"]
+    problems = []
+    lines = [line.strip() for line in str(body).splitlines()]
+    match = IDENTITY.match(lines[0]) if lines else None
+    if not author:
+        problems.append("patch author is unbound, so review independence is unobserved")
+    if not match or match["head"] != head[:8]:
+        problems.append("PR review identity line does not name the candidate head")
+    elif match["session"].replace(" (blind subagent)", "") == author:
+        problems.append("PR review was written by the patch author")
+    verdicts = {line for line in lines if line in VERDICTS | {"BLOCK"}}
+    if len(verdicts) != 1 or not verdicts <= VERDICTS:
+        problems.append("PR review has no single approving verdict")
+    if head not in str(body):
+        problems.append("PR review does not cite the full candidate head")
+    if not re.match(r"^https://github\.com/[^/]+/[^/]+/pull/[0-9]+#issuecomment-[0-9]+$", str(url)):
+        problems.append("PR review receipt is not a pull request comment")
+    return problems
 
 
 def audit(manifest: dict) -> dict:
@@ -139,6 +207,7 @@ def audit(manifest: dict) -> dict:
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as error:
         errors.append(f"Runtime evidence: {error}")
 
+    author = ""
     try:
         endpoint = read(manifest["endpoint"])
         rebound = native_methodology.accepted_patch_endpoint(
@@ -151,22 +220,24 @@ def audit(manifest: dict) -> dict:
             errors.append("review or hidden evaluator is not bound to exact Git patch")
         if endpoint["gitHead"] != manifest["candidateHead"]:
             errors.append("candidate head differs from accepted patch")
+        author = str(endpoint["author"])
     except (KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError) as error:
         errors.append(f"accepted endpoint: {error}")
 
     integration_complete = not errors
-    comparison_eligible = (integration_complete and manifest.get("manualIntervention") is False
-                           and manifest.get("prStageReviewed") is True
-                           and manifest.get("reachedStatus") == "passed")
-    return {"schema": "graphhelm-full-flow-audit/1", "integrationComplete": integration_complete,
-            "comparisonEligible": comparison_eligible, "errors": errors,
+    head = manifest.get("candidateHead", "")
+    eligibility = []
+    if manifest.get("manualIntervention") is not False:
+        eligibility.append("manual controller repair or undeclared intervention")
+    eligibility += reached_receipt(manifest, head)
+    eligibility += review_receipt(manifest, head, author)
+    if not integration_complete:
+        eligibility.append("integration incomplete")
+    return {"schema": "graphhelm-full-flow-audit/2", "integrationComplete": integration_complete,
+            "comparisonEligible": not eligibility, "errors": errors,
             "attempts": attempt_rows, "tokens": totals,
             "totalProcessedTokens": sum(totals.values()) if len(attempt_rows) == len(attempts) else None,
-            "limitations": [name for name, present in (
-                ("manual controller repair", manifest.get("manualIntervention") is True),
-                ("PR-stage review absent", manifest.get("prStageReviewed") is False),
-                ("reached suite unobserved", manifest.get("reachedStatus") != "passed")) if present]}
-
+            "limitations": eligibility}
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -176,7 +247,7 @@ def main() -> int:
     result = audit(read(args.manifest))
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({key: result[key] for key in ("integrationComplete", "comparisonEligible",
-                                                    "totalProcessedTokens", "errors")}))
+                                                    "totalProcessedTokens", "errors", "limitations")}))
     return 0 if result["integrationComplete"] else 2
 
 

@@ -1,4 +1,5 @@
 """Fail-closed contracts for the local Runtime and token audit."""
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -66,8 +67,16 @@ class FullFlowAudit(unittest.TestCase):
                          "journal": str(self.root / "journal.jsonl"),
                          "journey": str(self.root / "journey.json"),
                          "endpoint": str(self.root / "endpoint.json"), "executionId": "run",
-                         "candidateHead": "a" * 40, "manualIntervention": False,
-                         "prStageReviewed": True, "reachedStatus": "passed"}
+                         "candidateHead": "a" * 40, "manualIntervention": False}
+        self.reached = {"schema": "graphhelm-reached-run/1", "status": "passed",
+                        "headBefore": "a" * 40, "headAfter": "a" * 40, "pending": [],
+                        "unsupported": [], "untracked": [], "preflight": {"problems": []},
+                        "completed": [{"argv": ["python", "-m", "unittest"], "returncode": 0}]}
+        self.review = {"html_url": "https://github.com/o/r/pull/7#issuecomment-9",
+                       "body": "Session: other (blind subagent) · Head: aaaaaaaa\n\nAPPROVE\n\n"
+                               "Reviewed " + "a" * 40 + "."}
+        self.pin("reachedReceipt", self.reached)
+        self.pin("prReviewReceipt", self.review)
         self.rebound = patch.object(flow.native_methodology, "accepted_patch_endpoint",
                                     return_value=self.endpoint)
         self.rebound.start()
@@ -82,6 +91,11 @@ class FullFlowAudit(unittest.TestCase):
         path.write_text(json.dumps(value), encoding="utf-8")
         return path
 
+    def pin(self, key, value):
+        path = self.write(key + ".json", value)
+        self.manifest[key] = str(path)
+        self.manifest[key + "Sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+
     def read_json(self, name):
         return json.loads((self.root / name).read_text(encoding="utf-8"))
 
@@ -92,6 +106,40 @@ class FullFlowAudit(unittest.TestCase):
         self.assertEqual(result["totalProcessedTokens"], 30)
         self.manifest["manualIntervention"] = True
         self.assertFalse(flow.audit(self.manifest)["comparisonEligible"])
+
+    def test_declared_flags_cannot_replace_receipts(self):
+        for key in ("reachedReceipt", "prReviewReceipt"):
+            del self.manifest[key]
+        self.manifest.update({"prStageReviewed": True, "reachedStatus": "passed"})
+        result = flow.audit(self.manifest)
+        self.assertTrue(result["integrationComplete"], result["errors"])
+        self.assertFalse(result["comparisonEligible"])
+
+    def test_reached_receipt_must_pass_on_the_candidate_head(self):
+        for change in ({"status": "failed"}, {"headAfter": "b" * 40},
+                       {"completed": [{"returncode": 1}]}, {"pending": ["step"]}):
+            with self.subTest(change=change):
+                self.pin("reachedReceipt", {**self.reached, **change})
+                result = flow.audit(self.manifest)
+                self.assertFalse(result["comparisonEligible"])
+                self.assertIn("reached", " ".join(result["limitations"]))
+
+    def test_swapped_receipt_breaks_its_frozen_digest(self):
+        Path(self.manifest["reachedReceipt"]).write_text(json.dumps(
+            {**self.reached, "headBefore": "a" * 40}) + " ", encoding="utf-8")
+        result = flow.audit(self.manifest)
+        self.assertFalse(result["comparisonEligible"])
+        self.assertIn("frozen SHA-256", " ".join(result["limitations"]))
+
+    def test_review_must_approve_the_exact_head_from_another_actor(self):
+        cases = {"BLOCK": self.review["body"].replace("APPROVE", "BLOCK"),
+                 "other head": self.review["body"].replace("aaaaaaaa", "bbbbbbbb"),
+                 "author": self.review["body"].replace("other", "author"),
+                 "two verdicts": self.review["body"] + "\nBLOCK"}
+        for name, body in cases.items():
+            with self.subTest(name=name):
+                self.pin("prReviewReceipt", {**self.review, "body": body})
+                self.assertFalse(flow.audit(self.manifest)["comparisonEligible"])
 
     def test_missing_obligation_blocks_completed_runtime(self):
         path = self.root / "journal.jsonl"

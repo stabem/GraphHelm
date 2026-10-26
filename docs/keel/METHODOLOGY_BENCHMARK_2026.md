@@ -268,3 +268,27 @@ The Runtime used external native-agent claim/clear evidence, not an automatic
 Runtime model/tool executor. Keep this result as an integration probe; a
 balanced, controller-free cohort with the same full context and observer
 boundaries is still required before any gain claim.
+
+## Comparison eligibility and preflight (2026-10-26)
+
+`graphhelm_full_flow.py` (audit schema `/2`) no longer reads `reachedStatus` or
+`prStageReviewed` from the manifest. `comparisonEligible` is recomputed from two receipts
+whose SHA-256 the manifest freezes (`reachedReceipt`/`reachedReceiptSha256`,
+`prReviewReceipt`/`prReviewReceiptSha256`):
+
+- the reached receipt is a `run_reached.py` report with `status: passed`, `headBefore` and
+  `headAfter` equal to `candidateHead`, at least one step, every step exit 0, and no pending,
+  unsupported or untracked work;
+- the review receipt is the GitHub issue-comment JSON of a pull request comment whose identity
+  line names the candidate head, that cites the full head, carries exactly one verdict
+  (`APPROVE` or `APPROVE-WITH-RISK`), and was not written by the patch author bound in the
+  accepted endpoint.
+
+Any absent, swapped or contradicting receipt, a declared or undeclared manual intervention, or
+an incomplete integration leaves the cell ineligible; the reasons are listed in `limitations`.
+
+`native_preflight.py` runs before a native session spends tokens. It checks project permission
+deny rules, subscription login with no API key in the environment, connected MCP servers, a
+writable logs root, an observer Git mirror clean on the candidate head, and the reached runner
+against a frozen digest. Verdicts: `ready`, `OBSERVER_MISSING` (only observer checks failed) or
+`config_error`; both refusals exit 2 and the cell is recorded, not launched.

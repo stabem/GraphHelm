@@ -775,7 +775,8 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                 project = Path(workflow_spec["projectRoot"]) if workflow_spec else None
                 root_log = Path(archive["archivedRoot"])
                 stdout_file = raw_dir / "native.stdout.jsonl"
-                child_logs = sorted(archive_root.glob("child-*.jsonl"))
+                child_logs = sorted([*archive_root.glob("child-*.jsonl"),
+                                     *archive_root.glob("agent-*.jsonl")])
                 if not project or not project.is_dir() or not root_log.is_file() or not stdout_file.is_file():
                     raise ValueError("archived native project is missing")
                 if cli == "codex":
@@ -919,7 +920,7 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
     results = []
     predecessor = None
     predecessor_candidate = None
-    declared_candidate_paths = _declared_candidate_paths(workflow, Path(workflow["projectRoot"]))
+    project_root = Path(workflow["projectRoot"])
     fix_attempts = 0
     for ordinal, phase in enumerate(phases):
         if phase["id"] == "fix":
@@ -939,7 +940,7 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
             "request": prompt_override or phase["prompt"]})
         plan = phase_plan(workflow, {**task_context, "phase": phase["id"]},
                          plan_id=workflow_id + "-frozen")
-        candidate_before = candidate_tree_hash(Path(workflow["projectRoot"]), declared_candidate_paths)
+        candidate_before = candidate_tree_hash(project_root, _declared_candidate_paths(workflow, project_root))
         if predecessor_candidate is not None and candidate_before != predecessor_candidate:
             raise ValueError("candidate changed outside a recorded native phase")
         receipt = execute_native_phase(plan, phase["id"], f"{ordinal:03d}", cli_config=cli_config,
@@ -950,7 +951,8 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
         receipt["phase"] = phase["id"]
         receipt["manifestSha256"] = _json_hash(manifest)
         receipt["candidateBeforeSha256"] = candidate_before
-        receipt["candidateAfterSha256"] = candidate_tree_hash(Path(workflow["projectRoot"]), declared_candidate_paths)
+        receipt["candidateAfterSha256"] = candidate_tree_hash(project_root,
+                                                               _declared_candidate_paths(workflow, project_root))
         destination.mkdir(parents=True, exist_ok=False)
         base.publish(receipt_path, receipt)
         predecessor = receipt.get("requiredArtifactHashes", {})

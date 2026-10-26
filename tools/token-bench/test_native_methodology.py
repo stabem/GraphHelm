@@ -274,10 +274,14 @@ class NativeMethodologyContracts(unittest.TestCase):
             workflow["phases"] = [workflow["phases"][0]]
             project = root / "project"
             (project / "report").mkdir(parents=True)
+            before_dynamic = bench.candidate_tree_hash(project, bench._declared_candidate_paths(workflow, project))
             artifact = project / "report" / "result.json"
             artifact.write_text('{"ok":true}\n', encoding="utf-8")
             workflow["projectRoot"] = str(project)
             workflow["phases"][0]["requiredArtifactGlobs"] = ["report/*.json"]
+            self.assertIn("report/result.json", bench._declared_candidate_paths(workflow, project))
+            after_dynamic = bench.candidate_tree_hash(project, bench._declared_candidate_paths(workflow, project))
+            self.assertNotEqual(before_dynamic, after_dynamic)
             plan = bench.phase_plan(workflow, {**workflow["taskContext"], "phase": "setup"},
                                     plan_id="spec-kit-frozen")
             archive_result = evidence.claude_pipeline(archived_root)

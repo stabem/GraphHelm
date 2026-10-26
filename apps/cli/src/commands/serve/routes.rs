@@ -855,8 +855,12 @@ pub(super) async fn status(
     UrlPath(execution_id): UrlPath<String>,
 ) -> Response {
     let events = state.events.clone();
-    let Some(result) =
-        off_reactor(move || execution::status::budgeted(&events, Some(&execution_id), None)).await
+    let Some(result) = off_reactor(move || {
+        execution::timing::request("executions.status", || {
+            execution::status::budgeted(&events, Some(&execution_id), None)
+        })
+    })
+    .await
     else {
         return respond(
             StatusCode::INTERNAL_SERVER_ERROR,

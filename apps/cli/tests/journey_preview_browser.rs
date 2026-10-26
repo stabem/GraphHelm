@@ -124,7 +124,7 @@ fn an_unlisted_preview_refusal_keeps_its_code_and_stopped_step() {
         assert_eq!(code, 0, "{started}");
         let result = settled(project.path());
         assert_eq!(result["state"], "failed", "{result}");
-        assert_eq!(result["reason"], "internal", "{result}");
+        assert_eq!(result["reason"], "preview.step_failed", "{result}");
         let detail = json!({"code":code_expected,"pointer":pointer});
         assert_eq!(result["detail"], detail, "{result}");
         assert_eq!(result[kind][step]["detail"], detail, "{result}");

@@ -1,5 +1,5 @@
 import type { JourneyFlow, JourneyRun } from "../runtime/client";
-import type { Step } from "./steps";
+import { isHeld, isWaitingReview, type Step } from "./steps";
 
 /** #1919: the Runtime admits an ask of at most 2000 characters (`task.request_recorded`). */
 export const ASK_MAX = 2000;
@@ -9,7 +9,8 @@ export const NOTE_MAX = 500;
 /** Whether a finished run offers Send to fix: it failed or drifted. A run still playing, one that
  * could not finish, or a pass offers nothing. */
 export function offersFix(run: JourneyRun | null): boolean {
-  return run?.state === "ready" && (run.result === "fail" || run.result === "drift");
+  // A run that stopped before a draft's commands waits; it failed nothing a lane could fix.
+  return run?.state === "ready" && (run.result === "fail" || run.result === "drift") && !isHeld(run) && !isWaitingReview(run);
 }
 
 /** The first step that failed, else the first that drifted; `null` when none did. */

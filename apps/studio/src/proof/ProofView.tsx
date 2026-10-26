@@ -11,7 +11,7 @@ import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./
 import { askedWhen } from "../lanes/asked";
 import { OWNER } from "../runtime/client";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
-import { countSteps, failsOnlyOn, staleCountsText, stepStatusText, isHeld, isWaitingReview, journeyKind, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, staleCountsText, stepStatusText, isHeld, isWaitingReview, journeyKind, journeyScore, journeySteps, lastRunChip, historyChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 import { Empty, Loading, ReadFailure } from "../states/ViewState";
 import { When } from "../time/Stamp";
@@ -27,6 +27,8 @@ interface ProofViewProps {
   onRan: () => void;
   /** The journey a `?journey=` link opens on; `null` = the first listed. */
   initial?: string | null;
+  /** The owner picked a journey: the URL keeps it, so a Proof view opened again lands on it. */
+  onPicked?: (id: string) => void;
 }
 
 
@@ -45,9 +47,10 @@ function nameOf(flow: JourneyFlow): string {
 
 /** The Proof region (docs/design/studio/Proof.dc.html): the journeys column, then the selected
  * journey's run bar, console, step grid and the selected step's compare and Action panel. */
-export function ProofView({ runtime, journeys, error, executionId, onRan, initial = null }: ProofViewProps) {
+export function ProofView({ runtime, journeys, error, executionId, onRan, initial = null, onPicked }: ProofViewProps) {
   // The journey a deep link named (`studio open --journey`), until the owner picks another.
-  const [picked, setPicked] = useState<string | null>(initial);
+  const [picked, setPickedState] = useState<string | null>(initial);
+  const setPicked = (id: string) => { setPickedState(id); onPicked?.(id); };
   // #1905: bumped after a run is started from the column, so the open panel reads the run again.
   const [reread, setReread] = useState(0);
   // #1914: the run the open panel follows, by journey, so its card reads it before the list is read again.
@@ -55,6 +58,9 @@ export function ProofView({ runtime, journeys, error, executionId, onRan, initia
   // A list read again carries the result; a run still playing stays until its next answer.
   // #1953: a journey the list says is running is seeded, so a reload still shows it running.
   useEffect(() => { setLive((before) => liveAfterList(before, journeys)); }, [journeys]);
+  // #1953: a Proof view opened again reads the journey list afresh, so a run started from an
+  // earlier view (the list says running) is seen even when another journey is selected.
+  useEffect(() => { onRan(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const selectedId = journeys === null ? null : (journeys.find((flow) => flow.id === picked) ?? journeys[0] ?? null)?.id ?? null;
   // #1950: a running journey that no open panel follows is read from the Runtime here, so its card
   // keeps reading running after the owner selects another journey, and shows the result at its end.
@@ -384,11 +390,11 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           <pre role="log" aria-label="Run console" className="run-log">{log.length > 0 ? log.join("\n") : busy ? "Waiting for the Runtime's first line…" : NO_LOG}</pre>
         )}
         {history.length > 0 && (
-          <span className="run-history" aria-label="History">
+          <span className="run-history" role="group" aria-label="History">
             <span className="section-label">HISTORY</span>
-            {history.map((past, index) => (
-              <span key={past.run} className={`history-chip${index === 0 ? " newest" : ""}`}><b className={past.result === "pass" ? "pass" : "fail"}>{past.result === "pass" ? "✓" : "✕"}</b> {past.ranAt ? <When at={past.ranAt} /> : past.run}</span>
-            ))}
+            {history.map((past, index) => {
+              const chip = historyChip(past, stale); return <span key={past.run} className={`history-chip${index === 0 ? " newest" : ""}`} title={chip.label}><b className={chip.tone}>{chip.mark}</b>{chip.tone === "idle" ? ` ${chip.label}` : ""} {past.ranAt ? <When at={past.ranAt} /> : past.run}</span>;
+            })}
           </span>
         )}
         {steps.length > 0 && (
@@ -408,7 +414,9 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           <button type="button" className="b act" onClick={() => { setPicked(null); start(run.cliConfirm!.digest); }}>Confirm and run</button>
         </section>
       )}
-      <DecisionBar runtime={runtime} flow={flow} runFinished={finished} stale={stale} onDecided={onRan} />
+      {/* #1956/#2082: an earlier version's run, or a run that stopped to wait, proves nothing about
+          this version: Approve is offered only once this version's commands ran. */}
+      <DecisionBar runtime={runtime} flow={flow} runFinished={finished && !isHeld(run) && !isWaitingReview(run)} stale={stale} onDecided={onRan} />
       <div className="steps-card">
         <ol className="steps" aria-label="Steps">
           {steps.map((step) => (
@@ -499,8 +507,6 @@ function DecisionBar({ runtime, flow, runFinished, stale = false, onDecided }: {
     <div className="decision-bar">
       {decision === "approved" && <span role="status" aria-label="Approved" className="chip pass">Approved</span>}
       {decision === "rejected" && <span role="status" aria-label="Rejected" className="chip fail">Rejected{flow.rejected?.note ? ` · ${flow.rejected.note}` : ""}</span>}
-      {/* #1956: an earlier version's run proves nothing about this one: Approve waits for a Run. */}
-      {stale && <button type="button" className="b act" disabled title="Approve needs a run of the current version">Approve</button>}
       {!stale && offersDecision(flow, runFinished) && (
         <>
           <button type="button" className="b act" disabled={busy} onClick={() => act(() => runtime.approveJourney(flow.id))}>Approve</button>

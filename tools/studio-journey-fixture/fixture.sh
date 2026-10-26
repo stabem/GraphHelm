@@ -647,6 +647,51 @@ NODE
   # studio2-lanes-reply: the asking planner holds this same open slice, so answering its question
   # moves it from Blocked to Implement; a lane holding nothing leaves the board once it asks
   # nothing (#1986), which is not what that flow shows. It needs no slot holder.
+  # studio2-proof-send-fix: a free live lane, so the Hand off item names it and can be pressed. A
+  # lane is free when it owes nothing and recorded something lately: `helper` claims a slice and
+  # releases it, so it holds nothing and is not finished (no merged slice).
+  if [ "$flow" = studio2-proof-send-fix ]; then
+    node - "$dir" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "http://127.0.0.1:$rport" "$rt/events.token" <<'NODE'
+const fs = require('fs');
+const [dir, at, runtimeUrl, tokenFile] = process.argv.slice(2);
+const runtime = new URL(runtimeUrl);
+if (runtime.protocol !== 'http:' || runtime.hostname !== '127.0.0.1' || !runtime.port || runtime.port === '8793' || runtime.pathname !== '/') {
+  throw new Error('fixture: unsafe Runtime URL');
+}
+const token = fs.readFileSync(tokenFile, 'utf8').trim();
+const post = async (id, type, fields) => {
+  const signal = { id: `fixture-free-${id}`, type, source: { type: 'user', id: 'helper' }, severity: 'low', emittedAt: at,
+    evidence: ['demo'], description: JSON.stringify({ schema: 'graphhelm-task-event-v1', revision: 1, at, ...fields }) };
+  const response = await fetch(new URL('/v1/executions/demo/signal', runtime), {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
+      'Idempotency-Key': `fixture-free-${id}`, 'X-GraphHelm-Actor': 'helper', 'X-GraphHelm-Actor-Type': 'agent' },
+    body: JSON.stringify({ signal }), signal: AbortSignal.timeout(10000),
+  });
+  const result = await response.json();
+  fs.writeFileSync(`${dir}/.graphhelm/free-${id}.out`, JSON.stringify(result));
+  if (!response.ok || result.ok !== true) throw new Error(`free lane seed refused: ${id}`);
+  return result;
+};
+(async () => {
+  await post('claimed', 'task.claimed', { taskId: 'issue-1559-free', issue: 1559, lane: 'helper', branch: 'issue-1559-free-fixture', journeys: [], title: 'Free lane' });
+  // A release names its claim's event sequence: read it from the run's journal.
+  let after = 0, claim = null;
+  for (;;) {
+    const response = await fetch(new URL(`/v1/executions/demo/events?after=${after}&limit=512`, runtime), {
+      headers: { Authorization: `Bearer ${token}`, 'X-GraphHelm-Actor': 'helper', 'X-GraphHelm-Actor-Type': 'agent' }, signal: AbortSignal.timeout(10000) });
+    const page = await response.json();
+    const events = (page.data ?? page).events ?? [];
+    for (const event of events) {
+      if (event.kind?.type === 'signal_recorded' && event.kind?.data?.kind === 'task.claimed' && event.actor?.id === 'helper') claim = event.sequence;
+    }
+    if (events.length === 0) break;
+    after = events[events.length - 1].sequence;
+  }
+  if (claim === null) throw new Error('no claim sequence');
+  await post('released', 'task.released', { taskId: 'issue-1559-free', lane: 'helper', claimSequence: claim, reason: 'Fixture: the lane finished and holds nothing.' });
+})().catch(() => { console.error('fixture: free lane seed refused'); process.exit(1); });
+NODE
+  fi
   if [ "$flow" = studio2-lanes-board ] || [ "$flow" = studio2-lanes-control ] || [ "$flow" = studio2-lanes-reply ]; then
     node - "$dir" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "http://127.0.0.1:$rport" "$rt/events.token" <<'NODE'
 const fs = require('fs');

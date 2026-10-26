@@ -61,6 +61,16 @@ export function App() {
     history.pushState(null, "", `${location.pathname}${routeSearch(next)}`);
   }, []);
 
+  // The journey the owner picked stays in the URL (replaced, not pushed), so leaving Proof and
+  // coming back, or a reload, lands on it rather than on the journey the first link named.
+  const pickJourney = useCallback((journey: string) => {
+    setRoute((current) => {
+      const next = { ...current, journey };
+      history.replaceState(null, "", `${location.pathname}${routeSearch(next)}`);
+      return next;
+    });
+  }, []);
+
   // #1897: a project whose Runtime refuses its token leaves this tab; the last one leaves the connect screen.
   const dropSession = useCallback((key: string) => {
     forgetKey(key);
@@ -88,7 +98,7 @@ export function App() {
     key: known.key, name: known.project ?? "this project", folder: known.folder, summary: summaries[known.key] ?? null,
   }));
   // Keyed by project: switching starts that project's own reads from empty, never the last one's rows.
-  return <Shell key={session.key} session={session} projects={projects} closed={auth.closed} route={{ ...route, project: session.key }} go={go} onRefused={dropSession} />;
+  return <Shell key={session.key} session={session} projects={projects} closed={auth.closed} route={{ ...route, project: session.key }} go={go} pickJourney={pickJourney} onRefused={dropSession} />;
 }
 
 interface ShellProps {
@@ -97,11 +107,13 @@ interface ShellProps {
   closed: string[];
   route: Route;
   go: (route: Route) => void;
+  /** The owner picked a journey in Proof: the URL keeps it, replaced, not pushed. */
+  pickJourney: (journey: string) => void;
   /** The Runtime refused this session's token (#1897). */
   onRefused: (key: string) => void;
 }
 
-function Shell({ session, projects, closed, route, go, onRefused }: ShellProps) {
+function Shell({ session, projects, closed, route, go, pickJourney, onRefused }: ShellProps) {
   const runtime = useMemo(() => new Runtime(session.token, session.base), [session.token, session.base]);
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
   const [live, setLive] = useState(false);
@@ -196,7 +208,7 @@ function Shell({ session, projects, closed, route, go, onRefused }: ShellProps) 
           </GraphView>
         )}
         {route.view === "lanes" && <LanesView runtime={runtime} executionId={runId} journeys={journeys} onStart={startRun} />}
-        {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={runId} onRan={readJourneys} initial={route.journey ?? null} />}
+        {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={runId} onRan={readJourneys} initial={route.journey ?? null} onPicked={pickJourney} />}
         </>}
         </ViewBoundary>
       </div>

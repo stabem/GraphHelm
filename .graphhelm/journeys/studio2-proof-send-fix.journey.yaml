@@ -3,7 +3,7 @@ id: studio2-proof-send-fix
 title: Send a failed journey to be fixed
 name: Send to fix
 feature: Studio
-purpose: "A journey that fails offers Send to fix with an optional note box; pressing it records the owner's request on the team run, the note box and the button give way to Sent with its time, and the request shows in WHAT I ASKED and as a Hand off item in Needs action (#1919). The Studio does not show the note back after sending, so this flow proves only that it was typed (#2086)."
+purpose: "A journey that fails offers Send to fix with an optional note box; pressing it records the owner's request on the team run, the note box and the button give way to Sent with its time, and the request shows in WHAT I ASKED, handed to the free live lane (#1919, #1981). The Studio does not show the note back after sending, so this flow proves only that it was typed (#2086)."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -13,11 +13,11 @@ risks: [critical_ux, irreversible_effect]
 viewports: [web, mobile]
 screens:
   - id: asked
-    title: The request shows in WHAT I ASKED and as a Hand off item in Needs action
+    title: "The request shows in WHAT I ASKED, handed to the free lane"
     url: /?session=studio-fixture&run=demo&view=lanes&journey=health-broken
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: list, name: Owner requests, text: Fix Broken health check, because: "the request is named after the failing journey, Broken health check"}, {role: list, name: Needs action items, text: "Your request waits for a lane: Fix Broken health check", because: "no lane has taken the request yet, so Needs action lists it as an item that waits for a lane"}, {role: button, name: Hand off a free lane, because: "a request no issue was opened for is a Hand off item; the only lane, planner, waits on the owner, so the item offers it to a free lane"}]
+    expect: [{role: list, name: Owner requests, text: Fix Broken health check, because: "the request is named after the failing journey, Broken health check"}, {role: list, name: Owner requests, text: "Handed to helper, not yet taken", because: "helper is the only live lane that holds nothing, so the Runtime hands the request to it, and it has not claimed it yet"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/asked.ts]
   - id: failed
     title: The run drifted and offers Send to fix with a note

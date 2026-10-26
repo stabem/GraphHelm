@@ -696,6 +696,7 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         raise ValueError("native instrument dependency changed after freeze")
     rows = []
     workflow_specs = {row["id"]: row for row in manifest.get("workflows", [])}
+    candidate_chain = {}
     for planned in manifest.get("plannedPhases", []):
         key = f"{planned['workflow']}--{planned['phase']}"
         receipt = attempts_root / key / "phase-receipt.json"
@@ -715,11 +716,17 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                 expected_plan = None
         valid = (expected_plan is not None and isinstance(row.get("attempt"), dict)
                  and row["attempt"].get("planSha256") == expected_plan
+                 and row["attempt"].get("planId") == f"{planned['workflow']}-frozen"
+                 and row["attempt"].get("phase") == planned["phase"]
+                 and row.get("workflow") == planned["workflow"]
+                 and row.get("phase") == planned["phase"]
                  and row.get("manifestSha256") == _json_hash(manifest)
                  and isinstance(row.get("capture"), dict)
                  and isinstance(row.get("rawSha256"), dict) and bool(row["rawSha256"])
                  and isinstance(row.get("candidateBeforeSha256"), str)
                  and isinstance(row.get("candidateAfterSha256"), str))
+        if candidate_chain.get(planned["workflow"]) is not None:
+            valid = valid and row.get("candidateBeforeSha256") == candidate_chain[planned["workflow"]]
         capture = row.get("capture", {})
         valid = valid and all(key in capture for key in ("exit", "timeout", "cleanupConfirmed", "truncated"))
         attempt_id = row.get("attempt", {}).get("attemptId", "")
@@ -773,6 +780,8 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
             except (ImportError, KeyError, OSError, TypeError, ValueError):
                 valid = False
         rows.append({**planned, **row, "status": row.get("status", "incomplete") if valid else "incomplete"})
+        if isinstance(row.get("candidateAfterSha256"), str):
+            candidate_chain[planned["workflow"]] = row["candidateAfterSha256"]
     collection_complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] != "incomplete" for row in rows)
     quality_accepted = collection_complete and all(row["status"] == "complete" for row in rows)
     complete = quality_accepted and all(row["status"] == "complete" for row in rows)

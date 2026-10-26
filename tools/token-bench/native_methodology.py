@@ -160,12 +160,18 @@ def frozen_inputs(workflow: dict) -> dict:
             "taskRefs": list(workflow["taskRefs"]), "requiredWitnesses": witnesses}
 
 
-def candidate_tree_hash(root: Path) -> str:
+def candidate_tree_hash(root: Path, declared_paths: list[str] | None = None) -> str:
     """Hash the evolving project candidate without including its Git metadata."""
     root = root.resolve()
     entries = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or ".git" in path.parts or path.is_symlink():
+    candidates = ((root / relative for relative in declared_paths)
+                  if declared_paths is not None else root.rglob("*"))
+    volatile = {".git", ".graphhelm", ".native-observations", "target", "node_modules",
+                ".pytest_cache", "__pycache__", ".venv", "events", "cache"}
+    for path in sorted(candidates):
+        if not path.is_file() or any(part in volatile for part in path.parts) or path.is_symlink():
+            continue
+        if path.name.startswith(".env") or path.name.endswith((".token", ".key")):
             continue
         relative = path.relative_to(root).as_posix()
         entries.append((relative, base.digest(path)))
@@ -594,11 +600,16 @@ def freeze(registry_path: Path, *, cli_paths: dict[str, Path], models: dict[str,
     with tempfile.TemporaryDirectory() as directory:
         identity_map = {cli: base.identity(path, cli, Path(directory)) for cli, path in cli_paths.items()}
     workflows = registry["workflows"]
+    source_names = ["methodology.py", "real_methodology.py", "native_methodology.py",
+                    "native_session_evidence.py", "native_session_capture.py", "native_quota.py"]
+    source_root = Path(__file__).resolve().parent
+    source_hashes = {name: base.digest(source_root / name) for name in source_names if (source_root / name).is_file()}
     manifest = {"schema": "native-methodology-manifest/1", "registry": {"path": str(registry_path.resolve()),
                 "sha256": base.digest(registry_path)}, "registryHash": _json_hash(registry),
                 "workflows": workflows, "inputs": {row["id"]: frozen_inputs(row) for row in workflows},
                 "identities": identity_map, "models": models,
-                "instrumentSha256": base.digest(Path(__file__)), "plannedPhases":
+                "instrumentSha256": base.digest(Path(__file__)), "instrumentSources": source_hashes,
+                "plannedPhases":
                 [{"workflow": row["id"], "phase": phase["id"],
                   "promptSha256": _json_hash(phase["prompt"]),
                   "requiredArtifacts": list(phase.get("requiredArtifacts", [])),
@@ -616,6 +627,10 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
     manifest = base.read(manifest_path)
     if manifest.get("instrumentSha256") != base.digest(Path(__file__)):
         raise ValueError("native instrument changed after freeze")
+    source_root = Path(__file__).resolve().parent
+    if any(not (source_root / name).is_file() or base.digest(source_root / name) != digest
+           for name, digest in manifest.get("instrumentSources", {}).items()):
+        raise ValueError("native instrument dependency changed after freeze")
     rows = []
     for planned in manifest.get("plannedPhases", []):
         key = f"{planned['workflow']}--{planned['phase']}"
@@ -632,6 +647,10 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
             valid = valid and raw_file.is_file() and base.digest(raw_file) == raw_hash
         if row.get("status") in {"complete", "failed"}:
             valid = valid and row.get("fidelity", {}).get("status") == "observed" and isinstance(row.get("usage"), dict)
+        archived_total = _usage_total(row.get("archivedSession", {}).get("total"))
+        recorded_total = _usage_total(row.get("usage", {}).get("counts"))
+        if archived_total is None or recorded_total != archived_total:
+            valid = False
         rows.append({**planned, **row, "status": row.get("status", "incomplete") if valid else "incomplete"})
     collection_complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] != "incomplete" for row in rows)
     quality_accepted = collection_complete and all(row["status"] == "complete" for row in rows)
@@ -675,6 +694,10 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
     results = []
     predecessor = None
     predecessor_candidate = None
+    declared_candidate_paths = list(workflow.get("pinnedPublicFiles", []))
+    declared_candidate_paths.extend(workflow.get("methodAssetDigests", {}).keys())
+    for phase_spec in phases:
+        declared_candidate_paths.extend(phase_spec.get("requiredArtifacts", []))
     fix_attempts = 0
     for ordinal, phase in enumerate(phases):
         if phase["id"] == "fix":
@@ -694,7 +717,7 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
             "request": prompt_override or phase["prompt"]})
         plan = phase_plan(workflow, {**task_context, "phase": phase["id"]},
                          plan_id=workflow_id + "-frozen")
-        candidate_before = candidate_tree_hash(Path(workflow["projectRoot"]))
+        candidate_before = candidate_tree_hash(Path(workflow["projectRoot"]), declared_candidate_paths)
         if predecessor_candidate is not None and candidate_before != predecessor_candidate:
             raise ValueError("candidate changed outside a recorded native phase")
         receipt = execute_native_phase(plan, phase["id"], f"{ordinal:03d}", cli_config=cli_config,
@@ -705,7 +728,7 @@ def run_workflow(manifest: dict, *, workflow_id: str, cli_config: dict, output: 
         receipt["phase"] = phase["id"]
         receipt["manifestSha256"] = _json_hash(manifest)
         receipt["candidateBeforeSha256"] = candidate_before
-        receipt["candidateAfterSha256"] = candidate_tree_hash(Path(workflow["projectRoot"]))
+        receipt["candidateAfterSha256"] = candidate_tree_hash(Path(workflow["projectRoot"]), declared_candidate_paths)
         destination.mkdir(parents=True, exist_ok=False)
         base.publish(receipt_path, receipt)
         predecessor = receipt.get("requiredArtifactHashes", {})

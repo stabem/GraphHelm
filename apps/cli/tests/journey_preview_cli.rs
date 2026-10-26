@@ -87,13 +87,13 @@ fn fixture_path(root: &Path, success: bool) -> PathBuf {
     #[cfg(windows)]
     {
         let npm = if success {
-            "@echo off\necho npm>>.graphhelm\\fixture-install.log\nif not exist package.json echo {\"private\":true}>package.json\nif not exist node_modules\\@playwright\\test mkdir node_modules\\@playwright\\test\necho {\"name\":\"@playwright/test\",\"version\":\"1.64.0\",\"main\":\"index.js\"}>node_modules\\@playwright\\test\\package.json\ncopy /Y fake_playwright.js node_modules\\@playwright\\test\\index.js >nul\nexit /b 0\n".to_owned()
+            "@echo off\necho npm>>..\\fixture-install.log\nif not exist package.json echo {\"private\":true}>package.json\nif not exist node_modules\\@playwright\\test mkdir node_modules\\@playwright\\test\necho {\"name\":\"@playwright/test\",\"version\":\"1.64.0\",\"main\":\"index.js\"}>node_modules\\@playwright\\test\\package.json\ncopy /Y ..\\..\\fake_playwright.js node_modules\\@playwright\\test\\index.js >nul\nexit /b 0\n".to_owned()
         } else {
             "@echo off\necho fixture registry unavailable 1>&2\nexit /b 23\n".to_owned()
         };
         std::fs::write(bin.join("npm.cmd"), npm).unwrap();
         let npx = if success {
-            "@echo off\necho npx>>.graphhelm\\fixture-install.log\nif not exist node_modules\\playwright-core\\.local-browsers mkdir node_modules\\playwright-core\\.local-browsers\nmkdir node_modules\\playwright-core\\.local-browsers\\chromium-fixture 2>nul\nexit /b 0\n".to_owned()
+            "@echo off\necho npx>>..\\fixture-install.log\nif not exist node_modules\\playwright-core\\.local-browsers mkdir node_modules\\playwright-core\\.local-browsers\nmkdir node_modules\\playwright-core\\.local-browsers\\chromium-fixture 2>nul\nexit /b 0\n".to_owned()
         } else {
             "@echo off\necho fixture registry unavailable 1>&2\nexit /b 23\n".to_owned()
         };
@@ -103,11 +103,11 @@ fn fixture_path(root: &Path, success: bool) -> PathBuf {
     {
         let npm = if success {
             r#"#!/bin/sh
-echo npm >> .graphhelm/fixture-install.log
+echo npm >> ../fixture-install.log
 mkdir -p node_modules/@playwright/test node_modules/playwright-core/.local-browsers/chromium-fixture
 printf '%s' '{"private":true}' > package.json
 printf '%s' '{"name":"@playwright/test","version":"1.64.0","main":"index.js"}' > node_modules/@playwright/test/package.json
-cp fake_playwright.js node_modules/@playwright/test/index.js
+cp ../../fake_playwright.js node_modules/@playwright/test/index.js
 exit 0
 "#
             .to_owned()
@@ -118,7 +118,7 @@ exit 0
         std::fs::write(
             bin.join("npx"),
             if success {
-                "#!/bin/sh\necho npx >> .graphhelm/fixture-install.log\nexit 0\n"
+                "#!/bin/sh\necho npx >> ../fixture-install.log\nexit 0\n"
             } else {
                 "#!/bin/sh\necho 'fixture registry unavailable' >&2\nexit 23\n"
             },
@@ -297,15 +297,40 @@ fn a_preview_installs_a_missing_observer_and_refreshes_a_stale_copy() {
         "{first}"
     );
     assert_eq!(first["observerSetup"]["state"], "ready", "{first}");
+    // #2084: the dependency lands in GraphHelm's own toolchain dir; the project's root manifest,
+    // lockfile and `node_modules` are never written, so the checkout stays clean.
+    let toolchain = dir.path().join(".graphhelm/toolchain");
     assert!(
-        dir.path()
+        toolchain
             .join("node_modules/@playwright/test/package.json")
             .is_file()
     );
     assert!(
-        dir.path()
+        toolchain
             .join("node_modules/playwright-core/.local-browsers/chromium-fixture")
             .is_dir()
+    );
+    for stray in ["package.json", "package-lock.json", "node_modules"] {
+        assert!(
+            !dir.path().join(stray).exists(),
+            "{stray} written into the project root"
+        );
+    }
+    let status = graphhelm_process::command("git")
+        .arg("-C")
+        .arg(dir.path())
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .output()
+        .unwrap();
+    let status = String::from_utf8(status.stdout).unwrap();
+    // Only the test's own fake-npm files (arranged beside the project) may be untracked.
+    let unexpected: Vec<&str> = status
+        .lines()
+        .filter(|line| !line.contains("fixture-bin/") && !line.ends_with("fake_playwright.js"))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "the preview dirtied the checkout: {unexpected:?}"
     );
     assert_eq!(
         std::fs::read_to_string(dir.path().join(".graphhelm/fixture-install.log"))

@@ -78,6 +78,23 @@ class PlaywrightObserve(unittest.TestCase):
             code, out = self.run_observer(0, body=body)
             self.assertEqual(out["verdict"], "observer_missing", body)
 
+    def test_the_runner_sees_the_toolchain_dir_the_setup_installed_into(self):
+        # #2084: the setup installs into .graphhelm/toolchain, so the runner must find it there.
+        modules = self.project / ".graphhelm" / "toolchain" / "node_modules"
+        (modules / ".bin").mkdir(parents=True)
+        (self.project / "next.json").write_text(json.dumps(report(0)))
+        fake = self.project / "fake_playwright.py"
+        fake.write_text(
+            "import os, shutil\n"
+            "shutil.copy('next.json', os.environ['PLAYWRIGHT_JSON_OUTPUT_NAME'])\n"
+            "open('seen.txt', 'w').write(os.environ['PATH'] + '|' + os.environ.get('NODE_PATH', ''))\n")
+        subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project),
+                        "--command", f"{sys.executable} {fake}"],
+                       capture_output=True, text=True, creationflags=NO_WINDOW)
+        path, node_path = (self.project / "seen.txt").read_text().split("|")
+        self.assertTrue(path.startswith(str(modules / ".bin") + os.pathsep), path)
+        self.assertTrue(node_path.startswith(str(modules)), node_path)
+
     def test_missing_runner_is_observer_missing(self):
         result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project),
                                  "--command", "definitely-not-a-runner-xyz test"],

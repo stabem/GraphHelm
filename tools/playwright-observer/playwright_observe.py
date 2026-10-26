@@ -60,6 +60,12 @@ def observe(project: Path, command: str, timeout: int) -> dict:
     report_path.unlink(missing_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, PLAYWRIGHT_JSON_OUTPUT_NAME=str(report_path.resolve()))
+    # The setup installs Playwright into GraphHelm's own toolchain dir, not the project (#2084):
+    # put its binaries and modules in reach of the runner.
+    modules = project / ".graphhelm" / "toolchain" / "node_modules"
+    if modules.is_dir():
+        env["PATH"] = os.pathsep.join([str(modules / ".bin"), env.get("PATH", "")])
+        env["NODE_PATH"] = os.pathsep.join(filter(None, [str(modules), env.get("NODE_PATH", "")]))
     try:
         result = subprocess.run(argv, cwd=project, capture_output=True, text=True,
                                 timeout=timeout, env=env, creationflags=NO_WINDOW)

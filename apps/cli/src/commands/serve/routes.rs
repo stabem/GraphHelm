@@ -3112,8 +3112,8 @@ const OBSERVER_SETUP_BUDGET: std::time::Duration = std::time::Duration::from_sec
 /// `POST /v1/journey-observer/setup` (#519): exactly `graphhelm setup --install-observer
 /// playwright` in this Runtime's project, so a project with no browser player can get one from the
 /// Studio. The body must be empty: no caller input reaches the commands, and the package version
-/// is pinned. It edits the project's `package.json` (creating one when there is none) and
-/// downloads Chromium; the result names every file it created or changed. Owner credential only
+/// is pinned. It installs into the project's `.graphhelm/toolchain` (its own `package.json`; the project's
+/// root manifest and lockfile are never touched, #2084) and downloads Chromium; the result names every file it created or changed. Owner credential only
 /// (not on the agent allow-list), one at a time (409 `observer.setup_busy`), bounded by
 /// `OBSERVER_SETUP_BUDGET` (`observer.setup_timeout`).
 pub(super) async fn setup_journey_observer(

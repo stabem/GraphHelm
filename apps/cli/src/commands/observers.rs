@@ -25,6 +25,9 @@ struct Spec {
 
 /// Where `--install-observer` writes the observer scripts, relative to the project.
 const SCRIPT_DIR: &str = ".graphhelm/observers";
+/// Where the observer's npm dependency lives (#2084): inside GraphHelm's own `.graphhelm/`, with its
+/// own `package.json`, never the project's root manifest, lockfile or `node_modules`.
+pub(super) const TOOLCHAIN_DIR: &str = ".graphhelm/toolchain";
 const DRIVER_NAME: &str = "journey_driver.mjs";
 const DRIVER: &[u8] = include_bytes!("../../../../tools/journey-driver/driver.mjs");
 /// The driver imports `./judge.mjs`, so it ships beside it.
@@ -78,7 +81,7 @@ fn on_path(program: &str) -> bool {
 
 /// Where Playwright keeps browsers: `PLAYWRIGHT_BROWSERS_PATH`, else the per-OS cache under `home`.
 fn browser_roots(project: &Path, home: &Path) -> Vec<PathBuf> {
-    let local = project.join("node_modules/playwright-core/.local-browsers");
+    let local = project.join(TOOLCHAIN_DIR).join("node_modules/playwright-core/.local-browsers");
     if let Some(path) = std::env::var_os("PLAYWRIGHT_BROWSERS_PATH") {
         if path == "0" {
             return vec![local];
@@ -112,13 +115,16 @@ fn check(spec: &Spec, project: &Path, roots: &[PathBuf], node: bool) -> serde_js
     if !node {
         missing.push("node and npm on PATH (install Node.js 18 or newer)".to_owned());
     }
-    if !project
-        .join("node_modules")
-        .join(spec.package)
-        .join("package.json")
-        .is_file()
-    {
-        missing.push(format!("{} in the project's node_modules", spec.package));
+    // The toolchain dir is where an install lands (#2084); a project's own `node_modules` that
+    // already carries the package (an install from before, or a hoisted workspace) still counts.
+    let has_package = |base: PathBuf| {
+        base.join("node_modules")
+            .join(spec.package)
+            .join("package.json")
+            .is_file()
+    };
+    if !has_package(project.join(TOOLCHAIN_DIR)) && !has_package(project.to_path_buf()) {
+        missing.push(format!("{} in {TOOLCHAIN_DIR}/node_modules", spec.package));
     }
     // Both runners drive Playwright's Chromium build.
     if !has_chromium(roots) {
@@ -190,12 +196,13 @@ fn safe_observer_target(project: &Path) -> std::io::Result<()> {
         ".graphhelm",
         SCRIPT_DIR,
         ".graphhelm/npm-cache",
-        "node_modules",
-        "node_modules/@playwright",
-        "node_modules/@playwright/test",
-        "node_modules/playwright",
-        "node_modules/playwright-core",
-        "node_modules/playwright-core/.local-browsers",
+        TOOLCHAIN_DIR,
+        ".graphhelm/toolchain/node_modules",
+        ".graphhelm/toolchain/node_modules/@playwright",
+        ".graphhelm/toolchain/node_modules/@playwright/test",
+        ".graphhelm/toolchain/node_modules/playwright",
+        ".graphhelm/toolchain/node_modules/playwright-core",
+        ".graphhelm/toolchain/node_modules/playwright-core/.local-browsers",
     ] {
         let path = project.join(relative);
         if let Ok(meta) = std::fs::symlink_metadata(&path) {
@@ -211,8 +218,8 @@ fn safe_observer_target(project: &Path) -> std::io::Result<()> {
         }
     }
     for relative in [
-        "package.json",
-        "package-lock.json",
+        ".graphhelm/toolchain/package.json",
+        ".graphhelm/toolchain/package-lock.json",
         ".graphhelm/observer-install.lock",
     ] {
         if let Ok(meta) = std::fs::symlink_metadata(project.join(relative))
@@ -266,10 +273,14 @@ fn run_step(
     } else {
         graphhelm_process::command(program)
     };
-    // Keep dependency and browser writes in the selected project, including npm workspaces.
+    // Keep dependency and browser writes in GraphHelm's own toolchain dir, never the project's
+    // manifest or lockfile (#2084), and out of any npm workspace the project belongs to.
     let cache = project.join(".graphhelm/npm-cache");
+    let toolchain = project.join(TOOLCHAIN_DIR);
     safe_observer_target(project)?;
     std::fs::create_dir_all(&cache)?;
+    std::fs::create_dir_all(&toolchain)?;
+    safe_observer_target(project)?;
     if std::fs::symlink_metadata(&cache).is_ok_and(|meta| {
         meta.file_type().is_symlink()
             || graphhelm_process::fs::is_reparse_point(&meta)
@@ -279,10 +290,10 @@ fn run_step(
     }
     let mut child = process
         .args(words)
-        .current_dir(project)
+        .current_dir(&toolchain)
         .env("PLAYWRIGHT_BROWSERS_PATH", "0")
         .env("npm_config_cache", &cache)
-        .env("npm_config_prefix", project)
+        .env("npm_config_prefix", &toolchain)
         .env("npm_config_workspaces", "false")
         .env("npm_config_ignore_scripts", "true")
         .stdin(std::process::Stdio::null())
@@ -379,11 +390,11 @@ pub(crate) enum Installed {
 }
 
 /// The files an install may write in the project, reported back to the owner by name (#519):
-/// the button says up front that it edits `package.json`, and the result says what it did.
+/// the result names each file by path; the project's own `package.json` is never among them (#2084).
 const TOUCHED: [&str; 6] = [
-    "package.json",
-    "package-lock.json",
-    "node_modules/@playwright/test/package.json",
+    ".graphhelm/toolchain/package.json",
+    ".graphhelm/toolchain/package-lock.json",
+    ".graphhelm/toolchain/node_modules/@playwright/test/package.json",
     ".graphhelm/observers/journey_driver.mjs",
     ".graphhelm/observers/judge.mjs",
     ".graphhelm/observers/playwright_observe.py",
@@ -639,6 +650,7 @@ mod tests {
             |stage| stages.push(stage.to_owned()),
             |command, cwd, _| {
                 assert_eq!(cwd, project);
+                assert!(project.join(TOOLCHAIN_DIR).is_dir());
                 commands.push(command.to_owned());
                 Ok(Step::Exited(Some(0), String::new()))
             },
@@ -787,15 +799,17 @@ mod tests {
     #[test]
     fn the_result_names_each_file_the_install_created_or_changed() {
         let (_root, project, _home) = fixture();
-        std::fs::write(project.join("package.json"), "{}").expect("manifest");
+        let toolchain = project.join(TOOLCHAIN_DIR);
+        std::fs::create_dir_all(&toolchain).expect("toolchain");
+        std::fs::write(toolchain.join("package.json"), "{}").expect("manifest");
         let before = snapshot(&project);
         write_script(&PLAYWRIGHT, &project).expect("script");
-        std::fs::write(project.join("package.json"), r#"{"devDependencies":{}}"#).expect("edit");
+        std::fs::write(toolchain.join("package.json"), r#"{"devDependencies":{}}"#).expect("edit");
         let changed = changed(&before, &snapshot(&project));
         assert_eq!(
             serde_json::Value::from(changed),
             serde_json::json!([
-                {"path": "package.json", "change": "modified"},
+                {"path": ".graphhelm/toolchain/package.json", "change": "modified"},
                 {"path": ".graphhelm/observers/journey_driver.mjs", "change": "created"},
                 {"path": ".graphhelm/observers/judge.mjs", "change": "created"},
                 {"path": ".graphhelm/observers/playwright_observe.py", "change": "created"},
@@ -826,7 +840,7 @@ mod tests {
     #[test]
     fn package_plus_chromium_plus_node_is_ready() {
         let (_root, project, home) = fixture();
-        let package = project.join("node_modules/@playwright/test");
+        let package = project.join(".graphhelm/toolchain/node_modules/@playwright/test");
         std::fs::create_dir_all(&package).expect("package");
         std::fs::write(package.join("package.json"), "{}").expect("manifest");
         write_script(&PLAYWRIGHT, &project).expect("script");

@@ -19,7 +19,6 @@ from real_methodology import registry_hashes as pinned_registry_hashes
 SCHEMA = "native-methodology-workflow/1"
 PUBLIC_CONTEXT_KEYS = {"task", "scope", "publicTests", "request", "workflow", "phase"}
 NATIVE_WITNESS_KINDS = {"native_stream", "native_cli", "native_artifact", "native_skill"}
-REQUIRED_COSTS = {"setup", "planner", "author", "independent-review", "fix", "verify", "archive"}
 
 # Shared observers remain single-sourced in the existing pilot/evaluator modules.
 capture = base.capture
@@ -159,7 +158,9 @@ def phase_plan(workflow: dict, context: dict, *, plan_id: str, predecessor: str 
     phases = [{"id": phase["id"], "command": list(phase["command"]),
                "frameworkStage": phase.get("frameworkStage", phase["id"]),
                "prompt": phase["prompt"], "promptSha256": _json_hash(phase["prompt"]),
-               "requiredArtifacts": list(phase.get("requiredArtifacts", []))} for phase in workflow["phases"]]
+               "requiredArtifacts": list(phase.get("requiredArtifacts", [])),
+               "requiredWitnessKinds": list(phase.get("requiredWitnessKinds", ["native_stream", "native_skill"])),
+               "costKinds": list(phase.get("costKinds", [phase["id"]]))} for phase in workflow["phases"]]
     return {"schema": "native-methodology-plan/1", "planId": _safe_id(plan_id, "plan id"),
             "workflow": workflow["id"], "workflowVersion": workflow["version"],
             "predecessorPlan": predecessor, "maxFixAttempts": workflow["maxFixAttempts"],
@@ -240,7 +241,7 @@ def reconcile_nested_usage(records: object, *, expected_sessions: list[str], par
             "expectedSessions": sorted(expected_sessions)}
 
 
-def fidelity_witnesses(witnesses: object) -> dict:
+def fidelity_witnesses(witnesses: object, *, required_kinds: set[str] | None = None) -> dict:
     """Require observable native evidence; prose claiming fidelity is not evidence."""
     if not isinstance(witnesses, list):
         return {"status": "incomplete", "reason": "fidelity witnesses missing"}
@@ -259,20 +260,23 @@ def fidelity_witnesses(witnesses: object) -> dict:
                 continue
         valid.append({**row, "sha256": base.digest(path)})
     kinds = {row["kind"] for row in valid}
-    if not valid or not (kinds & {"native_stream", "native_cli"}) or not (kinds & {"native_artifact", "native_skill"}):
+    required = required_kinds or {"native_stream", "native_skill"}
+    if not valid or not required.issubset(kinds):
         return {"status": "incomplete", "reason": "native fidelity witness missing"}
     return {"status": "observed", "witnesses": valid}
 
 
 def complete_attempt(attempt: dict, *, auth: bool, quota: bool, cleanup: bool,
                      usage: dict, witnesses: object, artifact_hashes_value: dict[str, str],
-                     costs: dict[str, dict]) -> dict:
+                     costs: dict[str, dict], required_costs: set[str] | None = None,
+                     required_witness_kinds: set[str] | None = None) -> dict:
     """Close a phase only when every quality and accounting control is observed."""
-    fidelity = fidelity_witnesses(witnesses)
+    fidelity = fidelity_witnesses(witnesses, required_kinds=required_witness_kinds)
     cost_keys = set(costs) if isinstance(costs, dict) else set()
     usage_ok = isinstance(usage, dict) and usage.get("status") == "observed" and usage.get("total") is not None
     controls = {"auth": auth, "quota": quota, "cleanup": cleanup, "usage": usage_ok,
-                "fidelity": fidelity["status"] == "observed", "costs": REQUIRED_COSTS.issubset(cost_keys)}
+                "fidelity": fidelity["status"] == "observed",
+                "costs": (required_costs or set()).issubset(cost_keys)}
     result = {**attempt, "artifactHashes": dict(sorted(artifact_hashes_value.items())), "fidelity": fidelity,
               "usage": usage, "costs": costs, "controls": controls,
               "status": "complete" if all(controls.values()) else "incomplete",
@@ -314,7 +318,8 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     if predecessor_artifacts and not isinstance(predecessor_artifacts, dict):
         raise ValueError("predecessor artifact hashes are invalid")
     attempt = phase_attempt(plan, phase_id, attempt_id, stage_root=str(stage))
-    captured = base.capture(cli_config["argv"], project_root, deadline=int(cli_config.get("deadlineSeconds", 300)),
+    frozen_argv = list(cli_config["argv"]) + list(phase["command"])
+    captured = base.capture(frozen_argv, project_root, deadline=int(cli_config.get("deadlineSeconds", 300)),
                             prompt=prompt, environment=environment)
     stdout = stage / "native.stdout.jsonl"
     stderr = stage / "native.stderr.log"
@@ -323,10 +328,11 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     parsed_usage = base.usage(cli_config["cli"], captured["stdout"])
     provider_error = base.native_provider_error(cli_config["cli"], captured["stdout"], captured["stderr"])
     required = artifact_hashes(project_root, phase.get("requiredArtifacts", [])) if phase.get("requiredArtifacts") else {}
-    receipt = {"attempt": attempt, "ordinal": ordinal, "capture": {key: captured[key] for key in
+    receipt = {"attempt": attempt, "ordinal": ordinal, "argv": frozen_argv, "capture": {key: captured[key] for key in
                ("exit", "seconds", "timeout", "cleanupConfirmed", "truncated")},
                "usage": parsed_usage, "providerError": provider_error,
                "stdoutPath": stdout.name, "stderrPath": stderr.name,
+               "rawSha256": {stdout.name: base.digest(stdout), stderr.name: base.digest(stderr)},
                "requiredArtifactHashes": required, "predecessorArtifacts": predecessor_artifacts}
     base.publish(stage / "phase-receipt.json", receipt)
     witnesses = [{"kind": "native_stream", "path": str(stdout), "sha256": base.digest(stdout)},
@@ -334,7 +340,7 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
                   "sha256": base.digest(stage / "phase-receipt.json")}]
     receipt["fidelity"] = fidelity_witnesses(witnesses + [
         {"kind": "native_artifact", "path": str(project_root / relative), "sha256": digest}
-        for relative, digest in required.items()])
+        for relative, digest in required.items()], required_kinds=set(phase["requiredWitnessKinds"]))
     receipt["status"] = "failed" if provider_error or captured["exit"] != 0 else "incomplete"
     if captured["timeout"] or not captured["cleanupConfirmed"] or captured["truncated"]:
         receipt["status"] = "incomplete"
@@ -374,7 +380,14 @@ def report_manifest(manifest_path: Path, attempts_root: Path) -> dict:
             rows.append({**planned, "status": "incomplete"})
             continue
         row = base.read(receipt)
-        rows.append({**planned, **row, "status": row.get("status", "incomplete")})
+        valid = isinstance(row.get("attempt"), dict) and row["attempt"].get("planSha256") and isinstance(row.get("capture"), dict)
+        raw_dir = receipt.parent.parent
+        for raw_name, raw_hash in row.get("rawSha256", {}).items():
+            raw_file = raw_dir / raw_name
+            valid = valid and raw_file.is_file() and base.digest(raw_file) == raw_hash
+        if row.get("status") in {"complete", "failed"}:
+            valid = valid and row.get("fidelity", {}).get("status") == "observed" and isinstance(row.get("usage"), dict)
+        rows.append({**planned, **row, "status": row.get("status", "incomplete") if valid else "incomplete"})
     collection_complete = bool(rows) and len(rows) == len(manifest.get("plannedPhases", [])) and all(row["status"] != "incomplete" for row in rows)
     quality_accepted = collection_complete and all(row["status"] in {"complete", "failed"} for row in rows)
     complete = quality_accepted and all(row["status"] == "complete" for row in rows)

@@ -1,0 +1,168 @@
+diff --git a/apps/cli/src/commands/serve/mod.rs b/apps/cli/src/commands/serve/mod.rs
+index 713e780..f705cbe 100644
+--- a/apps/cli/src/commands/serve/mod.rs
++++ b/apps/cli/src/commands/serve/mod.rs
+@@ -1804,7 +1804,23 @@ fn reply_with_status_value(
+     mut value: serde_json::Value,
+     original_decision_sequence: u64,
+ ) -> Response {
+-    if let Err(diagnostic) = annotate_recognized_retry(&mut value, original_decision_sequence) {
++    // A recognized retry of `execution.signal` must hand back the durable signal id the FIRST
++    // answer carried — the only way a client that lost its acknowledgement can match its own
++    // duplicate. Every other mutation command carries no client-derivable identity, so only a
++    // signal retry gets one. The store read happens only when the annotation below could still
++    // succeed (a non-object value fails before any I/O), and is fail-closed like
++    // [`current_head`]: an unreadable store or a non-signal event at the decision sequence yields
++    // no `signalId`, never a wrong one.
++    let signal_id = if matches!(value, serde_json::Value::Object(_))
++        && MutationDecisionKind::for_command(command) == MutationDecisionKind::SignalRecorded
++    {
++        original_signal_id(events, execution, original_decision_sequence)
++    } else {
++        None
++    };
++    if let Err(diagnostic) =
++        annotate_recognized_retry(&mut value, original_decision_sequence, signal_id)
++    {
+         return respond(
+             StatusCode::INTERNAL_SERVER_ERROR,
+             Outcome::domain(command, vec![diagnostic]).output,
+@@ -1818,6 +1834,7 @@ fn reply_with_status_value(
+ fn annotate_recognized_retry(
+     status: &mut serde_json::Value,
+     original_decision_sequence: u64,
++    signal_id: Option<String>,
+ ) -> Result<(), Diagnostic> {
+     let serde_json::Value::Object(data) = status else {
+         return Err(Diagnostic::error(
+@@ -1827,13 +1844,19 @@ fn annotate_recognized_retry(
+             SOURCE,
+         ));
+     };
+-    data.insert(
+-        "idempotency".to_owned(),
+-        serde_json::json!({
+-            "recognizedRetry": true,
+-            "originalDecisionSequence": original_decision_sequence,
+-        }),
++    let mut proof = serde_json::Map::new();
++    proof.insert("recognizedRetry".to_owned(), serde_json::json!(true));
++    proof.insert(
++        "originalDecisionSequence".to_owned(),
++        serde_json::json!(original_decision_sequence),
+     );
++    // Only a retry of `execution.signal` (or a future command with a client-derivable identity)
++    // reaches here with `Some`: the mismatched-actor / wrong-kind paths answer 409 without any
++    // proof at all, so their bodies keep carrying neither field.
++    if let Some(signal_id) = signal_id {
++        proof.insert("signalId".to_owned(), serde_json::json!(signal_id));
++    }
++    data.insert("idempotency".to_owned(), serde_json::Value::Object(proof));
+     Ok(())
+ }
+ 
+@@ -2246,6 +2269,23 @@ fn current_head(events: &Path, execution: &str) -> Option<u64> {
+     Some(history.last().map_or(0, |event| event.sequence))
+ }
+ 
++/// The durable `signalId` recorded in the `signal_recorded` event committed at exactly
++/// `sequence` — what a recognized retry of `execution.signal` echoes so a client that lost its
++/// first acknowledgement can match its own duplicate against the id the FIRST answer carried.
++///
++/// Best-effort, like [`current_head`]: an unreadable store, or a non-signal event at that
++/// sequence, yields `None` (the retry still answers with its proof, just without a `signalId`)
++/// rather than guessing or failing the whole answer.
++fn original_signal_id(events: &Path, execution: &str, sequence: u64) -> Option<String> {
++    let store = event_store(events).ok()?;
++    let (_, _, history) = execution::resolve_stream(&store, Some(execution)).ok()?;
++    let event = history.iter().find(|event| event.sequence == sequence)?;
++    match &event.kind {
++        EventKind::SignalRecorded(payload) => Some(payload.signal_id.as_str().to_owned()),
++        _ => None,
++    }
++}
++
+ /// Whether ANY committed `ExecutionPaused` event in this stream's history carries exactly this
+ /// (key, actor) pair.
+ ///
+@@ -2933,10 +2973,12 @@ mod tests {
+             1,
+             "the same decision key must commit exactly once"
+         );
+-        assert!(matches!(
+-            matching[0].kind,
+-            graphhelm_protocols::EventKind::SignalRecorded(_)
+-        ));
++        // The loser's proof must carry the durable signal id the first answer carried — read
++        // off the committed event, not retyped here, so the assertion fails if either side
++        // (the append or the retry annotation) drifts from the record.
++        let graphhelm_protocols::EventKind::SignalRecorded(record) = &matching[0].kind else {
++            panic!("the committed decision must be a recorded signal");
++        };
+         assert_eq!(
+             current_head(&events, execution_id),
+             Some(before + 1),
+@@ -2963,6 +3005,7 @@ mod tests {
+             serde_json::json!({
+                 "recognizedRetry": true,
+                 "originalDecisionSequence": matching[0].sequence,
++                "signalId": record.signal_id.as_str(),
+             })
+         );
+     }
+diff --git a/apps/cli/tests/api_http.rs b/apps/cli/tests/api_http.rs
+index f6e166c..c2b8c3f 100644
+--- a/apps/cli/tests/api_http.rs
++++ b/apps/cli/tests/api_http.rs
+@@ -2133,6 +2133,13 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
+     );
+     let first_head = head_sequence(&base, &token, execution);
+     assert!(first_head > before, "the fresh signal must have appended");
++    let first_signal_id = first_reply["data"]["signalId"]
++        .as_str()
++        .unwrap_or_else(|| {
++            panic!("the fresh signal answer must carry its durable signal id: {first_reply}")
++        })
++        .to_owned();
++    assert_eq!(first_signal_id, "signal-http-retry");
+ 
+     let original_event = last_event_of_kind(&base, &token, execution, "signal_recorded");
+     let original_sequence = original_event["sequence"].as_u64().unwrap_or_else(|| {
+@@ -2189,9 +2196,15 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
+         serde_json::json!({
+             "recognizedRetry": true,
+             "originalDecisionSequence": original_sequence,
++            "signalId": first_signal_id,
+         }),
+         "the retry marker must identify the exact committed decision: {retry_reply}"
+     );
++    assert_eq!(
++        retry_reply["data"]["idempotency"]["signalId"], first_signal_id,
++        "a client that lost its acknowledgement must match its duplicate against the id the \
++         FIRST answer carried: {retry_reply}"
++    );
+     assert_ne!(
+         original_sequence,
+         stale_if_match.parse::<u64>().unwrap(),
+@@ -2279,6 +2292,10 @@ fn the_same_key_and_body_from_a_different_actor_is_not_a_recognized_retry() {
+         second_reply["data"].get("idempotency").is_none(),
+         "a mismatched actor must never receive a retry proof: {second_reply}"
+     );
++    assert!(
++        !second_reply.to_string().contains("signalId"),
++        "a mismatched actor must not receive the original signalId: {second_reply}"
++    );
+     assert_eq!(
+         second_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+         "{second_reply}"
+@@ -2402,6 +2419,10 @@ fn an_event_of_the_wrong_kind_with_the_same_key_is_not_a_recognized_retry() {
+         retry_reply["data"].get("idempotency").is_none(),
+         "a wrong-kind event must never produce a retry proof: {retry_reply}"
+     );
++    assert!(
++        !retry_reply.to_string().contains("signalId"),
++        "a wrong-kind event must not receive the original signalId: {retry_reply}"
++    );
+     assert_eq!(
+         retry_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+         "{retry_reply}"

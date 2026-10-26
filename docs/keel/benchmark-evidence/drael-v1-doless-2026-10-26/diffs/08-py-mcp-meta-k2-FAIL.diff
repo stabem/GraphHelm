@@ -1,0 +1,67 @@
+diff --git a/plugins/graphhelm-codex-hooks/hooks/task_handoff.py b/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
+index 22d68b4..956e34a 100644
+--- a/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
++++ b/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
+@@ -492,8 +492,11 @@ def _mcp_stdio() -> int:
+                 params = request_value.get("params")
+                 if not isinstance(params, dict):
+                     raise ValueError("tools/call params must be an object")
+-                if set(params) - {"name", "arguments"}:
++                if set(params) - {"name", "arguments", "_meta"}:
+                     raise ValueError("tools/call params contain an unsupported field")
++                meta = params.get("_meta")
++                if meta is not None and not isinstance(meta, dict):
++                    raise ValueError("tools/call _meta must be an object")
+                 response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
+             else:
+                 response = _mcp_error(request_id, -32601, "method not found")
+diff --git a/plugins/graphhelm/hooks/task_handoff.py b/plugins/graphhelm/hooks/task_handoff.py
+index 22d68b4..956e34a 100644
+--- a/plugins/graphhelm/hooks/task_handoff.py
++++ b/plugins/graphhelm/hooks/task_handoff.py
+@@ -492,8 +492,11 @@ def _mcp_stdio() -> int:
+                 params = request_value.get("params")
+                 if not isinstance(params, dict):
+                     raise ValueError("tools/call params must be an object")
+-                if set(params) - {"name", "arguments"}:
++                if set(params) - {"name", "arguments", "_meta"}:
+                     raise ValueError("tools/call params contain an unsupported field")
++                meta = params.get("_meta")
++                if meta is not None and not isinstance(meta, dict):
++                    raise ValueError("tools/call _meta must be an object")
+                 response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
+             else:
+                 response = _mcp_error(request_id, -32601, "method not found")
+diff --git a/plugins/graphhelm/hooks/test_task_handoff.py b/plugins/graphhelm/hooks/test_task_handoff.py
+index 07025a0..627426d 100644
+--- a/plugins/graphhelm/hooks/test_task_handoff.py
++++ b/plugins/graphhelm/hooks/test_task_handoff.py
+@@ -215,6 +215,28 @@ class HandoffTests(unittest.TestCase):
+         self.assertEqual(replies[1]["error"]["code"], -32600)
+         self.assertEqual(len(RuntimeHandler.requests), before)
+ 
++    def test_mcp_accepts_native_meta_object_and_keeps_rejecting_other_unknown_fields(self):
++        env = os.environ.copy(); env.update(self.env)
++        env["GRAPHHELM_MCP_HOST"] = "codex"
++        env["GRAPHHELM_SESSION_ID"] = "receiver-1"
++        payload = "\n".join([
++            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
++            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
++                        "params": {"name": "status", "arguments": {}, "_meta": {"progressToken": "tok-1"}}}),
++            json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
++                        "params": {"name": "status", "arguments": {}, "_meta": "tok-1"}}),
++            json.dumps({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
++                        "params": {"name": "status", "arguments": {}, "clientName": "native-client"}}),
++        ]) + "\n"
++        result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
++                                input=payload, capture_output=True, text=True)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        replies = [json.loads(line) for line in result.stdout.splitlines()]
++        self.assertFalse(replies[1]["result"]["isError"])
++        self.assertIn('"phase":"status"', replies[1]["result"]["content"][0]["text"])
++        self.assertEqual(replies[2]["error"]["code"], -32602)
++        self.assertEqual(replies[3]["error"]["code"], -32602)
++
+     def test_oversized_frame_cannot_execute_a_json_suffix_as_another_request(self):
+         env = os.environ.copy(); env.update(self.env)
+         env["GRAPHHELM_MCP_HOST"] = "codex"

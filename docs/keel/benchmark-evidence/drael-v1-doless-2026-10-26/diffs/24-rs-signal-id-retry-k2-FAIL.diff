@@ -1,0 +1,196 @@
+diff --git a/apps/cli/src/commands/serve/mod.rs b/apps/cli/src/commands/serve/mod.rs
+index 713e780..c9ff898 100644
+--- a/apps/cli/src/commands/serve/mod.rs
++++ b/apps/cli/src/commands/serve/mod.rs
+@@ -1454,13 +1454,14 @@ async fn run_idempotent_mutation_inner<'a>(
+     run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
+ ) -> Response {
+     match classify_existing_keys(events, execution, &identity) {
+-        Ok(KeyState::Complete(original_decision_sequence)) => {
++        Ok(KeyState::Complete(original_decision_sequence, signal_id)) => {
+             return reply_with_current_status(
+                 events,
+                 execution,
+                 command,
+                 wiring,
+                 original_decision_sequence,
++                signal_id,
+             );
+         }
+         Ok(KeyState::Partial(stuck)) => {
+@@ -1589,13 +1590,16 @@ async fn run_idempotent_mutation_inner<'a>(
+             // the pre-flight check above and this append. Classify again against the store's
+             // now-current state rather than trusting the in-flight guess either way.
+             match classify_existing_keys(events, execution, &identity) {
+-                Ok(KeyState::Complete(original_decision_sequence)) => reply_with_current_status(
+-                    events,
+-                    execution,
+-                    command,
+-                    wiring,
+-                    original_decision_sequence,
+-                ),
++                Ok(KeyState::Complete(original_decision_sequence, signal_id)) => {
++                    reply_with_current_status(
++                        events,
++                        execution,
++                        command,
++                        wiring,
++                        original_decision_sequence,
++                        signal_id,
++                    )
++                }
+                 Ok(KeyState::Partial(stuck)) => {
+                     partial_conflict_response(events, execution, command, &stuck)
+                 }
+@@ -1624,8 +1628,12 @@ async fn run_idempotent_mutation_inner<'a>(
+ enum KeyState {
+     Absent,
+     /// Every expected key exists. Carries the committed sequence of the command's first
+-    /// server-derived decision key, never the current head or a caller-supplied sequence.
+-    Complete(u64),
++    /// server-derived decision key, never the current head or a caller-supplied sequence. For a
++    /// recognized retry of `execution.signal` it additionally carries the original durable
++    /// `signalId`, read off the very event that authenticated the retry below (exact key, actor,
++    /// scope/stream, kind and body all matched); a mismatched actor or wrong-kind event classifies
++    /// `Divergent` before it reaches here, so it can never receive one.
++    Complete(u64, Option<OpaqueId>),
+     Partial(OpaqueId),
+     /// A committed event's key shares this command's `{command-key}-{suffix}-` prefix but was
+     /// derived from a *different* request body (a different content digest) — the caller reused
+@@ -1754,12 +1762,31 @@ fn classify_existing_keys(
+             }
+         }
+     }
++    // A recognized retry of `execution.signal` must hand the caller the ORIGINAL durable signal
++    // id — the first reply carried it under `data.signalId`, and a client retrying after a lost
++    // acknowledgement cannot match its signal without it. It is read off the very event the
++    // classification above authenticated (exact derived key, actor, scope/stream, decision kind
++    // and body digest), so it is a property of committed history, never re-derived from the
++    // request: the only other events that can share this command's key are classified
++    // `Divergent` upstream and never reach `Complete`.
++    let signal_id = if identity.decision_kind == MutationDecisionKind::SignalRecorded {
++        history
++            .iter()
++            .find(|event| event.idempotency_key.as_str() == identity.keys[0].full.as_str())
++            .and_then(|event| match &event.kind {
++                EventKind::SignalRecorded(payload) => Some(payload.signal_id.clone()),
++                _ => None,
++            })
++    } else {
++        None
++    };
+     Ok(if present == 0 {
+         KeyState::Absent
+     } else if present == identity.keys.len() {
+         KeyState::Complete(
+             original_decision_sequence
+                 .expect("a complete non-empty derived-key set has a first decision sequence"),
++            signal_id,
+         )
+     } else {
+         KeyState::Partial(first_missing.expect("some but not all present implies one missing"))
+@@ -1775,13 +1802,19 @@ fn classify_existing_keys(
+ /// same category of problem `run_idempotent_mutation`'s pre-flight check exists to avoid;
+ /// "current status" is the one shape every mutation can report honestly no matter how long ago
+ /// the original attempt actually committed, while the proof distinguishes that history from a
+-/// fresh application.
++/// fresh application. For a recognized retry of `execution.signal` the reply additionally carries
++/// the original durable `signalId` under `data.signalId` — the same place the FIRST reply carried
++/// it — so a client retrying after a lost acknowledgement can still match the signal it sent. A
++/// mismatched actor or a wrong-kind event never reaches this reply: `classify_existing_keys`
++/// classifies it `Divergent`, and those refusals carry neither the `idempotency` proof nor a
++/// `signalId`.
+ fn reply_with_current_status(
+     events: &Path,
+     execution: &str,
+     command: &'static str,
+     wiring: ExecutorWiring,
+     original_decision_sequence: u64,
++    signal_id: Option<OpaqueId>,
+ ) -> Response {
+     match execution::status::execute(events, Some(execution)) {
+         Ok(value) => reply_with_status_value(
+@@ -1791,6 +1824,7 @@ fn reply_with_current_status(
+             wiring,
+             value,
+             original_decision_sequence,
++            signal_id,
+         ),
+         Err(failure) => respond_failure(command, failure),
+     }
+@@ -1803,6 +1837,7 @@ fn reply_with_status_value(
+     wiring: ExecutorWiring,
+     mut value: serde_json::Value,
+     original_decision_sequence: u64,
++    signal_id: Option<OpaqueId>,
+ ) -> Response {
+     if let Err(diagnostic) = annotate_recognized_retry(&mut value, original_decision_sequence) {
+         return respond(
+@@ -1810,6 +1845,13 @@ fn reply_with_status_value(
+             Outcome::domain(command, vec![diagnostic]).output,
+         );
+     }
++    // The annotation above has already failed closed unless `value` is an object; here we are past
++    // that check, so the insert below only ever runs against the status object itself.
++    if let Some(signal_id) = signal_id
++        && let serde_json::Value::Object(data) = &mut value
++    {
++        data.insert("signalId".to_owned(), serde_json::json!(signal_id.as_str()));
++    }
+     let mut output = Outcome::success(command, value).output;
+     annotate_fixture_only(&mut output, events, execution, wiring);
+     respond(StatusCode::OK, output)
+@@ -2781,6 +2823,7 @@ mod tests {
+             ExecutorWiring::FIXTURE_ONLY,
+             serde_json::json!("not-an-object"),
+             17,
++            None,
+         );
+         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+diff --git a/apps/cli/tests/api_http.rs b/apps/cli/tests/api_http.rs
+index f6e166c..0d9ba22 100644
+--- a/apps/cli/tests/api_http.rs
++++ b/apps/cli/tests/api_http.rs
+@@ -2197,6 +2197,19 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
+         stale_if_match.parse::<u64>().unwrap(),
+         "the proof must not echo the caller's deliberately stale If-Match"
+     );
++    assert_eq!(
++        first_reply["data"].get("signalId"),
++        retry_reply["data"].get("signalId"),
++        "a recognized retry must carry the same signalId the first reply carried, so a \
++         client that lost the original acknowledgement can still match its own signal: \
++         first={first_reply} retry={retry_reply}"
++    );
++    assert_eq!(
++        retry_reply["data"]["signalId"],
++        serde_json::json!("signal-http-retry"),
++        "the retry's signalId must be the ORIGINAL durable signal id from committed history: \
++         {retry_reply}"
++    );
+     assert_eq!(
+         retry_reply["data"]["headSequence"],
+         serde_json::json!(advanced_head),
+@@ -2279,6 +2292,10 @@ fn the_same_key_and_body_from_a_different_actor_is_not_a_recognized_retry() {
+         second_reply["data"].get("idempotency").is_none(),
+         "a mismatched actor must never receive a retry proof: {second_reply}"
+     );
++    assert!(
++        second_reply["data"].get("signalId").is_none(),
++        "a mismatched actor must never receive the original signalId either: {second_reply}"
++    );
+     assert_eq!(
+         second_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+         "{second_reply}"
+@@ -2402,6 +2419,10 @@ fn an_event_of_the_wrong_kind_with_the_same_key_is_not_a_recognized_retry() {
+         retry_reply["data"].get("idempotency").is_none(),
+         "a wrong-kind event must never produce a retry proof: {retry_reply}"
+     );
++    assert!(
++        retry_reply["data"].get("signalId").is_none(),
++        "a wrong-kind event must never produce the original signalId either: {retry_reply}"
++    );
+     assert_eq!(
+         retry_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+         "{retry_reply}"

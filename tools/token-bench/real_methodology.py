@@ -12,49 +12,18 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 
 import methodology as base
 
 # These names are the shared pilot boundaries; this runner does not fork them.
 
 HOME = Path(__file__).resolve().parent
-MAX_JSON = 2_000_000
 MAX_FILE = 2_000_000
 MAX_NATIVE_FILE = 256 * 1024 * 1024
 MAX_EXTERNAL_FILES = 50_000
 MAX_EXTERNAL_BYTES = 2 * 1024 * 1024 * 1024
 DEADLINE = 300
 EVALUATOR_DEADLINE = 90
-
-
-def _legacy_digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _legacy_read(path: Path) -> dict:
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_JSON:
-        raise ValueError(f"unsafe or oversized JSON: {path}")
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"invalid JSON: {path}") from error
-    if not isinstance(value, dict):
-        raise ValueError(f"JSON object required: {path}")
-    return value
-
-
-def _legacy_publish(path: Path, value: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
-    try:
-        with temporary.open("x", encoding="utf-8") as handle:
-            json.dump(value, handle, indent=2, ensure_ascii=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.link(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 digest = base.digest

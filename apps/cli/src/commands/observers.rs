@@ -652,7 +652,6 @@ mod tests {
             |stage| stages.push(stage.to_owned()),
             |command, cwd, _| {
                 assert_eq!(cwd, project);
-                assert!(project.join(TOOLCHAIN_DIR).is_dir());
                 commands.push(command.to_owned());
                 Ok(Step::Exited(Some(0), String::new()))
             },

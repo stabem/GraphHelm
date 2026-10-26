@@ -316,6 +316,13 @@ fn a_preview_installs_a_missing_observer_and_refreshes_a_stale_copy() {
             "{stray} written into the project root"
         );
     }
+    // GraphHelm state under `.graphhelm/` is ignored the way a GraphHelm project ignores it.
+    std::fs::write(
+        dir.path().join(".git/info/exclude"),
+        "/.graphhelm/*
+",
+    )
+    .unwrap();
     let status = graphhelm_process::command("git")
         .arg("-C")
         .arg(dir.path())

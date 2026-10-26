@@ -12,6 +12,7 @@ class NativeMethodologyContracts(unittest.TestCase):
     def workflow(self):
         return {"id": "spec-kit", "version": "v1", "framework": "SpecKit", "maxFixAttempts": 2,
                 "projectRoot": str(Path.cwd()), "taskRefs": ["task-1"], "pinnedPublicFiles": [], "methodAssetDigests": {},
+                "taskContext": {"task": "task-1", "scope": [], "publicTests": [], "request": "fix it"},
                 "phases": [
                     {"id": "setup", "command": ["native", "init"], "prompt": "setup", "frameworkStage": "specify"},
                     {"id": "planner", "command": ["native", "plan"], "prompt": "plan", "frameworkStage": "plan"},

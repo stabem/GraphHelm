@@ -97,6 +97,11 @@ def validate_registry(registry: dict) -> dict:
             raise ValueError("workflow pinnedPublicFiles are required")
         if not isinstance(workflow.get("methodAssetDigests"), dict):
             raise ValueError("workflow methodAssetDigests are required")
+        context = workflow.get("taskContext")
+        if (not isinstance(context, dict) or not isinstance(context.get("task"), str)
+                or not isinstance(context.get("scope"), list) or not isinstance(context.get("publicTests"), list)
+                or not isinstance(context.get("request"), str) or not context["request"].strip()):
+            raise ValueError("workflow taskContext must include public task, scope, publicTests, and request")
         phases = workflow.get("phases")
         if not isinstance(phases, list) or not phases:
             raise ValueError("workflow phases are required")
@@ -110,6 +115,10 @@ def validate_registry(registry: dict) -> dict:
                 raise ValueError("each phase needs a native command")
             if not isinstance(phase.get("prompt"), str) or not phase["prompt"].strip():
                 raise ValueError("each phase needs a frozen prompt")
+            for operation in phase.get("requiredOperations", []):
+                pattern = operation.get("commandPattern") if isinstance(operation, dict) else None
+                if not isinstance(pattern, str) or not pattern.strip() or pattern.lstrip().startswith(("read ", "inspect ", "preserve ", "follow ", "invoke ")):
+                    raise ValueError("required native operations must name executable commands")
     return registry
 
 

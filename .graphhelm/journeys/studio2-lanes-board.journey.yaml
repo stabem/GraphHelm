@@ -4,8 +4,8 @@ title: See every agent on the Lanes board
 name: See the lanes
 feature: Studio
 purpose: "On Lanes the owner sees WHAT I ASKED with the request Show the work graph for the fixture run, and the planner agent's card in the Blocked column with its request #1556, the ask it serves, its last action and its question, with the reply box addressed to planner; the idle filter takes the active planner off the board."
-status: draft
-approved: null
+status: approved
+approved: {revision: 2e2eb86b49af43f1e71b77403b3bf16d19a9cf95, digest: sha256:70ed0abbaa124f5e0673a6ff27564de376b0af242c57341ba51828cfcd73f241}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

@@ -4,8 +4,8 @@ title: Review a card's screens in the large modal
 name: Review a screen
 feature: Studio
 purpose: "The owner opens issue #721's card, in review, and gets a large modal comparing a screen of its journey, Open the Studio on a project (bad-ticket), before and now: as one frame, side by side, as changes, as an overlay with a slider, and at mobile width; Close shuts it and leaves the card in review."
-status: draft
-approved: null
+status: approved
+approved: {revision: 2e2eb86b49af43f1e71b77403b3bf16d19a9cf95, digest: sha256:d867db2d3cd52afb2c6a98ff1e0cf8a07405e999e5b9b533e243a7682bb0d1bb}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

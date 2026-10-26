@@ -211,7 +211,7 @@ Connection: close
     );
     let request = server.join().unwrap();
     assert!(
-        request.starts_with("GET /v1/executions/gh-team/tasks?since=2026-10-15T00:00:00Z "),
+        request.starts_with("GET /v1/executions/gh-team/tasks?full=1&since=2026-10-15T00:00:00Z "),
         "{request}"
     );
 }

@@ -66,6 +66,23 @@ def test_forged_archive_total_cannot_be_counted():
         assert result["totalProcessedTokens"] is None
 
 
+def test_unhashed_root_cannot_be_counted():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        _write_attempt(root, "review", "one")
+        archive = root / "review/archive"
+        unrelated = archive / "unrelated.txt"
+        unrelated.write_text("unrelated evidence", encoding="utf-8")
+        receipt = root / "review/receipt.json"
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        data["archive"]["archive"] = {
+            "unrelated.txt": hashlib.sha256(unrelated.read_bytes()).hexdigest()}
+        receipt.write_text(json.dumps(data), encoding="utf-8")
+        result = ledger.summarize(root, prefix="review", cli="claude", project=root)
+        assert result["accountingStatus"] == "unknown"
+        assert result["totalProcessedTokens"] is None
+
+
 def test_copied_native_session_cannot_be_reidentified_as_a_retry():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)

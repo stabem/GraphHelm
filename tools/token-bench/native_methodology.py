@@ -900,74 +900,65 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         if archived_total is None or recorded_total != archived_total:
             valid = False
         archive = row.get("archivedSession", {})
-        archive_root = Path(archive["archivedRoot"]).parent if isinstance(archive.get("archivedRoot"), str) else None
-        archive_hashes = archive.get("archive")
-        if not archive_root or not isinstance(archive_hashes, dict) or not archive_hashes:
-            valid = False
-        else:
-            valid = valid and all((archive_root / relative).is_file()
-                                  and base.digest(archive_root / relative) == digest
-                                  for relative, digest in archive_hashes.items())
-            try:
-                from native_session_evidence import codex_tree, claude_pipeline, claude_owned_tree, counters, records
-                cli = row.get("cli")
-                project = Path(workflow_spec["projectRoot"]) if workflow_spec else None
-                root_log = Path(archive["archivedRoot"])
-                stdout_file = raw_dir / "native.stdout.jsonl"
-                child_logs = sorted([*archive_root.glob("child-*.jsonl"),
-                                     *archive_root.glob("agent-*.jsonl")])
-                if not project or not project.is_dir() or not root_log.is_file() or not stdout_file.is_file():
-                    raise ValueError("archived native project is missing")
-                replayed_wire = base.usage(cli, stdout_file.read_text(encoding="utf-8"))
-                replayed_models = sorted(set(replayed_wire.get("observedModels", []))
-                                         | set(replayed_wire.get("accountingModels", [])))
-                valid = (valid and replayed_wire.get("accountingStatus") == "observed"
-                         and replayed_wire.get("counts") == row.get("rootWireUsage", {}).get("counts")
-                         and replayed_models == served_models
-                         and replayed_wire.get("observedModels") == row.get("usage", {}).get("observedModels")
-                         and replayed_wire.get("accountingModels", []) == row.get("usage", {}).get("accountingModels", []))
-                if cli == "codex":
-                    parsed_archive = codex_tree(root_log, child_logs, project=project,
-                                                root_thread=archive["rootSession"],
-                                                stdout_usage=_codex_root_counters(row.get("rootWireUsage")))
-                elif cli == "claude":
-                    native_rows = records(stdout_file)
-                    finals = [native_row for native_row in native_rows
-                              if native_row.get("type") == "result"]
-                    root_rows = records(root_log)
-                    metadata = [native_row for native_row in root_rows
-                                if native_row.get("type") in {"user", "assistant"}]
-                    if (len(finals) != 1 or finals[0].get("session_id") != archive["rootSession"]
-                            or not metadata or any(
-                                native_row.get("sessionId") != archive["rootSession"]
-                                or native_row.get("version") != "2.1.310"
-                                or native_row.get("isSidechain") is not False
-                                or native_row.get("agentId") is not None
-                                or not Path(native_row.get("cwd", "")).resolve().is_relative_to(project.resolve())
-                                for native_row in metadata)):
-                        raise ValueError("Claude archived root identity differs from native stream")
-                    if child_logs:
-                        parsed_archive = claude_owned_tree(stdout_file, child_logs, project=project,
-                                                           session_id=archive["rootSession"])
-                    else:
-                        parsed_archive = claude_pipeline(stdout_file)
+        try:
+            from native_session_evidence import (codex_tree, claude_pipeline, claude_owned_tree,
+                                                 counters, records, verified_archive)
+            cli = row.get("cli")
+            project = Path(workflow_spec["projectRoot"]) if workflow_spec else None
+            root_log, child_logs = verified_archive(archive, cli=cli)
+            stdout_file = raw_dir / "native.stdout.jsonl"
+            if not project or not project.is_dir() or not root_log.is_file() or not stdout_file.is_file():
+                raise ValueError("archived native project is missing")
+            replayed_wire = base.usage(cli, stdout_file.read_text(encoding="utf-8"))
+            replayed_models = sorted(set(replayed_wire.get("observedModels", []))
+                                     | set(replayed_wire.get("accountingModels", [])))
+            valid = (valid and replayed_wire.get("accountingStatus") == "observed"
+                     and replayed_wire.get("counts") == row.get("rootWireUsage", {}).get("counts")
+                     and replayed_models == served_models
+                     and replayed_wire.get("observedModels") == row.get("usage", {}).get("observedModels")
+                     and replayed_wire.get("accountingModels", []) == row.get("usage", {}).get("accountingModels", []))
+            if cli == "codex":
+                parsed_archive = codex_tree(root_log, child_logs, project=project,
+                                            root_thread=archive["rootSession"],
+                                            stdout_usage=_codex_root_counters(row.get("rootWireUsage")))
+            elif cli == "claude":
+                native_rows = records(stdout_file)
+                finals = [native_row for native_row in native_rows
+                          if native_row.get("type") == "result"]
+                root_rows = records(root_log)
+                metadata = [native_row for native_row in root_rows
+                            if native_row.get("type") in {"user", "assistant"}]
+                if (len(finals) != 1 or finals[0].get("session_id") != archive["rootSession"]
+                        or not metadata or any(
+                            native_row.get("sessionId") != archive["rootSession"]
+                            or native_row.get("version") != "2.1.310"
+                            or native_row.get("isSidechain") is not False
+                            or native_row.get("agentId") is not None
+                            or not Path(native_row.get("cwd", "")).resolve().is_relative_to(project.resolve())
+                            for native_row in metadata)):
+                    raise ValueError("Claude archived root identity differs from native stream")
+                if child_logs:
+                    parsed_archive = claude_owned_tree(stdout_file, child_logs, project=project,
+                                                       session_id=archive["rootSession"])
                 else:
-                    raise ValueError("unsupported archived native provider")
-                parsed_total = _usage_total(parsed_archive.get("total"), cli=cli)
-                valid = valid and parsed_archive.get("status") == "observed" and parsed_total == archived_total
-                if "native_skill" in required_kinds and phase_spec:
-                    from native_session_evidence import native_skill_load
-                    expected_skills = [w for w in phase_spec.get("requiredWitnesses", [])
-                                       if w.get("kind") == "native_skill"]
-                    stated_loads = row.get("skillLoad", {}).get("loads", [])
-                    replayed_loads = [native_skill_load(root_log, cli=cli,
-                        expected_path=Path(w["path"]), expected_sha256=w["sha256"],
-                        frozen_prompt=phase_spec["prompt"]) for w in expected_skills]
-                    valid = valid and len(replayed_loads) == len(stated_loads) and all(
-                        replayed.get("status") == "observed"
-                        and replayed.get("skillSha256") == stated.get("skillSha256")
-                        for replayed, stated in zip(replayed_loads, stated_loads))
-            except (ImportError, KeyError, OSError, TypeError, ValueError):
+                    parsed_archive = claude_pipeline(stdout_file)
+            else:
+                raise ValueError("unsupported archived native provider")
+            parsed_total = _usage_total(parsed_archive.get("total"), cli=cli)
+            valid = valid and parsed_archive.get("status") == "observed" and parsed_total == archived_total
+            if "native_skill" in required_kinds and phase_spec:
+                from native_session_evidence import native_skill_load
+                expected_skills = [w for w in phase_spec.get("requiredWitnesses", [])
+                                   if w.get("kind") == "native_skill"]
+                stated_loads = row.get("skillLoad", {}).get("loads", [])
+                replayed_loads = [native_skill_load(root_log, cli=cli,
+                    expected_path=Path(w["path"]), expected_sha256=w["sha256"],
+                    frozen_prompt=phase_spec["prompt"]) for w in expected_skills]
+                valid = valid and len(replayed_loads) == len(stated_loads) and all(
+                    replayed.get("status") == "observed"
+                    and replayed.get("skillSha256") == stated.get("skillSha256")
+                    for replayed, stated in zip(replayed_loads, stated_loads))
+        except (ImportError, KeyError, OSError, TypeError, ValueError):
                 valid = False
         if workflow_spec is None:
             valid = False

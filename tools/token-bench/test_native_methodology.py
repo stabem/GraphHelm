@@ -402,6 +402,14 @@ class NativeMethodologyContracts(unittest.TestCase):
             self.assertEqual(swapped_root["attempts"][0]["status"], "incomplete")
             self.assertIsNone(swapped_root["usageAggregate"])
             receipt["archivedSession"]["rootSession"] = session
+            unrelated = archive_root / "unrelated.txt"
+            unrelated.write_text("unrelated evidence", encoding="utf-8")
+            receipt["archivedSession"]["archive"] = {"unrelated.txt": bench.base.digest(unrelated)}
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            unhashed_root = bench.report_manifest(manifest_path, output)
+            self.assertEqual(unhashed_root["attempts"][0]["status"], "incomplete")
+            self.assertIsNone(unhashed_root["usageAggregate"])
+            receipt["archivedSession"]["archive"] = {"root.jsonl": bench.base.digest(archived_root)}
             receipt["usage"]["counts"]["output"] += 1
             (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
             forged_count = bench.report_manifest(manifest_path, output)

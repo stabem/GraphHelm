@@ -21,6 +21,29 @@ def records(path: Path) -> list[dict]:
     return result
 
 
+def verified_archive(archive: dict, *, cli: str) -> tuple[Path, list[Path]]:
+    """Bind every replayed native journal to its checked archive digest."""
+    root_value = archive.get("archivedRoot")
+    hashes = archive.get("archive")
+    if not isinstance(root_value, str) or not isinstance(hashes, dict) or cli not in {"codex", "claude"}:
+        raise ValueError("native archive inventory is missing")
+    root = Path(root_value)
+    directory = root.parent
+    prefix = "child-" if cli == "codex" else "agent-"
+    actual = {path.name for path in directory.glob("*.jsonl")}
+    if (root.name != "root.jsonl" or not directory.is_dir() or
+            not all(isinstance(name, str) and (name == "root.jsonl" or
+                    (name.startswith(prefix) and name.endswith(".jsonl")))
+                    for name in hashes) or set(hashes) != actual):
+        raise ValueError("native archive journal inventory differs")
+    for name, digest in hashes.items():
+        path = directory / name
+        if (path.is_symlink() or not path.is_file() or not isinstance(digest, str)
+                or hashlib.sha256(path.read_bytes()).hexdigest() != digest):
+            raise ValueError("native archive journal hash differs")
+    return root, sorted(directory / name for name in hashes if name != "root.jsonl")
+
+
 def native_review(path: Path) -> dict:
     """Read a terminal review from a real CLI envelope, never a standalone verdict row."""
     try:

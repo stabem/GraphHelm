@@ -44,14 +44,8 @@ def _attempt(path: Path, *, cli: str, project: Path) -> dict:
             raise ValueError("archived token accounting is incomplete")
         if receipt.get("stdoutSha256") != _digest(stdout) or receipt.get("stderrSha256") != _digest(stderr):
             raise ValueError("raw attempt hash differs from receipt")
-        archive_root = Path(archive["archivedRoot"]).parent
-        if not isinstance(archive.get("archive"), dict) or not archive["archive"]:
-            raise ValueError("owned session archive is missing")
-        if any(not (archive_root / name).is_file() or _digest(archive_root / name) != digest
-               for name, digest in archive["archive"].items()):
-            raise ValueError("owned session archive hash differs")
         import native_session_evidence as evidence
-        root_log = Path(archive["archivedRoot"])
+        root_log, children = evidence.verified_archive(archive, cli=cli)
         if cli == "claude":
             native_stream = evidence.records(stdout)
             finals = [row for row in native_stream if row.get("type") == "result"]
@@ -65,7 +59,6 @@ def _attempt(path: Path, *, cli: str, project: Path) -> dict:
                                    or row.get("isSidechain") is not False
                                    or row.get("agentId") is not None for row in metadata):
                 raise ValueError("Claude archived root provenance differs")
-            children = sorted(archive_root.glob("agent-*.jsonl"))
             replay = (evidence.claude_owned_tree(stdout, children, project=project,
                                                  session_id=archive["rootSession"])
                       if children else evidence.claude_pipeline(stdout))
@@ -81,7 +74,7 @@ def _attempt(path: Path, *, cli: str, project: Path) -> dict:
                 "input_tokens": wire["input"], "output_tokens": wire["output"],
                 "cached_input_tokens": wire["cacheRead"]}:
                 raise ValueError("Codex native stdout counters differ from receipt")
-            replay = evidence.codex_tree(root_log, sorted(archive_root.glob("child-*.jsonl")),
+            replay = evidence.codex_tree(root_log, children,
                 project=project, root_thread=archive["rootSession"],
                 stdout_usage=evidence.counters({"input_tokens": wire["input"],
                     "output_tokens": wire["output"],

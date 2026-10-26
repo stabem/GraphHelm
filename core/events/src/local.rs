@@ -1090,6 +1090,20 @@ impl LocalEventRepository {
         stream_id: &str,
         after: u64,
     ) -> Result<(Vec<EventEnvelope>, Option<StreamHead>), EventRepositoryError> {
+        self.read_stream_page(scope, stream_id, after, MAX_READ_ALL)
+    }
+
+    /// One page of a stream: at most `limit` events past `after`, oldest first, and the stream's
+    /// head. Only the sealed segments and batch lines past `after` are read, and the walk stops at
+    /// the page's end, so a page costs its own size, not the stream's history.
+    pub fn read_stream_page(
+        &self,
+        scope: &RepositoryScope,
+        stream_id: &str,
+        after: u64,
+        limit: usize,
+    ) -> Result<(Vec<EventEnvelope>, Option<StreamHead>), EventRepositoryError> {
+        let limit = limit.min(MAX_READ_ALL);
         OpaqueId::parse(stream_id).map_err(|_| EventRepositoryError::Invalid)?;
         self.with_shared_lock(|| {
             let state = self.load_state("read_stream_after")?;
@@ -1112,10 +1126,14 @@ impl LocalEventRepository {
                 })
                 .transpose()?;
             // #1721: only the segments past `after` are read.
-            let events =
-                self.stream_events_after(&state, scope, stream_id, after, MAX_READ_ALL + 1)?;
-            if events.len() > MAX_READ_ALL {
-                return Err(EventRepositoryError::LimitExceeded);
+            let events = self.stream_events_after(&state, scope, stream_id, after, limit + 1)?;
+            if events.len() > limit {
+                if limit == MAX_READ_ALL {
+                    return Err(EventRepositoryError::LimitExceeded);
+                }
+                let mut events = events;
+                events.truncate(limit);
+                return Ok((events, head));
             }
             Ok((events, head))
         })

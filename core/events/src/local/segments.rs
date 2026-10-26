@@ -443,24 +443,110 @@ impl LocalEventRepository {
         Ok(ctx)
     }
 
-    /// Reads one sealed segment's batches, after checking its bytes against the seal.
-    fn read_sealed_segment(
+    /// Reads one sealed segment's batches, after checking its bytes against the seal. With
+    /// `stream` set, only that stream's batches are read, by seeking to the lines the segment's
+    /// index names; the index is built by the one full digest check this process makes of the
+    /// segment (see [`SegmentIndex`]).
+    pub(super) fn read_sealed_segment(
         &self,
         sealed: &SealedSegment,
+        stream: Option<&str>,
+        after: u64,
     ) -> Result<Vec<PhysicalBatch>, EventRepositoryError> {
+        let mut batches = Vec::new();
+        self.visit_sealed_segment(sealed, stream, after, |batch| {
+            batches.push(batch);
+            Ok(true)
+        })?;
+        Ok(batches)
+    }
+
+    /// [`Self::read_sealed_segment`] one batch at a time: `visit` returns whether to go on, so a
+    /// page that fills stops reading.
+    fn visit_sealed_segment(
+        &self,
+        sealed: &SealedSegment,
+        stream: Option<&str>,
+        after: u64,
+        mut visit: impl FnMut(PhysicalBatch) -> Result<bool, EventRepositoryError>,
+    ) -> Result<bool, EventRepositoryError> {
         let mut file = open_sealed_segment(&self.root_handle, &self.root, sealed.index())?;
-        if file.metadata()?.len() != sealed.seal.segment_bytes {
+        let metadata = file.metadata()?;
+        if metadata.len() != sealed.seal.segment_bytes {
             return Err(EventRepositoryError::IntegrityAt("segments:sealed-length"));
+        }
+        let cache_key = (
+            self.root.clone(),
+            sealed.index(),
+            sealed.seal_sha256.clone(),
+        );
+        let modified = metadata.modified().ok();
+        if let Some(index) = cached_index(&cache_key, metadata.len(), modified) {
+            if let Some(key) = stream {
+                for &(start, end, _) in index
+                    .lines
+                    .get(key)
+                    .map_or(&[][..], Vec::as_slice)
+                    .iter()
+                    .filter(|line| line.2 > after)
+                {
+                    let line = read_bounded_range(&mut file, start, end)?;
+                    if !visit(parse_physical_batch(self.schemas, &line)?)? {
+                        return Ok(false);
+                    }
+                }
+                return Ok(true);
+            }
+            let bytes = read_bounded_range(&mut file, 0, sealed.seal.segment_bytes)?;
+            for line in bytes
+                .split(|byte| *byte == b'\n')
+                .filter(|line| !line.is_empty())
+            {
+                if !visit(parse_physical_batch(self.schemas, line)?)? {
+                    return Ok(false);
+                }
+            }
+            return Ok(true);
         }
         let bytes = read_bounded_range(&mut file, 0, sealed.seal.segment_bytes)?;
         if wire_sha256(&bytes) != sealed.seal.segment_sha256 {
             return Err(EventRepositoryError::IntegrityAt("segments:sealed-digest"));
         }
-        bytes
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.is_empty())
-            .map(|line| parse_physical_batch(self.schemas, line))
-            .collect()
+        #[cfg(test)]
+        SEGMENT_DIGEST_CHECKS.with(|count| count.set(count.get() + 1));
+        let mut lines: BTreeMap<String, Vec<(u64, u64, u64)>> = BTreeMap::new();
+        let mut batches = Vec::new();
+        let mut start = 0_usize;
+        for line in bytes.split(|byte| *byte == b'\n') {
+            let end = start + line.len();
+            if !line.is_empty() {
+                let batch = parse_physical_batch(self.schemas, line)?;
+                let key = stream_key(&batch.scope, &batch.stream_id)?;
+                let last = batch.events.last().map_or(0, |event| event.sequence);
+                if stream.is_none_or(|wanted| wanted == key) && (stream.is_none() || last > after) {
+                    batches.push(batch);
+                }
+                lines
+                    .entry(key)
+                    .or_default()
+                    .push((start as u64, end as u64, last));
+            }
+            start = end + 1;
+        }
+        store_index(
+            cache_key,
+            Arc::new(SegmentIndex {
+                length: metadata.len(),
+                modified,
+                lines,
+            }),
+        );
+        for batch in batches {
+            if !visit(batch)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Visits the history's batches oldest first: the sealed segments, then the active one. With
@@ -486,10 +572,8 @@ impl LocalEventRepository {
                     continue;
                 }
             }
-            for batch in self.read_sealed_segment(sealed)? {
-                if !visit(&batch)? {
-                    return Ok(());
-                }
+            if !self.visit_sealed_segment(sealed, stream, after, |batch| visit(&batch))? {
+                return Ok(());
             }
         }
         for batch in &state.batches {
@@ -819,3 +903,55 @@ pub fn concatenated_journal(root: &Path) -> Result<Vec<u8>, EventRepositoryError
 
 #[cfg(test)]
 mod tests;
+
+/// What one full digest check of a sealed segment learned, kept for the life of the process: a
+/// sealed segment is immutable and named by its seal's digest, so it is verified once, and every
+/// later read seeks straight to its stream's lines. The cached result is trusted only while the
+/// file still has the length and modification time it had when it was verified; any change sends
+/// the reader back to the full digest check, so a rewritten segment is still refused.
+pub(super) struct SegmentIndex {
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+    /// Each stream key's batch lines: byte range `[start, end)` without the newline, and the
+    /// batch's last sequence, so a reader past it skips the line unparsed.
+    lines: BTreeMap<String, Vec<(u64, u64, u64)>>,
+}
+
+type SegmentKey = (std::path::PathBuf, u64, String);
+
+/// Bounds the process-wide cache; past it, the cache starts over (each entry is only an index).
+const MAX_CACHED_SEGMENTS: usize = 256;
+
+fn segment_cache()
+-> &'static std::sync::Mutex<std::collections::HashMap<SegmentKey, Arc<SegmentIndex>>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<SegmentKey, Arc<SegmentIndex>>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+fn cached_index(
+    key: &SegmentKey,
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+) -> Option<Arc<SegmentIndex>> {
+    let cache = segment_cache().lock().ok()?;
+    let index = cache.get(key)?;
+    (modified.is_some() && index.length == length && index.modified == modified)
+        .then(|| Arc::clone(index))
+}
+
+fn store_index(key: SegmentKey, index: Arc<SegmentIndex>) {
+    if let Ok(mut cache) = segment_cache().lock() {
+        if cache.len() >= MAX_CACHED_SEGMENTS {
+            cache.clear();
+        }
+        cache.insert(key, index);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only: how many full digest checks of a sealed segment this thread made.
+    pub(super) static SEGMENT_DIGEST_CHECKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}

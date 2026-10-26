@@ -114,7 +114,7 @@ impl LocalEventRepository {
                 let sealed = &state.sealed[position];
                 generation.restart_walk_bounds();
                 let events = self
-                    .read_sealed_segment(sealed)?
+                    .read_sealed_segment(sealed, Some(&key), 0)?
                     .into_iter()
                     .filter(|batch| &batch.scope == scope && batch.stream_id == stream_id)
                     .flat_map(|batch| batch.events)

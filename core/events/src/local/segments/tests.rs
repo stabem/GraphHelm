@@ -619,3 +619,45 @@ fn a_handle_opened_before_another_handles_rotation_appends_to_the_new_segment() 
             .contains("request-4")
     );
 }
+
+/// A sealed segment is digest-checked once per process, not once per read: repeated paged reads
+/// seek to their stream's lines through the index that first check built. A rewrite of the
+/// segment after that check (same length, new modification time) still refuses the read.
+#[test]
+fn paged_reads_check_each_sealed_segment_once_and_a_later_rewrite_is_still_refused() {
+    use super::SEGMENT_DIGEST_CHECKS;
+    let directory = tempfile::tempdir().unwrap();
+    let repository = rotating(directory.path(), 2);
+    append_batches(&repository, 1, 6);
+    let sealed = repository.load_state("test").unwrap().sealed.len() as u64;
+    assert!(sealed >= 2, "the store must hold several sealed segments");
+    let before = SEGMENT_DIGEST_CHECKS.with(std::cell::Cell::get);
+    for after in [0, 1, 2, 0, 1, 2, 0, 3] {
+        let (events, _) = repository
+            .read_stream_after(&scope(), "stream-1", after)
+            .unwrap();
+        assert_eq!(events.len() as u64, 6 - after);
+    }
+    assert_eq!(replay(&repository).len(), 6);
+    let checks = SEGMENT_DIGEST_CHECKS.with(std::cell::Cell::get) - before;
+    assert!(
+        checks <= sealed,
+        "{checks} digest checks for {sealed} sealed segments over nine reads"
+    );
+
+    let journal = directory.path().join("journal.jsonl");
+    let mut bytes = std::fs::read(&journal).unwrap();
+    let position = bytes.iter().position(|byte| *byte == b'a').unwrap();
+    bytes[position] = b'b';
+    std::fs::write(&journal, &bytes).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&journal)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(60))
+        .unwrap();
+    assert!(matches!(
+        repository.read_stream_after(&scope(), "stream-1", 0),
+        Err(EventRepositoryError::IntegrityAt("segments:sealed-digest"))
+    ));
+}

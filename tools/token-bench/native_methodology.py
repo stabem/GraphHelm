@@ -193,6 +193,8 @@ def phase_plan(workflow: dict, context: dict, *, plan_id: str, predecessor: str 
                "frameworkStage": phase.get("frameworkStage", phase["id"]),
                "prompt": phase["prompt"], "promptSha256": _json_hash(phase["prompt"]),
                "requiredArtifacts": list(phase.get("requiredArtifacts", [])),
+               "requiredOperations": list(phase.get("requiredOperations", [])),
+               "requiredArtifactGlobs": list(phase.get("requiredArtifactGlobs", [])),
                "requiredWitnessKinds": list(phase.get("requiredWitnessKinds", ["native_stream", "native_skill"])),
                "requiredWitnesses": list(phase.get("requiredWitnesses", [])),
                "costKinds": list(phase.get("costKinds", [phase["id"]]))} for phase in workflow["phases"]]
@@ -442,6 +444,17 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     parsed_usage = base.usage(cli_config["cli"], captured["stdout"])
     provider_error = base.native_provider_error(cli_config["cli"], captured["stdout"], captured["stderr"])
     quota_after = _quota_observation(cli_config, project_root, stdout=captured["stdout"])
+    operations = {"status": "observed", "results": []}
+    if phase.get("requiredOperations"):
+        try:
+            from native_session_evidence import required_operations
+            operations = required_operations(stdout, cli=cli_config["cli"], requirements=phase["requiredOperations"])
+        except (ImportError, OSError, ValueError, KeyError) as error:
+            operations = {"status": "unknown", "reason": str(error)}
+    required_globs = []
+    for pattern in phase.get("requiredArtifactGlobs", []):
+        required_globs.extend(str(path) for path in project_root.glob(pattern) if path.is_file())
+    artifacts_observed = bool(required_globs) if phase.get("requiredArtifactGlobs") else True
     archive_root = cli_config.get("archiveRoot")
     if not archive_root:
         raise ValueError("native session archive root is required")
@@ -475,6 +488,7 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
                ("exit", "seconds", "timeout", "cleanupConfirmed", "truncated")},
                "usage": parsed_usage, "sessionEvidence": session_evidence, "providerError": provider_error,
                "quotaBefore": quota_before, "quotaAfter": quota_after, "archivedSession": archived,
+               "operations": operations, "requiredArtifactFiles": sorted(required_globs),
                "stdoutPath": stdout.name, "stderrPath": stderr.name,
                "rawSha256": {stdout.name: base.digest(stdout), stderr.name: base.digest(stderr)},
                "requiredArtifactHashes": required, "predecessorArtifacts": predecessor_artifacts}
@@ -491,6 +505,7 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
                        and parsed_usage.get("counts") is not None
                        and receipt["fidelity"].get("status") == "observed"
                        and archived.get("status") == "observed"
+                       and operations.get("status") == "observed" and artifacts_observed
                        and (quota_before is not None and quota_after is not None
                             and quota_before.get("allowed") is True and quota_after.get("allowed") is True))
     receipt["status"] = "complete" if native_complete else ("failed" if provider_error or captured["exit"] != 0 else "incomplete")
@@ -531,7 +546,9 @@ def freeze(registry_path: Path, *, cli_paths: dict[str, Path], models: dict[str,
                 [{"workflow": row["id"], "phase": phase["id"],
                   "promptSha256": _json_hash(phase["prompt"]),
                   "requiredArtifacts": list(phase.get("requiredArtifacts", [])),
-                  "requiredWitnesses": list(phase.get("requiredWitnesses", []))}
+                  "requiredWitnesses": list(phase.get("requiredWitnesses", [])),
+                  "requiredOperations": list(phase.get("requiredOperations", [])),
+                  "requiredArtifactGlobs": list(phase.get("requiredArtifactGlobs", []))}
                  for row in workflows for phase in row["phases"]],
                 "winner": None}
     base.publish(output, manifest)

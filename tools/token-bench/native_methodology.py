@@ -996,6 +996,13 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
     endpoint_ok = endpoint_ok and len(reviewer_rows) == 1
     aggregate = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
     aggregate_known = True
+    accounted_raw_dirs = {f"phase-{row.get('phase')}-{row.get('attempt', {}).get('attemptId')}"
+                          for row in rows if isinstance(row.get("attempt"), dict)}
+    unplanned_attempt_dirs = sorted(path.name for path in attempts_root.glob("phase-*")
+                                    if path.is_dir() and path.name not in accounted_raw_dirs)
+    if unplanned_attempt_dirs:
+        aggregate_known = False
+        endpoint_ok = False
     usage_groups = {}
     for row in rows:
         cli = row.get("cli")
@@ -1026,7 +1033,10 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
             "usageAggregate": aggregate if aggregate_known else None,
             "usageGroups": list(usage_groups.values()) if aggregate_known else None,
             "acceptedEndpoint": endpoint, "winner": None,
-            "limitations": [] if complete and endpoint_ok else ["missing or incomplete native phase evidence"]}
+            "unplannedAttemptDirs": unplanned_attempt_dirs,
+            "limitations": [] if complete and endpoint_ok else
+                (["unplanned native attempts require a complete token ledger"]
+                 if unplanned_attempt_dirs else ["missing or incomplete native phase evidence"])}
 
 
 def report_attempts(manifest: dict, attempts: list[dict]) -> dict:

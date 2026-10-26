@@ -8,6 +8,33 @@ import native_session_evidence as evidence
 
 
 class NativeVendorWorkflowContracts(unittest.TestCase):
+    def test_openspec_explore_requires_native_read_without_writing_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for method, skills in {
+                "speckit": ("speckit-constitution", "speckit-specify", "speckit-plan",
+                            "speckit-tasks", "speckit-implement"),
+                "openspec": ("openspec-explore", "openspec-propose", "openspec-apply-change"),
+                "bmad": ("bmad", "bmad-build", "bmad-code-review"),
+                "superpowers": ("using-superpowers", "systematic-debugging",
+                                "test-driven-development", "requesting-code-review",
+                                "verification-before-completion"),
+            }.items():
+                for name in skills:
+                    skill = root / method / ".claude/skills" / name / "SKILL.md"
+                    skill.parent.mkdir(parents=True, exist_ok=True)
+                    skill.write_text(name, encoding="utf-8")
+            registry = vendor.build_vendor_registry(
+                project_root=root / "openspec", task_ref="task-record-binding",
+                asset_root=root, project_roots={name: root / name for name in vendor.PINNED},
+                cli="claude", executable=Path(__file__), public_files=[], public_tests=[],
+                scope=["task_record.py"], task_brief="fix binding")
+            explore = next(phase for workflow in registry["workflows"]
+                           if workflow["id"] == "native-openspec"
+                           for phase in workflow["phases"] if phase["id"] == "explore")
+            self.assertEqual(explore["requiredArtifactGlobs"], [])
+            self.assertEqual(explore["requiredOperations"][0]["name"], "explore")
+
     def test_phase_uses_native_prompt_and_phase_skill_witness_without_cli_flags(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

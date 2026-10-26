@@ -384,6 +384,13 @@ class NativeMethodologyContracts(unittest.TestCase):
             report = bench.report_manifest(manifest_path, output)
             self.assertEqual(report["attempts"][0]["status"], "complete")
             self.assertEqual(report["usageAggregate"], counts)
+            extra = output / "phase-setup-retry-1"
+            extra.mkdir()
+            retried = bench.report_manifest(manifest_path, output)
+            self.assertEqual(retried["unplannedAttemptDirs"], [extra.name])
+            self.assertIsNone(retried["usageAggregate"])
+            self.assertFalse(retried["complete"])
+            extra.rmdir()
             injected = project / "injected.txt"
             injected.write_text("unexpected new context\n", encoding="utf-8")
             added = bench.report_manifest(manifest_path, output)

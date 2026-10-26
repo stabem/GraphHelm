@@ -132,7 +132,7 @@ def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path
         ("implement", "speckit-implement", ["read tasks, plan, contracts and checklists; implement and run declared tests"], ["**/*"]),
         ]
     openspec = [
-        ("explore", "openspec-explore", ["run openspec list --json; keep exploration read-only"], ["openspec/changes/*/**"]),
+        ("explore", "openspec-explore", ["run openspec list --json; keep exploration read-only"], []),
         ("propose", "openspec-propose", ["confirm local root; create proposal, specs, design and tasks; stop at the native planning boundary"], ["openspec/changes/*/proposal.md", "openspec/changes/*/tasks.md"]),
         ("apply", "openspec-apply-change", ["start a new native request after proposal review; read apply instructions and every context file; implement and validate"], ["**/*"]),]
     bmad = [

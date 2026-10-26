@@ -205,3 +205,14 @@ the processed-token total. Claude's processed input includes new input, cache re
 cache writes; Codex's reported input already includes cached input, so cache reads are not
 added again. These are provider wire counters, not a subscription bill. A single successful
 pilot is evidence of feasibility, not an estimate of a methodology gain.
+
+For multi-session qualification pilots, run `native_pilot_ledger.py` over the complete
+private `runs/` directory (or an explicit comma-separated set of phase prefixes). It
+discovers every matching attempt, including failed setup and linked retries, verifies
+raw stream and owned archive hashes, and refuses a total if any attempt lacks counters.
+The ledger does not certify method fidelity or an accepted endpoint. A phase marked
+`observed` only proves that phase's witnesses; method completion also requires every
+native boundary and the independent quality endpoint.
+The frozen-manifest report refuses a total and an accepted result if extra native
+attempt directories exist outside its planned phase receipts. Use the pilot ledger
+to account for those attempts before interpreting any cost result.

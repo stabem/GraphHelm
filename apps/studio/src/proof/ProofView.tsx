@@ -58,6 +58,9 @@ export function ProofView({ runtime, journeys, error, executionId, onRan, initia
   // A list read again carries the result; a run still playing stays until its next answer.
   // #1953: a journey the list says is running is seeded, so a reload still shows it running.
   useEffect(() => { setLive((before) => liveAfterList(before, journeys)); }, [journeys]);
+  // #1953: a Proof view opened again reads the journey list afresh, so a run started from an
+  // earlier view (the list says running) is seen even when another journey is selected.
+  useEffect(() => { onRan(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const selectedId = journeys === null ? null : (journeys.find((flow) => flow.id === picked) ?? journeys[0] ?? null)?.id ?? null;
   // #1950: a running journey that no open panel follows is read from the Runtime here, so its card
   // keeps reading running after the owner selects another journey, and shows the result at its end.

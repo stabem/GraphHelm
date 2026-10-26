@@ -429,7 +429,7 @@ button { font: inherit; }
 .more { font-size: var(--fs-meta); color: var(--faint); }
 .small { font-size: 11px; }
 .ghost.small { align-self: flex-start; padding: 4px 10px; }
-.serves { font-size: var(--fs-meta); color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.serves { font-size: var(--fs-meta); color: var(--accent); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 .serves.unlinked { color: var(--muted); font-style: italic; }
 /* #1934: a 300px agent panel that folds to a 40px rail (Lanes.dc.html). */
 .agent-panel { flex: none; width: 300px; border-left: 1px solid var(--edge); padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
@@ -502,6 +502,7 @@ button { font: inherit; }
 .cap-fill.late { background: #ff6b6b; }
 .feed li { display: flex; gap: 8px; font-size: 11px; min-width: 0; }
 .feed-who { flex: none; width: 88px; overflow-wrap: break-word; font-size: var(--fs-meta); }
+.feed li > time { flex: none; white-space: nowrap; }
 .feed li > .muted { overflow-wrap: break-word; min-width: 0; }
 @media (max-width: 1100px) { .lane-panels { grid-template-columns: 1fr; } }
 

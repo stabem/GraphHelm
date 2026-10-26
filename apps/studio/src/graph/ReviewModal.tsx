@@ -128,7 +128,7 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
                 </label>
               )}
             </div>
-            <section aria-label="Review frame" className="review-frame">
+            <section aria-label="Review frame" className={`review-frame${shownViewport === "mobile" ? " phone-fit" : ""}`}>
               <div className="compare-bar">
                 <span className="mono small review-url">{(shownViewport === "mobile" ? mobileUrl : shot?.frameUrl) ?? "no frame"}</span>
                 <div role="group" aria-label="Viewport" className="seg-group">

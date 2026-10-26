@@ -38,7 +38,7 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: list, name: In review, text: Observe issue graph and work kanban, because: "issue #721's PR waits for a reviewer, so its card sits in the In review column"}, {role: heading, name: In review 1, because: the In review column counts the one card in it}, {role: list, name: Owner requests, absent: true, because: in Kanban view the request graph's list is replaced by the columns}]
+    expect: [{role: list, name: In review, text: Observe issue graph and work kanban, because: "issue #721's PR waits for a reviewer, so its card sits in the In review column"}, {role: heading, name: In review 1, because: the In review column counts the one card in it}, {role: list, name: Owner requests, absent: true, because: in Kanban view the request graph's list is replaced by the columns}, {role: heading, name: "Merged, waits proof 0", because: "no fixture PR is merged, and the column is on screen at 1280 next to In review"}, {role: heading, name: Proven 0, because: "nothing is proven yet, and the last column fits on screen at 1280 instead of scrolling away"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
 edges:
   - id: filtered.kanban

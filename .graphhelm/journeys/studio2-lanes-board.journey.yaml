@@ -17,7 +17,7 @@ screens:
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: listitem, name: "Blocked, empty", because: "the planner recorded work just now, so it is not idle over 30 min and its card leaves the Blocked column"}, {role: region, name: Question, absent: true, because: the planner's question goes with its card once the filter hides it}, {role: region, name: What I asked, text: Show the work graph for the fixture run, because: the filter narrows agents only; the owner's request stays in WHAT I ASKED}]
+    expect: [{role: listitem, name: "Blocked, empty", because: "the planner recorded work just now, so it is not idle over 30 min and its card leaves the Blocked column"}, {role: region, name: Question, absent: true, because: "the planner's card, which carries its question, leaves the board once the filter hides it"}, {role: complementary, name: Agent, absent: true, because: "the filter hid the selected planner, so its agent panel closes instead of showing an agent the board no longer lists"}, {role: region, name: What I asked, text: Show the work graph for the fixture run, because: the filter narrows agents only; the owner's request stays in WHAT I ASKED}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/asked.ts, apps/studio/src/lanes/board.ts, apps/studio/src/topbar/Topbar.tsx]
   - id: lanes
     title: The planner's card is in the Blocked column

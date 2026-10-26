@@ -3,7 +3,7 @@ id: studio2-lanes-control
 title: "Wake, reassign or stop an agent"
 name: Control an agent
 feature: Studio
-purpose: "Wake, Reassign and Stop on an agent change its state, and the change shows on the board."
+purpose: "On the blocked planner (holding #1556), Stop then Keep running leaves it on the board, Wake records a nudge, Reassign takes #1556 off its card, and Stop then Confirm stop removes it from the board."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -17,49 +17,63 @@ screens:
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: button, name: Wake}, {role: button, name: Reassign}, {role: button, name: Stop}]
+    expect: [{role: button, name: Wake, because: the selected planner can be nudged to look at its work again}, {role: button, name: Reassign, because: "the planner holds #1556, so its work can be handed to another lane"}, {role: button, name: Stop, because: the planner can be retired from the board}, {role: list, name: Blocked, text: "#1556", because: "the planner sits in Blocked holding #1556 before any control is pressed"}]
+    scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]
+  - id: kept
+    title: Keep running leaves the agent on the board
+    url: /?session=studio-fixture&run=demo&view=lanes
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: list, name: Blocked, text: planner, because: "the owner cancelled the stop, so the planner's card is still in Blocked"}, {role: button, name: Stop, because: the cancelled confirm returns to the plain Stop button}, {role: status, name: Agent stopped, absent: true, because: "nothing was stopped, so no stop is reported"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]
   - id: reassigned
-    title: Reassign moves the agent's work
+    title: Reassign takes the work off the agent's card
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Work reassigned}, {role: list, name: Agent board, text: reassigned, because: the board marks an agent whose work was moved with the word reassigned}]
+    expect: [{role: status, name: Work reassigned, because: "the Runtime accepted the reassignment of #1556"}, {role: list, name: Blocked, text: no task, because: "the planner's card no longer holds #1556: it shows no task"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]
   - id: stopped
-    title: The stopped agent shows as stopped
+    title: The stopped agent leaves the board
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Agent stopped}, {role: list, name: Agent board, text: stopped, because: the board marks a stopped agent with the word stopped}]
+    expect: [{role: status, name: Agent stopped, because: the Runtime recorded the confirmed stop}, {role: listitem, name: "Blocked, empty", because: "the planner was the only card in Blocked, and a stopped agent is no longer drawn there"}, {role: list, name: Blocked, absent: true, because: no card is left in the Blocked column}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]
   - id: woken
-    title: Wake shows on the board
+    title: Wake is recorded and the work stays put
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Wake sent}, {role: list, name: Agent board, text: woken, because: the board marks an agent that was just woken with the word woken}]
+    expect: [{role: status, name: Wake sent, because: the Runtime accepted the wake for the planner}, {role: listitem, name: Recent controls, text: planner woken, because: "a wake nudges the lane and changes no card state, so the board records it under Recent controls"}, {role: list, name: Blocked, text: "#1556", because: "neither the cancelled stop nor the wake moved work: the planner is still on the board holding #1556"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/drafts.ts, apps/studio/src/lanes/board.ts]
 edges:
-  - id: agent.woken
+  - id: agent.kept
     from: agent
+    to: kept
+    why: "Keep running cancels a stop the owner started by mistake, and nothing changes."
+    acts:
+      - {kind: activate, role: button, name: Stop}
+      - {kind: activate, role: button, name: Keep running}
+  - id: kept.woken
+    from: kept
     to: woken
-    why: Wake on an agent is recorded and the board shows it woken.
+    why: "Wake on an agent is recorded, and the round trip shows the cancelled stop left the agent and its work in place."
     acts:
       - {kind: activate, role: button, name: Wake}
   - id: reassigned.stopped
     from: reassigned
     to: stopped
-    why: "Stop, once confirmed, stops the agent and the board shows it stopped."
+    why: "Stop, once confirmed, retires the agent and the board drops its card."
     acts:
       - {kind: activate, role: button, name: Stop}
       - {kind: activate, role: button, name: Confirm stop}
   - id: woken.reassigned
     from: woken
     to: reassigned
-    why: Reassign moves the agent's work and the board shows it reassigned.
+    why: Reassign moves the agent's work off its card.
     acts:
       - {kind: activate, role: button, name: Reassign}
 paths:
-  main: [agent.woken, woken.reassigned, reassigned.stopped]
+  main: [agent.kept, kept.woken, woken.reassigned, reassigned.stopped]
 drift: []

@@ -526,7 +526,7 @@ async function run(r) {
       if (await locator.count()===1 && await locator.first().isVisible()) present.push(locator.first());
     }
     for (const locator of [...present,...[...present].reverse()]) {
-      await locator.evaluate(el=>el.scrollIntoView({block:'nearest',inline:'nearest'}),undefined,{timeout:TIMEOUT}).catch(()=>{});
+      await locator.evaluate(el=>el.scrollIntoView({block:'nearest',inline:'nearest'}),undefined,{timeout:TIMEOUT});
     }
     const rects=new Map();
     for (const expected of r.expect) {
@@ -538,7 +538,8 @@ async function run(r) {
       if (visible && expected.role==='img' && expected.absent!==true) {
         visible=await locator.first().evaluate(async el=>{
           if (!(el instanceof HTMLImageElement)) return true;
-          if (!el.complete) await Promise.race([el.decode().catch(()=>{}),new Promise(done=>setTimeout(done,5000))]);
+          // A broken image rejects decode: that is the answer (not seen), not an error.
+          if (!el.complete && !await Promise.race([el.decode().then(()=>true,()=>false),new Promise(done=>setTimeout(()=>done(true),5000))])) return false;
           return el.complete && el.naturalWidth>=16 && el.naturalHeight>=16;
         },undefined,{timeout:TIMEOUT}).catch(()=>false);
       }

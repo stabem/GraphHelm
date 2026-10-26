@@ -3,7 +3,7 @@ id: studio2-proof-run
 title: Run a journey in Proof
 name: Run a journey
 feature: Studio
-purpose: "Pressing Run shows Preparing the browser with its log, then the steps run and step cards fill with frames and pass or fail per viewport."
+purpose: "Pressing Run on the fixture's studio-home journey shows Preparing the browser with a readable log, then the steps run and each step card shows its frame and a pass verdict for web and for mobile."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -13,32 +13,32 @@ risks: [critical_ux, recovery]
 viewports: [web, mobile]
 screens:
   - id: journeys
-    title: A journey is selected
-    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-run
+    title: A journey is selected and has not run
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio-home
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: list, name: Journeys}, {role: button, name: Run}]
+    expect: [{role: button, name: Run, because: "the selected journey offers Run, the one press that starts it"}, {role: listitem, name: Step 1, text: web not run, because: "before the press no viewport has played step 1, so the card says not run"}, {role: status, name: Preparing the browser, absent: true, because: nothing is being prepared until the owner presses Run}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
   - id: log
     title: The run console is open
-    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-run
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio-home
     ignoreQuery: [session, project]
     state: loading
-    expect: [{role: log, name: Run console, text: observer, because: "the run console prints the browser observer's setup lines, which name the observer"}, {role: button, name: Hide log}]
+    expect: [{role: log, name: Run console, text: Browser observer ready, because: "the run console prints the observer check the run starts with, so the owner can read whether the browser was ready"}, {role: button, name: Hide log, because: the open console can be closed again with the same button}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
   - id: preparing
     title: The browser is being prepared
-    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-run
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio-home
     ignoreQuery: [session, project]
     state: loading
-    expect: [{role: status, name: Preparing the browser}, {role: button, name: Show log}]
+    expect: [{role: status, name: Preparing the browser, because: "until the first screen is reached the run checks the observer, launches Chromium and opens the app, and the run bar says so"}, {role: button, name: Show log, because: the preparation's lines can be read while it runs}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
   - id: ran
     title: Step cards hold frames and verdicts per viewport
-    url: /?session=studio-fixture&run=demo&view=proof&journey=studio2-proof-run
+    url: /?session=studio-fixture&run=demo&view=proof&journey=studio-home
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: list, name: Steps}, {role: img, name: Step 1 frame}, {role: listitem, name: Step 1, text: web, because: "every run plays both widths, so step 1 carries a web verdict"}, {role: listitem, name: Step 1, text: mobile, because: "every run plays both widths, so step 1 carries a mobile verdict"}]
+    expect: [{role: img, name: Step 1 frame, because: "the finished run captured step 1, and its card shows that frame"}, {role: listitem, name: Step 1, text: web ✓, because: "step 1 passed at the web width, and the card marks web with a check instead of not run"}, {role: listitem, name: Step 1, text: mobile ✓, because: "step 1 passed at the mobile width too, and the card marks mobile with a check"}, {role: status, name: Passed, because: the run bar gives the run's verdict once both widths finished}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
 edges:
   - id: journeys.preparing
@@ -52,7 +52,9 @@ edges:
     to: ran
     why: When the run ends each step card holds its frame and its verdict for web and for mobile.
     acts:
-      - {kind: wait_for, role: list, name: Steps}
+      - {kind: wait_for, role: status, name: Running}
+      - {kind: wait_for, role: img, name: Step 1 frame}
+      - {kind: wait_for, role: status, name: Passed}
   - id: preparing.log
     from: preparing
     to: log

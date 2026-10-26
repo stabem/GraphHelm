@@ -401,6 +401,53 @@ FLOW
   done
   grep -q '"recorded":true' "$dir/.graphhelm/observer-preview.out"     || echo "fixture: the observer preview did not record (see $dir/.graphhelm/observer-preview.out)" >&2
   fi
+  # studio2-proof-run presses Run on studio-home, a short browser draft of this fixture's Studio,
+  # never on itself: a run of studio2-proof-run would press Run on the run that is playing it and
+  # never finish. The observer is warm (the preview above set it up), so the run says "Preparing
+  # the browser" until its first screen, not while installing: an install downloads Chromium and
+  # outlasts every wait a flow can make.
+  if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-proof-run ]; then
+    cat > "$dir/project/.graphhelm/journeys/studio-home.journey.yaml" <<FLOW
+schema: graphhelm.journey-flow/1
+id: studio-home
+title: Open the Studio and its Lanes
+purpose: The fixture's Studio opens on its project and switches to Lanes.
+status: draft
+approved: null
+base: http://127.0.0.1:$sport
+actors: [owner]
+secrets: []
+risks: []
+screens:
+  - id: home
+    title: The Studio opens on the project
+    url: /?session=studio-fixture
+    ignoreQuery: [session, project, run, view]
+    state: stable
+    expect: [{role: tab, name: Lanes, because: the Studio offers its three views as tabs}]
+    scope: unknown
+  - id: lanes
+    title: The Lanes view is open
+    url: /?session=studio-fixture
+    ignoreQuery: [session, project, run, view]
+    state: success
+    expect: [{role: region, name: Lanes, because: the Lanes tab opens the lanes board}]
+    scope: unknown
+edges:
+  - id: open
+    from: home
+    to: lanes
+    why: The Lanes tab opens the lanes board.
+    acts:
+      - {kind: activate, role: tab, name: Lanes}
+paths:
+  main: [open]
+drift: []
+FLOW
+    "$bin" --json journey compile studio-home --fmt --include-draft --project "$dir/project" > /dev/null 2>&1 || true
+    git -C "$dir/project" add -f -- .graphhelm/journeys
+    git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: studio-home' || true
+  fi
   for pid in $(fixture_listeners record "$rport"); do
     if [ -r /proc/$$/winpid ]; then echo "serve-listener 0 $pid"; else echo "serve-listener $pid"; fi >> "$pids"
   done

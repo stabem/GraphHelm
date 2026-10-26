@@ -107,3 +107,56 @@ read its saved native stdout through the current `usage` parser and write a sepa
 derived artifact containing the original manifest/receipt hashes and the new parser's
 revision and digest. Do not rerun models, overwrite old receipts, relabel their first
 outcomes, or present the new parser as the parser used during the original collection.
+
+## Real-project benchmark
+
+`tools/token-bench/real_methodology.py` is a separate, offline instrument for a small
+exploratory cohort of real project defects. It does not replace this subscription pilot
+or reuse its toy cases. A private registry names exactly three frozen task snapshots,
+their production scope and import closure, the original public test, and a private hidden
+oracle. Snapshot roots and oracle roots are external to the checkout; the registry is
+hashed into the frozen manifest.
+
+Qualification must show the parent snapshot's public command green and hidden oracle red,
+then the known-fix snapshot green on both. A weakened or missing oracle fails qualification.
+Each planned cell is one fresh task directory, one of seven profiles, and one native CLI;
+the seeded order is 3 tasks × 7 profiles × 2 CLIs × 1 repeat = 42 cells. The public command
+is always `[sys.executable, "test_public.py"]`. The evaluator restores the original public
+test and copies only declared production scope from the candidate into a clean parent
+template, so changing tests cannot make a result pass. Hidden oracle files and known fixes
+never enter the agent directory.
+
+The runner reserves an attempt ID before invoking a child and never retries or overwrites
+that ID. Provider authentication, quota, cleanup, malformed output, missing usage and
+identity drift leave the cell failed or incomplete; they do not become a passing result.
+The report preserves `passed`, `failed`, `incomplete` and `not-run` separately and emits
+no winner. The cohort is neutral and exploratory: it cannot establish statistical or
+comparative superiority.
+
+The real-project manifest freezes every snapshot, support, public-test and oracle file,
+the parser revision, native Python and CLI identities, exact argv, and relevant environment.
+Each attempt rechecks those hashes, first-party authentication and version, frozen order,
+cohort lock and provider-stop marker before launching. A reserved cell always receives a
+receipt, including setup, cleanup, output-capture or evaluation failure; raw candidate,
+stdout and stderr evidence remain in the private results directory.
+
+The agent may edit only declared production scope and original public-test files. The
+immutable root `test_public.py` wrapper is copied from support files and runs the real
+nested public test. Evaluation restores original public tests and support files into a
+clean parent template, overlays only declared production files, and excludes caches and
+unrelated candidate files. Trusted wrappers must provide completion evidence (for example,
+JUnit or Vitest JSON completion); exit code zero alone is not acceptance. Qualification
+requires the broken parent to fail for the intended assertion, not an import, tool,
+timeout or cleanup error.
+
+Native Claude accounting remains sourced from final `result.modelUsage` totals. The
+separate final `usage` scope and transcript diagnostics are retained. Missing native usage
+is `unknown`, never free. An empty observed-model list is `unobserved`; a non-empty list
+that differs from the frozen requested model stops the cohort.
+
+Pinned external native binaries and dependency directories are fingerprinted before
+freeze and before each cell. Directory fingerprints are bounded, deterministic hashes of
+sorted relative paths, lengths and content hashes; declared cache paths are the only
+ignored entries, and links/reparse points are rejected unless they resolve to the exact
+declared candidate target. This validation costs O(external dependency bytes) and is
+control/setup time, not agent time; dependencies are not copied into each candidate.

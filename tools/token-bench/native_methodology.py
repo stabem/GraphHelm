@@ -206,7 +206,7 @@ def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path
             "reviewPath": str(review), "evaluatorPath": str(evaluator), "published": False}
 
 
-def reconcile_nested_usage(records: object, *, expected_sessions: list[str]) -> dict:
+def reconcile_nested_usage(records: object, *, expected_sessions: list[str], parent_usage: dict | None = None) -> dict:
     """Reconcile owned native child records; absent sessions are unknown and block totals."""
     if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
         raise ValueError("nested usage records must be a list")
@@ -215,7 +215,7 @@ def reconcile_nested_usage(records: object, *, expected_sessions: list[str]) -> 
     invalid = []
     for row in records:
         values = row.get("usage")
-        if row.get("owned") is not True or row.get("rawSha256") is None or row.get("includedInParent") is True:
+        if row.get("owned") is not True or row.get("rawSha256") is None:
             invalid.append(row.get("sessionId", ""))
             continue
         if (not isinstance(values, dict) or any(type(values.get(key)) is not int or values[key] < 0
@@ -226,7 +226,14 @@ def reconcile_nested_usage(records: object, *, expected_sessions: list[str]) -> 
     complete = not missing and not invalid and not duplicates and not overlap
     total = None
     if complete:
-        total = {key: sum(row["usage"].get(key, 0) for row in records) for key in ("input", "output", "cacheRead", "cacheWrite")}
+        if parent_usage is not None and (not isinstance(parent_usage, dict) or any(
+                type(parent_usage.get(key)) is not int or parent_usage[key] < 0
+                for key in ("input", "output", "cacheRead", "cacheWrite"))):
+            complete = False
+        else:
+            total = {key: (parent_usage.get(key, 0) if parent_usage else 0) + sum(
+                row["usage"].get(key, 0) for row in records if row.get("includedInParent") is not True)
+                     for key in ("input", "output", "cacheRead", "cacheWrite")}
     return {"status": "observed" if complete else "unknown", "total": total,
             "missingSessions": missing, "invalidSessions": invalid,
             "duplicateSessions": duplicates, "overlap": overlap,

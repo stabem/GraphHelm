@@ -81,6 +81,15 @@ class NativeMethodologyContracts(unittest.TestCase):
         self.assertEqual(result["status"], "unknown")
         self.assertIsNone(result["total"])
 
+    def test_child_usage_in_parent_pipeline_is_validated_but_not_added_twice(self):
+        result = bench.reconcile_nested_usage([{"sessionId": "child-a", "owned": True,
+                                                "rawSha256": "a" * 64, "includedInParent": True,
+                                                "usage": {"input": 2, "output": 21, "cacheRead": 0, "cacheWrite": 1215}}],
+                                              expected_sessions=["child-a"],
+                                              parent_usage={"input": 6, "output": 270, "cacheRead": 5773, "cacheWrite": 7381})
+        self.assertEqual(result["status"], "observed")
+        self.assertEqual(result["total"]["output"], 270)
+
     def test_completion_is_incomplete_until_all_controls_and_costs_are_observed(self):
         attempt = bench.phase_attempt(self.plan(), "author", "attempt-1")
         result = bench.complete_attempt(attempt, auth=True, quota=True, cleanup=True,

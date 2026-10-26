@@ -13316,6 +13316,16 @@ fn the_owner_wakes_stops_and_reassigns_a_lane_through_its_routes() {
         again["data"]["signalId"], first["data"]["signalId"],
         "{again}"
     );
+    // The tasks reply serves the wake note, so the Studio drops the Wake item once it is recorded.
+    let notes = tasks()["ownerNotes"].clone();
+    assert_eq!(notes.as_array().map(Vec::len), Some(1), "{notes}");
+    assert_eq!(notes[0]["to"], "lane-a", "{notes}");
+    assert!(
+        notes[0]["signalId"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("lane-wake-")),
+        "{notes}"
+    );
     let (status, reply) = wake("wake-1", "owner", "another reason");
     assert_eq!(status, 409, "same key, other body: {reply}");
     assert_eq!(head(), after_wake);
@@ -13365,6 +13375,14 @@ fn the_owner_wakes_stops_and_reassigns_a_lane_through_its_routes() {
         .unwrap()["releasedBy"]
         .clone();
     assert_eq!(released, "orchestrator", "the slice is released");
+    let handed = tasks()["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|slice| slice["key"] == held.as_str())
+        .unwrap()["reassignedTo"]
+        .clone();
+    assert_eq!(handed, "lane-c", "the slice names the lane it went to");
     let other = tasks()["tasks"]
         .as_array()
         .unwrap()

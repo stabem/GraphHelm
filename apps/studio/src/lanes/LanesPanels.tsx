@@ -4,7 +4,7 @@ import { OWNER, type Capacity, type FileCollisions, type LaneAction, type Runtim
 import { controlBody, draftFor, messageBody, newId, type Draft } from "./drafts";
 import { actionText } from "./format";
 import { When } from "../time/Stamp";
-import { capacityRows, feed, needsAction, type Need } from "./panels";
+import { capacityRows, feed, needTag, needsAction, type Need } from "./panels";
 import { idleText } from "./board";
 import type { OwnerRequest } from "../graph/requests";
 
@@ -90,7 +90,7 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
         ? `The owner assigns you the review of PR #${pr} (${need.lane}).`
         : `The owner asks you to merge PR #${pr}, approved and ready.`;
       intent = JSON.stringify([need.id, to]);
-      make = () => { const id = newId("studio-need"); return { id, body: messageBody(executionId, id, to, text, null, at, OWNER.id) }; };
+      make = () => { const id = newId(`studio-need-${needTag(need.id)}`); return { id, body: messageBody(executionId, id, to, text, null, at, OWNER.id) }; };
       post = (draft) => runtime.messageLane(executionId, draft);
     } else {
       const control = need.verb === "Archive" ? "stop" : need.verb === "Reassign" ? "reassign" : "wake";

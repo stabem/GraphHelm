@@ -39,6 +39,27 @@ function freeLane(board: TasksBoard, except: (string | null)[]): string | null {
     .sort()[0] ?? null;
 }
 
+/** A short, stable tag of a Need's id: the Studio puts it in the id of the note it sends
+ * (`studio-need-<tag>-<uuid>`), and the Runtime serves that id back in `ownerNotes`. */
+export function needTag(id: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < id.length; index += 1) hash = Math.imul(hash ^ id.charCodeAt(index), 0x01000193) >>> 0;
+  return hash.toString(16).padStart(8, "0");
+}
+
+/** The Runtime recorded this item's action: an Assign, Merge or Hand off note carrying its tag, or
+ * a wake note to its lane, appended at or after the item started waiting. Archive and Reassign
+ * clear themselves (the lane is retired, the slice released). */
+function actedOn(board: TasksBoard, need: Need): boolean {
+  if (need.verb !== "Assign" && need.verb !== "Merge" && need.verb !== "Hand off" && need.verb !== "Wake") return false;
+  const since = need.since === null ? NaN : Date.parse(need.since);
+  return (board.ownerNotes ?? []).some((note) => {
+    const ours = need.verb === "Wake" ? note.signalId.startsWith("lane-wake-") && note.to === need.lane : note.signalId.startsWith(`studio-need-${needTag(need.id)}-`);
+    const at = Date.parse(note.at);
+    return ours && (!Number.isFinite(since) || !Number.isFinite(at) || at >= since);
+  });
+}
+
 /** Everything on the board that waits on the owner, oldest first (an item with no time last). */
 export function needsAction(board: TasksBoard, requests: readonly OwnerRequest[] = []): Need[] {
   const needs: Need[] = [];
@@ -83,6 +104,7 @@ export function needsAction(board: TasksBoard, requests: readonly OwnerRequest[]
   }
   const at = (need: Need) => (need.since === null ? NaN : Date.parse(need.since));
   return needs
+    .filter((need) => !actedOn(board, need))
     .map((need, index) => ({ need, index, time: at(need) }))
     .sort((a, b) => {
       const known = Number(Number.isFinite(b.time)) - Number(Number.isFinite(a.time));

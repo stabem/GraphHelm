@@ -27,7 +27,14 @@ export interface TasksBoard {
   /** #1235: open PR slices idle past the stall threshold, with who owes the next step. */
   stalls: { key: string; owner: string | null; pr?: number; reason?: "block_unanswered" | "awaiting_verdict" | "awaiting_merge"; idleSince?: string }[];
   waiting: LaneWaiting[];
+  /** The owner's Needs action and wake notes as the Runtime recorded them (`OwnerNote`); a Needs
+   * action item leaves once one names it. Empty from an older Runtime. */
+  ownerNotes?: OwnerNote[];
 }
+
+/** An owner note the Runtime recorded: `studio-need-<tag>-...` from Assign, Merge and Hand off,
+ * `lane-wake-...` from Wake. `at` is the Runtime's append time. */
+export interface OwnerNote { signalId: string; to: string; at: string }
 
 export type TaskStepName = "plan" | "critic" | "implement" | "review" | "merge" | "merged";
 
@@ -44,6 +51,8 @@ export interface BoardTask {
   journeys: string[];
   lastSequence: number;
   releasedBy?: string;
+  /** The lane the owner reassigned this released slice to; it has not claimed the work yet. */
+  reassignedTo?: string;
   /** #502: `since` is when the record that moved the slice into its current step was appended. */
   clock?: { since: string | null };
 }
@@ -242,6 +251,7 @@ export function boardOf(reply: Partial<TasksBoard>): TasksBoard {
     liveness: { ...reply.liveness, lanes: listOf<BoardLaneLiveness>(reply.liveness?.lanes) },
     stalls: listOf<TasksBoard["stalls"][number]>(reply.stalls),
     waiting: listOf<LaneWaiting>(reply.waiting),
+    ownerNotes: listOf<OwnerNote>(reply.ownerNotes),
   };
 }
 

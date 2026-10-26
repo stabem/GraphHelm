@@ -334,6 +334,9 @@ pub(crate) fn validate_task_event(
                 && !graphhelm_release
                 && short("sliceKey", 256)
                 && short("lane", 128)
+                && document
+                    .get("reassignedTo")
+                    .is_none_or(|_| short("reassignedTo", 128))
                 && document.get("claimSequence").is_none()
                 && is_actor("releasedBy")
                 && document["reason"].as_str().is_some_and(|reason| {
@@ -341,7 +344,7 @@ pub(crate) fn validate_task_event(
                         && reason.chars().count() <= 500
                         && !reason.chars().any(char::is_control)
                 }),
-            &["lane", "sliceKey", "reason", "releasedBy"],
+            &["lane", "sliceKey", "reason", "releasedBy", "reassignedTo"],
         ),
         "task.lane_retired" => (
             owner

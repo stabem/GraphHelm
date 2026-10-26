@@ -149,6 +149,7 @@ async fn append(
     state: &ServeState,
     execution_id: &str,
     headers: HeaderMap,
+    id_prefix: &str,
     mut signal: serde_json::Value,
 ) -> Response {
     // The signal carries its own `id`, derived from the step's key: the signal route recognizes a
@@ -158,7 +159,7 @@ async fn append(
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
     let digest = graphhelm_protocols::hash::sha256_hex(key.as_bytes());
-    signal["id"] = serde_json::json!(format!("signal-{}", &digest[..16]));
+    signal["id"] = serde_json::json!(format!("{id_prefix}{}", &digest[..16]));
     let body = serde_json::json!({ "signal": signal });
     routes::signal(
         State(state.clone()),
@@ -222,7 +223,7 @@ pub(super) async fn wake(
         "lane-control:wake",
     );
     let headers = step_headers(&headers, "wake", &request.lane, "note");
-    append(&state, &execution_id, headers, note).await
+    append(&state, &execution_id, headers, "lane-wake-", note).await
 }
 
 /// `POST /v1/executions/{id}/lanes/{lane}/stop` `{reason, retired?}`: retires the lane, or with
@@ -259,6 +260,7 @@ pub(super) async fn stop(
         &state,
         &execution_id,
         headers,
+        "signal-",
         task_record(&request.owner, &request.at, "task.lane_retired", &document),
     )
     .await
@@ -364,12 +366,14 @@ pub(super) async fn reassign(
         "lane": request.lane,
         "sliceKey": slice_key,
         "releasedBy": request.owner,
+        "reassignedTo": to,
         "reason": request.reason,
     });
     let released = append(
         &state,
         &execution_id,
         release_headers,
+        "signal-",
         task_record(&request.owner, &request.at, "task.released", &release),
     )
     .await;
@@ -392,5 +396,5 @@ pub(super) async fn reassign(
         "lane-control:reassign",
     );
     let note_headers = step_headers(&headers, "reassign", &request.lane, "note");
-    append(&state, &execution_id, note_headers, note).await
+    append(&state, &execution_id, note_headers, "signal-", note).await
 }

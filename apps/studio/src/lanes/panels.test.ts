@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { BoardTask, Capacity, LaneAction, TasksBoard } from "../runtime/client";
-import { capacityRows, feed, needsAction } from "./panels";
+import { agents } from "./board";
+import { capacityRows, feed, needTag, needsAction } from "./panels";
 
 const task = (key: string, lane: string, step: BoardTask["step"], extra: Partial<BoardTask> = {}): BoardTask => ({
   key, issue: 7, pr: null, lane, currentReviewer: null, step, blockedBy: null, title: "Work", prTitle: null, journeys: [], lastSequence: 1, ...extra,
@@ -52,6 +53,44 @@ describe("lanes panels", () => {
       ["Merge", "lane-m", "lane-r", "2026-10-22T11:50:00Z"],
       ["Archive", "lane-asleep", null, "2026-10-22T11:59:00Z"],
     ]);
+  });
+
+  it("drops an Assign, Merge or Wake item once the Runtime recorded its note, and keeps it before", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [
+        task("f#1", "lane-free", "implement", { releasedBy: "orch" }),
+        task("p#1", "lane-p", "review", { pr: 11, clock: { since: "2026-10-22T11:48:00Z" } }),
+        task("m#1", "lane-m", "merge", { pr: 12, currentReviewer: "lane-r", clock: { since: "2026-10-22T11:50:00Z" } }),
+        task("b#1", "lane-b", "review", { pr: 13, blockedBy: { reviewer: "lane-r" } }),
+      ],
+      liveness: { lanes: [live("lane-free", { free: true })] },
+      stalls: [{ key: "b#1", owner: "lane-b", pr: 13, reason: "block_unanswered", idleSince: "2026-10-22T10:00:00Z" }],
+      waiting: [],
+    };
+    const verbs = (b: TasksBoard) => needsAction(b).map((need) => need.verb);
+    expect(verbs(board)).toEqual(["Wake", "Assign", "Merge"]);
+    const note = (signalId: string, to: string, at: string) => ({ signalId, to, at });
+    // A note for that item from before it started waiting does not clear it.
+    expect(verbs({ ...board, ownerNotes: [note(`studio-need-${needTag("assign:p#1")}-a`, "lane-free", "2026-10-22T11:00:00Z")] })).toEqual(["Wake", "Assign", "Merge"]);
+    expect(verbs({ ...board, ownerNotes: [note(`studio-need-${needTag("assign:p#1")}-a`, "lane-free", "2026-10-22T11:55:00Z")] })).toEqual(["Wake", "Merge"]);
+    expect(verbs({ ...board, ownerNotes: [note(`studio-need-${needTag("merge:m#1")}-b`, "lane-r", "2026-10-22T11:56:00Z")] })).toEqual(["Wake", "Assign"]);
+    // A wake note clears the Wake of the lane it names, not another lane's.
+    expect(verbs({ ...board, ownerNotes: [note("lane-wake-c", "lane-x", "2026-10-22T11:57:00Z")] })).toEqual(["Wake", "Assign", "Merge"]);
+    expect(verbs({ ...board, ownerNotes: [note("lane-wake-c", "lane-b", "2026-10-22T11:57:00Z")] })).toEqual(["Assign", "Merge"]);
+  });
+
+  it("shows a reassigned slice on the target lane's card before the lane claims it", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [task("q#1", "lane-q", "implement", { issue: 41, releasedBy: "orch", reassignedTo: "lane-c", lastSequence: 5 })],
+      liveness: { lanes: [live("lane-q"), live("lane-c", { free: true })] },
+      stalls: [], waiting: [],
+    };
+    const card = (b: TasksBoard) => agents(b).find((agent) => agent.lane === "lane-c")?.task?.key ?? null;
+    expect(card(board)).toBe("q#1");
+    // Once lane-c claims the issue its own slice is the card's.
+    expect(card({ ...board, tasks: [...board.tasks, task("c#1", "lane-c", "implement", { issue: 41, lastSequence: 9 })] })).toBe("c#1");
   });
 
   it("leaves Assign and Reassign without a target when no free live lane can take them, and an item with no time last", () => {

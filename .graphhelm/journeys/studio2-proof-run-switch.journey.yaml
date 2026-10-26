@@ -4,8 +4,8 @@ title: A journey's card keeps reading running after another is selected
 name: "Run, then select another journey"
 feature: Studio
 purpose: "Pressing Run on a journey's card and then selecting another journey leaves the first card reading running, as the Runtime reports it, and then its result once the Runtime says the run ended (#1950)."
-status: draft
-approved: null
+status: approved
+approved: {revision: d747031829659af960ca02d926a90691436a1ae5, digest: sha256:75bf68097809960dd5156b0c3482ed2d873bbcee71ed0661d7702ba8c740bcdd}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

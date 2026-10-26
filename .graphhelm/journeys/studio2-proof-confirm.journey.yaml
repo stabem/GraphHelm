@@ -4,8 +4,8 @@ title: Run a draft's commands only once main has reviewed it
 name: Draft commands run only once reviewed
 feature: Studio
 purpose: "A draft whose flow file is the one main reviewed runs its command step with no prompt and passes, each command step showing its command, exit code and stdout in a terminal and Approve offered. A draft edited since main reviewed it shows Waits for review and runs nothing (#1911, #1912)."
-status: draft
-approved: null
+status: approved
+approved: {revision: 136a7beb3c935f8df90004993f734215287a24f9, digest: sha256:7331a8efb0ba0a815bc530c4ec5b511012ae0afbd3975c47bc8557d875bd4955}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

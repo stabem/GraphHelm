@@ -4,8 +4,8 @@ title: Send a failed journey to be fixed
 name: Send to fix
 feature: Studio
 purpose: "A journey that fails offers Send to fix with an optional note box; pressing it records the owner's request on the team run, the note box and the button give way to Sent with its time, and the request shows in WHAT I ASKED, handed to the free live lane (#1919, #1981). The Studio does not show the note back after sending, so this flow proves only that it was typed (#2086)."
-status: draft
-approved: null
+status: approved
+approved: {revision: 136a7beb3c935f8df90004993f734215287a24f9, digest: sha256:2c13b4c8bdc40844f05631fbbaff911f3a0088de05527d91c4ec86cab487fb91}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

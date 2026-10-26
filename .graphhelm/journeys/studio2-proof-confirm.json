@@ -1,0 +1,116 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Run a draft's commands only once main has reviewed it",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-proof-confirm",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "journeys.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows list \"Journeys\", img \"Print a fixed greeting: Terminal journey\", button \"Run Print a fixed greeting\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "journeys"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "passed.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Passed\", listitem \"Step 2\" saying \"passed\", listitem \"Step 1\" saying \"precondition\", region \"Terminal\" saying \"hello-fixture\", status \"Exit code 0\", img \"Terminal journey\", button \"Approve\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "passed"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "irreversible_effect"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen journeys not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/steps.ts",
+          "apps/studio/src/proof/use-journey-run.ts"
+        ],
+        "screenId": "journeys",
+        "title": "The reviewed draft with a command step is selected"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=proof&journey=cli-hello"
+        }
+      },
+      "stepId": "journeys"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen passed not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/steps.ts",
+          "apps/studio/src/proof/use-journey-run.ts",
+          "apps/studio/src/proof/CompareFrame.tsx",
+          "apps/studio/src/proof/run-all.ts"
+        ],
+        "screenId": "passed",
+        "title": "The reviewed draft ran its command and passed"
+      },
+      "semanticAction": {
+        "kind": "wait_for",
+        "target": {
+          "geometryClaim": false,
+          "role": "status",
+          "strategy": "accessible_name",
+          "value": "Passed"
+        }
+      },
+      "stepId": "passed"
+    }
+  ],
+  "taskScope": "journey-flow studio2-proof-confirm path main",
+  "title": "Run a draft's commands only once main has reviewed it",
+  "version": 1
+}

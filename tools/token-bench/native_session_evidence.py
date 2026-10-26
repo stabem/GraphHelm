@@ -283,7 +283,7 @@ def required_operations(stream: Path, *, cli: str, requirements: list[dict]) -> 
                 for item in content if isinstance(content, list) else []:
                     if not isinstance(item, dict):
                         continue
-                    if item.get("type") == "tool_use" and item.get("name") == "Bash":
+                    if item.get("type") == "tool_use" and item.get("name") in {"Bash", "PowerShell"}:
                         calls[item.get("id")] = item.get("input", {}).get("command", "")
                     if item.get("type") == "tool_result" and item.get("tool_use_id") in calls:
                         output = item.get("content", "")

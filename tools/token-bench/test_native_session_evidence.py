@@ -83,6 +83,21 @@ def test_actual_native_resolvers_return_the_official_template():
         assert result["status"] == "observed", result
 
 
+def test_claude_powershell_operation_is_matched_to_its_native_result(tmp_path):
+    call = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "PowerShell",
+            "id": "tool-1", "input": {"command": ".specify/scripts/powershell/setup-tasks.ps1 -Json"}}]}}
+    reply = {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "tool-1",
+             "is_error": False, "content": '{"FEATURE_DIR":"specs/001"}'}]}}
+    stream = tmp_path / "native.jsonl"
+    stream.write_text(json.dumps(call) + "\n" + json.dumps(reply) + "\n", encoding="utf-8")
+    requirement = [{"commandPattern": r"setup-tasks\.ps1\s+-Json",
+                    "outputContains": ['"FEATURE_DIR"']}]
+    assert evidence.required_operations(stream, cli="claude", requirements=requirement)["status"] == "observed"
+    reply["message"]["content"][0]["is_error"] = True
+    stream.write_text(json.dumps(call) + "\n" + json.dumps(reply) + "\n", encoding="utf-8")
+    assert evidence.required_operations(stream, cli="claude", requirements=requirement)["status"] == "incomplete"
+
+
 def test_final_child_stats_cannot_be_ignored_when_agent_events_are_missing(tmp_path):
     rows = evidence.records(FIXTURES / "claude-child.jsonl")
     final = rows[-1]

@@ -296,6 +296,7 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
         "schema": "graphhelm.journey-flow/1",
         "id": "account",
         "title": "Owner deletes the account",
+        "purpose": "Proves the owner's account is deleted only after the destructive act is confirmed",
         "status": "draft",
         "approved": null,
         "base": base,
@@ -303,13 +304,14 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
         "secrets": [],
         "risks": ["irreversible_effect"],
         "screens": [
-            {"id":"account","url":"/account","state":"stable",
+            {"id":"account","title":"Account page","url":"/account","state":"stable",
              "expect":[{"role":"heading","name":"Account"}],"scope":["fixture-server.mjs"]},
-            {"id":"deleted","url":"/account/delete","state":"success",
+            {"id":"deleted","title":"Account deleted page","url":"/account/delete","state":"success",
              "expect":[{"role":"heading","name":"Account deleted"}],"scope":["fixture-server.mjs"]}
         ],
         "edges": [
             {"id":"account.delete","from":"account","to":"deleted",
+             "why":"Confirming the delete is what removes the account for the owner",
              "acts":[{"kind":"submit","role":"button","name":"Delete account"}]}
         ],
         "paths": {"main": ["account.delete"]},

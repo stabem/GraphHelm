@@ -18,6 +18,9 @@ HOME = Path(__file__).resolve().parent
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 API_ENV = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
            "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENROUTER_API_KEY", "CODEX_API_KEY"}
+HOST_BINDING_ENV = {"CODEX_APP_TOOLS_PIPE_PATH", "CODEX_THREAD_ID", "CODEX_SESSION_ID",
+                    "CODEX_TOOL_CALL_ID", "CODEX_TASK_WORKSPACE_VERIFYING_IDENTITY",
+                    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE"}
 PROVIDER_ERROR_TERMS = ("rate limit", "usage limit", "quota", "unauthorized",
                         "authentication", "not logged in", "login required")
 
@@ -28,7 +31,7 @@ def child_environment(environment: dict[str, str] | None = None,
     source = os.environ if environment is None else environment
     cleaned = {key: value for key, value in source.items()
                if key.upper() not in API_ENV and not key.upper().endswith(("_API_KEY", "_BASE_URL", "_ENDPOINT"))
-               and not key.upper().startswith("GRAPHHELM_")}
+               and key.upper() not in HOST_BINDING_ENV and not key.upper().startswith("GRAPHHELM_")}
     for key, value in (graphhelm_overrides or {}).items():
         if key not in {"GRAPHHELM_ACTOR", "GRAPHHELM_RUNTIME_URL", "GRAPHHELM_EXECUTION_ID"}:
             raise ValueError("only non-secret cell GraphHelm overrides are allowed")

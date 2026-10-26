@@ -30,6 +30,15 @@ class MethodologyContracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             bench.child_environment({}, {"GRAPHHELM_API_TOKEN": "secret"})
 
+    def test_child_environment_removes_host_app_identity_but_keeps_native_home(self):
+        filtered = bench.child_environment({"CODEX_HOME": "C:/native-home",
+                                            "CODEX_THREAD_ID": "production-thread",
+                                            "CODEX_APP_TOOLS_PIPE_PATH": "pipe",
+                                            "PATH": "x"})
+        self.assertEqual(filtered["CODEX_HOME"], "C:/native-home")
+        self.assertNotIn("CODEX_THREAD_ID", filtered)
+        self.assertNotIn("CODEX_APP_TOOLS_PIPE_PATH", filtered)
+
     def test_native_cli_command_has_frozen_non_bypass_controls(self):
         codex = bench.native_cli_command("codex", Path("codex.exe"), "model")
         claude = bench.native_cli_command("claude", Path("claude.exe"), "model")

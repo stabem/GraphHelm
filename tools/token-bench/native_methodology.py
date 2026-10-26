@@ -531,6 +531,8 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     stdout.write_text(captured["stdout"], encoding="utf-8")
     stderr.write_text(captured["stderr"], encoding="utf-8")
     parsed_usage = base.usage(cli_config["cli"], captured["stdout"])
+    served_models = sorted(set(parsed_usage.get("observedModels", []))
+                           | set(parsed_usage.get("accountingModels", [])))
     provider_error = base.native_provider_error(cli_config["cli"], captured["stdout"], captured["stderr"])
     quota_after = _quota_observation(cli_config, project_root, stdout=captured["stdout"])
     operations = {"status": "observed", "results": []}
@@ -586,6 +588,7 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     receipt = {"attempt": attempt, "ordinal": ordinal, "argv": frozen_argv, "capture": {key: captured[key] for key in
                ("exit", "seconds", "timeout", "cleanupConfirmed", "truncated")},
                "usage": parsed_usage, "rootWireUsage": root_wire_usage, "cli": cli_config["cli"],
+               "requestedModel": cli_config["model"], "servedModels": served_models,
                "sessionEvidence": session_evidence, "providerError": provider_error,
                "quotaBefore": quota_before, "quotaAfter": quota_after, "archivedSession": archived,
                "skillLoad": skill_load,
@@ -605,6 +608,7 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     native_complete = (not provider_error and captured["exit"] == 0 and not captured["timeout"]
                        and captured["cleanupConfirmed"] and not captured["truncated"]
                        and parsed_usage.get("counts") is not None
+                       and served_models == [cli_config["model"]]
                        and receipt["fidelity"].get("status") == "observed"
                        and ("native_skill" not in phase["requiredWitnessKinds"]
                             or skill_load.get("status") == "observed")
@@ -750,7 +754,24 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         if candidate_chain.get(planned["workflow"]) is not None:
             valid = valid and row.get("candidateBeforeSha256") == candidate_chain[planned["workflow"]]
         capture = row.get("capture", {})
-        valid = valid and all(key in capture for key in ("exit", "timeout", "cleanupConfirmed", "truncated"))
+        valid = valid and capture.get("exit") == 0 and capture.get("timeout") is False
+        valid = valid and capture.get("cleanupConfirmed") is True and capture.get("truncated") is False
+        phase_spec = next((phase for phase in workflow_spec.get("phases", [])
+                           if phase.get("id") == planned["phase"]), None) if workflow_spec else None
+        required_kinds = set(phase_spec.get("requiredWitnessKinds", ["native_stream", "native_skill"])) if phase_spec else set()
+        if "native_skill" in required_kinds:
+            valid = valid and row.get("skillLoad", {}).get("status") == "observed"
+        if phase_spec and phase_spec.get("requiredOperations"):
+            valid = valid and row.get("operations", {}).get("status") == "observed"
+        valid = valid and row.get("quotaBefore", {}).get("allowed") is True
+        valid = valid and row.get("quotaAfter", {}).get("allowed") is True
+        requested_model = row.get("requestedModel")
+        served_models = row.get("servedModels")
+        valid = valid and isinstance(requested_model, str) and isinstance(served_models, list)
+        valid = valid and served_models == [requested_model]
+        usage_models = sorted(set(row.get("usage", {}).get("observedModels", []))
+                              | set(row.get("usage", {}).get("accountingModels", [])))
+        valid = valid and usage_models == [requested_model]
         attempt_id = row.get("attempt", {}).get("attemptId", "")
         raw_dir = attempts_root / f"phase-{planned['phase']}-{attempt_id}"
         valid = valid and set(row.get("rawSha256", {})) == {"native.stdout.jsonl", "native.stderr.log"}
@@ -866,6 +887,16 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                    and isinstance(endpoint.get("authorRootSessionId"), str)
                    and endpoint["reviewerRootSessionId"] != endpoint["authorRootSessionId"]
                    and endpoint.get("evaluatorStatus") == "passed")
+    # The independent reviewer must be an archived planned phase. Its counters
+    # are already included in rows; an extra self-declared usage field would
+    # either allow forged cost or count the same session twice.
+    reviewer_rows = [row for row in rows if row.get("phase") == "review"
+                     and row.get("status") == "complete"
+                     and row.get("archivedSession", {}).get("rootSession") ==
+                         (endpoint or {}).get("reviewerRootSessionId")
+                     and row.get("rawSha256", {}).get("native.stdout.jsonl") ==
+                         (endpoint or {}).get("reviewerSessionSha256")]
+    endpoint_ok = endpoint_ok and len(reviewer_rows) == 1
     aggregate = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
     aggregate_known = True
     usage_groups = {}

@@ -319,8 +319,13 @@ class NativeMethodologyContracts(unittest.TestCase):
                        "candidateBeforeSha256": candidate, "candidateAfterSha256": candidate,
                        "requiredArtifactGlobHashes": {"report/result.json": bench.base.digest(artifact)},
                        "status": "complete", "fidelity": {"status": "observed"},
-                       "cli": "claude", "usage": {"counts": counts},
+                       "skillLoad": {"status": "observed"},
+                       "cli": "claude", "requestedModel": "claude-sonnet-5-5",
+                       "servedModels": ["claude-sonnet-5-5"],
+                       "usage": {"counts": counts, "observedModels": [],
+                                  "accountingModels": ["claude-sonnet-5-5"]},
                        "rootWireUsage": {"counts": counts},
+                       "quotaBefore": {"allowed": True}, "quotaAfter": {"allowed": True},
                        "archivedSession": {"status": "observed", "total": counts,
                                             "rootSession": "child-session",
                                             "archivedRoot": str(archived_root),
@@ -345,6 +350,10 @@ class NativeMethodologyContracts(unittest.TestCase):
             report = bench.report_manifest(manifest_path, output)
             self.assertEqual(report["attempts"][0]["status"], "complete")
             self.assertEqual(report["usageAggregate"], counts)
+            receipt["capture"]["timeout"] = True
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            forged = bench.report_manifest(manifest_path, output)
+            self.assertEqual(forged["attempts"][0]["status"], "incomplete")
 
 
 if __name__ == "__main__":

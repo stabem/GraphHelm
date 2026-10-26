@@ -29,7 +29,9 @@ def test_credit_availability_does_not_authorize_credit_fallback():
     limits["rateLimitsByLimitId"]["codex"]["credits"] = {"hasCredits": True, "balance": "123"}
     observed = native_quota.check_snapshot(account, limits)
     assert observed["allowed"] and observed["paidFallbackAuthorized"] is False
-    assert "123" not in str(observed)
+    assert set(observed) == {"allowed", "reason", "cutoffPercent", "windows", "paidFallbackAuthorized"}
+    assert all(set(window) == {"window", "usedPercent", "resetsAt"}
+               for window in observed["windows"])
     limits["ordinaryUsageAllowed"] = False
     assert not native_quota.check_snapshot(account, limits)["allowed"]
 

@@ -546,7 +546,20 @@ def _quota_observation(cli_config: dict, cwd: Path, *, stdout: str | None = None
                 return claude_subscription_observation(stdout)
             except (ImportError, ValueError, TypeError):
                 return {"allowed": False, "reason": "native Claude quota observer unavailable"}
-        return cli_config.get("quotaObservation")
+        try:
+            status = base.capture([str(cli_config["executable"]), "auth", "status"], cwd,
+                                  deadline=20, environment=None,
+                                  graphhelm_overrides=cli_config.get("graphhelmEnv"))
+            payload = json.loads(status["stdout"])
+            allowed = (status["exit"] == 0 and payload.get("loggedIn") is True
+                       and payload.get("authMethod") == "claude.ai"
+                       and payload.get("apiProvider") == "firstParty")
+            return {"allowed": allowed, "kind": "authentication-only",
+                    "reason": "native Claude first-party authentication" if allowed
+                    else "native Claude authentication unavailable"}
+        except (OSError, ValueError, TypeError, json.JSONDecodeError, KeyError):
+            return {"allowed": False, "kind": "authentication-only",
+                    "reason": "native Claude authentication observer unavailable"}
     executable = cli_config.get("executable")
     if not executable:
         return None

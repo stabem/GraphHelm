@@ -524,9 +524,14 @@ impl Driver {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         safe_environment(&mut command, false);
-        if project
-            .join("node_modules/playwright-core/.local-browsers")
-            .is_dir()
+        if [".graphhelm/toolchain/node_modules", "node_modules"]
+            .iter()
+            .any(|base| {
+                project
+                    .join(base)
+                    .join("playwright-core/.local-browsers")
+                    .is_dir()
+            })
         {
             command.env("PLAYWRIGHT_BROWSERS_PATH", "0");
         }

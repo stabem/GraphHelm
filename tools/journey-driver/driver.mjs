@@ -385,7 +385,7 @@ async function run(r) {
     const parsed=url(r.base,true); baseOrigin=parsed.origin;
     allowed = new Set([baseOrigin,...r.allowOrigins.map(o=>url(o,false,true).origin)]);
     let chromium;
-    try { chromium = createRequire(resolve(project,'package.json'))('@playwright/test').chromium; } catch { fail('driver.observer_missing'); }
+    try { chromium = createRequire(resolve(project,'.graphhelm/toolchain/package.json'))('@playwright/test').chromium; } catch { fail('driver.observer_missing'); }
     try {
       // #491: a watch opens maximized and the page takes the real window size (viewport: null),
       // so the owner can read it; every other session keeps its fixed, reproducible viewport.

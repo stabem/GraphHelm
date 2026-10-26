@@ -1,0 +1,118 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Switch between two projects",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-two-projects.refused",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "first.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Project demo\" saying \"demo · 0 agents\", banner \"Top bar\" saying \"demo / demo\", region \"Graph\" saying \"RUN demo STATUS\", no list \"Runs in demo\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "first"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "refused.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows form \"Add project folder\" saying \"The Studio refused to add that folder.\", no region \"Project proj-two\", banner \"Top bar\" saying \"demo / demo\"",
+      "statesToObserve": [
+        "error"
+      ],
+      "stepId": "refused"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "multiple_components",
+    "authentication"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen first not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/sidebar/Sidebar.tsx",
+          "apps/studio/src/topbar/Topbar.tsx",
+          "apps/studio/src/sidebar/project-summary.ts",
+          "apps/studio/src/login/session.ts"
+        ],
+        "screenId": "first",
+        "title": "demo is open with its own run"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture"
+        }
+      },
+      "stepId": "first"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "error"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen refused not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/sidebar/Sidebar.tsx",
+          "apps/studio/src/login/session.ts",
+          "apps/studio/src/topbar/Topbar.tsx"
+        ],
+        "screenId": "refused",
+        "title": "A wrong ticket adds no project"
+      },
+      "semanticAction": {
+        "kind": "submit",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Add"
+        }
+      },
+      "stepId": "refused"
+    }
+  ],
+  "taskScope": "journey-flow studio2-two-projects path refused",
+  "title": "Switch between two projects",
+  "version": 1
+}

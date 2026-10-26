@@ -1,0 +1,168 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Switch between two projects",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-two-projects",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "first.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Project demo\" saying \"demo · 0 agents\", banner \"Top bar\" saying \"demo / demo\", region \"Graph\" saying \"RUN demo STATUS\", no list \"Runs in demo\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "first"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "second.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"Project proj-two\" saying \"second-run\", banner \"Top bar\" saying \"proj-two / second-run\", region \"Graph\" saying \"RUN second-run STATUS\", link \"demo\", no list \"Runs in proj-two\", no region \"Error\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "second"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "back.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows banner \"Top bar\" saying \"demo / demo\", region \"Graph\" saying \"RUN demo STATUS\", no heading \"proj-two\", link \"proj-two\", complementary \"Journeys with work\" saying \"0 of 24\", no list \"Runs in demo\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "back"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "multiple_components",
+    "authentication"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen first not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/sidebar/Sidebar.tsx",
+          "apps/studio/src/topbar/Topbar.tsx",
+          "apps/studio/src/sidebar/project-summary.ts",
+          "apps/studio/src/login/session.ts"
+        ],
+        "screenId": "first",
+        "title": "demo is open with its own run"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture"
+        }
+      },
+      "stepId": "first"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen second not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/sidebar/Sidebar.tsx",
+          "apps/studio/src/topbar/Topbar.tsx",
+          "apps/studio/src/sidebar/project-summary.ts",
+          "apps/studio/src/login/session.ts"
+        ],
+        "screenId": "second",
+        "title": "The added project opens with its own run"
+      },
+      "semanticAction": {
+        "kind": "submit",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Add"
+        }
+      },
+      "stepId": "second"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen back not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/sidebar/Sidebar.tsx",
+          "apps/studio/src/topbar/Topbar.tsx",
+          "apps/studio/src/sidebar/project-summary.ts",
+          "apps/studio/src/login/session.ts",
+          "apps/studio/src/graph/RequestsView.tsx"
+        ],
+        "screenId": "back",
+        "title": "demo opens again with its own run"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "link",
+          "strategy": "accessible_name",
+          "value": "demo"
+        }
+      },
+      "stepId": "back"
+    }
+  ],
+  "taskScope": "journey-flow studio2-two-projects path main",
+  "title": "Switch between two projects",
+  "version": 1
+}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { addFolder, forgetKey, login, servedProjects, type Session } from "./login/session";
 import { parseRoute, routeSearch, type Route, type View } from "./routing/route";
+import { rereadOnReturn } from "./runtime/reread-on-return";
 import { refusedToken, Runtime, type JourneyFlow, type RunSummary } from "./runtime/client";
 import { Sidebar, type ProjectEntry } from "./sidebar/Sidebar";
 import { useSummaries } from "./sidebar/use-summaries";
@@ -153,6 +154,9 @@ function Shell({ session, projects, closed, route, go, pickJourney, onRefused }:
     if (journeys !== null) return;
     readJourneys();
   }, [route.view, journeys, readJourneys]);
+
+  // #1732: a pass recorded by another Studio on this project shows once the owner returns here.
+  useEffect(() => rereadOnReturn(window, document, readJourneys), [readJourneys]);
 
   const project = session.project ?? "this project";
   // #1934: the empty state of every view starts a team run the same way the top bar does.

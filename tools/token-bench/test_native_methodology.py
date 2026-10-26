@@ -137,17 +137,23 @@ class NativeMethodologyContracts(unittest.TestCase):
             patch = root / "accepted.patch"
             review = root / "review.json"
             evaluator = root / "evaluator.json"
+            reviewer_session = root / "review-session.jsonl"
+            head_file = root / "HEAD"
             patch.write_text("local patch\n", encoding="utf-8")
-            review.write_text('{"verdict":"APPROVE","reviewer":"reviewer","patchSha256":"%s"}' % bench.base.digest(patch), encoding="utf-8")
-            evaluator.write_text('{"status":"passed"}', encoding="utf-8")
+            reviewer_session.write_text('{"session":"review"}\n', encoding="utf-8")
+            head_file.write_text("a" * 40, encoding="utf-8")
+            review.write_text('{"verdict":"APPROVE","reviewer":"reviewer","patchSha256":"%s","taskId":"task-1","gitHead":"%s","reviewerSessionSha256":"%s","reviewerRootSessionId":"review-root","authorRootSessionId":"author-root"}' % (bench.base.digest(patch), "a" * 40, bench.base.digest(reviewer_session)), encoding="utf-8")
+            evaluator.write_text('{"status":"passed","taskId":"task-1","patchSha256":"%s","gitHead":"%s"}' % (bench.base.digest(patch), "a" * 40), encoding="utf-8")
             result = bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
                                                    evaluator_path=str(evaluator), author="author",
-                                                   reviewer="reviewer", local_git=True)
+                                                   reviewer="reviewer", local_git=True,
+                                                   reviewer_session_path=str(reviewer_session), git_head_path=str(head_file), task_id="task-1")
             self.assertEqual(result["status"], "observed")
             self.assertFalse(result["published"])
-            review.write_text('{"verdict":"APPROVE","reviewer":"author","patchSha256":"%s"}' % bench.base.digest(patch), encoding="utf-8")
+            review.write_text('{"verdict":"APPROVE","reviewer":"author","patchSha256":"%s","taskId":"task-1","gitHead":"%s","reviewerSessionSha256":"%s","reviewerRootSessionId":"author-root","authorRootSessionId":"author-root"}' % (bench.base.digest(patch), "a" * 40, bench.base.digest(reviewer_session)), encoding="utf-8")
             self.assertEqual(bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
-                             evaluator_path=str(evaluator), author="author", reviewer="author", local_git=True)["status"], "incomplete")
+                             evaluator_path=str(evaluator), author="author", reviewer="author", local_git=True,
+                             reviewer_session_path=str(reviewer_session), git_head_path=str(head_file), task_id="task-1")["status"], "incomplete")
 
 
 if __name__ == "__main__":

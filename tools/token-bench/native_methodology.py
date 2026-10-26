@@ -246,7 +246,8 @@ def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path
     evaluator = Path(evaluator_path)
     reviewer_session = Path(reviewer_session_path) if reviewer_session_path else None
     git_head = Path(git_head_path) if git_head_path else None
-    if (published or not local_git or not patch.is_file() or not review.is_file() or not evaluator.is_file()
+    if (published or not local_git or not task_id or not reviewer_session_path or not git_head_path
+            or not patch.is_file() or not review.is_file() or not evaluator.is_file()
             or (reviewer_session is not None and not reviewer_session.is_file())
             or (git_head is not None and not git_head.is_file())):
         return {"status": "incomplete", "reason": "accepted patch endpoint is not independently reviewed local Git"}
@@ -256,29 +257,34 @@ def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path
     except (OSError, ValueError, json.JSONDecodeError):
         return {"status": "incomplete", "reason": "review or evaluator receipt is invalid"}
     patch_sha = base.digest(patch)
+    reviewer_head = review_data.get("gitHead")
+    evaluator_head = evaluator_data.get("gitHead")
     if (review_data.get("verdict") not in {"APPROVE", "APPROVE-WITH-RISK"}
             or review_data.get("reviewer") != reviewer or reviewer == author
             or review_data.get("patchSha256") != patch_sha
-            or evaluator_data.get("status") != "passed"):
+            or evaluator_data.get("status") != "passed"
+            or not isinstance(reviewer_head, str) or len(reviewer_head) != 40
+            or not isinstance(evaluator_head, str) or len(evaluator_head) != 40
+            or reviewer_head != evaluator_head
+            or not isinstance(review_data.get("reviewerSessionSha256"), str)
+            or not isinstance(review_data.get("reviewerRootSessionId"), str)
+            or not isinstance(review_data.get("authorRootSessionId"), str)
+            or review_data["reviewerRootSessionId"] == review_data["authorRootSessionId"]):
         return {"status": "incomplete", "reason": "review/evaluator receipt is not bound to this patch"}
-    if task_id is not None and (review_data.get("taskId") != task_id or evaluator_data.get("taskId") != task_id):
+    if review_data.get("taskId") != task_id or evaluator_data.get("taskId") != task_id:
         return {"status": "incomplete", "reason": "review/evaluator task mismatch"}
     if evaluator_data.get("patchSha256") not in {None, patch_sha}:
         return {"status": "incomplete", "reason": "evaluator patch digest mismatch"}
-    if reviewer_session is not None:
-        if review_data.get("reviewerSessionSha256") != base.digest(reviewer_session):
-            return {"status": "incomplete", "reason": "review session is not bound to verdict"}
-    if git_head is not None:
-        if git_head.is_dir():
-            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=git_head,
-                                  capture_output=True, text=True, timeout=15,
-                                  creationflags=base.NO_WINDOW).stdout.strip()
-        else:
-            head = git_head.read_text(encoding="utf-8").strip()
-        if len(head) != 40 or any(char not in "0123456789abcdef" for char in head.lower()):
-            return {"status": "incomplete", "reason": "local Git head is not bound to accepted patch"}
-        if review_data.get("gitHead") not in {None, head} or evaluator_data.get("gitHead") not in {None, head}:
-            return {"status": "incomplete", "reason": "review/evaluator Git head mismatch"}
+    if review_data.get("reviewerSessionSha256") != base.digest(reviewer_session):
+        return {"status": "incomplete", "reason": "review session is not bound to verdict"}
+    if git_head.is_dir():
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=git_head,
+                              capture_output=True, text=True, timeout=15,
+                              creationflags=base.NO_WINDOW).stdout.strip()
+    else:
+        head = git_head.read_text(encoding="utf-8").strip()
+    if len(head) != 40 or any(char not in "0123456789abcdef" for char in head.lower()) or head != reviewer_head:
+        return {"status": "incomplete", "reason": "local Git head is not bound to accepted patch"}
     return {"status": "observed", "patchPath": str(patch), "patchSha256": patch_sha,
             "reviewPath": str(review), "evaluatorPath": str(evaluator), "published": False}
 

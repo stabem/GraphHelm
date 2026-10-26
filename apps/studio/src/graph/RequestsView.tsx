@@ -147,7 +147,7 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
                               if (item.task !== null && item.column !== null && reviewable(item.column, item.pr)) setReviewing(item.task);
                             }}
                           >
-                            <span className="gv-row"><span className="mono gv-muted">#{item.issue}</span><span className="gv-grow gv-clamp2">{item.title}</span></span>
+                            <span className="gv-row"><span className="mono gv-muted">#{item.issue}</span><span className="gv-grow gv-wrap">{item.title}</span></span>
                             <span className="gv-row" aria-label={`Steps ${item.blocks.filter((b) => b.color === "#3ddc97").length} of ${item.blocks.length}`}>
                               {item.blocks.map((block) => <span key={block.step} title={block.step} className={`gv-sq small${block.color === LIVE && (item.column === "implementing" || item.column === "review") ? " curstep" : ""}`} style={{ background: block.color }} />)}
                               <span className="mono gv-meta gv-agent">{item.lane ?? "no lane"}</span>

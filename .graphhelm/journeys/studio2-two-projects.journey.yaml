@@ -17,8 +17,8 @@ screens:
     url: /?session=studio-fixture
     ignoreQuery: [session, project, run]
     state: stable
-    expect: [{role: banner, name: Top bar, text: demo / demo, because: "the top bar reads project / run: demo and its own team run, demo, not proj-two's second-run"}, {role: region, name: Graph, text: RUN demo STATUS, because: "Graph shows demo's own run, so the switch did not keep second-run open under the demo label"}, {role: heading, name: proj-two, absent: true, because: the top bar no longer names proj-two once the owner switched back}, {role: link, name: proj-two, because: "proj-two stays in the sidebar as its own card, one click away"}, {role: list, name: Runs in demo, absent: true, because: each project is one card with no run list under it}]
-    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
+    expect: [{role: banner, name: Top bar, text: demo / demo, because: "the top bar reads project / run: demo and its own team run, demo, not proj-two's second-run"}, {role: region, name: Graph, text: RUN demo STATUS, because: "Graph shows demo's own run, so the switch did not keep second-run open under the demo label"}, {role: heading, name: proj-two, absent: true, because: the top bar no longer names proj-two once the owner switched back}, {role: link, name: proj-two, because: "proj-two stays in the sidebar as its own card, one click away"}, {role: complementary, name: Journeys with work, text: 0 of 24, because: "demo's own 24 journeys are read again after the switch back, none with work in flight, so the Graph is not left with proj-two's list or a half-loaded one"}, {role: list, name: Runs in demo, absent: true, because: each project is one card with no run list under it}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts, apps/studio/src/graph/RequestsView.tsx]
   - id: first
     title: demo is open with its own run
     url: /?session=studio-fixture

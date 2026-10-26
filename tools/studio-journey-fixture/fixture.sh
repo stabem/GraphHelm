@@ -537,8 +537,8 @@ if (journey[0] === 'studio2-graph-requests') {
 }
 // #1808: the review's Now is the PR head's captured frame (#1839); one for the first screen the\n// modal opens on, studio2-open's bad-ticket (screens are listed by id).
 if (flowId === 'studio2-graph-review-screen') {
-  // #2085: a real captured frame, visibly different from the Before (the logged-in Studio against
-  // the bad-ticket refusal), so the modal compares two readable screens. A tiny one stops the seed.
+  // #2085/#2108: the bad-ticket screen itself with its top-left quarter tinted blue, so the modal
+  // compares the same screen before and now and the change is visible. A tiny one stops the seed.
   const bytes = fs.readFileSync(`${repoDir}/tools/studio-journey-fixture/frames/now.png`);
   if (bytes.toString('latin1', 1, 4) !== 'PNG' || bytes.readUInt32BE(16) < 1280 || bytes.readUInt32BE(20) < 800 || bytes.length < 4096) {
     throw new Error('fixture: frames/now.png is not a real captured frame');

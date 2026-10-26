@@ -169,7 +169,7 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
             return (
               <BoardColumn key={name} name={name} label={COLUMN_NAME[name]} count={cards.length}>
                 <ul aria-label={COLUMN_NAME[name]}>
-                  {cards.map((agent) => <Card key={agent.lane} agent={agent} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} stripe={stripes.get(agent.lane) ?? null} unlinked={unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
+                  {cards.map((agent) => <Card key={agent.lane} agent={agent} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} stripe={stripes.get(agent.lane) ?? null} unlinked={!serves.has(agent.lane) && unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
                 </ul>
               </BoardColumn>
             );

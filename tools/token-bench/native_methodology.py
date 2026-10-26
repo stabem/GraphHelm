@@ -135,10 +135,14 @@ def frozen_inputs(workflow: dict) -> dict:
 
 
 def native_cli_config(cli: str, executable: Path, model: str, *, project_doc: Path | None = None,
-                      extra: list[str] | None = None) -> dict:
+                      extra: list[str] | None = None,
+                      graphhelm_env: dict[str, str] | None = None) -> dict:
     """Build native CLI configuration; project settings and skills remain enabled."""
     if cli == "codex":
-        argv = [str(executable), "exec", "--json", "--skip-git-repo-check", "-m", model, "-"]
+        argv = [str(executable), "exec", "--json", "--ignore-user-config", "--skip-git-repo-check",
+                "-c", 'default_permissions=":workspace"', "-c", 'windows.sandbox="elevated"',
+                "-c", "features.prefer_mxc=true", "-c", 'web_search="disabled"',
+                "-m", model, "-"]
     elif cli == "claude":
         argv = [str(executable), "-p", "--output-format", "stream-json", "--verbose", "--model", model]
     else:
@@ -148,7 +152,8 @@ def native_cli_config(cli: str, executable: Path, model: str, *, project_doc: Pa
     return {"cli": cli, "executable": str(executable.resolve()), "model": model,
             "argv": argv, "projectDoc": str(project_doc.resolve()) if project_doc else None,
             "projectSkills": "enabled", "safeMode": "native-default", "plugins": "native-default",
-            "sessionPersistence": "enabled", "projectConfig": "native-default"}
+            "sessionPersistence": "enabled", "projectConfig": "native-default",
+            "graphhelmEnv": dict(graphhelm_env or {})}
 
 
 def phase_plan(workflow: dict, context: dict, *, plan_id: str, predecessor: str | None = None) -> dict:
@@ -227,6 +232,8 @@ def reconcile_nested_usage(records: object, *, expected_sessions: list[str], par
     complete = not missing and not invalid and not duplicates and not overlap
     total = None
     if complete:
+        if parent_usage is None and any(row.get("includedInParent") is True for row in records):
+            complete = False
         if parent_usage is not None and (not isinstance(parent_usage, dict) or any(
                 type(parent_usage.get(key)) is not int or parent_usage[key] < 0
                 for key in ("input", "output", "cacheRead", "cacheWrite"))):
@@ -239,6 +246,32 @@ def reconcile_nested_usage(records: object, *, expected_sessions: list[str], par
             "missingSessions": missing, "invalidSessions": invalid,
             "duplicateSessions": duplicates, "overlap": overlap,
             "expectedSessions": sorted(expected_sessions)}
+
+
+def collect_owned_child_usage(cli: str, raw_records: object, *, parent_session: str,
+                              parent_usage: dict | None = None) -> dict:
+    """Extract child totals from owned native session observations without summing cumulative events."""
+    if not isinstance(raw_records, list) or not raw_records:
+        return {"status": "unknown", "reason": "child session observations missing"}
+    rows = []
+    expected = []
+    for raw in raw_records:
+        if not isinstance(raw, dict) or raw.get("owned") is not True:
+            continue
+        session = raw.get("sessionId")
+        if raw.get("parentSessionId") == parent_session and isinstance(session, str):
+            expected.append(session)
+        usage = raw.get("finalUsage")
+        if cli == "claude" and isinstance(raw.get("tool_use_result"), dict):
+            usage = raw["tool_use_result"].get("usage") or usage
+        if cli == "codex":
+            usage = raw.get("finalTokenUsage") or usage
+        if isinstance(session, str):
+            rows.append({"sessionId": session, "parentSessionId": raw.get("parentSessionId"),
+                         "owned": True, "usage": usage, "rawSha256": raw.get("rawSha256"),
+                         "includedInParent": raw.get("includedInParent", False),
+                         "overlaps": raw.get("overlaps", False)})
+    return reconcile_nested_usage(rows, expected_sessions=sorted(set(expected)), parent_usage=parent_usage)
 
 
 def fidelity_witnesses(witnesses: object, *, required_kinds: set[str] | None = None) -> dict:
@@ -320,7 +353,8 @@ def execute_native_phase(plan: dict, phase_id: str, attempt_id: str, *, cli_conf
     attempt = phase_attempt(plan, phase_id, attempt_id, stage_root=str(stage))
     frozen_argv = list(cli_config["argv"]) + list(phase["command"])
     captured = base.capture(frozen_argv, project_root, deadline=int(cli_config.get("deadlineSeconds", 300)),
-                            prompt=prompt, environment=environment)
+                            prompt=prompt, environment=environment,
+                            graphhelm_overrides=cli_config.get("graphhelmEnv"))
     stdout = stage / "native.stdout.jsonl"
     stderr = stage / "native.stderr.log"
     stdout.write_text(captured["stdout"], encoding="utf-8")

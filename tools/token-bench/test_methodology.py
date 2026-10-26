@@ -14,12 +14,21 @@ import methodology as bench
 class MethodologyContracts(unittest.TestCase):
     def test_child_environment_removes_provider_keys_and_endpoints(self):
         environment = {"CODEX_API_KEY": "secret", "CUSTOM_API_KEY": "secret",
+                       "GRAPHHELM_API_TOKEN": "secret",
                        "OPENAI_BASE_URL": "https://example", "SAFE_SETTING": "kept"}
         filtered = bench.child_environment(environment)
         self.assertNotIn("CODEX_API_KEY", filtered)
         self.assertNotIn("CUSTOM_API_KEY", filtered)
         self.assertNotIn("OPENAI_BASE_URL", filtered)
+        self.assertNotIn("GRAPHHELM_API_TOKEN", filtered)
         self.assertEqual(filtered["SAFE_SETTING"], "kept")
+
+    def test_child_environment_allows_only_explicit_cell_graphhelm_actor(self):
+        filtered = bench.child_environment({"GRAPHHELM_ACTOR": "production", "PATH": "x"},
+                                            {"GRAPHHELM_ACTOR": "native-cell"})
+        self.assertEqual(filtered["GRAPHHELM_ACTOR"], "native-cell")
+        with self.assertRaises(ValueError):
+            bench.child_environment({}, {"GRAPHHELM_API_TOKEN": "secret"})
 
     def test_native_cli_command_has_frozen_non_bypass_controls(self):
         codex = bench.native_cli_command("codex", Path("codex.exe"), "model")

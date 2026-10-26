@@ -31,7 +31,7 @@ class NativeMethodologyContracts(unittest.TestCase):
         config = bench.native_cli_config("codex", Path(sys.executable), "pinned")
         self.assertEqual(config["projectSkills"], "enabled")
         self.assertEqual(config["sessionPersistence"], "enabled")
-        self.assertNotIn("--ignore-user-config", config["argv"])
+        self.assertIn("--ignore-user-config", config["argv"])
         self.assertNotIn("--disable", config["argv"])
 
     def test_framework_specific_stage_names_are_preserved(self):
@@ -89,6 +89,16 @@ class NativeMethodologyContracts(unittest.TestCase):
                                               parent_usage={"input": 6, "output": 270, "cacheRead": 5773, "cacheWrite": 7381})
         self.assertEqual(result["status"], "observed")
         self.assertEqual(result["total"]["output"], 270)
+
+    def test_owned_child_collector_uses_claude_tool_result_not_forwarded_placeholder(self):
+        result = bench.collect_owned_child_usage("claude", [{"owned": True, "sessionId": "parent",
+            "parentSessionId": "root", "spawned": ["child-a"], "rawSha256": "p" * 64},
+            {"owned": True, "sessionId": "child-a", "parentSessionId": "parent", "rawSha256": "c" * 64,
+             "tool_use_result": {"usage": {"input": 2, "output": 21, "cacheRead": 0, "cacheWrite": 1215}},
+             "assistantUsage": {"input": 2, "output": 8, "cacheRead": 0, "cacheWrite": 1215},
+             "includedInParent": True}], parent_session="parent")
+        self.assertEqual(result["status"], "unknown")
+        self.assertIsNone(result["total"])
 
     def test_completion_is_incomplete_until_all_controls_and_costs_are_observed(self):
         attempt = bench.phase_attempt(self.plan(), "author", "attempt-1")

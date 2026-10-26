@@ -22,11 +22,18 @@ PROVIDER_ERROR_TERMS = ("rate limit", "usage limit", "quota", "unauthorized",
                         "authentication", "not logged in", "login required")
 
 
-def child_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
+def child_environment(environment: dict[str, str] | None = None,
+                      graphhelm_overrides: dict[str, str] | None = None) -> dict[str, str]:
     """Remove provider credentials and endpoint overrides from one owned child."""
     source = os.environ if environment is None else environment
-    return {key: value for key, value in source.items()
-            if key.upper() not in API_ENV and not key.upper().endswith(("_API_KEY", "_BASE_URL", "_ENDPOINT"))}
+    cleaned = {key: value for key, value in source.items()
+               if key.upper() not in API_ENV and not key.upper().endswith(("_API_KEY", "_BASE_URL", "_ENDPOINT"))
+               and not key.upper().startswith("GRAPHHELM_")}
+    for key, value in (graphhelm_overrides or {}).items():
+        if key not in {"GRAPHHELM_ACTOR", "GRAPHHELM_RUNTIME_URL", "GRAPHHELM_EXECUTION_ID"}:
+            raise ValueError("only non-secret cell GraphHelm overrides are allowed")
+        cleaned[key] = value
+    return cleaned
 
 
 def native_cli_command(cli: str, executable: Path, model: str) -> list[str]:
@@ -139,9 +146,10 @@ def publish(path: Path, value: dict) -> None:
 
 
 def capture(argv: list[str], cwd: Path, *, deadline: int, prompt: str = "",
-            environment: dict[str, str] | None = None) -> dict:
+            environment: dict[str, str] | None = None,
+            graphhelm_overrides: dict[str, str] | None = None) -> dict:
     """Own each child; preserve its timeout rather than retrying or using another provider."""
-    environment = child_environment(environment)
+    environment = child_environment(environment, graphhelm_overrides)
     started = time.monotonic()
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         child = subprocess.Popen(argv, cwd=cwd, env=environment, stdin=subprocess.PIPE,

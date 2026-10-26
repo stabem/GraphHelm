@@ -4,8 +4,8 @@ title: Follow each owner request to its result
 name: Follow a request
 feature: Studio
 purpose: "On the demo run's Graph the owner follows the request Show the work graph for the fixture run to issue #721, its PR #721 and its result, Not merged; picks that request's journey in the left column to see only its work; and switches to Kanban and back to Graph without losing the request."
-status: draft
-approved: null
+status: approved
+approved: {revision: c98569d195a2f61eff7fe8252e31e2c7b5d5a3fd, digest: sha256:5455a06b1b8845cc78028cc963bbe543acee50664449cdae3cbca7d43862514a}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

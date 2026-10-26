@@ -311,7 +311,7 @@ def usage(cli: str, raw: str) -> dict:
         return {"counts": counts, "observedModels": models, "parseErrors": parse_errors,
                 "countsSource": "codex.turn.completed", "accountingStatus": "observed" if counts is not None else "unobserved"}
     else:
-        from run import sum_transcript_usage
+        from native_usage import sum_transcript_usage
         diagnostic_error = ("invalid-assistant-diagnostic" if any(
             row.get("type") == "assistant" and not isinstance(row.get("message"), dict)
             for row in records) else None)

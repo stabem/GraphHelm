@@ -3,6 +3,8 @@ import tempfile
 from pathlib import Path
 import sys
 import subprocess
+import importlib.util
+import shutil
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -133,51 +135,81 @@ class NativeMethodologyContracts(unittest.TestCase):
             self.assertTrue(result["artifactHashes"]["native-result.json"])
             self.assertTrue((root / "phase-setup-attempt-1" / "native-result.json").is_file())
 
-    def test_local_reviewed_patch_endpoint_never_claims_published_merge(self):
+    def test_endpoint_binds_native_terminal_review_real_git_diff_and_completed_wrappers(self):
+        import json
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            patch = root / "accepted.patch"
-            review = root / "review.json"
-            evaluator = root / "evaluator.json"
-            reviewer_session = root / "review-session.jsonl"
-            git_root = root / "review-repo"
+            git_root = root / "candidate"
             git_root.mkdir()
-            subprocess.run(["git", "init", "--quiet"], cwd=git_root, check=True, creationflags=bench.base.NO_WINDOW)
-            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=git_root, check=True, creationflags=bench.base.NO_WINDOW)
-            subprocess.run(["git", "config", "user.name", "native-test"], cwd=git_root, check=True, creationflags=bench.base.NO_WINDOW)
-            (git_root / "candidate.txt").write_text("candidate\n", encoding="utf-8")
-            subprocess.run(["git", "add", "candidate.txt"], cwd=git_root, check=True, creationflags=bench.base.NO_WINDOW)
-            subprocess.run(["git", "commit", "--quiet", "-m", "candidate"], cwd=git_root, check=True, creationflags=bench.base.NO_WINDOW)
-            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=git_root,
-                                  check=True, capture_output=True, text=True,
-                                  creationflags=bench.base.NO_WINDOW).stdout.strip()
-            patch.write_text("local patch\n", encoding="utf-8")
-            reviewer_session.write_text('{"type":"session_meta","rootSessionId":"review-root"}\n{"verdict":"APPROVE","reviewer":"reviewer","taskId":"task-1","gitHead":"%s","rootSessionId":"review-root"}\n' % head, encoding="utf-8")
-            review.write_text('{"verdict":"APPROVE","reviewer":"reviewer","patchSha256":"%s","taskId":"task-1","gitHead":"%s","reviewerSessionSha256":"%s","reviewerRootSessionId":"review-root","authorRootSessionId":"author-root"}' % (bench.base.digest(patch), head, bench.base.digest(reviewer_session)), encoding="utf-8")
-            evaluator.write_text('{"status":"passed","taskId":"task-1","patchSha256":"%s","gitHead":"%s"}' % (bench.base.digest(patch), head), encoding="utf-8")
-            result = bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
-                                                   evaluator_path=str(evaluator), author="author",
-                                                   reviewer="reviewer", local_git=True,
-                                                   reviewer_session_path=str(reviewer_session), git_head_path=str(git_root), task_id="task-1")
-            self.assertEqual(result["status"], "observed")
-            self.assertFalse(result["published"])
-            self.assertEqual(result["taskId"], "task-1")
-            self.assertEqual(result["gitHead"], head)
-            self.assertEqual(result["evaluatorStatus"], "passed")
-            evaluator.write_text('{"status":"passed","taskId":"task-1","patchSha256":null,"gitHead":"%s"}' % head, encoding="utf-8")
-            self.assertEqual(bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
-                             evaluator_path=str(evaluator), author="author", reviewer="reviewer", local_git=True,
-                             reviewer_session_path=str(reviewer_session), git_head_path=str(git_root), task_id="task-1")["status"], "incomplete")
-            fake_head = root / "fake-head"
-            fake_head.write_text(head, encoding="utf-8")
-            evaluator.write_text('{"status":"passed","taskId":"task-1","patchSha256":"%s","gitHead":"%s"}' % (bench.base.digest(patch), head), encoding="utf-8")
-            self.assertEqual(bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
-                             evaluator_path=str(evaluator), author="author", reviewer="reviewer", local_git=True,
-                             reviewer_session_path=str(reviewer_session), git_head_path=str(fake_head), task_id="task-1")["status"], "incomplete")
-            review.write_text('{"verdict":"APPROVE","reviewer":"author","patchSha256":"%s","taskId":"task-1","gitHead":"%s","reviewerSessionSha256":"%s","reviewerRootSessionId":"author-root","authorRootSessionId":"author-root"}' % (bench.base.digest(patch), head, bench.base.digest(reviewer_session)), encoding="utf-8")
-            self.assertEqual(bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
-                             evaluator_path=str(evaluator), author="author", reviewer="author", local_git=True,
-                             reviewer_session_path=str(reviewer_session), git_head_path=str(git_root), task_id="task-1")["status"], "incomplete")
+            def git(*args):
+                result = bench.base.capture(["git", *args], git_root, deadline=15)
+                self.assertEqual(result["exit"], 0, result["stderr"])
+                return result["stdout"]
+            git("init", "--quiet")
+            git("config", "user.email", "test@example.invalid")
+            git("config", "user.name", "native-test")
+            (git_root / "candidate.txt").write_text("old", encoding="utf-8")
+            git("add", "candidate.txt")
+            git("commit", "--quiet", "-m", "baseline")
+            baseline = git("rev-parse", "HEAD").strip()
+            (git_root / "candidate.txt").write_text("candidate", encoding="utf-8")
+            git("add", "candidate.txt")
+            git("commit", "--quiet", "-m", "candidate")
+            head = git("rev-parse", "HEAD").strip()
+            patch = root / "candidate.patch"
+            patch.write_bytes(git("-c", "core.autocrlf=false", "diff", "--binary", baseline, head).encode("utf-8"))
+            patch_hash = bench.base.digest(patch)
+            session = "4fb1b27b-870f-4a50-9989-754a959cfb5e"
+            terminal = {"verdict": "APPROVE", "reviewer": "reviewer", "taskId": "task-1",
+                        "gitHead": head, "patchSha256": patch_hash}
+            native = root / "review.jsonl"
+            init = {"type": "system", "subtype": "init", "session_id": session}
+            final = {"type": "result", "subtype": "success", "is_error": False,
+                     "session_id": session, "result": json.dumps(terminal)}
+            native.write_text(json.dumps(init)+"\n"+json.dumps(final)+"\n", encoding="utf-8")
+            review = root / "review.json"
+            review_data = {**terminal, "baseHead": baseline, "reviewerSessionSha256": bench.base.digest(native),
+                           "reviewerRootSessionId": session,
+                           "authorRootSessionId": "01a176e5-8357-7001-89bb-8ea26df340cd"}
+            review.write_text(json.dumps(review_data), encoding="utf-8")
+            registry = root / "registry.json"
+            task = {"id": "task-1", "scope": ["candidate.txt"], "completion": {
+                    "public": {"stdoutMarker": "PUBLIC_DONE"}, "hidden": {"stdoutMarker": "HIDDEN_DONE"}}}
+            registry.write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            evaluation = {}
+            for phase in ("public", "hidden"):
+                marker = task["completion"][phase]["stdoutMarker"]
+                script = "from pathlib import Path; assert Path('candidate.txt').read_text() == 'candidate'; print("+repr(marker)+")"
+                observed = bench.base.capture([sys.executable, "-I", "-c", script], git_root, deadline=15)
+                observed["cwd"] = str(git_root)
+                evaluation[phase] = observed
+            evaluator = root / "evaluator.json"
+            evaluator_data = {"status": "passed", "taskId": "task-1", "gitHead": head,
+                "baseHead": baseline, "patchSha256": patch_hash, "registryPath": str(registry),
+                "registrySha256": bench.base.digest(registry), "evaluation": evaluation,
+                "productionDigests": {"candidate.txt": bench.base.digest(git_root / "candidate.txt")}}
+            evaluator.write_text(json.dumps(evaluator_data), encoding="utf-8")
+            def endpoint():
+                return bench.accepted_patch_endpoint(patch_path=str(patch), review_path=str(review),
+                    evaluator_path=str(evaluator), author="author", reviewer="reviewer", local_git=True,
+                    reviewer_session_path=str(native), git_head_path=str(git_root), task_id="task-1")
+            result = endpoint()
+            self.assertEqual(result["status"], "observed", result)
+            self.assertFalse(endpoint()["published"])
+            # A matching declared hash cannot turn unrelated text into this Git patch.
+            patch.write_text("invented patch", encoding="utf-8")
+            self.assertEqual(endpoint()["status"], "incomplete")
+            patch.write_bytes(git("-c", "core.autocrlf=false", "diff", "--binary", baseline, head).encode("utf-8"))
+            evaluation["hidden"]["stdout"] = ""
+            evaluator.write_text(json.dumps(evaluator_data), encoding="utf-8")
+            self.assertEqual(endpoint()["status"], "incomplete")
+            evaluation["hidden"]["stdout"] = "HIDDEN_DONE"
+            evaluator.write_text(json.dumps(evaluator_data), encoding="utf-8")
+            # A top-level self-declared verdict is not a native provider response.
+            native.write_text(json.dumps(terminal), encoding="utf-8")
+            review_data["reviewerSessionSha256"] = bench.base.digest(native)
+            review.write_text(json.dumps(review_data), encoding="utf-8")
+            self.assertEqual(endpoint()["status"], "incomplete")
 
     def test_claude_archived_total_allows_cache_context_above_new_input(self):
         """The real Claude nested-session fixture has cache context larger than new input.
@@ -199,6 +231,26 @@ class NativeMethodologyContracts(unittest.TestCase):
         metrics = bench._usage_metrics(archived["total"], cli="claude")
         self.assertEqual(metrics, {"contextInputTokens": 21134,
                                     "totalProcessedTokens": 21664})
+
+    def test_methodology_usage_imports_without_legacy_tasks_manifest(self):
+        """The native parser must load without run.py, whose startup requires tasks.json."""
+        source = Path(__file__).resolve().parent
+        fixture = source / "fixtures" / "native-sessions" / "claude-depth2-stream.jsonl"
+        with tempfile.TemporaryDirectory() as directory:
+            isolated = Path(directory)
+            shutil.copy2(source / "methodology.py", isolated / "methodology.py")
+            shutil.copy2(source / "native_usage.py", isolated / "native_usage.py")
+            spec = importlib.util.spec_from_file_location("isolated_methodology", isolated / "methodology.py")
+            module = importlib.util.module_from_spec(spec)
+            sys.path.insert(0, str(isolated))
+            try:
+                spec.loader.exec_module(module)
+                result = module.usage("claude", fixture.read_text(encoding="utf-8"))
+            finally:
+                sys.path.pop(0)
+            self.assertEqual(result["accountingStatus"], "observed")
+            self.assertEqual(result["counts"], {"input": 10, "output": 530,
+                                                 "cacheRead": 9256, "cacheWrite": 11868})
 
 
 if __name__ == "__main__":

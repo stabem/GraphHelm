@@ -259,17 +259,9 @@ def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path
     patch_sha = base.digest(patch)
     reviewer_head = review_data.get("gitHead")
     evaluator_head = evaluator_data.get("gitHead")
-    session_rows = []
-    try:
-        for line in reviewer_session.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                session_rows.append(json.loads(line))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {"status": "incomplete", "reason": "review session is not valid native JSONL"}
-    session_root_ids = {row.get("rootSessionId") or row.get("session_id")
-                        for row in session_rows if isinstance(row, dict)}
-    native_verdict = next((row for row in session_rows
-                           if isinstance(row, dict) and row.get("verdict") in {"APPROVE", "APPROVE-WITH-RISK"}), None)
+    from native_session_evidence import native_review
+    native = native_review(reviewer_session)
+    native_verdict = native.get("verdict", {})
     if (review_data.get("verdict") not in {"APPROVE", "APPROVE-WITH-RISK"}
             or review_data.get("reviewer") != reviewer or reviewer == author
             or review_data.get("patchSha256") != patch_sha
@@ -282,11 +274,13 @@ def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path
             or not isinstance(review_data.get("authorRootSessionId"), str)
             or review_data["reviewerRootSessionId"] == review_data["authorRootSessionId"]
             or not isinstance(native_verdict, dict)
+            or native.get("status") != "observed"
+            or native_verdict.get("verdict") != review_data.get("verdict")
             or native_verdict.get("reviewer") != reviewer
             or native_verdict.get("taskId") != task_id
             or native_verdict.get("gitHead") != reviewer_head
-            or native_verdict.get("rootSessionId") not in session_root_ids
-            or native_verdict.get("rootSessionId") != review_data.get("reviewerRootSessionId")):
+            or native_verdict.get("patchSha256") != patch_sha
+            or native.get("rootSession") != review_data.get("reviewerRootSessionId")):
         return {"status": "incomplete", "reason": "review/evaluator receipt is not bound to this patch"}
     if review_data.get("taskId") != task_id or evaluator_data.get("taskId") != task_id:
         return {"status": "incomplete", "reason": "review/evaluator task mismatch"}
@@ -302,10 +296,36 @@ def accepted_patch_endpoint(*, patch_path: str, review_path: str, evaluator_path
     head = completed.stdout.strip() if completed.returncode == 0 else ""
     if len(head) != 40 or any(char not in "0123456789abcdef" for char in head.lower()) or head != reviewer_head:
         return {"status": "incomplete", "reason": "local Git head is not bound to accepted patch"}
+    base_head = review_data.get("baseHead")
+    if (not isinstance(base_head, str) or len(base_head) != 40
+            or any(c not in "0123456789abcdef" for c in base_head)
+            or evaluator_data.get("baseHead") != base_head):
+        return {"status": "incomplete", "reason": "accepted patch has no shared Git baseline"}
+    diff = subprocess.run(["git", "-c", "core.autocrlf=false", "diff", "--binary", base_head, head],
+                          cwd=git_head, capture_output=True, timeout=15,
+                          creationflags=base.NO_WINDOW, check=False)
+    if diff.returncode != 0 or not diff.stdout or hashlib.sha256(diff.stdout).hexdigest() != patch_sha:
+        return {"status": "incomplete", "reason": "accepted patch differs from the actual Git candidate"}
+    try:
+        from real_methodology import wrapper_completed
+        registry_path = Path(evaluator_data["registryPath"])
+        if (base.digest(registry_path) != evaluator_data["registrySha256"]
+                or any(path.resolve().is_relative_to(git_head.resolve())
+                       for path in (review, evaluator, reviewer_session, registry_path))):
+            raise ValueError("acceptance evidence must be private and pinned")
+        task = next(t for t in base.read(registry_path)["tasks"] if t["id"] == task_id)
+        evaluation = evaluator_data["evaluation"]
+        if not all(wrapper_completed(task, evaluation[phase], phase)[0] for phase in ("public", "hidden")):
+            raise ValueError("external evaluator wrappers did not complete")
+        expected = evaluator_data["productionDigests"]
+        if set(expected) != set(task["scope"]) or artifact_hashes(git_head, task["scope"]) != expected:
+            raise ValueError("evaluated production differs from the candidate")
+    except (KeyError, TypeError, OSError, ValueError, StopIteration):
+        return {"status": "incomplete", "reason": "external acceptance is missing or bound to another candidate"}
     return {"status": "observed", "patchPath": str(patch), "patchSha256": patch_sha,
             "reviewPath": str(review), "evaluatorPath": str(evaluator),
             "reviewerSessionPath": str(reviewer_session), "gitHeadPath": str(git_head), "taskId": task_id,
-            "gitHead": reviewer_head, "reviewerSessionSha256": review_data["reviewerSessionSha256"],
+            "gitHead": reviewer_head, "baseHead": base_head, "reviewerSessionSha256": review_data["reviewerSessionSha256"],
             "reviewerRootSessionId": review_data["reviewerRootSessionId"],
             "authorRootSessionId": review_data["authorRootSessionId"],
             "evaluatorStatus": evaluator_data["status"], "author": author, "reviewer": reviewer,
@@ -643,7 +663,7 @@ def freeze(registry_path: Path, *, cli_paths: dict[str, Path], models: dict[str,
     with tempfile.TemporaryDirectory() as directory:
         identity_map = {cli: base.identity(path, cli, Path(directory)) for cli, path in cli_paths.items()}
     workflows = registry["workflows"]
-    source_names = ["methodology.py", "real_methodology.py", "native_methodology.py",
+    source_names = ["methodology.py", "native_usage.py", "real_methodology.py", "native_methodology.py",
                     "native_session_evidence.py", "native_session_capture.py", "native_quota.py"]
     source_root = Path(__file__).resolve().parent
     source_hashes = {name: base.digest(source_root / name) for name in source_names if (source_root / name).is_file()}

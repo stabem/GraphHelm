@@ -228,6 +228,7 @@ class WholeRun(unittest.TestCase):
             mw.subprocess.run = real
         self.assertEqual(seen["env"]["MAIN_WHOLE_RUN_REEXEC"], "1")
         self.assertEqual(seen["creationflags"], mw.NO_WINDOW)
+        self.assertIs(seen["stdin"], mw.subprocess.DEVNULL)
         self.assertEqual(seen["cmd"][1:], ["c.py", "--x"])
 
 

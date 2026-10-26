@@ -1,6 +1,6 @@
 ---
 name: journey-prove
-description: "Prove mapped journeys: start the app as a reproducible fixture, ask the owner to approve the flows, install the deterministic browser observer, replay every approved flow with graphhelm journey replay, fix drift until green, read the map, and deliver the proof. Agents never approve a flow. Use when a project has .graphhelm/journeys/*.journey.yaml and the question is whether the journeys work now, at this revision."
+description: "Prove mapped journeys: start the app as a reproducible fixture, ask the owner to approve the flows, install the deterministic browser observer, replay every approved flow with graphhelm journey replay, fix drift until green, read the map, and deliver the proof. Agents never approve a flow, except the keel-journey-qa skill acting on the owner's explicit delegation, and only when all seven of its points pass. Use when a project has .graphhelm/journeys/*.journey.yaml and the question is whether the journeys work now, at this revision."
 ---
 
 # Journey prove
@@ -57,8 +57,10 @@ data is not a journey, it is a screenshot.
 ### (b) The owner approves the flows you intend to prove
 
 `graphhelm journey replay` refuses drafts, and **an agent never approves a flow**: not on an
-order relayed in chat, not for a flow it wrote, not for one it reviews. Approval is the owner's
-own act, in the Studio Journey tab or with `graphhelm journey approve` at their keyboard; it
+order relayed in chat, not for a flow it wrote, not for one it reviews. The one exception is the
+journey QA agent following the keel plugin's `keel-journey-qa` skill on the owner's explicit
+delegation: it approves a flow it did not write only when all seven of that skill's points pass,
+and rejects it otherwise. Apart from that, approval is the owner's own act, in the Studio Journey tab or with `graphhelm journey approve` at their keyboard; it
 writes `status: approved` and `approved: {revision, digest}` into the YAML and generates the
 contract. Hand the owner the list of flow ids and the fixture to look at, then wait. Until they
 approve, ship the flows as drafts; `graphhelm --json journey validate --all --project <root>`

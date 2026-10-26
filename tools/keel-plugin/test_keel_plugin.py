@@ -30,7 +30,8 @@ def text(path):
 class KeelPlugin(unittest.TestCase):
     def test_every_keel_file_has_exactly_one_skill_and_every_skill_one_keel_file(self):
         skills = sorted(path.parent.name for path in (PLUGIN / "skills").glob("*/SKILL.md"))
-        self.assertEqual(skills, sorted(sync.SKILLS), "a KEEL file without a skill, or a skill without one")
+        self.assertEqual(skills, sorted([*sync.SKILLS, *sync.HAND_WRITTEN]),
+                         "a KEEL file without a skill, or a skill that is neither generated nor hand-written")
         for source in sync.SKILLS.values():
             self.assertTrue((ROOT / source).is_file(), f"{source} is named by the plugin but missing")
         keel_files = {"KEEL.md", *(f"keel/{p.name}" for p in (ROOT / "keel").glob("KEEL_*.md"))}
@@ -120,7 +121,7 @@ class KeelPlugin(unittest.TestCase):
             self.assertEqual(agents.count(keel_setup.POINTER), 1)
 
     def test_each_skill_is_named_after_its_folder(self):
-        for skill in sync.SKILLS:
+        for skill in [*sync.SKILLS, *sync.HAND_WRITTEN]:
             with self.subTest(skill=skill):
                 match = FRONTMATTER_NAME.match(text(PLUGIN / "skills" / skill / "SKILL.md"))
                 self.assertIsNotNone(match, f"{skill}: SKILL.md must open with frontmatter naming the skill")

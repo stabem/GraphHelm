@@ -201,8 +201,9 @@ claude plugin install keel@graphhelm
 codex plugin add keel@graphhelm
 ```
 
-**Verify** with `claude plugin details keel@graphhelm`: five skills (`keel`, `keel-plan`,
-`keel-exec`, `keel-review`, `keel-merge`), no MCP server and no hooks. The skills follow the
+**Verify** with `claude plugin details keel@graphhelm`: six skills (`keel`, `keel-plan`,
+`keel-exec`, `keel-review`, `keel-merge`, and `keel-journey-qa`, which needs GraphHelm journeys),
+no MCP server and no hooks. The skills follow the
 project's own `KEEL.md` when it has one, and run `graphhelm keel check` only when that CLI is on
 PATH.
 

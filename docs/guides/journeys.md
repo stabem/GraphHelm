@@ -316,7 +316,10 @@ record as the owner. Real separation needs the agent to run as another OS user, 
 held where the agent cannot read it.
 
 **Approval belongs to the owner** (a person, in the Studio or with `journey approve`), never to an
-agent approving its own flow. To change an approved flow: set `status: draft` and `approved: null`
+agent approving its own flow. An agent never approves a flow, except the journey QA agent
+following the keel plugin's `keel-journey-qa` skill on the owner's explicit delegation: it approves
+a flow it did not write, with `journey approve` and the owner's token, only when all seven of that
+skill's points pass, and rejects it otherwise. To change an approved flow: set `status: draft` and `approved: null`
 (keep `drift`), edit, `journey validate`, `journey compile --include-draft`, then ask the owner to
 re-approve. While `status: approved`, an edited flow reports `flow.approval_stale`, and
 `compile --include-draft` does not regenerate it.
@@ -480,8 +483,9 @@ head's frame (Now).
 ## 10. Explore, drift and heal (phase 3)
 
 These commands use a **model**. Ordinary `journey replay` (section 4) never does. Each one works
-on a draft or reports a refusal; none of them approves anything. Only `journey approve` (owner)
-turns a draft into a trusted flow.
+on a draft or reports a refusal; none of them approves anything. Only `journey approve` (the owner, or
+the `keel-journey-qa` agent on the owner's delegation when all seven of its points pass) turns a
+draft into a trusted flow.
 
 ### Explore: draft a new flow from the running app
 

@@ -19,6 +19,8 @@ SKILLS = {
     "keel-review": "keel/KEEL_REVIEW.md",
     "keel-merge": "keel/KEEL_MERGE.md",
 }
+# Skills written by hand in the plugin, carrying no KEEL file; the sync never touches them.
+HAND_WRITTEN = ("keel-journey-qa",)
 DESCRIPTIONS = {
     "keel": "Use before any code work in a project that follows Keel: the values every step applies "
             "(read cost, end-to-end proof, cheap-to-change code) and which step file to load next.",

@@ -3,7 +3,7 @@
   "kind": "Extension",
   "metadata": {
     "id": "graphhelm-jpd",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "publisher": "GraphHelm",
     "source": {
       "repository": "https://github.com/stabem/GraphHelm"
@@ -209,7 +209,7 @@
           "id": "host/claude",
           "kind": "host-adapter",
           "path": ".claude-plugin/plugin.json",
-          "sha256": "sha256:44f8c61eb96752bc3c1e20bfa55d3018b17af3ff2512609981b8daf6aa569644",
+          "sha256": "sha256:22c0e29f3192812de33b06c73cbf5aebf506b14adc620429b25443621c8b1b42",
           "effects": [
             "host.discover"
           ],
@@ -225,7 +225,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-          "sha256": "sha256:7c0088db79a8941581419e941497ff7d953b0480931cda3bfb2936dc115401b3",
+          "sha256": "sha256:ba285e12615b0f244b30c42e7e97f63750b37f367b1bbbf2a499300b43a0fe54",
           "effects": [
             "host.discover"
           ],
@@ -1061,7 +1061,7 @@
           "id": "skill/journey-prove",
           "kind": "skill",
           "path": "skills/journey-prove/SKILL.md",
-          "sha256": "sha256:ac4ff8def12fab9beba8823eb8236f8ea0b93331a3716b4a657788f40f23f1a1",
+          "sha256": "sha256:53edeebe3be897849ba31132f06a792c80c21f345ac816234044c351099d3121",
           "effects": [
             "artifact.local.write",
             "artifact.propose"

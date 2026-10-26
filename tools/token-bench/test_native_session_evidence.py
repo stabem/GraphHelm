@@ -222,3 +222,19 @@ def test_native_skill_loader_requires_native_metadata_and_pinned_body(tmp_path):
     assert evidence.native_skill_load(log, **arguments)["status"] == "incomplete"
     skill.write_text(source + "Unpinned amendment.\n", encoding="utf-8")
     assert evidence.native_skill_load(log, **arguments)["status"] == "incomplete"
+
+
+def test_claude_native_skill_without_argument_macro_appends_exact_footer(tmp_path):
+    skill = tmp_path / "SKILL.md"
+    skill.write_text("---\nname: selected-skill\n---\nReal instructions.\n", encoding="utf-8")
+    pinned = hashlib.sha256(skill.read_bytes()).hexdigest()
+    log = tmp_path / "native.jsonl"
+    row = {"type": "user", "isMeta": True, "message": {"content": [{"type": "text",
+        "text": f"Base directory for this skill: {tmp_path}\n\nReal instructions.\n\n\nARGUMENTS: task-a"}]}}
+    log.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    args = {"cli": "claude", "expected_path": skill, "expected_sha256": pinned,
+            "frozen_prompt": "/selected-skill task-a"}
+    assert evidence.native_skill_load(log, **args)["status"] == "observed"
+    row["message"]["content"][0]["text"] = row["message"]["content"][0]["text"].replace("task-a", "task-b")
+    log.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    assert evidence.native_skill_load(log, **args)["status"] == "incomplete"

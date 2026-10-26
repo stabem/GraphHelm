@@ -51,6 +51,7 @@ def _workflow(*, method_id: str, framework: str, project_root: Path,
                      project_root=project_root, operations=ops, output_globs=globs)
               for phase_id, skill, ops, globs in stages]
     first = Path(skill_root) / stages[0][1] / "SKILL.md"
+    first_abs = project_root / first
     return {"id": f"native-{method_id}", "version": f"pinned-{PINNED[method_id]}",
             "framework": framework, "maxFixAttempts": 1,
             "projectRoot": str(project_root.resolve()), "taskRefs": [task_ref],
@@ -63,7 +64,7 @@ def _workflow(*, method_id: str, framework: str, project_root: Path,
                         "assetRoot": str((project_root / skill_root).resolve()),
                         "pin": PINNED[method_id]}, "phases": [
                             {**phase, "requiredWitnesses": [{"kind": "native_skill", "path": str(first),
-                                                              "sha256": _digest(first)}]}
+                                                              "sha256": _digest(first_abs)}]}
                             for phase in phases]}
 
 def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path,

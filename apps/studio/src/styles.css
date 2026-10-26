@@ -503,7 +503,8 @@ button { font: inherit; }
 .feed li { display: flex; gap: 8px; font-size: 11px; min-width: 0; }
 .feed-who { flex: none; width: 88px; overflow-wrap: break-word; font-size: var(--fs-meta); }
 .feed li > time { flex: none; white-space: nowrap; }
-.feed li > .muted { overflow-wrap: break-word; min-width: 0; }
+.feed li { flex-wrap: wrap; }
+.feed li > .muted { flex: 1 1 10em; overflow-wrap: break-word; min-width: 0; }
 @media (max-width: 1100px) { .lane-panels { grid-template-columns: 1fr; } }
 
 /* #1801: the Graph region's owner requests and Kanban. */

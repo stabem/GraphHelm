@@ -115,6 +115,9 @@ def validate_registry(registry: dict) -> dict:
                 raise ValueError("each phase needs a native command list")
             if not isinstance(phase.get("prompt"), str) or not phase["prompt"].strip():
                 raise ValueError("each phase needs a frozen prompt")
+            minimum_agents = phase.get("minNativeReviewerAgents", 0)
+            if type(minimum_agents) is not int or not 0 <= minimum_agents <= 8:
+                raise ValueError("native reviewer agent minimum must be bounded")
             for operation in phase.get("requiredOperations", []):
                 pattern = operation.get("commandPattern") if isinstance(operation, dict) else None
                 if not isinstance(pattern, str) or not pattern.strip() or pattern.lstrip().startswith(("read ", "inspect ", "preserve ", "follow ", "invoke ")):
@@ -284,6 +287,7 @@ def phase_plan(workflow: dict, context: dict, *, plan_id: str, predecessor: str 
                "prompt": phase["prompt"], "promptSha256": _json_hash(phase["prompt"]),
                "requiredArtifacts": list(phase.get("requiredArtifacts", [])),
                "requiredOperations": list(phase.get("requiredOperations", [])),
+               "minNativeReviewerAgents": phase.get("minNativeReviewerAgents", 0),
                "requiredArtifactGlobs": list(phase.get("requiredArtifactGlobs", [])),
                "requiredWitnessKinds": list(phase.get("requiredWitnessKinds", ["native_stream"])),
                "requiredWitnesses": list(phase.get("requiredWitnesses", [])),
@@ -787,6 +791,7 @@ def freeze(registry_path: Path, *, cli_paths: dict[str, Path], models: dict[str,
                   "requiredArtifacts": list(phase.get("requiredArtifacts", [])),
                   "requiredWitnesses": list(phase.get("requiredWitnesses", [])),
                   "requiredOperations": list(phase.get("requiredOperations", [])),
+                  "minNativeReviewerAgents": phase.get("minNativeReviewerAgents", 0),
                   "requiredArtifactGlobs": list(phase.get("requiredArtifactGlobs", []))}
                  for row in workflows for phase in row["phases"]],
                 "winner": None}
@@ -946,6 +951,10 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                 raise ValueError("unsupported archived native provider")
             parsed_total = _usage_total(parsed_archive.get("total"), cli=cli)
             valid = valid and parsed_archive.get("status") == "observed" and parsed_total == archived_total
+            minimum_agents = phase_spec.get("minNativeReviewerAgents", 0) if phase_spec else 0
+            if minimum_agents:
+                valid = (valid and cli == "claude" and len(child_logs) >= minimum_agents
+                         and len(parsed_archive.get("children", {})) >= minimum_agents)
             if "native_skill" in required_kinds and phase_spec:
                 from native_session_evidence import native_skill_load
                 expected_skills = [w for w in phase_spec.get("requiredWitnesses", [])
@@ -959,7 +968,7 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                     and replayed.get("skillSha256") == stated.get("skillSha256")
                     for replayed, stated in zip(replayed_loads, stated_loads))
         except (ImportError, KeyError, OSError, TypeError, ValueError):
-                valid = False
+            valid = False
         if workflow_spec is None:
             valid = False
         else:

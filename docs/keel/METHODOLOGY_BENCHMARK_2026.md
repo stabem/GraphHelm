@@ -224,6 +224,9 @@ It counts that attempt once and retains its original phase status.
 The ledger does not certify method fidelity or an accepted endpoint. A phase marked
 `observed` only proves that phase's witnesses; method completion also requires every
 native boundary and the independent quality endpoint.
+For BMAD, setup must run its installed setup script. The method review must run
+its render script and produce at least two completed, archived native reviewer
+agents. Loading `bmad-code-review` alone does not prove that review happened.
 The frozen-manifest report refuses a total and an accepted result if extra native
 attempt directories exist outside its planned phase receipts. Use the pilot ledger
 to account for those attempts before interpreting any cost result.

@@ -51,8 +51,10 @@ def _phase(*, phase_id: str, skill: str, cli: str, task_ref: str,
                 "propose": r"openspec(?:\.cmd)?\s+(?:new\s+change|instructions)",
                 "sync": r"openspec(?:\.cmd)?\s+sync\s+specs",
                 "archive": r"openspec(?:\.cmd)?\s+archive",
-                "setup": r"knowledge\.py\s+--content\s+--root",
+                "setup": r"uv\s+run\s+--no-cache.*bmad/scripts/setup\.py.*--project-root",
                 "build": r"uv\s+run\s+--no-cache.*render_skill\.py"}
+    if phase_id == "method_review":
+        patterns[phase_id] = r"uv\s+run\s+--no-cache.*render_skill\.py"
     required = [] if phase_id not in patterns else [{"name": phase_id,
         "commandPattern": patterns[phase_id]}]
     skill_path = project_root / (".claude/skills" if cli == "claude" else ".agents/skills") / skill / "SKILL.md"
@@ -154,6 +156,7 @@ def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path
         _workflow(method_id="openspec", framework="OpenSpec", project_root=roots["openspec"], task_ref=task_ref, skill_root=skill_root, stages=openspec, **common),
         _workflow(method_id="bmad", framework="BMAD V7 preview (bmod-method 6.13.0-next)", project_root=roots["bmad"], task_ref=task_ref, skill_root=skill_root, stages=bmad, **common),
         _workflow(method_id="superpowers", framework="Superpowers", project_root=roots["superpowers"], task_ref=task_ref, skill_root=skill_root, stages=superpowers, **common),]
+    next(phase for phase in workflows[2]["phases"] if phase["id"] == "method_review")["minNativeReviewerAgents"] = 2
     return {"schema": SCHEMA, "version": "native-v2", "workflows": workflows}
 
 def write_registry(path: Path, **kwargs) -> dict:

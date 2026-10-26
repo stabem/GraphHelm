@@ -57,6 +57,14 @@ class NativeVendorWorkflowContracts(unittest.TestCase):
                                   if workflow["id"] == "native-superpowers"
                                   for phase in workflow["phases"] if phase["id"] == "request_review")
             self.assertEqual(request_review["requiredArtifactGlobs"], [])
+            bmad = next(workflow for workflow in registry["workflows"]
+                        if workflow["id"] == "native-bmad")
+            setup = next(phase for phase in bmad["phases"] if phase["id"] == "setup")
+            method_review = next(phase for phase in bmad["phases"]
+                                 if phase["id"] == "method_review")
+            self.assertIn("bmad/scripts/setup", setup["requiredOperations"][0]["commandPattern"])
+            self.assertIn("render_skill", method_review["requiredOperations"][0]["commandPattern"])
+            self.assertEqual(method_review["minNativeReviewerAgents"], 2)
 
     def test_phase_uses_native_prompt_and_phase_skill_witness_without_cli_flags(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -407,6 +407,21 @@ class NativeMethodologyContracts(unittest.TestCase):
             report = bench.report_manifest(manifest_path, output)
             self.assertEqual(report["attempts"][0]["status"], "complete")
             self.assertEqual(report["usageAggregate"], counts)
+            phase_spec = workflow["phases"][0]
+            phase_spec["minNativeReviewerAgents"] = 2
+            receipt["attempt"]["planSha256"] = bench.phase_plan(
+                workflow, {**workflow["taskContext"], "phase": "setup"},
+                plan_id="spec-kit-frozen")["planSha256"]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            receipt["manifestSha256"] = bench._json_hash(manifest)
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            missing_reviewers = bench.report_manifest(manifest_path, output)
+            self.assertEqual(missing_reviewers["attempts"][0]["status"], "incomplete")
+            self.assertIsNone(missing_reviewers["usageAggregate"])
+            phase_spec.pop("minNativeReviewerAgents")
+            receipt["attempt"]["planSha256"] = plan["planSha256"]
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            receipt["manifestSha256"] = bench._json_hash(manifest)
             receipt["archivedSession"]["rootSession"] = "22222222-2222-4222-8222-222222222222"
             (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
             swapped_root = bench.report_manifest(manifest_path, output)

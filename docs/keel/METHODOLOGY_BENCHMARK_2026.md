@@ -230,3 +230,41 @@ agents. Loading `bmad-code-review` alone does not prove that review happened.
 The frozen-manifest report refuses a total and an accepted result if extra native
 attempt directories exist outside its planned phase receipts. Use the pilot ledger
 to account for those attempts before interpreting any cost result.
+
+## GraphHelm JPD + Keel local lifecycle probe (2026-10-26)
+
+`tools/token-bench/graphhelm_full_flow.py` audits a complete local Runtime execution
+against its event journal, JPD journey steps, Keel signals, every planned claim and
+clearance, a Git-bound independent native review, the external public/hidden
+evaluator, and all native subscription attempt receipts. Give it a private manifest
+with `attemptsRoot`, `attemptPrefix`, every `attempts[].receipt`, `provider=claude`,
+`graphhelmCli`, `runtimeGraph`, `runtimeEvents`, `runtimeStatus`, `journal`,
+`journey`, `endpoint`, `executionId`, and `candidateHead`. The auditor replays
+the journal through the pinned local CLI; it refuses a different execution or
+receipt outside the attempt directory. The manifest
+also records `manualIntervention`, `prStageReviewed`, and `reachedStatus`. Run:
+
+```powershell
+python tools/token-bench/graphhelm_full_flow.py --manifest <private-manifest.json> --output <private-audit.json>
+```
+
+The first integration probe used the full 1,824-file public task context, the
+pinned native GraphHelm/JPD/Keel plugins, five Claude subscription sessions
+(including failed attempts), an isolated local Runtime, and a separate native
+Claude review. Runtime finished five nodes and recorded one journey, eight
+obligations, one Keel card, and one Keel proof. The exact-head public and
+submitted observers passed; the external evaluator passed 11 public and 28
+hidden assertions. The accepted local patch endpoint verified the Git diff,
+review session, and evaluator again. The five native sessions processed
+4,002,491 tokens in aggregate across input, output, cache reads, and cache
+writes; this is not a billed-dollar figure.
+
+This probe is **not comparison eligible**. A controller corrected a URL-encoding
+defect after an independent `BLOCK`, outside the native author session. The
+review was local rather than the GraphHelm PR-stage blind review. The reached
+observer was unobserved because its inventory-only mirror has no Git base;
+public, submitted, and hidden checks do not turn that into a reached pass.
+The Runtime used external native-agent claim/clear evidence, not an automatic
+Runtime model/tool executor. Keep this result as an integration probe; a
+balanced, controller-free cohort with the same full context and observer
+boundaries is still required before any gain claim.

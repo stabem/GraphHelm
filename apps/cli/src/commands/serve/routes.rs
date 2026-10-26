@@ -3595,17 +3595,13 @@ fn execute_events_tail(
 ) -> Result<serde_json::Value, execution::Failure> {
     let store = event_store(events_dir).map_err(|error| execution::repository_failure(&error))?;
     let (scope, stream_id) = execution::stream_of(execution_id)?;
-    // #1560: borrow the stream and clone only the page. Copying the whole history first made
-    // every page cost the same as the full stream (about 250 ms on a 40k-event run, whatever
-    // `after` and `limit` were), and the Studio pages it about 160 times per load.
+    // #1560 / segmented stores: read only the page. `read_stream_page` seeks to the stream's
+    // lines past `after` and stops at `limit`, so a page no longer costs the stream's whole
+    // history (the Studio pages this route about 160 times per load).
     store
-        .scan_replay_stream(&scope, &stream_id, |history| {
-            let head = history.last().map_or(0, |event| event.sequence);
-            let page: Vec<_> = history
-                .iter()
-                .filter(|event| event.sequence > after)
-                .take(limit)
-                .collect();
+        .read_stream_page(&scope, &stream_id, after, limit)
+        .map(|(page, head)| {
+            let head = head.map_or(0, |head| head.next_sequence.saturating_sub(1));
             serde_json::json!({ "events": page, "head": head })
         })
         .map_err(|error| execution::repository_failure(&error))

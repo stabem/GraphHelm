@@ -44,6 +44,27 @@ def verified_archive(archive: dict, *, cli: str) -> tuple[Path, list[Path]]:
     return root, sorted(directory / name for name in hashes if name != "root.jsonl")
 
 
+def verified_codex_stream_root(stream: Path, root_thread: str) -> None:
+    """Require the native stdout thread identity to match the archived root."""
+    starts = [row for row in records(stream) if row.get("type") == "thread.started"]
+    if len(starts) != 1 or starts[0].get("thread_id") != root_thread:
+        raise ValueError("Codex native stdout thread differs from archived root")
+
+
+def claude_final_results(rows: list[dict], session_id: str | None = None) -> list[dict]:
+    """Accept continued turns only when one session reports one cumulative pipeline."""
+    finals = [row for row in rows if row.get("type") == "result"]
+    if (not finals or (len(finals) > 1 and not isinstance(finals[0].get("session_id"), str))
+            or any(row.get("subtype") not in {None, "success"}
+                          or row.get("is_error") not in {None, False}
+                          or row.get("session_id") != finals[0].get("session_id")
+                          or row.get("modelUsage") != finals[-1].get("modelUsage")
+                          for row in finals)
+            or (session_id is not None and finals[0]["session_id"] != session_id)):
+        raise ValueError("Claude native results lack one cumulative session")
+    return finals
+
+
 def native_review(path: Path) -> dict:
     """Read a terminal review from a real CLI envelope, never a standalone verdict row."""
     try:
@@ -224,10 +245,8 @@ def claude_pipeline(stream: Path) -> dict:
     """
     try:
         rows = records(stream)
-        finals = [r for r in rows if r.get("type") == "result"]
-        if len(finals) != 1:
-            raise ValueError("expected exactly one native final result")
-        final = finals[0]
+        finals = claude_final_results(rows)
+        final = finals[-1]
         model_usage = final.get("modelUsage")
         if not isinstance(model_usage, dict) or not model_usage:
             raise ValueError("native pipeline counters missing")
@@ -238,7 +257,7 @@ def claude_pipeline(stream: Path) -> dict:
                           "cache_creation_input_tokens": value.get("cacheCreationInputTokens")}
             pipeline_rows.append(counters(normalized, claude=True))
         pipeline = _sum(pipeline_rows)
-        main = counters(final["usage"], claude=True)
+        main = _sum([counters(row["usage"], claude=True) for row in finals])
         agent_calls = set()
         children = {}
         answered_calls = set()
@@ -359,10 +378,8 @@ def claude_owned_tree(stream: Path, child_logs: list[Path], *, project: Path,
         if version != "2.1.310":
             raise ValueError("Claude recursive inclusion semantics are not qualified for this version")
         rows = records(stream)
-        finals = [r for r in rows if r.get("type") == "result"]
-        if len(finals) != 1 or finals[0].get("session_id") != session_id:
-            raise ValueError("native final session identity mismatch")
-        final = finals[0]
+        finals = claude_final_results(rows, session_id=session_id)
+        final = finals[-1]
         stats = final.get("subagent_stats")
         if not isinstance(stats, dict) or stats.get("spawned") != stats.get("completed"):
             raise ValueError("native child tree is incomplete")
@@ -460,7 +477,7 @@ def claude_owned_tree(stream: Path, child_logs: list[Path], *, project: Path,
                                    "cache_read_input_tokens": v.get("cacheReadInputTokens"),
                                    "cache_creation_input_tokens": v.get("cacheCreationInputTokens")}, claude=True)
                          for v in models.values()])
-        main = counters(final["usage"], claude=True)
+        main = _sum([counters(row["usage"], claude=True) for row in finals])
         if _sum([main, *[v["usage"] for v in children.values()]]) != pipeline:
             raise ValueError("native persisted child messages do not reconcile with pipeline")
         return {"status": "observed", "total": pipeline, "mainLoop": main,

@@ -144,7 +144,7 @@ def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path
         ("entry", "using-superpowers", ["invoke applicable skills before response or action"], [".agents/skills/**"]),
         ("debug", "systematic-debugging", ["investigate the root cause before proposing a fix"], ["tools/task-record/task_record.py"]),
         ("implement", "test-driven-development", ["write failing test; observe red; implement minimal green"], ["**/*"]),
-        ("request_review", "requesting-code-review", ["request independent review with exact diff and tests"], ["docs/superpowers/**"]),
+        ("request_review", "requesting-code-review", ["request independent review with exact diff and tests"], []),
         ("verify", "verification-before-completion", ["run fresh verification before any completion claim"], ["**/*"]),]
     common = dict(cli=cli, executable=executable, task_brief=task_brief,
                   approval_policy=approval_policy, task_context_root=project_root,

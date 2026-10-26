@@ -14,6 +14,17 @@ import native_session_evidence as evidence
 
 
 class NativeMethodologyContracts(unittest.TestCase):
+    def test_codex_stdout_root_must_match_archived_thread(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stream = Path(directory) / "stdout.jsonl"
+            stream.write_text(json.dumps({"type": "thread.started", "thread_id": "other"}) + "\n",
+                              encoding="utf-8")
+            with self.assertRaises(ValueError):
+                evidence.verified_codex_stream_root(stream, "archived-root")
+            stream.write_text(json.dumps({"type": "thread.started", "thread_id": "archived-root"}) + "\n",
+                              encoding="utf-8")
+            evidence.verified_codex_stream_root(stream, "archived-root")
+
     def test_codex_root_wire_counters_use_provider_field_names(self):
         self.assertEqual(bench._codex_root_counters({"counts": {
             "input_tokens": 65656, "output_tokens": 72, "cached_input_tokens": 43392}}),

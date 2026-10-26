@@ -53,6 +53,10 @@ class NativeVendorWorkflowContracts(unittest.TestCase):
                            for phase in workflow["phases"] if phase["id"] == "explore")
             self.assertEqual(explore["requiredArtifactGlobs"], [])
             self.assertEqual(explore["requiredOperations"][0]["name"], "explore")
+            request_review = next(phase for workflow in registry["workflows"]
+                                  if workflow["id"] == "native-superpowers"
+                                  for phase in workflow["phases"] if phase["id"] == "request_review")
+            self.assertEqual(request_review["requiredArtifactGlobs"], [])
 
     def test_phase_uses_native_prompt_and_phase_skill_witness_without_cli_flags(self):
         with tempfile.TemporaryDirectory() as directory:

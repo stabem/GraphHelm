@@ -83,6 +83,31 @@ def test_unhashed_root_cannot_be_counted():
         assert result["totalProcessedTokens"] is None
 
 
+def test_linked_replay_counts_original_attempt_once(tmp_path):
+    _write_attempt(tmp_path, "review", "one")
+    stage = tmp_path / "review"
+    receipt_path = stage / "receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    archive = receipt["archive"]
+    receipt["archive"] = {"status": "unknown", "total": None}
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+    replay = {"schema": "native-accounting-replay/1",
+              "sourceReceiptSha256": digest(receipt_path),
+              "sourceStdoutSha256": digest(stage / "native.stdout.jsonl"),
+              "sourceStderrSha256": digest(stage / "native.stderr.log"),
+              "archive": archive}
+    sidecar = stage / "accounting-replay-001.json"
+    sidecar.write_text(json.dumps(replay), encoding="utf-8")
+    accepted = ledger.summarize(tmp_path, prefix="review", cli="claude", project=tmp_path)
+    assert accepted["accountingStatus"] == "observed"
+    assert accepted["totalProcessedTokens"] == 13430
+    assert accepted["attempts"][0]["accountingReplaySha256"] == digest(sidecar)
+    receipt["status"] = "forged"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    assert ledger.summarize(tmp_path, prefix="review", cli="claude", project=tmp_path)["accountingStatus"] == "unknown"
+
+
 def test_copied_native_session_cannot_be_reidentified_as_a_retry():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)

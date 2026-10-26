@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 
 import native_session_evidence as evidence
+import methodology as base
 
 FIXTURES = Path(__file__).parent / "fixtures" / "native-sessions"
 
@@ -47,6 +48,37 @@ def test_claude_pipeline_includes_child_once():
     assert result["status"] == "observed"
     assert result["total"] == {"input": 6, "output": 270, "cacheRead": 5773, "cacheWrite": 7381}
     assert list(result["children"].values())[0]["output"] == 21
+
+
+def test_claude_continued_results_share_one_cumulative_pipeline(tmp_path):
+    rows = evidence.records(FIXTURES / "claude-depth2-stream.jsonl")
+    final = next(row for row in rows if row.get("type") == "result")
+    first = copy.deepcopy(final)
+    for key in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                "cache_creation_input_tokens"):
+        first["usage"][key] = final["usage"][key] // 2
+        final["usage"][key] -= first["usage"][key]
+    rows.insert(rows.index(final), first)
+    stream = tmp_path / "continued.jsonl"
+    stream.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    children = [FIXTURES / "claude-depth2-agent-a504ead345762efa8.jsonl",
+                FIXTURES / "claude-depth2-agent-ae3adfc4b2629e939.jsonl"]
+    expected = evidence.claude_owned_tree(FIXTURES / "claude-depth2-stream.jsonl", children,
+        project=Path("D:/gh/codex-scope-cleanup/native-2074-probes/claude-child-depth2-001"),
+        session_id=final["session_id"])
+    replay = evidence.claude_owned_tree(stream, children,
+        project=Path("D:/gh/codex-scope-cleanup/native-2074-probes/claude-child-depth2-001"),
+        session_id=final["session_id"])
+    assert replay["status"] == "observed", replay
+    assert replay["total"] == expected["total"]
+    wire = base.usage("claude", stream.read_text(encoding="utf-8"))
+    assert wire["accountingStatus"] == "observed"
+    assert wire["counts"] == expected["total"]
+    first["modelUsage"][next(iter(first["modelUsage"]))]["outputTokens"] += 1
+    stream.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    assert evidence.claude_owned_tree(stream, children,
+        project=Path("D:/gh/codex-scope-cleanup/native-2074-probes/claude-child-depth2-001"),
+        session_id=final["session_id"])["status"] == "unknown"
 
 
 def test_claude_unobserved_child_never_becomes_zero(tmp_path):

@@ -39,6 +39,17 @@ def _attempt(path: Path, *, cli: str, project: Path) -> dict:
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         archive = receipt["archive"]
+        replay_path = path / "accounting-replay-001.json"
+        replay_sha = None
+        if archive.get("status") != "observed" and replay_path.is_file() and not replay_path.is_symlink():
+            replay = json.loads(replay_path.read_text(encoding="utf-8"))
+            if (replay.get("schema") != "native-accounting-replay/1"
+                    or replay.get("sourceReceiptSha256") != _digest(receipt_path)
+                    or replay.get("sourceStdoutSha256") != _digest(stdout)
+                    or replay.get("sourceStderrSha256") != _digest(stderr)):
+                raise ValueError("linked accounting replay source differs")
+            archive = replay["archive"]
+            replay_sha = _digest(replay_path)
         counts = _counts(archive.get("total"))
         if counts is None or archive.get("status") != "observed":
             raise ValueError("archived token accounting is incomplete")
@@ -48,9 +59,7 @@ def _attempt(path: Path, *, cli: str, project: Path) -> dict:
         root_log, children = evidence.verified_archive(archive, cli=cli)
         if cli == "claude":
             native_stream = evidence.records(stdout)
-            finals = [row for row in native_stream if row.get("type") == "result"]
-            if len(finals) != 1 or finals[0].get("session_id") != archive.get("rootSession"):
-                raise ValueError("Claude root session does not match native stream")
+            evidence.claude_final_results(native_stream, session_id=archive.get("rootSession"))
             native_root = evidence.records(root_log)
             metadata = [row for row in native_root if row.get("type") in {"user", "assistant"}]
             if not metadata or any(row.get("sessionId") != archive["rootSession"]
@@ -64,10 +73,7 @@ def _attempt(path: Path, *, cli: str, project: Path) -> dict:
                       if children else evidence.claude_pipeline(stdout))
         elif cli == "codex":
             import methodology as base
-            native_stream = evidence.records(stdout)
-            starts = [row for row in native_stream if row.get("type") == "thread.started"]
-            if len(starts) != 1 or starts[0].get("thread_id") != archive.get("rootSession"):
-                raise ValueError("Codex root thread does not match native stream")
+            evidence.verified_codex_stream_root(stdout, archive.get("rootSession"))
             wire = receipt["wire"]["counts"]
             parsed_wire = base.usage("codex", stdout.read_text(encoding="utf-8"))
             if parsed_wire.get("accountingStatus") != "observed" or parsed_wire.get("counts") != {
@@ -86,7 +92,7 @@ def _attempt(path: Path, *, cli: str, project: Path) -> dict:
             raise ValueError("raw native counters do not reconcile with archive total")
         return {"attempt": path.name, "status": receipt.get("status", "unknown"),
                 "rootSession": archive.get("rootSession"), "counts": counts,
-                "receiptSha256": _digest(receipt_path)}
+                "receiptSha256": _digest(receipt_path), "accountingReplaySha256": replay_sha}
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
         return {"attempt": path.name, "status": "unknown", "reason": str(error)}
 

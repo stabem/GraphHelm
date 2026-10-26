@@ -123,10 +123,8 @@ def archive_phase(cli: str, stdout: Path, *, project: Path, archive: Path,
                                          stdout_usage=evidence.counters(root_counts))
             result["rootSession"] = thread
         elif cli == "claude":
-            finals = [r for r in rows if r.get("type") == "result"]
-            if len(finals) != 1:
-                raise ValueError("native final session identity missing or duplicated")
-            session = _uuid(finals[0].get("session_id"))
+            finals = evidence.claude_final_results(rows)
+            session = _uuid(finals[-1].get("session_id"))
             home = Path(env.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))).resolve()
             if home.is_relative_to(project):
                 raise ValueError("subject-writable Claude state is not native evidence")

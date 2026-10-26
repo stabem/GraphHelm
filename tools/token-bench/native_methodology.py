@@ -902,7 +902,8 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
         archive = row.get("archivedSession", {})
         try:
             from native_session_evidence import (codex_tree, claude_pipeline, claude_owned_tree,
-                                                 counters, records, verified_archive)
+                                                 claude_final_results, counters, records, verified_archive,
+                                                 verified_codex_stream_root)
             cli = row.get("cli")
             project = Path(workflow_spec["projectRoot"]) if workflow_spec else None
             root_log, child_logs = verified_archive(archive, cli=cli)
@@ -918,18 +919,17 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                      and replayed_wire.get("observedModels") == row.get("usage", {}).get("observedModels")
                      and replayed_wire.get("accountingModels", []) == row.get("usage", {}).get("accountingModels", []))
             if cli == "codex":
+                verified_codex_stream_root(stdout_file, archive["rootSession"])
                 parsed_archive = codex_tree(root_log, child_logs, project=project,
                                             root_thread=archive["rootSession"],
                                             stdout_usage=_codex_root_counters(row.get("rootWireUsage")))
             elif cli == "claude":
                 native_rows = records(stdout_file)
-                finals = [native_row for native_row in native_rows
-                          if native_row.get("type") == "result"]
+                claude_final_results(native_rows, session_id=archive["rootSession"])
                 root_rows = records(root_log)
                 metadata = [native_row for native_row in root_rows
                             if native_row.get("type") in {"user", "assistant"}]
-                if (len(finals) != 1 or finals[0].get("session_id") != archive["rootSession"]
-                        or not metadata or any(
+                if (not metadata or any(
                             native_row.get("sessionId") != archive["rootSession"]
                             or native_row.get("version") != "2.1.310"
                             or native_row.get("isSidechain") is not False

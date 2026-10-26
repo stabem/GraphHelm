@@ -328,14 +328,20 @@ def usage(cli: str, raw: str) -> dict:
                   "countsSource": "claude.result.modelUsage", "accountingStatus": "unobserved",
                   "transcriptCounts": parsed, "transcriptDiagnosticError": diagnostic_error,
                   "mainLoopCounts": None, "accountingModels": []}
-        terminal = [row for row in records if row.get("type") == "result"]
-        if parse_errors or len(terminal) != 1:
+        from native_session_evidence import claude_final_results
+        try:
+            terminal = claude_final_results(records)
+        except ValueError:
+            terminal = []
+        if parse_errors or not terminal:
             result["accountingStatus"] = "invalid-stream-or-result-count"
             return result
         fields = {"input": "input_tokens", "output": "output_tokens", "cacheRead": "cache_read_input_tokens", "cacheWrite": "cache_creation_input_tokens"}
-        main = token_counts(terminal[0].get("usage"), fields)
+        main_rows = [token_counts(row.get("usage"), fields) for row in terminal]
+        main = ({key: sum(row[key] for row in main_rows) for key in fields}
+                if all(row is not None for row in main_rows) else None)
         result["mainLoopCounts"] = main
-        pipeline = terminal[0].get("modelUsage")
+        pipeline = terminal[-1].get("modelUsage")
         if main is None or not isinstance(pipeline, dict) or not pipeline or any(not isinstance(key, str) or not key for key in pipeline):
             result["accountingStatus"] = "native-usage-missing-or-invalid"
             return result

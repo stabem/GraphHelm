@@ -213,6 +213,14 @@ discovers every matching attempt, including failed setup and linked retries, ver
 raw stream and owned archive hashes, replays native counters, and refuses a total if
 any attempt lacks counters. Codex cached input is already within reported input;
 Claude cache read and write counters are added to new input.
+Claude may emit more than one successful `result` for a continued native session.
+The parser accepts that case only when every result has the same session and
+identical cumulative `modelUsage`; it sums the separate main-loop usages and
+reconciles the cumulative pipeline against persisted child messages. A later
+accounting fix may add `accounting-replay-001.json` beside an immutable failed
+receipt. The ledger verifies its link to the original receipt and raw stream,
+then replays the archived root and every child from their hash-checked files.
+It counts that attempt once and retains its original phase status.
 The ledger does not certify method fidelity or an accepted endpoint. A phase marked
 `observed` only proves that phase's witnesses; method completion also requires every
 native boundary and the independent quality endpoint.

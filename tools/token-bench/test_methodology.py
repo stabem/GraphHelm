@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -45,6 +46,20 @@ class MethodologyContracts(unittest.TestCase):
         self.assertEqual(bench.native_provider_error("codex", codex, "")["code"], "unauthorized")
         self.assertEqual(bench.native_provider_error("claude", claude, "")["code"], "error_during_execution")
         self.assertEqual(bench.native_provider_error("claude", claude_errors, "")["code"], "error_during_execution")
+
+    def test_python_identity_fingerprints_readable_interpreter(self):
+        identity = bench.python_identity()
+        self.assertTrue(Path(identity["path"]).is_file())
+        self.assertEqual(identity["sha256"], bench.digest(Path(identity["path"])))
+
+    def test_python_identity_falls_back_from_unreadable_execution_alias(self):
+        with tempfile.TemporaryDirectory() as directory:
+            actual = Path(directory) / "python.exe"
+            actual.write_bytes(b"native interpreter fixture")
+            with mock.patch.object(bench.sys, "executable", str(Path(directory) / "WindowsApps" / "python.exe")), \
+                    mock.patch.object(bench.sys, "_base_executable", str(actual), create=True):
+                identity = bench.python_identity()
+            self.assertEqual(identity["path"], str(actual.resolve()))
 
     def claude_stream(self, *, auxiliary=False):
         usage = {"input_tokens": 6, "output_tokens": 1184,

@@ -8,6 +8,7 @@ import os
 from pathlib import Path, PurePosixPath
 import random
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -152,7 +153,13 @@ def mount_path(root: Path, mount: str) -> Path:
 
 def _is_redirected_directory(path: Path) -> bool:
     junction_probe = getattr(os.path, "isjunction", None)
-    return path.is_symlink() or bool(junction_probe(path)) if junction_probe else path.is_symlink()
+    if path.is_symlink() or (junction_probe and junction_probe(path)):
+        return True
+    try:
+        attributes = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
+    except OSError:
+        return False
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
 def validate_mount_parents(root: Path, target: Path) -> None:
@@ -348,7 +355,7 @@ def freeze(args: argparse.Namespace) -> dict:
             "tasks": tasks, "plannedAttempts": order,
             "argv": {cli: base.native_cli_command(cli, identities[cli]["path"], model) for cli, model in
                      (("codex", args.codex_model), ("claude", args.claude_model))},
-            "python": {"path": sys.executable, "sha256": digest(Path(sys.executable))},
+            "python": base.python_identity(),
             "environment": {key: os.environ.get(key, "") for key in ("PATH", "PATHEXT", "PYTHONPATH", "PYTEST_DISABLE_PLUGIN_AUTOLOAD")},
             "deadlineSeconds": DEADLINE, "evaluatorDeadlineSeconds": EVALUATOR_DEADLINE,
             "calibrationPassed": True, "winner": None}
@@ -366,7 +373,7 @@ def load_frozen(path: Path) -> dict:
     registry = load_registry(registry_path)
     if registry_hashes(registry) != manifest["registryFiles"]:
         raise ValueError("snapshot or oracle files changed after freeze")
-    if digest(Path(manifest["python"]["path"])) != manifest["python"]["sha256"]:
+    if base.python_identity() != manifest["python"]:
         raise ValueError("Python changed after freeze")
     return manifest
 

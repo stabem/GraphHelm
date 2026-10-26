@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import real_methodology as bench
@@ -66,8 +67,9 @@ class RealMethodologyContracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             registry = self.registry(root)
+            readable_python = Path(bench.base.python_identity()["path"])
             args = type("Args", (), {"registry": registry, "output": root / "manifest.json",
-                                      "codex": Path(sys.executable), "claude": Path(sys.executable),
+                                      "codex": readable_python, "claude": readable_python,
                                       "codex_model": "codex", "claude_model": "claude"})()
             original = bench.base.identity
             bench.base.identity = lambda executable, cli, cwd: {"path": str(executable), "sha256": bench.digest(executable), "version": "test", "subscription": True}
@@ -157,8 +159,9 @@ class RealMethodologyContracts(unittest.TestCase):
                 redirected.symlink_to(outside, target_is_directory=True)
             task = {"externalDependencies": [{"path": str(dependency), "kind": "directory",
                                                 "mount": "apps/studio/node_modules"}]}
-            with self.assertRaises(ValueError):
-                bench.prepare_mounts(task, workspace)
+            with mock.patch.object(bench.os.path, "isjunction", None, create=True):
+                with self.assertRaises(ValueError):
+                    bench.prepare_mounts(task, workspace)
             self.assertFalse((outside / "studio" / "node_modules").exists())
 
 

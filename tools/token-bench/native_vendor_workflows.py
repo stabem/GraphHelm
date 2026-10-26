@@ -31,16 +31,17 @@ def _phase(*, phase_id: str, skill: str, cli: str, task_ref: str,
     prompt = (f"{prefix}{skill} {task_brief}\n"
               f"Task ref: {task_ref}. Phase boundary: execute only {phase_id}; "
               f"stop after its declared artifacts. Approval policy: {approval_policy}.")
-    patterns = {"specify": r"(?:resolve-template|create-new-feature)\.ps1",
+    patterns = {"constitution": r"resolve-template\.ps1\s+constitution-template\s+-Json",
+                "specify": r"(?:resolve-template|create-new-feature)\.ps1",
                 "plan": r"setup-plan\.ps1\s+-Json",
-                "tasks": r"check-prerequisites\.ps1\s+-Json\s+-RequireTasks\s+-IncludeTasks",
+                "tasks": r"setup-tasks\.ps1\s+-Json",
                 "explore": r"openspec\s+list\s+--json",
                 "propose": r"openspec\s+(?:new\s+change|instructions)",
                 "sync": r"openspec\s+sync\s+specs", "archive": r"openspec\s+archive",
                 "setup": r"knowledge\.py\s+--content\s+--root",
                 "build": r"uv\s+run\s+--no-cache.*render_skill\.py"}
     required = [] if phase_id not in patterns else [{"name": phase_id,
-        "commandPattern": patterns[phase_id], "outputJson": True}]
+        "commandPattern": patterns[phase_id]}]
     skill_path = project_root / (".claude/skills" if cli == "claude" else ".agents/skills") / skill / "SKILL.md"
     return {"id": phase_id, "command": [], "nativeEntrypoint": f"{prefix}{skill}",
             "prompt": prompt, "frameworkStage": skill,
@@ -55,35 +56,30 @@ def _workflow(*, method_id: str, framework: str, project_root: Path,
               task_ref: str, skill_root: str, cli: str, executable: Path,
               stages: list[tuple[str, str, list[str], list[str]]],
               task_brief: str, approval_policy: str,
-              task_context_root: Path, public_files: list[str], public_tests: list[str]) -> dict:
+              task_context_root: Path, public_files: list[str], public_tests: list[str], scope: list[str]) -> dict:
     if not project_root.is_dir() or not executable.is_file():
         raise ValueError("native project fixture or executable is missing")
     phases = [_phase(phase_id=phase_id, skill=skill, cli=cli, task_ref=task_ref,
                      task_brief=task_brief, approval_policy=approval_policy,
                      project_root=project_root, operations=ops, output_globs=globs)
               for phase_id, skill, ops, globs in stages]
-    first = Path(skill_root) / stages[0][1] / "SKILL.md"
-    first_abs = project_root / first
     return {"id": f"native-{method_id}", "version": f"pinned-{PINNED[method_id]}",
             "framework": framework, "maxFixAttempts": 1,
             "projectRoot": str(project_root.resolve()), "taskRefs": [task_ref],
-            "pinnedPublicFiles": [str(first).replace("\\", "/")],
+            "pinnedPublicFiles": list(dict.fromkeys(public_tests + public_files)),
             "methodAssetDigests": _asset_digests(project_root / skill_root),
-            "taskContext": {"task": task_ref, "scope": list(public_files),
+            "taskContext": {"task": task_ref, "scope": list(scope),
                              "publicTests": list(public_tests), "request": task_brief},
             "native": {"cli": cli, "executable": str(executable.resolve()),
                         "integration": "native-project-skills",
                         "taskContextRoot": str(task_context_root.resolve()),
                         "publicTaskFiles": list(public_files), "skillRoot": skill_root,
                         "assetRoot": str((project_root / skill_root).resolve()),
-                        "pin": PINNED[method_id]}, "phases": [
-                            {**phase, "requiredWitnesses": [{"kind": "native_skill", "path": str(first),
-                                                              "sha256": _digest(first_abs)}]}
-                            for phase in phases]}
+                        "pin": PINNED[method_id]}, "phases": phases}
 
 def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path,
                           project_roots: dict[str, Path],
-                          cli: str, executable: Path, public_files: list[str], public_tests: list[str],
+                          cli: str, executable: Path, public_files: list[str], public_tests: list[str], scope: list[str],
                           task_brief: str,
                           approval_policy: str = "read-only inspection is automatic; writes require fixture approval") -> dict:
     """Build four independent project-local method fixtures; never execute them."""
@@ -116,6 +112,7 @@ def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path
         ("verify", "bmad-qa-generate-e2e-tests", ["generate or run only declared QA evidence"], ["_bmad-output/**"]),]
     superpowers = [
         ("entry", "using-superpowers", ["invoke applicable skills before response or action"], [".agents/skills/**"]),
+        ("debug", "systematic-debugging", ["investigate the root cause before proposing a fix"], ["tools/task-record/task_record.py"]),
         ("brainstorm", "brainstorming", ["brainstorm before implementation; record decisions"], ["docs/superpowers/**"]),
         ("plan", "writing-plans", ["write a bite-sized plan before code"], ["docs/superpowers/plans/**"]),
         ("implement", "test-driven-development", ["write failing test; observe red; implement minimal green"], ["**/*"]),
@@ -123,7 +120,7 @@ def build_vendor_registry(*, project_root: Path, task_ref: str, asset_root: Path
         ("verify", "verification-before-completion", ["run fresh verification before any completion claim"], ["**/*"]),]
     common = dict(cli=cli, executable=executable, task_brief=task_brief,
                   approval_policy=approval_policy, task_context_root=project_root,
-                  public_files=public_files, public_tests=public_tests)
+                  public_files=public_files, public_tests=public_tests, scope=scope)
     workflows = [
         _workflow(method_id="speckit", framework="SpecKit", project_root=roots["speckit"], task_ref=task_ref, skill_root=skill_root, stages=speckit, **common),
         _workflow(method_id="openspec", framework="OpenSpec", project_root=roots["openspec"], task_ref=task_ref, skill_root=skill_root, stages=openspec, **common),
@@ -135,52 +132,4 @@ def write_registry(path: Path, **kwargs) -> dict:
     registry = build_vendor_registry(**kwargs)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return registry
-
-
-def write_real_cell_registry(cells_path: Path, output: Path, *, executable: Path) -> dict:
-    """Render a workflow registry from the four real public-parent pilot cells."""
-    source = json.loads(cells_path.read_text(encoding="utf-8"))
-    if source.get("schema") != "native-real-pilot-preparation/1" or len(source.get("cells", [])) != 4:
-        raise ValueError("real pilot preparation must contain exactly four public cells")
-    workflows = []
-    for cell in source["cells"]:
-        task = cell["publicTask"]
-        project = Path(cell["projectRoot"])
-        if not project.is_dir() or not cell.get("baselineHead"):
-            raise ValueError(f"real cell baseline missing: {cell.get('id')}")
-        public_files = list(task.get("publicTests", [])) + list(task.get("canonicalContracts", []))
-        public_files = [path for path in public_files if (project / path).is_file()]
-        if not public_files:
-            raise ValueError(f"real cell has no public observer files: {cell['id']}")
-        phases = [
-            {"id": "setup", "command": ["--add-dir", str(project)], "prompt": task["request"],
-             "frameworkStage": "native-setup", "requiredOperations": [], "requiredArtifactGlobs": [],
-             "requiredArtifacts": [], "requiredWitnessKinds": ["native_stream"], "costKinds": ["setup"]},
-            {"id": "implement", "command": ["--add-dir", str(project)], "prompt": task["request"],
-             "frameworkStage": "native-implement", "requiredOperations": [], "requiredArtifactGlobs": [],
-             "requiredArtifacts": [], "requiredWitnessKinds": ["native_stream"], "costKinds": ["author"]},
-            {"id": "verify", "command": ["--add-dir", str(project)], "prompt": "Run the declared public tests and preserve the accepted local patch endpoint.",
-             "frameworkStage": "native-verify", "requiredOperations": [], "requiredArtifactGlobs": public_files,
-             "requiredArtifacts": [], "requiredWitnessKinds": ["native_stream"], "costKinds": ["verify"]},
-        ]
-        assets = {}
-        for asset, digest in cell.get("methodAssets", {}).items():
-            candidate = project / asset
-            if not candidate.is_file() or _digest(candidate) != digest:
-                candidate = project / ".native-method" / asset
-            if candidate.is_file() and _digest(candidate) == digest:
-                assets[str(candidate.relative_to(project)).replace("\\", "/")] = digest
-        workflows.append({"id": cell["id"], "version": "real-" + cell["baselineHead"],
-            "framework": cell["method"], "maxFixAttempts": 1, "projectRoot": str(project.resolve()),
-            "taskRefs": [cell["id"]], "pinnedPublicFiles": public_files,
-            "methodAssetDigests": assets,
-            "taskContext": {"task": task["task"], "scope": task["scope"],
-                            "publicTests": task["publicTests"], "request": task["request"]},
-            "native": {"cli": cell["cli"], "executable": str(executable.resolve()),
-                       "baselineHead": cell["baselineHead"], "datasetRegistrySha256": cell["sourceInventorySha256"]},
-            "phases": phases})
-    registry = {"schema": SCHEMA, "version": "real-pilot-1", "workflows": workflows}
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return registry

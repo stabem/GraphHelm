@@ -29,6 +29,19 @@ class MethodologyContracts(unittest.TestCase):
         self.assertIn("--safe-mode", claude)
         self.assertNotIn("--dangerously-skip-permissions", claude)
 
+    def test_provider_detector_ignores_quoted_source_output(self):
+        quoted = 'HTTPError(401, "Unauthorized") from source test'
+        self.assertIsNone(bench.native_provider_error("codex", quoted, ""))
+        self.assertIsNone(bench.native_provider_error("claude", "", quoted))
+
+    def test_provider_detector_requires_structured_native_auth_or_quota_envelope(self):
+        codex = json.dumps({"type": "error", "error": {"code": "unauthorized",
+                                                            "message": "authentication required"}})
+        claude = json.dumps({"type": "result", "is_error": True,
+                             "subtype": "error_during_execution", "result": "rate limit reached"})
+        self.assertEqual(bench.native_provider_error("codex", codex, "")["code"], "unauthorized")
+        self.assertEqual(bench.native_provider_error("claude", claude, "")["code"], "error_during_execution")
+
     def claude_stream(self, *, auxiliary=False):
         usage = {"input_tokens": 6, "output_tokens": 1184,
                  "cache_read_input_tokens": 20971, "cache_creation_input_tokens": 2542}

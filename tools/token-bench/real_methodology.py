@@ -492,8 +492,9 @@ def run_attempt(args: argparse.Namespace) -> dict:
         result["elapsedSeconds"] = time.monotonic() - started
         result["agent"] = agent
         result["usage"] = base.usage(cell["cli"], agent["stdout"])
-        native_error = (agent["stdout"] + agent["stderr"]).lower()
-        if any(term in native_error for term in ("rate limit", "usage limit", "quota", "unauthorized", "authentication", "not logged in")):
+        provider_error = base.native_provider_error(cell["cli"], agent["stdout"], agent["stderr"])
+        if provider_error:
+            result["providerError"] = provider_error
             raise ValueError("native provider control error observed")
         observed = result["usage"].get("observedModels", [])
         result["modelStatus"] = "unobserved" if not observed else ("matched" if observed == [manifest["models"][cell["cli"]]] else "mismatch")

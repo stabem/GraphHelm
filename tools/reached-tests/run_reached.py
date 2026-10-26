@@ -635,6 +635,16 @@ class _MissingExecutable(RuntimeError):
     """No existing invocation can be selected for this required command."""
 
 
+def _console_python(executable: str) -> str:
+    """Use the installed console sibling when a Windows runner is pythonw.exe."""
+    if os.name != "nt" or Path(executable).name.lower() not in ("pythonw.exe", "pythonw"):
+        return executable
+    sibling = Path(executable).with_name("python.exe")
+    if not sibling.is_file():
+        raise _MissingExecutable(f"matching console Python is missing beside {executable}")
+    return str(sibling)
+
+
 def _slot_program(program: str) -> str:
     """#1842: Windows resolves `cargo` to `...\\cargo.EXE` (PATHEXT's spelling). The same file under
     its lower-case name, which every `workspace slot` admits; an older slot compares the name with
@@ -652,7 +662,7 @@ def _effective_argv(repo: Path, cwd: Path, argv: list[str], graphhelm: Path | No
             raise RuntimeError("unsupported local Studio command identity")
         command = ["node", str(cwd / "node_modules" / entries[command[1]]), *command[2:]]
     if command[0] in ("python", "python3"):
-        command[0] = sys.executable
+        command[0] = _console_python(sys.executable)
     if graphhelm is not None and Path(command[0]).name.lower() in ("graphhelm", "graphhelm.exe"):
         command[0] = str(graphhelm)
     return command

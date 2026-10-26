@@ -154,6 +154,7 @@ owner reads verdicts), starting with the identity line your project uses:
 
 ```
 Journey QA: <id> — APPROVE | REJECT
+QA: <your session or lane name> · Approval: owner-delegated, approved revision <n> digest <sha256> (APPROVE only; from the approve reply)
 Promise: <point 1 sentence>
 1 promise:       PASS | FAIL — <evidence>
 2 why/because:   PASS | FAIL — <edge/expect pointer and its text>
@@ -171,6 +172,11 @@ printing it:
 ```sh
 graphhelm --json journey approve <id> --project <root> --token-file <root>/.graphhelm/events.token
 ```
+
+This CLI call, run with the owner's token file on the owner's explicit delegation, is the only
+delegated route. Never use MCP `journey_approve` and never the Runtime approve route: an agent-typed
+session is refused there with `GHCLI036_JOURNEY_APPROVE_OWNER_ONLY`. Any refusal, GHCLI036 included and
+every approve gate, is a `REJECT`, never retried another way.
 
 Approve refuses on its own gates (`flow.preview_not_passed`, `flow.approval_stale`,
 `flow.observer_missing`, an uncommitted flow or scope path). A refusal is not yours to work

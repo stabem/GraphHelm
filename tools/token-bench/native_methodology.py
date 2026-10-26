@@ -625,6 +625,18 @@ def _usage_total(value: object, *, cli: str | None = None) -> dict | None:
     return result
 
 
+def _usage_metrics(counts: dict, *, cli: str) -> dict:
+    """Derive provider-specific comparable totals without mixing raw cache semantics."""
+    if cli == "codex":
+        context = counts["input"]
+    elif cli == "claude":
+        context = counts["input"] + counts["cacheRead"] + counts["cacheWrite"]
+    else:
+        raise ValueError("unsupported native provider")
+    return {"contextInputTokens": context,
+            "totalProcessedTokens": context + counts["output"]}
+
+
 def freeze(registry_path: Path, *, cli_paths: dict[str, Path], models: dict[str, str], output: Path) -> dict:
     """Freeze registry, native executable identities, and phase order before any scored run."""
     registry = load_registry(registry_path)
@@ -724,16 +736,36 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                    and endpoint.get("evaluatorStatus") == "passed")
     aggregate = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
     aggregate_known = True
+    usage_groups = {}
+    workflow_specs = {row["id"]: row for row in manifest.get("workflows", [])}
     for row in rows:
-        counts = _usage_total(row.get("usage", {}).get("counts"), cli=row.get("cli"))
+        cli = row.get("cli")
+        counts = _usage_total(row.get("usage", {}).get("counts"), cli=cli)
         if counts is None:
             aggregate_known = False
             break
         for key in aggregate:
             aggregate[key] += counts[key]
+        if cli not in {"codex", "claude"}:
+            aggregate_known = False
+            break
+        workflow = row.get("workflow", "")
+        model = manifest.get("models", {}).get(cli, row.get("model", ""))
+        task = row.get("taskContext", {}).get("task") or workflow_specs.get(workflow, {}).get("taskContext", {}).get("task", "")
+        group_key = json.dumps([cli, model, workflow, task], separators=(",", ":"))
+        group = usage_groups.setdefault(group_key, {"cli": cli, "model": model,
+            "workflow": workflow, "task": task, "raw": {"input": 0, "output": 0,
+            "cacheRead": 0, "cacheWrite": 0}, "contextInputTokens": 0,
+            "totalProcessedTokens": 0})
+        for key in group["raw"]:
+            group["raw"][key] += counts[key]
+        metrics = _usage_metrics(counts, cli=cli)
+        group["contextInputTokens"] += metrics["contextInputTokens"]
+        group["totalProcessedTokens"] += metrics["totalProcessedTokens"]
     return {"schema": "native-methodology-report/2", "complete": complete and endpoint_ok,
             "collectionComplete": collection_complete, "qualityAccepted": quality_accepted, "attempts": rows,
             "usageAggregate": aggregate if aggregate_known else None,
+            "usageGroups": list(usage_groups.values()) if aggregate_known else None,
             "acceptedEndpoint": endpoint, "winner": None,
             "limitations": [] if complete and endpoint_ok else ["missing or incomplete native phase evidence"]}
 

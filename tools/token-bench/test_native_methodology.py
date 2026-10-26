@@ -195,6 +195,9 @@ class NativeMethodologyContracts(unittest.TestCase):
         self.assertEqual(archived["status"], "observed")
         self.assertEqual(bench._usage_total(archived["total"], cli="claude"), archived["total"])
         self.assertIsNone(bench._usage_total(archived["total"], cli="codex"))
+        metrics = bench._usage_metrics(archived["total"], cli="claude")
+        self.assertEqual(metrics, {"contextInputTokens": 21134,
+                                    "totalProcessedTokens": 21664})
 
 
 if __name__ == "__main__":

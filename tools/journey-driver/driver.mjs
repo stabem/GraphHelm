@@ -539,7 +539,8 @@ async function run(r) {
         visible=await locator.first().evaluate(async el=>{
           if (!(el instanceof HTMLImageElement)) return true;
           // A broken image rejects decode: that is the answer (not seen), not an error.
-          if (!el.complete && !await Promise.race([el.decode().then(()=>true,()=>false),new Promise(done=>setTimeout(()=>done(true),5000))])) return false;
+          const load=el.complete ? 'loaded' : await Promise.race([el.decode().then(()=>'loaded',()=>'broken'),new Promise(done=>setTimeout(()=>done('slow'),5000))]);
+          if (load==='broken') return false;
           return el.complete && el.naturalWidth>=16 && el.naturalHeight>=16;
         },undefined,{timeout:TIMEOUT}).catch(()=>false);
       }

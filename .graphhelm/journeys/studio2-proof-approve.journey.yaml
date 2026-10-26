@@ -4,8 +4,8 @@ title: Approve or reject a run journey
 name: Approve a journey
 feature: Studio
 purpose: "On the fully run runtime-health journey, Reject without a reason records nothing, Reject with a reason records the rejection and shows the reason, and a later Approve records the approval; each time the runtime-health row in the journey list shows the new status."
-status: draft
-approved: null
+status: approved
+approved: {revision: d747031829659af960ca02d926a90691436a1ae5, digest: sha256:947f86a8e93ee9e19913638da9c7055bf5e130d29ec165598ef0ca36be964bf6}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

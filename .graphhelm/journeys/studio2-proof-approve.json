@@ -1,0 +1,202 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Approve or reject a run journey",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-proof-approve",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "ran.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"Approve\", button \"Reject\", textbox \"Reason for rejecting\", no status \"Rejected\", no status \"Approved\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "ran"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "refused.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows alert \"Say why the journey is rejected before rejecting it.\", no status \"Rejected\", listitem \"Read the Runtime health\" saying \"preview, not proof 2/2\", button \"Reject\"",
+      "statesToObserve": [
+        "error"
+      ],
+      "stepId": "refused"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "rejected.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Rejected\" saying \"wrong page\", listitem \"Read the Runtime health\" saying \"rejected\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "rejected"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "approved.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Approved\", listitem \"Read the Runtime health\" saying \"approved\", no button \"Reject\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "approved"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "irreversible_effect"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen ran not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/decision.ts"
+        ],
+        "screenId": "ran",
+        "title": "A fully run journey offers the decision"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=proof&journey=runtime-health"
+        }
+      },
+      "stepId": "ran"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "error"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen refused not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/decision.ts"
+        ],
+        "screenId": "refused",
+        "title": "Reject without a reason records nothing"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Reject"
+        }
+      },
+      "stepId": "refused"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen rejected not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/decision.ts"
+        ],
+        "screenId": "rejected",
+        "title": "A rejected journey shows as rejected, with its reason"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Reject"
+        }
+      },
+      "stepId": "rejected"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen approved not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/decision.ts"
+        ],
+        "screenId": "approved",
+        "title": "The journey shows as approved"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Approve"
+        }
+      },
+      "stepId": "approved"
+    }
+  ],
+  "taskScope": "journey-flow studio2-proof-approve path main",
+  "title": "Approve or reject a run journey",
+  "version": 1
+}

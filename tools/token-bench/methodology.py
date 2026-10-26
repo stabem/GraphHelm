@@ -18,6 +18,8 @@ HOME = Path(__file__).resolve().parent
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 API_ENV = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
            "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENROUTER_API_KEY", "CODEX_API_KEY"}
+PROVIDER_ERROR_TERMS = ("rate limit", "usage limit", "quota", "unauthorized",
+                        "authentication", "not logged in", "login required")
 
 
 def child_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
@@ -44,6 +46,47 @@ def native_cli_command(cli: str, executable: Path, model: str) -> list[str]:
                 "acceptEdits", "--permission-prompts", "none", "--no-session-persistence",
                 "--model", model, "--effort", "low"]
     raise ValueError(f"unsupported CLI: {cli}")
+
+
+def native_provider_error(cli: str, stdout: str, stderr: str) -> dict | None:
+    """Classify only structured native error envelopes, never arbitrary output text."""
+    for stream_name, stream in (("stdout", stdout), ("stderr", stderr)):
+        for line in stream.splitlines():
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            kind = record.get("type")
+            details = record.get("error")
+            if cli == "codex":
+                if kind not in {"error", "turn.failed", "turn_failed"}:
+                    continue
+                if isinstance(details, dict):
+                    message = details.get("message", "")
+                    code = details.get("code")
+                else:
+                    message = record.get("message", "")
+                    code = record.get("code")
+            elif cli == "claude":
+                if kind == "error" and isinstance(details, dict):
+                    message = details.get("message", "")
+                    code = details.get("code")
+                elif kind == "result" and record.get("is_error") is True:
+                    message = record.get("result", "")
+                    errors = record.get("errors")
+                    if isinstance(errors, list):
+                        message = " ".join(str(item) for item in errors)
+                    code = record.get("subtype")
+                else:
+                    continue
+            else:
+                raise ValueError(f"unsupported CLI: {cli}")
+            message = str(message).lower()
+            if any(term in message for term in PROVIDER_ERROR_TERMS):
+                return {"stream": stream_name, "code": code, "message": message}
+    return None
 
 
 def digest(path: Path) -> str:
@@ -317,8 +360,10 @@ def run_attempt(args: argparse.Namespace) -> dict:
         result["usage"] = usage(cli, agent["stdout"])
         result["measurementStatus"] = "observed" if result["usage"]["counts"] is not None else "usage-unobserved"
         result["modelStatus"] = "matched" if result["usage"]["observedModels"] == [manifest["models"][cli]] else "mismatch-or-unobserved"
-        text = (agent["stdout"] + agent["stderr"]).lower()
-        if not agent["cleanupConfirmed"] or (agent["exit"] != 0 and any(term in text for term in ("rate limit", "usage limit", "quota", "unauthorized", "authentication", "login"))):
+        provider_error = native_provider_error(cli, agent["stdout"], agent["stderr"])
+        if provider_error:
+            result["providerError"] = provider_error
+        if not agent["cleanupConfirmed"] or provider_error:
             publish(args.output / "provider-stop.json", {"attempt": cell["id"], "reason": "provider-or-cleanup-failure"})
         source = subject / "subject.py"
         if source.is_symlink() or not source.is_file() or source.stat().st_size > 200_000:

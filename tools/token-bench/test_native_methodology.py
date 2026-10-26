@@ -14,6 +14,13 @@ import native_session_evidence as evidence
 
 
 class NativeMethodologyContracts(unittest.TestCase):
+    def test_codex_root_wire_counters_use_provider_field_names(self):
+        self.assertEqual(bench._codex_root_counters({"counts": {
+            "input_tokens": 65656, "output_tokens": 72, "cached_input_tokens": 43392}}),
+            {"input": 65656, "output": 72, "cacheRead": 43392, "cacheWrite": 0})
+        with self.assertRaises(ValueError):
+            bench._codex_root_counters({"counts": {"input": 65656, "output": 72}})
+
     def test_review_binding_requires_committed_patch_and_pins_git_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -314,19 +321,24 @@ class NativeMethodologyContracts(unittest.TestCase):
             output = root / "attempts"
             raw = output / "phase-setup-attempt-1"
             raw.mkdir(parents=True)
+            project = root / "project"
+            (project / "report").mkdir(parents=True)
             stream = fixtures / "claude-child.jsonl"
             stdout = raw / "native.stdout.jsonl"
             stderr = raw / "native.stderr.log"
-            stdout.write_bytes(stream.read_bytes())
+            session = "11111111-1111-4111-8111-111111111111"
+            native_rows = [json.loads(line) for line in stream.read_text(encoding="utf-8").splitlines()]
+            next(row for row in native_rows if row.get("type") == "result")["session_id"] = session
+            stdout.write_text("\n".join(json.dumps(row) for row in native_rows) + "\n", encoding="utf-8")
             stderr.write_text("", encoding="utf-8")
             archive_root = root / "archive" / "setup-attempt-1"
             archive_root.mkdir(parents=True)
             archived_root = archive_root / "root.jsonl"
-            archived_root.write_bytes(stream.read_bytes())
+            archived_root.write_text(json.dumps({"type": "user", "sessionId": session,
+                "cwd": str(project), "version": "2.1.310", "isSidechain": False,
+                "agentId": None}) + "\n", encoding="utf-8")
             workflow = self.workflow()
             workflow["phases"] = [workflow["phases"][0]]
-            project = root / "project"
-            (project / "report").mkdir(parents=True)
             contract = project / "PROJECT_CONTRACT.md"
             contract.write_text("frozen public context\n", encoding="utf-8")
             before_dynamic = bench.candidate_tree_hash(project, bench._declared_candidate_paths(workflow, project))
@@ -339,7 +351,7 @@ class NativeMethodologyContracts(unittest.TestCase):
             self.assertNotEqual(before_dynamic, after_dynamic)
             plan = bench.phase_plan(workflow, {**workflow["taskContext"], "phase": "setup"},
                                     plan_id="spec-kit-frozen")
-            archive_result = evidence.claude_pipeline(archived_root)
+            archive_result = evidence.claude_pipeline(stdout)
             counts = archive_result["total"]
             candidate = bench.candidate_tree_hash(Path(workflow["projectRoot"]),
                                                    bench._declared_candidate_paths(workflow, project))
@@ -360,7 +372,7 @@ class NativeMethodologyContracts(unittest.TestCase):
                        "rootWireUsage": {"counts": counts},
                        "quotaBefore": {"allowed": True}, "quotaAfter": {"allowed": True},
                        "archivedSession": {"status": "observed", "total": counts,
-                                            "rootSession": "child-session",
+                                            "rootSession": session,
                                             "archivedRoot": str(archived_root),
                                             "archive": {"root.jsonl": bench.base.digest(archived_root)}}}
             manifest = {"schema": "native-methodology-manifest/1", "workflows": [workflow],
@@ -384,6 +396,18 @@ class NativeMethodologyContracts(unittest.TestCase):
             report = bench.report_manifest(manifest_path, output)
             self.assertEqual(report["attempts"][0]["status"], "complete")
             self.assertEqual(report["usageAggregate"], counts)
+            receipt["archivedSession"]["rootSession"] = "22222222-2222-4222-8222-222222222222"
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            swapped_root = bench.report_manifest(manifest_path, output)
+            self.assertEqual(swapped_root["attempts"][0]["status"], "incomplete")
+            self.assertIsNone(swapped_root["usageAggregate"])
+            receipt["archivedSession"]["rootSession"] = session
+            receipt["usage"]["counts"]["output"] += 1
+            (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+            forged_count = bench.report_manifest(manifest_path, output)
+            self.assertEqual(forged_count["attempts"][0]["status"], "incomplete")
+            self.assertIsNone(forged_count["usageAggregate"])
+            receipt["usage"]["counts"]["output"] -= 1
             phase_spec = workflow["phases"][0]
             phase_spec["requiredOperations"] = [{"name": "setup", "commandPattern": "missing-native-command"}]
             receipt["attempt"]["planSha256"] = bench.phase_plan(
@@ -404,7 +428,7 @@ class NativeMethodologyContracts(unittest.TestCase):
             (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
             model_forgery = bench.report_manifest(manifest_path, output)
             self.assertEqual(model_forgery["attempts"][0]["status"], "incomplete")
-            self.assertEqual(model_forgery["usageGroups"][0]["model"], "claude-sonnet-5-5")
+            self.assertIsNone(model_forgery["usageGroups"])
             receipt["requestedModel"] = "different-frozen-model"
             receipt["servedModels"] = ["different-frozen-model"]
             receipt["usage"]["accountingModels"] = ["different-frozen-model"]
@@ -460,6 +484,7 @@ class NativeMethodologyContracts(unittest.TestCase):
             (destination / "phase-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
             forged = bench.report_manifest(manifest_path, output)
             self.assertEqual(forged["attempts"][0]["status"], "incomplete")
+            self.assertIsNone(forged["usageAggregate"])
 
 
 if __name__ == "__main__":

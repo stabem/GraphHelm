@@ -758,6 +758,14 @@ def _usage_metrics(counts: dict, *, cli: str) -> dict:
             "totalProcessedTokens": context + counts["output"]}
 
 
+def _codex_root_counters(envelope: object) -> dict:
+    """Read Codex's root wire names before comparing them with archived cumulative usage."""
+    if not isinstance(envelope, dict) or not isinstance(envelope.get("counts"), dict):
+        raise ValueError("Codex root wire counters are missing")
+    from native_session_evidence import counters
+    return counters(envelope["counts"])
+
+
 def freeze(registry_path: Path, *, cli_paths: dict[str, Path], models: dict[str, str], output: Path) -> dict:
     """Freeze registry, native executable identities, and phase order before any scored run."""
     registry = load_registry(registry_path)
@@ -901,7 +909,7 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                                   and base.digest(archive_root / relative) == digest
                                   for relative, digest in archive_hashes.items())
             try:
-                from native_session_evidence import codex_tree, claude_pipeline, claude_owned_tree, counters
+                from native_session_evidence import codex_tree, claude_pipeline, claude_owned_tree, counters, records
                 cli = row.get("cli")
                 project = Path(workflow_spec["projectRoot"]) if workflow_spec else None
                 root_log = Path(archive["archivedRoot"])
@@ -919,16 +927,25 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                          and replayed_wire.get("observedModels") == row.get("usage", {}).get("observedModels")
                          and replayed_wire.get("accountingModels", []) == row.get("usage", {}).get("accountingModels", []))
                 if cli == "codex":
-                    wire_envelope = row.get("rootWireUsage", {})
-                    wire = wire_envelope.get("counts", wire_envelope) if isinstance(wire_envelope, dict) else {}
-                    root_wire = {"input_tokens": wire.get("input", 0),
-                                 "output_tokens": wire.get("output", 0),
-                                 "cached_input_tokens": wire.get("cacheRead", 0),
-                                 "cache_write_input_tokens": wire.get("cacheWrite", 0)}
                     parsed_archive = codex_tree(root_log, child_logs, project=project,
                                                 root_thread=archive["rootSession"],
-                                                stdout_usage=counters(root_wire))
+                                                stdout_usage=_codex_root_counters(row.get("rootWireUsage")))
                 elif cli == "claude":
+                    native_rows = records(stdout_file)
+                    finals = [native_row for native_row in native_rows
+                              if native_row.get("type") == "result"]
+                    root_rows = records(root_log)
+                    metadata = [native_row for native_row in root_rows
+                                if native_row.get("type") in {"user", "assistant"}]
+                    if (len(finals) != 1 or finals[0].get("session_id") != archive["rootSession"]
+                            or not metadata or any(
+                                native_row.get("sessionId") != archive["rootSession"]
+                                or native_row.get("version") != "2.1.310"
+                                or native_row.get("isSidechain") is not False
+                                or native_row.get("agentId") is not None
+                                or not Path(native_row.get("cwd", "")).resolve().is_relative_to(project.resolve())
+                                for native_row in metadata)):
+                        raise ValueError("Claude archived root identity differs from native stream")
                     if child_logs:
                         parsed_archive = claude_owned_tree(stdout_file, child_logs, project=project,
                                                            session_id=archive["rootSession"])
@@ -1026,7 +1043,8 @@ def report_manifest(manifest_path: Path, attempts_root: Path, *, endpoint: dict 
                          (endpoint or {}).get("reviewerSessionSha256")]
     endpoint_ok = endpoint_ok and len(reviewer_rows) == 1
     aggregate = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
-    aggregate_known = True
+    aggregate_known = bool(rows) and all(row.get("status") in {"complete", "failed"}
+                                         for row in rows)
     accounted_raw_dirs = {f"phase-{row.get('phase')}-{row.get('attempt', {}).get('attemptId')}"
                           for row in rows if isinstance(row.get("attempt"), dict)}
     unplanned_attempt_dirs = sorted(path.name for path in attempts_root.glob("phase-*")

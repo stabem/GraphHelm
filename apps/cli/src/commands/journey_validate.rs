@@ -11,7 +11,7 @@
 //! Exit 0 when every file is clean, 2 when any file has a finding, 3 when the input itself is
 //! unusable (no files, a file that cannot be read, `--all` with no journeys directory).
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use graphhelm_execution::valid_journey_id;
 use graphhelm_protocols::Diagnostic;
@@ -164,6 +164,18 @@ pub fn run(args: &JourneyValidateArgs) -> Outcome {
     }
 }
 
+/// A repository-relative path, judged by its text so Linux and Windows agree: no backslash, no
+/// root, no drive (`C:/x`, `c:x`) and no `..`. On Linux `C:/x` is a plain relative path to the OS
+/// and would otherwise be probed as a missing file (#1754).
+fn stays_in_project(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    !(path.contains('\\')
+        || drive
+        || path.starts_with('/')
+        || path.split('/').any(|part| part == ".."))
+}
+
 /// `Err(None)`: not a readable regular file (input error). `Err(Some)`: read, but not usable JSON.
 fn read(file: &Path) -> Result<Value, Option<String>> {
     let metadata = std::fs::metadata(file).map_err(|_| None)?;
@@ -299,11 +311,7 @@ fn check(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             // Probe only a path that stays inside the project: every component a plain name or
             // `.`. `Path::join` discards the project for an absolute or drive path (`C:/x`), so
             // anything else is a finding and is never probed (#329 review).
-            if path.contains('\\')
-                || !Path::new(path)
-                    .components()
-                    .all(|part| matches!(part, Component::Normal(_) | Component::CurDir))
-            {
+            if !stays_in_project(path) {
                 findings.push(Finding::new(
                     "scope_path_outside_project",
                     pointer,
@@ -340,4 +348,19 @@ fn check(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
         }
     }
     findings
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stays_in_project;
+
+    #[test]
+    fn drive_rooted_and_escaping_paths_leave_the_project_on_every_platform() {
+        for bad in ["C:/Windows", "c:x", "/etc", "src/../..", "src\\cart.tsx"] {
+            assert!(!stays_in_project(bad), "{bad}");
+        }
+        for good in ["src/cart.tsx", "./src", "a/b:c"] {
+            assert!(stays_in_project(good), "{good}");
+        }
+    }
 }

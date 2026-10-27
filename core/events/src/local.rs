@@ -358,6 +358,9 @@ pub struct LocalEventRepository {
     /// #1560: set while a background genesis audit runs for this handle's [`PrefixCache`], so an
     /// expired prefix starts one audit, not one per request. `None` for a per-operation handle.
     prefix_audit: Option<Arc<AtomicBool>>,
+    /// The [`PrefixCache`]'s durable watermark: how far a sync in this process is known to have
+    /// covered the active journal. `None` for a per-operation handle, which syncs on every open.
+    durable: Option<Arc<Mutex<Option<DurableWatermark>>>>,
     #[cfg(test)]
     load_count: Arc<AtomicU64>,
     #[cfg(test)]
@@ -810,6 +813,7 @@ impl LocalEventRepository {
             verified: Arc::clone(&verified),
             prefix_max_age: prefix_cache.map(|cache| cache.max_age),
             prefix_audit: prefix_cache.map(|cache| Arc::clone(&cache.auditing)),
+            durable: prefix_cache.map(|cache| Arc::clone(&cache.durable)),
             #[cfg(test)]
             load_count: Arc::new(AtomicU64::new(0)),
             #[cfg(test)]
@@ -887,9 +891,13 @@ impl LocalEventRepository {
                 // exclusive lock, and concurrent clean opens proceed in parallel.
                 // A serve process opens a store per request. The reconcile scan lists every blob
                 // and the journal sync is an fsync; on a store of thousands of blobs the two were
-                // most of every request's open. Both answer about entries and bytes that have not
-                // changed since the last settled open on this cache, so a matching stamp skips
-                // them. The marker check stays: it is cheap and reads the markers themselves.
+                // most of every request's open. The scan answers about the three directories it
+                // lists, so a matching directory stamp skips it; an append that adds no file
+                // leaves them as they were. The sync is needed only for journal bytes no sync in
+                // this process has covered yet (`sync_journal_beyond_watermark`), and an append
+                // through this cache syncs its own line, so a store taking appends between reads
+                // does not make every read pay both again. The marker check stays: it is cheap and
+                // reads the markers themselves.
                 let stamp = match prefix_cache {
                     Some(_) => Some(repository.clean_open_stamp()?),
                     None => None,
@@ -906,6 +914,7 @@ impl LocalEventRepository {
                     && let Some(state) = &state
                     && repository.active_markers_clean(&published_in(state))?
                 {
+                    repository.sync_journal_beyond_watermark(state)?;
                     #[cfg(test)]
                     if let Some(cache) = prefix_cache {
                         cache.clean_open_hits.fetch_add(1, Ordering::SeqCst);
@@ -928,7 +937,7 @@ impl LocalEventRepository {
                     if let Some(cache) = prefix_cache {
                         cache.clean_open_scans.fetch_add(1, Ordering::SeqCst);
                     }
-                    repository.sync_loaded_journal(state)?;
+                    repository.sync_journal_beyond_watermark(state)?;
                     if plan.settled()
                         && let (Some(cache), Some(stamp)) = (prefix_cache, stamp)
                         && let Ok(mut slot) = cache.clean_open.lock()
@@ -1442,15 +1451,7 @@ impl LocalEventRepository {
         let directory = |handle: &File| -> Result<_, EventRepositoryError> {
             Ok((file_identity(handle)?, handle.metadata()?.modified().ok()))
         };
-        let journal = self
-            .journal
-            .lock()
-            .map_err(|_| EventRepositoryError::StorageAt {
-                site: "clean-open-stamp:journal-mutex-poisoned",
-                os: None,
-            })?;
         Ok(CleanOpenStamp {
-            journal: (file_identity(&journal)?, journal.metadata()?.len()),
             directories: [
                 directory(&self.blobs_handle)?,
                 directory(&self.temp_handle)?,
@@ -1480,6 +1481,77 @@ impl LocalEventRepository {
         #[cfg(test)]
         self.journal_sync_count.fetch_add(1, Ordering::SeqCst);
         Ok(())
+    }
+
+    /// [`Self::sync_loaded_journal`] for a shared open on a [`PrefixCache`]: syncs only when the
+    /// active journal holds bytes past the cache's durable watermark, then raises it.
+    ///
+    /// Why a read may skip the sync: the sync exists so a reader never serves journal bytes that
+    /// are not durable (an append that wrote its line and died before its own sync). A sync makes
+    /// every byte the file held when it ran durable, so once a sync in this process covered the
+    /// active journal up to `length`, the bytes this read observed are durable if the journal is
+    /// still that file and no longer than `length`. Every writer holds the exclusive lock and the
+    /// reader the shared one, so the length read here is the head this read serves. The only
+    /// writer that shortens the journal is the Runtime's start-up trim (`trim_torn_tail`, before
+    /// any read is served), and a journal found shorter than the watermark clears it, so a
+    /// shortened journal is synced again before it is trusted.
+    fn sync_journal_beyond_watermark(
+        &self,
+        state: &LoadedState,
+    ) -> Result<(), EventRepositoryError> {
+        let Some(durable) = self.durable.as_ref() else {
+            return self.sync_loaded_journal(state);
+        };
+        let observed = self.journal_extent("sync-beyond-watermark:journal-mutex-poisoned")?;
+        {
+            let mut watermark = durable
+                .lock()
+                .map_err(|_| EventRepositoryError::StorageAt {
+                    site: "sync-beyond-watermark:watermark-mutex-poisoned",
+                    os: None,
+                })?;
+            let covered = watermark
+                .as_ref()
+                .filter(|mark| mark.identity == observed.identity)
+                .map(|mark| mark.length);
+            match covered {
+                Some(length) if observed.length == length => return Ok(()),
+                // Shorter than a length a sync covered: the watermark no longer describes this
+                // file's bytes. Forget it, and sync below.
+                Some(length) if observed.length < length => *watermark = None,
+                _ => {}
+            }
+        }
+        self.sync_loaded_journal(state)?;
+        self.raise_watermark(observed);
+        Ok(())
+    }
+
+    /// The active journal's identity and length, read through this handle's journal file.
+    fn journal_extent(&self, site: &'static str) -> Result<DurableWatermark, EventRepositoryError> {
+        let journal = self
+            .journal
+            .lock()
+            .map_err(|_| EventRepositoryError::StorageAt { site, os: None })?;
+        Ok(DurableWatermark {
+            identity: file_identity(&journal)?,
+            length: journal.metadata()?.len(),
+        })
+    }
+
+    /// Records that a sync covered the active journal up to `extent` (no-op without a cache).
+    fn raise_watermark(&self, extent: DurableWatermark) {
+        let Some(durable) = self.durable.as_ref() else {
+            return;
+        };
+        if let Ok(mut watermark) = durable.lock() {
+            let keep = watermark.as_ref().is_some_and(|mark| {
+                mark.identity == extent.identity && mark.length >= extent.length
+            });
+            if !keep {
+                *watermark = Some(extent);
+            }
+        }
     }
 
     fn append_locked(
@@ -1673,6 +1745,14 @@ impl LocalEventRepository {
             });
         }
         journal.sync_data()?;
+        // The sync covered every byte the file holds, this line included: a read on the same
+        // cache need not sync them again (`sync_journal_beyond_watermark`).
+        let extent = DurableWatermark {
+            identity: file_identity(&journal)?,
+            length: journal.metadata()?.len(),
+        };
+        drop(journal);
+        self.raise_watermark(extent);
         sync_directory_handle(&self.root_handle)?;
         if self.failpoint == Some(LocalFailpoint::ActiveMarker) {
             return Err(EventRepositoryError::StorageAt {
@@ -3202,13 +3282,21 @@ enum LoadPath {
 /// in-place rewrite is refused within `max_age` plus one walk.
 /// Contention: the slot mutex is held across a suffix read, so concurrent handles on one
 /// cache serialize their journal walk; a caught-up cache makes that walk empty.
-/// What a settled shared open's checks depended on: the active journal (identity and length, so
-/// the synced bytes are exactly these) and the three directories the reconcile scan lists
+/// What a settled shared open's reconcile scan depended on: the three directories it lists
 /// (identity and last-write time, which an entry created, renamed or removed in them moves).
+/// The journal is not part of it: whether its bytes are durable is the [`DurableWatermark`]'s
+/// question, so an append that adds no file leaves the stamp unchanged.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CleanOpenStamp {
-    journal: (FileIdentity, u64),
     directories: [(FileIdentity, Option<std::time::SystemTime>); 3],
+}
+
+/// How far a sync in this process covered the active journal: a sync makes every byte the file
+/// held when it ran durable, so bytes up to `length` of the file `identity` need no other sync.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DurableWatermark {
+    identity: FileIdentity,
+    length: u64,
 }
 
 #[derive(Clone)]
@@ -3223,6 +3311,9 @@ pub struct PrefixCache {
     /// The stamp of the last shared open whose reconcile scan was settled and whose journal was
     /// synced. An open whose stamp equals it skips both (see `open_inner`).
     clean_open: Arc<Mutex<Option<CleanOpenStamp>>>,
+    /// How far a sync by a handle on this cache (an append's, or a shared open's) covered the
+    /// active journal; see `LocalEventRepository::sync_journal_beyond_watermark`.
+    durable: Arc<Mutex<Option<DurableWatermark>>>,
     /// Test seam: how many shared opens on this cache ran the reconcile scan.
     #[cfg(test)]
     clean_open_scans: Arc<std::sync::atomic::AtomicU64>,
@@ -3246,6 +3337,7 @@ impl PrefixCache {
             auditing: Arc::new(AtomicBool::new(false)),
             walker: Arc::new(Mutex::new(())),
             clean_open: Arc::new(Mutex::new(None)),
+            durable: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             clean_open_scans: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             #[cfg(test)]
@@ -9395,10 +9487,10 @@ mod limit_tests {
         );
     }
 
-    /// A serve process opens the store per request. On a clean store whose journal and
-    /// directories have not moved, the reconcile scan (a listing of every blob) and the journal
-    /// fsync run once per cache, not once per request; a temp left by a crashed writer, or an
-    /// append, makes the next open check again.
+    /// A serve process opens the store per request. On a clean store whose directories have not
+    /// moved, the reconcile scan (a listing of every blob) runs once per cache, and the journal
+    /// fsync once per journal bytes no sync in the process covered: a temp left by a crashed
+    /// writer makes the next open scan again, an append through the cache makes neither run.
     #[test]
     fn a_shared_cache_scans_and_syncs_an_unchanged_clean_store_once() {
         let directory = tempfile::tempdir().unwrap();
@@ -9440,17 +9532,45 @@ mod limit_tests {
         // Unix keeps a planned name by design (`ReconcilePlan::is_noop`); Windows removed it.
         let _ = std::fs::remove_file(&leftover);
 
-        // An append moves the journal: checked again once, then remembered again.
-        shared_repository(directory.path(), &cache)
-            .append_atomic(&wake_append(2, "clean-open-after-append"))
-            .unwrap();
-        let before = scans();
+        // Removing the leftover moved `.tmp/` again: one open settles the new stamp.
         drop(shared_repository(directory.path(), &cache));
-        drop(shared_repository(directory.path(), &cache));
+
+        // A serve process takes appends between its reads (lane heartbeats, signals). An append
+        // through the cache adds no file and syncs its own line, so the reads around it neither
+        // list the directories nor sync the journal again.
+        let (scans_before, mut read_syncs) = (scans(), 0);
+        for round in 0..5_u64 {
+            shared_repository(directory.path(), &cache)
+                .append_atomic(&wake_append(round + 2, &format!("interleaved-{round}")))
+                .unwrap();
+            for _ in 0..3 {
+                let opened = shared_repository(directory.path(), &cache);
+                assert_eq!(opened.shared_fast_open_count.load(Ordering::SeqCst), 1);
+                read_syncs += opened.journal_sync_count.load(Ordering::SeqCst);
+            }
+        }
         assert_eq!(
-            scans(),
-            before + 1,
-            "the moved journal is scanned and synced once"
+            (scans() - scans_before, read_syncs),
+            (0, 0),
+            "reads interleaved with appends on the same cache scan and sync nothing"
+        );
+
+        // An append by a handle off the cache (another process) is not covered by the
+        // watermark: the next read syncs once, and still lists nothing.
+        cache_repository(directory.path())
+            .append_atomic(&wake_append(7, "foreign-append"))
+            .unwrap();
+        let synced: Vec<u64> = (0..2)
+            .map(|_| {
+                shared_repository(directory.path(), &cache)
+                    .journal_sync_count
+                    .load(Ordering::SeqCst)
+            })
+            .collect();
+        assert_eq!(
+            (synced, scans() - scans_before),
+            (vec![1, 0], 0),
+            "bytes no sync in this process covered are synced once"
         );
     }
 

@@ -1,0 +1,461 @@
+diff --git a/docs/acceptance/windows-arm64-verify-2026-10-26.md b/docs/acceptance/windows-arm64-verify-2026-10-26.md
+new file mode 100644
+index 0000000..855d2c3
+--- /dev/null
++++ b/docs/acceptance/windows-arm64-verify-2026-10-26.md
+@@ -0,0 +1,76 @@
++# Windows ARM64 build verification — 2026-10-26
++
++Observation record for change `bench-feature` (OpenSpec): prove what level of evidence this
++environment can produce that the documented source path (`cargo +1.97.1 install --locked --path
++apps/cli`) yields a working `graphhelm` for Windows 11 on ARM64 at the pinned toolchain. Per the
++change's design (decisions D1 and D2), the promise is split into two observers reported
++separately: **O1** — a cross-compile of `graphhelm-cli` for `aarch64-pc-windows-msvc` whose output
++is an ARM64 PE image (observable from this host) and **O2** — on-device execution of the ARM64
++binary on actual ARM64 silicon (observable only from an ARM64 device). Every line in the
++transcript below is the output as written; nothing is rephrased.
++
++| | |
++|---|---|
++| Commit under test | `708cd9075ef496d9c6add3ebdcf9055956928e10` (HEAD of this checkout; unattended scratch checkout, no git remote registered on this machine) |
++| Host | Microsoft Windows 11 Pro, `AMD Ryzen 9 9950X 16-Core Processor`, `PROCESSOR_ARCHITECTURE=AMD64` — **x86-64, not ARM64**; no Snapdragon host or ARM64 transcript is present at this station (see task 2.1) |
++| Toolchain | `rustc 1.97.1 (8bab26f4f 2026-07-14)`, MSVC flavor (matches `rust-toolchain.toml`) |
++| Installed rustup targets (before this run) | `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu` |
++| Isolated build directory | `D:\_agent-scratch\graphhelm\bench-feature\target` (`CARGO_TARGET_DIR` set per invocation; never inside the worktree), removed by its creator after the transcript holds everything it proves |
++| Started (from the transcript) | `2026-10-26T23:10:23Z` |
++| Ended (from the transcript) | — |
++| Result | — |
++| Cost | none — local builds on an existing toolchain; no VPS, container, or paid infrastructure |
++
++## What was verified, and what was not
++
++**Verified (O1):** building `graphhelm-cli` for `aarch64-pc-windows-msvc` with the pinned
++toolchain yields a Windows PE image of machine type `AA64` (ARM64). This proves **compilation and
++linking for the target**, not execution on it.
++
++**Not verified (O2):** executing the produced binary — the install command and
++`graphhelm --version` running on Windows 11 ARM64 hardware. Windows x86-64 hosts cannot run ARM64
++executables (no ARM64-on-x86 emulation in Windows), so this observer is missing from this host by
++construction.
++
++## Transcript
++
++### 1. Record the host and the toolchain
++
++```
++$ $env:PROCESSOR_ARCHITECTURE
++AMD64
++
++$ (Get-CimInstance Win32_Processor).Name
++AMD Ryzen 9 9950X 16-Core Processor
++
++$ (Get-CimInstance Win32_OperatingSystem).Caption
++Microsoft Windows 11 Pro
++
++$ rustc +1.97.1 --version
++rustc 1.97.1 (8bab26f4f 2026-07-14)
++
++$ rustup target list --installed
++x86_64-pc-windows-msvc
++x86_64-unknown-linux-gnu
++[exit 0]
++```
++
++### 2. Add the cross target (`rustup target add aarch64-pc-windows-msvc`)
++
++(transcribed below)
++
++### 3. Attempt the vanilla cross-build (expected fast linker failure)
++
++(transcribed below)
++
++### 4. Cross-link with rust-lld (`-C linker-flavor=msvc-lld`)
++
++(transcribed below)
++
++### 5. Prove the binary is ARM64 (PE machine field, with the native x64 install as control)
++
++(transcribed below)
++
++### 6. On-device execution (O2) — branch on ARM64 device availability
++
++(transcribed below)
+diff --git a/openspec/changes/archive/.gitkeep b/openspec/changes/archive/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/openspec/changes/bench-feature/.openspec.yaml b/openspec/changes/bench-feature/.openspec.yaml
+new file mode 100644
+index 0000000..d58ba02
+--- /dev/null
++++ b/openspec/changes/bench-feature/.openspec.yaml
+@@ -0,0 +1,2 @@
++schema: spec-driven
++created: 2026-10-26
+diff --git a/openspec/changes/bench-feature/design.md b/openspec/changes/bench-feature/design.md
+new file mode 100644
+index 0000000..0b3e9ea
+--- /dev/null
++++ b/openspec/changes/bench-feature/design.md
+@@ -0,0 +1,131 @@
++# Design
++
++## Context
++
++See proposal.md for motivation. Facts measured on this machine on 2026-10-26 that shape the approach:
++
++- **The build host is x86-64, not ARM64.** Windows 11 Pro, AMD Ryzen 9 9950X,
++  `PROCESSOR_ARCHITECTURE=AMD64`. The checkout's scratch-directory name contains `win-arm64`, but
++  the silicon here is AMD64; there is no Snapdragon laptop at this station and no git remote to
++  reach one through. An ARM64 Windows `.exe` cannot execute on a Windows x86-64 host (Windows has
++  no ARM64-on-x86 emulation), so on-device execution is not observable from this host at all.
++- **Pinned toolchain present:** Rust 1.97.1 (matches `rust-toolchain.toml`), MSVC flavor, with
++  targets `x86_64-pc-windows-msvc` and `x86_64-unknown-linux-gnu` installed. The network reaches
++  `static.rust-lang.org` (a HEAD probe got an HTTP response), so `rustup target add` can run here.
++- **Linker situation for cross-compiling `aarch64-pc-windows-msvc`:** VS Build Tools 2022
++  (MSVC 14.44.35207) and Windows SDK 10.0.26100.0 are installed with `ucrt\arm64` and `um\arm64`
++  import libraries present, but there is **no** `bin\HostX64\arm64\link.exe` (the ARM64 MSVC
++  linker workload is absent). The toolchain ships `rust-lld.exe`, which supports the
++  `-C linker-flavor=msvc-lld` path.
++- **Documentation state:** `docs/install/GETTING_STARTED.md` §1 states "verified Windows and
++  Ubuntu x86-64 archives" and routes macOS/other hosts to building from source;
++  `docs/releases/0.1.0.md` says "For macOS, ARM, and other hosts, build from source". The
++  workspace version is `0.1.0`, so the expected banner is `graphhelm 0.1.0`. A native x64
++  `graphhelm.exe` already sits in `%USERPROFILE%\.cargo\bin` (PE machine `0x8664`) — useful as a
++  control read, irrelevant to the ARM claim.
++- **Evidence convention:** this page anchors "verified" to acceptance transcripts
++  (`docs/acceptance/*.md`) with a metadata table, a "rehearsed vs. not rehearsed" section, and a
++  verbatim transcript (see `install-rehearsal-2026-09-13.md`).
++
++## Goals / Non-Goals
++
++**Goals:**
++
++- Obtain the strongest observable evidence that the documented install path produces a working
++  `graphhelm` for Windows ARM64 at pinned toolchain 1.97.1, from this environment.
++- Add Windows ARM64 to the verified platforms in `docs/install/GETTING_STARTED.md`, worded exactly
++  as strongly as the evidence supports, anchored to a new acceptance transcript.
++- Keep the record honest about which level of proof each platform rests on (per spec requirement
++  "Verified-platform list matches observed evidence").
++
++**Non-Goals:**
++
++- No Rust code, schema, wire-format, dependency, or toolchain-version changes.
++- No prebuilt ARM64 release archive, no CI/release-pipeline changes, no edits to
++  `docs/releases/0.1.0.md`.
++- No claim of on-device execution without an actual ARM64 device transcript.
++
++## Decisions
++
++### D1 — Split the promise into two observers, report them separately
++
++The request's promise ("installs and runs `--version` on Windows 11 ARM64") decomposes into:
++
++- **O1 — compile/link proof (observable here):** build `graphhelm-cli` for
++  `aarch64-pc-windows-msvc` with pinned 1.97.1 and assert the output is a PE image with machine
++  `0xAA64`. Proves the documented source path yields an ARM64 Windows binary.
++- **O2 — on-device execution proof (not observable here):** run the install and
++  `graphhelm --version` on actual ARM64 silicon. No such host exists at this station.
++
++Per the repository proof rules, a proxy never stands in for the missing observer: O1 is reported
++as O1. If no ARM64 device is reachable when the apply phase runs, O2 stays unresolved and is
++recorded as `OBSERVER_MISSING` in the transcript; the documentation then claims exactly O1
++("verified build from source for Windows ARM64"), not on-device execution. If a device transcript
++exists or can be produced, the wording upgrades and cites it.
++
++*Alternative considered:* treat cross-compilation as full verification. Rejected — AGENTS.md:
++"a later green result never erases …" and "Never treat a proxy such as HTTP acceptance as proof";
++an ARM64 binary that was never executed must say so.
++
++### D2 — Cross-link order: plain MSVC first (cheap negative), rust-lld second, workload third
++
++1. `rustup target add aarch64-pc-windows-msvc` (needs network once; verified reachable).
++2. Attempt the vanilla cross-build
++   (`cargo +1.97.1 build --locked -p graphhelm-cli --target aarch64-pc-windows-msvc`). Expected to
++   fail fast because the ARM64 MSVC linker is absent (measured) — kept first because it is the
++   cheapest possible negative.
++3. Retry with `RUSTFLAGS=-C linker-flavor=msvc-lld`: the toolchain's bundled `rust-lld` links
++   against the SDK `arm64` import libraries that are present. This is the designed path.
++4. Fallback only if 3 fails: install the VS Build Tools ARM64 C++ workload via winget and repeat
++   step 2.
++
++All builds use an isolated `CARGO_TARGET_DIR` under the lane scratch root per the disk-hygiene
++rules, never inside the worktree.
++
++### D3 — Documentation shape: one paragraph edit plus a cited transcript
++
++- Add one acceptance transcript, `docs/acceptance/windows-arm64-verify-2026-10-26.md`, in the
++  house format: metadata table (commit under test, host facts, start/end, result, cost),
++  "verified vs. not verified", and the verbatim command transcript including the PE-machine check.
++- Edit `docs/install/GETTING_STARTED.md` §1 minimally:
++  - keep the existing sentence about verified x86-64 **archives** (still true);
++  - add Windows ARM64 to the verified-platforms statement, naming the source path, citing the new
++    transcript, and stating the proof level it rests on;
++  - adjust the closing sentence ("On macOS or another platform, build from source") so ARM hosts
++    are no longer lumped with unproven platforms while the exact scope holds.
++- The user-facing path for a Snapdragon owner stays the existing §1 commands run natively
++  (`cargo +1.97.1 install --locked --path apps/cli`); the `rustup target add` / lld details are
++  verification mechanics in the transcript, not user steps.
++
++### D4 — Version banner expectation
++
++Assert the banner equals `graphhelm 0.1.0` today (workspace version, measured). The spec phrases
++it as `graphhelm <workspace-version>` so the requirement survives version bumps.
++
++## Risks / Trade-offs
++
++- [No ARM64 device reachable from this environment] → O2 remains unobserved; mitigation: O1 lands
++  with honest scoping, transcript names the gap verbatim (`OBSERVER_MISSING: on-device execution
++  on Windows 11 ARM64 hardware`), doc wording matches the proven level; a later device run upgrades
++  the wording by citation.
++- [`rustup target add` download fails if the network changes between planning and apply] → abort
++  the compile claim rather than weaken it; report the change blocked on toolchain target, nothing
++  written.
++- [rust-lld cross-linking friction (missing import lib, CRT mismatch)] → fallback D2.4 (ARM64 MSVC
++  workload via winget); if both fail, O1 is also unobserved and the doc change is limited to what
++  O1 actually supports (likely: none — record and stop).
++- [Over-claiming in the doc line] → the transcript is the source of every adjective in the new
++  sentence; review re-reads transcript before sentence.
++- [Cross-target build pollutes the tree or disk] → isolated `CARGO_TARGET_DIR` in lane scratch,
++  removed by its creator after the transcript is committed.
++
++## Migration Plan
++
++Docs-and-evidence only: no migration. Rollback is reverting the documentation commit; the
++transcript file is additive and can be removed with it. No data, schema, or behavior to roll back.
++
++## Open Questions
++
++- Whether an ARM64 device (or its captured transcript) becomes reachable before apply. This
++  changes the evidence level and the doc wording, but not the task breakdown: the tasks branch on
++  it explicitly.
+diff --git a/openspec/changes/bench-feature/proposal.md b/openspec/changes/bench-feature/proposal.md
+new file mode 100644
+index 0000000..cb5c0f2
+--- /dev/null
++++ b/openspec/changes/bench-feature/proposal.md
+@@ -0,0 +1,48 @@
++# Proposal
++
++## Why
++
++Windows 11 on ARM64 (Snapdragon) laptops are common developer machines, but the getting-started
++page currently verifies the CLI only for the prebuilt x86-64 archives ("verified Windows and
++Ubuntu x86-64 archives", section 1) and sends every ARM host to an unproven build-from-source
++path (`docs/releases/0.1.0.md`: "For macOS, ARM, and other hosts, build from source"). An ARM64
++user today has no documented, verified way to get a working `graphhelm`. This change proves the
++documented install path works for Windows ARM64 at the pinned toolchain and records Windows ARM64
++as a verified platform in `docs/install/GETTING_STARTED.md`, scoped precisely to what was observed.
++
++## What Changes
++
++- Verification (no code changes): establish that the `graphhelm` CLI installs on Windows 11 ARM64
++  via the documented source path (`cargo +1.97.1 install --locked --path apps/cli`) and runs
++  `graphhelm --version`, using the strongest observer available on the build host and an ARM64
++  host where available (see design for the split, since the planning host is x86-64).
++- Documentation: `docs/install/GETTING_STARTED.md` section 1 lists **Windows ARM64** among the
++  verified platforms, replacing the blanket "build from source" routing for ARM with the verified
++  statement plus the exact commands and their expected `graphhelm 0.1.0` output.
++- Evidence: the observation record (commands, outputs, host facts) is kept where acceptance
++  transcripts already live (`docs/acceptance/`), because this page's claims are anchored to such
++  transcripts.
++- Explicitly out of scope: publishing a prebuilt ARM64 release archive, changes to
++  `docs/releases/0.1.0.md`, CI/release pipeline work, and any code or dependency changes.
++
++## Capabilities
++
++### New Capabilities
++
++- `cli-installation`: How users obtain and first run the `graphhelm` binary — the supported
++  install paths (prebuilt release archives vs. build from source) and which host platforms each
++  path is verified for, including Windows ARM64.
++
++### Modified Capabilities
++
++(none — `openspec/specs/` contains no existing capability specs)
++
++## Impact
++
++- Affected documentation: `docs/install/GETTING_STARTED.md` (section 1, "Build or install the
++  binary"); one acceptance transcript under `docs/acceptance/` recording the observation.
++- No Rust code, schema, wire format, dependency, or toolchain changes. The pinned toolchain stays
++  `1.97.1`; verification only adds the `aarch64-pc-windows-msvc` target to the verifying machine,
++  which is environment state, not a repository change.
++- Compatibility: none — documentation and evidence only; no behavior changes for existing
++  platforms.
+diff --git a/openspec/changes/bench-feature/specs/cli-installation/spec.md b/openspec/changes/bench-feature/specs/cli-installation/spec.md
+new file mode 100644
+index 0000000..1106661
+--- /dev/null
++++ b/openspec/changes/bench-feature/specs/cli-installation/spec.md
+@@ -0,0 +1,55 @@
++# Spec Delta
++
++## Purpose
++
++Defines how users obtain and first run the `graphhelm` binary, which host platforms each install
++path is verified for, and how the getting-started documentation states that verification so every
++"verified" claim is anchored to an observed transcript.
++
++## ADDED Requirements
++
++### Requirement: Windows ARM64 source install yields a runnable CLI
++
++On Windows 11 on ARM64 with the pinned Rust toolchain (currently `1.97.1`), the documented
++build-from-source path (`cargo +1.97.1 install --locked --path apps/cli`) SHALL put `graphhelm`
++on the user PATH, and `graphhelm --version` SHALL print `graphhelm <workspace-version>`
++(currently `graphhelm 0.1.0`) and exit successfully.
++
++#### Scenario: Install and first run on a Snapdragon laptop
++
++- **WHEN** a user on Windows 11 ARM64 runs the documented source-install commands with the pinned toolchain
++- **THEN** `graphhelm` is available on the user PATH
++- **AND** `graphhelm --version` prints `graphhelm 0.1.0` and exits with code 0
++
++### Requirement: Cross-compile evidence identifies the target binary
++
++When verification is performed by cross-compiling `aarch64-pc-windows-msvc` from a host that is
++not ARM64, the produced `graphhelm.exe` SHALL be a Windows PE image of machine type `AA64`
++(ARM64), and the observation record SHALL state that this proves compilation for the target, not
++execution on it.
++
++#### Scenario: Build observed from a non-ARM64 host
++
++- **WHEN** the workspace is compiled for `aarch64-pc-windows-msvc` on a host that is not ARM64
++- **THEN** the resulting `graphhelm.exe` is a PE image whose machine field reads `0xAA64`
++- **AND** the observation record describes this as compile-level proof for the target, not on-device execution
++
++### Requirement: Verified-platform list matches observed evidence
++
++The getting-started page SHALL name a host platform as verified only when its documented install
++path was executed on a host of that class and the execution is recorded in an acceptance
++transcript cited by the page. A platform without such a transcript SHALL be presented as
++build-from-source only and SHALL NOT appear among verified platforms. Wording SHALL distinguish
++claims proven by on-device execution from claims proven by cross-compilation.
++
++#### Scenario: Windows ARM64 added after evidence lands
++
++- **WHEN** an acceptance transcript records the ARM64 install-path commands and their outputs at the pinned toolchain
++- **THEN** section 1 of `docs/install/GETTING_STARTED.md` lists Windows ARM64 among the verified platforms
++- **AND** the page cites the transcript and states what level of proof each listed platform rests on
++
++#### Scenario: Platform with no transcript stays unverified
++
++- **WHEN** no acceptance transcript records the install path for a host class (for example macOS)
++- **THEN** that host class is not listed as verified on the getting-started page
++- **AND** users on it are routed to build from source with that limitation stated
+diff --git a/openspec/changes/bench-feature/tasks.md b/openspec/changes/bench-feature/tasks.md
+new file mode 100644
+index 0000000..cf2e9a7
+--- /dev/null
++++ b/openspec/changes/bench-feature/tasks.md
+@@ -0,0 +1,69 @@
++# Tasks
++
++Reference: specs in `specs/cli-installation/spec.md`, approach in `design.md` (decisions D1–D4).
++No Rust code changes in any task. If a step in section 1 cannot run (network, toolchain), stop and
++report the change blocked with the verbatim error before writing anything under section 3.
++
++## 1. Evidence: cross-compile the CLI for Windows ARM64 (observer O1)
++
++- [x] 1.1 Start the acceptance transcript skeleton
++  `docs/acceptance/windows-arm64-verify-2026-10-26.md` in the house format (metadata table with
++  commit under test = checkout HEAD, host facts, started timestamp, cost: none), recording the
++  measured host facts (`PROCESSOR_ARCHITECTURE`, CPU model, OS caption, `rustc +1.97.1 --version`,
++  installed rustup targets). Verify: file exists with the metadata table populated and the host
++  identified as non-ARM64.
++- [ ] 1.2 Add the cross target: `rustup target add aarch64-pc-windows-msvc`. Verify:
++  `rustup target list --installed` now lists `aarch64-pc-windows-msvc`; record the download result
++  in the transcript. On network failure, stop per the section preamble.
++- [ ] 1.3 Attempt the vanilla cross-build
++  `cargo +1.97.1 build --locked -p graphhelm-cli --target aarch64-pc-windows-msvc` into an isolated
++  `CARGO_TARGET_DIR` under the approved lane scratch root (not the worktree). Expected: a fast
++  linker-not-found failure (ARM64 MSVC linker absent, measured at planning). Verify: the verbatim
++  failure is captured in the transcript and is a toolchain/linker error, not a compile error in
++  GraphHelm sources.
++- [ ] 1.4 Cross-link with rust-lld (design D2.3): rerun 1.3 with
++  `$env:RUSTFLAGS = "-C linker-flavor=msvc-lld"` against the same isolated target dir. Verify: exit
++  code 0 and `target/aarch64-pc-windows-msvc/debug/graphhelm.exe` exists; capture the tail of the
++  build output (`Finished …` line) in the transcript.
++- [ ] 1.5 (conditional — only if 1.4 fails) Install the VS Build Tools 2022 ARM64 C++ workload via
++  winget and rerun 1.3 verbatim. Verify: build green, or the change is reported blocked with both
++  failures captured verbatim.
++- [ ] 1.6 Prove the binary is ARM64: read the PE machine field of the produced `graphhelm.exe`
++  (and of the existing `%USERPROFILE%\.cargo\bin\graphhelm.exe` as a control). Verify: the built
++  binary reads `0xAA64` and the control reads `0x8664`; both values recorded in the transcript.
++- [ ] 1.7 Clean up the isolated target directory by name (creator removes its own), after the
++  transcript holds everything it proves. Verify: directory gone, `git status` shows no stray files
++  inside the checkout.
++
++## 2. On-device execution (observer O2) — branch on device availability
++
++- [ ] 2.1 Determine whether an ARM64 Windows device (or a captured transcript from one) is
++  reachable from this environment. **If yes:** on that device run the documented §1 path natively
++  (`cargo +1.97.1 install --locked --path apps/cli`, then `graphhelm --version`) and append the
++  transcript, asserting output `graphhelm 0.1.0` and exit code 0. **If no:** append exactly
++  `OBSERVER_MISSING: on-device execution of the ARM64 binary on Windows 11 ARM64 hardware` to the
++  transcript's "not verified" section. Verify: the transcript ends with exactly one of the two
++  outcomes, stated verbatim.
++
++## 3. Documentation — word the claim at exactly the proven level
++
++- [ ] 3.1 Finish the transcript (sections "verified vs. not verified", proof-level classification
++  per design D1, ended timestamp, result line classifying pass/OBSERVER_MISSING parts separately).
++  Verify: metadata table complete; every command in the "verified" section has its verbatim output
++  beside it; the OBSERVER_MISSING line (if applicable) is present word for word.
++- [ ] 3.2 Edit `docs/install/GETTING_STARTED.md` section 1 only: add Windows ARM64 to the
++  verified-platforms statement, naming the verified path (build from source at pinned toolchain),
++  citing the new transcript, and stating the proof level the transcript actually holds; adjust the
++  closing "On macOS or another platform, build from source" sentence so ARM hosts are no longer
++  lumped with unproven platforms while macOS remains build-from-source-only. Verify: the diff
++  touches no other section; every "verified" adjective in the new sentence has a matching transcript
++  line; the relative link to the transcript resolves.
++- [ ] 3.3 Evidence-to-wording audit: re-read the final §1 text against the final transcript.
++  Verify (checklist recorded in the PR body): no claim exceeds the transcript; macOS and other
++  platforms are still presented as build-from-source, not verified; expected-banner text matches
++  design D4 (`graphhelm 0.1.0`).
++
++## Workflow follow-up
++
++- Archive the change once the project's review requirements are satisfied.
++- Verify the archived result (`openspec show cli-installation --type spec` lists both requirements).
+diff --git a/openspec/config.yaml b/openspec/config.yaml
+new file mode 100644
+index 0000000..2805cb6
+--- /dev/null
++++ b/openspec/config.yaml
+@@ -0,0 +1,32 @@
++schema: spec-driven
++
++# Project context (optional)
++# Add only constraints that should guide OpenSpec artifacts and workflows.
++# Include constraints an agent cannot infer by reading the code.
++# Keep general project documentation and discoverable codebase facts out.
++# Example:
++#   context: |
++#     Designs and tasks must cover Windows, macOS, and Linux
++#     Write all artifacts in Spanish
++
++# Per-artifact rules (optional)
++# Add custom rules for specific artifacts.
++# Example:
++#   rules:
++#     proposal:
++#       - Keep proposals under 500 words
++#       - Always state what is out of scope
++#     tasks:
++#       - Break tasks into chunks of max 2 hours
++
++# Per-operation guidance (optional)
++# Add advisory guidance for how apply and archive work should be conducted.
++# This is separate from artifact rules above.
++# Example:
++#   operations:
++#     apply:
++#       guidance:
++#         - Keep test summaries concise
++#     archive:
++#       guidance:
++#         - Summarize the archive outcome before finishing
+diff --git a/openspec/specs/.gitkeep b/openspec/specs/.gitkeep
+new file mode 100644
+index 0000000..e69de29

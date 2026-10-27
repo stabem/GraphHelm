@@ -1,0 +1,1573 @@
+diff --git a/.specify/feature.json b/.specify/feature.json
+new file mode 100644
+index 0000000..72ba549
+--- /dev/null
++++ b/.specify/feature.json
+@@ -0,0 +1,3 @@
++{
++  "feature_directory": "specs/001-bench"
++}
+diff --git a/.specify/templates/constitution-template.md b/.specify/templates/constitution-template.md
+new file mode 100644
+index 0000000..a4670ff
+--- /dev/null
++++ b/.specify/templates/constitution-template.md
+@@ -0,0 +1,50 @@
++# [PROJECT_NAME] Constitution
++<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
++
++## Core Principles
++
++### [PRINCIPLE_1_NAME]
++<!-- Example: I. Library-First -->
++[PRINCIPLE_1_DESCRIPTION]
++<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
++
++### [PRINCIPLE_2_NAME]
++<!-- Example: II. CLI Interface -->
++[PRINCIPLE_2_DESCRIPTION]
++<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
++
++### [PRINCIPLE_3_NAME]
++<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
++[PRINCIPLE_3_DESCRIPTION]
++<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
++
++### [PRINCIPLE_4_NAME]
++<!-- Example: IV. Integration Testing -->
++[PRINCIPLE_4_DESCRIPTION]
++<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
++
++### [PRINCIPLE_5_NAME]
++<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
++[PRINCIPLE_5_DESCRIPTION]
++<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
++
++## [SECTION_2_NAME]
++<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
++
++[SECTION_2_CONTENT]
++<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
++
++## [SECTION_3_NAME]
++<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
++
++[SECTION_3_CONTENT]
++<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
++
++## Governance
++<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
++
++[GOVERNANCE_RULES]
++<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
++
++**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
++<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+diff --git a/.specify/templates/plan-template.md b/.specify/templates/plan-template.md
+new file mode 100644
+index 0000000..36f2eab
+--- /dev/null
++++ b/.specify/templates/plan-template.md
+@@ -0,0 +1,113 @@
++# Implementation Plan: [FEATURE]
++
++**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
++
++**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
++
++**Note**: This template is filled in by the `__SPECKIT_COMMAND_PLAN__` command; its definition describes the execution workflow.
++
++## Summary
++
++[Extract from feature spec: primary requirement + technical approach from research]
++
++## Technical Context
++
++<!--
++  ACTION REQUIRED: Replace the content in this section with the technical details
++  for the project. The structure here is presented in advisory capacity to guide
++  the iteration process.
++-->
++
++**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]
++
++**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]
++
++**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
++
++**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]
++
++**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
++
++**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]
++
++**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]
++
++**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]
++
++**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++[Gates determined based on constitution file]
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/[###-feature]/
++├── plan.md              # This file (__SPECKIT_COMMAND_PLAN__ command output)
++├── research.md          # Phase 0 output (__SPECKIT_COMMAND_PLAN__ command)
++├── data-model.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── quickstart.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── contracts/           # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++└── tasks.md             # Phase 2 output (__SPECKIT_COMMAND_TASKS__ command - NOT created by __SPECKIT_COMMAND_PLAN__)
++```
++
++### Source Code (repository root)
++<!--
++  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
++  for this feature. Delete unused options and expand the chosen structure with
++  real paths (e.g., apps/admin, packages/something). The delivered plan must
++  not include Option labels.
++-->
++
++```text
++# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
++src/
++├── models/
++├── services/
++├── cli/
++└── lib/
++
++tests/
++├── contract/
++├── integration/
++└── unit/
++
++# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
++backend/
++├── src/
++│   ├── models/
++│   ├── services/
++│   └── api/
++└── tests/
++
++frontend/
++├── src/
++│   ├── components/
++│   ├── pages/
++│   └── services/
++└── tests/
++
++# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
++api/
++└── [same as backend above]
++
++ios/ or android/
++└── [platform-specific structure: feature modules, UI flows, platform tests]
++```
++
++**Structure Decision**: [Document the selected structure and reference the real
++directories captured above]
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++| Violation | Why Needed | Simpler Alternative Rejected Because |
++|-----------|------------|-------------------------------------|
++| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
++| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+diff --git a/.specify/templates/spec-template.md b/.specify/templates/spec-template.md
+new file mode 100644
+index 0000000..ceb2877
+--- /dev/null
++++ b/.specify/templates/spec-template.md
+@@ -0,0 +1,131 @@
++# Feature Specification: [FEATURE NAME]
++
++**Feature Branch**: `[###-feature-name]`
++
++**Created**: [DATE]
++
++**Status**: Draft
++
++**Input**: User description: "$ARGUMENTS"
++
++## User Scenarios & Testing *(mandatory)*
++
++<!--
++  IMPORTANT: User stories should be PRIORITIZED as user journeys ordered by importance.
++  Each user story/journey must be INDEPENDENTLY TESTABLE - meaning if you implement just ONE of them,
++  you should still have a viable MVP (Minimum Viable Product) that delivers value.
++
++  Assign priorities (P1, P2, P3, etc.) to each story, where P1 is the most critical.
++  Think of each story as a standalone slice of functionality that can be:
++  - Developed independently
++  - Tested independently
++  - Deployed independently
++  - Demonstrated to users independently
++-->
++
++### User Story 1 - [Brief Title] (Priority: P1)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently - e.g., "Can be fully tested by [specific action] and delivers [specific value]"]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++2. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 2 - [Brief Title] (Priority: P2)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 3 - [Brief Title] (Priority: P3)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++[Add more user stories as needed, each with an assigned priority]
++
++### Edge Cases
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right edge cases.
++-->
++
++- What happens when [boundary condition]?
++- How does system handle [error scenario]?
++
++## Requirements *(mandatory)*
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right functional requirements.
++-->
++
++### Functional Requirements
++
++- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
++- **FR-002**: System MUST [specific capability, e.g., "validate email addresses"]
++- **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
++- **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
++- **FR-005**: System MUST [behavior, e.g., "log all security events"]
++
++*Example of marking unclear requirements:*
++
++- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
++- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
++
++### Key Entities *(include if feature involves data)*
++
++- **[Entity 1]**: [What it represents, key attributes without implementation]
++- **[Entity 2]**: [What it represents, relationships to other entities]
++
++## Success Criteria *(mandatory)*
++
++<!--
++  ACTION REQUIRED: Define measurable success criteria.
++  These must be technology-agnostic and measurable.
++-->
++
++### Measurable Outcomes
++
++- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
++- **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
++- **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
++- **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
++
++## Assumptions
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right assumptions based on reasonable defaults
++  chosen when the feature description did not specify certain details.
++-->
++
++- [Assumption about target users, e.g., "Users have stable internet connectivity"]
++- [Assumption about scope boundaries, e.g., "Mobile support is out of scope for v1"]
++- [Assumption about data/environment, e.g., "Existing authentication system will be reused"]
++- [Dependency on existing system/service, e.g., "Requires access to the existing user profile API"]
+diff --git a/.specify/templates/tasks-template.md b/.specify/templates/tasks-template.md
+new file mode 100644
+index 0000000..7fff087
+--- /dev/null
++++ b/.specify/templates/tasks-template.md
+@@ -0,0 +1,252 @@
++---
++
++description: "Task list template for feature implementation"
++---
++
++# Tasks: [FEATURE NAME]
++
++**Input**: Design documents from `/specs/[###-feature-name]/`
++
++**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
++
++**Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
++
++**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies)
++- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
++- Include exact file paths in descriptions
++
++## Path Conventions
++
++- **Single project**: `src/`, `tests/` at repository root
++- **Web app**: `backend/src/`, `frontend/src/`
++- **Mobile**: `api/src/`, `ios/src/` or `android/src/`
++- Paths shown below assume single project - adjust based on plan.md structure
++
++<!--
++  ============================================================================
++  IMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.
++
++  The __SPECKIT_COMMAND_TASKS__ command MUST replace these with actual tasks based on:
++  - User stories from spec.md (with their priorities P1, P2, P3...)
++  - Feature requirements from plan.md
++  - Entities from data-model.md
++  - Endpoints from contracts/
++
++  Tasks MUST be organized by user story so each story can be:
++  - Implemented independently
++  - Tested independently
++  - Delivered as an MVP increment
++
++  DO NOT keep these sample tasks in the generated tasks.md file.
++  ============================================================================
++-->
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Project initialization and basic structure
++
++- [ ] T001 Create project structure per implementation plan
++- [ ] T002 Initialize [language] project with [framework] dependencies
++- [ ] T003 [P] Configure linting and formatting tools
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
++
++**⚠️ CRITICAL**: No user story work can begin until this phase is complete
++
++Examples of foundational tasks (adjust based on your project):
++
++- [ ] T004 Setup database schema and migrations framework
++- [ ] T005 [P] Implement authentication/authorization framework
++- [ ] T006 [P] Setup API routing and middleware structure
++- [ ] T007 Create base models/entities that all stories depend on
++- [ ] T008 Configure error handling and logging infrastructure
++- [ ] T009 Setup environment configuration management
++
++**Checkpoint**: Foundation ready - user story implementation can now begin in parallel
++
++---
++
++## Phase 3: User Story 1 - [Title] (Priority: P1) 🎯 MVP
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 1 (OPTIONAL - only if tests requested) ⚠️
++
++> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
++
++- [ ] T010 [P] [US1] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T011 [P] [US1] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 1
++
++- [ ] T012 [P] [US1] Create [Entity1] model in src/models/[entity1].py
++- [ ] T013 [P] [US1] Create [Entity2] model in src/models/[entity2].py
++- [ ] T014 [US1] Implement [Service] in src/services/[service].py (depends on T012, T013)
++- [ ] T015 [US1] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T016 [US1] Add validation and error handling
++- [ ] T017 [US1] Add logging for user story 1 operations
++
++**Checkpoint**: At this point, User Story 1 should be fully functional and testable independently
++
++---
++
++## Phase 4: User Story 2 - [Title] (Priority: P2)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 2 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T018 [P] [US2] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T019 [P] [US2] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 2
++
++- [ ] T020 [P] [US2] Create [Entity] model in src/models/[entity].py
++- [ ] T021 [US2] Implement [Service] in src/services/[service].py
++- [ ] T022 [US2] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T023 [US2] Integrate with User Story 1 components (if needed)
++
++**Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
++
++---
++
++## Phase 5: User Story 3 - [Title] (Priority: P3)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 3 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T024 [P] [US3] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T025 [P] [US3] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 3
++
++- [ ] T026 [P] [US3] Create [Entity] model in src/models/[entity].py
++- [ ] T027 [US3] Implement [Service] in src/services/[service].py
++- [ ] T028 [US3] Implement [endpoint/feature] in src/[location]/[file].py
++
++**Checkpoint**: All user stories should now be independently functional
++
++---
++
++[Add more user story phases as needed, following the same pattern]
++
++---
++
++## Phase N: Polish & Cross-Cutting Concerns
++
++**Purpose**: Improvements that affect multiple user stories
++
++- [ ] TXXX [P] Documentation updates in docs/
++- [ ] TXXX Code cleanup and refactoring
++- [ ] TXXX Performance optimization across all stories
++- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
++- [ ] TXXX Security hardening
++- [ ] TXXX Run quickstart.md validation
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies - can start immediately
++- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
++- **User Stories (Phase 3+)**: All depend on Foundational phase completion
++  - User stories can then proceed in parallel (if staffed)
++  - Or sequentially in priority order (P1 → P2 → P3)
++- **Polish (Final Phase)**: Depends on all desired user stories being complete
++
++### User Story Dependencies
++
++- **User Story 1 (P1)**: Can start after Foundational (Phase 2) - No dependencies on other stories
++- **User Story 2 (P2)**: Can start after Foundational (Phase 2) - May integrate with US1 but should be independently testable
++- **User Story 3 (P3)**: Can start after Foundational (Phase 2) - May integrate with US1/US2 but should be independently testable
++
++### Within Each User Story
++
++- Tests (if included) MUST be written and FAIL before implementation
++- Models before services
++- Services before endpoints
++- Core implementation before integration
++- Story complete before moving to next priority
++
++### Parallel Opportunities
++
++- All Setup tasks marked [P] can run in parallel
++- All Foundational tasks marked [P] can run in parallel (within Phase 2)
++- Once Foundational phase completes, all user stories can start in parallel (if team capacity allows)
++- All tests for a user story marked [P] can run in parallel
++- Models within a story marked [P] can run in parallel
++- Different user stories can be worked on in parallel by different team members
++
++---
++
++## Parallel Example: User Story 1
++
++```bash
++# Launch all tests for User Story 1 together (if tests requested):
++Task: "Contract test for [endpoint] in tests/contract/test_[name].py"
++Task: "Integration test for [user journey] in tests/integration/test_[name].py"
++
++# Launch all models for User Story 1 together:
++Task: "Create [Entity1] model in src/models/[entity1].py"
++Task: "Create [Entity2] model in src/models/[entity2].py"
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup
++2. Complete Phase 2: Foundational (CRITICAL - blocks all stories)
++3. Complete Phase 3: User Story 1
++4. **STOP and VALIDATE**: Test User Story 1 independently
++5. Deploy/demo if ready
++
++### Incremental Delivery
++
++1. Complete Setup + Foundational → Foundation ready
++2. Add User Story 1 → Test independently → Deploy/Demo (MVP!)
++3. Add User Story 2 → Test independently → Deploy/Demo
++4. Add User Story 3 → Test independently → Deploy/Demo
++5. Each story adds value without breaking previous stories
++
++### Parallel Team Strategy
++
++With multiple developers:
++
++1. Team completes Setup + Foundational together
++2. Once Foundational is done:
++   - Developer A: User Story 1
++   - Developer B: User Story 2
++   - Developer C: User Story 3
++3. Stories complete and integrate independently
++
++---
++
++## Notes
++
++- [P] tasks = different files, no dependencies
++- [Story] label maps task to specific user story for traceability
++- Each user story should be independently completable and testable
++- Verify tests fail before implementing
++- Commit after each task or logical group
++- Stop at any checkpoint to validate story independently
++- Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
+diff --git a/AGENTS.md b/AGENTS.md
+index e51860c..850ebc9 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -138,10 +138,12 @@ guidance alone (paper, section 7).
+ 
+ | The change | What Keel asks |
+ |---|---|
+-| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the task record. |
++| Docs, comments, *inert* config values (no observable runtime or security effect), a one-line fix, a test-only fix | Nothing beyond the task record. |
+ | A bounded code change on the direct route (above) | A three-line card in the PR body: the paths in scope, the promise, the command that proves it. |
+ | New public surface: a new module, type, public function, dependency or test file | The full card, and the new surface named in the PR body. |
+-| The expanded route: persistence, permissions, compatibility, security, external effects | The full card and the JPD flow above. |
++| The expanded route: persistence, permissions, compatibility, security, external effects, runtime-affecting config | The full card and the JPD flow above. |
++
++A one-line change is not light because it is one line: a runtime- or security-affecting config value (a Runtime timeout, a permission setting) takes the expanded route — full card and behavioural evidence of the changed behaviour, not parse or shape validation alone.
+ 
+ **The four moves, when Keel applies:**
+ 
+diff --git a/docs/process/DELIVERY.md b/docs/process/DELIVERY.md
+index ba7d532..0ad689a 100644
+--- a/docs/process/DELIVERY.md
++++ b/docs/process/DELIVERY.md
+@@ -22,10 +22,12 @@ Keel is proportional. Use only as much of it as the change needs.
+ 
+ | The change | What goes in the PR body |
+ |---|---|
+-| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the summary. |
++| Docs, comments, *inert* config values (no observable runtime or security effect), a one-line fix, a test-only fix | Nothing beyond the summary. |
+ | A bounded code change | A three-line card: the paths in scope, the promise, the command that proves it. |
+ | New public surface: a module, type, public function, dependency or test file | The full card, and the new surface named. |
+-| Persistence, permissions, compatibility, security, external effects | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development). |
++| Persistence, permissions, compatibility, security, external effects, runtime-affecting config | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development). |
++
++A one-line change is not light because it is one line: a runtime- or security-affecting config value (a Runtime timeout, a permission setting) takes the expanded route — full card and behavioural evidence of the changed behaviour, not parse or shape validation alone.
+ 
+ A card lists paths, not globs. A new dependency is always named. Risk is read from what the change
+ touches, not from how big it is: a one-line change can remove a permission check.
+diff --git a/specs/001-bench/checklists/requirements.md b/specs/001-bench/checklists/requirements.md
+new file mode 100644
+index 0000000..5290c3f
+--- /dev/null
++++ b/specs/001-bench/checklists/requirements.md
+@@ -0,0 +1,43 @@
++# Specification Quality Checklist: Keel Config Risk Tier
++
++**Purpose**: Validate specification completeness and quality before proceeding to planning
++**Created**: 2026-10-26
++**Feature**: [spec.md](../spec.md)
++
++## Content Quality
++
++- [x] No implementation details (languages, frameworks, APIs)
++- [x] Focused on user value and business needs
++- [x] Written for non-technical stakeholders
++- [x] All mandatory sections completed
++
++## Requirement Completeness
++
++- [x] No [NEEDS CLARIFICATION] markers remain
++- [x] Requirements are testable and unambiguous
++- [x] Success criteria are measurable
++- [x] Success criteria are technology-agnostic (no implementation details)
++- [x] All acceptance scenarios are defined
++- [x] Edge cases are identified
++- [x] Scope is clearly bounded
++- [x] Dependencies and assumptions identified
++
++## Feature Readiness
++
++- [x] All functional requirements have clear acceptance criteria
++- [x] User scenarios cover primary flows
++- [x] Feature meets measurable outcomes defined in Success Criteria
++- [x] No implementation details leak into specification
++
++## Notes
++
++- Validation run 1 (2026-10-26): all items pass. The feature is a documentation-process
++  change, so "technology-agnostic" is satisfied trivially: the spec prescribes prose in two
++  named documents and explicitly forbids any executable artifact (FR-006, SC-004).
++- One deliberate use of repo-specific names (`AGENTS.md`, `docs/process/DELIVERY.md`,
++  `keel.yaml`) is retained because the change targets those exact files; naming them is
++  scope definition, not implementation detail.
++- No `[NEEDS CLARIFICATION]` markers were raised: the task description fixed the files,
++  the edits, and the exclusion (no checker, no `keel.yaml` rule), leaving no decision
++  without a reasonable default. Defaults recorded in Assumptions.
++- Items marked incomplete require spec updates before `/speckit.clarify` or `/speckit.plan`.
+diff --git a/specs/001-bench/contracts/proportionality-table.md b/specs/001-bench/contracts/proportionality-table.md
+new file mode 100644
+index 0000000..5c9e6cc
+--- /dev/null
++++ b/specs/001-bench/contracts/proportionality-table.md
+@@ -0,0 +1,54 @@
++# Contract: Proportionality table wording
++
++**Feature**: [specs/001-bench/spec.md](spec.md) · **Date**: 2026-10-26
++
++The feature exposes no programmatic API. Its observable "interface" is the **wording of two
++proportionality tables** — one in `AGENTS.md` (Keel section) and one in
++`docs/process/DELIVERY.md` (section 2) — which agent authors read to decide how much Keel a change
++owes. Readers depend on that text behaving as a classifier, so it is documented here as a contract.
++
++## Required table state (post-change)
++
++Both tables MUST present these rows, with the config-bearing cells worded so a reader of **either
++document alone** reaches the same classification (SC-001, SC-002):
++
++| Row | Change class (required wording) | Obligation |
++|---|---|---|
++| 1 (lightest) | Docs, comments, **inert** config values (**no observable runtime or security effect**), a one-line fix, a test-only fix | Nothing beyond the task record / summary. |
++| 2 | A bounded code change on the direct route | A three-line card: paths in scope, promise, proving command. |
++| 3 | New public surface: a module, type, public function, dependency or test file | The full card, and the new surface named. |
++| 4 (expanded) | Persistence, permissions, compatibility, security, external effects, **runtime-affecting config** | The full card and the JPD flow. |
++
++Immediately after each table, the surrounding prose MUST state (FR-003) that a runtime- or
++security-affecting config value (e.g. a Runtime timeout, a permission setting) takes the expanded
++route — full card **and behavioural evidence of the changed behaviour**, not parse or shape
++validation alone.
++
++## Invariants a reader relies on
++
++1. **Inert qualifier present.** No row routes *config values* to the lightest tier without the
++   word *inert* (SC-003). Grep: there is no bare "config values" cell in row 1 of either table.
++2. **Expanded route names runtime config.** Row 4's list includes `runtime-affecting config` in both
++   tables (FR-004, FR-005).
++3. **Behavioural evidence named.** The supporting prose says *behavioural evidence*, not merely a
++   parse check or the summary (FR-003).
++4. **Cross-document parity.** Rows 1 and 4 give identical classifications in both documents
++   (SC-002). The only pre-existing permitted divergence is the obligation label for row 1
++   ("task record" in AGENTS.md vs "summary" in DELIVERY.md), which denotes the same minimum.
++5. **Nothing else changed.** Other rows, other sections, and every other file are semantically
++   unchanged (FR-006, FR-008); English only (FR-007); no new checker, no `keel.yaml` rule.
++
++## Probe classification table (the contract's acceptance surface, SC-001)
++
++A reader MUST be able to classify each of these five probes from the table alone, identically in
++both documents, with zero ambiguity:
++
++| Probe | Expected tier | Obligation | Cited wording |
++|---|---|---|---|
++| Inert config value (no observable effect) | Row 1 | task record / summary | "*inert* config values (no observable runtime or security effect)" |
++| Runtime timeout (one line) | Row 4 | full card + JPD + behavioural evidence | "runtime-affecting config" + supporting sentence |
++| Permission setting (one line) | Row 4 | full card + JPD + behavioural evidence | "runtime-affecting config" / "a permission setting" |
++| One-line code fix | Row 1 | task record / summary | "a one-line fix" |
++| Doc-only edit | Row 1 | task record / summary | "Docs" |
++
++Verification procedure lives in [../quickstart.md](../quickstart.md).
+diff --git a/specs/001-bench/data-model.md b/specs/001-bench/data-model.md
+new file mode 100644
+index 0000000..2a3d9e3
+--- /dev/null
++++ b/specs/001-bench/data-model.md
+@@ -0,0 +1,83 @@
++# Data Model: Keel Config Risk Tier
++
++**Feature**: [specs/001-bench/spec.md](spec.md) · **Date**: 2026-10-26
++
++This feature is docs-only: it changes no runtime data, no database schema, and no wire type. The
++"model" below captures the **documentation entities** the spec names under *Key Entities* and the
++classification rules they encode, so the wording contract in [contracts/](contracts/) has a stable
++vocabulary to draw from.
++
++## Entity: Proportionality table
++
++The two-column mapping from "the change" to "what is asked", existing once in the Keel section of
++`AGENTS.md` and once in section 2 of `docs/process/DELIVERY.md`.
++
++| Attribute | Type | Notes |
++|---|---|---|
++| `rows` | list[row] | Four rows, fixed order (lightest → expanded). |
++| `row.change_class` | string | The class of change this row covers. |
++| `row.obligation` | enum | one of: `task_record`, `three_line_card`, `full_card`, `full_card_plus_jpd`. |
++
++Fixed rows (unchanged except where FRs direct):
++
++1. change_class: `Docs, comments, inert config values, a one-line fix, a test-only fix` → `task_record`
++2. change_class: `A bounded code change on the direct route` → `three_line_card`
++3. change_class: `New public surface: a module, type, public function, dependency or test file` → `full_card`
++4. change_class: `Persistence, permissions, compatibility, security, external effects, runtime-affecting config` → `full_card_plus_jpd`
++
++### Changes specified by this feature
++
++- **Row 1 (`change_class`)** — FR-001 / FR-002: the config term MUST read as **inert** config
++  values with the qualifier "no observable runtime or security effect" attached, so that a bare
++  "config values" phrase does not route to this row (SC-003).
++- **Row 4 (`change_class`)** — FR-004 / FR-005: the list MUST include **runtime-affecting config**
++  alongside persistence, permissions, compatibility, security, external effects.
++- **Supporting prose** (immediately after each table) — FR-003: MUST state that a runtime- or
++  security-affecting config change requires the full card **and behavioural evidence of the
++  changed behaviour**, not merely parse or shape validation.
++
++All other rows, columns, and sections: semantically unchanged (FR-008).
++
++## Entity: Config value
++
++Any setting in a configuration surface (config files, policy rules, tool settings).
++
++| Field | Type | Validation rule |
++|---|---|---|
++| `value` | scalar | — |
++| `tier_class` | enum: `inert`, `runtime_or_security_affecting` | Determined **by effect**, not by file location. |
++
++**Classification rule (state transition for tier purposes):**
++
++- `inert`: changing the current value produces **no observable** difference in runtime behaviour,
++  timing, permissions, or external exposure → routes to row 1 (`task_record`).
++- `runtime_or_security_affecting`: changing the value produces an observable difference in
++  behaviour, timing, permission, or exposure → routes to row 4 (`full_card_plus_jpd`) and owes
++  behavioural evidence (FR-003).
++
++Applied per value-class; a mixed diff is lifted off the lightest tier by any non-inert value
++(Edge Case: mixed change). File format never downgrades the tier (Edge Case: config inside Markdown).
++
++**Not classified inert by this change alone**: a value no shipped code currently reads but which a
++documented contract says *may* be read in future (Edge Case: "inert" vs "looks inert") — the author
++classifies it and makes the call visible in the record.
++
++## Entity: Full card with behavioural evidence
++
++The obligation pair owed for `runtime_or_security_affecting` config.
++
++| Component | Content |
++|---|---|
++| `card` | The complete Keel card in the PR body (paths in scope, promise, proving command). |
++| `behavioural_evidence` | A command or test that observes the behaviour the config value changed; parse/shape validation alone is not sufficient (reuses the Journey-Proven Development definition). |
++
++## Relationships
++
++```text
++Config value --classified by effect--> tier_class
++  inert                       --> Proportionality table row 1 (task_record)
++  runtime_or_security_affecting -> Proportionality table row 4 (full_card_plus_jpd)
++                                   + Entity "Full card with behavioural evidence"
++Proportionality table exists twice: AGENTS.md (Keel §) | docs/process/DELIVERY.md (§2)
++  constraint SC-002: both tables must classify every probe identically
++```
+diff --git a/specs/001-bench/plan.md b/specs/001-bench/plan.md
+new file mode 100644
+index 0000000..49b9ccc
+--- /dev/null
++++ b/specs/001-bench/plan.md
+@@ -0,0 +1,105 @@
++# Implementation Plan: Keel Config Risk Tier
++
++**Branch**: `main` | **Date**: 2026-10-26 | **Spec**: [specs/001-bench/spec.md](spec.md)
++
++**Input**: Feature specification from `/specs/001-bench/spec.md`
++
++## Summary
++
++Restrict the lightest row of Keel's proportionality table to **inert** config values and
++route **runtime- or security-affecting** config changes to the expanded (full-card) route, in
++the two copies of the table that exist in `AGENTS.md` (Keel section) and
++`docs/process/DELIVERY.md` (section 2). Add "runtime-affecting config" to the
++expanded-route list in both tables, and add the supporting sentence stating that such a
++change owes the full card plus **behavioural evidence** of the changed behaviour (not merely
++parse or shape validation). Docs only: no checker, no `keel.yaml` rule, and no file other than
++those two is modified.
++
++Technical approach (docs-only): edit two Markdown tables and their immediate supporting prose,
++keeping the rest of each table and both documents semantically unchanged, in English. Because
++the change is guidance text a human reviewer reads against a real PR, the proof is reading the
++two tables back and confirming all five probe cases in SC-001/SC-002 classify identically in
++both documents.
++
++## Technical Context
++
++**Language/Version**: N/A (Markdown documentation only; no code compiled by this change)
++
++**Primary Dependencies**: None (no new libraries; two existing Markdown files edited in place)
++
++**Storage**: Filesystem only — `AGENTS.md` and `docs/process/DELIVERY.md`
++
++**Testing**: Manual read-back of the two tables against the five probe cases in the spec's
++success criteria (SC-001–SC-005); optionally a grep asserting no bare "config values" phrase
++routes to the lightest tier (SC-003). No automated test suite is reached by a pure docs edit.
++
++**Target Platform**: N/A (documentation rendered by any Markdown viewer / GitHub)
++
++**Project Type**: Documentation (proportionality-table edits inside an existing Rust workspace's
++governance docs)
++
++**Performance Goals**: N/A (no runtime behaviour is changed or measured)
++
++**Constraints**:
++- English only (FR-007), per repository documentation-language rules in `AGENTS.md`.
++- Exactly two files modified — `AGENTS.md` and `docs/process/DELIVERY.md` (FR-006, SC-004).
++- No new scripts, no modified `keel.yaml`, no new checklist (FR-006, SC-004).
++- All other rows/columns and all other sections of both documents remain semantically unchanged
++  (FR-008).
++- Wording minimal and consistent with Keel's own proportionality principle (Assumption: wording
++  stays minimal). No term is used that is undefined within the changed sentence or its section
++  (SC-005).
++
++**Scale/Scope**: Two Markdown tables (four rows each) plus at most one supporting sentence each.
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++Governance reference: no `.specify/memory/constitution.md` exists in this checkout, so
++`AGENTS.md` at the repository root is used as the governance reference, per the execution
++instruction. This substitution is recorded here and in `research.md`.
++
++| Gate (from AGENTS.md governance) | Status | Notes |
++|---|---|---|
++| English-only documentation | PASS | FR-007 requires English; edit introduces no non-English prose. |
++| Issue-first / merge-is-completion delivery | PASS | Spec names an issue-first branch (`issue-config-risk`) deferred for this unattended run; plan does not change delivery semantics. |
++| Do not scaffold empty modules / public stubs / future directories | PASS | Docs-only; no new files, crates, stubs, or directories beyond `specs/001-bench/` planning artifacts. |
++| Wording consistent with existing Keel/JPD definitions ("behavioural evidence") | PASS | FR and Assumptions reuse the existing Journey-Proven Development meaning of behavioural evidence; no new category. |
++| Preserve user work; smallest adequate change | PASS | Edit confined to two named tables and their immediate prose; FR-008 keeps the rest unchanged. |
++
++No violations requiring justification. Complexity Tracking left empty.
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/001-bench/
++├── plan.md              # This file
++├── research.md          # Phase 0 output
++├── data-model.md        # Phase 1 output
++├── quickstart.md        # Phase 1 output
++├── contracts/           # Phase 1 output
++│   └── proportionality-table.md   # the two-table wording contract readers rely on
++└── tasks.md             # Phase 2 output (created later by speckit.tasks, not this command)
++```
++
++### Source Code (repository root)
++
++This feature changes no source code. The two governance documents it edits are:
++
++```text
++AGENTS.md                    # Keel section -> proportionality table (lines ~139-146)
++docs/process/DELIVERY.md     # Section 2 "Keel card" -> matching table (lines ~23-30)
++```
++
++**Structure Decision**: Single project, no code layout. The delivered change touches exactly two
++existing Markdown files at the repository root and under `docs/process/`; no new crate, module,
++or directory is introduced.
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++(No violations; table intentionally empty.)
+diff --git a/specs/001-bench/quickstart.md b/specs/001-bench/quickstart.md
+new file mode 100644
+index 0000000..0b31ede
+--- /dev/null
++++ b/specs/001-bench/quickstart.md
+@@ -0,0 +1,83 @@
++# Quickstart: Validate the Keel Config Risk Tier change
++
++**Feature**: [specs/001-bench/spec.md](spec.md) · **Date**: 2026-10-26
++
++Docs-only change. The smallest observer is a **read-back of the two tables plus a bounded grep**.
++No build, no test suite, no network, no branch is required. Work from the repository root.
++
++## Prerequisites
++
++- This checkout only.
++- The two edited files present: `AGENTS.md` and `docs/process/DELIVERY.md`.
++- The change limited to those two files (SC-004).
++
++## Step 1 — Confirm the diff touches exactly two files (SC-004)
++
++```powershell
++git status --porcelain
++git diff --name-only
++```
++
++Expected: only `AGENTS.md` and `docs/process/DELIVERY.md` under this feature's diff. No new script,
++no modified `keel.yaml`, no new checklist. (Planning artifacts under `specs/001-bench/` are a
++separate concern from the implementation diff SC-004 measures.)
++
++## Step 2 — Open and read both tables
++
++- `AGENTS.md`, Keel section → the table headed `| The change | What Keel asks |`.
++- `docs/process/DELIVERY.md`, section 2 "Keel card" → the table headed `| The change | What goes in the PR body |`.
++
++For each table verify (against [contracts/proportionality-table.md](contracts/proportionality-table.md)):
++
++1. **Row 1 (lightest)** names config values as *inert* with the qualifier "no observable runtime
++   or security effect". (FR-001 / FR-002)
++2. **Row 4 (expanded)** list includes `runtime-affecting config`. (FR-004 / FR-005)
++3. **Supporting sentence** after each table says a runtime- or security-affecting config value
++   takes the expanded route with full card **and behavioural evidence**, not parse/shape alone.
++   (FR-003)
++
++## Step 3 — Grep guards (SC-002, SC-003)
++
++Confirm *runtime-affecting config* appears in both tables' expanded rows and *inert* appears in
++both light rows:
++
++```powershell
++Select-String -Path AGENTS.md,docs\process\DELIVERY.md -Pattern 'runtime-affecting config'
++Select-String -Path AGENTS.md,docs\process\DELIVERY.md -Pattern '\*inert\* config values'
++```
++
++Confirm no bare "config values" routes to the lightest tier (SC-003): every occurrence of the
++phrase "config values" in the two files should be preceded by *inert* (row 1) or be part of the
++"runtime-affecting config" / "security-affecting config value" wording, never an unqualified
++light-row cell.
++
++```powershell
++Select-String -Path AGENTS.md,docs\process\DELIVERY.md -Pattern 'config values?'
++```
++
++Read each hit; the only allowed unqualified occurrences are inside "runtime-affecting config" /
++"a runtime- or security-affecting config value" prose, not in a row-1 cell.
++
++## Step 4 — Five-probe classification read-through (SC-001, SC-002)
++
++Using **each document alone**, classify the five probes from
++[contracts/proportionality-table.md](contracts/proportionality-table.md): inert config, Runtime
++timeout, permission setting, one-line code fix, doc-only edit. Expected answers:
++
++| Probe | AGENTS.md | DELIVERY.md |
++|---|---|---|
++| Inert config | Row 1 / task record | Row 1 / summary |
++| Runtime timeout | Row 4 / full card + JPD + behavioural evidence | Row 4 / full card + JPD + behavioural evidence |
++| Permission setting | Row 4 / full card + JPD + behavioural evidence | Row 4 / full card + JPD + behavioural evidence |
++| One-line code fix | Row 1 / task record | Row 1 / summary |
++| Doc-only edit | Row 1 / task record | Row 1 / summary |
++
++Pass = zero ambiguous probes, and identical tiers across the two columns for every probe
++(the "task record"/"summary" label difference is not a tier difference).
++
++## Expected outcome
++
++All steps pass: two-file diff, both tables carry *inert* on row 1 and `runtime-affecting config`
++on row 4, both supporting sentences name behavioural evidence, no bare "config values" light-row
++cell remains, and both documents classify all five probes identically. The change is docs-only,
++English, and leaves every other section of both files semantically unchanged.
+diff --git a/specs/001-bench/research.md b/specs/001-bench/research.md
+new file mode 100644
+index 0000000..d0c231b
+--- /dev/null
++++ b/specs/001-bench/research.md
+@@ -0,0 +1,90 @@
++# Research: Keel Config Risk Tier
++
++**Feature**: [specs/001-bench/spec.md](spec.md) · **Date**: 2026-10-26
++
++This change is docs-only. There are no technology choices, integrations, or new dependencies to
++research; the "unknowns" in the plan's Technical Context were all resolved by direct inspection of
++the two target documents. Findings below record what is true on this checkout and the decisions
++the plan rests on.
++
++## Constitution / governance reference
++
++- **Decision**: Use `AGENTS.md` at the repository root as the governance reference (in place of
++  `.specify/memory/constitution.md`, which does not exist in this checkout).
++- **Rationale**: The execution instruction explicitly authorizes this substitution and requires it
++  be recorded. The spec's own Assumptions already name AGENTS.md as the governance reference.
++- **Alternatives considered**: None available — no Spec Kit constitution file exists in this
++  checkout.
++
++## Finding 1 — Current state of both tables (read directly from the checkout)
++
++The two tables were read verbatim before planning. **Both already carry most of the goal wording.**
++
++`AGENTS.md` Keel section (lines 139–146):
++
++| The change | What Keel asks |
++|---|---|
++| Docs, comments, *inert* config values (no observable runtime or security effect), a one-line fix, a test-only fix | Nothing beyond the task record. |
++| A bounded code change on the direct route (above) | A three-line card … |
++| New public surface … | The full card, and the new surface named in the PR body. |
++| The expanded route: persistence, permissions, compatibility, security, external effects, **runtime-affecting config** | The full card and the JPD flow above. |
++
++Followed by: *"A one-line change is not light because it is one line: a runtime- or
++security-affecting config value (a Runtime timeout, a permission setting) takes the expanded route
++— full card and behavioural evidence of the changed behaviour, not parse or shape validation alone."*
++
++`docs/process/DELIVERY.md` section 2 (lines 23–30): the same light row (*inert* config values, no
++observable runtime or security effect), the same expanded row listing **runtime-affecting config**,
++and the same supporting sentence about behavioural evidence — but its first-row obligation reads
++"Nothing beyond the summary." instead of "Nothing beyond the task record."
++
++- **Decision**: Treat the two tables' current wording as the baseline. Because the checkout appears
++  to already satisfy FR-001–FR-005, the implementation phase may reduce to verification that the
++  required wording is present and consistent (and, if any row is missing a clause, adding only that
++  clause), rather than a full rewrite. The plan still specifies the exact goal state so the task is
++  provable either way.
++- **Rationale**: Planning against observed reality avoids an edit that churns already-correct text
++  (which would threaten SC-005 "changed lines read as process guidance" and the minimal-wording
++  assumption). The benchmark's job at this stage is a faithful plan; the observable goal state is
++  recorded so downstream phases can confirm rather than guess.
++- **Alternatives considered**: Assuming the spec's "currently:" lists are authoritative (they omit
++  *inert* and runtime-affecting config) and planning a diff against that older baseline. Rejected
++  because the spec's "currently" clauses describe a prior revision, and the checkout is the single
++  source of truth for this run.
++
++## Decision 1 — Definition of "inert"
++
++- **Decision**: A config value is *inert* iff changing its current value produces no observable
++  difference in runtime behaviour, timing, permissions, or external security posture. The documents
++  state the **test** ("nothing observable changes"), not a closed example list.
++- **Rationale**: Matches the spec's Key Entities definition and Assumptions; keeps the tier a
++  classification (a reader must judge inertness) rather than a default, which SC-003 depends on
++  (the word *inert* must appear so no bare "config values" routes to the lightest tier).
++- **Alternatives considered**: A closed list of inert examples. Rejected — brittle and contradicts
++  the spec's edge case distinguishing "inert" from "looks inert".
++
++## Decision 2 — Meaning of "behavioural evidence"
++
++- **Decision**: Reuse the existing Journey-Proven Development meaning from `AGENTS.md`: evidence
++  that the changed behaviour is actually observed; parsing or shape validation alone is not proof.
++- **Rationale**: The spec's Assumptions fix this; introducing a new evidence category would add a
++  term undefined in-section (SC-005) and diverge the two documents (SC-002).
++- **Alternatives considered**: Defining a new "config-behaviour test" category. Rejected as scope
++  creep beyond FR-006.
++
++## Decision 3 — Cross-document consistency mechanism
++
++- **Decision**: The light row's classification text must read identically in both tables; the
++  expanded-row list must contain the same classes in both; the supporting sentence must give the
++  same answer ("behavioural evidence") in both. The only permitted divergence is the obligation
++  label phrasing already present today ("task record" vs "summary"), which refers to the same
++  minimum and is not part of the five probe classifications.
++- **Rationale**: SC-001/SC-002 require identical tier answers from either document alone.
++- **Alternatives considered**: Forcing byte-identical rows. Rejected — the pre-existing
++  "task record"/"summary" divergence is out of the spec's stated scope (FR-008 keeps other content
++  unchanged).
++
++## No open NEEDS CLARIFICATION
++
++Every Technical Context field is resolved (N/A or a concrete value); there is no dependency,
++integration, or unknown requiring further research. All clarifications are resolved at this stage.
+diff --git a/specs/001-bench/spec.md b/specs/001-bench/spec.md
+new file mode 100644
+index 0000000..f39d0da
+--- /dev/null
++++ b/specs/001-bench/spec.md
+@@ -0,0 +1,207 @@
++# Feature Specification: Keel Config Risk Tier
++
++**Feature Branch**: `issue-config-risk` (branch creation deferred; unattended run)
++
++**Created**: 2026-10-26
++
++**Status**: Draft
++
++**Input**: User description: "Keel's proportionality table puts \"config values\" on the lightest row (nothing beyond the summary), but a one-line change to a Runtime timeout or a permission setting changes behaviour. In the table in `docs/process/DELIVERY.md` section 2 and the matching table in the Keel section of `AGENTS.md`: limit the light row to *inert* config values and say that runtime- or security-affecting config needs a full card and behavioural evidence; add runtime-affecting config to the expanded (persistence, permissions, ...) row. Docs only: no checker, no `keel.yaml` rule."
++
++## User Scenarios & Testing *(mandatory)*
++
++### User Story 1 - Route an inert config tweak to the lightest tier (Priority: P1)
++
++An agent author changes a configuration value whose effect is verifiably invisible at
++runtime — nothing it observes, allows, times out, or exposes can change — and wants the
++cheapest honest tier. After this change, both copies of the proportionality table say the
++same thing: inert config values carry nothing beyond the summary/task record, exactly as
++today, so no working author pays more than they did before.
++
++**Why this priority**: This preserves the existing bargain for the truly costless case. If
++the fix only added requirements without keeping the light exit, it would tax trivial
++changes and lose the property Keel was designed for (lowest total cost per proven
++delivery).
++
++**Independent Test**: An author opens either document, finds a config value with no
++runtime or security effect, and reads from the table alone that the summary/task record
++suffices — with the word *inert* present, so the tier is a classification, not a default.
++
++**Acceptance Scenarios**:
++
++1. **Given** the updated table in the Keel section of `AGENTS.md`, **when** an author
++   matches a one-line change to a purely inert config value (for example a formatting
++   preference that no code reads semantically) against the rows, **then** the lightest row
++   names it as covered, limited to *inert* config values.
++2. **Given** the updated table in section 2 of `docs/process/DELIVERY.md`, **when** an
++   author performs the same match, **then** the answer is identical to the one read from
++   `AGENTS.md`.
++3. **Given** the updated documents, **when** a reader looks for any row that routes a
++   config value to the lightest tier without the *inert* qualifier, **then** no such row
++   exists in either table.
++
++---
++
++### User Story 2 - A runtime- or security-affecting config change demands its proof (Priority: P1)
++
++An agent author makes a one-line change to a Runtime timeout, a concurrency bound, or a
++permission setting. One line, but behaviour changes. The table must stop letting such a
++change hide in the "docs/comments/config values" row and must tell the author exactly what
++is owed: a full card and behavioural evidence that observes the changed behaviour.
++
++**Why this priority**: This is the defect being repaired. The gap between "the diff is
++one line" and "the risk is real" is what the existing warning sentence already anticipates
++("a one-line change can remove a permission check"); the table itself now has to carry the
++same distinction instead of leaving it to the reviewer's memory.
++
++**Independent Test**: An author with a single-line timeout or permission change can state,
++citing the table, (a) that the full card is required and (b) that the proof owed is
++behavioural evidence of the changed behaviour — from either document, with the same
++answer.
++
++**Acceptance Scenarios**:
++
++1. **Given** the updated table in the Keel section of `AGENTS.md`, **when** an author
++   matches a one-line change to a Runtime timeout against the rows, **then** the table
++   places it under the full-card obligation and states that behavioural evidence is owed.
++2. **Given** the updated table in section 2 of `docs/process/DELIVERY.md`, **when** an
++   author matches a one-line change to a permission setting against the rows, **then** the
++   table places it under the full-card obligation and states that behavioural evidence is
++   owed.
++3. **Given** the updated documents, **when** an author asks what kind of proof a
++   runtime-affecting config change needs, **then** both documents answer "behavioural
++   evidence" (not merely a parse check or the summary).
++
++---
++
++### User Story 3 - The expanded route admits runtime-affecting config (Priority: P2)
++
++The top row of the JPD flow lists what the expanded (full-card) route covers: persistence,
++permissions, compatibility, security, external effects. Runtime-affecting configuration is
++missing from that list even though a timeout or permission bound is precisely that class
++of risk. A reviewer cross-checking "which route does this change take?" against the list
++gets an incomplete answer.
++
++**Why this priority**: Without the list naming the class, a careful reader can still reach
++the right row via User Story 2's statement, but the route-selection aid itself stays
++stale. Lower cost than Story 2 to miss; included because it closes the same inconsistency
++at the point where routes are selected.
++
++**Independent Test**: In both documents, the expanded-route row's list can be read as
++covering runtime-affecting configuration alongside persistence, permissions, compatibility,
++security, and external effects.
++
++**Acceptance Scenarios**:
++
++1. **Given** the updated table in the Keel section of `AGENTS.md`, **when** a reviewer
++   reads the expanded-route row, **then** its list includes runtime-affecting config.
++2. **Given** the updated table in section 2 of `docs/process/DELIVERY.md`, **when** a
++   reviewer reads the last row, **then** its list includes runtime-affecting config.
++
++---
++
++### Edge Cases
++
++- **Mixed change**: a single diff contains one inert value and one runtime-affecting
++  value. The non-inert value lifts the whole change off the lightest row (risk is read
++  from what the change touches, not from how much it adds). The documents state the rule
++  per value-class; the author applies it to the whole change.
++- **"Inert" vs. "looks inert"**: a value that no shipped code currently reads but that a
++  documented contract says may be read in future is *not* classified as inert by this
++  change alone; classification remains the author's call, made visible in the record. The
++  documents define inert by effect (nothing observable changes at runtime or in the
++  security posture), not by where the value sits in a file.
++- **Config change that also edits prose**: a config value edited inside a markdown file.
++  If the value is inert, the change stays in the lightest tier (docs); if the value is
++  runtime-affecting, it takes the full card regardless of file type. File format never
++  downgrades the tier.
++- **Scope boundary**: the rule lives in exactly the two named tables and their immediate
++  supporting prose. No checker script, no `keel.yaml` policy rule, and no other document
++  is created or modified by this change.
++
++## Requirements *(mandatory)*
++
++### Functional Requirements
++
++- **FR-001**: The lightest row of the Keel proportionality table in the Keel section of
++  `AGENTS.md` MUST be limited to *inert* config values, stating that a config value
++  belongs there only if no observable runtime behaviour or security posture changes.
++- **FR-002**: The lightest row of the Keel proportionality table in section 2 of
++  `docs/process/DELIVERY.md` MUST carry the same limitation as FR-001, worded so that a
++  reader of either document arrives at the same classification.
++- **FR-003**: Both tables' surrounding prose MUST state that a runtime- or
++  security-affecting config change requires the full card and behavioural evidence of the
++  changed behaviour (not merely parse or shape validation).
++- **FR-004**: The expanded-route row of the table in the Keel section of `AGENTS.md`
++  (currently: persistence, permissions, compatibility, security, external effects) MUST
++  include runtime-affecting config in its list.
++- **FR-005**: The final row of the table in section 2 of `docs/process/DELIVERY.md`
++  (currently: persistence, permissions, compatibility, security, external effects) MUST
++  include runtime-affecting config in its list.
++- **FR-006**: The change MUST NOT create or modify any executable checker, validator, or
++  `keel.yaml` policy rule, and MUST NOT modify any file other than `AGENTS.md` and
++  `docs/process/DELIVERY.md`.
++- **FR-007**: Both documents MUST remain in English after the change, per repository
++  documentation-language rules.
++- **FR-008**: The rest of each table (other rows, other columns, all other sections of
++  both documents) MUST remain semantically unchanged.
++
++### Key Entities
++
++- **Proportionality table**: the two-row-by-two-column (four-row) mapping from "the
++  change" to "what is asked", existing once in the Keel section of `AGENTS.md` and once
++  in section 2 of `docs/process/DELIVERY.md`. Attributes that matter: row labels (the
++  classes of change) and obligations (summary, three-line card, full card, JPD flow).
++- **Config value**: any setting in a configuration surface (config files, policy rules,
++  tool settings). Classified for tier purposes as either *inert* (no observable runtime
++  or security effect) or *runtime/security-affecting* (an observable change in behaviour,
++  timing, permission, or exposure).
++- **Full card with behavioural evidence**: the obligation pair owed for
++  runtime/security-affecting config: the complete Keel card in the PR body plus a command
++  or test that observes the behaviour the config value changed.
++
++## Success Criteria *(mandatory)*
++
++### Measurable Outcomes
++
++- **SC-001**: A reader of EITHER document alone can classify all five probe cases — inert
++  config, Runtime timeout, permission setting, one-line code fix, doc-only edit — to the
++  tier the table assigns, with zero ambiguous probes, citing the row text as evidence.
++- **SC-002**: The two tables give identical tier classifications for every probe case in
++  SC-001: zero discrepancies between the answer read from `AGENTS.md` and the answer read
++  from `docs/process/DELIVERY.md`.
++- **SC-003**: Zero occurrences of a bare "config values" phrase routing to the lightest
++  tier remain in either table after the change.
++- **SC-004**: The diff touches exactly two files (`AGENTS.md`, `docs/process/DELIVERY.md`)
++  and modifies no other artifact: no new scripts, no modified `keel.yaml`, no new
++  checklist.
++- **SC-005**: Every changed line reads as process guidance a non-tooling reader
++  (a human reviewer without opening any source) can apply to a real PR in one reading,
++  with no term used that is undefined within the changed sentence or the section it sits
++  in.
++
++## Assumptions
++
++- **"Docs only" bounds the file set exactly.** The task names two documents and excludes a
++  checker and a `keel.yaml` rule; therefore the only files modified are `AGENTS.md` and
++  `docs/process/DELIVERY.md`. The `keel.yaml` that exists under `extensions/builtin/graphhelm-development-contracts/policies/` is deliberately untouched, as is
++  `docs/keel/KEEL_SPEC.md` (it discusses a different `keel.yaml` versioning concept and
++  does not restate the proportionality table).
++- **Definition of *inert*.** A config value is inert when changing its current value
++  produces no observable difference in runtime behaviour, timing, permissions, or
++  external exposure. This is an assumption recorded here; the documents themselves will
++  state the test ("nothing observable changes") rather than a closed list of examples.
++- **"Behavioural evidence" reuses the existing meaning.** It means what the Journey-Proven
++  Development section of `AGENTS.md` already requires of runtime-affecting configuration:
++  evidence that the behaviour is observed, where parsing or shape validation alone is not
++  proof. No new evidence category is introduced.
++- **Governance substitution.** No `.specify/` constitution file exists in this checkout;
++  `AGENTS.md` at the repository root serves as the governance reference (documentation
++  language, issue-first delivery, merge-is-completion). Recorded per execution instruction.
++- **No branching.** This unattended run creates the spec in the fixed directory
++  `specs/001-bench`; no git branch is created (`before_specify` hooks are absent because
++  `.specify/extensions.yml` does not exist).
++- **Wording stays minimal.** Consistent with Keel's own proportionality principle, the
++  edit limits the light row to inert values, adds the runtime/security statement, and adds
++  "runtime-affecting config" to the expanded-route list; it does not rewrite the rest of
++  either table or invent new tiers.
+diff --git a/specs/001-bench/tasks.md b/specs/001-bench/tasks.md
+new file mode 100644
+index 0000000..4deda88
+--- /dev/null
++++ b/specs/001-bench/tasks.md
+@@ -0,0 +1,243 @@
++# Tasks: Keel Config Risk Tier
++
++**Input**: Design documents from `/specs/001-bench/`
++
++**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/proportionality-table.md, quickstart.md
++
++**Tests**: No automated test suite is reached by this pure docs-only change (plan.md, Technical Context
++â†’ Testing). The spec's observable proof is the manual read-back plus bounded-grep procedure defined in
++`specs/001-bench/quickstart.md`; those steps are carried below as explicit verification tasks per story
++and in the final phase. No red-first test tasks apply.
++
++**Organization**: Tasks are grouped by user story to enable independent implementation and testing of
++each story.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies)
++- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
++- Include exact file paths in descriptions
++
++## Path Conventions
++
++- Docs-only feature inside an existing Rust workspace. All edited files live at the repository root or
++  under `docs/process/`; planning artifacts live under `specs/001-bench/`.
++
++## Recorded Substitutions & Findings
++
++- **Governance substitution**: no `.specify/memory/constitution.md` exists in this checkout; `AGENTS.md`
++  at the repository root is used as the governance reference, per the execution instruction (also
++  recorded in plan.md Constitution Check and research.md).
++- **Extension hooks**: `.specify/extensions.yml` does not exist in this checkout, so all before/after
++  task hooks are skipped.
++- **Baseline finding (measured in this checkout before task generation)**: the required post-change
++  wording of contracts/proportionality-table.md is **already present** in both documents â€”
++  `AGENTS.md` Keel table rows 1 and 4 at approx. lines 141 and 144, supporting sentence at approx.
++  line 146; `docs/process/DELIVERY.md` section 2 rows 1 and 4 at approx. lines 25 and 28, supporting
++  sentence at approx. line 30. Consequently each edit task below is **verify-and-complete**: confirm
++  the exact contract wording is present and semantically intact; if and only if a clause is missing or
++  altered, add just that clause, never rewrite surrounding text (FR-008, minimal-wording assumption).
++
++---
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Baseline capture so the implementation diff is provably confined to the two named files.
++
++- [X] T001 Establish the pre-change baseline: run `git status --porcelain` and `git diff --name-only` from the repository root (quickstart.md Step 1) and record that no file other than `AGENTS.md` and `docs/process/DELIVERY.md` will enter this feature's implementation diff (SC-004; planning artifacts under `specs/001-bench/` excluded from that measurement per quickstart.md).
++- [X] T002 [P] Read the Keel proportionality table in `AGENTS.md` (Keel section, `| The change | What Keel asks |`, approx. lines 139â€“146) and note which of the FR-001, FR-003, FR-004 clauses are already present verbatim, recording any gaps for Phase 3â€“5 tasks.
++- [X] T003 [P] Read the matching table in `docs/process/DELIVERY.md` (section 2 "Keel card", `| The change | What goes in the PR body |`, approx. lines 23â€“30) and note which of the FR-002, FR-003, FR-005 clauses are already present verbatim, recording any gaps.
++
++**Checkpoint**: Baseline recorded; both tables read; known gaps (if any) listed for the story phases.
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
++
++**âš ï¸ CRITICAL**: No user story work can begin until this phase is complete
++
++None. This feature is docs-only (plan.md): both target files already exist, no code is compiled, and no
++shared infrastructure is introduced. Phases 3â€“5 can start directly after Phase 1's baseline capture.
++
++---
++
++## Phase 3: User Story 1 - Route an inert config tweak to the lightest tier (Priority: P1) ðŸŽ¯ MVP
++
++**Goal**: The lightest row of both proportionality tables names config values only as *inert*
++("no observable runtime or security effect"), preserving today's bargain for truly costless changes
++(FR-001, FR-002).
++
++**Independent Test**: An author opens either document, finds a config value with no runtime or security
++effect, and reads from the table alone that the summary/task record suffices â€” with the word *inert*
++present, so the tier is a classification, not a default (spec.md US1 Independent Test).
++
++### Implementation for User Story 1
++
++- [X] T004 [P] [US1] In `AGENTS.md`, verify-and-complete the Keel-section table's lightest row (approx. line 141) so it reads exactly, per contracts/proportionality-table.md row 1: `Docs, comments, *inert* config values (no observable runtime or security effect), a one-line fix, a test-only fix | Nothing beyond the task record.` (FR-001; add only a missing clause â€” the word *inert* and/or the parenthetical qualifier â€” if absent).
++- [X] T005 [P] [US1] In `docs/process/DELIVERY.md`, verify-and-complete the section 2 table's lightest row (approx. line 25) so its change-class cell reads identically to T004's cell, keeping its existing obligation cell: `Nothing beyond the summary.` (FR-002; permitted divergence is the obligation label only, per research.md Decision 3).
++- [X] T006 [US1] Run the SC-003 grep guard from quickstart.md Step 3 (`Select-String -Path AGENTS.md,docs\process\DELIVERY.md -Pattern 'config values?'`) and confirm no occurrence routes a bare "config values" phrase to the lightest tier in either table â€” every hit must carry the *inert* qualifier (row 1) or sit inside "runtime-affecting config" / "a runtime- or security-affecting config value" wording (acceptance scenarios US1.1â€“US1.3).
++
++**Checkpoint**: From either document alone, an inert config value classifies to the lightest tier with
++the *inert* word visible, and no bare "config values" light-tier route remains (SC-003).
++
++---
++
++## Phase 4: User Story 2 - A runtime- or security-affecting config change demands its proof (Priority: P1)
++
++**Goal**: The supporting prose immediately after both tables states that a runtime- or
++security-affecting config change owes the full card **and behavioural evidence of the changed
++behaviour**, not merely parse or shape validation (FR-003) â€” repairing the defect this feature exists
++for.
++
++**Independent Test**: An author with a single-line timeout or permission change can state, citing the
++table, (a) that the full card is required and (b) that the proof owed is behavioural evidence of the
++changed behaviour â€” from either document, with the same answer (spec.md US2 Independent Test).
++
++### Implementation for User Story 2
++
++- [X] T007 [P] [US2] In `AGENTS.md`, verify-and-complete the sentence immediately after the Keel-section table (approx. line 146) so it carries the FR-003 contract wording: *"A one-line change is not light because it is one line: a runtime- or security-affecting config value (a Runtime timeout, a permission setting) takes the expanded route â€” full card and behavioural evidence of the changed behaviour, not parse or shape validation alone."* (add only a missing element â€” e.g., "behavioural evidence of the changed behaviour" â€” if absent; "behavioural evidence" reuses the existing Journey-Proven Development meaning, research.md Decision 2).
++- [X] T008 [P] [US2] In `docs/process/DELIVERY.md`, verify-and-complete the sentence immediately after the section 2 table (approx. line 30) so it gives the same answer â€” full card **and behavioural evidence of the changed behaviour**, not parse or shape validation alone (FR-003; same minimal-add-only rule as T007).
++- [X] T009 [US2] Perform the US2 classification read-through using each document alone (quickstart.md Step 4 method): classify "Runtime timeout (one line)" and "Permission setting (one line)" per the probe table in `specs/001-bench/contracts/proportionality-table.md`; pass only if both class to the expanded row in both documents with the obligation "full card + JPD + behavioural evidence", citing the row text and supporting sentence as evidence (acceptance scenarios US2.1â€“US2.3).
++
++**Checkpoint**: Both documents answer, identically and citing their own text, what proof a
++runtime-affecting config change owes: the full card plus behavioural evidence.
++
++---
++
++## Phase 5: User Story 3 - The expanded route admits runtime-affecting config (Priority: P2)
++
++**Goal**: The expanded-route list in both tables names runtime-affecting configuration alongside
++persistence, permissions, compatibility, security, and external effects, closing the stale
++route-selection aid at the point where routes are chosen (FR-004, FR-005).
++
++**Independent Test**: In both documents, the expanded-route row's list can be read as covering
++runtime-affecting configuration alongside persistence, permissions, compatibility, security, and
++external effects (spec.md US3 Independent Test).
++
++### Implementation for User Story 3
++
++- [X] T010 [P] [US3] In `AGENTS.md`, verify-and-complete the Keel-section table's expanded-route row (approx. line 144) so its list reads exactly per contracts/proportionality-table.md row 4: `The expanded route: persistence, permissions, compatibility, security, external effects, runtime-affecting config | The full card and the JPD flow above.` â€” appending `runtime-affecting config` only if it is absent (FR-004).
++- [X] T011 [P] [US3] In `docs/process/DELIVERY.md`, verify-and-complete the section 2 table's final row (approx. line 28) so its list includes `runtime-affecting config` alongside persistence, permissions, compatibility, security, external effects, keeping its existing obligation cell `The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development).` (FR-005).
++- [X] T012 [US3] Cross-document parity check on the expanded rows: confirm the two lists classify identically in both documents (zero discrepancies, SC-002 for the expanded row), using `Select-String -Path AGENTS.md,docs\process\DELIVERY.md -Pattern 'runtime-affecting config'` (quickstart.md Step 3) plus reading both rows back against `specs/001-bench/contracts/proportionality-table.md` (acceptance scenarios US3.1â€“US3.2).
++
++**Checkpoint**: The route-selection list in both documents names runtime-affecting config; route
++choice and tier obligation agree across the two documents.
++
++---
++
++## Phase 6: Polish & Cross-Cutting Concerns
++
++**Purpose**: Whole-feature validation against the remaining success criteria (SC-001, SC-002, SC-004,
++SC-005, FR-006, FR-007, FR-008) that no single story closes alone.
++
++- [X] T013 Run the complete `specs/001-bench/quickstart.md` validation end-to-end: Step 1 (diff touches exactly `AGENTS.md` and `docs/process/DELIVERY.md` â€” no new script, no modified `keel.yaml` under `extensions/builtin/graphhelm-development-contracts/policies/`, no new checklist; SC-004, FR-006), Steps 2â€“3 (both tables against `specs/001-bench/contracts/proportionality-table.md`; grep guards; SC-003), and Step 4 (full five-probe read-through from each document alone; SC-001 and SC-002, zero ambiguous probes).
++- [X] T014 [P] Review every changed line in `AGENTS.md` and `docs/process/DELIVERY.md` for SC-005 and FR-007: each reads as process guidance a human reviewer without opening source can apply to a real PR in one reading, uses no term undefined within the changed sentence or its section, and is English only; revert any incidental rewording outside the contract cells (FR-008).
++- [X] T015 Prepare the delivery record (PR body / commit message, no file created): the three-line Keel card naming exactly `AGENTS.md` and `docs/process/DELIVERY.md` as paths in scope, the promise (inert-qualified lightest row; runtime-affecting config on the expanded route; behavioural-evidence supporting sentence in both documents), and the proving commands â€” the quickstart.md Steps 1â€“4 PowerShell invocations â€” as the observation that the change delivers.
++
++**Checkpoint**: All success criteria SC-001â€“SC-005 observed and recorded; delivery card ready.
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies - can start immediately
++- **Foundational (Phase 2)**: Empty for this docs-only feature; nothing blocks user stories
++- **User Stories (Phases 3â€“5)**: All depend on Phase 1 baseline capture only
++  - Stories can proceed in parallel (each story's per-file tasks touch disjoint cells)
++  - Or sequentially in priority order (P1 US1 â†’ P1 US2 â†’ P2 US3)
++- **Polish (Phase 6)**: Depends on all desired user stories being complete (T013 observes the whole
++  feature, not one story)
++
++### User Story Dependencies
++
++- **User Story 1 (P1)**: Can start after Phase 1 - No dependencies on other stories
++- **User Story 2 (P1)**: Can start after Phase 1 - No dependency on US1 (different cells: supporting
++  sentence vs. lightest row); independently testable
++- **User Story 3 (P2)**: Can start after Phase 1 - No dependency on US1/US2 (different cell: expanded
++  row); independently testable; T009's timeout/permission probes cite the expanded row, so if stories
++  run in isolation before US3 completes, T009/T012 expect US3's cell state per contract regardless
++
++### Within Each User Story
++
++- Per-file verify-and-complete tasks (T004/T005, T007/T008, T010/T011) first
++- The joint verification task (T006, T009, T012) last, since it reads both documents' final state
++- Story complete before moving to next priority
++
++### Parallel Opportunities
++
++- T002 âˆ¥ T003 (Phase 1, disjoint files)
++- T004 âˆ¥ T005 (US1, disjoint files), then T006 serially after both
++- T007 âˆ¥ T008 (US2, disjoint files), then T009 serially after both
++- T010 âˆ¥ T011 (US3, disjoint files), then T012 serially after both
++- All three user-story pairs can run concurrently across sessions (disjoint tables cells); T014 âˆ¥ T015
++  in Phase 6
++
++---
++
++## Parallel Example: User Story 1
++
++```text
++# Launch both per-file tasks together (different files, no dependencies):
++Task T004: "In AGENTS.md, verify-and-complete the Keel-section table's lightest row"
++Task T005: "In docs/process/DELIVERY.md, verify-and-complete the section 2 table's lightest row"
++
++# Then, once both land:
++Task T006: "Run the SC-003 grep guard over both files (quickstart.md Step 3)"
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup (baseline capture)
++2. Complete Phase 3: User Story 1 (lightest row limited to *inert* in both tables + SC-003 guard)
++3. **STOP and VALIDATE**: run T006 and the US1 acceptance scenarios against the two files alone
++4. Deliver/demo if the inert-qualified light tier is readable from either document
++
++### Incremental Delivery
++
++1. Complete Phase 1 â†’ baseline ready
++2. Add User Story 1 â†’ validate T006 â†’ MVP (light-tier bargain preserved with the *inert* qualifier)
++3. Add User Story 2 â†’ validate T009 â†’ the defect case now owes its stated proof in both documents
++4. Add User Story 3 â†’ validate T012 â†’ route-selection list closed at the point of choice
++5. Each increment leaves the other tables' content semantically unchanged (FR-008)
++
++### Parallel Team Strategy
++
++With multiple agents:
++
++1. One agent completes Phase 1 (T001 first, then T002 âˆ¥ T003)
++2. Once the baseline is recorded:
++   - Agent A: User Story 1 (T004â€“T006)
++   - Agent B: User Story 2 (T007â€“T009)
++   - Agent C: User Story 3 (T010â€“T012)
++   (Disjoint table cells per story; merge order P1 â†’ P1 â†’ P2 if serializing.)
++3. Phase 6 validation (T013â€“T015) runs once after all desired stories are in
++
++### Note on the Measured Baseline
++
++Because the checkout already carries the contract wording (see Recorded Substitutions & Findings),
++phases 3â€“5 will most likely resolve to confirmations with zero edits; the goal state above is still
++recorded verbatim from `specs/001-bench/contracts/proportionality-table.md` so the outcome is provable
++either way (research.md Finding 1 decision).
++
++---
++
++## Notes
++
++- [P] tasks = different files, no dependencies
++- [Story] label maps task to specific user story for traceability
++- Each user story should be independently completable and testable
++- Line numbers quoted (approx. 139â€“146, 23â€“30) were measured in this checkout on 2026-10-26; re-locate
++  by the table header text if they drift
++- Commit after each task or logical group
++- Stop at any checkpoint to validate a story independently
++- Avoid: vague tasks, same-file cell conflicts, cross-story dependencies that break independence
++- Governance reference: `AGENTS.md` at the repository root (constitution substitution, recorded above)
++- Branch `issue-config-risk` creation is deferred for this unattended run (spec.md header)

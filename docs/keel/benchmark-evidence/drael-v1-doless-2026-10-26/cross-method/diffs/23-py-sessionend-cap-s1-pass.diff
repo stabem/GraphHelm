@@ -1,0 +1,1879 @@
+diff --git a/.specify/feature.json b/.specify/feature.json
+new file mode 100644
+index 0000000..72ba549
+--- /dev/null
++++ b/.specify/feature.json
+@@ -0,0 +1,3 @@
++{
++  "feature_directory": "specs/001-bench"
++}
+diff --git a/.specify/templates/constitution-template.md b/.specify/templates/constitution-template.md
+new file mode 100644
+index 0000000..a4670ff
+--- /dev/null
++++ b/.specify/templates/constitution-template.md
+@@ -0,0 +1,50 @@
++# [PROJECT_NAME] Constitution
++<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
++
++## Core Principles
++
++### [PRINCIPLE_1_NAME]
++<!-- Example: I. Library-First -->
++[PRINCIPLE_1_DESCRIPTION]
++<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
++
++### [PRINCIPLE_2_NAME]
++<!-- Example: II. CLI Interface -->
++[PRINCIPLE_2_DESCRIPTION]
++<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
++
++### [PRINCIPLE_3_NAME]
++<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
++[PRINCIPLE_3_DESCRIPTION]
++<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
++
++### [PRINCIPLE_4_NAME]
++<!-- Example: IV. Integration Testing -->
++[PRINCIPLE_4_DESCRIPTION]
++<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
++
++### [PRINCIPLE_5_NAME]
++<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
++[PRINCIPLE_5_DESCRIPTION]
++<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
++
++## [SECTION_2_NAME]
++<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
++
++[SECTION_2_CONTENT]
++<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
++
++## [SECTION_3_NAME]
++<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
++
++[SECTION_3_CONTENT]
++<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
++
++## Governance
++<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
++
++[GOVERNANCE_RULES]
++<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
++
++**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
++<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+diff --git a/.specify/templates/plan-template.md b/.specify/templates/plan-template.md
+new file mode 100644
+index 0000000..36f2eab
+--- /dev/null
++++ b/.specify/templates/plan-template.md
+@@ -0,0 +1,113 @@
++# Implementation Plan: [FEATURE]
++
++**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
++
++**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
++
++**Note**: This template is filled in by the `__SPECKIT_COMMAND_PLAN__` command; its definition describes the execution workflow.
++
++## Summary
++
++[Extract from feature spec: primary requirement + technical approach from research]
++
++## Technical Context
++
++<!--
++  ACTION REQUIRED: Replace the content in this section with the technical details
++  for the project. The structure here is presented in advisory capacity to guide
++  the iteration process.
++-->
++
++**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]
++
++**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]
++
++**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
++
++**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]
++
++**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
++
++**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]
++
++**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]
++
++**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]
++
++**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++[Gates determined based on constitution file]
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/[###-feature]/
++├── plan.md              # This file (__SPECKIT_COMMAND_PLAN__ command output)
++├── research.md          # Phase 0 output (__SPECKIT_COMMAND_PLAN__ command)
++├── data-model.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── quickstart.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── contracts/           # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++└── tasks.md             # Phase 2 output (__SPECKIT_COMMAND_TASKS__ command - NOT created by __SPECKIT_COMMAND_PLAN__)
++```
++
++### Source Code (repository root)
++<!--
++  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
++  for this feature. Delete unused options and expand the chosen structure with
++  real paths (e.g., apps/admin, packages/something). The delivered plan must
++  not include Option labels.
++-->
++
++```text
++# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
++src/
++├── models/
++├── services/
++├── cli/
++└── lib/
++
++tests/
++├── contract/
++├── integration/
++└── unit/
++
++# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
++backend/
++├── src/
++│   ├── models/
++│   ├── services/
++│   └── api/
++└── tests/
++
++frontend/
++├── src/
++│   ├── components/
++│   ├── pages/
++│   └── services/
++└── tests/
++
++# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
++api/
++└── [same as backend above]
++
++ios/ or android/
++└── [platform-specific structure: feature modules, UI flows, platform tests]
++```
++
++**Structure Decision**: [Document the selected structure and reference the real
++directories captured above]
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++| Violation | Why Needed | Simpler Alternative Rejected Because |
++|-----------|------------|-------------------------------------|
++| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
++| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+diff --git a/.specify/templates/spec-template.md b/.specify/templates/spec-template.md
+new file mode 100644
+index 0000000..ceb2877
+--- /dev/null
++++ b/.specify/templates/spec-template.md
+@@ -0,0 +1,131 @@
++# Feature Specification: [FEATURE NAME]
++
++**Feature Branch**: `[###-feature-name]`
++
++**Created**: [DATE]
++
++**Status**: Draft
++
++**Input**: User description: "$ARGUMENTS"
++
++## User Scenarios & Testing *(mandatory)*
++
++<!--
++  IMPORTANT: User stories should be PRIORITIZED as user journeys ordered by importance.
++  Each user story/journey must be INDEPENDENTLY TESTABLE - meaning if you implement just ONE of them,
++  you should still have a viable MVP (Minimum Viable Product) that delivers value.
++
++  Assign priorities (P1, P2, P3, etc.) to each story, where P1 is the most critical.
++  Think of each story as a standalone slice of functionality that can be:
++  - Developed independently
++  - Tested independently
++  - Deployed independently
++  - Demonstrated to users independently
++-->
++
++### User Story 1 - [Brief Title] (Priority: P1)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently - e.g., "Can be fully tested by [specific action] and delivers [specific value]"]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++2. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 2 - [Brief Title] (Priority: P2)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 3 - [Brief Title] (Priority: P3)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++[Add more user stories as needed, each with an assigned priority]
++
++### Edge Cases
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right edge cases.
++-->
++
++- What happens when [boundary condition]?
++- How does system handle [error scenario]?
++
++## Requirements *(mandatory)*
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right functional requirements.
++-->
++
++### Functional Requirements
++
++- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
++- **FR-002**: System MUST [specific capability, e.g., "validate email addresses"]
++- **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
++- **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
++- **FR-005**: System MUST [behavior, e.g., "log all security events"]
++
++*Example of marking unclear requirements:*
++
++- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
++- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
++
++### Key Entities *(include if feature involves data)*
++
++- **[Entity 1]**: [What it represents, key attributes without implementation]
++- **[Entity 2]**: [What it represents, relationships to other entities]
++
++## Success Criteria *(mandatory)*
++
++<!--
++  ACTION REQUIRED: Define measurable success criteria.
++  These must be technology-agnostic and measurable.
++-->
++
++### Measurable Outcomes
++
++- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
++- **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
++- **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
++- **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
++
++## Assumptions
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right assumptions based on reasonable defaults
++  chosen when the feature description did not specify certain details.
++-->
++
++- [Assumption about target users, e.g., "Users have stable internet connectivity"]
++- [Assumption about scope boundaries, e.g., "Mobile support is out of scope for v1"]
++- [Assumption about data/environment, e.g., "Existing authentication system will be reused"]
++- [Dependency on existing system/service, e.g., "Requires access to the existing user profile API"]
+diff --git a/.specify/templates/tasks-template.md b/.specify/templates/tasks-template.md
+new file mode 100644
+index 0000000..7fff087
+--- /dev/null
++++ b/.specify/templates/tasks-template.md
+@@ -0,0 +1,252 @@
++---
++
++description: "Task list template for feature implementation"
++---
++
++# Tasks: [FEATURE NAME]
++
++**Input**: Design documents from `/specs/[###-feature-name]/`
++
++**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
++
++**Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
++
++**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies)
++- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
++- Include exact file paths in descriptions
++
++## Path Conventions
++
++- **Single project**: `src/`, `tests/` at repository root
++- **Web app**: `backend/src/`, `frontend/src/`
++- **Mobile**: `api/src/`, `ios/src/` or `android/src/`
++- Paths shown below assume single project - adjust based on plan.md structure
++
++<!--
++  ============================================================================
++  IMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.
++
++  The __SPECKIT_COMMAND_TASKS__ command MUST replace these with actual tasks based on:
++  - User stories from spec.md (with their priorities P1, P2, P3...)
++  - Feature requirements from plan.md
++  - Entities from data-model.md
++  - Endpoints from contracts/
++
++  Tasks MUST be organized by user story so each story can be:
++  - Implemented independently
++  - Tested independently
++  - Delivered as an MVP increment
++
++  DO NOT keep these sample tasks in the generated tasks.md file.
++  ============================================================================
++-->
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Project initialization and basic structure
++
++- [ ] T001 Create project structure per implementation plan
++- [ ] T002 Initialize [language] project with [framework] dependencies
++- [ ] T003 [P] Configure linting and formatting tools
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
++
++**⚠️ CRITICAL**: No user story work can begin until this phase is complete
++
++Examples of foundational tasks (adjust based on your project):
++
++- [ ] T004 Setup database schema and migrations framework
++- [ ] T005 [P] Implement authentication/authorization framework
++- [ ] T006 [P] Setup API routing and middleware structure
++- [ ] T007 Create base models/entities that all stories depend on
++- [ ] T008 Configure error handling and logging infrastructure
++- [ ] T009 Setup environment configuration management
++
++**Checkpoint**: Foundation ready - user story implementation can now begin in parallel
++
++---
++
++## Phase 3: User Story 1 - [Title] (Priority: P1) 🎯 MVP
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 1 (OPTIONAL - only if tests requested) ⚠️
++
++> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
++
++- [ ] T010 [P] [US1] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T011 [P] [US1] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 1
++
++- [ ] T012 [P] [US1] Create [Entity1] model in src/models/[entity1].py
++- [ ] T013 [P] [US1] Create [Entity2] model in src/models/[entity2].py
++- [ ] T014 [US1] Implement [Service] in src/services/[service].py (depends on T012, T013)
++- [ ] T015 [US1] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T016 [US1] Add validation and error handling
++- [ ] T017 [US1] Add logging for user story 1 operations
++
++**Checkpoint**: At this point, User Story 1 should be fully functional and testable independently
++
++---
++
++## Phase 4: User Story 2 - [Title] (Priority: P2)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 2 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T018 [P] [US2] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T019 [P] [US2] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 2
++
++- [ ] T020 [P] [US2] Create [Entity] model in src/models/[entity].py
++- [ ] T021 [US2] Implement [Service] in src/services/[service].py
++- [ ] T022 [US2] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T023 [US2] Integrate with User Story 1 components (if needed)
++
++**Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
++
++---
++
++## Phase 5: User Story 3 - [Title] (Priority: P3)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 3 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T024 [P] [US3] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T025 [P] [US3] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 3
++
++- [ ] T026 [P] [US3] Create [Entity] model in src/models/[entity].py
++- [ ] T027 [US3] Implement [Service] in src/services/[service].py
++- [ ] T028 [US3] Implement [endpoint/feature] in src/[location]/[file].py
++
++**Checkpoint**: All user stories should now be independently functional
++
++---
++
++[Add more user story phases as needed, following the same pattern]
++
++---
++
++## Phase N: Polish & Cross-Cutting Concerns
++
++**Purpose**: Improvements that affect multiple user stories
++
++- [ ] TXXX [P] Documentation updates in docs/
++- [ ] TXXX Code cleanup and refactoring
++- [ ] TXXX Performance optimization across all stories
++- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
++- [ ] TXXX Security hardening
++- [ ] TXXX Run quickstart.md validation
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies - can start immediately
++- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
++- **User Stories (Phase 3+)**: All depend on Foundational phase completion
++  - User stories can then proceed in parallel (if staffed)
++  - Or sequentially in priority order (P1 → P2 → P3)
++- **Polish (Final Phase)**: Depends on all desired user stories being complete
++
++### User Story Dependencies
++
++- **User Story 1 (P1)**: Can start after Foundational (Phase 2) - No dependencies on other stories
++- **User Story 2 (P2)**: Can start after Foundational (Phase 2) - May integrate with US1 but should be independently testable
++- **User Story 3 (P3)**: Can start after Foundational (Phase 2) - May integrate with US1/US2 but should be independently testable
++
++### Within Each User Story
++
++- Tests (if included) MUST be written and FAIL before implementation
++- Models before services
++- Services before endpoints
++- Core implementation before integration
++- Story complete before moving to next priority
++
++### Parallel Opportunities
++
++- All Setup tasks marked [P] can run in parallel
++- All Foundational tasks marked [P] can run in parallel (within Phase 2)
++- Once Foundational phase completes, all user stories can start in parallel (if team capacity allows)
++- All tests for a user story marked [P] can run in parallel
++- Models within a story marked [P] can run in parallel
++- Different user stories can be worked on in parallel by different team members
++
++---
++
++## Parallel Example: User Story 1
++
++```bash
++# Launch all tests for User Story 1 together (if tests requested):
++Task: "Contract test for [endpoint] in tests/contract/test_[name].py"
++Task: "Integration test for [user journey] in tests/integration/test_[name].py"
++
++# Launch all models for User Story 1 together:
++Task: "Create [Entity1] model in src/models/[entity1].py"
++Task: "Create [Entity2] model in src/models/[entity2].py"
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup
++2. Complete Phase 2: Foundational (CRITICAL - blocks all stories)
++3. Complete Phase 3: User Story 1
++4. **STOP and VALIDATE**: Test User Story 1 independently
++5. Deploy/demo if ready
++
++### Incremental Delivery
++
++1. Complete Setup + Foundational → Foundation ready
++2. Add User Story 1 → Test independently → Deploy/Demo (MVP!)
++3. Add User Story 2 → Test independently → Deploy/Demo
++4. Add User Story 3 → Test independently → Deploy/Demo
++5. Each story adds value without breaking previous stories
++
++### Parallel Team Strategy
++
++With multiple developers:
++
++1. Team completes Setup + Foundational together
++2. Once Foundational is done:
++   - Developer A: User Story 1
++   - Developer B: User Story 2
++   - Developer C: User Story 3
++3. Stories complete and integrate independently
++
++---
++
++## Notes
++
++- [P] tasks = different files, no dependencies
++- [Story] label maps task to specific user story for traceability
++- Each user story should be independently completable and testable
++- Verify tests fail before implementing
++- Commit after each task or logical group
++- Stop at any checkpoint to validate story independently
++- Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
+diff --git a/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json b/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json
+index 1ef47a4..043c400 100644
+--- a/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json
++++ b/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json
+@@ -20,7 +20,7 @@
+           {
+             "type": "command",
+             "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" end --host codex",
+-            "timeout": 5
++            "timeout": 3
+           }
+         ]
+       }
+diff --git a/plugins/graphhelm-codex-hooks/hooks/session_hook.py b/plugins/graphhelm-codex-hooks/hooks/session_hook.py
+index 3d4b7ea..d97a996 100644
+--- a/plugins/graphhelm-codex-hooks/hooks/session_hook.py
++++ b/plugins/graphhelm-codex-hooks/hooks/session_hook.py
+@@ -19,6 +19,11 @@ MAX_INPUT = 64 * 1024
+ MAX_REPLY = 256 * 1024
+ MAX_STATE = 32 * 1024
+ MAX_CONTEXT = 1600
++# SessionEnd acknowledgement wait in socket-inactivity seconds: strictly above the
++# 1.0 second briefing limit and strictly below the 3 second Codex SessionEnd process
++# cap, with headroom for interpreter startup, state locking, and the durable state
++# write (sizing evidence: specs/001-bench/research.md D1).
++END_ACK_TIMEOUT = 2.0
+ ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+ NEXT_STEPS = {"resume_held", "answer", "diagnose", "dispatch", "finished", "nothing"}
+ REMEDIES = {"approve", "claim", "clear", "amend_budget"}
+@@ -348,7 +353,7 @@ def _end_impl(payload: dict, host: str) -> None:
+     signal_id = delivery.get("signalId")
+     if not isinstance(signal, dict) or not isinstance(signal_id, str):
+         raise ValueError("invalid delivery state")
+-    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=3.0)
++    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=END_ACK_TIMEOUT)
+     data = reply.get("data")
+     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
+         raise ValueError("signal acknowledgment did not match")
+diff --git a/plugins/graphhelm/README.md b/plugins/graphhelm/README.md
+index a80d3c2..28641b4 100644
+--- a/plugins/graphhelm/README.md
++++ b/plugins/graphhelm/README.md
+@@ -55,9 +55,11 @@ the current state. `SessionEnd` records an attributed
+ run, pick a run by project name, or forward the host's raw payload.
+ 
+ SessionStart keeps its one-second socket inactivity limit. SessionEnd allows one
+-request up to three seconds of socket inactivity, so a durable acknowledgement
+-slower than one second can be confirmed without another request. Both hosts bound
+-the SessionEnd command process to five seconds. The socket limit alone is not a
++request up to two seconds of socket inactivity, so a durable acknowledgement
++slower than one second can be confirmed without another request. Codex caps the
++SessionEnd command process at three seconds, which the Codex hook manifests
++declare, while Claude keeps its five-second bound; the end-acknowledgement
++wait is sized to complete inside the Codex cap. The socket limit alone is not a
+ wall-time deadline. A timeout remains unobserved; it never becomes task success.
+ 
+ Python 3 must be on the host's `PATH`. Set these variables in the environment that launches the
+diff --git a/plugins/graphhelm/hooks/codex-hooks.json b/plugins/graphhelm/hooks/codex-hooks.json
+index 1ef47a4..043c400 100644
+--- a/plugins/graphhelm/hooks/codex-hooks.json
++++ b/plugins/graphhelm/hooks/codex-hooks.json
+@@ -20,7 +20,7 @@
+           {
+             "type": "command",
+             "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" end --host codex",
+-            "timeout": 5
++            "timeout": 3
+           }
+         ]
+       }
+diff --git a/plugins/graphhelm/hooks/session_hook.py b/plugins/graphhelm/hooks/session_hook.py
+index 3d4b7ea..d97a996 100644
+--- a/plugins/graphhelm/hooks/session_hook.py
++++ b/plugins/graphhelm/hooks/session_hook.py
+@@ -19,6 +19,11 @@ MAX_INPUT = 64 * 1024
+ MAX_REPLY = 256 * 1024
+ MAX_STATE = 32 * 1024
+ MAX_CONTEXT = 1600
++# SessionEnd acknowledgement wait in socket-inactivity seconds: strictly above the
++# 1.0 second briefing limit and strictly below the 3 second Codex SessionEnd process
++# cap, with headroom for interpreter startup, state locking, and the durable state
++# write (sizing evidence: specs/001-bench/research.md D1).
++END_ACK_TIMEOUT = 2.0
+ ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+ NEXT_STEPS = {"resume_held", "answer", "diagnose", "dispatch", "finished", "nothing"}
+ REMEDIES = {"approve", "claim", "clear", "amend_budget"}
+@@ -348,7 +353,7 @@ def _end_impl(payload: dict, host: str) -> None:
+     signal_id = delivery.get("signalId")
+     if not isinstance(signal, dict) or not isinstance(signal_id, str):
+         raise ValueError("invalid delivery state")
+-    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=3.0)
++    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=END_ACK_TIMEOUT)
+     data = reply.get("data")
+     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
+         raise ValueError("signal acknowledgment did not match")
+diff --git a/specs/001-bench/checklists/requirements.md b/specs/001-bench/checklists/requirements.md
+new file mode 100644
+index 0000000..5be499b
+--- /dev/null
++++ b/specs/001-bench/checklists/requirements.md
+@@ -0,0 +1,69 @@
++# Specification Quality Checklist: Fix Codex SessionEnd Hook Budget
++
++**Purpose**: Validate specification completeness and quality before proceeding to planning
++**Created**: 2026-10-27
++**Feature**: [spec.md](../spec.md)
++
++## Content Quality
++
++- [x] No implementation details (languages, frameworks, APIs)
++- [x] Focused on user value and business needs
++- [x] Written for non-technical stakeholders
++- [x] All mandatory sections completed
++
++## Requirement Completeness
++
++- [x] No [NEEDS CLARIFICATION] markers remain
++- [x] Requirements are testable and unambiguous
++- [x] Success criteria are measurable
++- [x] Success criteria are technology-agnostic (no implementation details)
++- [x] All acceptance scenarios are defined
++- [x] Edge cases are identified
++- [x] Scope is clearly bounded
++- [x] Dependencies and assumptions identified
++
++## Feature Readiness
++
++- [x] All functional requirements have clear acceptance criteria
++- [x] User scenarios cover primary flows
++- [x] Feature meets measurable outcomes defined in Success Criteria
++- [x] No implementation details leak into specification
++
++## Notes
++
++- Items marked incomplete require spec updates before `/speckit.clarify` or `/speckit.plan`
++- **Validation performed (unattended run, 2026-10-27)**: spec written in one iteration; no
++  [NEEDS CLARIFICATION] markers were emitted because the run is unattended and every open decision
++  (exact end-acknowledgement constant, scope of SessionStart budgets, state-format stability) was
++  resolved as an informed default in the Assumptions section instead.
++- **Judgment on "implementation details" (two items above)**: the shipped file paths named in
++  FR-001/FR-002/FR-006/FR-007 *are* the contract surface of this feature — they are the installed
++  plugin artifacts the requirement must hold on, and naming them keeps the requirements testable and
++  unambiguous (Keel card convention: name the paths). No language-, framework-, or library-level
++  choices are made in the spec; the one implementation constant (the end-acknowledgement wait value)
++  is deliberately left to planning within the bounds FR-003/FR-004 fix ("strictly above one second,
++  strictly below three seconds, with headroom for process overhead"), so success stays verifiable
++  without knowing the value. "Socket inactivity" wording is kept only because the host-visible
++  budget and the documented limit share that exact meaning in the README being corrected.
++- **Grounding evidence measured before writing (all from this checkout, 2026-10-27)**:
++  - Both Codex manifests declare `"timeout": 5` on SessionEnd (`plugins/graphhelm/hooks/codex-hooks.json`,
++    `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json`); the Claude manifest declares 5 on both events.
++  - The hook script's end request uses `timeout=3.0` socket inactivity; its comment confirms socket
++    inactivity is not a wall-time guarantee and the host timeout bounds the whole process.
++  - `git diff --no-index` shows the two `session_hook.py` copies and `git diff` context show the two
++    Codex manifests are currently byte-identical pairs, which the compatibility test enforces on raw
++    bytes (this is why FR-006 exists).
++  - The existing contract test releases a real acknowledgement ~1.25 s after the POST begins and
++    requires it to be confirmed from one request — hence the lower bound in FR-004.
++  - Baseline hook suite: `python -m unittest plugins.graphhelm.hooks.test_session_hook` → 28 tests,
++    OK, exit 0 (no skips, no failures) — the baseline SC-003 cites.
++  - Repository-wide search shows no other document or manifest carries these hook budget figures
++    (other "five seconds" occurrences are unrelated Rust subsystems), so FR-007's README paragraph is
++    the only prose correction required.
++- **Constitution substitution**: no `/memory/constitution.md` exists in this checkout; per the run's
++  stage setup, `AGENTS.md` at the repository root was used as the governance reference (recorded in
++  the spec's Assumptions section as well).
++- **Hooks**: `.specify/extensions.yml` does not exist in this checkout, so no pre- or
++  post-`specify` extension hooks were checked or executed; `.specify/scripts/` likewise does not exist
++  and the resolved template `.specify/templates/spec-template.md` was used directly.
++- **Readiness**: ready for `/speckit.plan` (or `/speckit.clarify`, though no open clarifications exist).
+diff --git a/specs/001-bench/contracts/codex-hooks-manifest.md b/specs/001-bench/contracts/codex-hooks-manifest.md
+new file mode 100644
+index 0000000..e35c384
+--- /dev/null
++++ b/specs/001-bench/contracts/codex-hooks-manifest.md
+@@ -0,0 +1,68 @@
++# Contract: Codex Hook Manifests (host-facing registration)
++
++**Feature**: [../spec.md](../spec.md) | **Surface**: JSON hook-registration manifests read by the
++Codex host at plugin load/install time.
++
++**Files** (byte-identical pair — a core invariant of this contract):
++
++- `plugins/graphhelm/hooks/codex-hooks.json`
++- `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json`
++
++The companion copy is the one the `graphhelm-codex-hooks` package exposes to Codex via
++`.codex-plugin/plugin.json` (`"hooks": "./hooks/codex-hooks.json"`). The main-plugin copy exists so
++Codex-capable installations of `graphhelm` carry the same declaration; both must always be
++identical byte for byte, verified by `test_codex_compatibility_package_keeps_one_hook_source`
++(raw-byte comparison) and by hash checks (quickstart.md C3).
++
++## Normative content after this feature
++
++```json
++{
++  "hooks": {
++    "SessionStart": [
++      {
++        "matcher": "startup|resume|clear|compact",
++        "hooks": [
++          {
++            "type": "command",
++            "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" start --host codex",
++            "statusMessage": "Loading Keel and GraphHelm context",
++            "timeout": 5,
++            "additionalContextLimit": 512
++          }
++        ]
++      }
++    ],
++    "SessionEnd": [
++      {
++        "hooks": [
++          {
++            "type": "command",
++            "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" end --host codex",
++            "timeout": 3
++          }
++        ]
++      }
++    ]
++  }
++}
++```
++
++The only difference from the currently shipped file is `"timeout": 3` in the SessionEnd entry
++(was `5`).
++
++## Invariants (must hold after the change)
++
++1. **Declared Codex SessionEnd timeout equals the host cap**: `3` seconds, matching the Codex
++   hard cap (FR-001, SC-001). A declared value above the cap advertises a window the host never
++   grants — that mismatch is the defect this feature removes.
++2. **Every other entry unchanged**: SessionStart matcher, command, statusMessage, timeout (5),
++   additionalContextLimit (512); SessionEnd command and type (US2-AS1).
++3. **Twin byte identity**: the two copies compare equal as raw bytes (FR-006).
++4. **Companion pins unchanged**: no `plugin.json` at the companion root; `.codex-plugin/plugin.json`
++   keeps its hooks pointer and its version equal to the main plugin's (all four plugin manifests'
++   versions stay equal).
++5. **Claude manifest untouched**: `plugins/graphhelm/hooks/hooks.json` keeps five-second timeouts
++   on both events (FR-002); baseline SHA-256 `5FA2B622D3B35AE4BD40E07B49F0C319BA630699A6C2813CE5E1A684E758FB4D`.
++6. **Documented equality**: the README budget paragraph states exactly these figures
++   (SC-005); declared, effective, and documented budgets agree for every event/host pair.
+diff --git a/specs/001-bench/contracts/session-hook-end-contract.md b/specs/001-bench/contracts/session-hook-end-contract.md
+new file mode 100644
+index 0000000..59f159a
+--- /dev/null
++++ b/specs/001-bench/contracts/session-hook-end-contract.md
+@@ -0,0 +1,73 @@
++# Contract: Session Hook End Flow (script ↔ host ↔ Runtime)
++
++**Feature**: [../spec.md](../spec.md) | **Surface**: the command-hook interface of
++`session_hook.py` — what the host invokes, what the script sends to the Runtime, and what it may
++report. The hook is a client of the Runtime's public HTTP contract; no Runtime surface changes in
++this feature.
++
++## Invocation (host → hook)
++
++```text
++python <plugin>/hooks/session_hook.py end --host <claude|codex>
++stdin:  {"hook_event_name": "SessionEnd", "session_id": "<id>", ...}   (≤ 64 KiB)
++exit:   0 for every observed-or-unobserved outcome of `end`
++stdout: empty on `end` (success and unobserved alike)
++stderr: "graphhelm-hook: end unobserved (<ErrorType>)" when the operation is unobserved
++```
++
++Unbound sessions (no `GRAPHHELM_EXECUTION_ID`) make no request, print nothing, claim nothing —
++unchanged.
++
++## End request (hook → Runtime)
++
++`POST {runtime}/v1/executions/{executionId}/signal` with body `{"signal": <stored signal>}` and headers:
++
++| Header | Value |
++|---|---|
++| `Authorization` | `Bearer <token>` — read from the token file at request time; never printed |
++| `Content-Type` | `application/json` |
++| `X-GraphHelm-Actor` | `<host>-session-<sessionId>` |
++| `X-GraphHelm-Actor-Type` | `agent` |
++| `X-GraphHelm-Actor-Session` | `<sessionId>` |
++| `Idempotency-Key` | the stored `delivery.signalId` (`session-end-v2-…`) — identical across retries |
++
++Acceptance requires `ok: true` **and** `data.executionId == execution` **and**
++`data.signalId == signalId`; anything else is a mismatch (unobserved, retryable). Redirects are
++refused; replies are bounded at 256 KiB.
++
++## Timing contract — the changed part of this feature
++
++| Bound | Value | Where | Host that enforces the enclosing process cap |
++|---|---|---|---|
++| SessionStart briefing socket-inactivity limit | 1.0 s (default of `request(...)`) | `session_hook.py` | Claude 5 s / Codex 5 s (SessionStart declarations unchanged) |
++| **SessionEnd acknowledgement socket-inactivity bound** | **`END_ACK_TIMEOUT = 2.0` s** (was an inline 3.0 s literal) | module constant in `session_hook.py` | **Codex 3 s** (declared and enforced); Claude 5 s |
++| Declared Codex SessionEnd timeout | 3 s | both `codex-hooks.json` manifests | Codex host hard cap |
++
++Properties the bound must keep (FR-003/FR-004, SC-002): strictly above the one-second briefing
++limit (a durable acknowledgement slower than one second is still confirmable from the single
++original request — observed by the suite's ~1.25 s-release test), strictly below the three-second
++Codex cap, and sized so interpreter startup + state locking + the durable state write still finish
++inside the cap (sizing evidence: research.md D1; machine-local probe: quickstart.md S4).
++
++Semantics: the bound is **socket inactivity**, not a wall-time deadline; the host's declared
++timeout bounds the whole process. A timeout is an *unobserved* operation — never a success claim
++and never a delivery.
++
++## Delivery, retry, and failure discipline (unchanged by this feature)
++
++Receipt shape and transitions are defined in [../data-model.md](../data-model.md), entity 4. The
++behavioral contract the hook must keep honoring (all covered by the existing suite):
++
++- Acknowledged end → receipt durably marked `delivered`; later end events skip sending (no second POST).
++- Timed-out / refused / mismatched end → state unchanged or undelivered, reported unobserved on
++  stderr without token or path leakage; a later end event retries the **identical signal bytes with
++  the same idempotency key**.
++- Corrupt stored receipt → fails closed: no request until a valid receipt exists again.
++- Overlapping ends → non-blocking lock keeps one signal body; the overlapping caller reports
++  unobserved; the later retry yields exactly one durable delivery.
++- Killed hook → OS releases the lock; retry reuses the stored signal (same bytes, same key).
++
++## Twin-file identity
++
++Both installed copies of `session_hook.py` remain byte-identical (FR-006); the compatibility test
++asserts this on raw bytes, so any drift between copies is a test failure, not a silent split.
+diff --git a/specs/001-bench/data-model.md b/specs/001-bench/data-model.md
+new file mode 100644
+index 0000000..b6d2c8e
+--- /dev/null
++++ b/specs/001-bench/data-model.md
+@@ -0,0 +1,106 @@
++# Data Model: Fix Codex SessionEnd Hook Budget
++
++**Feature**: [spec.md](spec.md) | **Date**: 2026-10-27
++
++Entities below are the data-bearing artifacts this feature touches or freezes. For each: fields,
++what changes, validation rules, and (where applicable) state transitions. Contracts for the
++host-facing and script-facing surfaces live in [contracts/](contracts/).
++
++## Entity 1 — Codex hook manifest (two byte-identical copies)
++
++- **Paths**: `plugins/graphhelm/hooks/codex-hooks.json`, `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json`
++- **Relationships**: raw-byte-identical pair enforced by `test_codex_compatibility_package_keeps_one_hook_source`; referenced by `plugins/graphhelm-codex-hooks/.codex-plugin/plugin.json` (`"hooks": "./hooks/codex-hooks.json"`).
++- **Changes in this feature**: one field only — `hooks.SessionEnd[0].hooks[0].timeout`: `5 → 3`.
++
++| Field (JSON pointer) | Type | Before | After | Rule |
++|---|---|---|---|---|
++| `/hooks/SessionStart/0/matcher` | string | `"startup\|resume\|clear\|compact"` | unchanged | invariant |
++| `/hooks/SessionStart/0/hooks/0/type` | string | `"command"` | unchanged | invariant |
++| `/hooks/SessionStart/0/hooks/0/command` | string | `python "${PLUGIN_ROOT}/hooks/session_hook.py" start --host codex` | unchanged | invariant |
++| `/hooks/SessionStart/0/hooks/0/statusMessage` | string | `"Loading Keel and GraphHelm context"` | unchanged | invariant |
++| `/hooks/SessionStart/0/hooks/0/timeout` | number | `5` | unchanged | invariant (SessionStart out of scope) |
++| `/hooks/SessionStart/0/hooks/0/additionalContextLimit` | number | `512` | unchanged | invariant |
++| `/hooks/SessionEnd/0/hooks/0/type` | string | `"command"` | unchanged | invariant |
++| `/hooks/SessionEnd/0/hooks/0/command` | string | `python "${PLUGIN_ROOT}/hooks/session_hook.py" end --host codex` | unchanged | invariant |
++| `/hooks/SessionEnd/0/hooks/0/timeout` | number | `5` | **`3`** | FR-001: equals the Codex host cap |
++
++**Validation**: valid JSON object of the same shape; integer seconds; both copies byte-identical
++after the edit (SC-001). All other keys and their order/formatting preserved.
++
++## Entity 2 — Claude hook manifest (invariant)
++
++- **Path**: `plugins/graphhelm/hooks/hooks.json`
++- **Changes**: none. `SessionStart` timeout stays `5`, `SessionEnd` timeout stays `5` (FR-002);
++  the `--host claude` commands and `${CLAUDE_PLUGIN_ROOT}` references are untouched.
++- **Baseline**: SHA-256 `5FA2B622D3B35AE4BD40E07B49F0C319BA630699A6C2813CE5E1A684E758FB4D`
++  (measured 2026-10-27); a post-change hash comparison against this value is check C4 in quickstart.md.
++
++## Entity 3 — Session hook script (two byte-identical copies)
++
++- **Paths**: `plugins/graphhelm/hooks/session_hook.py`, `plugins/graphhelm-codex-hooks/hooks/session_hook.py`
++- **Relationships**: raw-byte-identical pair, same enforcing test; the companion copy is the one
++  Codex actually runs.
++- **Changes in this feature**:
++
++| Item | Kind | Before | After | Constraint source |
++|---|---|---|---|---|
++| module constant block (near `MAX_*` bounds) | new constant | — | `END_ACK_TIMEOUT = 2.0` with budget comment | FR-003/FR-004, SC-002; decision D1/D2 |
++| `_end_impl` end-request call site (`session_hook.py:351`) | call argument | inline literal `timeout=3.0` | `timeout=END_ACK_TIMEOUT` | FR-003 |
++| `request(...)` signature default | parameter default | `timeout: float = 1.0` | unchanged | SessionStart briefing bound is frozen (spec Assumptions) |
++
++- **Validation rules (unchanged behavior this feature must preserve)**: input ≤ 64 KiB; reply ≤ 256 KiB;
++  state ≤ 32 KiB; context ≤ 1600 chars; token file ≤ 4096 bytes; plain-HTTP Runtime must be loopback;
++  redirects refused; state files mode 0600 / dirs 0700 on POSIX.
++- **Twin identity**: after editing, both copies byte-identical (FR-006); baseline pre-edit SHA-256
++  `67A7B1CE…E95` recorded in [research.md](research.md) for reference only.
++
++## Entity 4 — Delivery receipt (local hook state, invariant schema)
++
++- **Storage**: `<state-root>/<sha256(v2\0execution\0session\0host\0origin)>.json`, version 2; sibling `.lock` file.
++- **Format**: frozen by this feature (no migration — spec Assumptions).
++
++| Field | Type | Rule |
++|---|---|---|
++| `version` | int | must be `2` |
++| `executionId` / `sessionId` / `host` / `origin` | strings | must equal current binding identity or the receipt is rejected as mismatched |
++| `briefing` | object (optional) | revalidated through `_briefing_digest` on read; unknown fields dropped |
++| `delivery` | object (optional) | see below |
++| `delivery.signalId` | string | `session-end-v2-` + first 24 hex chars of the identity digest — identical across retries (idempotency key) |
++| `delivery.signal` | object | canonical `agent_session_ended` signal; stored bytes replayed identically on every retry; revalidated on read |
++| `delivery.declaredNodeId` | string\|null | optional, ID-shaped |
++| `delivery.delivered` | bool | delivery state flag |
++
++**State transitions** (unchanged by this feature — documented so the plan's "what must keep
++working" is explicit):
++
++```text
++(receipt absent)
++   │  first end event, undelivered
++   ▼
++delivery.delivered = false ──matching ack (executionId+signalId, ok:true)──▶ delivery.delivered = true
++   │                                                                            (terminal; later ends skip sending)
++   │  timeout at END_ACK_TIMEOUT, refusal (ok != true), mismatched ack,
++   │  corrupt receipt, busy lock, binding mismatch
++   ▼
++unchanged receipt; operation reported "unobserved"; next end event retries
++the identical signal body with the identical Idempotency-Key
++```
++
++- **Locking**: non-blocking OS lock on the sibling `.lock` inode; released by the OS when the host
++  kills the process; the inode is intentionally kept (unlinking could let two processes lock two
++  files). Overlapping callers report unobserved; exactly one durable delivery results (covered by
++  `test_overlapping_end_calls_keep_one_signal_body`, `test_killed_end_hook_releases_lock_and_retries_same_signal`).
++- **Failure discipline**: a partially-delivered state is never observable — either the matching ack
++  landed and `delivered` is durably true, or nothing changed and the signal remains retryable.
++
++## Entity 5 — Budget paragraph (plugin README prose)
++
++- **Path**: `plugins/graphhelm/README.md`, Session-hooks section, lines 57–61 (numbered for the
++  current file).
++- **Content contract after the change**: states (a) Codex caps the SessionEnd command process at
++  three seconds and the Codex manifests declare exactly that; (b) Claude keeps its five-second
++  bound; (c) the end-acknowledgement wait is sized to complete inside the Codex cap; and no longer
++  states that both hosts bound the SessionEnd command process to five seconds. Every figure in the
++  paragraph equals the shipped manifests/constant (SC-005). English-only per AGENTS.md.
++- **Frozen neighbours**: the one-second SessionStart socket limit sentence and the
++  unobserved-timeout sentences stay verbatim.
+diff --git a/specs/001-bench/plan.md b/specs/001-bench/plan.md
+new file mode 100644
+index 0000000..f1bf45f
+--- /dev/null
++++ b/specs/001-bench/plan.md
+@@ -0,0 +1,126 @@
++# Implementation Plan: Fix Codex SessionEnd Hook Budget
++
++**Branch**: `main` (unattended run; `BRANCH=main` from stage setup — no feature branch created) | **Date**: 2026-10-27 | **Spec**: [spec.md](spec.md)
++
++**Input**: Feature specification from `/specs/001-bench/spec.md`
++
++**Governance substitution**: No `/memory/constitution.md` exists in this checkout. Per the run's stage setup, `AGENTS.md` at the repository root is used as the governance reference; the substitution is recorded here, in the spec's Assumptions, and in [research.md](research.md).
++
++## Summary
++
++Codex clamps SessionEnd hook commands to a hard three-second process cap, but both shipped Codex
++hook manifests declare a five-second SessionEnd timeout, and the hook script waits up to
++3.0 seconds of socket inactivity for the Runtime's durable end acknowledgement — so Codex can kill
++the hook mid-wait and lose a slow-but-valid acknowledgement. The fix declares `3` for Codex's
++SessionEnd in both byte-identical manifests, replaces the inline `timeout=3.0` in the end request
++with a named constant `END_ACK_TIMEOUT = 2.0` applied identically to both installed script copies,
++and corrects the budget paragraph in `plugins/graphhelm/README.md`. Claude's manifest keeps its
++five-second budgets, the SessionStart one-second briefing limit is untouched, and the hook contract
++suite (28 tests, baseline green) stays the observer. Technical approach and resolved unknowns are
++in [research.md](research.md).
++
++## Technical Context
++
++**Language/Version**: Python 3.11 (hook script is standard-library-only; `python 3.11.9` verified on this machine). The enclosing repository is a Rust workspace (pinned 1.97.1), but this feature touches no Rust crate.
++
++**Primary Dependencies**: None added. The hook script uses only the Python standard library (`urllib`, `json`, `hashlib`, `tempfile`, `argparse`, `msvcrt`/`fcntl` for the lock). No new dependency may be introduced.
++
++**Storage**: Local-first JSON state files (`version: 2`) plus a sibling `.lock` file under the user's local state directory (`GRAPHHELM_HOOK_STATE_DIR` override supported). Format and migration status are invariant for this feature.
++
++**Testing**: Standard-library `unittest`; single module `plugins/graphhelm/hooks/test_session_hook.py` (28 tests) driving the hook via subprocesses against an in-process `ThreadingHTTPServer` on loopback. No network, Docker, credentials, or browser sessions needed. Baseline measured on this machine: 28/28 pass, exit 0.
++
++**Target Platform**: Windows (this checkout; PowerShell 5.1-compatible commands) and POSIX. Hosts: Codex CLI (three-second SessionEnd cap, owner-provided fact) and Claude Code (five-second bound).
++
++**Project Type**: Agent-host command-hook plugin shipped inside a Rust-workspace repository; this feature modifies only plugin artifacts (two JSON manifests, two script copies, one README paragraph).
++
++**Performance Goals**: Worst in-window end run — acknowledgement arriving arbitrarily close to the 2.0 s inactivity bound — completes in under three seconds of wall time, with interpreter startup, state locking, and the durable state write included (headroom analysis in research.md, D1).
++
++**Constraints**: Declared Codex SessionEnd timeout must equal the host cap (3); the end-acknowledgement socket-inactivity bound must be strictly inside (1.0, 3.0) seconds (SC-002) and sized with overhead headroom (FR-003); the two script copies and the two Codex manifests must remain byte-identical pairs (FR-006, enforced by the compatibility test); the token never appears in stdout/stderr/signals; English-only documentation; no ceremonial stubs or TODOs.
++
++**Scale/Scope**: Five artifact paths — `plugins/graphhelm/hooks/codex-hooks.json`, `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json`, `plugins/graphhelm/hooks/session_hook.py`, `plugins/graphhelm-codex-hooks/hooks/session_hook.py`, and the budget paragraph in `plugins/graphhelm/README.md`. No new modules, types, files, dependencies, or test files.
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++Gates below are derived from `AGENTS.md` (constitution substitute; see header note).
++
++| # | Gate (AGENTS.md source) | Result | Evidence |
++|---|--------------------------|--------|----------|
++| 1 | English-only documentation (Documentation language) | PASS | All edits are English prose; these artifacts are English. |
++| 2 | Keel proportionality: bounded change on named paths with a known observer follows the direct route with a three-line card (Keel table) | PASS | Bounded config-plus-code edit on five named paths; observer is the hook contract suite. Card below. |
++| 3 | New public surface must be named in the plan/PR (Keel, objective contracts) | PASS | Only new surface: one module-level constant `END_ACK_TIMEOUT` in `session_hook.py` (both copies). No new module, type, function, dependency, or test file. |
++| 4 | Every public method has working behavior in the same commit; no TODO/TBD/stubs (JPD proof rules) | PASS | The constant and its call-site use land together; no scaffold. |
++| 5 | Smallest adequate observer; report passed / skipped / unobserved separately (JPD) | PASS | One test module + direct inspection of shipped JSON/prose. The host-enforced kill is an owner-provided fact (spec Assumptions) and is reported as unobserved locally, with the closest local proxy (wall-time probe) listed in quickstart.md. |
++| 6 | Tests use fixed IDs; assertions must not depend on wall clock, randomness, filesystem ordering, locale, or path separators (JPD) | PASS | No test additions; the existing suite's one timed case (ack released ~1.25 s, asserting delivery not timing) retains ≥ 0.75 s margin under the 2.0 s bound (research.md, D1). |
++| 7 | Secrets never appear in logs/fixtures/output (Security rules) | PASS | Token-discipline tests are unchanged and continue to assert absence of the token on stdout/stderr/signals. |
++| 8 | No new dependency without it being named (Keel objective contract) | PASS | None added; standard library only. |
++| 9 | Stable diagnostics (`code`, severity, path, message) for structured errors (JPD) | N/A (unchanged surface) | Error paths in `main()` are not modified; their messages keep their current stable shapes. |
++
++**Gate verdict: PASS — no violations. Post-Phase-1 re-evaluation:** the design introduced no
++new risk class (no crate, module, dependency, persistence-format, or permission change), so every
++gate above holds unchanged. Complexity Tracking is therefore not required.
++
++### Keel card (direct route)
++
++```text
++Scope:   plugins/graphhelm/hooks/codex-hooks.json, plugins/graphhelm-codex-hooks/hooks/codex-hooks.json,
++         plugins/graphhelm/hooks/session_hook.py, plugins/graphhelm-codex-hooks/hooks/session_hook.py,
++         plugins/graphhelm/README.md
++Promise: Codex SessionEnd declares 3 s (both manifests, byte-identical pair); the end-acknowledgement
++         socket-inactivity wait becomes END_ACK_TIMEOUT = 2.0 s in both script copies (byte-identical
++         pair); Claude manifest, SessionStart budgets, signal/state schemas, and idempotency keys are
++         unchanged; README budget paragraph states the corrected budgets.
++Proof:   python -m unittest plugins.graphhelm.hooks.test_session_hook   ->  28 tests OK, exit 0
++         (plus the inspection checks in quickstart.md)
++```
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/001-bench/
++├── plan.md              # This file (/speckit.plan command output)
++├── research.md          # Phase 0 output (/speckit.plan command)
++├── data-model.md        # Phase 1 output (/speckit.plan command)
++├── quickstart.md        # Phase 1 output (/speckit.plan command)
++├── contracts/           # Phase 1 output (/speckit.plan command)
++│   ├── codex-hooks-manifest.md
++│   └── session-hook-end-contract.md
++└── tasks.md             # Phase 2 output (/speckit.tasks command - NOT created by /speckit.plan)
++```
++
++### Source Code (repository root)
++
++```text
++plugins/
++├── graphhelm/
++│   ├── README.md                        # budget paragraph corrected (FR-007)
++│   ├── plugin.json                      # invariant (version pinned by the compatibility test)
++│   ├── .claude-plugin/plugin.json       # invariant (version pinned by the compatibility test)
++│   ├── .codex-plugin/plugin.json        # invariant (version pinned by the compatibility test)
++│   └── hooks/
++│       ├── codex-hooks.json             # SessionEnd "timeout": 5 -> 3 (FR-001)
++│       ├── hooks.json                   # invariant (FR-002)
++│       ├── session_hook.py              # end wait 3.0 -> END_ACK_TIMEOUT = 2.0 (FR-003/FR-004)
++│       └── test_session_hook.py         # invariant observer (FR-008)
++└── graphhelm-codex-hooks/               # Codex compatibility companion (no README, no plugin.json at root)
++    ├── .codex-plugin/plugin.json        # invariant (hooks pointer "./hooks/codex-hooks.json", version pin)
++    └── hooks/
++        ├── codex-hooks.json             # byte-identical twin of plugins/graphhelm/hooks/codex-hooks.json
++        └── session_hook.py              # byte-identical twin of plugins/graphhelm/hooks/session_hook.py
++```
++
++**Structure Decision**: The existing plugin layout is kept as-is. No new directories, modules, or
++files are added anywhere outside `specs/001-bench/`. The twin-file pairs (script and Codex
++manifest) are edited identically so the compatibility test's raw-byte assertions keep passing;
++twin identity is verified by that test and by hash comparison (quickstart.md, check C3).
++
++## Out of Scope
++
++- SessionStart budgets in all three manifests (one-second briefing limit, five-second SessionStart timeouts).
++- Signal schema, local state format (`version: 2`), idempotency-key derivation, and delivery deduplication semantics — no migration.
++- Any Rust crate, CI gate, schema, or non-plugin documentation (a repository sweep confirmed the README paragraph is the only prose carrying these budget figures).
++- Changes to the companion package's structure (it intentionally has no `plugin.json` at its root and no README).
++- Host-side Codex behavior (the three-second kill itself is an owner-provided fact, not something this checkout exercises).
+diff --git a/specs/001-bench/quickstart.md b/specs/001-bench/quickstart.md
+new file mode 100644
+index 0000000..865a624
+--- /dev/null
++++ b/specs/001-bench/quickstart.md
+@@ -0,0 +1,160 @@
++# Quickstart / Validation Guide: Fix Codex SessionEnd Hook Budget
++
++**Feature**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
++
++Runnable validation scenarios proving the feature end-to-end from this checkout. Prerequisites:
++Python 3.11+ on `PATH` (verified here: 3.11.9), the repository checked out, Windows PowerShell or
++bash. No network access, Docker, credentials, provider accounts, or browser sessions are needed —
++the suite runs an in-process loopback Runtime.
++
++Run every scenario from the repository root. **Report each item as passed, failed, or unobserved
++— never skip-as-pass.** Details on what each scenario proves (and the one thing only a real Codex
++host could prove) are in [research.md](research.md), section D6.
++
++## S1 — Hook contract suite (primary observer; FR-008, SC-003/SC-004)
++
++```powershell
++python -m unittest plugins.graphhelm.hooks.test_session_hook
++```
++
++**Expected**: `Ran 28 tests … OK`, exit code 0, zero failures and zero skips. This single module
++drives the real script through subprocesses against an in-process Runtime and covers, among others:
++an acknowledgement released ~1.25 s after the POST must be confirmed from one request
++(`test_end_accepts_slow_matching_ack_without_extra_posts` — the FR-004 observer under the new
++bound), refusal/mismatch staying retryable with identical signal bytes and idempotency key,
++overlapping ends, the killed-hook lock release, corrupt-receipt fail-closed behavior, and raw-byte
++twin identity of both `session_hook.py` copies and both `codex-hooks.json` files
++(`test_codex_compatibility_package_keeps_one_hook_source` — part of SC-001's observer).
++
++## C2 — Declared budgets match the effective host budgets (FR-001/FR-002, SC-001)
++
++```powershell
++$m  = Get-Content plugins\graphhelm\hooks\codex-hooks.json -Raw | ConvertFrom-Json
++$c  = Get-Content plugins\graphhelm-codex-hooks\hooks\codex-hooks.json -Raw | ConvertFrom-Json
++$k  = Get-Content plugins\graphhelm\hooks\hooks.json -Raw | ConvertFrom-Json
++@($m.hooks.SessionEnd[0].hooks[0].timeout,   $c.hooks.SessionEnd[0].hooks[0].timeout)  | Should-Budget 3   # Codex SessionEnd = 3
++@($m.hooks.SessionStart[0].hooks[0].timeout, $k.hooks.SessionStart[0].hooks[0].timeout,
++   $k.hooks.SessionEnd[0].hooks[0].timeout) | Should-Budget 5                                           # everything else = 5
++```
++
++(`Should-Budget` is shorthand: assert every listed value equals the right-hand number.)
++**Expected**: both Codex manifests declare SessionEnd `3`; SessionStart stays `5` everywhere; the
++Claude manifest keeps `5` on both events.
++
++## C3 — Twin-file byte identity (FR-006, SC-001)
++
++```powershell
++Get-FileHash plugins\graphhelm\hooks\session_hook.py, plugins\graphhelm-codex-hooks\hooks\session_hook.py | Select-Object Hash
++Get-FileHash plugins\graphhelm\hooks\codex-hooks.json, plugins\graphhelm-codex-hooks\hooks\codex-hooks.json | Select-Object Hash
++```
++
++**Expected**: the two hashes in each pair are equal. (Redundant with S1's compatibility test on
++purpose: it stands alone if the suite is unavailable.)
++
++## C4 — Claude manifest untouched (FR-002)
++
++```powershell
++git diff --stat -- plugins/graphhelm/hooks/hooks.json
++```
++
++**Expected**: empty output. Cross-check:
++`(Get-FileHash plugins\graphhelm\hooks\hooks.json -Algorithm SHA256).Hash` equals the recorded
++baseline `5FA2B622D3B35AE4BD40E07B49F0C319BA630699A6C2813CE5E1A684E758FB4D`.
++
++## C5 — End-acknowledgement bound strictly inside the Codex cap (FR-003/FR-004, SC-002)
++
++```powershell
++Select-String -Path plugins\graphhelm\hooks\session_hook.py, plugins\graphhelm-codex-hooks\hooks\session_hook.py -Pattern 'END_ACK_TIMEOUT|timeout=3\.0|timeout: float = 1\.0'
++```
++
++**Expected**, per file: one definition line `END_ACK_TIMEOUT = 2.0`, exactly one use
++(`timeout=END_ACK_TIMEOUT` in `_end_impl`), and `request(...)` still defaulting to
++`timeout: float = 1.0`; **zero** matches for the old inline literal `timeout=3.0`. The defined
++value must satisfy `1.0 < END_ACK_TIMEOUT < 3.0` — which `2.0` does; the margin arithmetic and the
++rejected alternatives are in [research.md](research.md), D1.
++
++## C6 — Documented budgets equal shipped budgets (FR-007, SC-005)
++
++Read the Session-hooks budget paragraph in `plugins/graphhelm/README.md` (around lines 57–62) and
++compare every figure against C2 (Codex SessionEnd 3, Claude 5) and C5 (two-second end-ack wait).
++Programmatic guard for the removed false sentence:
++
++```powershell
++Select-String -Path plugins\graphhelm\README.md -Pattern 'Both hosts bound'
++```
++
++**Expected**: no match. **Passed** means: the paragraph states the three-second Codex SessionEnd
++cap (now declared in the Codex manifests), the unchanged five-second Claude bound, and that the
++end-acknowledgement wait fits inside the Codex cap — and nothing in it contradicts C2/C5.
++
++## S4 — Optional: wall-time probe for the near-bound end run (evidence for the sizing assumption)
++
++The hard three-second kill is enforced by the Codex host and cannot be reproduced in this
++checkout (unobserved locally; research.md D6). What *can* be measured here is that the worst
++in-window run — an acknowledgement arriving just inside the 2.0 s bound — finishes well under
++three seconds of wall time, startup and durable write included. Save the snippet below as
++`end-timing-probe.py` (scratch location, e.g. under `$env:TEMP`) and run `python end-timing-probe.py`
++from the repository root; remove it afterward.
++
++```python
++import json, os, subprocess, sys, tempfile, threading, time
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from pathlib import Path
++
++SCRIPT, DELAY, CAP = Path("plugins/graphhelm/hooks/session_hook.py"), 1.9, 3.0
++
++class H(BaseHTTPRequestHandler):
++    posts = 0
++    def do_POST(self):
++        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
++        H.posts += 1
++        time.sleep(DELAY)                      # ack arrives just inside the 2.0 s inactivity bound
++        self.send_response(200)
++        self.send_header("Content-Type", "application/json")
++        self.end_headers()
++        self.wfile.write(json.dumps({"ok": True, "data": {"executionId": "run-probe",
++                                                          "signalId": body["signal"]["id"]}}).encode())
++    def log_message(self, *_): pass
++
++srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
++threading.Thread(target=srv.serve_forever, daemon=True).start()
++tmp = Path(tempfile.mkdtemp())
++(tmp / "events.token").write_text("probe-token")
++env = {**os.environ, "GRAPHHELM_EXECUTION_ID": "run-probe",
++       "GRAPHHELM_TOKEN_FILE": str(tmp / "events.token"),
++       "GRAPHHELM_HOOK_STATE_DIR": str(tmp / "state"),
++       "GRAPHHELM_RUNTIME_URL": f"http://127.0.0.1:{srv.server_port}"}
++env.pop("GRAPHHELM_SESSION_ID", None); env.pop("GRAPHHELM_NODE_ID", None)
++
++t0 = time.monotonic()
++p = subprocess.run([sys.executable, str(SCRIPT), "end", "--host", "codex"],
++                   input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "probe-1"}),
++                   text=True, capture_output=True, env=env, timeout=8)
++wall = time.monotonic() - t0
++delivered = json.loads(next(Path(env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")).read_text())["delivery"]["delivered"]
++print(f"wall={wall:.2f}s rc={p.returncode} delivered={delivered} posts={H.posts} stderr={p.stderr.strip()!r}")
++assert p.returncode == 0 and delivered is True and H.posts == 1 and wall < CAP
++print(f"PASS: near-bound ack confirmed from one request in {wall:.2f}s (< {CAP:.0f}s)")
++```
++
++**Expected**: exit 0 of the probe, e.g. `wall≈2.1–2.3s … delivered=True posts=1`, i.e. wall time
++strictly under the 3.0 s cap with ≥ 0.5 s of headroom on this machine. For the missed-window
++variant, raise `DELAY` to 3.0: the hook then exits 0 in ~2.2 s with `unobserved` on stderr and
++`delivered=False`, and a repeated end run POSTs the same signal bytes with the same
++`Idempotency-Key` (full semantics already covered by S1's retry tests). A machine where the probe
++exceeds 3.0 s invalidates the sizing assumption and must be reported as such — not worked around
++by silently lowering `END_ACK_TIMEOUT` without re-checking C5/S1.
++
++## Success-criteria coverage
++
++| Success criterion | Observed by |
++|---|---|
++| SC-001 (declared = effective for Codex; twins identical; Claude unchanged) | C2, C3, C4, S1 (compatibility test) |
++| SC-002 (end wait strictly inside (1 s, 3 s)) | C5, S1 (slow-ack test) |
++| SC-003 (28 tests, zero failures/skips) | S1 |
++| SC-004 (slow ack confirmed once; miss stays retryable, unclaimed) | S1 (slow-ack + retry tests), S4 (wall-time portion) |
++| SC-005 (README figures match shipped artifacts; false sentence gone) | C6 with C2/C5 |
++
++**Unobserved and reported as such**: the Codex host actually killing a timed-out SessionEnd hook
++process (owner-provided fact; no Codex host in this checkout). Everything else above is observed
++locally and must be reported with its result.
+diff --git a/specs/001-bench/research.md b/specs/001-bench/research.md
+new file mode 100644
+index 0000000..110f7b5
+--- /dev/null
++++ b/specs/001-bench/research.md
+@@ -0,0 +1,162 @@
++# Research: Fix Codex SessionEnd Hook Budget
++
++**Feature**: [spec.md](spec.md) | **Date**: 2026-10-27 | **Governance reference**: `AGENTS.md` (constitution substitute — no `/memory/constitution.md` in this checkout)
++
++Phase 0 resolves every open question the Technical Context left to planning. There are no
++`NEEDS CLARIFICATION` markers in the spec (unattended run; open decisions were carried into the
++spec's Assumptions) and this file records how each was resolved here, with alternatives and the
++measured grounding for each choice. All facts below were verified in this checkout on 2026-10-27.
++
++## Grounding evidence (measured before deciding)
++
++| Fact | Value | How measured |
++|------|-------|--------------|
++| Python available for the observer | 3.11.9 | `python --version` |
++| Baseline hook suite | 28 tests, OK, exit 0, ~8.2 s | `python -m unittest plugins.graphhelm.hooks.test_session_hook -v` |
++| `session_hook.py` twin pair byte-identical | SHA-256 `67A7B1CE932E9EAF58FBACF0442D32C0F13ACA3C213D402B3D60C57DB9D9E895` (both copies) | `Get-FileHash` on both copies |
++| Codex manifest twin pair byte-identical | SHA-256 `B671BBE63B326D7D07E898A1850B1F8DF5480D83608FE31A3A37F0E4CB1BC596` (both copies) | `Get-FileHash` on both copies |
++| Claude manifest baseline (must stay unchanged) | SHA-256 `5FA2B622D3B35AE4BD40E07B49F0C319BA630699A6C2813CE5E1A684E758FB4D` | `Get-FileHash` |
++| Declared Codex SessionEnd timeout | `5` at line 23 of both `codex-hooks.json` | file read |
++| End-request wait | `timeout=3.0` inline at `session_hook.py:351` (`_end_impl`) | file read |
++| SessionStart briefing wait | `request(...)` default `timeout: float = 1.0`, used unmodified by the briefing GET | file read |
++| Slow-ack test behavior | `test_end_accepts_slow_matching_ack_without_extra_posts` releases a real HTTP response ~1.25 s after the POST begins and asserts delivery from one request | test source, lines 245–274 |
++| Budget figures elsewhere in the repo | Only `plugins/graphhelm/README.md` lines 57–61 carry them in shipped artifacts (other "seconds"/"timeout" hits are unrelated) | repository-wide case-insensitive grep over `plugins/` |
++| Compatibility pins already enforced by tests | `test_codex_compatibility_package_keeps_one_hook_source`: raw-byte identity of both script copies and both Codex manifests, equal plugin versions across all four `plugin.json` files, hooks pointer `./hooks/codex-hooks.json`, no `extensions` key, no root `plugin.json` in the companion | test source, lines 103–124 |
++
++## D1 — Exact end-acknowledgement socket-inactivity bound
++
++**Decision**: `END_ACK_TIMEOUT = 2.0` seconds.
++
++**Rationale**: The spec's bounds (FR-003, FR-004, SC-002) fix an open interval plus a sizing duty:
++strictly above the one-second briefing limit, strictly below the three-second Codex cap, with
++headroom so interpreter startup, state locking, and the durable state write still fit inside the
++cap. The tightest *observed* demand on the bound is the contract test that releases a real
++acknowledgement ~1.25 s after the POST begins — the bound must absorb that plus timer/thread
++jitter. Wall-time arithmetic for the worst in-window case (ack arrives arbitrarily close to the
++bound): CPython startup for this stdlib-only 453-line script (~30–150 ms) + loopback connect +
++up to 2.0 s inactivity + post-ack parse/validate + one `fsync`'d state write (typically tens of ms
++on this machine) ≈ 2.2–2.5 s, leaving ≥ 0.5 s under the hard cap. 2.0 s also leaves 0.75 s of
++margin above the test's 1.25 s release point, keeping the suite green without making it more
++timing-sensitive than it already is. The value is the spec's own stated reasonable default, which
++keeps plan and assumption consistent.
++
++**Alternatives considered**:
++
++- `1.5 s` — only ~0.25 s above the test's 1.25 s release; a loaded machine (timer jitter, slow
++  thread wakeup in the in-process server) could push the observed response past the bound and turn
++  a contract test flaky. Rejected: buys little headroom under the cap, spends most of the margin
++  the suite needs.
++- `1.75 s` — same class of risk, slightly larger. Rejected.
++- `2.25 s` / `2.5 s` — grows the wall-time worst case toward 2.4–2.9 s against a hard 3.0 s kill;
++  a single slow `fsync` or cold-interpreter startup on a busy host would consume the remaining
++  headroom. Rejected: the defect being fixed is precisely a host killing a slow hook.
++- Per-host bound (e.g., 4 s on Claude, 2 s on Codex) — Claude's five-second cap would allow more,
++  but would require host branching inside `_end_impl`, a larger diff surface, and an unmeasured
++  benefit: acknowledgement latency is a Runtime property, not a host property, and the compatibility
++  contract wants one identical script body. Rejected.
++
++## D2 — Where the bound lives in code
++
++**Decision**: A module-level constant `END_ACK_TIMEOUT = 2.0` added to the existing bounds block
++near the other module constants (`MAX_INPUT`, …, `MAX_CONTEXT`) with a short comment stating the
++budget relationship (above the 1.0 s briefing limit, strictly below the 3 s Codex cap, sized for
++overhead headroom), and `_end_impl`'s call site changed from the inline literal `timeout=3.0` to
++`timeout=END_ACK_TIMEOUT`. Both installed copies receive the identical edit.
++
++**Rationale**: The spec requires the chosen value to be "recorded where implemented"; a named
++constant next to the other bounds makes the budget relationship readable at the definition site,
++greppable, and byte-stable across the twin copies. It is the only new public surface the change
++introduces (named in the Keel card).
++
++**Alternatives considered**:
++
++- Keep an inline literal `2.0` at the call site — smaller diff, but the budget rationale would live
++  only in a comment beside a magic number and SC-002 ("maximum end-acknowledgement wait is …") has
++  no single addressable location. Rejected.
++- Add a host parameter or argument (`--end-timeout`) — new interface surface with no consumer; the
++  host does not receive this value from us (the host enforces its own cap). Rejected as scaffold.
++
++The comment block inside `request()` ("This is socket inactivity, not a wall-time guarantee. The
++host hook timeout bounds the whole process; …") remains accurate after the change and is not
++edited, minimizing churn in a byte-identity-critical file.
++
++## D3 — Manifest edit shape
++
++**Decision**: In each `codex-hooks.json`, change exactly the SessionEnd entry's `"timeout": 5` to
++`"timeout": 3`. No reformatting; every other byte (including trailing newline state and key order)
++is preserved, and both copies receive the same edit so the raw-byte equality test keeps passing.
++
++**Rationale**: FR-001 demands the declared value; US2-AS1 demands every other entry untouched;
++FR-006 demands byte-identical twins. A single-token edit is the minimal diff satisfying all three,
++and hash comparison after the edit proves twin identity independent of the test.
++
++**Alternatives considered**: Parse-and-reserialize JSON (normalizes formatting — risks a diff
++churn larger than the requirement and a non-minimal change); editing only one copy and letting the
++installer sync (there is no installer in this repository — the copies are the source). Rejected.
++
++## D4 — README correction scope
++
++**Decision**: Correct exactly the two stale statements in the Session-hooks budget paragraph
++(`plugins/graphhelm/README.md`, lines 57–61):
++
++1. "SessionEnd allows one request up to **three seconds** of socket inactivity" → the corrected
++   two-second bound, preserving the sentence's point (a durable acknowledgement slower than one
++   second is still confirmed without resending).
++2. "**Both hosts bound the SessionEnd command process to five seconds.**" → replaced by the true
++   split: Codex caps the SessionEnd command process at three seconds (which the Codex manifests now
++   declare), while Claude keeps its five-second bound, and the end-acknowledgement wait is sized to
++   complete inside the Codex cap.
++
++The surrounding sentences ("SessionStart keeps its one-second socket inactivity limit.", "The
++socket limit alone is not a wall-time deadline. A timeout remains unobserved; it never becomes task
++success.") remain verbatim.
++
++**Rationale**: FR-007 names these two defects and the repository-wide sweep (grounding table above)
++confirms no other shipped document carries these figures, so the paragraph is the entire prose
++surface. Smallest edit that makes every number in the paragraph equal the shipped manifests
++(SC-005).
++
++**Alternatives considered**: Rewrite the whole paragraph (unnecessary churn in a reviewed guide);
++leave "three seconds" and note the discrepancy elsewhere (defeats the purpose — the reader must
++find figures matching the manifests). Rejected.
++
++## D5 — Compatibility-contract invariants the change must respect
++
++**Decision**: Treat as frozen until proven otherwise: all four `plugin.json` files (versions must
++stay equal; companion hooks pointer stays `./hooks/codex-hooks.json`; no `extensions` key; no root
++`plugin.json` in the companion), the full Claude manifest (baseline SHA recorded above), the
++matcher/statusMessage/context-limit/command strings in both Codex manifests, and the test module
++itself.
++
++**Rationale**: The compatibility test pins all of these on raw bytes and values; they are the
++shipped contract between the main plugin and the companion package (US2). Nothing in D1–D4 needs
++to touch them, so they stay out of scope and the unchanged Claude-manifest SHA doubles as a cheap
++post-change check.
++
++**Alternatives considered**: Bumping plugin versions for the manifest change — the version pin is a
++compatibility invariant, not a content hash; the spec nowhere requires a version move and moving
++it would widen the diff beyond the promise. Rejected.
++
++## D6 — Observability: what can and cannot be observed from this checkout
++
++**Decision**: The observing set is (a) the 28-test hook contract suite — it drives the real script
++via subprocess against an in-process Runtime and covers acknowledged, slow (~1.25 s release),
++refused, mismatched, overlapping, and killed-hook end flows, plus raw-byte twin identity and the
++manifest pins; (b) direct inspection of the shipped JSON manifests and README prose; (c) optional
++machine-local wall-time probe (quickstart.md S4) demonstrating the near-bound end run finishes in
++under three seconds of wall time on this machine.
++
++**Rationale**: Spec Assumptions already classify the feature as locally observable and name the
++suite plus manifest/prose inspection as the observers; no workspace-wide Rust build or full Rust
++matrix is needed because no Rust code changes.
++
++**Unobserved (stated, per JPD)**: the *host-enforced* three-second kill of a Codex SessionEnd hook
++process cannot be reproduced here — no Codex host runs in this checkout, and the cap is an
++owner-provided fact. What is locally observed instead: the declared value equals the cap (≤), and
++the end-to-end wall time of the slowest in-window run is measured well below it. These are different
++claims; the second is evidence *for* the first's safety, not a substitute for watching a real Codex
++host kill behavior. Reported as unobserved wherever results are reported.
++
++**Alternatives considered**: Waiting for a real-host observation before planning (blocks the run
++with no new information available from this machine); adding a fake-host simulator crate to the
++Rust workspace (new surface, wrong crate boundary — the host is external software). Rejected.
+diff --git a/specs/001-bench/spec.md b/specs/001-bench/spec.md
+new file mode 100644
+index 0000000..39d8d2e
+--- /dev/null
++++ b/specs/001-bench/spec.md
+@@ -0,0 +1,213 @@
++# Feature Specification: Fix Codex SessionEnd Hook Budget
++
++**Feature Branch**: n/a (unattended run; no branch created by this command)
++
++**Created**: 2026-10-27
++
++**Status**: Draft
++
++**Input**: User description: "Installed Codex clamps a `SessionEnd` hook command to three seconds, but both Codex hook files (`plugins/graphhelm/hooks/codex-hooks.json` and `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json`) declare 5, and the end request in `session_hook.py` waits up to 3.0 seconds of socket inactivity, so Codex can kill the hook while it is still waiting. Declare 3 for Codex's SessionEnd and make the end acknowledgement wait fit inside it (both copies of `session_hook.py`). Claude's `hooks.json` keeps its 5-second budget. Correct the budget paragraph in `plugins/graphhelm/README.md`. The hook tests must stay green."
++
++## User Scenarios & Testing *(mandatory)*
++
++### User Story 1 - The end acknowledgement survives the host kill (Priority: P1)
++
++A user who has bound a Codex session to a GraphHelm execution ends the session. Codex kills any
++SessionEnd hook process that reaches its three-second cap. Today the end hook declares a five-second
++budget that Codex does not honor, and it waits up to three seconds of socket inactivity for the
++Runtime's durable end acknowledgement — so the host can terminate the hook in the middle of that wait.
++A slow-but-valid acknowledgement is then lost from that run, even though the retry machinery exists.
++After this feature, the Codex hook declares the budget Codex actually enforces (three seconds), and
++the end acknowledgement wait is short enough that the whole hook finishes inside that cap. An
++acknowledgement slower than the one-second briefing limit is still confirmed without resending the
++signal; if the acknowledgement does not arrive in time, nothing is claimed delivered and the next end
++event retries the same signal with the same idempotency key.
++
++**Why this priority**: This is the defect itself. Every other statement in this spec exists so Codex
++users get the acknowledgement behavior the plugin already promises them — but only within a budget the
++host actually grants.
++
++**Independent Test**: Run the plugin's hook contract suite (the single Python test module that drives
++the hook script against an in-process Runtime); it verifies acknowledged, slow, refused, mismatched,
++overlapping, and killed-hook end flows. Additionally, read the shipped manifests and the hook script to
++confirm the declared Codex SessionEnd budget is three seconds and the end-acknowledgement wait is
++strictly inside it.
++
++**Acceptance Scenarios**:
++
++1. **Given** a Codex host that caps SessionEnd hooks at three seconds, and the installed Codex hook
++   manifest declares a three-second SessionEnd timeout, **When** a bound session ends and the Runtime
++   acknowledges the end signal while the hook waits, **Then** the hook finishes inside the three-second
++   budget and the local delivery state records the confirmation.
++2. **Given** the Runtime needs more than one second but less than the end-acknowledgement wait bound to
++   produce a matching acknowledgement, **When** the end hook runs, **Then** the acknowledgement is
++   accepted from the single original request — no duplicate signal is sent.
++3. **Given** the Runtime does not acknowledge before the wait bound elapses, **When** the end hook
++   runs, **Then** the hook exits cleanly with the operation reported unobserved (no success claim),
++   local state is not marked delivered, and a later end event retries the identical signal body with
++   the same idempotency key.
++
++---
++
++### User Story 2 - Declared budgets match the effective host budgets (Priority: P2)
++
++A maintainer (or anyone auditing the plugin) reads the hook registration files and sees one
++consistent story instead of a budget the host quietly strips away: both Codex hook manifests declare a
++three-second SessionEnd budget, equal to the Codex cap, and the Claude host manifest keeps its existing
++five-second budget. The two Codex manifests and the two installed copies of the hook script — which the
++compatibility contract requires to be byte-identical to each other — stay identical through the change.
++
++**Why this priority**: Without it the fix is untruthful: a declared-five budget on Codex advertises a
++window the host never grants, and drift between the twin files breaks the shipped compatibility
++contract.
++
++**Independent Test**: Read both Codex hook manifests and the Claude hook manifest from the repository;
++verify Codex SessionEnd declares three seconds with every other entry untouched, Claude still declares
++five seconds, and the paired Codex manifests compare byte-for-byte identical.
++
++**Acceptance Scenarios**:
++
++1. **Given** the two shipped Codex hook manifests, **When** they are read, **Then** each declares a
++   three-second SessionEnd timeout and every other entry (SessionStart timeout, matcher, status
++   message, context limit, commands) is unchanged.
++2. **Given** the Claude hook manifest, **When** it is read, **Then** its SessionEnd timeout remains
++   five seconds and no other value changed.
++3. **Given** the compatibility contract between the main plugin and the Codex companion package,
++   **When** the change is applied, **Then** the two Codex manifests remain byte-identical to each other
++   and the two hook-script copies remain byte-identical to each other.
++
++---
++
++### User Story 3 - The documented budget tells the true budget (Priority: P3)
++
++A reader of the plugin guide relies on it to learn how long session-end processing may take. After this
++feature, the guide's budget paragraph describes the corrected reality: Codex caps the SessionEnd command
++process at three seconds (and the Codex manifests now declare exactly that), Claude keeps its
++five-second bound, and the end-acknowledgement wait is sized to complete inside the Codex cap. The old
++sentence claiming both hosts bound the SessionEnd command process to five seconds is gone.
++
++**Why this priority**: Documentation accuracy prevents the next reader from re-deriving the old,
++incorrect budget from stale prose; it carries no runtime risk of its own.
++
++**Independent Test**: Read the Session-hooks budget paragraph in the plugin README and compare each
++number against the shipped manifests; the two must agree.
++
++**Acceptance Scenarios**:
++
++1. **Given** the corrected manifests, **When** the plugin README's Session-hooks budget paragraph is
++   read, **Then** it states the three-second Codex SessionEnd cap, the unchanged five-second Claude
++   bound, and that the end-acknowledgement wait fits inside the Codex cap, and it no longer states that
++   both hosts bound the SessionEnd command process to five seconds.
++
++### Edge Cases
++
++- **Acknowledgement arrives just after the new (shorter) wait but before the host kill**: the request
++  times out and the operation is unobserved; state is not marked delivered; the next end event retries
++  with identical signal bytes. A partially-delivered state must never be observable.
++- **Two end events overlap while the first is still inside its request**: the existing lock keeps one
++  signal body; the overlapping caller reports unobserved and the later retry yields exactly one durable
++  delivery (already covered by the hook contract tests).
++- **Unbound session**: no execution binding configured — the end hook makes no request, prints nothing,
++  and claims nothing, exactly as today.
++- **Refused or mismatched acknowledgement**: remains retryable and unobserved; the token value never
++  appears in the signal, on stdout, or on stderr.
++- **Corrupt stored delivery receipt**: still fails closed — no request is sent until a valid receipt
++  exists again.
++- **Twin-file integrity**: the hook script has two installed copies and the Codex manifest has two
++  copies; a change that lands in only one copy violates the compatibility contract and must be caught
++  by the hook tests.
++
++## Requirements *(mandatory)*
++
++### Functional Requirements
++
++- **FR-001**: The system MUST declare a three-second SessionEnd hook timeout in both Codex hook
++  manifests (`plugins/graphhelm/hooks/codex-hooks.json` and
++  `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json`), matching the Codex host cap.
++- **FR-002**: The system MUST leave the Claude host manifest (`plugins/graphhelm/hooks/hooks.json`)
++  unchanged: its SessionEnd timeout remains five seconds, as does its SessionStart timeout.
++- **FR-003**: The system MUST reduce the SessionEnd acknowledgement wait in the hook script to a
++  bounded socket-inactivity limit strictly below three seconds, sized so that interpreter startup,
++  state locking, and the durable state write still complete inside the three-second Codex process cap.
++- **FR-004**: The system MUST keep the SessionEnd acknowledgement wait long enough that a durable
++  acknowledgement slower than the one-second briefing limit is still confirmed without resending the
++  signal (the existing contract behavior releases a real acknowledgement past the one-second boundary
++  and requires it to be accepted).
++- **FR-005**: The system MUST preserve unobserved-and-retryable semantics: a timed-out, refused, or
++  mismatched end request leaves the signal undelivered, reports the operation unobserved without a
++  success claim, and a later end event retries the identical signal body with the same idempotency key.
++- **FR-006**: The system MUST apply the hook-script change identically to both installed copies
++  (`plugins/graphhelm/hooks/session_hook.py` and
++  `plugins/graphhelm-codex-hooks/hooks/session_hook.py`) so the pair remains byte-identical, and keep
++  the two Codex manifests byte-identical to each other.
++- **FR-007**: The system MUST correct the Session-hooks budget paragraph in
++  `plugins/graphhelm/README.md` so that the documented budgets equal the effective ones: the three
++  second Codex SessionEnd cap (now declared in the Codex manifests), the unchanged five-second Claude
++  bound, and the end-acknowledgement wait sized to fit inside the Codex cap; the sentence claiming both
++  hosts bound the SessionEnd command process to five seconds MUST be removed or corrected.
++- **FR-008**: The existing hook contract test suite MUST remain fully green after the change, with no
++  skipped or failing tests.
++
++### Key Entities
++
++- **Codex hook manifest**: registers the SessionStart/SessionEnd hook commands for the Codex host,
++  including the declared per-event timeout. Carried in two byte-identical copies (main plugin and Codex
++  companion package). Its SessionEnd timeout changes from five to three seconds; all other attributes
++  are invariant.
++- **Claude hook manifest**: the corresponding registration for the Claude host. Invariant: five-second
++  timeouts on both events.
++- **Session hook script (two installed copies)**: the local-first script that reads the start briefing
++  and posts the attributed end signal. Holds the socket-inactivity bound used by the end
++  acknowledgement request; the copies must remain byte-identical.
++- **Budget paragraph (plugin README)**: the prose describing the SessionStart/SessionEnd timing
++  budgets. Updated to match the shipped manifests.
++
++## Success Criteria *(mandatory)*
++
++### Measurable Outcomes
++
++- **SC-001**: Zero declared-versus-effective budget mismatch for Codex: both Codex hook manifests
++  declare a three-second SessionEnd budget (equal to the Codex cap), remain byte-identical to each
++  other, and the Claude manifest still declares five seconds.
++- **SC-002**: In both installed hook scripts, the maximum end-acknowledgement wait is strictly below
++  three seconds and strictly above the one-second briefing limit.
++- **SC-003**: The complete hook contract suite passes with zero failures and zero skips (baseline on
++  this machine: 28 tests, all passing, measured 2026-10-27).
++- **SC-004**: A durable acknowledgement taking longer than one second is still confirmed from a single
++  end request within the Codex three-second budget; when the acknowledgement misses the window, the
++  signal remains retryable with identical bytes and no success is claimed.
++- **SC-005**: A reader of the plugin README finds budget figures matching the shipped manifests
++  (Codex three seconds, Claude five seconds) and no remaining statement that both hosts bound the
++  SessionEnd command process to five seconds.
++
++## Assumptions
++
++- Codex enforces a hard three-second process cap on SessionEnd hook commands regardless of the declared
++  value (owner-provided fact; the observed failure mode is the host killing the hook mid-wait). The
++  five-second declaration is therefore not honored by Codex, while Claude's five-second declaration
++  stands.
++- "Fits inside" the three-second cap is interpreted as: the end-acknowledgement socket-inactivity bound
++  plus worst-case process overhead (interpreter startup, state locking, durable state write) completes
++  within three seconds of wall time. The exact constant is an implementation choice constrained by
++  FR-003 and FR-004 (strictly above the one-second briefing limit, strictly below three seconds, with
++  headroom for overhead); the chosen value is recorded where implemented and applied identically to
++  both script copies. Reasonable default: 2.0 seconds.
++- The SessionStart budgets are out of scope: the one-second briefing socket limit and the declared
++  five-second SessionStart timeouts in all three manifests remain unchanged.
++- No change to the signal schema, local state format, or idempotency key is introduced; existing local
++  state needs no migration, and delivery deduplication semantics are unchanged.
++- Observability of this feature is local to the plugin: the hook contract suite (one Python test
++  module, in-process Runtime, no network or credentials needed) plus direct inspection of the shipped
++  JSON manifests and README. Workspace-wide builds and the full Rust test matrix are not required to
++  observe this change.
++- This run is unattended: no clarifying questions were posed; open decisions were resolved with the
++  assumptions above and are recorded here.
++- Where the workflow references the project constitution (`/memory/constitution.md`), no constitution
++  file exists in this checkout; the `AGENTS.md` file at the repository root was used as the governance
++  reference instead, and this substitution is recorded here. Its constraints most relevant to this
++  feature: English-only documentation, every public method must have working behavior in the same
++  commit (no ceremonial stubs), and Keel proportionality — this change is a bounded config-plus-code
++  edit on named paths with a known observer, so it follows the direct route with a three-line card
++  (paths, promise, observing command) at planning time.
++- The feature directory name `specs/001-bench` is fixed by the run harness and is unrelated to the
++  feature name.
+diff --git a/specs/001-bench/tasks.md b/specs/001-bench/tasks.md
+new file mode 100644
+index 0000000..6f357d3
+--- /dev/null
++++ b/specs/001-bench/tasks.md
+@@ -0,0 +1,174 @@
++# Tasks: Fix Codex SessionEnd Hook Budget
++
++**Input**: Design documents from `/specs/001-bench/`
++
++**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
++
++**Governance reference**: `AGENTS.md` at the repository root (substitute for the missing `/memory/constitution.md`; substitution recorded in plan.md and research.md).
++
++**Tests**: No new test tasks — this feature adds no test files (plan.md: "No new modules, types, files, dependencies, or test files"). The spec *does* require the existing hook contract suite (28 tests) to stay green (FR-008, SC-003), so each story phase ends with the suite run as its observing checkpoint, plus the inspection checks (C2–C6, S1–S4) from quickstart.md.
++
++**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies)
++- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
++- Include exact file paths in descriptions
++
++## Path Conventions
++
++- Single repository, plugin subtree: `plugins/graphhelm/…` and `plugins/graphhelm-codex-hooks/…` at the repository root. All commands run from the repository root (Windows PowerShell or bash; Python 3.11 on `PATH`).
++
++---
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Confirm the known observer is available and green before any edit lands. No project initialization is needed — the plugin, its test module, and the toolchain (Python 3.11.9 measured) already exist.
++
++- [X] T001 Verify `python --version` reports Python 3.11.x from the repository root, then run the baseline hook contract suite `python -m unittest plugins.graphhelm.hooks.test_session_hook` and confirm `Ran 28 tests … OK` with exit code 0 and zero skips (quickstart.md S1); if the baseline is not green, stop and report the failure — do not edit any artifact first
++- [X] T002 [P] Record the pre-edit SHA-256 hashes of `plugins/graphhelm/hooks/session_hook.py`, `plugins/graphhelm-codex-hooks/hooks/session_hook.py`, `plugins/graphhelm/hooks/codex-hooks.json`, `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json`, and `plugins/graphhelm/hooks/hooks.json` via `Get-FileHash`, and cross-check them against the baselines recorded in `specs/001-bench/research.md` (grounding evidence table) so post-change comparisons have an independent anchor
++
++**Checkpoint**: Baseline observer green and baseline hashes confirmed — safe to edit.
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Pre-condition that every later phase depends on: the twin-file pairs currently agree byte-for-byte, so a post-edit hash inequality unambiguously identifies which edit drifted.
++
++**⚠️ CRITICAL**: No user story work can begin until this phase is complete
++
++- [X] T003 Verify pre-edit twin identity: `Get-FileHash` of `plugins/graphhelm/hooks/session_hook.py` and `plugins/graphhelm-codex-hooks/hooks/session_hook.py` produce equal hashes, and `Get-FileHash` of `plugins/graphhelm/hooks/codex-hooks.json` and `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json` produce equal hashes (quickstart.md C3, pre-edit form)
++
++**Checkpoint**: Foundation ready — user story implementation can now begin.
++
++---
++
++## Phase 3: User Story 1 - The end acknowledgement survives the host kill (Priority: P1) 🎯 MVP
++
++**Goal**: Replace the inline `timeout=3.0` literal in the end-acknowledgement request with a named module constant `END_ACK_TIMEOUT = 2.0`, applied identically to both installed script copies, so the whole end run completes inside Codex's three-second process cap while an acknowledgement slower than the one-second briefing limit is still confirmed from the single original request (FR-003, FR-004, FR-005, SC-002, SC-004).
++
++**Independent Test**: Run `python -m unittest plugins.graphhelm.hooks.test_session_hook` (must be 28/28 OK, exit 0 — includes the ~1.25 s slow-ack test `test_end_accepts_slow_matching_ack_without_extra_posts` and the retry/overlap/killed-hook flows), then run quickstart.md C5 on both script copies: exactly one `END_ACK_TIMEOUT = 2.0` definition, exactly one use `timeout=END_ACK_TIMEOUT` in `_end_impl`, `request(...)` still defaulting to `timeout: float = 1.0`, and **zero** matches for the old literal `timeout=3.0`.
++
++### Implementation for User Story 1
++
++- [X] T004 [US1] In `plugins/graphhelm/hooks/session_hook.py`, add the module-level constant `END_ACK_TIMEOUT = 2.0` to the existing bounds block near the other module constants (`MAX_INPUT`, …, `MAX_CONTEXT`), with a short comment stating the budget relationship (strictly above the 1.0 s briefing limit, strictly below the 3 s Codex SessionEnd cap, sized so interpreter startup + state locking + the durable state write still fit inside the cap; sizing evidence in `specs/001-bench/research.md` D1), and in `_end_impl` change the end-request call argument from the inline literal `timeout=3.0` (line 351) to `timeout=END_ACK_TIMEOUT`; do not touch `request(...)`'s `timeout: float = 1.0` default or any other line (research.md D2; data-model.md entity 3)
++- [X] T005 [P] [US1] Apply the byte-for-byte identical edit (same constant placement, same comment, same call-site change) to `plugins/graphhelm-codex-hooks/hooks/session_hook.py` so the pair remains raw-byte-identical (FR-006); do not reformat or reorder anything else
++- [X] T006 [US1] Verify User Story 1: run quickstart.md C5 (`Select-String` for `END_ACK_TIMEOUT|timeout=3\.0|timeout: float = 1\.0` over both `session_hook.py` copies with the expected match shape above and value `2.0` satisfying `1.0 < END_ACK_TIMEOUT < 3.0`), confirm the two script hashes are equal again (quickstart.md C3), and run `python -m unittest plugins.graphhelm.hooks.test_session_hook` confirming 28 tests OK, exit 0, zero skips (FR-008, SC-003)
++
++**Checkpoint**: At this point, User Story 1 should be fully functional and testable independently — the end-acknowledgement wait is strictly inside the Codex cap in both installed copies, and unobserved-and-retryable semantics (FR-005) are unchanged per the suite.
++
++---
++
++## Phase 4: User Story 2 - Declared budgets match the effective host budgets (Priority: P2)
++
++**Goal**: Declare the three-second SessionEnd timeout in both Codex hook manifests (equal to the Codex host cap), leave every other entry untouched, leave the Claude manifest untouched, and keep both twin pairs byte-identical (FR-001, FR-002, FR-006, SC-001).
++
++**Independent Test**: Read all three hook manifests (quickstart.md C2): both `codex-hooks.json` declare SessionEnd `3`; every SessionStart timeout stays `5`; `plugins/graphhelm/hooks/hooks.json` keeps `5` on both events. Confirm C3 twin hashes (manifests now included alongside the scripts) and C4: `git diff --stat -- plugins/graphhelm/hooks/hooks.json` is empty and its SHA-256 equals the recorded baseline `5FA2B622D3B35AE4BD40E07B49F0C319BA630699A6C2813CE5E1A684E758FB4D`.
++
++### Implementation for User Story 2
++
++- [X] T007 [US2] In `plugins/graphhelm/hooks/codex-hooks.json`, change exactly the SessionEnd entry's `"timeout": 5` to `"timeout": 3` (JSON pointer `/hooks/SessionEnd/0/hooks/0/timeout`); preserve every other byte — key order, formatting, whitespace, trailing-newline state — and leave the SessionStart entry (`matcher`, `command`, `statusMessage`, `timeout: 5`, `additionalContextLimit: 512`) and the SessionEnd `type`/`command` untouched (contracts/codex-hooks-manifest.md normative content; research.md D3)
++- [X] T008 [P] [US2] Apply the byte-for-byte identical `"timeout": 5` → `"timeout": 3` SessionEnd edit to `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json` so the manifest pair remains raw-byte-identical (FR-006)
++- [X] T009 [US2] Verify User Story 2: run quickstart.md C2 (both Codex manifests SessionEnd = 3; Codex SessionStart = 5; Claude manifest 5/5), C3 (both manifest hashes equal; script hashes still equal), and C4 (Claude manifest `git diff --stat` empty + SHA-256 equals `5FA2B622D3B35AE4BD40E07B49F0C319BA630699A6C2813CE5E1A684E758FB4D`), then run `python -m unittest plugins.graphhelm.hooks.test_session_hook` confirming 28 tests OK including `test_codex_compatibility_package_keeps_one_hook_source` (the raw-byte twin-identity and version-pin observer)
++
++**Checkpoint**: At this point, User Stories 1 AND 2 should both work independently — declared, effective, and shipped budgets agree for every event/host pair, with twins identical.
++
++---
++
++## Phase 5: User Story 3 - The documented budget tells the true budget (Priority: P3)
++
++**Goal**: Correct the Session-hooks budget paragraph in `plugins/graphhelm/README.md` (lines 57–61) so its figures equal the shipped manifests and constant, removing the false "both hosts bound the SessionEnd command process to five seconds" claim (FR-007, SC-005).
++
++**Independent Test**: Read the corrected paragraph and compare every figure against quickstart.md C2 (Codex SessionEnd 3, Claude 5) and C5 (two-second end-ack wait); run the programmatic guard `Select-String -Path plugins/graphhelm/README.md -Pattern 'Both hosts bound'` and confirm **no match**.
++
++### Implementation for User Story 3
++
++- [X] T010 [US3] In `plugins/graphhelm/README.md`, edit exactly the two stale statements in the Session-hooks budget paragraph (lines 57–61): (1) change "SessionEnd allows one request up to three seconds of socket inactivity" to the corrected two-second bound, preserving the sentence's point that a durable acknowledgement slower than one second is still confirmed without another request; (2) replace "Both hosts bound the SessionEnd command process to five seconds." with the true split — Codex caps the SessionEnd command process at three seconds (which the Codex manifests declare) and Claude keeps its five-second bound, with the end-acknowledgement wait sized to complete inside the Codex cap; keep the neighbouring sentences ("SessionStart keeps its one-second socket inactivity limit." and "The socket limit alone is not a wall-time deadline. A timeout remains unobserved; it never becomes task success.") verbatim; English-only prose (research.md D4; data-model.md entity 5)
++- [X] T011 [US3] Verify User Story 3: run quickstart.md C6 — `Select-String -Path plugins/graphhelm/README.md -Pattern 'Both hosts bound'` returns no match, and every figure in the paragraph (three-second Codex SessionEnd cap, five-second Claude bound, two-second end-ack wait) agrees with C2/C5 results
++
++**Checkpoint**: All user stories should now be independently functional.
++
++---
++
++## Phase 6: Polish & Cross-Cutting Concerns
++
++**Purpose**: End-to-end validation sweep and final diff hygiene across all stories.
++
++- [X] T012 Run the full quickstart.md validation sweep from the repository root — S1 (`python -m unittest plugins.graphhelm.hooks.test_session_hook`, expected 28 tests OK, exit 0, zero skips), C2, C3, C4, C5, C6, and the optional S4 wall-time probe (`end-timing-probe.py` saved to a scratch location under `$env:TEMP`, removed afterward) — and report each item as passed, failed, or unobserved (never skip-as-pass), recording the Codex host-enforced three-second kill as unobserved locally (research.md D6)
++- [X] T013 [P] Final diff hygiene: run `git diff --check` (expect clean) and review the full branch diff, confirming exactly the five named artifact paths changed — `plugins/graphhelm/hooks/codex-hooks.json`, `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json`, `plugins/graphhelm/hooks/session_hook.py`, `plugins/graphhelm-codex-hooks/hooks/session_hook.py`, and the budget paragraph in `plugins/graphhelm/README.md` — with no other shipped artifact, plugin.json, schema, or Rust file touched (plan.md Out of Scope)
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies - can start immediately
++- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
++- **User Stories (Phases 3–5)**: All depend on Foundational phase completion
++  - The three stories touch disjoint files (scripts vs. manifests vs. README) and can proceed in parallel if staffed; sequentially in priority order (P1 → P2 → P3) otherwise
++  - Each story's verify task (T006, T009, T011) depends on that story's implementation tasks only
++- **Polish (Phase 6)**: Depends on all desired user stories being complete (T012 depends on T006, T009, T011)
++
++### User Story Dependencies
++
++- **User Story 1 (P1)**: Can start after Foundational (Phase 2) — no dependencies on other stories (owns the two `session_hook.py` copies)
++- **User Story 2 (P2)**: Can start after Foundational (Phase 2) — no dependencies on other stories (owns the two `codex-hooks.json` copies); its suite checkpoint (T009) also observes US1's changes but needs nothing from US1 to pass
++- **User Story 3 (P3)**: Can start after Foundational (Phase 2) — owns `plugins/graphhelm/README.md`; its figures must describe the post-US1/US2 state (three-second Codex cap, two-second end-ack wait), so *verify* US3 after US1 and US2 land, though the edit itself may be drafted independently
++
++### Within Each User Story
++
++- Models/entities: none — this feature modifies existing JSON manifests, an existing script, and an existing README paragraph; no new surface beyond the single `END_ACK_TIMEOUT` constant
++- Implementation before verification; verification (suite + inspection checks) completes the story
++
++### Parallel Opportunities
++
++- T001 and T002 in Phase 1 (different concerns: suite run vs. hash recording)
++- T004 and T005 in Phase 3 (twin script copies — identical edit, different files; re-check hash equality in T006)
++- T007 and T008 in Phase 4 (twin manifest copies — identical edit, different files; re-check hash equality in T009)
++- Entire user-story phases run concurrently with different workers, since no two stories touch the same file
++
++---
++
++## Parallel Example: User Story 1
++
++```text
++# Launch both twin-copy edits together:
++Task: "Add END_ACK_TIMEOUT = 2.0 + change call site in plugins/graphhelm/hooks/session_hook.py"          (T004)
++Task: "Apply the identical edit in plugins/graphhelm-codex-hooks/hooks/session_hook.py"                  (T005)
++
++# Then, once both land, verify as one step:
++Task: "Run C5 inspection + twin hash check + full hook suite"                                            (T006)
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup (baseline suite green, baseline hashes recorded)
++2. Complete Phase 2: Foundational (pre-edit twin identity confirmed)
++3. Complete Phase 3: User Story 1 (end-ack wait fits inside the Codex cap)
++4. **STOP and VALIDATE**: Run T006 — C5 inspection, twin hash equality, 28-test suite OK
++5. This alone fixes the defect: the acknowledgement can no longer be killed mid-wait by the three-second cap
++
++### Incremental Delivery
++
++1. Complete Setup + Foundational → baseline confirmed
++2. Add User Story 1 → validate via T006 → MVP (the actual defect fix)
++3. Add User Story 2 → validate via T009 → declared budgets become truthful (FR-001/FR-002, SC-001)
++4. Add User Story 3 → validate via T011 → documentation tells the true budget (FR-007, SC-005)
++5. Complete Polish (T012, T013) → full success-criteria coverage reported with passed/failed/unobserved separated
++
++### Notes
++
++- [P] tasks = different files, no dependencies
++- [Story] label maps task to specific user story for traceability
++- Each user story is independently completable and testable; each verify task names its own observer
++- Commit after each task or logical group; keep commits small and independently buildable (AGENTS.md Git rules)
++- Stop at any checkpoint to validate the story independently; never run the workspace-wide Rust gate for this feature (plan.md: no Rust code changes)
++- Unobserved-and-reported (JPD): the real Codex host killing a timed-out SessionEnd process cannot be reproduced in this checkout — report it as unobserved, with the S4 wall-time probe as the closest local evidence
++- Avoid: reformatting the twin JSON files, touching `hooks.json` or any `plugin.json`, adding dependencies, new test files, or TODO/stub lines

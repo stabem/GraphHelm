@@ -1,0 +1,2069 @@
+diff --git a/.specify/feature.json b/.specify/feature.json
+new file mode 100644
+index 0000000..72ba549
+--- /dev/null
++++ b/.specify/feature.json
+@@ -0,0 +1,3 @@
++{
++  "feature_directory": "specs/001-bench"
++}
+diff --git a/.specify/templates/constitution-template.md b/.specify/templates/constitution-template.md
+new file mode 100644
+index 0000000..a4670ff
+--- /dev/null
++++ b/.specify/templates/constitution-template.md
+@@ -0,0 +1,50 @@
++# [PROJECT_NAME] Constitution
++<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
++
++## Core Principles
++
++### [PRINCIPLE_1_NAME]
++<!-- Example: I. Library-First -->
++[PRINCIPLE_1_DESCRIPTION]
++<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
++
++### [PRINCIPLE_2_NAME]
++<!-- Example: II. CLI Interface -->
++[PRINCIPLE_2_DESCRIPTION]
++<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
++
++### [PRINCIPLE_3_NAME]
++<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
++[PRINCIPLE_3_DESCRIPTION]
++<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
++
++### [PRINCIPLE_4_NAME]
++<!-- Example: IV. Integration Testing -->
++[PRINCIPLE_4_DESCRIPTION]
++<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
++
++### [PRINCIPLE_5_NAME]
++<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
++[PRINCIPLE_5_DESCRIPTION]
++<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
++
++## [SECTION_2_NAME]
++<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
++
++[SECTION_2_CONTENT]
++<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
++
++## [SECTION_3_NAME]
++<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
++
++[SECTION_3_CONTENT]
++<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
++
++## Governance
++<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
++
++[GOVERNANCE_RULES]
++<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
++
++**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
++<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+diff --git a/.specify/templates/plan-template.md b/.specify/templates/plan-template.md
+new file mode 100644
+index 0000000..36f2eab
+--- /dev/null
++++ b/.specify/templates/plan-template.md
+@@ -0,0 +1,113 @@
++# Implementation Plan: [FEATURE]
++
++**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
++
++**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
++
++**Note**: This template is filled in by the `__SPECKIT_COMMAND_PLAN__` command; its definition describes the execution workflow.
++
++## Summary
++
++[Extract from feature spec: primary requirement + technical approach from research]
++
++## Technical Context
++
++<!--
++  ACTION REQUIRED: Replace the content in this section with the technical details
++  for the project. The structure here is presented in advisory capacity to guide
++  the iteration process.
++-->
++
++**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]
++
++**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]
++
++**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
++
++**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]
++
++**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
++
++**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]
++
++**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]
++
++**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]
++
++**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++[Gates determined based on constitution file]
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/[###-feature]/
++├── plan.md              # This file (__SPECKIT_COMMAND_PLAN__ command output)
++├── research.md          # Phase 0 output (__SPECKIT_COMMAND_PLAN__ command)
++├── data-model.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── quickstart.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── contracts/           # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++└── tasks.md             # Phase 2 output (__SPECKIT_COMMAND_TASKS__ command - NOT created by __SPECKIT_COMMAND_PLAN__)
++```
++
++### Source Code (repository root)
++<!--
++  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
++  for this feature. Delete unused options and expand the chosen structure with
++  real paths (e.g., apps/admin, packages/something). The delivered plan must
++  not include Option labels.
++-->
++
++```text
++# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
++src/
++├── models/
++├── services/
++├── cli/
++└── lib/
++
++tests/
++├── contract/
++├── integration/
++└── unit/
++
++# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
++backend/
++├── src/
++│   ├── models/
++│   ├── services/
++│   └── api/
++└── tests/
++
++frontend/
++├── src/
++│   ├── components/
++│   ├── pages/
++│   └── services/
++└── tests/
++
++# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
++api/
++└── [same as backend above]
++
++ios/ or android/
++└── [platform-specific structure: feature modules, UI flows, platform tests]
++```
++
++**Structure Decision**: [Document the selected structure and reference the real
++directories captured above]
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++| Violation | Why Needed | Simpler Alternative Rejected Because |
++|-----------|------------|-------------------------------------|
++| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
++| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+diff --git a/.specify/templates/spec-template.md b/.specify/templates/spec-template.md
+new file mode 100644
+index 0000000..ceb2877
+--- /dev/null
++++ b/.specify/templates/spec-template.md
+@@ -0,0 +1,131 @@
++# Feature Specification: [FEATURE NAME]
++
++**Feature Branch**: `[###-feature-name]`
++
++**Created**: [DATE]
++
++**Status**: Draft
++
++**Input**: User description: "$ARGUMENTS"
++
++## User Scenarios & Testing *(mandatory)*
++
++<!--
++  IMPORTANT: User stories should be PRIORITIZED as user journeys ordered by importance.
++  Each user story/journey must be INDEPENDENTLY TESTABLE - meaning if you implement just ONE of them,
++  you should still have a viable MVP (Minimum Viable Product) that delivers value.
++
++  Assign priorities (P1, P2, P3, etc.) to each story, where P1 is the most critical.
++  Think of each story as a standalone slice of functionality that can be:
++  - Developed independently
++  - Tested independently
++  - Deployed independently
++  - Demonstrated to users independently
++-->
++
++### User Story 1 - [Brief Title] (Priority: P1)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently - e.g., "Can be fully tested by [specific action] and delivers [specific value]"]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++2. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 2 - [Brief Title] (Priority: P2)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 3 - [Brief Title] (Priority: P3)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++[Add more user stories as needed, each with an assigned priority]
++
++### Edge Cases
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right edge cases.
++-->
++
++- What happens when [boundary condition]?
++- How does system handle [error scenario]?
++
++## Requirements *(mandatory)*
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right functional requirements.
++-->
++
++### Functional Requirements
++
++- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
++- **FR-002**: System MUST [specific capability, e.g., "validate email addresses"]
++- **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
++- **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
++- **FR-005**: System MUST [behavior, e.g., "log all security events"]
++
++*Example of marking unclear requirements:*
++
++- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
++- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
++
++### Key Entities *(include if feature involves data)*
++
++- **[Entity 1]**: [What it represents, key attributes without implementation]
++- **[Entity 2]**: [What it represents, relationships to other entities]
++
++## Success Criteria *(mandatory)*
++
++<!--
++  ACTION REQUIRED: Define measurable success criteria.
++  These must be technology-agnostic and measurable.
++-->
++
++### Measurable Outcomes
++
++- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
++- **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
++- **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
++- **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
++
++## Assumptions
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right assumptions based on reasonable defaults
++  chosen when the feature description did not specify certain details.
++-->
++
++- [Assumption about target users, e.g., "Users have stable internet connectivity"]
++- [Assumption about scope boundaries, e.g., "Mobile support is out of scope for v1"]
++- [Assumption about data/environment, e.g., "Existing authentication system will be reused"]
++- [Dependency on existing system/service, e.g., "Requires access to the existing user profile API"]
+diff --git a/.specify/templates/tasks-template.md b/.specify/templates/tasks-template.md
+new file mode 100644
+index 0000000..7fff087
+--- /dev/null
++++ b/.specify/templates/tasks-template.md
+@@ -0,0 +1,252 @@
++---
++
++description: "Task list template for feature implementation"
++---
++
++# Tasks: [FEATURE NAME]
++
++**Input**: Design documents from `/specs/[###-feature-name]/`
++
++**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
++
++**Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
++
++**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies)
++- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
++- Include exact file paths in descriptions
++
++## Path Conventions
++
++- **Single project**: `src/`, `tests/` at repository root
++- **Web app**: `backend/src/`, `frontend/src/`
++- **Mobile**: `api/src/`, `ios/src/` or `android/src/`
++- Paths shown below assume single project - adjust based on plan.md structure
++
++<!--
++  ============================================================================
++  IMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.
++
++  The __SPECKIT_COMMAND_TASKS__ command MUST replace these with actual tasks based on:
++  - User stories from spec.md (with their priorities P1, P2, P3...)
++  - Feature requirements from plan.md
++  - Entities from data-model.md
++  - Endpoints from contracts/
++
++  Tasks MUST be organized by user story so each story can be:
++  - Implemented independently
++  - Tested independently
++  - Delivered as an MVP increment
++
++  DO NOT keep these sample tasks in the generated tasks.md file.
++  ============================================================================
++-->
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Project initialization and basic structure
++
++- [ ] T001 Create project structure per implementation plan
++- [ ] T002 Initialize [language] project with [framework] dependencies
++- [ ] T003 [P] Configure linting and formatting tools
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
++
++**⚠️ CRITICAL**: No user story work can begin until this phase is complete
++
++Examples of foundational tasks (adjust based on your project):
++
++- [ ] T004 Setup database schema and migrations framework
++- [ ] T005 [P] Implement authentication/authorization framework
++- [ ] T006 [P] Setup API routing and middleware structure
++- [ ] T007 Create base models/entities that all stories depend on
++- [ ] T008 Configure error handling and logging infrastructure
++- [ ] T009 Setup environment configuration management
++
++**Checkpoint**: Foundation ready - user story implementation can now begin in parallel
++
++---
++
++## Phase 3: User Story 1 - [Title] (Priority: P1) 🎯 MVP
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 1 (OPTIONAL - only if tests requested) ⚠️
++
++> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
++
++- [ ] T010 [P] [US1] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T011 [P] [US1] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 1
++
++- [ ] T012 [P] [US1] Create [Entity1] model in src/models/[entity1].py
++- [ ] T013 [P] [US1] Create [Entity2] model in src/models/[entity2].py
++- [ ] T014 [US1] Implement [Service] in src/services/[service].py (depends on T012, T013)
++- [ ] T015 [US1] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T016 [US1] Add validation and error handling
++- [ ] T017 [US1] Add logging for user story 1 operations
++
++**Checkpoint**: At this point, User Story 1 should be fully functional and testable independently
++
++---
++
++## Phase 4: User Story 2 - [Title] (Priority: P2)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 2 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T018 [P] [US2] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T019 [P] [US2] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 2
++
++- [ ] T020 [P] [US2] Create [Entity] model in src/models/[entity].py
++- [ ] T021 [US2] Implement [Service] in src/services/[service].py
++- [ ] T022 [US2] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T023 [US2] Integrate with User Story 1 components (if needed)
++
++**Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
++
++---
++
++## Phase 5: User Story 3 - [Title] (Priority: P3)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 3 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T024 [P] [US3] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T025 [P] [US3] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 3
++
++- [ ] T026 [P] [US3] Create [Entity] model in src/models/[entity].py
++- [ ] T027 [US3] Implement [Service] in src/services/[service].py
++- [ ] T028 [US3] Implement [endpoint/feature] in src/[location]/[file].py
++
++**Checkpoint**: All user stories should now be independently functional
++
++---
++
++[Add more user story phases as needed, following the same pattern]
++
++---
++
++## Phase N: Polish & Cross-Cutting Concerns
++
++**Purpose**: Improvements that affect multiple user stories
++
++- [ ] TXXX [P] Documentation updates in docs/
++- [ ] TXXX Code cleanup and refactoring
++- [ ] TXXX Performance optimization across all stories
++- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
++- [ ] TXXX Security hardening
++- [ ] TXXX Run quickstart.md validation
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies - can start immediately
++- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
++- **User Stories (Phase 3+)**: All depend on Foundational phase completion
++  - User stories can then proceed in parallel (if staffed)
++  - Or sequentially in priority order (P1 → P2 → P3)
++- **Polish (Final Phase)**: Depends on all desired user stories being complete
++
++### User Story Dependencies
++
++- **User Story 1 (P1)**: Can start after Foundational (Phase 2) - No dependencies on other stories
++- **User Story 2 (P2)**: Can start after Foundational (Phase 2) - May integrate with US1 but should be independently testable
++- **User Story 3 (P3)**: Can start after Foundational (Phase 2) - May integrate with US1/US2 but should be independently testable
++
++### Within Each User Story
++
++- Tests (if included) MUST be written and FAIL before implementation
++- Models before services
++- Services before endpoints
++- Core implementation before integration
++- Story complete before moving to next priority
++
++### Parallel Opportunities
++
++- All Setup tasks marked [P] can run in parallel
++- All Foundational tasks marked [P] can run in parallel (within Phase 2)
++- Once Foundational phase completes, all user stories can start in parallel (if team capacity allows)
++- All tests for a user story marked [P] can run in parallel
++- Models within a story marked [P] can run in parallel
++- Different user stories can be worked on in parallel by different team members
++
++---
++
++## Parallel Example: User Story 1
++
++```bash
++# Launch all tests for User Story 1 together (if tests requested):
++Task: "Contract test for [endpoint] in tests/contract/test_[name].py"
++Task: "Integration test for [user journey] in tests/integration/test_[name].py"
++
++# Launch all models for User Story 1 together:
++Task: "Create [Entity1] model in src/models/[entity1].py"
++Task: "Create [Entity2] model in src/models/[entity2].py"
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup
++2. Complete Phase 2: Foundational (CRITICAL - blocks all stories)
++3. Complete Phase 3: User Story 1
++4. **STOP and VALIDATE**: Test User Story 1 independently
++5. Deploy/demo if ready
++
++### Incremental Delivery
++
++1. Complete Setup + Foundational → Foundation ready
++2. Add User Story 1 → Test independently → Deploy/Demo (MVP!)
++3. Add User Story 2 → Test independently → Deploy/Demo
++4. Add User Story 3 → Test independently → Deploy/Demo
++5. Each story adds value without breaking previous stories
++
++### Parallel Team Strategy
++
++With multiple developers:
++
++1. Team completes Setup + Foundational together
++2. Once Foundational is done:
++   - Developer A: User Story 1
++   - Developer B: User Story 2
++   - Developer C: User Story 3
++3. Stories complete and integrate independently
++
++---
++
++## Notes
++
++- [P] tasks = different files, no dependencies
++- [Story] label maps task to specific user story for traceability
++- Each user story should be independently completable and testable
++- Verify tests fail before implementing
++- Commit after each task or logical group
++- Stop at any checkpoint to validate story independently
++- Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
+diff --git a/docs/acceptance/windows-arm64-2026-10-26.md b/docs/acceptance/windows-arm64-2026-10-26.md
+new file mode 100644
+index 0000000..e15ba97
+--- /dev/null
++++ b/docs/acceptance/windows-arm64-2026-10-26.md
+@@ -0,0 +1,154 @@
++# Windows 11 ARM64 verification — 2026-10-26
++
++The ARM64 half of the verification feature for this repository's CLI: install
++`graphhelm` through the documented build-from-source path on a genuine Windows 11 ARM64
++(Snapdragon) host and reach a clean `graphhelm --version` from a native ARM64 binary
++(exit code 0, exactly one line shaped `graphhelm <version>`, nothing on stderr). This
++attempt could not run its main observer: **no genuine Windows 11 ARM64 device was
++available at verification time**, so the record below closes as
++**`OBSERVER_MISSING`** rather than claiming the platform. The x86-64 authoring host is
++documented with its full redundant signal set and an explicit negative-control run, so a
++later reader can see why that outcome is not an ARM64 verification and what completes it.
++
++| | |
++|---|---|
++| Commit under test | `708cd9075ef496d9c6add3ebdcf9055956928e10` (branch `main`; HEAD of this checkout at session start) — no binary was built against it on this host; the executed binary is a preinstalled preview (named in the negative-control block) |
++| Host | Gigabyte X670 AORUS ELITE AX desktop, Microsoft Windows 11 Pro, build `10.0.26200`, AMD Ryzen 9 9950X, **x86-64 by every signal in the host-identity block below** — not a Windows-on-ARM device |
++| Source | this task checkout at the commit above (branch `b`: no device to clone onto; no clone step was run) |
++| Toolchain | default host triple `x86_64-pc-windows-msvc`; cargo 1.97.1 (c980f4866 2026-06-30), active via the checkout's `rust-toolchain.toml`; installed targets `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu` (no `aarch64*`); VS 2022 BuildTools MSVC 14.44.35207 with host toolsets `Hostx64` / `Hostx86` only |
++| Started / ended | `2026-10-26T22:42:26Z` / `2026-10-26T22:48:33Z` (UTC) |
++| Result | **`OBSERVER_MISSING`** — no genuine Windows 11 ARM64 (Snapdragon) device available; the ARM64 runtime promise remains unobserved and the platform stays unverified in the guide's wording |
++| Secrets | none involved in this run; the sweep at the end confirms the transcript carries no 64-hex string |
++| Cost | none — no paid infrastructure |
++
++## What was verified, and what was not
++
++**Verified on this host:**
++
++- The host's x86-64 identity, from the redundant signal set below (agreement of the set,
++  not any single query).
++- The negative control of the version contract on the preinstalled x86-64 preview
++  binary: exit code 0, exactly one stdout line shaped `graphhelm <version>`, empty stderr —
++  and the installed image's PE COFF machine reads `0x8664` (x86-64).
++- That the documented prerequisites check for the Windows build path
++  (`vswhere -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64`) answers as
++  written on this machine.
++
++**Not verified (and therefore still unclaimed):**
++
++- The ARM64 runtime promise — install + native `--version` on Windows 11 ARM64 — has no
++  observation here. Reasons this machine cannot serve, each measured rather than assumed:
++  1. x86-64 by all four signals (`PROCESSOR_ARCHITECTURE=AMD64`, `SystemType=x64-based PC`,
++     CPU model AMD Ryzen 9 9950X, rustup host triple `x86_64-pc-windows-msvc`);
++  2. no `aarch64*` Rust target is installed, so no ARM64 toolchain half exists locally;
++  3. the VS BuildTools MSVC 14.44.35207 installation carries only `Hostx64` / `Hostx86`
++     toolsets — no ARM64 host linker;
++  4. Windows 11 Pro on x86-64 does not emulate ARM64 at all, so no ARM64 image can even
++     execute on this machine — an emulator or a cross-build would be a proxy, and this
++     repository does not count a proxy as proof of the ARM64 promise.
++- A clean x86-64 result (measured below) explicitly **does not satisfy** the ARM64
++  confirmation; it is recorded so a later reader cannot mistake it for one.
++
++**Supersession.** When a genuine device runs the sequence and passes, that dated
++transcript becomes the authoritative record for (Windows 11, ARM64), links back to this
++one, and flips the guide's wording in the same follow-up change. This record is never
++rewritten; supersession replaces authority, not content.
++
++## Host identity (the redundant signal set, verbatim)
++
++All four readings, taken before anything else was run. Agreement of the set is what
++counts: a lone WMI architecture code has already been measured to mislead on exactly this
++machine (it reports code 9 — the ARM64 code — while every other signal says x86-64), so
++it is included for completeness and treated as noise.
++
++```
++PS> $env:PROCESSOR_ARCHITECTURE
++AMD64
++
++PS> (Get-CimInstance Win32_ComputerSystem).SystemType
++x64-based PC
++
++PS> Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name
++AMD Ryzen 9 9950X 16-Core Processor
++
++PS> (Get-CimInstance Win32_Processor).Architecture
++9   # the ARM64 code, contradicting every other signal above — recorded, not believed
++
++PS> rustup show
++Default host: x86_64-pc-windows-msvc
++```
++
++Expected for a genuine ARM64 host would have been `ARM64` / `ARM64-based PC` / a
++Snapdragon part / `aarch64-pc-windows-msvc`. Any one x86-64 reading disqualifies the
++device; this host is x86-64 by all four.
++
++## Negative control: the version sequence on the x86-64 host (not an ARM64 verification)
++
++The contract command, captured verbatim with its exit code:
++
++```
++PS> graphhelm --version; Write-Output "exit=$LASTEXITCODE"
++graphhelm 0.1.1
++exit=0
++```
++
++Stderr was redirected to a file and measured: 0 bytes. The printed number is **recorded,
++never asserted**: it comes from a preinstalled preview binary resolved from PATH
++(`%USERPROFILE%\.cargo\bin\graphhelm.exe`), not from a build of the commit under test —
++which is precisely why acceptance is on the shape, not a pinned digit.
++
++The executed image's own architecture, read from the PE header:
++
++```
++PS> $exe = (Get-Command graphhelm).Source
++PS> $b = [System.IO.File]::ReadAllBytes($exe)
++PS> [BitConverter]::ToUInt16($b, [BitConverter]::ToInt32($b, 60) + 4)
++34404   # decimal — 0x8664, an x86-64 image
++```
++
++`0xAA64` would have been required for the ARM64 claim; `0x8664` fails it even though the
++version line was clean.
++
++## Toolchain state (why no local ARM64 route exists either)
++
++```
++PS> cargo +1.97.1 --version
++cargo 1.97.1 (c980f4866 2026-06-30)
++
++PS> rustup target list --installed
++x86_64-pc-windows-msvc
++x86_64-unknown-linux-gnu
++
++# C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin
++# contains exactly: Hostx64, Hostx86   (no ARM64 host toolset)
++
++PS> & 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe' -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
++C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools
++```
++
++A cross-compile from here to `aarch64-pc-windows-msvc` and copying the `.exe` over would
++need the ARM64 target plus an ARM64 link toolchain (neither installed) and would still
++leave the *running* proof to a device — a proxy at both the build and the run step.
++
++## How this verification completes
++
++On a genuine Windows 11 ARM64 (Snapdragon) laptop: establish the host identity with the
++same four readings before installing anything, install the documented prerequisites
++(Visual Studio Build Tools 2022 with the "Desktop development with C++" workload for the
++native ARM64 MSVC linker, rustup with the pinned 1.97.1 toolchain — rustup defaults to
++`aarch64-pc-windows-msvc` there), build exactly as the guide says
++(`cargo +1.97.1 install --locked --path apps/cli`), run `graphhelm --version`, read the
++installed image's PE machine expecting `0xAA64`, and write a dated transcript in this
++format with Result **pass**. All of those steps are documented in
++[`docs/install/GETTING_STARTED.md`](../install/GETTING_STARTED.md) §1, including the
++platform status of this record until the pass lands.
++
++## Sweep
++
++```
++PS> Select-String -Path .\docs\acceptance\windows-arm64-2026-10-26.md -Pattern '[0-9a-f]{64}'
++(no matches)
++```
++
++No token or key appears anywhere in this record; the sweep above found no 64-hex string
++in the finished file.
+diff --git a/docs/install/GETTING_STARTED.md b/docs/install/GETTING_STARTED.md
+index 9e9aaef..1fcbbb0 100644
+--- a/docs/install/GETTING_STARTED.md
++++ b/docs/install/GETTING_STARTED.md
+@@ -35,6 +35,7 @@ a recipe, not part of the historical executed transcripts cited above.
+ | | Needed for | Check |
+ |---|---|---|
+ | Rust `1.97.1` (pinned) with `rustfmt` and `clippy` | building the binary | `cargo +1.97.1 --version` |
++| Visual Studio Build Tools 2022 with the "Desktop development with C++" workload | building the binary **on Windows** (provides the MSVC linker; on an ARM64 host the native ARM64 toolset) | `"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64` prints the install path |
+ | git | the clone, and `init`'s `.gitignore` step | `git --version` |
+ | Node 22+ and npm | **only** the Studio (sections 4 and 5) | `node --version` |
+ | PowerShell (Windows) or bash (Linux/macOS) | running the commands | — |
+@@ -88,8 +89,15 @@ winget install --id OpenJS.NodeJS.LTS --exact --source winget --accept-source-ag
+ The [0.1.0 CLI preview release](../releases/0.1.0.md) provides verified Windows and Ubuntu x86-64
+ archives, avoiding the Rust build. Download the matching archive and its `SHA256SUMS.txt`, check
+ the digest, extract it, and add the binary's directory to `PATH`. You still need the repository
+-for this guide's example graphs, Studio, and installation assets. On macOS or another platform,
+-build from source using the commands below.
++for this guide's example graphs, Studio, and installation assets. On macOS, Windows ARM64, or
++another platform, build from source using the commands below.
++
++**Windows 11 ARM64 (Snapdragon): documented, not yet verified.** No release publishes an ARM64
++archive, so building from source is the only route to a native ARM64 binary; the exact steps are
++the Windows 11 ARM64 block below. That path has not been executed end to end on a genuine Windows
++11 ARM64 device as of 2026-10-26 — a missing observer, recorded with its x86-64 negative control
++in [`docs/acceptance/windows-arm64-2026-10-26.md`](../acceptance/windows-arm64-2026-10-26.md). Until
++a passing record exists, Windows 11 ARM64 is not represented as verified anywhere on this page.
+ 
+ Clone over HTTPS using the command below; a read-only clone needs no GitHub account. SSH cloning
+ requires an authenticated key. Contributors need a GitHub account to open issues and pull requests.
+@@ -108,12 +116,36 @@ cargo +1.97.1 install --locked --path apps/cli
+ graphhelm --version
+ ```
+ 
+-Expected last line:
++**Windows 11 ARM64, build from source.** There is no ARM64 archive to download; the block below is
++the complete path on a Windows 11 ARM64 host. The C++ workload from Prerequisites supplies the
++native ARM64 MSVC linker the release build needs; rustup on an ARM64 host defaults to
++`aarch64-pc-windows-msvc`, so no target step is required, and the build command is the same as
++above:
++
++```powershell
++winget install --id Microsoft.VisualStudio.2022.BuildTools --exact --source winget --accept-source-agreements --accept-package-agreements
++# then enable the "Desktop development with C++" workload in that installation (native ARM64 toolset)
++winget install --id Rustlang.Rustup --exact --source winget --accept-source-agreements --accept-package-agreements
++$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
++rustup toolchain install 1.97.1 --profile minimal --component rustfmt clippy
++git clone https://github.com/stabem/GraphHelm.git
++cd GraphHelm
++cargo +1.97.1 install --locked --path apps/cli
++graphhelm --version
++```
++
++Expected last line, on every platform: one line shaped
+ 
+ ```
+-graphhelm 0.1.0
++graphhelm <version>
+ ```
+ 
++where `<version>` is the version of the tree you cloned (a checkout of this release line prints
++`0.1.0`); the number tracks the tag you clone, so a different checkout prints its own number and
++the contract is the shape — one line, exit code 0 — not a pinned digit. If your terminal shows a
++number you did not expect, an older installed binary may still be first on `PATH`: check
++`(Get-Command graphhelm).Source` (Windows) or `which graphhelm` (Linux/macOS) before rebuilding.
++
+ `cargo install` puts `graphhelm` on your PATH (`~/.cargo/bin`). If you would rather not install,
+ `cargo +1.97.1 build --locked -p graphhelm-cli` leaves the binary at `target/debug/graphhelm`
+ (`.exe` on Windows); use that path wherever this page says `graphhelm`, and pass it to
+diff --git a/specs/001-bench/checklists/requirements.md b/specs/001-bench/checklists/requirements.md
+new file mode 100644
+index 0000000..e19215d
+--- /dev/null
++++ b/specs/001-bench/checklists/requirements.md
+@@ -0,0 +1,40 @@
++# Specification Quality Checklist: Windows 11 ARM64 CLI Install Verification
++
++**Purpose**: Validate specification completeness and quality before proceeding to planning
++**Created**: 2026-10-26
++**Feature**: [spec.md](../spec.md)
++
++## Content Quality
++
++- [x] No implementation details (languages, frameworks, APIs)
++- [x] Focused on user value and business needs
++- [x] Written for non-technical stakeholders
++- [x] All mandatory sections completed
++
++## Requirement Completeness
++
++- [x] No [NEEDS CLARIFICATION] markers remain
++- [x] Requirements are testable and unambiguous
++- [x] Success criteria are measurable
++- [x] Success criteria are technology-agnostic (no implementation details)
++- [x] All acceptance scenarios are defined
++- [x] Edge cases are identified
++- [x] Scope is clearly bounded
++- [x] Dependencies and assumptions identified
++
++## Feature Readiness
++
++- [x] All functional requirements have clear acceptance criteria
++- [x] User scenarios cover primary flows
++- [x] Feature meets measurable outcomes defined in Success Criteria
++- [x] No implementation details leak into specification
++
++## Notes
++
++- **Iteration 1 — all items pass.** The spec was reviewed line by line against each item; no revision iterations were required.
++- **[NEEDS CLARIFICATION] policy**: zero markers were left. This run is unattended with a directive to make reasonable assumptions and continue, so every open decision was resolved and recorded in `Assumptions` rather than posed as a question:
++  - *Verified install path for ARM64* → build-from-source (the only path the current release offers for non-x86-64 hosts); a prebuilt ARM64 archive is explicitly out of scope. See Assumptions ("Install path is build-from-source") and Out of Scope.
++  - *Definition of "verified"* → adopted the repository's existing standard (commands actually executed on-platform, transcript retained), consistent with how the guide evidences x86-64/Ubuntu. See Assumptions.
++- **"No implementation details" boundary**: because this feature verifies a developer-facing CLI, its acceptance criteria are inherently about *observable contract* — exit code 0, one-line `graphhelm <version>` output, and that the produced binary is native to an ARM64 host (FR-001..FR-003). Those describe *what must be true when observed*, not how the tool is implemented. Low-level observer hints (Rust host triple `aarch64`/PE machine, WMI/OS fields) appear only in Edge Cases and Assumptions as evidence for distinguishing a genuine ARM64 host from an emulated one — not as implementation prescriptions for the change itself.
++- **Success criteria are technology-agnostic**: expressed as user/business outcomes (single guided pass, 100% success, 100% reader awareness, 0 documentation contradictions, reproducible transcript), not internal metrics.
++- **Observation recorded, not over-claimed**: on the authoring host (Windows 11 Pro build 26200, x86-64 AMD Ryzen 9950X) `graphhelm --version` was observed to exit 0 and print `graphhelm 0.1.1`, but the installed binary is x86-64 (PE machine `0x8664`). This is captured in Assumptions so planning/implementation targets a *genuine* Windows 11 ARM64 device and does not mistake an x86-64 run for the ARM64 confirmation (FR-007). If no such device is available at verification time, the outcome is a recorded missing observer, not a "verified" claim.
+diff --git a/specs/001-bench/contracts/verified-platform-docs.md b/specs/001-bench/contracts/verified-platform-docs.md
+new file mode 100644
+index 0000000..6229b25
+--- /dev/null
++++ b/specs/001-bench/contracts/verified-platform-docs.md
+@@ -0,0 +1,59 @@
++# Contract: verified-platforms statements in documentation
++
++**Feature**: [spec.md](../spec.md) · **Date**: 2026-10-26 · **Stage**: Phase 1 (`speckit.plan`)
++
++External interface in play: the getting-started page that a reader consults **before**
++installing, and the release downloads listing it must agree with. Normative source: spec
++FR-004, FR-005, FR-006, FR-007 and success criteria SC-003, SC-004.
++
++## D1 — The guide names platforms verifiably
++
++`docs/install/GETTING_STARTED.md` must let a reader, before installing, identify which
++platforms are **verified** (SC-003). For this feature, after implementation:
++
++- Windows 11 ARM64 is present among the platform/verification statements, with the exact
++  build-from-source steps a developer on that platform follows (FR-004) — or, in the
++  missing-observer branch, present as *not yet verified* with an honest status line and a
++  pointer to the record (FR-007).
++- The steps reference only prerequisites that are actually documented (including the MSVC
++  C++ toolset for ARM64, research R2), so the path can be followed in a single guided pass
++  with zero undocumented detours (SC-001).
++
++## D2 — Consistency with the release downloads listing (FR-005, SC-004)
++
++Zero contradictions between:
++
++- `docs/install/GETTING_STARTED.md`'s platform/verification statements, and
++- `docs/releases/0.1.0.md`'s Downloads table (`windows-x86_64`, `linux-x86_64`,
++  `SHA256SUMS.txt`).
++
++Hard rules:
++
++1. The guide may claim a **prebuilt download** for an OS + arch only if the release
++   listing contains that archive. No ARM64 archive exists, so no ARM64 download claim may
++   appear anywhere (the release notes' existing "For macOS, ARM, and other hosts, build
++   from source" line already satisfies this; keep it true).
++2. "Verified" for ARM64 is tied to the *build-from-source* method, never to an archive.
++3. If the two documents are found to disagree during implementation, the fix keeps both
++   consistent in the same change (one review, one merge); a contradiction that survives
++   the merge is a defect, not a known issue.
++
++## D3 — Every "verified" claim has an auditable transcript (FR-006)
++
++- The claim links to a dated record under `docs/acceptance/` (the ARM64 one will be
++  `windows-arm64-<YYYY-MM-DD>.md`), in the same citation style as the page's existing
++  clean-host records.
++- The record follows the format fixed in [data-model.md](../data-model.md): header table
++  (commit under test, host, toolchain, started/ended, result, secrets, cost), redundant
++  host-identity signals, binary PE-machine read, verbatim `graphhelm --version` output,
++  secrets as digests only.
++- A `verified` status is allowed only with a record whose Result is `pass`; when no
++  genuine ARM64 device was available, the record exists **instead**, names the missing
++  observer, and the platform stays unverified in the wording (FR-007, US3 scenario 2).
++- Records are append-only: supersession links to a newer transcript; older transcripts
++  are never rewritten.
++
++## D4 — Language
++
++English only, per the repository documentation rule — including the new transcript and
++any guide wording this feature adds.
+diff --git a/specs/001-bench/contracts/version-command.md b/specs/001-bench/contracts/version-command.md
+new file mode 100644
+index 0000000..9669de1
+--- /dev/null
++++ b/specs/001-bench/contracts/version-command.md
+@@ -0,0 +1,51 @@
++# Contract: `graphhelm --version` on a verified host
++
++**Feature**: [spec.md](../spec.md) · **Date**: 2026-10-26 · **Stage**: Phase 1 (`speckit.plan`)
++
++This is the observable contract the ARM64 verification exercises. It describes what a
++reader can *see* when the feature works; it is not an implementation prescription.
++Normative source: spec FR-002, FR-003 and User Story 1 acceptance scenarios 1–3.
++
++## Invocation
++
++```powershell
++graphhelm --version
++```
++
++Bare invocation of the executable resolved through `PATH`; no subcommand, no flags.
++
++## Observable behavior (all must hold)
++
++| # | Aspect | Contract |
++|---|---|---|
++| C1 | Exit code | `0` |
++| C2 | stdout | Exactly **one** line matching `graphhelm <version>`, where `<version>` is semver-shaped (e.g. `0.1.0`, `0.1.1`). The exact number is observed and recorded, never asserted (research R5: the workspace version, the `VERSION` file, and an installed preview already disagree) |
++| C3 | stderr | Empty |
++| C4 | Interactivity | No prompt, no progress output; the command returns immediately |
++| C5 | Environment | Works offline on the verified host after installation; no service, account, or network dependency |
++
++## Architecture contract (the part that makes it the *ARM64* verification)
++
++| # | Signal | Source | Expectation on a genuine Windows 11 ARM64 host |
++|---|---|---|---|
++| A1 | Host process env | `$env:PROCESSOR_ARCHITECTURE` | `ARM64` |
++| A2 | Host system type | `Win32_ComputerSystem.SystemType` | `ARM64-based PC` |
++| A3 | Toolchain host triple | `rustup show` | default host `aarch64-pc-windows-msvc` |
++| A4 | CPU model string | `Win32_Processor.Name` | an ARM/Snapdragon part (supporting signal only — a lone WMI architecture code has been observed to mislead; research R3) |
++| A5 | Binary image type | PE COFF machine field of the resolved `graphhelm.exe` | `0xAA64` (ARM64). Anything else — in particular `0x8664` — fails FR-003 even if C1–C5 pass |
++
++**Emulation rule** (spec edge case): A1–A4 establish the *host* is genuinely ARM64 and A5
++establishes the *binary* is native. Both halves are required; an x86-64 image running
++under emulation satisfies none of the ARM64 acceptance even when it prints the right
++version line.
++
++## Negative control (User Story 1, scenario 3)
++
++The same command run on an x86-64 Windows host — expected to satisfy C1–C5 with A5 =
++`0x8664` — is explicitly **not** an ARM64 verification. Quickstart Scenario 2 runs it and
++records it as such, so a later reader cannot confuse the two outcomes.
++
++## Out of scope for this contract
++
++Anything beyond `--version`: graph commands, `serve`, Studio, MCP. Per the spec's Out of
++Scope section, the ARM64 confirmation covers only install + version behavior.
+diff --git a/specs/001-bench/data-model.md b/specs/001-bench/data-model.md
+new file mode 100644
+index 0000000..2795390
+--- /dev/null
++++ b/specs/001-bench/data-model.md
+@@ -0,0 +1,136 @@
++# Data Model: Windows 11 ARM64 CLI Install Verification
++
++**Feature**: [spec.md](spec.md) · **Date**: 2026-10-26 · **Stage**: Phase 1 (`speckit.plan`)
++
++The spec names two key entities — *Verified Platform Record* and *Verification Evidence*.
++This feature persists them as Markdown documentation (no database, no schema change), so
++the model below fixes their fields, validation rules, and state transitions precisely
++enough that a later reader can audit a "verified" claim and reproduce it (FR-006, SC-005).
++
++## Entity 1: Verified Platform Record
++
++A row in the guide's platform/verification statement. One record per (OS, architecture)
++pair; for this feature the record of interest is
++`(Windows 11, ARM64, build_from_source)`.
++
++| Field | Type / domain | Required | Rule |
++|---|---|---|---|
++| `platform_os` | string, e.g. `Windows 11` | yes | Must name OS + edition class actually verified (a Windows 11 ARM64 result does not cover Windows 10) |
++| `platform_arch` | `ARM64` \| `x86-64` | yes | The CPU architecture the host genuinely runs |
++| `install_method` | `prebuilt_download` \| `build_from_source` | yes | The method actually executed, not a possible one |
++| `status` | `verified` \| `observer_missing` (see transitions) | yes | Only `verified` may appear in the guide's verified-platforms list |
++| `evidence_path` | repository-relative path to a transcript under `docs/acceptance/` | yes when `status` is `verified` or `observer_missing` | Must exist in the same PR as the status it supports |
++| `commit_under_test` | full git SHA of the tree the binary was built from | yes | Recorded inside the transcript's header table |
++| `recorded_on` | ISO date (YYYY-MM-DD) | yes | Date of the run |
++| `superseded_by` | path of a newer transcript, or empty | optional | Set only when a newer run replaces the current one; old transcripts are never rewritten |
++
++### Validation rules
++
++1. `status = verified` ⇒ the referenced transcript has Result **pass**, its host signals
++   agree on `platform_arch`, and its binary PE machine matches
++   (`0xAA64` for ARM64, `0x8664` for x86-64).
++2. `install_method = prebuilt_download` ⇒ the release listing
++   (`docs/releases/<version>.md`) contains an archive for exactly that OS + arch
++   (FR-005). For this feature `install_method` is `build_from_source`; no ARM64 archive
++   exists in the listing, so no prebuilt claim may be written.
++3. Guide consistency invariant (SC-004): the set of platforms the guide lists as
++   **verified** equals the set of records with `status = verified`. Any platform absent
++   from that set must not be worded as verified, however informally (FR-007).
++4. English-only text (repository documentation rule).
++
++## Entity 2: Verification Evidence (transcript)
++
++A file `docs/acceptance/windows-arm64-<YYYY-MM-DD>.md`, format fixed by the existing
++clean-host records (research R4). Its observable content contract:
++
++### Header table (fixed rows)
++
++| Row | Content rule |
++|---|---|
++| Commit under test | full SHA of the checkout the binary was built from |
++| Host | device/model + OS name/build + architecture, stated from the redundant signal set below |
++| Source | how the source tree arrived at the host (e.g. `git clone` URL + SHA) |
++| Toolchain | rustup default host triple (expect `aarch64-pc-windows-msvc`) + Rust version 1.97.1 + MSVC toolset version present |
++| Started / ended | UTC timestamps from the transcript itself |
++| Result | `pass` \| `fail` \| `OBSERVER_MISSING` (branch (b): which observer was absent) |
++| Secrets | tokens/keys as SHA-256 digests only, plus a note of the sweep performed |
++| Cost | expected: none (no paid infrastructure) |
++
++### Host-identity block (redundant signals — research R3)
++
++All four are captured, and agreement of the set is what counts:
++
++| Signal | Command / query | Expectation for a genuine ARM64 host |
++|---|---|---|
++| Process environment | `$env:PROCESSOR_ARCHITECTURE` | `ARM64` |
++| System type | `Get-CimInstance Win32_ComputerSystem` → `SystemType` | `ARM64-based PC` |
++| Toolchain triple | `rustup show` → default host | `aarch64-pc-windows-msvc` |
++| CPU model | `Get-CimInstance Win32_Processor` → `Name` | an ARM/Snapdragon part (and *not* treated as decisive alone: the authoring host returned architecture code 9 while being x86-64 by every other signal) |
++
++### Binary-identity block
++
++| Signal | Command / method | Expectation |
++|---|---|---|
++| PE COFF machine of the installed `graphhelm.exe` | read bytes at offset `0x3C` + 4 (as done on the authoring host, where this yielded `0x8664`) | `0xAA64` for ARM64 |
++
++### Version-run block
++
++The verbatim command and output of `graphhelm --version`: exit code `0`, exactly one
++stdout line matching `graphhelm <version>` (semver-shaped), nothing on stderr — per
++[contracts/version-command.md](contracts/version-command.md). The exact printed number is
++recorded but never asserted (research R5).
++
++### Reproduction requirements
++
++- The "what was verified, and what was not" section states the limits honestly
++  (mirrors `install-rehearsal-2026-09-13.md`).
++- A maintainer re-running the sequence on an equivalent ARM64 host must reproduce
++  Result `pass` with 0 unexpected failures (SC-005); the version number may differ per
++  R5.
++
++## State transitions
++
++States: `unverified` (no run yet) → terminal-ish outcomes recorded per run. Transitions
++are caused only by runs; nothing flips a status without a transcript.
++
++```text
++                          run lands: transcript Result = pass, signals agree
++        unverified ─────────────────────────────────────────────────────────► verified
++             ▲                                                                      │
++             │  no ARM64 device available:                                          │ dependencies/toolchain changed;
++             │  branch (b) record names the missing observer                        │ re-run cannot complete or fails
++             ▼                                                                      ▼
++       observer_missing ◄─────────────────────────────────────────────────────── observer_missing
++             │
++             │ next run passes (device becomes available)
++             └───────────────────────────────────────────────────────────────────► verified
++```
++
++Rules:
++
++- **`unverified → verified`**: requires a pass transcript satisfying validation rule 1;
++  the guide edit and the transcript land in the same change (one review, one merge).
++- **`* → observer_missing`**: whenever a re-run is blocked by an absent device or fails
++  on the host, a new dated transcript records why and becomes the authoritative record
++  (`superseded_by` links forward on any later replacement). Earlier transcripts are
++  never edited after the fact — consistent with the repository's append-only evidence
++  culture; supersession replaces *authority*, not *content*.
++- **`observer_missing → verified`**: the normal follow-up once a device is available
++  (branch (a) runs after branch (b) has already landed).
++- At any instant, exactly one record per (OS, arch) pair is authoritative — the newest
++  un-superseded transcript.
++
++## Relationships
++
++```text
++Verified Platform Record (Windows 11, ARM64)
++   │  1 : 1 (current), 1 : n (history via superseded_by)
++   ▼
++Verification Evidence (docs/acceptance/windows-arm64-<date>.md)
++   ▲
++   │ linked from (cited, like the two existing clean-host records)
++docs/install/GETTING_STARTED.md  ──── consistency-checked against ──── docs/releases/0.1.0.md
++```
++
++The document-level invariants these pointers enforce are written out in
++[contracts/verified-platform-docs.md](contracts/verified-platform-docs.md).
+diff --git a/specs/001-bench/delivery.md b/specs/001-bench/delivery.md
+new file mode 100644
+index 0000000..166e391
+--- /dev/null
++++ b/specs/001-bench/delivery.md
+@@ -0,0 +1,106 @@
++# Delivery record — 001-bench, Windows 11 ARM64 CLI install verification
++
++Session: drael · opencode tb-dl-om-win-arm64-s-20261026T200953-d5b6b9 · Head: 708cd907 (baseline measured at session start; changes delivered in a single local commit on top of it — this checkout has no remote)
++
++**Outcome: OBSERVER_MISSING.** This checkout is an x86-64 Windows 11 Pro host (Ryzen 9 9950X).
++No genuine Windows 11 ARM64 device was reachable from it, and x86-64 Windows cannot emulate
++ARM64. US1 therefore closes as a recorded missing observer (branch b, T010), not as verified:
++the evidence is `docs/acceptance/windows-arm64-2026-10-26.md` (x86-64 negative control,
++`graphhelm 0.1.1`, exit 0, clean stderr, PE machine `0x8664`). US2 and US3 are complete and
++observable on any machine.
++
++## Keel card — direct route
++
++Docs-only change with known observers (file content, grep sweeps, link resolution); no code, no
++runtime-affecting config, no expanded-route risk.
++
++| | |
++|---|---|
++| Paths in scope | `docs/install/GETTING_STARTED.md` (modified), `docs/acceptance/windows-arm64-2026-10-26.md` (new), `specs/001-bench/tasks.md` (task marks), `specs/001-bench/delivery.md` (this record) |
++| Promise | The getting-started guide names Windows 11 ARM64 explicitly, presents it only as documented-not-verified, carries the exact build-from-source path, reconciles "expected last line" to the C1 shape without pinning a number, agrees with the release listing, and every verified-platform mention resolves to a cited acceptance record |
++| Command that proves it | `Select-String -Path docs\install\GETTING_STARTED.md -Pattern 'arm'`; `Select-String -Path docs\install\GETTING_STARTED.md -Pattern 'verified','acceptance'`; `Select-String -Path docs\acceptance\windows-arm64-2026-10-26.md -Pattern '[0-9a-f]{64}'` (expect none); `git status --porcelain` scope guard (T021); `git diff --stat` (only `docs/install/GETTING_STARTED.md`, 36+/4-) |
++
++Result at delivery: all four checks green (see completion report below for the verbatim runs).
++
++## Changed
++
++1. `docs/install/GETTING_STARTED.md`
++   - Prerequisites table: Visual Studio Build Tools 2022 row with the vswhere check that works
++     from PowerShell (FR-002 prerequisite; R1/R2 — the C++ workload, not just Rust).
++   - §1 platform statement extended to name Windows ARM64, plus the explicit
++     "**Windows 11 ARM64 (Snapdragon): documented, not yet verified.**" status paragraph
++     (FR-001; dated 2026-10-26; links the transcript; never worded as verified).
++   - New "**Windows 11 ARM64, build from source.**" block: Build Tools (winget) → enable the
++     "Desktop development with C++" workload → Rustup → pinned toolchain → clone →
++     `cargo +1.97.1 install --locked --path apps/cli` → `graphhelm --version`.
++   - "Expected last line" now shows the C1 shape `graphhelm <version>` with a note that the
++     number tracks the cloned tag and how to detect a stale PATH binary (`(Get-Command
++     graphhelm).Source` / `which graphhelm`). Neither `0.1.0` nor `0.1.1` is pinned.
++2. `docs/acceptance/windows-arm64-2026-10-26.md` (new, append-only record): header table (commit
++   under test, host, source, toolchain, run window, result OBSERVER_MISSING, secrets, cost),
++   host-identity block (4 signals incl. the WMI code-9 false positive noted, R3), negative-control
++   version run (A1–A4 + C1; A5 n/a with the expected value stated), toolchain state, completion
++   path for a real device, secret sweep statement (zero 64-hex matches).
++3. `specs/001-bench/tasks.md`: all executable tasks marked `[X]`; T005–T009 annotated
++   "not run; collapsed to T010 (branch b)" per the Phase-3 branch note.
++4. `docs/releases/0.1.0.md`: **verified only, no edit** — its archive table lists exactly the two
++   x86-64 archives plus SHA256SUMS.txt and already points non-x86-64 hosts to build from source,
++   so no contradiction existed to reconcile (T014).
++
++## Assumptions recorded (unattended run)
++
++- Stage Setup JSON treated as the `check-prerequisites` script output:
++  `{"FEATURE_DIR": "specs/001-bench", "AVAILABLE_DOCS": []}`; no `.specify/extensions.yml`, so all
++  extension hooks were skipped.
++- No constitution file in this checkout: repo-root `AGENTS.md` used as governance reference
++  (substitution also recorded inside the transcript).
++- No genuine Windows 11 ARM64 device reachable from this unattended checkout → branch (b) chosen
++  at T003; US1 closes as OBSERVER_MISSING.
++- Transcript named by record-authoring date (today, 2026-10-26 UTC) = run date.
++- Negative-control binary is a preinstalled preview (`%USERPROFILE%\.cargo\bin\graphhelm.exe`),
++  not built from the commit under test; its number is recorded, never asserted (R5).
++- Pre-existing untracked `.specify/` (provisioning scaffolding) left untracked; nothing ignored or
++  ignore-file created beyond verifying the existing `.gitignore` (stage directive).
++
++## Verification evidence (passed / failed / unobserved)
++
++- PASS: Scenario 1 static (C1–C5 hold in the repo; guide commands are byte-identical to the
++  verified x86-64 block except platform-scoped additions); T014 release-listing check; Scenario 3
++  sweeps (no ARM64 download claim; every "verified" mention resolves to a cited record; ARM64
++  never worded as verified); secret sweep (zero 64-hex matches in the new transcript); T021 scope
++  guard (`git status --porcelain` = modified guide + new transcript + specs/ tree; no Cargo.lock,
++  crate, schema, CI, or Studio file touched).
++- FAILED: none.
++- UNOBSERVED: US1 end-to-end on a genuine Windows 11 ARM64 device (SC-001's on-device half) —
++  OBSERVER_MISSING: absent Windows 11 ARM64 device. Not covered by a proxy (R6); nothing about
++  that promise may be stated as verified.
++
++## Security notes
++
++No secrets introduced: the transcript prints command text and version output only, uses
++`%USERPROFILE%`-masked paths, and its 64-hex sweep returned zero matches (SC-002). No new network
++endpoint, credential, or dependency.
++
++## Dependencies
++
++None added or changed. `Cargo.lock` byte-identical (T021 guard).
++
++## Rollback plan
++
++Revert the single delivery commit (or: `git checkout -- docs/install/GETTING_STARTED.md` and
++delete `docs/acceptance/windows-arm64-2026-10-26.md`). Pure docs; no code, runtime, or data to
++migrate.
++
++## Closing-keyword discipline
++
++No issue numbers exist in this checkout; no closing keyword (`fixes/closes/resolves/...`) appears
++in this record or its commit body. No accidental-closure risk.
++
++## Out-of-scope (exactly)
++
++- Any code change (plan R8: docs/** at most; zero Rust files touched).
++- Building or shipping an actual ARM64 binary; publishing a new release or archive.
++- Executing the ARM64 steps themselves here (no device, R6).
++- Creating ignore files (verified existing only, per stage directive).
++- Editing existing acceptance transcripts (append-only, D1).
++- `.specify/` scaffolding (left untracked as found at baseline).
+diff --git a/specs/001-bench/plan.md b/specs/001-bench/plan.md
+new file mode 100644
+index 0000000..504321a
+--- /dev/null
++++ b/specs/001-bench/plan.md
+@@ -0,0 +1,147 @@
++# Implementation Plan: Windows 11 ARM64 CLI Install Verification
++
++**Branch**: `main` | **Date**: 2026-10-26 | **Spec**: [specs/001-bench/spec.md](spec.md)
++
++**Input**: Feature specification from `/specs/001-bench/spec.md`
++
++**Setup note**: `.specify/scripts/` does not exist in this checkout; the stage setup JSON
++(`FEATURE_SPEC = specs/001-bench/spec.md`, `IMPL_PLAN = specs/001-bench/plan.md`,
++`FEATURE_DIR = specs/001-bench`, `BRANCH = main`) is treated as the `setup-plan` output.
++The working branch is `main`, per that JSON and the checkout's actual branch. There is no
++`.specify/extensions.yml`, so all extension hooks were skipped.
++
++**Governance note**: No project constitution file exists in this checkout. Per the run's
++stage setup, the repository-root `AGENTS.md` is used as the governance reference in place
++of a constitution document; this substitution is recorded here and carried into the gate
++below (research R7).
++
++## Summary
++
++Confirm that the `graphhelm` CLI installs through its documented build-from-source path on
++a genuine Windows 11 ARM64 (Snapdragon) host and runs `graphhelm --version` cleanly —
++exit code 0, exactly one line shaped `graphhelm <version>`, nothing on stderr, from a
++native ARM64 binary — then record that confirmation as a dated acceptance transcript in
++the same form as the guide's existing platform records and reflect it as a verified
++platform in `docs/install/GETTING_STARTED.md`. The 0.1.0 release publishes no prebuilt
++ARM64 archive (Windows x86-64 and Linux x86-64 only), so the verified path is a native
++build on the ARM64 device itself. If no genuine ARM64 host is available when the
++verification runs, the feature resolves to a **recorded missing observer** (FR-007): the
++guide still shows the exact steps, but the platform is not represented as verified, and
++the report says `OBSERVER_MISSING`.
++
++Technical approach (from [research.md](research.md)): native build on the ARM64 host with
++the pinned Rust 1.97.1 toolchain plus an explicitly stated MSVC C++ toolset for ARM64
++(research R2); host *and* binary architecture established by several redundant signals
++because a single WMI reading already proved misleading on the authoring host (R3);
++evidence captured as a transcript under `docs/acceptance/` following the header-table
++convention of the existing clean-host records (R4); acceptance on version **shape**, not
++a pinned number, given measured version drift (R5); and a documented branch for the
++missing-device case that is part of the design, not an afterthought (R6). No Rust code,
++dependency, or `Cargo.lock` change is planned (R8).
++
++## Technical Context
++
++**Language/Version**: Rust `1.97.1` (pinned by `rust-toolchain.toml`; unchanged) with
++host triple `aarch64-pc-windows-msvc` on the target device; Markdown documentation
++
++**Primary Dependencies**: existing workspace crates only (`Cargo.lock` untouched); on the
++ARM64 host additionally the MSVC C++ build toolset providing the ARM64 linker — currently
++an implicit Windows prerequisite of the guide's build path, to be made explicit (research R2)
++
++**Storage**: N/A — documentation edits plus one acceptance transcript; no data store
++
++**Testing**: no workspace-wide build or full test suite (task directive). Smallest
++observers per [quickstart.md](quickstart.md): `graphhelm --version` on the ARM64 host
++(exit code + stdout shape), PE-machine read of the produced `graphhelm.exe`, redundant
++host-architecture queries, an explicit negative-control run on the x86-64 authoring host,
++and text-level consistency checks between `docs/install/GETTING_STARTED.md` and
++`docs/releases/0.1.0.md`
++
++**Target Platform**: Windows 11 ARM64 (Snapdragon-class device); the x86-64 authoring
++host serves only as negative control and cannot observe the ARM64 promise (research R6)
++
++**Project Type**: cli (existing `apps/cli`) + documentation/acceptance-record feature; no
++new project surface
++
++**Performance Goals**: none beyond a deterministic single-line `--version` answer; the
++on-device build time is recorded in the transcript for readers' expectations, not gated
++
++**Constraints**: English-only documentation (repository rule); no claim of a prebuilt
++ARM64 archive may be introduced (FR-005); transcripts carry secrets as digests only, per
++the existing acceptance records; the build stays `--locked`; an x86-64 outcome never
++substitutes for the ARM64 observation (JPD: no proxy observers)
++
++**Scale/Scope**: at most two documentation edits (`docs/install/GETTING_STARTED.md`, and
++`docs/releases/0.1.0.md` only if a contradiction is found) plus one new transcript under
++`docs/acceptance/`; zero planned Rust code changes — any required code fix escalates to
++its own issue-first flow (research R8)
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++Governance reference: repository-root `AGENTS.md` (constitution-file substitution recorded
++above and in research R7).
++
++| # | Gate (source: AGENTS.md) | Verdict | Evidence / note |
++|---|---|---|---|
++| 1 | Documentation language — all documentation in English | PASS | All artifacts for this feature (this plan, research, data model, contracts, quickstart, and the planned transcript/guide edits) are English-only |
++| 2 | Journey-Proven Development — smallest adequate proof; no proxy observers; `OBSERVER_MISSING` when a promise has no adequate observer | PASS (first-class handling) | The ARM64 runtime promise is observable only on a genuine ARM64 host; the authoring machine measured x86-64 (research R6), so the design carries the missing-observer branch as a normal outcome (FR-007) and demotes the x86-64 run to negative control instead of letting it act as proof |
++| 3 | Repository boundaries — workspace crates, no new adapters/scaffolding | PASS | No crate, module, public stub, dependency, or schema change is planned; `Cargo.lock` stays byte-identical |
++| 4 | Security rules — "Secrets never appear in … fixtures, … exported manifests" | PASS (design constraint) | The new transcript follows the existing records' convention (Secrets row: token/key values as SHA-256 digests only, with the sweep noted) |
++| 5 | Keel proportionality — docs/evidence change takes the direct route with a PR-body card (paths, promise, proving command) | PASS | Footprint is two doc edits plus one transcript; no new public surface is added, so no full card / named-surface obligation is triggered |
++| 6 | Meaningful-test rule — every test protects an observable contract against a credible regression | PASS | No tests are added; if the on-device run surfaces a code defect it gets its own issue with its own observer (research R8) rather than a test grafted onto a docs change |
++| 7 | Delivery — merge required, issue-first, identity lines, closing-keyword discipline | NOTE (binds at implementation, not at planning) | Recorded so tasks/implementation inherit it; this planning run works on `main` inside the task checkout, which the run treats as the only source of truth |
++
++**Post-Phase-1 re-check: PASS.** Phase 1 added no new surface, dependencies, storage, or
++platform claim. `contracts/` formalizes observable behavior that already exists (the
++`--version` contract, the verified-platforms statement invariants) without creating a
++second definition; the data model's states map one-to-one onto FR-007's two branches. No
++gate regressed.
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/001-bench/
++├── plan.md              # This file (speckit.plan command output)
++├── research.md          # Phase 0 output (speckit.plan command)
++├── data-model.md        # Phase 1 output (speckit.plan command)
++├── quickstart.md        # Phase 1 output (speckit.plan command)
++├── contracts/           # Phase 1 output (speckit.plan command)
++│   ├── version-command.md        # observable contract of `graphhelm --version` on the target host
++│   └── verified-platform-docs.md # invariants of the guide's platform/verification statements
++├── checklists/
++│   └── requirements.md  # produced during the spec phase (pre-existing)
++└── tasks.md             # Phase 2 output (speckit.tasks command — NOT created by speckit.plan)
++```
++
++### Source Code (repository root)
++
++This feature changes documentation and adds one acceptance record; no source-tree change
++is planned.
++
++```text
++docs/
++├── install/GETTING_STARTED.md          # edit: verified-platforms statement + explicit ARM64 build-from-source steps + transcript link
++├── acceptance/windows-arm64-<date>.md  # new: the ARM64 transcript (pass record in branch (a), missing-observer record in branch (b)); exact date name chosen at verification time
++└── releases/0.1.0.md                   # verify-only: already states "For macOS, ARM, and other hosts, build from source"; edit solely if a contradiction with the new statement is found
++
++apps/cli/                               # unchanged (version derives from package version at build time; no code touch planned)
++```
++
++**Structure Decision**: single-repository documentation feature. No new crate, module, or
++directory beyond the one new file under `docs/acceptance/`, whose date-suffixed filename
++mirrors the existing naming (`install-rehearsal-2026-09-13.md`,
++`clean-machine-2026-09-14.md`). The guide's platform statement lives where readers look
++before installing (top of the page / section 1), consistent with how the page already
++points at its executed clean-host records.
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++No violations — the section is intentionally empty. The one non-obvious design decision
++(the missing-observer branch, research R6) is a direct consequence of JPD rules and the
++spec's own edge cases, not a relaxation of a gate.
+diff --git a/specs/001-bench/quickstart.md b/specs/001-bench/quickstart.md
+new file mode 100644
+index 0000000..d849632
+--- /dev/null
++++ b/specs/001-bench/quickstart.md
+@@ -0,0 +1,150 @@
++# Quickstart: validating the Windows 11 ARM64 CLI install verification
++
++**Feature**: [spec.md](spec.md) · **Date**: 2026-10-26 · **Stage**: Phase 1 (`speckit.plan`)
++
++Runnable validation scenarios for this feature. Each scenario names its observer, its
++commands, and the exact expected outcome. Contracts live in
++[contracts/](contracts/) and the evidence format in [data-model.md](data-model.md); this
++guide does not restate them.
++
++> **Read first — which branch applies.** The core promise is observable **only on a
++> genuine Windows 11 ARM64 device**. As of 2026-10-26 the authoring machine is x86-64
++> (research R6) and no ARM64 host is reachable from it. If a Snapdragon laptop is at hand
++> when the verification runs, do **Scenario 1**. If not, follow the **Missing-observer
++> path** and report `OBSERVER_MISSING` — do not mark the platform verified on the
++> strength of any other machine (FR-007).
++
++## Prerequisites
++
++| For | Needed | How to check |
++|---|---|---|
++| Scenario 1 | A Windows 11 ARM64 (Snapdragon) laptop, clean or with the prerequisites absent | Scenario 1 step 1 establishes this |
++| Scenario 1 | Visual Studio Build Tools 2022 with the "Desktop development with C++" workload (provides the native ARM64 MSVC linker), Rust via rustup, git | guide's prerequisites + research R2 |
++| Scenario 2 | Any x86-64 Windows host (the authoring machine qualifies) with the same toolchain shape | `PROCESSOR_ARCHITECTURE` = `AMD64` |
++| Scenario 3 | The repository checkout itself (no device needed) | `git status` |
++
++Network is needed for clone and winget/rustup fetches; everything after the build runs
++offline.
++
++## Scenario 1 — Install and verify on the ARM64 host (the actual feature)
++
++Observer: `graphhelm --version` executing natively on ARM64 hardware, plus the binary's
++own image type. Covers FR-001…FR-003, FR-006, SC-001…SC-002.
++
++1. **Establish the host identity first** (all four readings, before installing anything):
++
++   ```powershell
++   $env:PROCESSOR_ARCHITECTURE                      # expect: ARM64
++   (Get-CimInstance Win32_ComputerSystem).SystemType   # expect: ARM64-based PC
++   Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name   # expect: a Snapdragon/ARM part
++   ```
++
++   If any of these says x86-64, this is not the device — stop and use the missing-observer
++   path (or another machine). Record the readings; they go into the transcript's
++   host-identity block.
++
++2. **Install the documented prerequisites** (guide §Prerequisites, plus the ARM64 linker):
++
++   ```powershell
++   winget install --id Microsoft.VisualStudio.2022.BuildTools --exact --source winget --accept-source-agreements --accept-package-agreements
++   # then add the "Desktop development with C++" workload to that installation (ARM64 toolset)
++   winget install --id Rustlang.Rustup --exact --source winget --accept-source-agreements --accept-package-agreements
++   $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
++   rustup toolchain install 1.97.1 --profile minimal --component rustfmt clippy
++   rustup show                                     # expect default host triple: aarch64-pc-windows-msvc
++   ```
++
++   Any failure here is a finding for the record, not a detour to improvise past silently
++   (SC-001).
++
++3. **Build from source exactly as the guide says** (guide §1):
++
++   ```powershell
++   git clone https://github.com/stabem/GraphHelm.git
++   cd GraphHelm
++   cargo +1.97.1 install --locked --path apps/cli
++   ```
++
++   Record the commit SHA the tree is at (`git rev-parse HEAD`) — it becomes the
++   transcript's "Commit under test".
++
++4. **Run the contract command** and capture verbatim output plus exit code:
++
++   ```powershell
++   graphhelm --version; Write-Output "exit=$LASTEXITCODE"
++   ```
++
++   Expect per [contracts/version-command.md](contracts/version-command.md): exit 0, one
++   line `graphhelm <version>`, empty stderr. Note the printed version — recorded, not
++   asserted (research R5).
++
++5. **Prove the binary is native**, not emulated:
++
++   ```powershell
++   $exe = (Get-Command graphhelm).Source
++   $b = [System.IO.File]::ReadAllBytes($exe)
++   [BitConverter]::ToUInt16($b, [BitConverter]::ToInt32($b, 60) + 4)   # expect 0xAA64 (42628)
++   ```
++
++   `0xAA64` passes FR-003; anything else fails even if step 4 was clean.
++
++6. **Write the transcript** `docs/acceptance/windows-arm64-<date>.md` exactly per the
++   data model (header table with started/ended UTC times, result, secrets row, cost; "what
++   was verified, and what was not"; the verbatim blocks above) and **update the guide** in
++   the same change: verified-platforms statement naming Windows 11 ARM64 as verified via
++   build-from-source with the steps and a link to the new record
++   ([contracts/verified-platform-docs.md](contracts/verified-platform-docs.md)).
++
++## Scenario 2 — Negative control on the x86-64 authoring host
++
++Observer: the same sequence demonstrating it is *not* the ARM64 confirmation. Covers User
++Story 1 scenario 3; guards against the exact mistake already measured on this machine
++(WMI architecture code 9 on an x86-64 CPU — research R3).
++
++1. Run steps 1, 4, 5 of Scenario 1 on the x86-64 host.
++2. Expect: `PROCESSOR_ARCHITECTURE=AMD64`, `SystemType=x64-based PC`, PE machine `0x8664`
++   (measured today on the installed preview binary: it prints `graphhelm 0.1.1`, exit 0).
++3. State the result explicitly in the record: **"not an ARM64 verification."**
++
++## Scenario 3 — Documentation consistency (no device needed)
++
++Observer: text-level agreement between the guide and the release listing. Covers FR-005,
++SC-004, D2/D4 of the docs contract.
++
++From the repository root:
++
++```powershell
++# the guide must not claim any ARM64 prebuilt download
++Select-String -Path docs\install\GETTING_STARTED.md -Pattern 'arm' -SimpleMatch:$false
++# the release listing must still show only its real archives
++Get-Content docs\releases\0.1.0.md
++# every "verified" platform named in the guide must resolve to a cited transcript under docs/acceptance/
++Select-String -Path docs\install\GETTING_STARTED.md -Pattern 'verified','acceptance'
++```
++
++Expected: no sentence anywhere asserts a downloadable ARM64 archive; each verified
++platform statement cites a `docs/acceptance/` record; all text is English. Re-run these
++checks after *every* documentation edit in the change.
++
++## Missing-observer path (branch (b))
++
++When Scenario 1 cannot run because no genuine ARM64 device is available:
++
++1. Land the guide with the ARM64 build-from-source steps and an honest status line — the
++   platform is **not** represented as verified — pointing at the record below (FR-007, SC-003's steps half).
++2. Still write `docs/acceptance/windows-arm64-<date>.md`: header table with Result
++   `OBSERVER_MISSING`, the host-identity block documenting *why this machine cannot serve*
++   (it is x86-64 by the four redundant signals), and the Scenario 2 negative-control block.
++3. Report completion ending with `OBSERVER_MISSING:` naming the absent device. When a
++   device later becomes available, run Scenario 1, link the pass record as the
++   supersedure, and flip the guide's wording in that follow-up change (data-model state
++   transition `observer_missing → verified`).
++
++## Outcome map
++
++| Scenario | Proves | Spec anchors |
++|---|---|---|
++| 1 | install + native run + retained evidence | FR-001…FR-004, FR-006; SC-001, SC-002, SC-005 |
++| 2 | x86-64 result is not ARM64 proof | US1 scenario 3; edge cases |
++| 3 | guide ↔ release listing agree; English-only | FR-004, FR-005, FR-007; SC-003, SC-004 |
++| Missing-observer | blocked ≠ assumed | FR-007; US3 scenario 2; JPD rules |
+diff --git a/specs/001-bench/research.md b/specs/001-bench/research.md
+new file mode 100644
+index 0000000..d1a75c3
+--- /dev/null
++++ b/specs/001-bench/research.md
+@@ -0,0 +1,200 @@
++# Research: Windows 11 ARM64 CLI Install Verification
++
++**Feature**: [spec.md](spec.md) · **Date**: 2026-10-26 · **Stage**: Phase 0 (`speckit.plan`)
++
++Every open technical question the plan had to resolve is answered below in the
++Decision / Rationale / Alternatives form. All measurements were taken on the
++authoring host (the only machine this run can reach) on 2026-10-26; they are
++reproduced in the appendix so a later reader can re-derive them.
++
++No `NEEDS CLARIFICATION` markers remain: the spec left none, and every planning
++decision that was open (install route, evidence form, architecture identification,
++version pinning, observer availability) is resolved here or inherited from the
++spec's Assumptions.
++
++## R1 — Verified install route on Windows 11 ARM64
++
++- **Decision**: Build from source, natively on the ARM64 device, through the guide's
++  existing section 1 route (`git clone` → `cargo +1.97.1 install --locked --path apps/cli`).
++  Neither the plan nor the documentation may introduce or imply a prebuilt ARM64 archive.
++- **Rationale**: `docs/releases/0.1.0.md` publishes exactly two archives —
++  `graphhelm-v0.1.0-windows-x86_64.zip` and `graphhelm-v0.1.0-linux-x86_64.tar.gz`, plus
++  `SHA256SUMS.txt` — and already says "For macOS, ARM, and other hosts, [build from
++  source]." The spec puts publishing an ARM64 archive out of scope, and FR-005 forbids
++  claiming one. Build-from-source is therefore simultaneously the only available route
++  and the spec-assumed one.
++- **Alternatives considered**:
++  - *Publish a prebuilt `aarch64-pc-windows-msvc` archive* — rejected: packaging,
++    checksums, and the download listing are explicitly out of scope; would also turn a
++    documentation feature into a release feature.
++  - *Cross-compile from the x86-64 authoring host and copy the `.exe` to the device* —
++    rejected: the host is not configured for it (R8) and the copy step is an
++    undocumented detour against SC-001's "zero undocumented detours."
++
++## R2 — Build toolchain a fresh ARM64 laptop actually needs
++
++- **Decision**: The ARM64 steps in the guide must state the MSVC C++ build toolset
++  explicitly (Visual Studio Build Tools 2022, "Desktop development with C++", which
++  provides the native ARM64 MSVC linker), alongside the guide's existing Rust 1.97.1 /
++  git / PowerShell prerequisites. On an ARM64 Windows host, rustup's default target is
++  `aarch64-pc-windows-msvc`, so no `rustup target add` step is required.
++- **Rationale**: Rust's MSVC targets link with `link.exe`; a bare Windows install has
++  no C++ linker until the VS toolset is present. Today that prerequisite is **implicit**
++  even on x86-64: the guide's Prerequisites table lists only Rust, git, Node, and
++  PowerShell. On the authoring host the implicit dependency is visible — VS 2022
++  BuildTools 14.44.35207 is installed, and the repository's own transcripts quote a
++  `linking with link.exe failed` diagnosis (`docs/acceptance/gate-red-classification-2026-09-18.md`).
++  On a brand-new Snapdragon laptop that silence is precisely the "undocumented detour"
++  SC-001 forbids, so the ARM64 section writes it down.
++- **Alternatives considered**:
++  - *Document the GNU target (`aarch64-pc-windows-gnu`)* — rejected: requires a mingw
++    arm64 toolchain named nowhere in the repository and diverges from rustup's default
++    MSVC target, so it would create a second build route to maintain.
++  - *Leave MSVC implicit and learn from failures* — rejected: contradicts the
++    "expected values" discipline the rest of the guide uses (every block states what
++    the reader should see).
++
++## R3 — Proving "genuine ARM64 host, native binary": redundant signals
++
++- **Decision**: Establish both the host architecture and the binary architecture from
++  several independent signals; agreement of the set — not any single query — is the
++  acceptance bar:
++  - **Host**: `PROCESSOR_ARCHITECTURE` (expect `ARM64`), `Win32_ComputerSystem.SystemType`
++    (expect `ARM64-based PC`), the rustup host triple (`rustup show`, expect
++    `aarch64-pc-windows-msvc`), and the CPU model string (expect a Snapdragon/ARM part,
++    not an Intel/AMD x86 part).
++  - **Binary**: the PE COFF machine field of the installed `graphhelm.exe`, expect
++    `0xAA64` (ARM64). An x86-64 image reads `0x8664`.
++- **Rationale**: A single authoritative-looking query already proved unreliable on this
++  very host: `Win32_Processor.Architecture` returned **9 (ARM64)** on an AMD Ryzen 9
++  9950X that every other signal marks as x86-64 (`PROCESSOR_ARCHITECTURE=AMD64`,
++  `SystemType=x64-based PC`, rust host triple `x86_64-pc-windows-msvc`, PE machine
++  `0x8664`). The spec's "Emulation ambiguity" edge case requires the record to show the
++  host is genuinely ARM64 *and* the binary is native; the Windows-on-x86 Prism
++  emulation layer is transparent to a running process, so the binary's own PE machine
++  field is the deciding signal for the executable.
++- **Alternatives considered**:
++  - *Trust `Win32_Processor.Architecture`* — rejected: measured false positive on the
++    authoring host (above).
++  - *Compare performance against an x86 baseline to detect emulation* — rejected:
++    indirect, unrepeatable, and not an observable contract.
++
++## R4 — Form and location of the verification evidence
++
++- **Decision**: One new dated Markdown transcript under `docs/acceptance/`
++  (filename `windows-arm64-<YYYY-MM-DD>.md`, date chosen at verification time), modeled
++  on `docs/acceptance/install-rehearsal-2026-09-13.md`: a header table (commit under
++  test, host with OS/build/architecture, source, started/ended, result, secrets,
++  cost), a "what was verified, and what was not" section, then the transcript with each
++  command and its verbatim output. `docs/install/GETTING_STARTED.md` links to it exactly
++  the way it links the two existing clean-host records.
++- **Rationale**: FR-006 asks for evidence "in the same spirit as the guide's other
++  platform transcripts"; the two records the guide already cites fix the de-facto
++  format, and the "Secrets" row convention (tokens/keys as SHA-256 digests only)
++  satisfies the repository's secrets rule for records. Keeping one convention in one
++  directory makes SC-004 auditable at a glance.
++- **Alternatives considered**:
++  - *Machine-readable artifact under `target/`* — rejected: not durable, not diffable,
++    not citable from documentation.
++  - *New `docs/platforms/` tree* — rejected: `docs/acceptance/` is the established home
++    for executed-transcript records (fifteen-plus files).
++
++## R5 — `--version` output: shape accepted, number not pinned
++
++- **Decision**: Acceptance is on the **shape** — exit code 0, exactly one stdout line
++  matching `graphhelm <version>` (semver-shaped), nothing on stderr — plus the native
++  ARM64 machine check (R3). The transcript records the exact printed value *and* the
++  commit/`VERSION` state it came from. During implementation the guide's "Expected last
++  line" block (currently `graphhelm 0.1.0`) is reconciled against whatever the verified
++  build actually prints.
++- **Rationale**: Three sources disagree today: workspace `Cargo.toml` version is
++  `0.1.0`, the repository `VERSION` file reads `0.1.1-spec`, and the preinstalled
++  authoring-host binary prints `graphhelm 0.1.1` (exit 0, measured this run). The CLI
++  derives its version from the package version at build time (clap `version` attribute
++  in `apps/cli/src/args.rs`), so a source build of this checkout prints `0.1.0` while an
++  older installed preview prints `0.1.1`. Pinning either literal would make a correct
++  build fail on the next release bump; the spec's "Version drift" edge case mandates
++  shape-based acceptance.
++- **Alternatives considered**:
++  - *Pin `0.1.1`* — rejected: contradicts a fresh source build of this checkout.
++  - *Pin `0.1.0`* — rejected: stale on the next bump, and wrong against the currently
++    installed preview.
++
++## R6 — Observer status at planning time: this checkout + this machine
++
++- **Decision**: As of 2026-10-26, the core runtime promise (FR-001–FR-003, FR-006) is
++  **`OBSERVER_MISSING` on this machine**, and the design carries that as a first-class
++  branch rather than assuming a device away:
++  - **(a) Device available**: run quickstart Scenario 1 on the ARM64 laptop; the
++    transcript lands with Result **pass**; `GETTING_STARTED.md` lists Windows 11 ARM64
++    as verified (FR-004) with the exact steps and the transcript link.
++  - **(b) No device available**: the guide documents the exact ARM64 steps with an
++    honest status line ("not yet verified — missing observer, see record"), the
++    transcript is still written and names the missing observer, the platform is NOT
++    represented as verified (FR-007, US3 scenario 2), and the report ends with
++    `OBSERVER_MISSING` rather than "verified".
++- **Rationale**: The measured facts that fix this branch choice are in the appendix:
++  the host is x86-64 by four independent signals; the installed Rust toolchain carries
++  no `aarch64*` target; VS BuildTools here ships only the x64/x86 host toolsets.
++  Windows on x86-64 does not emulate ARM64 at all, so no ARM64 image can even execute
++  on this machine — an emulator or a cross-build would be a proxy, and the repository's
++  JPD rules forbid counting a proxy as proof. The spec's own edge case ("the
++  confirmation is blocked, not assumed") makes branch (b) normative, not pessimistic.
++- **Alternatives considered**:
++  - *Claim ARM64 verified on the strength of the x86-64 run* — rejected: US1 scenario 3
++    exists to say exactly that that outcome does not satisfy the ARM64 confirmation.
++  - *Ship nothing until a device appears* — rejected: SC-003 wants the steps visible to
++    readers either way, and FR-007 wants the missing observer recorded, not the task
++    dropped.
++
++## R7 — Governance reference substitution
++
++- **Decision**: No constitution file exists in this checkout. The repository-root
++  `AGENTS.md` is used as the governance reference for the plan's Constitution Check,
++  and the substitution is recorded in `plan.md` (and here) per the run's stage setup.
++- **Rationale**: Stage setup directs the substitution; `AGENTS.md` is this repository's
++  checked-in governance document (scope, JPD rules, Keel, security, delivery), so the
++  gate reads substance, not a placeholder.
++- **Alternatives considered**: *Fail the plan for the missing constitution* — rejected:
++  the stage setup explicitly anticipates the absence and names the substitute.
++
++## R8 — Scope guard: zero planned code changes; defect escalation path
++
++- **Decision**: This feature plans **documentation and acceptance-record changes only**:
++  edits to `docs/install/GETTING_STARTED.md`, verification-only of
++  `docs/releases/0.1.0.md` (edit only if a contradiction is found), and the new
++  transcript. No crate, module, type, dependency, or `Cargo.lock` entry changes. If the
++  on-device run uncovers a genuine code or dependency defect that blocks the ARM64
++  build/run, that defect is fixed through the repository's ordinary issue-first flow
++  (its own label, branch, review, merge) and the transcript records the failure plus a
++  pointer to the fixing issue — it does not ride along in the documentation PR.
++- **Rationale**: Keel proportionality reads risk from what a change touches, not how big
++  it is; a code change mixed into a docs change gets reviewed as a docs change. The
++  spec's Out of Scope section bounds the feature to the confirmation and the guide.
++- **Alternatives considered**: *Fix discovered defects inline* — rejected: muddles
++  review attribution and violates the issue-first rule for non-trivial changes.
++
++## Appendix — Measurements (authoring host, 2026-10-26)
++
++Everything below was read on the machine running this planning session (Gigabyte
++X670 AORUS ELITE AX), to anchor R3, R5, R6, and R8.
++
++| Signal | Value |
++|---|---|
++| `PROCESSOR_ARCHITECTURE` | `AMD64` |
++| `Win32_ComputerSystem.SystemType` | `x64-based PC` |
++| `Win32_Processor.Name` | AMD Ryzen 9 9950X 16-Core Processor |
++| `Win32_Processor.Architecture` | `9` (ARM64 code — conflicts with every other signal; treated as noise per R3) |
++| OS | Microsoft Windows 11 Pro, build 10.0.26200 |
++| Rust host triple (`rustup show`) | `x86_64-pc-windows-msvc`; toolchain 1.97.1 active via `rust-toolchain.toml` |
++| Installed Rust targets | `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu` (no `aarch64*`) |
++| VS 2022 BuildTools MSVC toolsets | 14.44.35207, host dirs `HostX64\{x64,x86}` only — no ARM64 cross tools; no `clang` on PATH |
++| Installed `graphhelm --version` | printed `graphhelm 0.1.1`, exit code 0, single line |
++| Installed `graphhelm.exe` PE machine | `0x8664` (x86-64) |
++| Workspace `Cargo.toml` version | `0.1.0` |
++| Repository `VERSION` file | `0.1.1-spec` |
++| Release archives (`docs/releases/0.1.0.md`) | `windows-x86_64.zip`, `linux-x86_64.tar.gz`, `SHA256SUMS.txt` — no ARM entry |
++| Existing clean-host records | `docs/acceptance/install-rehearsal-2026-09-13.md`, `docs/acceptance/clean-machine-2026-09-14.md` (format reference for R4) |
++
++**Conclusion**: this checkout + machine cannot observe the ARM64 runtime promise; the
++plan therefore designs both branches (R6) instead of pretending the observer exists.
+diff --git a/specs/001-bench/spec.md b/specs/001-bench/spec.md
+new file mode 100644
+index 0000000..9d3862a
+--- /dev/null
++++ b/specs/001-bench/spec.md
+@@ -0,0 +1,106 @@
++# Feature Specification: Windows 11 ARM64 CLI Install Verification
++
++**Feature Branch**: `[001-bench]`
++
++**Created**: 2026-10-26
++
++**Status**: Draft
++
++**Input**: User description: "Confirm that the `graphhelm` CLI installs and runs `graphhelm --version` on Windows 11 on ARM64 (a Snapdragon laptop), and add Windows ARM64 to the verified platforms in `docs/install/GETTING_STARTED.md`."
++
++## User Scenarios & Testing *(mandatory)*
++
++### User Story 1 - Developer installs and runs GraphHelm on a Snapdragon laptop (Priority: P1)
++
++A developer gets a new Windows 11 laptop on ARM64 (a Snapdragon-based device) and wants to use GraphHelm. They open the getting-started guide, follow its install steps, and want confidence the tool actually works on this hardware before investing in the rest of the setup. By the end of the install section they run `graphhelm --version` and get a real answer from a binary built for their machine.
++
++**Why this priority**: Without a confirmed-working path on ARM64, a developer on a Snapdragon laptop is left guessing whether GraphHelm runs at all, or silently ends up with an emulated/wrong-architecture build. Confirming install-and-run is the smallest slice that delivers real value: a usable CLI on the device.
++
++**Independent Test**: On a clean Windows 11 ARM64 laptop with the documented prerequisites present, run the install steps shown in the getting-started guide and then run `graphhelm --version`. Success is a clean, single-line version result with no errors, produced by a binary that matches the host architecture.
++
++**Acceptance Scenarios**:
++
++1. **Given** a Windows 11 ARM64 (Snapdragon) host with the prerequisites listed in the guide, **When** the developer follows the documented install steps and runs `graphhelm --version`, **Then** the command finishes successfully (exit code 0) and prints exactly one line shaped `graphhelm <version>`, with no error output.
++2. **Given** the same host after installation, **When** the installed `graphhelm` command is inspected for the machine architecture of the executable it runs, **Then** it is a native ARM64 build matching the host, not an emulated x86-64 build.
++3. **Given** a developer on an x86-64 Windows machine, **When** they run `graphhelm --version`, **Then** that outcome is recognized as NOT satisfying the ARM64 confirmation (this check is specific to an ARM64 host).
++
++---
++
++### User Story 2 - The guide names Windows 11 ARM64 as a verified platform (Priority: P2)
++
++A reader is deciding whether GraphHelm fits their hardware. They read the getting-started page and want it to state plainly that Windows 11 on ARM64 is a supported, verified platform, and to show the exact steps to reach a working install there — before they spend time installing.
++
++**Why this priority**: Documentation that does not name the platform forces every ARM64 user to verify the tool themselves; naming it with the precise steps turns an unknown into a known, and it is the second half of the requested change.
++
++**Independent Test**: Open `docs/install/GETTING_STARTED.md`, find the platform/verification statement, and confirm Windows 11 ARM64 appears as a verified platform with the concrete steps to reach a working `graphhelm --version`.
++
++**Acceptance Scenarios**:
++
++1. **Given** the getting-started page, **When** a reader looks for which platforms are verified, **Then** Windows 11 ARM64 is listed alongside the previously verified platforms.
++2. **Given** the page presents ARM64 as verified, **When** a reader compares it with the release downloads listing, **Then** the two agree and neither claims a prebuilt ARM64 download that does not exist.
++
++---
++
++### User Story 3 - The ARM64 verification is reproducible and evidenced (Priority: P3)
++
++A maintainer later wants to know whether the "verified on ARM64" claim still holds after dependencies change. The verification should leave a recorded, repeatable proof — the same way the guide evidences its other platforms — so the claim can be trusted and re-checked.
++
++**Why this priority**: Evidence is what separates a durable "verified" label from a hopeful one; it keeps the platform claim honest over time.
++
++**Independent Test**: Re-run the documented ARM64 install-and-`--version` sequence on an equivalent Windows 11 ARM64 host and confirm the same successful result is reproduced, with the host's architecture identifiable in the record.
++
++**Acceptance Scenarios**:
++
++1. **Given** a recorded ARM64 verification, **When** the documented sequence is re-run on an equivalent Windows 11 ARM64 host, **Then** the same successful `graphhelm --version` outcome is reproduced.
++2. **Given** no genuine Windows 11 ARM64 device is available, **When** someone attempts to mark the platform verified, **Then** the missing observer is recorded and the platform is NOT represented as verified.
++
++### Edge Cases
++
++- **No prebuilt ARM64 archive exists in the current release.** The verified ARM64 path is the documented build-from-source route. The guide must not imply a downloadable ARM64 archive exists unless and until one is published.
++- **The test/authoring host is x86-64, not ARM64.** Running `graphhelm` on an x86-64 machine (even a fast one) does not count as the ARM64 confirmation; the produced binary's architecture must match an ARM64 host.
++- **Emulation ambiguity.** Native ARM64 execution must be distinguishable from running an x86-64 binary under emulation; the verification record must show the host is genuinely ARM64 and the binary it runs is native.
++- **No ARM64 device available at verification time.** The confirmation is blocked, not assumed: the missing observer is recorded and the platform stays unverified rather than being claimed.
++- **Version drift.** The version printed by `graphhelm --version` tracks the current release and may differ from the specific preview named in older release notes; the acceptance is on the output shape, and the guide's "expected output" should reflect the live release.
++
++## Requirements *(mandatory)*
++
++### Functional Requirements
++
++- **FR-001**: The system MUST be installable on a Windows 11 ARM64 (Snapdragon) host through the documented install path, yielding a runnable `graphhelm` command.
++- **FR-002**: On a correctly installed Windows 11 ARM64 host, `graphhelm --version` MUST exit successfully (exit code 0) and print exactly one line of the form `graphhelm <version>` with no error output.
++- **FR-003**: The `graphhelm` executable produced for the ARM64 host MUST be a native ARM64 image matching the host architecture, not an emulated foreign-architecture binary.
++- **FR-004**: The getting-started documentation MUST list Windows 11 ARM64 among verified platforms and MUST show the precise steps a developer on that platform follows to reach a working install.
++- **FR-005**: The verified-platforms statement MUST be consistent with the release downloads listing and MUST NOT assert that a prebuilt ARM64 archive exists unless one is actually published.
++- **FR-006**: The ARM64 verification MUST leave recorded, reproducible evidence showing the successful `--version` run together with the host's architecture, in the same spirit as the guide's other platform transcripts.
++- **FR-007**: When no genuine Windows 11 ARM64 device is available to confirm, the platform MUST NOT be presented as verified and the missing observer MUST be recorded instead.
++
++### Out of Scope
++
++- Publishing a brand-new prebuilt ARM64 release archive (packaging, checksums, download page): the verified path for this change is build-from-source; a prebuilt archive is a potential follow-up.
++- Studio, Runtime, or model-provider behavior beyond what `graphhelm --version` exercises on the ARM64 host.
++- Changes to other platforms' verified status, or to the existing x86-64 / Ubuntu flow.
++
++### Key Entities *(included because the feature produces a verifiable platform record)*
++
++- **Verified Platform Record**: identifies a platform (operating system + CPU architecture), the install method that was actually verified (prebuilt download vs build-from-source), its verified / not-verified status, and a pointer to the supporting evidence.
++- **Verification Evidence**: a captured, re-runnable record of the install-and-version sequence on a specific host, including the host's identifying architecture and the resulting version line, so the "verified" claim can be audited and reproduced.
++
++## Success Criteria *(mandatory)*
++
++### Measurable Outcomes
++
++- **SC-001**: A developer on a Windows 11 ARM64 laptop, starting from only the documented prerequisites, reaches a working `graphhelm --version` in a single guided pass — zero undocumented detours required.
++- **SC-002**: On the verified ARM64 host, `graphhelm --version` succeeds on 100% of invocations (deterministic clean exit, one-line version output).
++- **SC-003**: 100% of getting-started readers can identify, before installing, that Windows 11 ARM64 is a verified platform and can see the exact steps to a working install.
++- **SC-004**: The getting-started platform statement and the release downloads listing share 0 contradictions (in particular, no claimed prebuilt ARM64 download that does not exist).
++- **SC-005**: The ARM64 verification is reproducible: at least one transcript is retained, and re-running the documented sequence on an equivalent Windows 11 ARM64 host reproduces the same successful outcome with 0 unexpected failures.
++
++## Assumptions
++
++- **Target device**: "Windows 11 on ARM64" means a genuine ARM64 Windows 11 device (for example a Snapdragon-based laptop). Confirming the claim requires such a device to be present when the verification runs.
++- **Install path is build-from-source.** The current preview release publishes only Windows x86-64 and Linux x86-64 archives, so for this change the verified ARM64 path is the guide's existing build-from-source route. Introducing a prebuilt ARM64 archive is out of scope (see Out of Scope).
++- **"Verified" follows the repository's existing standard**: the documented commands were actually executed on that platform and the transcript retained, mirroring how the guide evidences its Windows x86-64 and Ubuntu platforms.
++- **Authoring-host observation (recorded 2026-10-26)**: this specification was authored on a Windows 11 Pro (build 26200) machine whose processor is an AMD Ryzen 9 9950X (x86-64). A `Win32_Processor.Architecture` query returned the ARM64 code (9), but that single reading conflicts with `PROCESSOR_ARCHITECTURE=AMD64`, `SystemType=x64-based PC`, the Rust host triple `x86_64-pc-windows-msvc`, and a preinstalled x86-64 `graphhelm.exe` (PE machine `0x8664`). The authoring host is therefore treated as **x86-64** and is *not* evidence for the ARM64 confirmation. On that host `graphhelm --version` was observed to exit 0 and print `graphhelm 0.1.1`, which anchors the expected single-line output shape.
++- **Version not pinned.** Acceptance is on the shape `graphhelm <version>`, not a fixed number; the live binary currently reports `0.1.1`, while the 0.1.0 release notes still quote `0.1.0`. During implementation the guide's "expected output" should be reconciled with the current release.
++- **English-only documentation** per the repository rule for all documentation.
++- **Governance reference substitution**: no project constitution file exists in this checkout; per the run's stage setup, the repository-root `AGENTS.md` is used as the governance reference in place of a constitution document.
+diff --git a/specs/001-bench/tasks.md b/specs/001-bench/tasks.md
+new file mode 100644
+index 0000000..7a11701
+--- /dev/null
++++ b/specs/001-bench/tasks.md
+@@ -0,0 +1,206 @@
++# Tasks: Windows 11 ARM64 CLI Install Verification
++
++**Input**: Design documents from `/specs/001-bench/`
++
++**Prerequisites**: plan.md ✓ (tech stack, structure), spec.md ✓ (3 user stories P1–P3), research.md ✓ (R1–R8), data-model.md ✓ (2 entities + state transitions), contracts/ ✓ (`version-command.md`, `verified-platform-docs.md`), quickstart.md ✓ (scenarios 1–3 + missing-observer path)
++
++**Setup note**: `.specify/scripts/` does not exist in this checkout; the stage setup JSON (`FEATURE_DIR = specs/001-bench`, `TASKS_TEMPLATE = .specify/templates/tasks-template.md`, `AVAILABLE_DOCS = []`) is treated as the `setup-tasks` output, and the design documents were listed and read directly under `specs/001-bench/`. There is no `.specify/extensions.yml`, so all extension hooks (before/after tasks) were skipped.
++
++**Governance note**: No project constitution file exists in this checkout. Per the run's stage setup, the repository-root `AGENTS.md` is used as the governance reference in place of `/memory/constitution.md`; this substitution is recorded here, in plan.md, and in research.md R7.
++
++**Assumptions recorded (unattended run)**:
++
++1. The authoring host is x86-64 by four redundant signals (research R6 appendix), so the *expected* outcome is branch (b) — missing observer. Branch (a) applies only if a genuine Windows 11 ARM64 device is at hand when the run executes; T003 fixes the branch at run time.
++2. Zero code changes are planned (plan R8): the change touches at most `docs/install/GETTING_STARTED.md`, `docs/releases/0.1.0.md` (only if a contradiction is found), and one new transcript under `docs/acceptance/`; `Cargo.lock` stays byte-identical.
++3. No workspace-wide build and no full test suite (task directive); the observers are the smallest ones defined in quickstart.md.
++4. The feature spec requests no automated code tests: the plan's Testing note substitutes quickstart scenario observers for unit tests (plan Constitution gate 6 — "No tests are added"). Story "verification" below is therefore scenario-driven capture with inline contract assertions (contracts/version-command.md C1–C5, A1–A5), not red-green TDD steps.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies)
++- **[Story]**: Which user story this task belongs to (US1, US2, US3 — from spec.md)
++- Every task carries the exact file path(s) it touches
++
++## Path Conventions
++
++Paths are repository-root-relative. This feature touches `docs/**` only, plus creates exactly one new file under `docs/acceptance/`. No source-tree change is planned.
++
++---
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Establish a trusted baseline before any observation or edit.
++
++- [X] T001 [P] Verify the pinned toolchain and checkout baseline on the authoring host: `cargo +1.97.1 --version` reports 1.97.1 under `rust-toolchain.toml`, `rustup show` records the host triple (expect `x86_64-pc-windows-msvc` on the authoring host per research R6), `git rev-parse HEAD` records the checkout SHA — no file writes; values anchor `docs/acceptance/windows-arm64-<date>.md` (T016) and the PR record
++- [X] T002 [P] Baseline-read the documents this change modifies or verifies, recording their current state for the later diff audit: the platform statement in `docs/install/GETTING_STARTED.md` § 1 (currently "provides verified Windows and Ubuntu x86-64 archives … On macOS or another platform, build from source"), the "Expected last line" block (currently `graphhelm 0.1.0`), and the Downloads table in `docs/releases/0.1.0.md`; read the format references `docs/acceptance/install-rehearsal-2026-09-13.md` and `docs/acceptance/clean-machine-2026-09-14.md` as the transcript templates — no file writes
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Fix the branch and capture the one piece of evidence that is branch-independent.
++
++**⚠️ CRITICAL**: T003 fixes branch (a)/(b) (research R6) — US1 task selection and US2/US3 wording all depend on it.
++
++- [X] T003 Branch determination: record whether a genuine Windows 11 ARM64 (Snapdragon) device is available for the verification run, with the signal set that supports the verdict; this selects branch (a) — run T005–T009 — or branch (b) — run T010 (referencing `specs/001-bench/research.md` R6 and `specs/001-bench/quickstart.md` "Read first")
++- [X] T004 [P] Run the negative control (quickstart Scenario 2) on the x86-64 authoring host regardless of branch: capture `$env:PROCESSOR_ARCHITECTURE` (expect `AMD64`), `(Get-CimInstance Win32_ComputerSystem).SystemType` (expect `x64-based PC`), `Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name`, `graphhelm --version; Write-Output "exit=$LASTEXITCODE"`, and the PE COFF machine of the resolved `graphhelm.exe` (expect `0x8664`, read as `[BitConverter]::ToUInt16($b, [BitConverter]::ToInt32($b, 60) + 4)`) — the captures become the explicit "not an ARM64 verification" block consumed by T010/T017 (contracts/version-command.md, "Negative control")
++
++**Checkpoint**: Foundation ready — branch fixed, negative-control evidence in hand; user story work can begin.
++
++---
++
++## Phase 3: User Story 1 - Developer installs and runs GraphHelm on a Snapdragon laptop (Priority: P1) 🎯 MVP
++
++**Goal**: Reach a working `graphhelm --version` (exit 0, exactly one line shaped `graphhelm <version>`, nothing on stderr) from a native ARM64 binary, by following only the documented path on a genuine Windows 11 ARM64 host — or, when no device exists, record the blocked run (FR-001…FR-003, FR-007; contracts/version-command.md C1–C5, A1–A5).
++
++**Independent Test**: Quickstart Scenario 1: on a clean Windows 11 ARM64 laptop with the documented prerequisites, follow the guide's install steps in a single guided pass, then run `graphhelm --version` — a clean single-line result produced by an ARM64-native binary. An x86-64 outcome (even a clean one) does NOT satisfy this story (US1 scenario 3; T004 demonstrates exactly that case).
++
++**Branch note**: If T003 fixed branch (b), skip T005–T009 and run T010; US1 then closes as OBSERVER_MISSING, not verified.
++
++### Implementation for User Story 1 (on-device run; contract assertions run inline at capture time)
++
++- [ ] T005 [US1] Establish host identity BEFORE installing anything, on the ARM64 host (quickstart Scenario 1 step 1; contract A1–A4): `$env:PROCESSOR_ARCHITECTURE` (expect `ARM64`), `(Get-CimInstance Win32_ComputerSystem).SystemType` (expect `ARM64-based PC`), `Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name` (expect a Snapdragon/ARM part) — if ANY reading says x86-64, this is not the device: stop and take T010 instead; record the readings verbatim for the transcript's host-identity block (`docs/acceptance/windows-arm64-<date>.md`, T017) — not run; collapsed to T010 (branch b)
++- [ ] T006 [US1] Install the documented prerequisites per `docs/install/GETTING_STARTED.md` § Prerequisites PLUS the ARM64 linker (research R2): `winget install --id Microsoft.VisualStudio.2022.BuildTools --exact --source winget --accept-source-agreements --accept-package-agreements`, then add the "Desktop development with C++" workload (native ARM64 MSVC linker), `winget install --id Rustlang.Rustup --exact --source winget --accept-source-agreements --accept-package-agreements`, `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"`, `rustup toolchain install 1.97.1 --profile minimal --component rustfmt clippy`, then `rustup show` expecting default host triple `aarch64-pc-windows-msvc` (contract A3) — any failure here is a finding for the record, not a silent detour (SC-001) — not run; collapsed to T010 (branch b)
++- [ ] T007 [US1] Build from source EXACTLY as guide § 1 says: `git clone https://github.com/stabem/GraphHelm.git` → `cd GraphHelm` → `cargo +1.97.1 install --locked --path apps/cli` — record `git rev-parse HEAD` as the transcript's "Commit under test" (data-model field `commit_under_test`, T016) — not run; collapsed to T010 (branch b)
++- [ ] T008 [US1] Run the contract command and capture it verbatim: `graphhelm --version; Write-Output "exit=$LASTEXITCODE"` — assert C1–C5: exit code `0`, stdout exactly ONE line matching semver-shaped `graphhelm <version>`, stderr empty, no prompt or progress output, works offline (contracts/version-command.md); RECORD the printed number, never assert it (research R5) — not run; collapsed to T010 (branch b)
++- [ ] T009 [US1] Prove the installed binary is native, not emulated (contract A5): read the PE COFF machine of `(Get-Command graphhelm).Source` as `[BitConverter]::ToUInt16($b, [BitConverter]::ToInt32($b, 60) + 4)` — expect `0xAA64`; a reading of `0x8664` fails FR-003 even if T008 was clean — not run; collapsed to T010 (branch b)
++
++### Branch (b) closeout (no device available)
++
++- [X] T010 [US1] (branch b only) Record the blocked run per FR-007 and the spec edge case "No ARM64 device available at verification time": state that no genuine Windows 11 ARM64 device was available, cite T004's four-signal x86-64 negative control and the absence of ARM64-on-x86-64 emulation (R6), and conclude the ARM64 runtime promise remains unobserved — never substituting an x86-64 result; the record lands in the work log / PR body and is consumed by `docs/acceptance/windows-arm64-<date>.md` (T016/T018)
++
++**Checkpoint**: US1 closes either as verified-candidate (branch a: T008/T009 green, captures preserved for US3) or as OBSERVER_MISSING (branch b: T010 written).
++
++---
++
++## Phase 4: User Story 2 - The guide names Windows 11 ARM64 as a verified platform (Priority: P2)
++
++**Goal**: `docs/install/GETTING_STARTED.md` lets a reader identify, BEFORE installing, where Windows 11 ARM64 stands — verified via build-from-source with a transcript link (branch a), or present with an honest "not yet verified — missing observer" line pointing at the record (branch b) — together with the precise steps, and zero contradictions with the release downloads listing (FR-004…FR-005, SC-003, SC-004; contracts/verified-platform-docs.md D1/D2).
++
++**Independent Test**: Open `docs/install/GETTING_STARTED.md`, find the platform/verification statement: Windows 11 ARM64 appears alongside the previously verified platforms (branch a) or appears with the honest status line (branch b), with the concrete steps to a working `graphhelm --version`, and `docs/releases/0.1.0.md` agrees word-for-word (no claimed prebuilt ARM64 download anywhere).
++
++### Implementation for User Story 2
++
++- [X] T011 [US2] Edit the `docs/install/GETTING_STARTED.md` § 1 platform statement (currently the block beginning "The 0.1.0 CLI preview release … provides verified Windows and Ubuntu x86-64 archives") to name Windows 11 ARM64 per the T003 outcome — branch (a): verified VIA BUILD-FROM-SOURCE, linking `docs/acceptance/windows-arm64-<YYYY-MM-DD>.md` in the same citation style the page already uses for its clean-host records; branch (b): present with an honest status line (e.g. "not yet verified — missing observer, see <record>") and NEVER worded as verified, however informally (data-model validation rule 3); NO prebuilt-ARM64-download claim in either branch (FR-005)
++- [X] T012 [US2] Add the explicit Windows 11 ARM64 build-from-source steps to `docs/install/GETTING_STARTED.md` § 1 (adjacent PowerShell block beside the existing build instructions): Visual Studio Build Tools 2022 with the "Desktop development with C++" workload (native ARM64 MSVC linker — research R2), rustup + `rustup toolchain install 1.97.1 --profile minimal --component rustfmt clippy`, `git clone https://github.com/stabem/GraphHelm.git` → `cargo +1.97.1 install --locked --path apps/cli`, then `graphhelm --version`; every prerequisite referenced must actually be documented (contract D1, SC-001 "zero undocumented detours")
++- [X] T013 [US2] Reconcile the "Expected last line" block in `docs/install/GETTING_STARTED.md` (currently `graphhelm 0.1.0`) with the live release per research R5: express the expected output as the SHAPE `graphhelm <version>` consistent with what the verified build actually prints (the T008 value; branch b: the T004 value), pinning neither `0.1.0` nor `0.1.1` literally
++- [X] T014 [P] [US2] Verify-only `docs/releases/0.1.0.md` (different file — parallel-safe with T011–T013): confirm the Downloads table still lists ONLY `graphhelm-v0.1.0-windows-x86_64.zip`, `graphhelm-v0.1.0-linux-x86_64.tar.gz`, `SHA256SUMS.txt` and that "For macOS, ARM, and other hosts, [build from source]" stays true; edit ONLY if a contradiction with the T011 statement is found, and any fix keeps both documents consistent in the same change (FR-005, SC-004, contract D2 rule 3)
++- [X] T015 [US2] Run quickstart Scenario 3 from the repository root AFTER every Phase 4 edit: `Select-String -Path docs\install\GETTING_STARTED.md -Pattern 'arm'` (no sentence anywhere asserts a downloadable ARM64 archive), `Get-Content docs\releases\0.1.0.md`, `Select-String -Path docs\install\GETTING_STARTED.md -Pattern 'verified','acceptance'` (every "verified" platform named resolves to a cited `docs/acceptance/` record; branch b: ARM64 not worded as verified) — re-run this check after EVERY later documentation edit in the change
++
++**Checkpoint**: US2 complete — readers see the ARM64 standing and exact steps before installing, and both documents agree.
++
++---
++
++## Phase 5: User Story 3 - The ARM64 verification is reproducible and evidenced (Priority: P3)
++
++**Goal**: One dated transcript under `docs/acceptance/` records the run — Result `pass`, `fail`, or `OBSERVER_MISSING` — with the redundant host signals, the binary's PE machine, and the verbatim `--version` output, so the claim is auditable and reproducible (FR-006, SC-005; data-model Entity 2; contract D3).
++
++**Independent Test**: A maintainer re-runs the documented ARM64 install-and-`--version` sequence on an equivalent Windows 11 ARM64 host and reproduces the same successful result (version number may differ per R5), with the host's architecture identifiable in the record; under branch (b), the record names the missing observer and the platform stays unverified (US3 scenario 2).
++
++### Implementation for User Story 3
++
++- [X] T016 [US3] Author `docs/acceptance/windows-arm64-<YYYY-MM-DD>.md` (`<YYYY-MM-DD>` = the verification run's date; branch b: the date the record is authored; filename mirrors `docs/acceptance/install-rehearsal-2026-09-13.md`) with the fixed header-table rows per data-model.md: **Commit under test** (full SHA from T007; branch b: the T001 checkout SHA), **Host** (device/model + OS name/build + architecture from the T005 signal set; branch b: the authoring host with its x86-64 signals), **Source** (`git clone` URL + SHA; branch b: this checkout), **Toolchain** (default host triple + Rust 1.97.1 + MSVC toolset version present; branch b: the authoring host's), **Started / ended** (UTC timestamps), **Result** (`pass` | `fail` + reason | `OBSERVER_MISSING` + which observer was absent), **Secrets** (token/key values as SHA-256 digests only + note of the sweep performed), **Cost** (expected: none)
++- [X] T017 [US3] Include the three evidence blocks in the transcript per data-model.md: the **host-identity block** (ALL FOUR signals — `$env:PROCESSOR_ARCHITECTURE`, `Win32_ComputerSystem.SystemType`, `rustup show` triple, `Win32_Processor.Name` — stating that agreement of the SET is what counts and a lone WMI architecture code is not decisive, citing R3's measured false positive), the **binary-identity block** (PE COFF machine of the installed `graphhelm.exe`: expect `0xAA64`; branch b: T004's `0x8664` negative control), and the **verbatim version-run block** (T008's command + output + exit code; the printed number recorded, never asserted)
++- [X] T018 [US3] Write the transcript's "what was verified, and what was not" section mirroring `docs/acceptance/install-rehearsal-2026-09-13.md`: state the limits honestly (branch b: WHY the authoring machine cannot serve — x86-64 by four signals, no `aarch64*` Rust target installed, no ARM64 host toolset in VS BuildTools, and no ARM64-on-x86-64 emulation; note that a later pass record supersedes this one via `superseded_by` without rewriting it)
++- [X] T019 [US3] Reconcile the guide link with the real transcript: confirm the path written by T011 in `docs/install/GETTING_STARTED.md` resolves to the actual file (adjust the link ONLY if the real run date differs from the placeholder), that the citation style matches the page's existing clean-host record links, and that the append-only invariant holds — older transcripts are never rewritten, supersession replaces authority not content (data-model state transitions; contract D3)
++
++**Checkpoint**: All user stories closed as designed: US1 observed (or OBSERVER_MISSING), US2 guide consistent with the release listing, US3 evidence retained and linked.
++
++---
++
++## Phase 6: Polish & Cross-Cutting Concerns
++
++**Purpose**: Whole-change sweeps and the delivery record.
++
++- [X] T020 [P] English-only audit of every document this feature creates or edits — `docs/install/GETTING_STARTED.md`, `docs/releases/0.1.0.md` (if T014 edited it), `docs/acceptance/windows-arm64-<date>.md` — per the AGENTS.md documentation-language rule (contract D4)
++- [X] T021 [P] Scope guard (plan R8): `git status --porcelain` shows ONLY the intended files — `docs/install/GETTING_STARTED.md` modified, `docs/releases/0.1.0.md` modified only if T014 found a contradiction, one new file under `docs/acceptance/`; `apps/cli/`, all crates, and `Cargo.lock` byte-identical; any code defect found on-device escalates to its own issue-first flow instead of riding along in this change
++- [X] T022 Final quickstart Scenario 3 pass over both documents after ALL changes (SC-004, FR-005/FR-007): branch (b) → end the completion report with `OBSERVER_MISSING: <absent device>`; branch (a) → confirm every "verified" claim in the guide resolves to a `pass` transcript
++- [X] T023 Write the delivery record per AGENTS.md: PR body carrying the Keel direct-route card (paths in scope, the promise, the proving command), the identity line `Session: … · Head: <sha8>` on every comment and commit body, closing-keyword discipline (`Refs #N` unless the close is intended; run `ci/closing-keywords.ps1` before pressing merge), and the rollback plan (revert the doc edits and remove the transcript)
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies — can start immediately (T001 ∥ T002)
++- **Foundational (Phase 2)**: Depends on Setup — T003 fixes the branch; T004 captures the branch-independent negative control; BLOCKS correct US1/US2/US3 wording (informational, not mechanical)
++- **User Stories (Phases 3–5)**: All depend on Foundational completion
++- **Polish (Phase 6)**: Depends on all desired user stories being complete
++
++### User Story Dependencies
++
++- **US1 (P1)**: Can start after Foundational — strictly sequential internally (one device). Under branch (b), T005–T009 collapse to T010.
++- **US2 (P2)**: Can start after Foundational; T011's wording depends on the US1 OUTCOME (T003 branch + T008/T010 results); T011's transcript link presumes the US3 filename convention (`windows-arm64-<YYYY-MM-DD>.md`) — T019 reconciles at landing.
++- **US3 (P3)**: Transcript content consumes US1 captures (T005–T009) or, under branch (b), the T004 negative control. **Phases 4 + 5 land as ONE change** (data-model: "the guide edit and the transcript land in the same change — one review, one merge"); if they are executed separately, complete US3 before pressing merge so T019 can verify the link.
++
++### Within Each User Story
++
++- US1: strictly sequential — T005 → T006 → T007 → T008 → T009 (host identity before install; install before build; build before run; run before binary proof)
++- US2: T011 → T012 → T013 sequential (same file); T014 parallel (different file); T015 last
++- US3: T016 → T017 → T018 sequential (same file); T019 last (touches both guide and transcript)
++
++### Parallel Opportunities
++
++- Phase 1: T001 ∥ T002
++- Phase 2: T003 ∥ T004
++- Phases 4+5: US2 and US3 touch disjoint files except the single link T019 reconciles — after T011 lands, T014 (releases page) ∥ T016–T018 (transcript) can proceed concurrently
++- Phase 6: T020 ∥ T021
++
++---
++
++## Parallel Example
++
++```text
++# Phase 1 (two independent lanes):
++T001 toolchain baseline           ∥   T002 document baseline reads
++
++# Phase 2:
++T003 branch determination          ∥   T004 negative control (x86-64 host)
++
++# After T003 → branch (a):            # branch (b):
++T005 → T006 → T007 → T008 → T009     T010 (blocked-run record)
++
++# Phases 4+5 (one landing unit):
++T011 → T012 → T013 (guide, same file)   ∥   T014 (releases page)
++                                      ∥   T016 → T017 → T018 (transcript, same file)
++then:  T015 (Scenario 3) → T019 (link reconciliation)
++
++# Phase 6:
++T020 ∥ T021 → T022 → T023
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup
++2. Complete Phase 2: Foundational (branch fixed, negative control captured)
++3. Complete Phase 3: User Story 1
++4. **STOP and VALIDATE**: US1 closes as verified-candidate (branch a) or OBSERVER_MISSING (branch b)
++5. Note: US1 alone is not the full requested change (the guide update is the literal request), but it produces every observation the later phases consume — nothing downstream may invent or substitute one
++
++### Incremental Delivery (one landing unit for the documentation)
++
++1. Setup + Foundational → branch fixed, negative control in hand
++2. US1 → run executed on the device (or blocked and recorded)
++3. US2 + US3 together → guide statement + steps + transcript + link land in ONE change (data-model invariant); validate via T015, T019, T022
++4. Polish → delivery record; under branch (b) the report ends `OBSERVER_MISSING: <absent device>`
++
++### Sizing Note
++
++This is a documentation + evidence feature: "parallel team" scaling is limited to the [P] pairs above; no two unmarked tasks share a file, and the on-device run is inherently serial. There is no cross-compile shortcut (research R1/R6): an x86-64 outcome never substitutes for the ARM64 observation.
++
++---
++
++## Notes
++
++- [P] tasks = different files, no dependencies on unfinished tasks
++- [Story] labels map tasks to spec.md user stories for traceability
++- The transcript's `<YYYY-MM-DD>` is chosen at verification-run time (branch b: record-authoring date); until then all references use the placeholder
++- The version NUMBER is observed and recorded, never asserted (research R5); the contract is the shape `graphhelm <version>` (C2)
++- Old transcripts are never rewritten (contract D3); a later pass record supersedes by link, not by editing
++- Commit after each task or logical group; stop at any checkpoint to validate the story independently
++- Avoid: vague tasks, same-file conflicts between parallel tasks, cross-story dependencies that break the one-landing-unit property

@@ -7,6 +7,12 @@ Keel-armed baseline sits inside the noise band of the un-armed baseline, and the
 rests on one suspected mis-graded task. Read §What this run does and does not establish before
 quoting numbers.
 
+**Follow-up.** A second battery on the same executor and task set, this time against external
+spec-driven methodologies (Spec Kit `s`, OpenSpec `o`), is reported in
+[`CROSS-METHOD.md`](CROSS-METHOD.md) (data in [`cross-method/`](cross-method/)). Headline: the Keel
+surfaces stay cost-neutral-to-cheaper and quality-neutral-to-better against both chains, while the
+multi-stage chains are the expensive side (≈9–11× $/proven after instrument corrections).
+
 ## 1. Claim under test
 
 Per [BENCHMARK_PROTOCOL.md](../../BENCHMARK_PROTOCOL.md): *"equal or better delivered-code quality
@@ -293,10 +299,15 @@ In this directory:
 | [`diffs/`](diffs/) | The 30 delivery diffs, named `{NN}-{task}-{arm}{run}-{verdict}.diff` |
 | [`blind-pack/`](blind-pack/) | INDEX + 14 anonymized exhibits as handed to the blind reviewer |
 | [`blind-review.md`](blind-review.md) | Verbatim blind-review table, findings, post-hoc exhibit→run mapping, disagreements |
+| [`CROSS-METHOD.md`](CROSS-METHOD.md) | Cross-methodology battery vs Spec Kit (`s`) and OpenSpec (`o`), same executor/tasks/scorer (report) |
+| [`cross-method/`](cross-method/) | Cross battery data: `rows.json` (28 rows, per-stage sessions included), `stats-cross.md`, `diffs/` (28 delivery diffs) |
 
-Canonical ledger: `tools/token-bench/doless/results.jsonl` (untracked by design) — 66 rows
-(37 Codex + 29 Drael; the reconstructed `k1` row lives only in `runs.json`). SHA-256 after the
-BOM strip at report time: `dc688da1…97e8b51c` (pre-strip `0aeb5d47…eb0e6344a`, 166,311 B).
+Canonical ledger: `tools/token-bench/doless/results.jsonl` (untracked by design) — 66 rows at
+battery-1 report time (37 Codex + 29 Drael; the reconstructed `k1` row lives only in `runs.json`).
+SHA-256 after the BOM strip at that time: `dc688da1…97e8b51c` (pre-strip `0aeb5d47…eb0e6344a`,
+166,311 B). The cross-method battery (run afterwards) appended 30 Drael rows (28 scored runs + 2
+excluded smoke rows); post-cross ledger SHA-256 `1a0addd7…fd29bb97` (315,609 B) is recorded in
+[`control-digests.json`](control-digests.json) and [CROSS-METHOD.md](CROSS-METHOD.md) §12.
 
 Official outputs reproduced at report time (`python tools\token-bench\doless.py …`):
 

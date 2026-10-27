@@ -1,0 +1,1879 @@
+diff --git a/.specify/feature.json b/.specify/feature.json
+new file mode 100644
+index 0000000..72ba549
+--- /dev/null
++++ b/.specify/feature.json
+@@ -0,0 +1,3 @@
++{
++  "feature_directory": "specs/001-bench"
++}
+diff --git a/.specify/templates/constitution-template.md b/.specify/templates/constitution-template.md
+new file mode 100644
+index 0000000..a4670ff
+--- /dev/null
++++ b/.specify/templates/constitution-template.md
+@@ -0,0 +1,50 @@
++# [PROJECT_NAME] Constitution
++<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
++
++## Core Principles
++
++### [PRINCIPLE_1_NAME]
++<!-- Example: I. Library-First -->
++[PRINCIPLE_1_DESCRIPTION]
++<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
++
++### [PRINCIPLE_2_NAME]
++<!-- Example: II. CLI Interface -->
++[PRINCIPLE_2_DESCRIPTION]
++<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
++
++### [PRINCIPLE_3_NAME]
++<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
++[PRINCIPLE_3_DESCRIPTION]
++<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
++
++### [PRINCIPLE_4_NAME]
++<!-- Example: IV. Integration Testing -->
++[PRINCIPLE_4_DESCRIPTION]
++<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
++
++### [PRINCIPLE_5_NAME]
++<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
++[PRINCIPLE_5_DESCRIPTION]
++<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
++
++## [SECTION_2_NAME]
++<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
++
++[SECTION_2_CONTENT]
++<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
++
++## [SECTION_3_NAME]
++<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
++
++[SECTION_3_CONTENT]
++<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
++
++## Governance
++<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
++
++[GOVERNANCE_RULES]
++<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
++
++**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
++<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+diff --git a/.specify/templates/plan-template.md b/.specify/templates/plan-template.md
+new file mode 100644
+index 0000000..36f2eab
+--- /dev/null
++++ b/.specify/templates/plan-template.md
+@@ -0,0 +1,113 @@
++# Implementation Plan: [FEATURE]
++
++**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
++
++**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
++
++**Note**: This template is filled in by the `__SPECKIT_COMMAND_PLAN__` command; its definition describes the execution workflow.
++
++## Summary
++
++[Extract from feature spec: primary requirement + technical approach from research]
++
++## Technical Context
++
++<!--
++  ACTION REQUIRED: Replace the content in this section with the technical details
++  for the project. The structure here is presented in advisory capacity to guide
++  the iteration process.
++-->
++
++**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]
++
++**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]
++
++**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
++
++**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]
++
++**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
++
++**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]
++
++**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]
++
++**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]
++
++**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++[Gates determined based on constitution file]
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/[###-feature]/
++├── plan.md              # This file (__SPECKIT_COMMAND_PLAN__ command output)
++├── research.md          # Phase 0 output (__SPECKIT_COMMAND_PLAN__ command)
++├── data-model.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── quickstart.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── contracts/           # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++└── tasks.md             # Phase 2 output (__SPECKIT_COMMAND_TASKS__ command - NOT created by __SPECKIT_COMMAND_PLAN__)
++```
++
++### Source Code (repository root)
++<!--
++  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
++  for this feature. Delete unused options and expand the chosen structure with
++  real paths (e.g., apps/admin, packages/something). The delivered plan must
++  not include Option labels.
++-->
++
++```text
++# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
++src/
++├── models/
++├── services/
++├── cli/
++└── lib/
++
++tests/
++├── contract/
++├── integration/
++└── unit/
++
++# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
++backend/
++├── src/
++│   ├── models/
++│   ├── services/
++│   └── api/
++└── tests/
++
++frontend/
++├── src/
++│   ├── components/
++│   ├── pages/
++│   └── services/
++└── tests/
++
++# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
++api/
++└── [same as backend above]
++
++ios/ or android/
++└── [platform-specific structure: feature modules, UI flows, platform tests]
++```
++
++**Structure Decision**: [Document the selected structure and reference the real
++directories captured above]
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++| Violation | Why Needed | Simpler Alternative Rejected Because |
++|-----------|------------|-------------------------------------|
++| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
++| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+diff --git a/.specify/templates/spec-template.md b/.specify/templates/spec-template.md
+new file mode 100644
+index 0000000..ceb2877
+--- /dev/null
++++ b/.specify/templates/spec-template.md
+@@ -0,0 +1,131 @@
++# Feature Specification: [FEATURE NAME]
++
++**Feature Branch**: `[###-feature-name]`
++
++**Created**: [DATE]
++
++**Status**: Draft
++
++**Input**: User description: "$ARGUMENTS"
++
++## User Scenarios & Testing *(mandatory)*
++
++<!--
++  IMPORTANT: User stories should be PRIORITIZED as user journeys ordered by importance.
++  Each user story/journey must be INDEPENDENTLY TESTABLE - meaning if you implement just ONE of them,
++  you should still have a viable MVP (Minimum Viable Product) that delivers value.
++
++  Assign priorities (P1, P2, P3, etc.) to each story, where P1 is the most critical.
++  Think of each story as a standalone slice of functionality that can be:
++  - Developed independently
++  - Tested independently
++  - Deployed independently
++  - Demonstrated to users independently
++-->
++
++### User Story 1 - [Brief Title] (Priority: P1)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently - e.g., "Can be fully tested by [specific action] and delivers [specific value]"]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++2. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 2 - [Brief Title] (Priority: P2)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 3 - [Brief Title] (Priority: P3)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++[Add more user stories as needed, each with an assigned priority]
++
++### Edge Cases
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right edge cases.
++-->
++
++- What happens when [boundary condition]?
++- How does system handle [error scenario]?
++
++## Requirements *(mandatory)*
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right functional requirements.
++-->
++
++### Functional Requirements
++
++- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
++- **FR-002**: System MUST [specific capability, e.g., "validate email addresses"]
++- **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
++- **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
++- **FR-005**: System MUST [behavior, e.g., "log all security events"]
++
++*Example of marking unclear requirements:*
++
++- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
++- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
++
++### Key Entities *(include if feature involves data)*
++
++- **[Entity 1]**: [What it represents, key attributes without implementation]
++- **[Entity 2]**: [What it represents, relationships to other entities]
++
++## Success Criteria *(mandatory)*
++
++<!--
++  ACTION REQUIRED: Define measurable success criteria.
++  These must be technology-agnostic and measurable.
++-->
++
++### Measurable Outcomes
++
++- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
++- **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
++- **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
++- **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
++
++## Assumptions
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right assumptions based on reasonable defaults
++  chosen when the feature description did not specify certain details.
++-->
++
++- [Assumption about target users, e.g., "Users have stable internet connectivity"]
++- [Assumption about scope boundaries, e.g., "Mobile support is out of scope for v1"]
++- [Assumption about data/environment, e.g., "Existing authentication system will be reused"]
++- [Dependency on existing system/service, e.g., "Requires access to the existing user profile API"]
+diff --git a/.specify/templates/tasks-template.md b/.specify/templates/tasks-template.md
+new file mode 100644
+index 0000000..7fff087
+--- /dev/null
++++ b/.specify/templates/tasks-template.md
+@@ -0,0 +1,252 @@
++---
++
++description: "Task list template for feature implementation"
++---
++
++# Tasks: [FEATURE NAME]
++
++**Input**: Design documents from `/specs/[###-feature-name]/`
++
++**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
++
++**Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
++
++**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies)
++- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
++- Include exact file paths in descriptions
++
++## Path Conventions
++
++- **Single project**: `src/`, `tests/` at repository root
++- **Web app**: `backend/src/`, `frontend/src/`
++- **Mobile**: `api/src/`, `ios/src/` or `android/src/`
++- Paths shown below assume single project - adjust based on plan.md structure
++
++<!--
++  ============================================================================
++  IMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.
++
++  The __SPECKIT_COMMAND_TASKS__ command MUST replace these with actual tasks based on:
++  - User stories from spec.md (with their priorities P1, P2, P3...)
++  - Feature requirements from plan.md
++  - Entities from data-model.md
++  - Endpoints from contracts/
++
++  Tasks MUST be organized by user story so each story can be:
++  - Implemented independently
++  - Tested independently
++  - Delivered as an MVP increment
++
++  DO NOT keep these sample tasks in the generated tasks.md file.
++  ============================================================================
++-->
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Project initialization and basic structure
++
++- [ ] T001 Create project structure per implementation plan
++- [ ] T002 Initialize [language] project with [framework] dependencies
++- [ ] T003 [P] Configure linting and formatting tools
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
++
++**⚠️ CRITICAL**: No user story work can begin until this phase is complete
++
++Examples of foundational tasks (adjust based on your project):
++
++- [ ] T004 Setup database schema and migrations framework
++- [ ] T005 [P] Implement authentication/authorization framework
++- [ ] T006 [P] Setup API routing and middleware structure
++- [ ] T007 Create base models/entities that all stories depend on
++- [ ] T008 Configure error handling and logging infrastructure
++- [ ] T009 Setup environment configuration management
++
++**Checkpoint**: Foundation ready - user story implementation can now begin in parallel
++
++---
++
++## Phase 3: User Story 1 - [Title] (Priority: P1) 🎯 MVP
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 1 (OPTIONAL - only if tests requested) ⚠️
++
++> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
++
++- [ ] T010 [P] [US1] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T011 [P] [US1] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 1
++
++- [ ] T012 [P] [US1] Create [Entity1] model in src/models/[entity1].py
++- [ ] T013 [P] [US1] Create [Entity2] model in src/models/[entity2].py
++- [ ] T014 [US1] Implement [Service] in src/services/[service].py (depends on T012, T013)
++- [ ] T015 [US1] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T016 [US1] Add validation and error handling
++- [ ] T017 [US1] Add logging for user story 1 operations
++
++**Checkpoint**: At this point, User Story 1 should be fully functional and testable independently
++
++---
++
++## Phase 4: User Story 2 - [Title] (Priority: P2)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 2 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T018 [P] [US2] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T019 [P] [US2] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 2
++
++- [ ] T020 [P] [US2] Create [Entity] model in src/models/[entity].py
++- [ ] T021 [US2] Implement [Service] in src/services/[service].py
++- [ ] T022 [US2] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T023 [US2] Integrate with User Story 1 components (if needed)
++
++**Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
++
++---
++
++## Phase 5: User Story 3 - [Title] (Priority: P3)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 3 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T024 [P] [US3] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T025 [P] [US3] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 3
++
++- [ ] T026 [P] [US3] Create [Entity] model in src/models/[entity].py
++- [ ] T027 [US3] Implement [Service] in src/services/[service].py
++- [ ] T028 [US3] Implement [endpoint/feature] in src/[location]/[file].py
++
++**Checkpoint**: All user stories should now be independently functional
++
++---
++
++[Add more user story phases as needed, following the same pattern]
++
++---
++
++## Phase N: Polish & Cross-Cutting Concerns
++
++**Purpose**: Improvements that affect multiple user stories
++
++- [ ] TXXX [P] Documentation updates in docs/
++- [ ] TXXX Code cleanup and refactoring
++- [ ] TXXX Performance optimization across all stories
++- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
++- [ ] TXXX Security hardening
++- [ ] TXXX Run quickstart.md validation
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies - can start immediately
++- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
++- **User Stories (Phase 3+)**: All depend on Foundational phase completion
++  - User stories can then proceed in parallel (if staffed)
++  - Or sequentially in priority order (P1 → P2 → P3)
++- **Polish (Final Phase)**: Depends on all desired user stories being complete
++
++### User Story Dependencies
++
++- **User Story 1 (P1)**: Can start after Foundational (Phase 2) - No dependencies on other stories
++- **User Story 2 (P2)**: Can start after Foundational (Phase 2) - May integrate with US1 but should be independently testable
++- **User Story 3 (P3)**: Can start after Foundational (Phase 2) - May integrate with US1/US2 but should be independently testable
++
++### Within Each User Story
++
++- Tests (if included) MUST be written and FAIL before implementation
++- Models before services
++- Services before endpoints
++- Core implementation before integration
++- Story complete before moving to next priority
++
++### Parallel Opportunities
++
++- All Setup tasks marked [P] can run in parallel
++- All Foundational tasks marked [P] can run in parallel (within Phase 2)
++- Once Foundational phase completes, all user stories can start in parallel (if team capacity allows)
++- All tests for a user story marked [P] can run in parallel
++- Models within a story marked [P] can run in parallel
++- Different user stories can be worked on in parallel by different team members
++
++---
++
++## Parallel Example: User Story 1
++
++```bash
++# Launch all tests for User Story 1 together (if tests requested):
++Task: "Contract test for [endpoint] in tests/contract/test_[name].py"
++Task: "Integration test for [user journey] in tests/integration/test_[name].py"
++
++# Launch all models for User Story 1 together:
++Task: "Create [Entity1] model in src/models/[entity1].py"
++Task: "Create [Entity2] model in src/models/[entity2].py"
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup
++2. Complete Phase 2: Foundational (CRITICAL - blocks all stories)
++3. Complete Phase 3: User Story 1
++4. **STOP and VALIDATE**: Test User Story 1 independently
++5. Deploy/demo if ready
++
++### Incremental Delivery
++
++1. Complete Setup + Foundational → Foundation ready
++2. Add User Story 1 → Test independently → Deploy/Demo (MVP!)
++3. Add User Story 2 → Test independently → Deploy/Demo
++4. Add User Story 3 → Test independently → Deploy/Demo
++5. Each story adds value without breaking previous stories
++
++### Parallel Team Strategy
++
++With multiple developers:
++
++1. Team completes Setup + Foundational together
++2. Once Foundational is done:
++   - Developer A: User Story 1
++   - Developer B: User Story 2
++   - Developer C: User Story 3
++3. Stories complete and integrate independently
++
++---
++
++## Notes
++
++- [P] tasks = different files, no dependencies
++- [Story] label maps task to specific user story for traceability
++- Each user story should be independently completable and testable
++- Verify tests fail before implementing
++- Commit after each task or logical group
++- Stop at any checkpoint to validate story independently
++- Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
+diff --git a/specs/001-bench/checklists/requirements.md b/specs/001-bench/checklists/requirements.md
+new file mode 100644
+index 0000000..0487932
+--- /dev/null
++++ b/specs/001-bench/checklists/requirements.md
+@@ -0,0 +1,55 @@
++# Specification Quality Checklist: Verify GraphHelm CLI on Windows 11 ARM64
++
++**Purpose**: Validate specification completeness and quality before proceeding to planning
++**Created**: 2026-10-26
++**Feature**: [spec.md](../spec.md)
++
++## Content Quality
++
++- [x] No implementation details (languages, frameworks, APIs)
++- [x] Focused on user value and business needs
++- [x] Written for non-technical stakeholders
++- [x] All mandatory sections completed
++
++## Requirement Completeness
++
++- [x] No [NEEDS CLARIFICATION] markers remain
++- [x] Requirements are testable and unambiguous
++- [x] Success criteria are measurable
++- [x] Success criteria are technology-agnostic (no implementation details)
++- [x] All acceptance scenarios are defined
++- [x] Edge cases are identified
++- [x] Scope is clearly bounded
++- [x] Dependencies and assumptions identified
++
++## Feature Readiness
++
++- [x] All functional requirements have clear acceptance criteria
++- [x] User scenarios cover primary flows
++- [x] Feature meets measurable outcomes defined in Success Criteria
++- [x] No implementation details leak into specification
++
++## Notes
++
++- Items marked incomplete require spec updates before `/speckit.clarify` or `/speckit.plan`
++- Validation iteration 1 (2026-10-26): all items pass on first review.
++- Judgment calls recorded during validation:
++  - "No implementation details": requirements name the documented command `graphhelm --version`,
++    the file `docs/install/GETTING_STARTED.md`, and `systeminfo` as evidence examples. These are
++    accepted because the feature IS the execution of a documented journey and a documentation
++    change; they identify what is verified where, not how it is implemented. FR-003 marks the
++    `systeminfo` identity "for example" to keep the check method-agnostic.
++  - "Technology-agnostic success criteria": SC-002/SC-003 reference the documented CLI command
++    and its output because the user-facing contract of this feature is precisely that command; no
++    framework, language, or build-system detail is asserted.
++  - Key Entities section omitted: the feature involves no persistent user data (verification,
++    documentation, and an evidence transcript only), per template guidance to remove sections that
++    do not apply.
++  - Zero [NEEDS CLARIFICATION] markers: every open decision had a reasonable default, which is
++    recorded in Assumptions (ARM64 native vs. emulated, archives out of scope, doc edit limited to
++    GETTING_STARTED.md plus transcript, English-only prose, x86-64 host environment fact, skipped
++    extension hooks / fixed feature directory).
++  - Known limitation carried into planning, not a spec defect: the ARM64 run promise cannot be
++    observed from this checkout's x86-64 host; the Assumptions section records the environment
++    measurement and the `OBSERVER_MISSING` consequence so planning does not mistake a proxy for a
++    proof.
+diff --git a/specs/001-bench/contracts/evidence-transcript.md b/specs/001-bench/contracts/evidence-transcript.md
+new file mode 100644
+index 0000000..c5d1a7e
+--- /dev/null
++++ b/specs/001-bench/contracts/evidence-transcript.md
+@@ -0,0 +1,66 @@
++# Contract: Evidence transcript (verification record)
++
++**Feature**: [../spec.md](../spec.md) | **Plan**: [../plan.md](../plan.md)
++
++Shape contract for the file the verification session produces:
++`docs/acceptance/windows-arm64-verification-<run-date>.md` (`<run-date>` = UTC date the session
++ends; house filename convention per
++[`install-rehearsal-2026-09-13.md`](../../../docs/acceptance/install-rehearsal-2026-09-13.md)).
++The field table in [data-model.md](../data-model.md) Entity 1 is the normative inventory; this
++contract fixes how those fields are *written*, so a reviewer can audit the record without the
++device.
++
++## Header (required, before any transcript line)
++
++1. **Title**: `# Windows 11 ARM64 verification — <run-date>` plus one sentence stating what was
++   verified (documented install journey + `graphhelm --version`) and against which
++   [`docs/install/GETTING_STARTED.md`](../../../docs/install/GETTING_STARTED.md) revision.
++2. **Header table**, same shape as the existing acceptance records:
++
++   | Row | Content |
++   |---|---|
++   | Commit under test | 40-char SHA (B2), plus tag/PR if applicable |
++   | Host | OS name/version from B1 verbatim, `System type` line, CPU name, and the shell used (with a note that shell-reported architecture is context, not proof) |
++   | Started / ended | UTC timestamps taken at session start/end |
++   | Result | `pass` or `fail` (uppercase **pass** style per house convention) |
++   | Extra steps beyond the document | none, or each one named with its reason (V3) |
++   | Secrets | statement that none appear (journey is credential-free); if anything identifying was masked, the masking rule |
++3. **Provenance note**: physical device vs. ARM64-native virtualized instance (spec Assumptions:
++   virtualization qualifies only when ARM64 runs natively); no x86-64 emulation layer anywhere in
++   the observed chain.
++
++## Body (the transcript itself)
++
++- Every command as executed, `$`-prefixed, followed by its unedited output and `[exit N]`, exactly
++  the format the existing acceptance transcripts use. Order: Part B1 → Part A → Part B2–B5 as
++  executed (see [install-journey.md](install-journey.md)); the ordering followed must be
++  reproducible from the text alone.
++- The four anchor outputs are mandatory and non-elidable: the B1 identity lines, the B3
++  `rustc --version --verbose` block, the full Part A sequence, and B5's exact `graphhelm
++  --version` line with exit code.
++- Elision is allowed only for long toolchain download/install progress output and is marked
++  verbatim-style (`[... elided ...]`) — the same marker discipline the rehearsal record states up
++  front. No other edits. A transcript whose only elisions are unmarked has failed V5.
++- Tool failures inside the journey appear in place (command, error output, `[exit N]`) followed by
++  exactly the sanctioned remedy or a V3-flagged extra step; failures are never deleted from the
++  stream.
++
++## Footer (required, after the transcript)
++
++1. **Reading of the run**: which data-model validations (V1–V7) hold, each checked against the
++   transcript's own lines (cite the section, not memory).
++2. **Failure block** (only if `fail`): what failed, the cause as established by the outputs, the
++   environment state — this is the FR-007 blocker record, written so a later retry links to it
++   instead of replacing it.
++3. **Reference note**: the exact relative path GETTING_STARTED.md's platform statement will link to
++   (i.e., this file), and confirmation the claim text lands in the same change set (C3).
++
++## Style rules (governance)
++
++- English only (AGENTS.md documentation-language rule); prose minimal — the transcript is the
++  content, commentary stays in header/footer.
++- No secrets, tokens, keys, or API keys anywhere (S1); the journey needs none, so their appearance
++  is a defect in the record.
++- Paths in the record use the device's actual paths (they identify the environment); nothing here
++  must stay true on other machines, which is why no path is asserted as universal except the
++  document-relative ones the guide uses.
+diff --git a/specs/001-bench/contracts/install-journey.md b/specs/001-bench/contracts/install-journey.md
+new file mode 100644
+index 0000000..d44e174
+--- /dev/null
++++ b/specs/001-bench/contracts/install-journey.md
+@@ -0,0 +1,91 @@
++# Contract: Windows 11 ARM64 install journey (on-device)
++
++**Feature**: [../spec.md](../spec.md) | **Plan**: [../plan.md](../plan.md)
++
++This is the fixed command sequence the verification session executes on the device. It has two
++parts with different legal force:
++
++- **Part A — Journey (documented).** These commands are copied from
++  [`docs/install/GETTING_STARTED.md`](../../../docs/install/GETTING_STARTED.md) (Prerequisites,
++  Windows commands, plus section 1, Windows block) **as written in the file under test**. They are
++  the promise: FR-001 succeeds only if Part A, alone, yields a working `graphhelm`. If the
++  document and this contract disagree at run time, the document wins — the session verifies the
++  document, not its mirror here.
++- **Part B — Evidence capture.** Commands added by this feature to establish the identities FR-003
++  demands (research R1/R2). They observe; they do not install. Their output goes to the transcript
++  ([evidence-transcript.md](evidence-transcript.md)).
++
++Environment: one fresh PowerShell session on the device, cloned repository at an arbitrary depth;
++`C:\path\to\GraphHelm` below means the clone root. Every command is recorded with its exit code.
++
++## Part A — Journey (exactly as documented; do not reorder or shorten)
++
++```powershell
++# A0. Prerequisites check (documented Checks column)
++cargo +1.97.1 --version        # only if the toolchain already exists; otherwise A1 installs it
++git --version
++
++# A1. Install the toolchain when missing (Prerequisites, Windows block)
++winget install --id Rustlang.Rustup --exact --source winget --accept-source-agreements --accept-package-agreements
++$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
++rustup toolchain install 1.97.1 --profile minimal --component rustfmt clippy
++
++# A2. Section 1 — clone and build-or-install (Windows block)
++git clone https://github.com/stabem/GraphHelm.git
++cd GraphHelm
++cargo +1.97.1 install --locked --path apps/cli
++graphhelm --version            # Expected last line, per the document: graphhelm 0.1.0
++```
++
++Notes fixed by the spec (edge cases):
++
++- **PATH refresh**: if `graphhelm` is not found immediately after A2, the only sanctioned remedy is
++  the documented one (new shell / PATH refresh) — no other step may be invented.
++- **Undocumented step rule**: any additional command required for success (a missing MSVC linker,
++  a toolchain host re-point per research R3, an archive substitution) fails SC-001 as written and
++  must be flagged in the transcript as a documentation defect whose fix lands in
++  GETTING_STARTED.md (in scope) before the claim is published.
++- **Archive path is out of scope**: the 0.1.0 release archives are x86-64 only; an ARM64 user who
++  took an archive instead of the source build has not run this journey.
++
++## Part B — Evidence capture (fixed expectations; see research R1/R2/R6)
++
++```powershell
++# B1. OS identity — must establish Windows 11 + ARM64 from the OS, never from a shell variable
++systeminfo | Select-String -Pattern 'OS Name|OS Version|System type'   # expect: ... ARM-based PC
++(Get-CimInstance Win32_Processor).Name                                  # expected: Snapdragon-class ARM name
++$PSVersionTable.PSVersion.ToString()                                    # context line for the transcript (not proof)
++
++# B2. Commit under test (A2 clone, unmodified)
++git rev-parse HEAD
++
++# B3. Toolchain identity — after A1, before A2's build
++rustup --version
++rustc --version --verbose        # the host: line MUST read aarch64-pc-windows-msvc (V2)
++
++# B4. Binary identity (optional direct check, R2) — after A2's install
++dumpbin /headers "$env:USERPROFILE\.cargo\bin\graphhelm.exe"   # if present: expect machine (AArch64)
++# or, without dumpbin, the 2-byte PE machine field of graphhelm.exe at offset (DWORD@0x3C)+4 == AA64h
++# if no inspector exists, record that fact — B3 alone establishes the build (V2)
++
++# B5. Version baseline comparison input
++graphhelm --version; echo "exit=$LASTEXITCODE"                    # must be exit=0 (SC-002), line recorded verbatim
++```
++
++Fallback fixed in advance (research R3): if B3 reports `host: x86_64-pc-windows-msvc`, execute
++`rustup set default-host aarch64-pc-windows-msvc`, reinstall the pinned toolchain, re-run B3, and
++flag the extra step as a documentation defect (V3). The journey then continues from A2 with the
++native toolchain in place.
++
++## Disqualifiers (any one voids the observation, FR-003 / spec edge cases)
++
++| Disqualifier | Detected by |
++|---|---|
++| OS not ARM64 (or identity taken from a shell variable only) | B1 lacks `ARM-based PC` (and no Snapdragon CPU name) |
++| Executed binary is x86-64 (incl. running emulated) | B3 host triple not `aarch64-pc-windows-msvc`; B4 PE machine not AArch64 when checked |
++| Install needed an undocumented step | Part A list extended without a V3 flag + doc fix |
++| `graphhelm --version` needed a retry or failed | B5 exit code / first-invocation requirement |
++| Run performed in cross-compilation or under full OS emulation from another host | provenance note in the transcript header |
++
++A disqualified run is still recorded — as `recorded_fail` (data model Entity 1) with its cause —
++and never counted toward the verified-platform claim (FR-007).
+diff --git a/specs/001-bench/data-model.md b/specs/001-bench/data-model.md
+new file mode 100644
+index 0000000..898a9bb
+--- /dev/null
++++ b/specs/001-bench/data-model.md
+@@ -0,0 +1,116 @@
++# Data Model: Verify GraphHelm CLI on Windows 11 ARM64
++
++**Feature**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
++
++The feature persists no application data — no tables, stores, or runtime state are created or
++changed (the spec's requirements checklist records the same: "no persistent user data"). What it
++*does* create and manage are two **repository records**, each with a fixed shape, validation rules,
++and a lifecycle. This file models them so the on-device session and the doc edit produce and check
++the same record twice (once written on the device, once read at review).
++
++## Entity 1: `VerificationTranscript` (evidence record)
++
++The durable acceptance record of one verification session. Created on disk as
++`docs/acceptance/windows-arm64-verification-<run-date>.md`; field shape defined in
++[evidence-transcript.md](contracts/evidence-transcript.md).
++
++### Fields
++
++| Field | Type / content | Source |
++|---|---|---|
++| `run_date` | UTC date, embedded in filename `<run-date>` | session end time |
++| `commit_under_test` | 40-char SHA (+ branch/PR if any) | `git rev-parse HEAD` on the device clone |
++| `os_identity.os_name_version` | e.g., `Microsoft Windows 11 ... ARM64` line | `systeminfo` |
++| `os_identity.system_type` | must contain `ARM-based PC` | `systeminfo` |
++| `os_identity.cpu_name` | processor name (expected to name a Snapdragon) | `Get-CimInstance Win32_Processor` |
++| `shell_note` | which shell ran the commands and its own reported architecture (context only, never the proof) | session |
++| `toolchain_identity.rustup_line` | rustup version output | `rustup --version` |
++| `toolchain_identity.rustc_host` | `rustc --version --verbose` output; `host:` line must be `aarch64-pc-windows-msvc` | toolchain install step |
++| `pe_machine_check` | optional: PE machine field of the installed exe (AArch64) or a note "inspector not available" | R2 |
++| `commands[]` | complete ordered sequence exactly as executed, `$`-prefixed, each with `[exit N]` | session |
++| `outputs` | unedited output for every command, elisions only by explicit markers | session |
++| `version_output` | exact `graphhelm --version` stdout line + exit code | install step |
++| `result` | `pass` \| `fail` | session |
++| `failure_cause` | present iff `result = fail`: what failed and its cause | session |
++| `secrets_policy` | statement that no secrets appear (digests-only convention, no tokens/keys/API keys in scope) | session author |
++
++### Validation rules (a transcript is *qualifying* only if all hold)
++
++- `V1` (FR-003): `system_type` contains `ARM-based PC`, or `cpu_name` names a Snapdragon-class ARM
++  processor — OS-level identity, not a shell variable.
++- `V2` (FR-003): `toolchain_identity.rustc_host` shows `host: aarch64-pc-windows-msvc`.
++- `V3` (FR-001/SC-001): `commands[]` reproduces the documented prerequisites + section 1 steps
++  exactly; any extra command needed for success is explicitly flagged as a documentation defect
++  with the fix landed in GETTING_STARTED.md (spec edge case: toolchain absent).
++- `V4` (FR-002/SC-003): `version_output` equals the repository's expected version line for
++  `commit_under_test` (see research R6), and `graphhelm --version` exited 0 on first invocation
++  (SC-002).
++- `V5` (FR-006): all of `os_identity`, `commands[]`, and `outputs` are present and verbatim
++  (elisions marked), so a skeptic re-reads the journey without the device.
++- `V6` (S1/secrets): no secret values anywhere (journey is credential-free; rule stated, sweep
++  performed, mirroring the acceptance-record convention).
++- `V7` (FR-007): `result = fail` transcripts are recorded with `failure_cause` but make the entity
++  non-qualifying: they cannot be referenced by a verified-platform claim.
++
++### State transitions
++
++```text
++not_run ──(session executed, V1–V6 hold)──────────► qualifying_pass
++   │                                                
++   └──(session executed, some Vi fail)────────────► recorded_fail
++```
++
++`qualifying_pass` → referenced by `PlatformClaim` in the same change set. `recorded_fail` → claim
++stays withheld (or withdrawn); retry is a new dated transcript linked to the failed one, and a later
++green never erases the earlier red (AGENTS.md retry rule). There is no `qualifying_proxy` state:
++runs under x86-64 emulation or cross-built from another host do not enter this model at all
++(FR-003) — they are noted as context in the failing transcript, if anywhere.
++
++## Entity 2: `PlatformClaim` (documentation statement)
++
++The sentence(s) in [`docs/install/GETTING_STARTED.md`](../../docs/install/GETTING_STARTED.md)
++section 1 asserting a platform is verified. One instance is added by this feature:
++
++### Fields
++
++| Field | Content for this feature |
++|---|---|
++| `platform` | Windows 11 on ARM64 |
++| `acquisition` | source build, using the section 1 commands shown directly beneath the statement |
++| `archive_statement` | untouched: "verified Windows and Ubuntu x86-64 archives" remains scoped to those archives (research R5) |
++| `evidence_ref` | relative link to the qualifying transcript (`../acceptance/windows-arm64-verification-<run-date>.md`) |
++| `edit_sites` | ≤ 2: section 1 statement; top-of-page citation paragraph only if the run qualifies |
++
++### Validation rules
++
++- `C1` (FR-004): statement names the platform, says how the CLI is obtained there, and keeps that
++  distinct from the archives statement.
++- `C2` (FR-005/SC-005): `evidence_ref` resolves within the repository to a `VerificationTranscript`
++  satisfying V1–V6. Every verified-platform statement in the file has such a reference.
++- `C3` (US2 scenario 2 / FR-007): the claim text and its reference land in the same change set as
++  the qualifying transcript; a review finds no claim without resolvable evidence.
++- `C4` (L1/L2): English-only prose.
++
++### State transitions
++
++```text
++UNVERIFIED ──(planning done, device observer absent)──────────► PENDING_DEVICE (OBSERVER_MISSING recorded; claim text absent)
++   │                                                        │
++   │                                                        ├─(qualifying_pass transcript)──► VERIFIED (claim + reference published together)
++   │                                                        └─(recorded_fail)────────────────► FAILED_HELD (claim stays absent; blocker named)
++   └──────────────────────────────(qualifying_pass, direct)──┴────────────────────────────────► VERIFIED
++```
++
++Current state after this plan: **PENDING_DEVICE** — `OBSERVER_MISSING: a native Windows 11 ARM64
++device on which the installed CLI can execute`. `FAILED_HELD` is reversible by a new passing run;
++nothing else writes to these states except a qualifying transcript landing.
++
++## Relationships
++
++- `PlatformClaim.evidence_ref` → `VerificationTranscript` (exactly one per claim; many-to-one is
++  legal — a future re-run may be cited by a later claim revision, but never while the old
++  transcript remains the cited one without both moving together).
++- `VerificationTranscript.commit_under_test` → repository commit (informational pointer; the
++  transcript itself is the evidence, the SHA anchors which version it proved).
++- No other entities exist for this feature; anything beyond these two records is out of scope
++  (research R7).
+diff --git a/specs/001-bench/plan.md b/specs/001-bench/plan.md
+new file mode 100644
+index 0000000..fcf4bb2
+--- /dev/null
++++ b/specs/001-bench/plan.md
+@@ -0,0 +1,137 @@
++# Implementation Plan: Verify GraphHelm CLI on Windows 11 ARM64
++
++**Branch**: `main` (stage setup fixed `BRANCH: main`; no feature branch is created because `.specify/extensions.yml` is absent and hooks are skipped) | **Date**: 2026-10-26 | **Spec**: [spec.md](spec.md)
++
++**Input**: Feature specification from `/specs/001-bench/spec.md`
++
++**Note**: This template is filled in by the `__SPECKIT_COMMAND_PLAN__` command; its definition describes the execution workflow.
++
++## Summary
++
++The feature proves one journey on one real device and then publishes what it proved: run the
++documented install path in [`docs/install/GETTING_STARTED.md`](../../docs/install/GETTING_STARTED.md)
++(Prerequisites + section 1) exactly as written on a native Windows 11 ARM64 laptop, capture the
++session as an acceptance transcript under `docs/acceptance/`, and only after a passing transcript
++exists, add Windows 11 ARM64 to the verified platforms in `GETTING_STARTED.md` — obtained by source
++build, with a resolvable reference to the transcript, while leaving the statement about the 0.1.0
++release archives (Windows/Ubuntu x86-64) unchanged.
++
++Technical approach: no Rust code, schema, or dependency changes. The implementation is (a) a
++transcripted device session whose command sequence is fixed in advance by
++[contracts/install-journey.md](contracts/install-journey.md) and whose record shape is fixed by
++[contracts/evidence-transcript.md](contracts/evidence-transcript.md), and (b) a bounded edit of at
++most two locations in `docs/install/GETTING_STARTED.md` (the section 1 platform statement, and the
++top-of-page transcript citation if the device run qualifies). The device identity (OS ARM64 per
++`systeminfo` / CPU identity) and the binary identity (`rustc` host triple `aarch64-pc-windows-msvc`)
++are captured before and during the run so that FR-003 is evidenced, not assumed. This checkout lives
++on an x86-64 Windows 11 host (measured 2026-10-26), so the device observer is absent here and the
++FR-001–FR-003 promise is carried as `OBSERVER_MISSING` rather than proven by cross-compilation or
++emulation (see Constitution Check, gate O).
++
++## Technical Context
++
++**Language/Version**: Rust `1.97.1` (pinned toolchain; workspace version `0.1.0`) — toolchain only.
++This feature changes no Rust source; `cargo +1.97.1 install --locked --path apps/cli` is exercised,
++not modified.
++
++**Primary Dependencies**: rustup-provided `1.97.1` toolchain for `aarch64-pc-windows-msvc`, git,
++PowerShell (as documented). No new crate dependencies are introduced; any build-time requirement the
++device surface adds (e.g., an MSVC linker) is an observation about the documented prerequisites, not
++a dependency change in this repository.
++
++**Storage**: Filesystem only. Artifacts are one new Markdown transcript in `docs/acceptance/` and an
++in-place edit of `docs/install/GETTING_STARTED.md`. No database, no new state files.
++
++**Testing**: No automated code tests are touched. Proof is the observed device journey
++(spec User Story 1 acceptance scenarios) plus doc-audit checks (SC-001…SC-005) run against the
++edited files — smallest checks: read the edited section, verify the referenced transcript path
++resolves in the tree. See [quickstart.md](quickstart.md).
++
++**Target Platform**: Native Windows 11 on ARM64 (`aarch64-pc-windows-msvc`, Snapdragon) for the
++journey itself; the checkout host is Windows 11 Pro x86-64 (AMD Ryzen 9 9950X) and serves only as
++the documentation/planning machine.
++
++**Project Type**: Verification + documentation change on an existing Rust CLI workspace (no new
++project type; structure decision below).
++
++**Performance Goals**: None beyond the recorded expectation that a source build takes a few minutes
++on a laptop (comparison point: 186 s on a clean Ubuntu container per
++[docs/acceptance/install-rehearsal-2026-09-13.md](../../docs/acceptance/install-rehearsal-2026-09-13.md)).
++
++**Constraints**: Only the documented steps may succeed the install (any invented step is a doc
++defect to fix within this feature); English-only prose; a verified-platform claim is never published
++ahead of its passing transcript (FR-007); x86-64 execution under emulation never counts
++(FR-003); no secrets in the transcript (digests-only convention of existing acceptance records).
++
++**Scale/Scope**: One device session, one transcript file, ≤ 2 edit sites inside
++`docs/install/GETTING_STARTED.md`. Release archives, INSTALL.md, release notes, CI, and all Rust
++code are out of scope.
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++**Governance substitution (recorded)**: no constitution file exists in this checkout
++(`.specify/memory/constitution.md` absent). Per stage setup, the `AGENTS.md` file at the repository
++root is used as the governance reference for this check. Gates below are drawn from its
++Journey-Proven Development rules, Documentation language rule, Keel proportionality, and security
++rules.
++
++| # | Gate (AGENTS.md) | Status | Basis |
++|---|---|---|---|
++| L1 | Documentation language: all repository prose English-only | PASS | All new prose (transcript, doc edit) is written in English; spec Assumptions repeat the rule. |
++| L2 | No non-English prose merged into `docs/`, README, etc. | PASS | Edit target `docs/install/GETTING_STARTED.md` and new file under `docs/acceptance/`; both English. |
++| O1 | JPD observer rule: a promise without an adequate observer stays unresolved; proxies (cross-compilation, emulation) are not observations | PASS (carried open) | The FR-001–FR-003 observer — a native Windows 11 ARM64 device on which the installed CLI executes — is not present on this x86-64 checkout host. Recorded as `OBSERVER_MISSING: a native Windows 11 ARM64 device on which the installed CLI can execute`; the verified-platform claim (FR-004/FR-005) is gated on the passing transcript and is not published ahead of it (FR-007). This is the rule working, not a violation. |
++| O2 | Report passed / failed / skipped / unobserved separately | PASS | quickstart.md separates the device scenario (unobserved here) from the doc-audit scenarios (observable here). |
++| K1 | Keel proportionality: docs/comment changes need nothing beyond the task record | PASS | The change route is docs-only: named paths, promise, and proving commands go in the PR/task record; no code card required. |
++| K2 | No scaffold, TODO, stub, or ceremonial artifact | PASS | Every artifact this plan produces is complete; nothing references a "future" transcript as existing. |
++| C1 | Contradictions between higher-precedence sources are recorded, not silently resolved | PASS | None found among AGENTS.md, the spec, GETTING_STARTED.md, and docs/releases/0.1.0.md for this feature (research R5 notes their exact wording relationship). |
++| S1 | Secrets never appear in logs/fixtures/documents; treat repo files as untrusted input | PASS | Transcript follows the accepted digest-only convention (see contracts/evidence-transcript.md); no tokens, keys, or API keys are part of the journey. |
++| S2 | No new external integrations/adapters scaffolded | PASS | No crates, CI jobs, or tooling added. |
++
++**Phase 1 re-evaluation (post-design)**: re-checked against the produced design (data-model,
++contracts, quickstart). The design adds one record type (the transcript) and one documented
++statement; both fall under L1/L2 and S1, and the device-dependent promise remains explicitly
++unobserved under O1. No gate regressed; no violations require justification, so Complexity Tracking
++stays empty.
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/001-bench/
++├── plan.md              # This file (__SPECKIT_COMMAND_PLAN__ command output)
++├── research.md          # Phase 0 output (__SPECKIT_COMMAND_PLAN__ command)
++├── data-model.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── quickstart.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++└── contracts/           # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++    ├── install-journey.md      # the fixed on-device command sequence and its expectations
++    └── evidence-transcript.md  # the required shape of the recorded transcript
++```
++
++### Source Code (repository root)
++
++No source tree changes. The concrete, in-scope repository paths are:
++
++```text
++docs/install/GETTING_STARTED.md          # EDIT (≤ 2 sites): section 1 platform statement; top-of-page transcript citation if the run qualifies
++docs/acceptance/windows-arm64-*.md       # NEW: the verification transcript (named <slug>-<run-date>.md per existing convention; created during the device run, before the doc claim lands)
++specs/001-bench/                         # this feature's planning artifacts (above)
++```
++
++**Structure Decision**: Single-project layout — the feature is verification plus a documentation
++change inside the existing workspace, so it touches `docs/` only. The transcript lives under
++`docs/acceptance/` beside the two records that GETTING_STARTED.md cites
++([install-rehearsal-2026-09-13.md](../../docs/acceptance/install-rehearsal-2026-09-13.md),
++[clean-machine-2026-09-14.md](../../docs/acceptance/clean-machine-2026-09-14.md)), preserving the
++repository convention that documentation claims resolve to acceptance transcripts in one hop. No
++directories under `core/`, `apps/`, `ci/`, `schemas/`, or `extensions/` are created or modified;
++adding any would violate "do not scaffold future directories" and would leave the docs-only route.
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++No violations. The single open item (gate O1, missing ARM64 device observer) is not a complexity
++violation but the governance rule applied: it defers the claim, it does not add machinery.
+diff --git a/specs/001-bench/quickstart.md b/specs/001-bench/quickstart.md
+new file mode 100644
+index 0000000..43fe142
+--- /dev/null
++++ b/specs/001-bench/quickstart.md
+@@ -0,0 +1,96 @@
++# Quickstart: Verification Scenarios — Windows 11 ARM64
++
++**Feature**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md)
++
++Runbook for proving the feature works end-to-end. The command sequences live in
++[contracts/install-journey.md](contracts/install-journey.md); the record shape in
++[contracts/evidence-transcript.md](contracts/evidence-transcript.md); entity lifecycles in
++[data-model.md](data-model.md). This file only says *which scenario proves what* and what counts.
++
++## Status of each scenario (kept honest per AGENTS.md JPD)
++
++| Scenario | Observable from this checkout? | State |
++|---|---|---|
++| A — on-device journey | **No.** This host is Windows 11 Pro x86-64 (AMD Ryzen 9 9950X; `systeminfo` reports `x64-based PC`). `OBSERVER_MISSING: a native Windows 11 ARM64 device on which the installed CLI can execute.` | Blocked on device — never reported as passed here |
++| B — documentation audit | Yes, once the change lands in the tree | Runnable by any reviewer |
++| C — blocked-path guard | Yes, right now on this host | Runnable immediately |
++
++A proxy (cross-compiling `aarch64-pc-windows-msvc` here, running an x86-64 build under emulation)
++never satisfies Scenario A — the disqualifiers are listed in the install-journey contract.
++
++## Scenario A — Install and run on the device (FR-001…FR-003, FR-006; US1; SC-001…SC-003)
++
++**Prerequisites**: a physical Snapdragon-based Windows 11 laptop (or an ARM64-native virtualized
++Windows 11 instance), network access for the toolchain fetch, nothing pre-installed beyond what the
++document's Prerequisites table lists. One fresh PowerShell session.
++
++**Steps**: execute the fixed sequence from [contracts/install-journey.md](contracts/install-journey.md)
++(Part B1 first, then Part A, then Part B2–B5), writing each command and its unedited output into a
++transcript as you go, and finish the transcript per [evidence-transcript.md](contracts/evidence-transcript.md).
++Estimated time: one pinned-toolchain download plus a source build — comparison point: 186 s on a
++clean Ubuntu container; a laptop is similar.
++
++**Expected outcome**:
++- B1 shows `ARM-based PC` / Snapdragon CPU name (V1).
++- B3 shows `host: aarch64-pc-windows-msvc` (V2) — otherwise the fallback fires and the extra step is flagged.
++- Part A completes with zero undocumented steps (V3), and B5 prints exactly the document's expected
++  version line (`graphhelm 0.1.0` for workspace version `0.1.0`, at the tested commit) with
++  `[exit 0]` on first invocation (V4, SC-002).
++- The committed transcript passes V1–V7 → the data model's `qualifying_pass`, which unblocks
++  Scenario B's claim checks.
++
++**Count as failed** when any disqualifier in the install-journey contract hits; record with cause
++(FR-007) and keep the claim withheld.
++
++## Scenario B — Documentation audit (FR-004, FR-005; US2, US3; SC-004, SC-005)
++
++**Prerequisites**: a checkout containing the landed change (transcript + edited
++[`docs/install/GETTING_STARTED.md`](../../docs/install/GETTING_STARTED.md)). Any platform.
++
++**Checks** (smallest that observe; run in PowerShell from the repository root):
++
++```powershell
++# B-check 1: the platform claim exists in section 1, names source build, and cites the transcript
++Select-String -Path docs/install/GETTING_STARTED.md -Pattern 'ARM64' -Context 2,2
++# human review of the hit: claim present · acquisition = source build · archives sentence still
++# scoped to "verified Windows and Ubuntu x86-64 archives" (C1, US2 scenario 3)
++
++# B-check 2: the referenced evidence resolves in one hop (SC-004/SC-005)
++$ref = 'docs/acceptance/windows-arm64-verification-<run-date>.md'   # as linked in section 1
++Test-Path $ref   # expect: True
++
++# B-check 3: the cited transcript actually carries the proof (C2 → V1–V6)
++Select-String -Path $ref -Pattern 'ARM-based PC', 'aarch64-pc-windows-msvc', 'graphhelm 0\.1\.0'
++# expect all three anchors present, matching the contracts' required lines
++
++# B-check 4: no verified-platform statement lacks a resolvable reference, and prose is English-only (SC-005, L1)
++git diff --stat HEAD~1   # confirm the touched files are exactly: GETTING_STARTED.md + the transcript (+ specs/)
++```
++
++**Expected outcome**: all four checks hold → US2 independent test passes ("read the guide; follow
++the reference; it shows a successful install and passing `--version` on ARM64"). A claim found
++without a resolving reference fails SC-005 and the change must not merge (C3).
++
++## Scenario C — Blocked-path guard (FR-007; US2 scenario 2) — runnable now, on this host
++
++**Prerequisites**: nothing but this checkout.
++
++```powershell
++systeminfo | Select-String 'System type'        # expect: ... x64-based PC → not a qualifying device
++git grep -n "Windows 11 on ARM64" docs/install/GETTING_STARTED.md
++# while no qualifying transcript exists in docs/acceptance/, expect: no match (claim not published)
++```
++
++**Expected outcome**: this host confirms the missing observer, and until Scenario A produces a
++`qualifying_pass` transcript, the guide does not state Windows 11 ARM64 as verified. This is the
++check that keeps a rushed doc edit from outliving its proof; run it again at any future point where
++the claim's status is in question.
++
++## Mapping back to the specification
++
++| Spec artifact | Observed by |
++|---|---|
++| US1 scenarios 1–3, FR-001…FR-003, SC-001…SC-003 | Scenario A (device) |
++| US2 scenarios 1–3, FR-004/FR-005, SC-004/SC-005 | Scenario B (after landing) |
++| US2 scenario 2 / FR-007 while the observer is absent | Scenario C (now) |
++| US3, FR-006 | Scenario A's transcript + Scenario B-check 3 (auditability after the device is gone) |
+diff --git a/specs/001-bench/research.md b/specs/001-bench/research.md
+new file mode 100644
+index 0000000..439af76
+--- /dev/null
++++ b/specs/001-bench/research.md
+@@ -0,0 +1,158 @@
++# Research: Verify GraphHelm CLI on Windows 11 ARM64
++
++**Feature**: [spec.md](spec.md) | **Plan**: [plan.md](plan.md) | **Date**: 2026-10-26
++
++Phase 0 output. Every entry resolves an unknown that the plan's Technical Context raised; none is
++left as `NEEDS CLARIFICATION`. Items that only a device can settle are decided here *with their
++device-time observation and fallback* so the on-device session executes a fixed plan rather than an
++open question.
++
++## R1. How the session proves the OS is Windows 11 ARM64 (FR-003, edge case: emulated PowerShell misreporting)
++
++- **Decision**: capture two system-level identities at the start of the session: (a)
++  `systeminfo` filtered to `OS Name` / `OS Version` / `System type`, where a native Windows 11 on
++  ARM reports `System type: ... ARM-based PC`; and (b)
++  `(Get-CimInstance Win32_Processor).Name`, expected to name a Snapdragon processor (the spec
++  allows either signal). Both lines go verbatim into the transcript.
++- **Rationale**: these values come from the OS's own identity services, not from the process's view
++  of itself. The spec names exactly this failure mode: a 64-bit x86-64 process (e.g., classic
++  PowerShell 5.1 running under emulation) can report AMD64 even on an ARM64 machine, so shell
++  variables are disqualified. `systeminfo` and WMI/CIM are present on every supported Windows 11
++  image, need no install, and work identically in PowerShell 5.1 and pwsh.
++- **Alternatives considered**: `$env:PROCESSOR_ARCHITECTURE` / `PROCESSOR_ARCHITEW6432` (rejected:
++  per-process values, the exact class of misreport the spec rules out); `Get-ComputerInfo`
++  (supersets R1 but takes ~10 s and dumps unrelated fields); registry `PROCESSOR_ARCHITECTURE` read
++  (same OS truth as systeminfo but less human-readable in a transcript); WMI via `wmic` (deprecated,
++  not guaranteed on newer images — CIM is its successor).
++
++## R2. How the session proves the executed binary was built for ARM64 (FR-003, edge case: wrong binary)
++
++- **Decision**: evidence by construction plus one optional direct check. During the documented
++  toolchain install the transcript captures `rustc --version --verbose`; the `host:` line must read
++  `aarch64-pc-windows-msvc` — then `cargo +1.97.1 install --locked --path apps/cli` compiles for the
++  host target by default, so the installed binary is ARM64 and runs natively. As a secondary line,
++  when a PE inspector is available (`dumpbin /headers <exe>` showing `machine (AArch64)`, or the
++  2-byte PE machine field `AA64h` at offset `DWORD@0x3C + 4` of `graphhelm.exe`) the transcript
++  records it; absence of such a tool is noted, not fatal, because the host-triple line already
++  establishes the build.
++- **Rationale**: rustc's host triple names the compiler's own architecture; a native ARM64 compiler
++  targeting its own host produces a native ARM64 PE. An emulated x86-64 toolchain would print
++  `x86_64-pc-windows-msvc` and is caught before any binary is produced. SC-003 (identical version
++  output across platforms) then holds by construction: clap prints `{bin} {CARGO_PKG_VERSION}` with
++  no platform term, and the workspace version is `0.1.0`
++  (root [Cargo.toml](../../Cargo.toml)), matching GETTING_STARTED §1's expected line
++  `graphhelm 0.1.0`.
++- **Alternatives considered**: file-size/hash comparison against an x86-64 build (weak: proves
++  difference, not architecture, and hashes differ between hosts anyway); `dumpbin` as primary
++  (not present on a clean Windows without Visual Studio tools — cannot be a prerequisite of the
++  proof); relying solely on "it ran" (unreliable: x86-64 binaries run fine under emulation and print
++  the same version — the spec's own disqualifier).
++
++## R3. Will the pinned Rust toolchain exist natively for ARM64 Windows, and does the documented winget path deliver it?
++
++- **Decision**: `aarch64-pc-windows-msvc` is a first-class rustc target — Tier 2 since the beta
++  notes period and promoted to Tier 1 with Rust 1.91 — so the pinned `1.97.1` ships a native ARM64
++  toolchain, and rustup's distribution tree carries an `aarch64-pc-windows-msvc` folder
++  (e.g., `static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe`). The device
++  session therefore expects the documented winget command to yield a native toolchain — and it
++  verifies that expectation with R2's `rustc --version --verbose` immediately after
++  `rustup toolchain install 1.97.1 ...`.
++- **Fallback (fixed in advance)**: if the installed toolchain's host triple is
++  `x86_64-pc-windows-msvc` — i.e., the winget package ran an emulated x86-64 rustup-init that made
++  an emulated default host — the session re-points with
++  `rustup set default-host aarch64-pc-windows-msvc` followed by reinstalling the pinned toolchain,
++  and records that extra step in the transcript. Per the spec's edge case "Toolchain absent on the
++  device", any extra step required makes the documentation wrong, and fixing
++  `docs/install/GETTING_STARTED.md` (inside this feature's edit scope) becomes part of the delivery
++  rather than a blocker to it. The same rule applies to any missing MSVC linker the build demands.
++- **Rationale**: the research question was "can the documented journey succeed natively at all?" —
++  answered yes with a named escape hatch, so neither outcome opens a design change; both produce a
++  transcript plus, at most, an extra documented step.
++- **Alternatives considered**: cross-compiling `aarch64-pc-windows-msvc` on this x86-64 host and
++  copying the exe to the laptop (rejected: violates FR-003's source-build journey and AGENTS.md's
++  proxy rule — it would also need the ARM64 linker installed here anyway); pinning a
++  Windows-GNU toolchain (different feature, changes the documented commands); assuming the winget
++  package is architecture-aware without checking (rejected precisely because R1/R2 exist to catch
++  the assumption on-device).
++
++## R4. Where and in what shape the evidence transcript is recorded (FR-005, FR-006, US3)
++
++- **Decision**: a new Markdown record at `docs/acceptance/windows-arm64-verification-<run-date>.md`
++  (date = UTC date the device run completes), following the house convention of
++  [install-rehearsal-2026-09-13.md](../../docs/acceptance/install-rehearsal-2026-09-13.md): a header
++  table (commit under test, host identity, start/end, result, secrets policy), then the transcript
++  verbatim as `$`-prefixed commands with `[exit N]` markers, unedited outputs, and elisions marked
++  explicitly. The exact required fields live in
++  [contracts/evidence-transcript.md](contracts/evidence-transcript.md).
++- **Rationale**: US3 says the transcript is kept "with the project's other acceptance records" — that
++  directory is `docs/acceptance/`; matching its filename pattern (`<slug>-<YYYY-MM-DD>.md`) and its
++  header/verbatim style keeps the new record discoverable and auditable in one hop from
++  GETTING_STARTED.md (SC-004/SC-005) without inventing a new record format.
++- **Alternatives considered**: a JSON receipt (no precedent for journey transcripts in this repo;
++  the CLI's JSON envelopes serve the CLI, not journey records); a machine-neutral name without date
++  (breaks the existing convention and loses ordering against future re-runs after updates);
++  storing the transcript under `specs/` (wrong home: specs hold requirements/design, acceptance
++  holds executed evidence).
++
++## R5. What exactly changes in `docs/install/GETTING_STARTED.md`, and why the archive statement survives untouched (FR-004, US2 scenario 3)
++
++- **Decision**: at most two edit sites. (1) Section 1: after the existing sentence stating that the
++  0.1.0 release provides verified Windows and Ubuntu x86-64 archives and directing other platforms
++  to a source build, add a sentence naming Windows 11 on ARM64 as a **verified platform**, stating
++  the CLI is obtained there by the source-build commands shown directly below, and linking to the
++  transcript (one relative hop). (2) Optionally, the top-of-page citation paragraph ("Every command
++  here was executed as written …") gains the new transcript link if and only if the run qualifies —
++  otherwise site (1) alone carries the reference and the page keeps exactly the references it
++  already had. The sentence about which *release archives* exist ("verified Windows and Ubuntu
++  x86-64 archives") is not rewritten, because publishing ARM64 archives is out of scope (spec
++  Assumptions).
++- **Rationale**: section 1 is where an ARM user lands and where the acquisition path
++  (source build vs. archive) is explained, so one-minute discovery (SC-004) and the required
++  distinction between "verified platform" and "existing archives" (US2 scenario 3) are satisfied at
++  the point of decision. Keeping the claim and the transcript reference in the same PR means no
++  revision can publish the claim ahead of its proof (US2 scenario 2, FR-007).
++- **Alternatives considered**: a new dedicated "Platforms" section or matrix table (cleaner at 10
++  platforms, over-structure at 3; larger diff, more prose to keep true later, and the spec bounds
++  the edit to this file's existing shape); editing INSTALL.md or the release notes too (explicitly
++  deferred by spec Assumptions to a later feature); wording ARM64 as an *archive* platform
++  (false: no archive exists yet — would invert US2 scenario 3's required distinction).
++
++## R6. Which version string the device run must match (FR-002, SC-003)
++
++- **Decision**: the run is tested against the repository state that GETTING_STARTED.md's
++  "Expected last line" block currently documents — `graphhelm 0.1.0` (workspace version `0.1.0`;
++  the CLI prints `{bin} {CARGO_PKG_VERSION}` via clap, no platform term). The transcript records the
++  commit under test and compares its `--version` line character-for-character against the doc's
++  expected block at review time. If the run happens after a workspace version bump, the comparison
++  baseline moves with it and the doc's expected block must show the same value — the check is
++  always "doc block ≡ transcript line at the tested commit", which is what FR-002/SC-003 require.
++- **Rationale**: pins SC-003 to an observable comparison instead of a memory of what the output
++  "should be". (The repository's top-level `VERSION` file reads `0.1.1-spec` — a release-cycle
++  marker not consumed by the CLI's version string, which derives from the workspace
++  [Cargo.toml](../../Cargo.toml); noted so the device session does not mistake it for the baseline.)
++- **Alternatives considered**: hard-coding `graphhelm 0.1.0` forever (stale after the next bump);
++  accepting "any semver-shaped line" (does not observe SC-003's character-for-character promise).
++
++## R7. What stays out of scope, per the spec, so the plan does not drift (Assumptions)
++
++- **Decision**: unchanged surfaces — all Rust code and tests, `Cargo.toml`/`Cargo.lock`,
++  `INSTALL.md`, `docs/releases/0.1.0.md`, CI workflows, Studio. No ARM64 release archives are
++  published; no cross-compilation setup is added to CI; no `.github` workflow touches the run.
++  Extension hooks: no `.specify/extensions.yml` exists, so every hook (including `before_specify`
++  branch creation) is skipped and `BRANCH` stays `main`. Governance: no constitution file exists, so
++  `AGENTS.md` is the governance reference (recorded in plan.md Constitution Check).
++- **Rationale**: each item is a spec Assumption; restating them here keeps Phase 1/2 from quietly
++  widening the diff. Any device-run finding that forces a wider change (e.g., a prerequisite that
++  truly cannot be documented inside GETTING_STARTED.md) goes back through the spec, not around it.
++- **Alternatives considered**: pre-building CI cross-compilation to de-risk future archives (future
++  capability, different milestone); adding ARM64 to INSTALL.md in passing (scope creep by one file,
++  ruled out by Assumptions).
++
++## Consolidation
++
++No Technical Context field remains unresolved: language, dependencies, storage, testing, target
++platform, project type, performance goals, constraints, and scale were filled from measurements of
++this checkout (workspace `0.1.0`, x86-64 host, acceptance-record convention) and from R1–R7 above.
++The only fact still owned by the future is the device run itself, and it is scheduled with fixed
++commands ([contracts/install-journey.md](contracts/install-journey.md)), fixed expectations, fixed
++fallbacks, and a declared missing observer on this host.
+diff --git a/specs/001-bench/spec.md b/specs/001-bench/spec.md
+new file mode 100644
+index 0000000..2934bd3
+--- /dev/null
++++ b/specs/001-bench/spec.md
+@@ -0,0 +1,189 @@
++# Feature Specification: Verify GraphHelm CLI on Windows 11 ARM64
++
++**Feature Branch**: `001-bench`
++
++**Created**: 2026-10-26
++
++**Status**: Draft
++
++**Input**: User description: "Confirm that the `graphhelm` CLI installs and runs `graphhelm --version` on Windows 11 on ARM64 (a Snapdragon laptop), and add Windows ARM64 to the verified platforms in `docs/install/GETTING_STARTED.md`."
++
++## User Scenarios & Testing *(mandatory)*
++
++### User Story 1 - Install and run the CLI on a Windows 11 ARM64 device (Priority: P1)
++
++A person with a Snapdragon-based Windows 11 laptop follows the documented installation path in
++`docs/install/GETTING_STARTED.md` (Prerequisites plus section 1) and ends up with a working
++`graphhelm` binary that runs natively on their machine. They confirm the installation by running
++`graphhelm --version`, which succeeds and prints the expected version identification.
++
++**Why this priority**: This is the core promise of the feature — that Windows 11 on ARM64 is a
++working platform for the CLI, proven by observation rather than assumption. Nothing else in this
++feature (the documentation change, the evidence trail) has value unless this journey genuinely
++works end to end.
++
++**Independent Test**: On a real Windows 11 ARM64 device, run the documented commands exactly as
++written and observe (a) `graphhelm` resolves on the PATH after installation, and (b)
++`graphhelm --version` exits successfully with the expected version string. Delivers: a verified
++platform claim backed by reproducible steps.
++
++**Acceptance Scenarios**:
++
++1. **Given** a Windows 11 on ARM64 device that has only the prerequisites listed in
++   `GETTING_STARTED.md` Prerequisites, **When** the user executes the documented Windows install
++   commands (section 1) exactly as written, **Then** `graphhelm` is available on the PATH and the
++   install required no step beyond those documented.
++2. **Given** an installed `graphhelm` binary built for ARM64 running natively on the device,
++   **When** the user runs `graphhelm --version`, **Then** the command exits successfully and prints
++   the version identification for the version of the repository being tested, consistent with the
++   same version on the already-verified platforms.
++3. **Given** a candidate observation where either the operating system is not ARM64 or the running
++   binary is an x86-64 build executing under emulation, **When** the result is reviewed, **Then** it
++   does not count toward confirming Windows 11 on ARM64.
++
++---
++
++### User Story 2 - The getting-started guide lists Windows ARM64 as a verified platform (Priority: P1)
++
++A developer deciding whether GraphHelm works on their Snapdragon laptop opens
++`docs/install/GETTING_STARTED.md` and sees Windows 11 on ARM64 named among the verified platforms,
++with a reference to the recorded evidence behind that claim. They trust the statement without
++having to test it themselves first, and any skeptic can follow the reference to the transcript.
++
++**Why this priority**: Documentation is the user-facing deliverable of this feature: the platform
++claim changes what new users believe they can do. It pairs with User Story 1 because the claim must
++carry its evidence.
++
++**Independent Test**: Read `docs/install/GETTING_STARTED.md`; verify that Windows 11 on ARM64 is
++listed among the verified platforms and that the referenced evidence exists in the repository and
++shows a successful install and a passing `graphhelm --version` run on ARM64.
++
++**Acceptance Scenarios**:
++
++1. **Given** the recorded verification evidence from User Story 1, **When** a reader consults
++   `GETTING_STARTED.md`, **Then** Windows 11 on ARM64 is presented as a verified platform for
++   installing and running the CLI, with a direct reference to the evidence behind the claim.
++2. **Given** that the verification evidence has not yet been observed, **When** the documentation is
++   reviewed, **Then** it does not state Windows 11 on ARM64 as verified (a claim is never published
++   ahead of its proof).
++3. **Given** the released CLI archives described in section 1 cover specific architectures,
++   **When** the platform statement is written, **Then** it distinguishes how ARM64 users obtain the
++   CLI (e.g., source build vs. release archive) from the statement about which archives exist.
++
++---
++
++### User Story 3 - The verification is recorded as durable, auditable evidence (Priority: P2)
++
++The exact commands executed on the device and their actual outputs are captured in a written
++transcript kept with the project's other acceptance records, including the device and system
++identities that prove the run was on Windows 11 on ARM64. The documentation references this
++transcript, so the claim remains auditable after the device is moved or the team member is gone.
++
++**Why this priority**: It protects Users Stories 1 and 2 against decay (the claim outliving its
++proof) but adds no capability of its own, so it is secondary.
++
++**Independent Test**: Open the recorded transcript in the repository and verify it contains the
++system identity proving ARM64, the complete command sequence, and the unedited `graphhelm
++--version` output; then verify the documentation's reference resolves to it.
++
++**Acceptance Scenarios**:
++
++1. **Given** a completed verification session, **When** the transcript is inspected, **Then** it
++   shows the device/system identity establishing Windows 11 on ARM64, every command as executed,
++   and the resulting output including the version line.
++2. **Given** the documentation names Windows ARM64 as verified, **When** its reference is followed,
++   **Then** it resolves to the transcript (or equivalent receipt) in the repository.
++
++---
++
++### Edge Cases
++
++- **Emulated PowerShell misreporting the architecture**: on Windows 11 on ARM64, a 64-bit
++  x86-64 process (such as classic PowerShell 5.1) can report an AMD64 architecture even though the
++  hardware and OS are ARM64. The verification must establish ARM64 from the operating system's own
++  identity (for example `systeminfo` reporting an ARM-based PC, or the CPU identity naming a
++  Snapdragon processor), never from a shell variable alone.
++- **Wrong binary running**: an x86-64 build of the CLI runs correctly under Windows' x64 emulation
++  on an ARM64 device and would print the same version. Only a binary built for ARM64, running
++  natively, satisfies the feature.
++- **Toolchain absent on the device**: the pinned Rust toolchain for ARM64 Windows is not assumed to
++  exist. Installing it through the documented prerequisite steps is part of the journey, and any
++  extra step that had to be invented makes the test fail (the documentation is wrong, fix it).
++- **PATH not refreshed after install**: if the freshly installed binary is not found in the
++  current shell, the documented remedy applies exactly as on the verified platforms (new shell or
++  PATH refresh) and must not require anything more.
++- **Verification fails on the device**: the failure, its cause, and the environment are recorded;
++  the "verified platform" documentation change is withheld until a passing run exists. A failing or
++  unrun observation never becomes a verified-platform claim.
++
++## Requirements *(mandatory)*
++
++### Functional Requirements
++
++- **FR-001**: The CLI MUST install on Windows 11 on ARM64 using only the steps documented in
++  `docs/install/GETTING_STARTED.md` (Prerequisites plus the section 1 install path), with no
++  undocumented manual step required for success.
++- **FR-002**: After installation, `graphhelm --version` MUST run successfully on the ARM64 device
++  (clean exit) and print the version identification for the tested version, consistent with the
++  output produced by the same version on the already-verified platforms.
++- **FR-003**: The verification MUST establish that both the operating system is Windows 11 on ARM64
++  (native, evidenced by the system's own identity such as `systeminfo` "ARM-based PC" or a
++  Snapdragon CPU identity) and the executed binary was built for ARM64; x86-64 execution under
++  emulation does not satisfy this requirement.
++- **FR-004**: `docs/install/GETTING_STARTED.md` MUST list Windows 11 on ARM64 among the verified
++  platforms, stating how the CLI is obtained there (source build) and keeping it distinct from any
++  statement about which release archives exist.
++- **FR-005**: The documentation statement MUST reference the recorded evidence (transcript or
++  receipt) behind the claim, in line with the repository's existing practice of linking
++  documentation claims to acceptance transcripts.
++- **FR-006**: The verification session MUST be recorded as a transcript capturing the device and
++  OS identity, the complete command sequence exactly as executed, and the actual output including
++  the `graphhelm --version` result.
++- **FR-007**: If the verification cannot be observed on a qualifying ARM64 device, the claim MUST
++  NOT appear in the documentation; the blocker is recorded with the missing observer named, and
++  the documentation change waits.
++
++## Success Criteria *(mandatory)*
++
++### Measurable Outcomes
++
++- **SC-001**: 100% of the documented Windows install steps execute as written on the ARM64 device;
++  the number of undocumented extra steps required for a working install is 0.
++- **SC-002**: `graphhelm --version` succeeds on the first invocation after installation (no retry
++  needed) and prints the expected version identification.
++- **SC-003**: The `graphhelm --version` output on ARM64 is character-for-character identical to the
++  output for the same version on the already-verified platforms.
++- **SC-004**: A reader of `GETTING_STARTED.md` can identify Windows 11 on ARM64 as a verified
++  platform within one minute of reading, and find the referenced evidence with at most one
++  navigation hop.
++- **SC-005**: Zero verified-platform statements in the documentation lack a resolvable reference to
++  recorded evidence.
++
++## Assumptions
++
++- "Windows 11 on ARM64 (a Snapdragon laptop)" means native Windows 11 on ARM64 hardware, physical
++  device preferred. A virtualized Windows 11 on ARM64 instance qualifies only if it runs ARM64
++  natively; any level of x86-64 emulation of the binary under test disqualifies the observation.
++- Scope is verification plus the documentation update plus the recorded evidence. Publishing
++  ARM64 release archives for the 0.1.0 CLI preview release is out of scope; the verified ARM64
++  path is the source build, and section 1's statement about which *release archives* exist is
++  left unchanged by this feature.
++- The documentation edit is limited to `docs/install/GETTING_STARTED.md` (plus the new evidence
++  transcript). Other documents (INSTALL.md, release notes) are updated only in a later feature if
++  they restate the platform list.
++- All new or changed documentation prose is written in English, per the repository documentation
++  language rule.
++- Governance substitution (recorded per stage setup): no constitution file exists in this
++  checkout; the AGENTS.md file at the repository root serves as the governance reference. Its
++  Journey-Proven Development observer rules apply to this feature: a promise not observed from an
++  adequate observer stays unresolved, and cross-compilation or emulation results from a non-ARM64
++  host are proxies, not observations.
++- Environment fact measured on 2026-10-26: this checkout lives on an x86-64 Windows 11 Pro host
++  (AMD Ryzen 9 9950X, `systeminfo` reports "x64-based PC"; installed Rust targets are
++  `x86_64-pc-windows-msvc` and `x86_64-unknown-linux-gnu` only). Consequence: the ARM64 install
++  and run promise (FR-001 to FR-003) cannot be observed from this machine and is carried forward
++  as a blocked-on-device observer (`OBSERVER_MISSING: a native Windows 11 ARM64 device on which the
++  installed CLI can execute`) rather than proven here.
++- No `.specify/extensions.yml` exists in this checkout, so all extension hooks (including
++  `before_specify` branch creation) are skipped; the feature directory `specs/001-bench` is fixed
++  for this run, and no git branch is created by this specification.
+diff --git a/specs/001-bench/tasks.md b/specs/001-bench/tasks.md
+new file mode 100644
+index 0000000..8a00532
+--- /dev/null
++++ b/specs/001-bench/tasks.md
+@@ -0,0 +1,338 @@
++# Tasks: Verify GraphHelm CLI on Windows 11 ARM64
++
++**Input**: Design documents from `/specs/001-bench/` — plan.md, spec.md, data-model.md, research.md, quickstart.md, contracts/install-journey.md, contracts/evidence-transcript.md (all present; `AVAILABLE_DOCS` empty per setup script means none beyond the feature directory itself)
++
++**Governance substitution (recorded)**: no constitution file exists in this checkout; the `AGENTS.md` file at the repository root serves as the governance reference (already recorded in plan.md Constitution Check). No `.specify/extensions.yml` exists, so all extension hooks were skipped.
++
++**Tests**: This feature changes no Rust source; the specification requests no automated code tests. Proof is observational — Scenario A (on-device journey), Scenario B (documentation audit), and Scenario C (blocked-path guard) in [quickstart.md](quickstart.md) — so there are no write-tests-first tasks below.
++
++**Organization**: Tasks are grouped by user story. Execution order deviates from raw priority order and is justified under *User Story Dependencies* below: **US1 → US3 → US2**. User Story 2 carries its P1 priority but cannot publish its claim before a `qualifying_pass` transcript exists (FR-007, FR-005, data-model `PlatformClaim` transition `PENDING_DEVICE → VERIFIED`), so it executes third even though User Story 3 (the transcript) is P2.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies)
++- **[Story]**: Which user story this task belongs to (US1, US2, US3)
++- Paths are repository-relative. `<run-date>` below always means the UTC date the device session ends, per the filename convention in contracts/evidence-transcript.md (`windows-arm64-verification-<run-date>.md`).
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Confirm the planning artifacts and the pre-change baseline; no scaffolding is created (Keel K2: nothing references a "future" transcript as existing).
++
++- [X] T001 [P] Verify all seven design artifacts are present and mutually consistent in specs/001-bench/ (plan.md, spec.md, data-model.md, research.md, quickstart.md, contracts/install-journey.md, contracts/evidence-transcript.md); create no files, directories, or stubs in this phase
++- [X] T002 [P] Run the Scenario C baseline guard from specs/001-bench/quickstart.md on the current checkout (`systeminfo | Select-String 'System type'` expecting `x64-based PC`; `git grep -n "Windows 11 on ARM64" docs/install/GETTING_STARTED.md` expecting no match) and record both outputs verbatim in the task/PR record as the pre-change baseline proving the claim is not yet published (FR-007)
++
++**Checkpoint**: Baseline established — host is confirmed not a qualifying device and the guide does not yet name Windows 11 on ARM64.
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Put the on-device session in its fixed starting state per contracts/install-journey.md, so the journey runs a predetermined sequence rather than improvised steps.
++
++**⚠️ CRITICAL**: No user story work can begin until this phase is complete. Both tasks run on the ARM64 device (or produce session-fixed inputs from this checkout).
++
++- [ ] T003 Provision the device session exactly as contracts/install-journey.md fixes it: a physical Snapdragon-based Windows 11 ARM64 laptop (or ARM64-native virtualized instance, noted in the transcript provenance line), repository cloned at the commit under test (`git clone https://github.com/stabem/GraphHelm.git`, the unmodified A2 clone), one fresh PowerShell session, and nothing pre-installed beyond the Prerequisites table in docs/install/GETTING_STARTED.md
++- [X] T004 [P] Fix the version comparison baseline per research R6 before the session starts: copy the "Expected last line" block from docs/install/GETTING_STARTED.md (currently `graphhelm 0.1.0`) and the workspace version from root Cargo.toml into the session notes, so SC-003's character-for-character comparison compares against the document block at the tested commit, never against memory (the top-level VERSION file `0.1.1-spec` is a release-cycle marker and NOT the baseline)
++
++**Checkpoint**: Foundation ready — device, clone, shell, and version baseline are fixed; the journey can run in parallel with nothing (it is sequential by nature).
++
++---
++
++## Phase 3: User Story 1 - Install and run the CLI on a Windows 11 ARM64 device (Priority: P1) 🎯 MVP
++
++**Goal**: Prove FR-001…FR-003 by observation: the documented install path (Prerequisites + section 1) alone yields a natively-built, natively-running `graphhelm` whose `--version` exits 0 on first invocation, with every identity captured verbatim as the journey runs.
++
++**Independent Test**: On the device, `graphhelm` resolves on the PATH using only the documented steps, and `graphhelm --version` prints exactly the document's expected line with exit 0 — recorded live in the transcript being created.
++
++> **Note**: The transcript file is opened in T005 and appended to in every subsequent task of this phase; the ordering followed (B1 → Part A → B2–B5) must be reproducible from the transcript text alone (contracts/evidence-transcript.md).
++
++### Implementation for User Story 1
++
++- [ ] T005 [US1] Create the transcript at docs/acceptance/windows-arm64-verification-<run-date>.md with the full required header (title naming what was verified and against which GETTING_STARTED.md revision; header table rows Commit under test / Host / Started / ended / Result / Extra steps beyond the document / Secrets; provenance note physical-vs-virtualized with no emulation layer), then execute Part B1 from contracts/install-journey.md — `systeminfo | Select-String -Pattern 'OS Name|OS Version|System type'` (must show `ARM-based PC`), `(Get-CimInstance Win32_Processor).Name` (expected Snapdragon-class), `$PSVersionTable.PSVersion.ToString()` — appending each `$`-prefixed command, unedited output, and `[exit N]` (validations V1, V5)
++- [ ] T006 [US1] Execute Part A of contracts/install-journey.md exactly as written in docs/install/GETTING_STARTED.md, in order — A0 prerequisite checks (`cargo +1.97.1 --version`, `git --version`), A1 toolchain install (`winget install --id Rustlang.Rustup --exact --source winget --accept-source-agreements --accept-package-agreements`; `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"`; `rustup toolchain install 1.97.1 --profile minimal --component rustfmt clippy`), A2 clone and `cargo +1.97.1 install --locked --path apps/cli` — appending each command and unedited output to docs/acceptance/windows-arm64-verification-<run-date>.md; elide only toolchain download progress, marked `[... elided ...]`; flag any extra command required for success as a documentation defect in the transcript (V3, SC-001, FR-001)
++- [ ] T007 [US1] Execute Part B2–B3 immediately after A1's toolchain install and before any build result is trusted — `git rev-parse HEAD` (commit under test, 40-char SHA into the header table) and `rustup --version` plus `rustc --version --verbose` appended verbatim (the `host:` line MUST read `aarch64-pc-windows-msvc`, V2); if it reads `x86_64-pc-windows-msvc`, apply the research R3 fallback exactly as fixed in advance — `rustup set default-host aarch64-pc-windows-msvc`, reinstall the pinned 1.97.1 toolchain, re-run B3 — and record the extra step in the transcript as a V3-flagged documentation defect
++- [ ] T008 [US1] Execute Part B4–B5 after the A2 install completes — the optional PE machine check on `%USERPROFILE%\.cargo\bin\graphhelm.exe` (`dumpbin /headers` expecting `machine (AArch64)`, or the 2-byte machine field at offset `(DWORD@0x3C)+4 == AA64h`; absence of an inspector recorded, not fatal), then `graphhelm --version; echo "exit=$LASTEXITCODE"` appended verbatim with exit 0 on first invocation (V4, SC-002); if the binary is not found, apply only the documented PATH remedy (new shell / PATH refresh) and record it
++- [ ] T009 [US1] (Conditional — only if T006/T007/T008 flagged an undocumented step, e.g., the R3 host re-point or a missing MSVC linker) Fix docs/install/GETTING_STARTED.md (Prerequisites and/or section 1, Windows blocks) so that Part A of contracts/install-journey.md reproduces the working install with zero undocumented steps; land this fix in the same change set as the claim, named in the transcript's "Extra steps beyond the document" row (V3)
++- [ ] T010 [US1] Run the disqualifier screen at the end of the session: check every row of the Disqualifiers table in contracts/install-journey.md (OS identity from `ARM-based PC`/Snapdragon not a shell variable; host triple `aarch64-pc-windows-msvc`; no unflagged extra steps; no retry on `graphhelm --version`; no cross-compilation or full-OS-emulation provenance) and compare the captured `--version` line character-for-character against the T004 baseline (SC-003); set the transcript's preliminary Result to `pass` or `fail` — a fail means this phase stops the pipeline and the claim stays withheld (FR-007)
++
++**Checkpoint**: User Story 1 stands or falls here, independently of documentation work. On `pass`, the transcript body holds every anchor output (V1, V2, V3, V4, V5) and the device promise is observed. On `fail`, stop: complete the transcript as `recorded_fail` (Phase 4 tasks still apply) and do not proceed to Phase 5.
++
++---
++
++## Phase 4: User Story 3 - The verification is recorded as durable, auditable evidence (Priority: P2, executed before User Story 2 by dependency)
++
++**Goal**: Turn the session's running transcript into a complete, self-auditing `qualifying_pass` record at docs/acceptance/windows-arm64-verification-<run-date>.md that a skeptic can re-read without the device.
++
++**Independent Test**: Open the committed transcript and verify it contains the system identity proving ARM64, the complete command sequence, and the unedited `graphhelm --version` output, with every V1–V7 validation read against the transcript's own lines (data-model.md Entity 1).
++
++> **Dependency note**: US3 is P2 in spec.md but must complete before US2's doc claim lands, because FR-005 requires the claim to reference recorded evidence and FR-007 forbids publishing ahead of it. See *User Story Dependencies*.
++
++### Implementation for User Story 3
++
++- [ ] T011 [US3] Complete the transcript per contracts/evidence-transcript.md: finish the header table (Commit under test 40-char SHA, Host lines from B1 verbatim, Started/ended UTC timestamps, Result `pass`/`fail` in house uppercase style, Extra steps row, Secrets row) and write the required footer — (1) Reading of the run: every validation V1–V7 stated and checked against cited sections of the transcript itself; (2) Failure block iff `fail`: what failed, cause as established by the outputs, environment state, written so a later retry links to it instead of replacing it (AGENTS.md retry rule: a later green never erases the earlier red); (3) Reference note: the exact relative path `docs/install/GETTING_STARTED.md` will link to, confirming the claim text lands in the same change set (C3)
++- [ ] T012 [US3] Self-audit docs/acceptance/windows-arm64-verification-<run-date>.md against the full validation inventory of data-model.md Entity 1 — V1 (`system_type` contains `ARM-based PC` or Snapdragon CPU name), V2 (`host: aarch64-pc-windows-msvc`), V3 (commands reproduce the documented steps; extras flagged), V4 (version line equals the R6 baseline, exit 0 first invocation), V5 (os_identity, commands[], outputs present verbatim; elisions marked `[... elided ...]` only), V6 (no secret values anywhere), V7 (a `fail` record carries `failure_cause` and is non-qualifying) — and fix any defect in place before Phase 5 begins
++- [ ] T013 [US3] Perform the governance sweeps on docs/acceptance/windows-arm64-verification-<run-date>.md: English-only prose check (AGENTS.md documentation-language rule, L1/L2) and a secrets sweep (no tokens, keys, API keys, or credentials anywhere in the record; S1 — their appearance in a credential-free journey is itself a defect to correct or mask-and-note)
++
++**Checkpoint**: The transcript is `qualifying_pass` (or `recorded_fail`) — a durable record that outlives the device (US3 acceptance scenarios 1–2, FR-006).
++
++---
++
++## Phase 5: User Story 2 - The getting-started guide lists Windows ARM64 as a verified platform (Priority: P1)
++
++**Goal**: Publish the platform claim in docs/install/GETTING_STARTED.md with its evidence reference, in at most two edit sites, distinguishing "verified platform obtained by source build" from "which release archives exist."
++
++**Independent Test**: Read docs/install/GETTING_STARTED.md; verify Windows 11 on ARM64 is listed as a verified platform acquired by the source-build commands shown beneath the statement, and that the referenced transcript exists in the repository and shows a successful install plus a passing `graphhelm --version` run on ARM64 (SC-004/SC-005).
++
++> **Entry condition**: a `qualifying_pass` transcript from Phases 3–4. If the run was `fail` or remains unrun, this whole phase is withheld (US2 scenario 2, FR-007) — the claim is never published ahead of its proof.
++
++### Implementation for User Story 2
++
++- [ ] T014 [US2] Edit section 1 of docs/install/GETTING_STARTED.md (edit site 1, per research R5): after the existing sentence about the 0.1.0 release providing verified Windows and Ubuntu x86-64 archives and directing other platforms to a source build, add a sentence naming **Windows 11 on ARM64 as a verified platform**, stating the CLI is obtained there by the source-build commands shown directly below, and adding the relative link `../acceptance/windows-arm64-verification-<run-date>.md` (one navigation hop); leave the archives sentence scoped to "verified Windows and Ubuntu x86-64 archives", untouched (FR-004, US2 scenario 3, C1, C2)
++- [ ] T015 [US2] (Conditional — edit site 2, only if the run fully qualifies per R5) Add the new transcript link to the top-of-page citation paragraph ("Every command here was executed as written …") in docs/install/GETTING_STARTED.md; if not, the page keeps exactly the references it already had and site 1 alone carries the evidence reference — total edit sites remain ≤ 2
++- [ ] T016 [US2] Run the complete Scenario B documentation audit from specs/001-bench/quickstart.md from the repository root: (B-check 1) `Select-String -Path docs/install/GETTING_STARTED.md -Pattern 'ARM64' -Context 2,2` with human review confirming claim present, acquisition = source build, and archives sentence still scoped to x86-64 (C1); (B-check 2) `Test-Path` on the referenced transcript returns True (SC-004/SC-005); (B-check 3) `Select-String -Path <transcript> -Pattern 'ARM-based PC', 'aarch64-pc-windows-msvc', 'graphhelm 0\.1\.0'` returns all three anchors (C2 → V1–V6); (B-check 4) `git diff --stat` confirms the touched files are exactly GETTING_STARTED.md, the transcript, and specs/001-bench/
++- [ ] T017 [US2] Perform the one-minute reader check (SC-004): as a first-time reader of docs/install/GETTING_STARTED.md, identify Windows 11 on ARM64 as a verified platform within one minute and reach the cited evidence within at most one navigation hop; and re-run the Scenario C `git grep` guard to confirm the claim now resolves to a `qualifying_pass` transcript rather than floating unevidenced (C3, US2 acceptance scenarios 1–3)
++
++**Checkpoint**: User Stories 1 AND 3 stand independently, and User Story 2's claim now carries its proof in the same change set — the full feature is delivered.
++
++---
++
++## Phase 6: Polish & Cross-Cutting Concerns
++
++**Purpose**: Close the loop on the planning artifacts, scope, and delivery record.
++
++- [X] T018 [P] Update the scenario status table in specs/001-bench/quickstart.md: flip Scenario A's State from "Blocked on device — never reported as passed here" to observed-passed on `<run-date>` with the device identity, and retire the `OBSERVER_MISSING: a native Windows 11 ARM64 device on which the installed CLI can execute` note (or, if the run was `recorded_fail`, extend the blocked-state row with a pointer to the failing transcript instead — a failed or unrun observation keeps Scenario A unresolved, never marked passed)
++- [X] T019 [P] Run the scope discipline check from the repository root (`git status` and `git diff --stat`) confirming the change touches exactly the paths plan.md names as in-scope — docs/install/GETTING_STARTED.md, docs/acceptance/windows-arm64-verification-<run-date>.md, specs/001-bench/ — and nothing under core/, apps/, ci/, schemas/, extensions/, INSTALL.md, or docs/releases/ (research R7); investigate and revert any drift
++- [X] T020 Write the delivery record for the PR per docs/process/DELIVERY.md and AGENTS.md PR requirements: summary and rationale, the tests/checks run and their results (Scenario A transcript path, Scenario B checks 1–4 outputs, Scenario C before/after), security notes (credential-free journey, secrets sweep performed), dependency notes (none added), out-of-scope list from research R7, and the rollback plan (revert the GETTING_STARTED.md edit sites; the transcript remains in the tree as the executed record, and the claim simply does not appear — no state to unwind elsewhere)
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies — can start immediately.
++- **Foundational (Phase 2)**: Depends on Setup completion — BLOCKS all user stories (both tasks fix inputs the device session consumes).
++- **User Story 1 (Phase 3)**: Depends on Foundational. No dependencies on other stories.
++- **User Story 3 (Phase 4)**: Depends on User Story 1 (its transcript body is written during Phase 3).
++- **User Story 2 (Phase 5)**: Depends on Users Stories 1 AND 3 — the entry condition is a `qualifying_pass` transcript (FR-005/FR-007).
++- **Polish (Phase 6)**: Depends on the desired user stories being complete (at minimum 1+3; 5 if the claim was published).
++
++### User Story Dependencies (completion order)
++
++```text
++Foundational ──► US1 (P1, device journey) ──► US3 (P2, transcript finalized) ──► US2 (P1, doc claim)
++                                    └──(recorded_fail)──► STOP: US2 withheld, blocker named (FR-007)
++```
++
++- **US1 → US3 → US2, not P1/P1/P2 order, is deliberate and spec-mandated**: US2 is P1 but its own acceptance scenario 2 and FR-007 forbid the claim landing before a qualifying transcript exists, and FR-005 makes the reference load-bearing. Sequencing the P2 transcript phase between the two P1 phases is the dependency the spec itself draws; nothing here re-prioritizes the stories, it orders them so the invariant holds.
++- **Within the chain**: tasks are strictly sequential inside each phase (one session, one transcript, one file at a time); only cross-phase-independent tasks carry `[P]`.
++
++### Within Each User Story
++
++- Identity capture (B1) before the journey (Part A) before build-result trust (B2–B3) before binary/version proof (B4–B5) — the contract's fixed order.
++- Failures are recorded in place, never deleted; a fail halts the chain at Phase 3's checkpoint.
++- Core observation before auditing; auditing before publication.
++
++### Parallel Opportunities
++
++- **Phase 1**: T001 and T002 are independent (T002 reads repo state, T001 reads planning artifacts).
++- **Phase 2**: T004 (baseline fixing from this checkout) is independent of T003 (device provisioning).
++- **Between machines**: while T003 runs on the device, T004 can be done from any checkout; T002 re-runs cheaply at review time.
++- **Phase 6**: T018 and T019 touch different files (specs/001-bench/quickstart.md vs. repo-wide state) and can run in parallel.
++- There are no parallel opportunities inside a single device session — it is one ordered PowerShell stream by design (contracts/install-journey.md).
++
++---
++
++## Parallel Example: Setup + Foundational
++
++```text
++# Launchable together (different observers, different machines/files):
++T002  "Run Scenario C baseline guard from specs/001-bench/quickstart.md (this checkout)"
++T004  "Fix version comparison baseline per research R6 (any checkout)"
++
++# Launchable together once the device and clone exist:
++#   (T003 is the enabler and runs first on the device; no second device-side task exists)
++```
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup.
++2. Complete Phase 2: Foundational (CRITICAL — blocks the session).
++3. Complete Phase 3: User Story 1 (the on-device journey, live transcripted).
++4. **STOP and VALIDATE**: read the transcript's own lines — V1–V5 hold, version line matches, disqualifier screen clean. On fail: record `recorded_fail`, withhold the claim, stop.
++
++The MVP IS the observation: this feature's value exists or does not exist at Phase 3's checkpoint. Everything after it (US3 finalization, US2 publication) is making the observation durable and visible.
++
++### Incremental Delivery
++
++1. Setup + Foundational → session inputs fixed.
++2. User Story 1 → observed pass → (MVP: the platform is proven on the device).
++3. User Story 3 → transcript becomes `qualifying_pass`, auditable without the device.
++4. User Story 2 → claim + evidence reference published together in docs/install/GETTING_STARTED.md.
++5. Polish → planning artifacts closed, scope verified, delivery record written.
++6. Each increment adds durability, never more claim than the previous increment proved.
++
++### Parallel Team Strategy
++
++With two people/machines:
++
++1. Person A (device): T003 → Phases 3–4 (the whole session and transcript).
++2. Person B (any checkout): T001, T002, T004 concurrently; then T016/T017 as auditor for Person A's landing (the Scenario B audit doubles as the independent review of the claim — AGENTS.md requires a reviewer who did not write the change).
++3. Person B completes Phase 6 after the merge-ready diff is assembled.
++
++---
++
++## Notes
++
++- **[P] tasks** = different files/observers, no dependency on an incomplete task; everything else in this feature is sequential by construction.
++- **`<run-date>`** = UTC date the device session ends; it is fixed at T011 and the filename must match the link written in T014 exactly (a mismatch fails SC-005 at B-check 2).
++- **Every public method must have working behavior in the same commit** (AGENTS.md): the claim text and its resolving reference land in the same change set as the transcript (C3) — never in separate pushes.
++- **Golden-fixture discipline**: the transcript's anchor lines (B1 identities, B3 host triple, B5 version line) are reviewed canonical content; any post-hoc edit to them is a fixture change requiring explicit explanation in the commit/PR.
++- **Observer honesty**: on this x86-64 checkout host, Phases 2–4 tasks are UNOBSERVABLE here; they carry `OBSERVER_MISSING: a native Windows 11 ARM64 device on which the installed CLI can execute` until executed on the device. Scenario C (T002) and Scenario B (T016–T017) ARE observable from this checkout and are the smallest checks that bound the promise.
++- Commit after each phase checkpoint; stop at any checkpoint to validate the increment independently.
++- Avoid: invented install steps (each is a V3 defect), emulated/x86-64 executions counted as proof, claim-before-proof ordering, editing any file outside the R7 in-scope set.
++
++---
++
++## Execution Record — unattended run on the x86-64 checkout host
++
++Session: opencode (Drael) · Head: 708cd907 · Date: 2026-10-26 (UTC) · Branch: `main` (no feature
++branch created; `.specify/extensions.yml` absent, all hooks skipped; no constitution file —
++`AGENTS.md` at the repository root is the governance reference, substitution recorded in plan.md
++and repeated here).
++
++### Checklist gate (step 2)
++
++| Checklist | Total | Checked | Unchecked | Status |
++|-----------|-------|---------|-----------|--------|
++| requirements.md | 17    | 17      | 0         | ✓ PASS |
++
++All checklists pass; implementation proceeded automatically. No checklist markers were modified.
++
++### T001 — design artifacts present and consistent (done)
++
++All seven artifacts exist in `specs/001-bench/`: `plan.md`, `spec.md`, `data-model.md`,
++`research.md`, `quickstart.md`, `contracts/install-journey.md`, `contracts/evidence-transcript.md`.
++Consistency verified against this checkout, not memory:
++
++- `Cargo.toml` workspace `version = "0.1.0"` matches the "Expected last line" block
++  (`graphhelm 0.1.0`) in `docs/install/GETTING_STARTED.md` §1 — the SC-003 comparison pair.
++- Top-level `VERSION` reads `0.1.1-spec`; per research R6 that is a release-cycle marker and NOT
++  the version baseline.
++- Spec Assumptions' measured host fact (`systeminfo` reports `x64-based PC`) was re-measured and
++  holds on this checkout (see T002).
++- data-model's current state (`PENDING_DEVICE`, claim text absent) matches quickstart's Scenario A
++  blocked row and the actual guide (no "Windows 11 on ARM64" statement present).
++
++### T002 — Scenario C baseline guard, verbatim (done)
++
++```powershell
++PS> systeminfo | Select-String 'System type'
++System Type:                   x64-based PC
++
++PS> git grep -n "Windows 11 on ARM64" docs/install/GETTING_STARTED.md
++(no output; exit code 1 = no match)
++```
++
++Pre-change baseline established: this host is not a qualifying device, and the guide does not yet
++name Windows 11 on ARM64 (FR-007 held before the change). The guard was re-run after this run's
++edits with the same result (exit code 1) — the claim remains unpublished.
++
++### T003 — device provisioning (not observable here)
++
++No ARM64 device is reachable from this checkout, and the checkout has no git remote
++(`git remote -v` is empty), so the A2 clone step of the journey has no source to clone either.
++The on-device session is scheduled unchanged by `contracts/install-journey.md` (fixed sequence,
++fixed expectations, fixed fallbacks). Carries:
++`OBSERVER_MISSING: a native Windows 11 ARM64 device on which the installed CLI can execute.`
++
++### T004 — version baseline fixed before the session (done)
++
++Recorded here as the session notes the device session compares against (research R6):
++
++- Document block under test, `docs/install/GETTING_STARTED.md` §1 "Expected last line":
++  `graphhelm 0.1.0`
++- Workspace version, root `Cargo.toml`: `version = "0.1.0"`
++- NOT the baseline: top-level `VERSION` = `0.1.1-spec` (release-cycle marker, research R6)
++
++### Phases 3–4 — User Story 1 and User Story 3 (unobservable here)
++
++Tasks T005–T010 (the on-device journey and disqualifier screen) and T011–T013 (transcript
++completion, self-audit, governance sweeps) are unobservable from this x86-64 checkout; an x86-64
++execution — even a native one — is a proxy, not an observation (FR-003, AGENTS.md JPD proxy rule),
++so none was run to stand in. Consequences applied exactly as the data model prescribes:
++
++- No transcript created at `docs/acceptance/windows-arm64-verification-*.md` (Keel K2: nothing
++  references a future transcript as existing; `Test-Path` of the expected path returns False).
++- Entity 1 stays `not_run`; Entity 2 stays `PENDING_DEVICE`.
++- T009 (conditional doc fix) is not applicable yet — no device run has flagged any undocumented step.
++- Carries, for every one of these tasks:
++  `OBSERVER_MISSING: a native Windows 11 ARM64 device on which the installed CLI can execute.`
++
++### Phase 5 — User Story 2 (withheld, FR-007)
++
++Entry condition unmet: there is no `qualifying_pass` transcript. T014–T017 are withheld without
++change — `docs/install/GETTING_STARTED.md` keeps exactly the statements and references it had; the
++claim is never published ahead of its proof (US2 scenario 2, FR-007; data model transition
++`PENDING_DEVICE`).
++
++### Project setup verification (step 4)
++
++This checkout already ships its own ignore files; they were verified and no new ones were created
++(per stage instruction): `.gitignore` present with the Rust patterns (`target/`) and universal
++patterns; `Dockerfile` present but no `.dockerignore` (left absent, noted); no root `package.json`/
++`.npmrc`/`.eslintrc*`/`eslint.config.*`/`.prettierrc*`/`*.tf`/helm chart, so no corresponding ignore
++file applies.
++
++### T018 — quickstart scenario status (done, by the rule's own terms)
++
++No pass and no `recorded_fail` occurred in this run (the device run was never executed), so the
++rule applied: "a failed or unrun observation keeps Scenario A unresolved, never marked passed".
++`specs/001-bench/quickstart.md` was therefore left byte-for-byte unchanged; its Scenario A row
++still reads "Blocked on device — never reported as passed here" with the `OBSERVER_MISSING` note,
++which remains true and was re-confirmed by the T002 guard re-run.
++
++### T019 — scope discipline check (done)
++
++```powershell
++PS> git status --porcelain
++?? .specify/
++?? specs/
++
++PS> git diff --stat
++(empty — no tracked file modified)
++```
++
++The only changes on disk are: this execution record inside `specs/001-bench/tasks.md` (in scope)
++and the pre-existing untracked `.specify/` provisioning that this checkout ships (not created by
++this run). Nothing under `core/`, `apps/`, `ci/`, `schemas/`, `extensions/`, `INSTALL.md`, or
++`docs/releases/` was touched; `docs/install/GETTING_STARTED.md` and `docs/acceptance/` are
++untouched, as required while the claim is withheld (research R7, T019).
++
++### T020 — delivery record (this section)
++
++Per `docs/process/DELIVERY.md` and the AGENTS.md PR requirements; no remote exists for this
++checkout, so the record lives here and travels with the change set when it lands.
++
++- **Summary and rationale**: Executed `/speckit.implement` for `001-bench` from the x86-64
++  checkout host. Everything observable from this machine was executed and recorded (Scenario C
++  before/after, artifact consistency, version baseline, scope check); everything that needs the
++  ARM64 device is scheduled, not proxied — no transcript invented, no claim published.
++- **Checks run and results**: Scenario C guard PASS twice (before and after edits —
++  `x64-based PC`, zero guide matches); checklist gate 17/17 PASS; T001 consistency checks PASS;
++  Scenario B not runnable (nothing landed to audit); Scenario A unobserved (carries
++  OBSERVER_MISSING above). Reported separately per AGENTS.md: passed = C-guard, checklists,
++  consistency, scope; unobserved = A (device); none failed; none skipped-and-counted-as-pass.
++- **Security notes**: The journey is credential-free by construction; no secrets appear in this
++  record (secrets sweep performed: no tokens, keys, API keys).
++- **Dependency notes**: none added.
++- **Out of scope (research R7)**: all Rust code and tests, `Cargo.toml`/`Cargo.lock`,
++  `INSTALL.md`, `docs/releases/0.1.0.md`, CI workflows, Studio; no ARM64 release archives; no
++  cross-compilation CI; no `.github` workflow touching the run.
++- **Rollback plan**: revert the checkbox marks and this execution record in
++  `specs/001-bench/tasks.md`; the rest of the tree is untouched. When the device run eventually
++  lands: on `qualifying_pass`, publish the claim per T014–T017 in the same change set as the
++  transcript; on `recorded_fail`, link the failed transcript in quickstart's Scenario A row instead
++  of replacing it (a later green never erases the earlier red).

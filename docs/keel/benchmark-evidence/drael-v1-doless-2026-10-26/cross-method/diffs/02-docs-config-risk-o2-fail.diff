@@ -1,0 +1,379 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index e51860c..05b6e73 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -138,10 +138,16 @@ guidance alone (paper, section 7).
+ 
+ | The change | What Keel asks |
+ |---|---|
+-| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the task record. |
++| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the task record. |
+ | A bounded code change on the direct route (above) | A three-line card in the PR body: the paths in scope, the promise, the command that proves it. |
+ | New public surface: a new module, type, public function, dependency or test file | The full card, and the new surface named in the PR body. |
+-| The expanded route: persistence, permissions, compatibility, security, external effects | The full card and the JPD flow above. |
++| The expanded route: persistence, permissions, compatibility, security, external effects, runtime- or security-affecting config | The full card and the JPD flow above. |
++
++A config value stays on the light row only while it is inert: a value whose setting cannot
++alter runtime behaviour or security. A runtime- or security-affecting config value — a
++timeout, a retry limit, a permission setting — routes to the expanded row above, takes the
++full card and the JPD flow, and must name behavioural evidence that the setting changes
++observed behaviour; parsing or shape validation alone is not proof (Proof rules, above).
+ 
+ **The four moves, when Keel applies:**
+ 
+diff --git a/docs/process/DELIVERY.md b/docs/process/DELIVERY.md
+index ba7d532..2173b49 100644
+--- a/docs/process/DELIVERY.md
++++ b/docs/process/DELIVERY.md
+@@ -22,13 +22,18 @@ Keel is proportional. Use only as much of it as the change needs.
+ 
+ | The change | What goes in the PR body |
+ |---|---|
+-| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the summary. |
++| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the summary. |
+ | A bounded code change | A three-line card: the paths in scope, the promise, the command that proves it. |
+ | New public surface: a module, type, public function, dependency or test file | The full card, and the new surface named. |
+-| Persistence, permissions, compatibility, security, external effects | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development). |
++| Persistence, permissions, compatibility, security, external effects, runtime- or security-affecting config | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development). |
+ 
+ A card lists paths, not globs. A new dependency is always named. Risk is read from what the change
+-touches, not from how big it is: a one-line change can remove a permission check.
++touches, not from how big it is: a one-line change can remove a permission check. A config value
++stays on the light row only while it is inert: a value whose setting cannot alter runtime
++behaviour or security. A runtime- or security-affecting config value — a timeout, a retry limit, a
++permission setting — takes the full card and the JPD flow, and its PR body must name behavioural
++evidence that the setting changes observed behaviour; parsing or shape validation alone is not
++proof (`AGENTS.md`, Journey-Proven Development, Proof rules).
+ 
+ ## 3. Work
+ 
+diff --git a/openspec/changes/archive/.gitkeep b/openspec/changes/archive/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/openspec/changes/bench-feature/.openspec.yaml b/openspec/changes/bench-feature/.openspec.yaml
+new file mode 100644
+index 0000000..d58ba02
+--- /dev/null
++++ b/openspec/changes/bench-feature/.openspec.yaml
+@@ -0,0 +1,2 @@
++schema: spec-driven
++created: 2026-10-26
+diff --git a/openspec/changes/bench-feature/design.md b/openspec/changes/bench-feature/design.md
+new file mode 100644
+index 0000000..a48dc04
+--- /dev/null
++++ b/openspec/changes/bench-feature/design.md
+@@ -0,0 +1,92 @@
++# Design
++
++## Context
++
++The Keel proportionality table is published twice, in two wordings: `AGENTS.md` (Keel section,
++table under "Keel is proportional") and `docs/process/DELIVERY.md` section 2. Both currently put
++every "config value" on the lightest row. The Journey-Proven Development proof rules in
++`AGENTS.md` already say "Runtime-affecting configuration needs behavioral evidence; parsing or
++shape validation alone is not proof." Keel is declared guidance and measurement, not punishment:
++its deterministic half lives in `extensions/builtin/graphhelm-development-contracts/policies/keel.yaml`
++and the classifier in `core/policy`, neither of which this change touches. All repository
++documentation is English-only. See proposal.md for motivation.
++
++## Goals / Non-Goals
++
++**Goals:**
++
++- Limit the light row to **inert** config values in both tables.
++- Add **runtime- or security-affecting config** to the expanded-route trigger list in both tables.
++- State next to both tables that a runtime- or security-affecting config value needs the full
++  card and behavioural evidence.
++- Keep the two published tables mutually consistent, as they are today.
++
++**Non-Goals:**
++
++- No rule in `keel.yaml`, no classifier change in `core/policy`, no new checker or script.
++- No edits to `docs/keel/KEEL_SPEC.md`, `docs/harness/KEEL_PARADIGMS_PAPER.md`,
++  `plugins/graphhelm/README.md`, or `docs/keel/BENCHMARK_PROTOCOL.md`.
++- No change to what any tier asks for in its ask cell (task record / summary, three-line card,
++  full card, full card + JPD flow).
++
++## Decisions
++
++1. **Statement goes beside the table as a sentence, not as a third row.** The owner's request
++   has two parts that could collide: (a) state that runtime-/security-affecting config needs the
++   full card and behavioural evidence, and (b) add that config kind to the expanded row. A
++   dedicated middle row implementing (a) would leave a permission-setting config ambiguous
++   between the middle row and the expanded row ("permissions" is already an expanded trigger).
++   Instead: the expanded row's trigger list gains "runtime- or security-affecting config", and a
++   sentence directly after each table states that for this kind of change the required evidence
++   is behavioural — matching the proof rule it cites. This mirrors the existing style: both
++   documents already carry their fine-grained rules in the paragraph after the table
++   ("A card lists paths, not globs…", "**What is enforced…**").
++   - Alternative rejected: a dedicated middle row — creates a two-tier conflict for one kind of
++     change.
++   - Alternative rejected: appending the evidence sentence inside the expanded row's ask cell —
++     breaks the parallel structure of the four ask cells and overloads a table cell with prose.
++
++2. **Reuse the existing proof-rule sentence rather than coining a parallel one.**
++   "Parsing or shape validation alone is not proof" already exists in `AGENTS.md` (Journey-Proven
++   Development, Proof rules); the new sentence points at that obligation instead of stating a
++   second version that could later drift from it. In `DELIVERY.md`, the sentence links to
++   `AGENTS.md`'s proof rules, the same way section 2 already links out for the JPD flow.
++
++3. **"Inert" is defined by its complement, not by a whitelist.** A config value is inert when
++   its changed setting cannot alter runtime behaviour or security. The repository already uses
++   "inert" this way (e.g., decision register D-056, CHANGELOG). A whitelist of example inert
++   values would rot as schemas evolve; one non-normative example in each document
++   (display label / timeout / retry limit / permission setting) is enough to anchor the split.
++
++4. **Both tables ship in the same change, preserving each file's own wording.** Each table keeps
++   its existing ask-cell phrasing ("Nothing beyond the task record." vs "Nothing beyond the
++   summary."; the JPD flow reference differs per file). Only the shared classification text
++   ("inert config values", "runtime- or security-affecting config") is identical across the two
++   files, which is what a reviewer diffing the tables can check.
++
++## Risks / Trade-offs
++
++- [A reviewer reads "expanded row" as making plain timeout edits carry the whole JPD flow] →
++  That is the stated routing: the kind of change is listed on that row, and the sentence after
++  the table says the evidence the card must name for it is behavioural. If the owner later wants
++  a lighter dedicated tier for pure runtime config, that is a future reclassification, and the
++  consistency requirement in the spec keeps both tables moving together.
++- ["Inert" is judged at pull-request time and could be misjudged in either direction] → Keel is
++  guidance, not punishment: a misrouted light change is caught by the mandatory one-review that
++  already runs on every PR, and drift is recorded with its cause by the existing "Drift is
++  recorded with its cause" rule.
++- [The duplicated table drifts again after this change] → The spec adds a consistency
++  requirement covering both files; no checker is added in this scope (owner note: docs only), so
++  the enforcement remains the review reading both tables.
++
++## Migration Plan
++
++None: the change is prose in two checked-in documents with no artifacts, state, or wire
++contracts. Rollback is reverting the single documentation commit. Installed skill copies and
++other branches keep their current wording until they integrate `main`, per the existing policy
++that merging `main` does not update installed copies.
++
++## Open Questions
++
++None. The one scope question that would have changed the approach (dedicated row vs expanded
++row) is answered by the request itself, and recorded as decision 1.
+diff --git a/openspec/changes/bench-feature/proposal.md b/openspec/changes/bench-feature/proposal.md
+new file mode 100644
+index 0000000..d6d5ab0
+--- /dev/null
++++ b/openspec/changes/bench-feature/proposal.md
+@@ -0,0 +1,54 @@
++# Proposal
++
++## Why
++
++Keel's proportionality table puts every "config value" on the lightest row (nothing beyond the
++task record / summary). That is right for inert values, but wrong for a one-line change to a
++Runtime timeout, a retry limit, or a permission setting: such a change alters runtime behaviour
++or security with the same diff size as a comment edit, yet would go to review with no card and
++no behavioural evidence. The tables already say "Risk is read from what the change touches,
++not from how big it is"; the row that admits all config values contradicts it.
++
++## What Changes
++
++Docs-only change; no checker, no new rule in `extensions/builtin/graphhelm-development-contracts/policies/keel.yaml`, no code:
++
++- `AGENTS.md` (Keel section) and `docs/process/DELIVERY.md` (§2): limit the light row to
++  **inert** config values — a value whose changed setting cannot alter runtime behaviour or
++  security.
++- Same two tables: add **runtime- or security-affecting config** to the expanded-route row's
++  trigger list (`persistence, permissions, compatibility, security, external effects`).
++- Same two documents, next to each table: state explicitly that a runtime- or
++  security-affecting config value needs the full card **and behavioural evidence** that the
++  observed behaviour changes — parsing or shape validation alone is not proof (the existing
++  Journey-Proven Development proof rule already says exactly this; the table statement points
++  at it instead of restating a second version).
++- Not touched: the deterministic half of Keel (`keel.yaml`, `core/policy`), the Keel spec and
++  paradigms paper, `plugins/graphhelm/README.md`, and the benchmark protocol. If the owner
++  later wants the classifier to enforce the tier split, that is a separate change with its own
++  pathogen and version bump.
++
++## Capabilities
++
++### New Capabilities
++
++- `keel-card-proportionality`: how the delivery process routes a change into the tier of card
++  and evidence it requires, keyed to what the change touches — including the inert vs
++  runtime-/security-affecting config split.
++
++### Modified Capabilities
++
++(None. No capabilities exist under `openspec/specs/` yet; this is the first spec in the
++inventory.)
++
++## Impact
++
++- Files: `AGENTS.md`, `docs/process/DELIVERY.md` (two table rows each plus one adjacent
++  sentence each).
++- No code, tests, schemas, dependencies, or wire contracts change. The only consumers are
++  agents and humans reading the delivery rules at session start; the observable contract is
++  the wording itself, checked by rereading both tables after the edit.
++- Precedence note: these documents sit below `docs/DECISION_REGISTER.md` and accepted ADRs in
++  the conflict order. No register entry or ADR assigns config values a tier, so restricting the
++  light row introduces no contradiction with a higher-precedence source; the JPD proof rule in
++  the same files already requires behavioural evidence for runtime-affecting configuration.
+diff --git a/openspec/changes/bench-feature/specs/keel-card-proportionality/spec.md b/openspec/changes/bench-feature/specs/keel-card-proportionality/spec.md
+new file mode 100644
+index 0000000..f5296bc
+--- /dev/null
++++ b/openspec/changes/bench-feature/specs/keel-card-proportionality/spec.md
+@@ -0,0 +1,40 @@
++# Spec Delta
++
++## Purpose
++
++Defines how the GraphHelm delivery process routes each kind of change into the tier of Keel card and proof it requires, so that ceremony tracks what the change can reach — including which config values may travel light and which need a full card plus behavioural evidence.
++
++## ADDED Requirements
++
++### Requirement: Light tier admits only inert config values
++The proportionality tables (`AGENTS.md` Keel section, `docs/process/DELIVERY.md` section 2) SHALL limit their lightest row to documentation edits, comments, inert config values, one-line fixes, and test-only fixes. A config value is inert when its changed setting cannot alter runtime behaviour or security; every other config value is runtime- or security-affecting.
++
++#### Scenario: Inert config value stays light
++- **WHEN** a change alters only a config value whose setting cannot change runtime behaviour or security (for example, a display label)
++- **THEN** the lightest row applies and nothing beyond the task record or summary is required in the pull request body
++
++#### Scenario: Behaviour-changing config value leaves the light row
++- **WHEN** a change alters a Runtime timeout, a retry limit, or a permission setting
++- **THEN** the lightest row does not apply and the change takes the tier the tables assign to runtime- or security-affecting config
++
++### Requirement: Runtime- or security-affecting config takes the full card and behavioural evidence
++A change to runtime- or security-affecting config SHALL be listed among the expanded-route triggers in both tables and SHALL carry the full card with the JPD flow, and its pull request SHALL name behavioural evidence that the setting changes observed behaviour; parsing or shape validation alone is not proof.
++
++#### Scenario: Timeout change shows behavioural evidence
++- **WHEN** a pull request changes a Runtime timeout and its review checks the card
++- **THEN** the pull request body carries the full card and names a test or command whose outcome depends on the timeout actually firing, not merely on the config parsing
++
++#### Scenario: Parse-only validation is not proof
++- **WHEN** the only evidence attached to a runtime- or security-affecting config change is that the value parses or validates against its schema
++- **THEN** the change lacks the behavioural evidence the tables require and the review records it as missing
++
++### Requirement: The two published tables stay mutually consistent
++`AGENTS.md` (Keel section) and `docs/process/DELIVERY.md` (section 2) publish the same routing in two wordings; a reclassification of any row in one table SHALL be applied to the matching row of the other table in the same change.
++
++#### Scenario: Row reclassified in one file
++- **WHEN** a later change moves a kind of change between rows in either table
++- **THEN** the same change updates the matching row in the other table and the pull request body names both files
++
++#### Scenario: Reviewer compares the two tables
++- **WHEN** a reviewer compares the row sets of the two tables
++- **THEN** every kind of change named in either table sits in the same tier in both, with matching asks: task record or summary, three-line card, full card, or full card with the JPD flow
+diff --git a/openspec/changes/bench-feature/tasks.md b/openspec/changes/bench-feature/tasks.md
+new file mode 100644
+index 0000000..57af4c8
+--- /dev/null
++++ b/openspec/changes/bench-feature/tasks.md
+@@ -0,0 +1,68 @@
++# Tasks
++
++Docs-only change to two files: `AGENTS.md` (Keel section table, currently lines 139–144) and
++`docs/process/DELIVERY.md` (§2 table, currently lines 23–28). Wording decisions and rationale are
++in design.md; the requirements being implemented are in
++`specs/keel-card-proportionality/spec.md`. No build, no tests, no checker — verification is
++rereading and targeted greps.
++
++## 1. `AGENTS.md` — Keel section table
++
++- [x] 1.1 Limit the light row to inert config values: change the first table row from
++      `| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the task record. |`
++      to `| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the task record. |`.
++      Verify: reread the table; the row reads "inert config values" and no other row changed.
++- [x] 1.2 Add runtime-/security-affecting config to the expanded route: change the fourth table
++      row from `| The expanded route: persistence, permissions, compatibility, security, external effects | The full card and the JPD flow above. |`
++      to `| The expanded route: persistence, permissions, compatibility, security, external effects, runtime- or security-affecting config | The full card and the JPD flow above. |`.
++      Verify: reread the row; the trigger list ends with ", runtime- or security-affecting config".
++- [x] 1.3 State the evidence requirement beside the table: insert a new paragraph between the
++      table and `**The four moves, when Keel applies:**`:
++      "A config value stays on the light row only while it is inert: a value whose setting cannot
++      alter runtime behaviour or security. A runtime- or security-affecting config value — a
++      timeout, a retry limit, a permission setting — routes to the expanded row above, takes the
++      full card and the JPD flow, and must name behavioural evidence that the setting changes
++      observed behaviour; parsing or shape validation alone is not proof (Proof rules, above)."
++      Verify: reread the Keel section; the paragraph sits directly below the table, cites the
++      Proof rules, and uses English only.
++
++## 2. `docs/process/DELIVERY.md` — section 2
++
++- [x] 2.1 Limit the light row to inert config values: change the first table row from
++      `| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the summary. |`
++      to `| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the summary. |`.
++      Verify: reread the table; the row reads "inert config values" and no other row changed.
++- [x] 2.2 Add runtime-/security-affecting config to the expanded route: change the fourth table
++      row from `| Persistence, permissions, compatibility, security, external effects | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development). |`
++      to `| Persistence, permissions, compatibility, security, external effects, runtime- or security-affecting config | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development). |`.
++      Verify: reread the row; the trigger list ends with ", runtime- or security-affecting config".
++- [x] 2.3 State the evidence requirement beside the table: append one sentence to the existing
++      paragraph after the table (the one starting "A card lists paths, not globs."):
++      "A config value stays on the light row only while it is inert: a value whose setting cannot
++      alter runtime behaviour or security. A runtime- or security-affecting config value — a
++      timeout, a retry limit, a permission setting — takes the full card and the JPD flow, and its
++      PR body must name behavioural evidence that the setting changes observed behaviour; parsing
++      or shape validation alone is not proof (`AGENTS.md`, Journey-Proven Development, Proof
++      rules)."
++      Verify: reread §2; the appended sentence links out like the JPD flow reference already does,
++      and the pre-existing sentences are unchanged.
++
++## 3. Cross-table integration checks
++
++- [x] 3.1 The two tables agree: compare the two tables side by side and confirm every kind of
++      change sits in the same tier in both files, with each file keeping its own ask-cell
++      wording (task record vs summary; JPD flow references) — the spec scenario "Reviewer
++      compares the two tables". Verify: read both tables in the working tree.
++- [x] 3.2 No unintended surface: run `git diff --stat` and confirm only `AGENTS.md` and
++      `docs/process/DELIVERY.md` are modified (plus this change's `openspec/changes/bench-feature/`
++      planning artifacts if untracked); confirm nothing under `extensions/`, `core/`, `ci/`, or
++      `schemas/` changed, and that `keel.yaml` is untouched. Verify: inspect the diff output.
++- [x] 3.3 Style and language: confirm all added prose is English, adds no new headings or code
++      fences, and introduces no non-breaking whitespace or trailing spaces (`git diff --check`).
++      Verify: run `git diff --check` and reread the diff hunks.
++
++## Workflow follow-up
++
++- After the documentation change is reviewed and merged, archive the change
++  (`openspec archive bench-feature`) so the delta becomes the main capability spec at
++  `openspec/specs/keel-card-proportionality/spec.md`.
+diff --git a/openspec/config.yaml b/openspec/config.yaml
+new file mode 100644
+index 0000000..2805cb6
+--- /dev/null
++++ b/openspec/config.yaml
+@@ -0,0 +1,32 @@
++schema: spec-driven
++
++# Project context (optional)
++# Add only constraints that should guide OpenSpec artifacts and workflows.
++# Include constraints an agent cannot infer by reading the code.
++# Keep general project documentation and discoverable codebase facts out.
++# Example:
++#   context: |
++#     Designs and tasks must cover Windows, macOS, and Linux
++#     Write all artifacts in Spanish
++
++# Per-artifact rules (optional)
++# Add custom rules for specific artifacts.
++# Example:
++#   rules:
++#     proposal:
++#       - Keep proposals under 500 words
++#       - Always state what is out of scope
++#     tasks:
++#       - Break tasks into chunks of max 2 hours
++
++# Per-operation guidance (optional)
++# Add advisory guidance for how apply and archive work should be conducted.
++# This is separate from artifact rules above.
++# Example:
++#   operations:
++#     apply:
++#       guidance:
++#         - Keep test summaries concise
++#     archive:
++#       guidance:
++#         - Summarize the archive outcome before finishing
+diff --git a/openspec/specs/.gitkeep b/openspec/specs/.gitkeep
+new file mode 100644
+index 0000000..e69de29

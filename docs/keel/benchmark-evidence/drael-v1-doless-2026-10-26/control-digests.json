@@ -102,5 +102,50 @@
   "tools/token-bench/doless/oracles/verify_end_ack_evidence.py": "2243b048a75e51e2af16398f8252a8144427dd923736b5695e9cdba038515d22",
   "tools/token-bench/doless/oracles/_lib.py": "c4c0e52432b7abddca6c8366f9dd11a6fb35e85beeea96acec8ee0b75dcc1bd4",
   "tools/token-bench/doless/regressions/diff_check.py": "a5977a1b3a60c4c0f27c1f75a03d366fd56f6fb35dee0ed380c24f83b8c4e862"
+ },
+ "crossMethod": {
+  "note": "Cross-method comparison battery (arms s = Spec Kit 4-stage, o = OpenSpec 2-stage), same executor/tasks/scorer as the main battery. Surface digests below are raw-file SHA-256 of the pinned command markdown in tools/token-bench/doless/surfaces/{spec-kit,openspec}/; each ledger row also carries its per-stage prompt digests (surfaceDigests/promptDigest fields), so row scoring does not depend on the driver file's later state. Committed drivers carry documented post-run fixes (ARTIFACT_PREFIXES 'o' string-to-tuple fix, top-level import traceback, repo-relative env-overridable path resolution); see the driver docstrings and CROSS-METHOD.md section 9.",
+  "windowUtc": {
+   "firstRowAt": "2026-10-26T19:45:44Z",
+   "lastRowAt": "2026-10-27T06:53:52Z",
+   "rows": 28
+  },
+  "openspecCli": {
+   "version": "1.15.0",
+   "install": "npm global (Fission-AI/OpenSpec)",
+   "telemetryEnv": "OPENSPEC_TELEMETRY=0"
+  },
+  "specKitSource": "github/spec-kit@main templates (fetched 2026-10-26, no .specify scripts present in checkout; JSON outputs given inline per driver prelude)",
+  "surfaceFileSha256": {
+   "s/specify.md": "7d5a88e6afa504f1d16503df6bf8664f30e3df812b83f9a456a2eaccaeb638ee",
+   "s/plan.md": "206a0386d20b3eed4c087a4d9de247a3e7b2b59348bf3c801fc74f63ca2726a5",
+   "s/tasks.md": "2f9176c6e7c23d2a83d2bd018ffa1e67aee977389a57f2a3fe35fe987b425944",
+   "s/implement.md": "feab334232940cfd4ecbcdae41cf63ccb7d581a60380230837385f296f7b49bd",
+   "s/templates/spec-template.md": "3945437fc35cd30a5b2bf7beea680337c3516826d3efa5a6b92c4a7eca1ba28e",
+   "s/templates/plan-template.md": "dfba43da2b2a207ff8c177a0fba03af074fd45e261696b4b64172041fad2e992",
+   "s/templates/tasks-template.md": "1e448e9153462e8c5b5a55231a54c756d870a82950d4dd9425a2bf5b7008a0d9",
+   "s/templates/constitution-template.md": "ce7549540fa45543cca797a150201d868e64495fdff39dc38246fb17bd4024b3",
+   "o/opsx-propose.md": "aac98d42f525b00de334d0147b4217b35991176bcfd3baa0647feb4bd9bb9d6a",
+   "o/opsx-apply.md": "edd84d85092b2ffda664f5964de6d66acbe9ed5c1792fa8425b9b5a2d18a6e80",
+   "o/config.yaml": "f0082e9c22e8ce1d611c0f3b4d4915ce445e7ff2553cda6b713b6c25f390984c"
+  },
+  "driverCrossPySha256": "1361c284237ec2c4ddcdf963bae76dbcadceba6a89f10af40d03236d394f6e2f",
+  "driverBattery1PySha256": "2b1c5171d9e8e2a79d2af33a53c1b1c97e7637d69e88171483f1be2d2bf86b6c",
+  "planCrossJsonSha256": "27b4a6a2c00670fc150c70cdd1e5f6d9329b4190a06d6463795e0ecf1298bb61",
+  "timeoutCapSecondsPerStage": 2400,
+  "artifactsExcludedFromBlockingColumns": {
+   "s": [
+    "specs/",
+    ".specify/"
+   ],
+   "o": [
+    "openspec/"
+   ]
+  }
+ },
+ "resultsJsonlSha256AfterCrossBattery": {
+  "note": "Full ledger (96 rows: 37 Codex + 29 Drael battery-1 + 30 Drael cross incl. 2 smoke run-0) after BOM strip, at cross-report time.",
+  "sha256": "1a0addd7064a67cd8e59e334b67b56750bdd07ee216532414f4a11a3fd29bb97",
+  "sizeBytes": 315609
  }
 }

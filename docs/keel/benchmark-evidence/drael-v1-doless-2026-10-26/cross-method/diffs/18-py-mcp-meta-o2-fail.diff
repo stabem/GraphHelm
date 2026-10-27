@@ -1,0 +1,465 @@
+diff --git a/openspec/changes/archive/.gitkeep b/openspec/changes/archive/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/openspec/changes/bench-feature/.openspec.yaml b/openspec/changes/bench-feature/.openspec.yaml
+new file mode 100644
+index 0000000..d58ba02
+--- /dev/null
++++ b/openspec/changes/bench-feature/.openspec.yaml
+@@ -0,0 +1,2 @@
++schema: spec-driven
++created: 2026-10-26
+diff --git a/openspec/changes/bench-feature/delivery-notes.md b/openspec/changes/bench-feature/delivery-notes.md
+new file mode 100644
+index 0000000..148c6b1
+--- /dev/null
++++ b/openspec/changes/bench-feature/delivery-notes.md
+@@ -0,0 +1,58 @@
++# Delivery notes — bench-feature
++
++Executed via `/opsx-apply bench-feature` (schema: `spec-driven`) on 2026-10-27, unattended, in a
++single checkout with no remote. All 8 tracked tasks are complete.
++
++## Files changed
++
++- `plugins/graphhelm/hooks/task_handoff.py` — `tools/call` branch of `_mcp_stdio()`: params
++  allow-list widened from `{"name", "arguments"}` to `{"name", "arguments", "_meta"}` plus an
++  `isinstance(params["_meta"], dict)` guard; both failures raise `ValueError` into the existing
++  `-32602 invalid request` handler. No other method touched.
++- `plugins/graphhelm-codex-hooks/hooks/task_handoff.py` — byte-for-byte copy of the updated file.
++- `plugins/graphhelm/hooks/test_task_handoff.py` — four new tests:
++  - `test_mcp_tools_call_accepts_and_ignores_top_level_meta` (task 1.1),
++  - `test_mcp_tools_call_rejects_other_unknown_params_fields_and_scalar_meta` (task 1.2),
++  - `test_mcp_arguments_level_meta_and_host_override_stay_refused_with_params_meta` (task 1.3),
++  - `test_codex_companion_copy_is_byte_identical` (task 2.3).
++- `plugins/graphhelm/README.md` — stdio MCP paragraph now states the `_meta` exception explicitly.
++
++No dependency changes. No plugin/serverInfo version change (design decision 6).
++
++## Verification trail (every step observed in this checkout)
++
++Python on PATH: 3.11.9. Command for every run: `python -m unittest test_task_handoff -v` from
++`plugins/graphhelm/hooks/`.
++
++1. Baseline (before any edit): 9/9 passed, exit 0.
++2. Task 1.1 RED check: after adding only the new acceptance test, 10 ran — the new test FAILED
++   exactly as specified (`_meta` call answered `-32602 invalid request`), all 9 pre-existing
++   tests still ok.
++3. Task 1.2: guard test green against current code — unknown top-level field `"host"` and
++   scalar `_meta` both answered `-32602`, `RuntimeHandler.requests` count unchanged.
++4. Task 1.3: refusal test green against current code, no Runtime requests.
++5. Task 2.1 GREEN: after the allow-list change, all 12 tests passed (the 1.1 test turned green;
++   1.2 and 1.3 kept passing through their post-fix branches; oversized-frame and identity-
++   override refusals unchanged).
++6. Task 2.2: after `Copy-Item`, `Get-FileHash` reported both copies at
++   `1D22BB2B71837CAECE4EA796D9F49D8A4D818B2574E10967B68709B1C6460EAA`.
++7. Task 2.3: full suite green (13/13); appending one byte to the companion copy made exactly
++   `test_codex_companion_copy_is_byte_identical` fail with a message naming both paths and both
++   digests; restoring the copy returned the suite to 13/13 green.
++8. Task 3.1: README sentence re-read against the implemented behavior (step 5) and against
++   `specs/task-handoff-mcp/spec.md` scenarios — prose and behavior agree.
++9. Task 3.2 (final clean-shell run): `Ran 13 tests … OK`, exit 0; SHA-256 pair re-checked after
++   all edits were in place — both files again at `1D22BB2B71837CAECE4EA796D9F49D8A4D818B2574E10967B68709B1C6460EAA`.
++
++## Recorded assumptions
++
++1. **Dual-shape refusal assertion in the task 1.3 test.** Before the allow-list widening, a call
++   carrying a valid top-level `_meta` is itself refused at the params layer (`-32602`) because
++   `_meta` is then an unknown field, so an assertion of the literal post-fix shape
++   (`result.isError == true`) would not hold against the current code. Task 1.3's verify clause
++   requires the test to be green both before and after the fix, so the test accepts either the
++   pre-fix `-32602` refusal or the post-fix `isError: true` tool result (with the exact
++   unobserved-result text), plus no Runtime requests in either case. After the fix, the observed
++   shape is precisely the spec's: `isError` true with the unobserved-result text.
++2. **`python` on PATH is the verification interpreter** (3.11.9); the stdio tests spawn the same
++   interpreter for the server subprocess, so no second interpreter is involved.
+diff --git a/openspec/changes/bench-feature/design.md b/openspec/changes/bench-feature/design.md
+new file mode 100644
+index 0000000..43ef764
+--- /dev/null
++++ b/openspec/changes/bench-feature/design.md
+@@ -0,0 +1,116 @@
++# Design
++
++## Context
++
++See proposal.md for motivation. Current state, verified in this checkout:
++
++- The `tools/call` branch of `_mcp_stdio()` in `plugins/graphhelm/hooks/task_handoff.py`
++  requires `params` to be a dict and rejects any key outside `{"name", "arguments"}`
++  (`set(params) - {...}`, raising `ValueError`, which the surrounding handler maps to JSON-RPC
++  `-32602 invalid request`). Only `params.get("name")` and `params.get("arguments")` are read at
++  dispatch.
++- The per-tool argument closure lives separately in `_mcp_tool_call()`: `set(arguments) - allowed`
++  (`allowed` = `{"recipientHost","recipientSessionId","handoffId"}` for `offer`, `{"offerId"}` for
++  `receive`/`status`). This is what makes the identity-override refusal work.
++- Frame bounds live in the read loop: a frame over `MAX_MCP_MESSAGE` (32 KiB) or without a
++  trailing newline answers one `-32600 invalid request`, closes the transport, and exits nonzero.
++- The two shipped copies `plugins/graphhelm/hooks/task_handoff.py` and
++  `plugins/graphhelm-codex-hooks/hooks/task_handoff.py` are byte-identical right now
++  (SHA-256 `2aeae452…f8c3` both). No build system copies or links them; they are literal file
++  duplicates.
++- `serverInfo` advertises version `0.1.11`; the existing stdio test asserts it equals
++  `plugin.json`'s `version` (currently `0.1.11`).
++- Per the MCP 2025-06-18 specification, `_meta` is standard metadata attached to JSON-RPC request
++  params (a map/object); compliant clients include it in `tools/call`, e.g.
++  `{"progressToken": ...}`.
++
++## Goals / Non-Goals
++
++**Goals:**
++
++- Accept a top-level `_meta` object in `tools/call` params and ignore it at dispatch.
++- Keep every other refusal working with the same wire behavior: other unknown `params` fields,
++  non-object `_meta`, identity overrides in `arguments`, oversized/unterminated frames.
++- Keep the two shipped copies byte-identical and make that contract observable from
++  `test_task_handoff.py`.
++
++**Non-Goals:**
++
++- No `_meta` processing: no progress notification replies, no relaying `_meta` anywhere.
++- No `_meta` accepted inside per-tool `arguments`.
++- No protocol version change (`protocolVersion` stays `2025-06-18`) and no plugin/serverInfo
++  version bump.
++- No changes to `initialize`, `ping`, `tools/list`, the argument schemas, or the CLI phases.
++
++## Decisions
++
++1. **Extend the `params` allow-list in `_mcp_stdio()`, with an explicit objectness check.**
++   Change the field check from `set(params) - {"name", "arguments"}` to
++   `set(params) - {"name", "arguments", "_meta"}`, and when `_meta` is present additionally require
++   `isinstance(params["_meta"], dict)` before dispatching. Rationale: the check stays where all
++   other `tools/call` param validation already is, so every failure path keeps raising `ValueError`
++   into the same handler and producing the same `-32602 invalid request` response shape. The
++   objectness check encodes the requested condition ("accept `_meta` when it is an object"): a
++   non-object `_meta` fails closed rather than being silently dropped. Alternative considered:
++   validating `_meta` inside `_mcp_tool_call()` — rejected because dispatch already ignores the
++   value and would then need its signature or a new channel to carry transport metadata.
++
++2. **`_meta` is accepted only at the top level of `params`.**
++   The per-tool argument closure in `_mcp_tool_call()` is untouched, so a `_meta` key inside
++   `arguments` is still an unsupported field and still returns an `isError: true` tool result.
++   Rationale: the request scopes the fix to fields of `params`, MCP places `_meta` on the request
++   params rather than the tool argument object, and leaving the argument closure untouched keeps
++   the identity-override refusal provably intact. Recorded assumption from the request wording:
++   "params has a field other than name and arguments" names the top-level params scope.
++
++3. **The `_meta` value is ignored after validation.**
++   Only `name` and `arguments` are read at dispatch; nothing echoes or interprets `_meta`. Its
++   size is bounded transitively by the existing 32 KiB frame bound, matching the adapter's
++   untrusted-input posture.
++
++4. **The Codex companion is updated as a byte copy, verified by hash.**
++   After editing `plugins/graphhelm/hooks/task_handoff.py`, copy exactly those bytes to
++   `plugins/graphhelm-codex-hooks/hooks/task_handoff.py` (no per-copy edits) and confirm with a
++   SHA-256 comparison of both files. Alternatives considered: a symlink or a build-time copy
++   step — rejected because the repository has no build system for the plugins and ships literal
++   file duplicates (changing the shipping mechanism is out of scope).
++
++5. **Byte-identity gets a committed test, in `test_task_handoff.py`.**
++   Add a test that compares the SHA-256 digests of the two checked-in files, resolving the
++   companion path relative to the test file
++   (`Path(__file__).resolve().parents[2] / "graphhelm-codex-hooks" / "hooks" / "task_handoff.py"`).
++   Rationale: byte-identity is the named shipping contract, and without this case the unittest run
++   would not observe a companion drift at all. The assertion message names both paths so a layout
++   move fails loudly instead of reading as a content mismatch.
++
++6. **No version bump in this change.**
++   The existing test pins `serverInfo.version` to `plugin.json`'s `version`; the request asks for
++   behavior parity, not a release. Bumping both together remains a separate release decision.
++
++## Risks / Trade-offs
++
++- [A client sends a very large `_meta`] → bounded by the existing 32 KiB frame limit; oversized
++  frames are already refused and close the transport.
++- [A future edit reads `_meta` at dispatch by accident] → dispatch reads only `name` and
++  `arguments`; the new tests assert identical results with and without `_meta`.
++- [The two copies drift again] → the new hash-comparison test fails the unittest run immediately,
++  in both lanes that run it.
++- [Non-object `_meta` stricter than needed] → compliant clients always send objects; the wire
++  consequence of either reading (drop vs reject) would have been identical, so the stricter
++  check costs nothing and matches "unknown fields fail closed".
++- [Params with `_meta` but no `name`] → dispatch proceeds as today with a missing name and
++  returns the existing `isError: true` "unknown handoff tool" result; behavior there is unchanged
++  by this design.
++
++## Migration Plan
++
++Pure additive widening of the accepted request set. Clients that do not send `_meta` behave
++exactly as before; clients sending any other unknown field are still refused. No state, storage,
++or schema migration. Rollback is reverting both task_handoff.py copies and the test additions in
++one step; no wire compatibility breaks because `protocolVersion` and the advertised tool surface
++are unchanged.
++
++## Open Questions
++
++- Whether the next *release* bumps the plugin/serverInfo version (e.g. to `0.1.12`) is a release
++  decision that does not affect this change's specs, approach, or task breakdown.
+diff --git a/openspec/changes/bench-feature/proposal.md b/openspec/changes/bench-feature/proposal.md
+new file mode 100644
+index 0000000..7284104
+--- /dev/null
++++ b/openspec/changes/bench-feature/proposal.md
+@@ -0,0 +1,50 @@
++# Proposal
++
++## Why
++
++Native MCP clients send the standard `_meta` field (for example `{"progressToken": ...}`) in
++`tools/call` params. The task-handoff stdio adapter
++(`plugins/graphhelm/hooks/task_handoff.py --mcp-stdio`) allows only `name` and `arguments` in
++`params`, so every `tools/call` from such clients is rejected with `invalid request` before
++dispatch, and no tool call over stdio works for them.
++
++## What Changes
++
++- `tools/call` accepts a top-level `_meta` field when its value is a JSON object; the value is
++  ignored at dispatch (the adapter reads only `name` and `arguments`).
++- Every other unknown top-level `params` field still fails closed with JSON-RPC
++  `-32602 invalid request`; a `_meta` whose value is not an object is rejected the same way.
++- The identity-override refusal (tool arguments cannot replace the host/session binding) and the
++  oversized/unterminated-frame refusal (sanitized `-32600`, transport closes, remaining bytes
++  never become another request) keep working exactly as they do today.
++- The Codex companion copy `plugins/graphhelm-codex-hooks/hooks/task_handoff.py` receives the same
++  bytes and stays byte-identical to `plugins/graphhelm/hooks/task_handoff.py`.
++- `plugins/graphhelm/hooks/test_task_handoff.py` gains coverage that a `_meta` call dispatches,
++  that a different unknown `params` field still fails, and that the companion copy stays
++  byte-identical.
++
++## Capabilities
++
++### New Capabilities
++
++- `task-handoff-mcp`: the stdio MCP transport of the explicit task-handoff adapter — the accepted
++  `tools/call` param shape, the fail-closed unknown-field policy, the environment-only identity
++  binding, bounded frames, and the byte-identical companion-copy shipping contract.
++
++### Modified Capabilities
++
++(none — this is the project's first capability spec)
++
++## Impact
++
++- Code: `plugins/graphhelm/hooks/task_handoff.py` (the `tools/call` branch of `_mcp_stdio`),
++  `plugins/graphhelm-codex-hooks/hooks/task_handoff.py` (byte-identical companion),
++  `plugins/graphhelm/hooks/test_task_handoff.py` (new stdio test cases).
++- Protocol surface: the `tools/call` params allow-list gains `_meta` (object values only).
++  `initialize`, `ping`, `tools/list`, the per-tool argument validation, the advertised
++  `protocolVersion` (2025-06-18), and all JSON-RPC error codes are unchanged.
++- Docs: one-sentence clarification in `plugins/graphhelm/README.md` where it states that "unknown
++  fields fail closed" (that statement stays true; the `_meta` exception becomes explicit).
++- No plugin version bump in this change: the existing test pins `serverInfo.version` to
++  `plugin.json`'s `version`, and the request does not ask for a release.
++- No dependencies added or changed; runtime environment requirements are unchanged.
+diff --git a/openspec/changes/bench-feature/specs/task-handoff-mcp/spec.md b/openspec/changes/bench-feature/specs/task-handoff-mcp/spec.md
+new file mode 100644
+index 0000000..b4add88
+--- /dev/null
++++ b/openspec/changes/bench-feature/specs/task-handoff-mcp/spec.md
+@@ -0,0 +1,90 @@
++# Spec Delta
++
++## Purpose
++
++Defines the stdio MCP transport of the GraphHelm task-handoff plugin: which `tools/call` request
++shapes the adapter accepts, how it fails closed on malformed or unknown input, how its identity
++binding stays environment-only, and how its Codex companion copy ships.
++
++## ADDED Requirements
++
++### Requirement: tools/call accepts a top-level _meta object
++
++The stdio MCP server SHALL accept a `tools/call` request whose `params` contains the standard MCP
++`_meta` field, when its value is a JSON object. The `_meta` value SHALL be ignored at dispatch:
++the server reads only `name` and `arguments`, and an accepted `_meta` MUST NOT change which tool
++runs or what it returns.
++
++#### Scenario: A native client sends _meta with a progress token
++
++- **WHEN** a client sends `tools/call` with `params` of `{"name": "status", "arguments": {}, "_meta": {"progressToken": "pt-1"}}`
++- **THEN** the server responds with a JSON-RPC result whose `isError` is false and whose text content is the encoded status report, and no `invalid request` error is returned
++
++#### Scenario: _meta is ignored at dispatch
++
++- **WHEN** two `tools/call` requests are identical except that one carries `_meta` and the other does not
++- **THEN** both return the same result for the same underlying state, and the `_meta` value does not appear in either response
++
++### Requirement: tools/call fails closed on unknown params fields
++
++The stdio MCP server SHALL reject a `tools/call` request with a JSON-RPC `-32602` (`invalid
++request`) error when `params` is not a JSON object, when `params` contains any field other than
++`name`, `arguments`, and `_meta`, or when a present `_meta` is not a JSON object. The rejection
++SHALL occur before any Runtime request is made.
++
++#### Scenario: An unknown top-level params field is rejected
++
++- **WHEN** a client sends `tools/call` with `params` containing a field other than `name`, `arguments`, and `_meta` (for example `"host"`)
++- **THEN** the server responds with JSON-RPC error code `-32602` and makes no Runtime request as a result
++
++#### Scenario: A non-object _meta is rejected
++
++- **WHEN** a client sends `tools/call` with `params._meta` set to a value that is not a JSON object (for example a string)
++- **THEN** the server responds with JSON-RPC error code `-32602` and makes no Runtime request as a result
++
++### Requirement: Tool arguments cannot override the environment binding
++
++The stdio MCP server SHALL reject a `tools/call` whose `arguments` contain any field outside the
++closed per-tool field list, so caller arguments cannot replace the host, session, execution,
++Runtime URL, or token binding from the server environment. Such a call SHALL return an
++`isError: true` tool result rather than dispatch. A `_meta` key inside `arguments` stays
++unsupported for every tool, including when a valid `_meta` object is present at the `params`
++level.
++
++#### Scenario: An arguments-level host override fails
++
++- **WHEN** a client sends `tools/call` for `status` with `arguments` of `{"host": "claude"}`, with or without a valid `_meta` object at the `params` level
++- **THEN** the result has `isError` true with the unobserved-result text, and no Runtime request is made
++
++#### Scenario: _meta inside arguments stays rejected
++
++- **WHEN** a client sends `tools/call` for `status` with `arguments` of `{"_meta": {"progressToken": "pt-1"}}` and a valid `_meta` object at the `params` level
++- **THEN** the result has `isError` true with the unobserved-result text, and no Runtime request is made
++
++### Requirement: Oversized or unterminated frames close the transport
++
++The stdio MCP server SHALL read frames of at most 32 KiB plus one newline. A frame longer than
++that bound, or a final frame that is not terminated by a newline, SHALL produce exactly one
++sanitized `-32600` error response, then close the transport with a nonzero exit; the remaining
++bytes of such a frame SHALL NOT be interpreted as further requests.
++
++#### Scenario: An oversized ping frame
++
++- **WHEN** the only input is a `ping` frame longer than the bound
++- **THEN** the server prints exactly one JSON-RPC error with code `-32600`, exits nonzero, and makes no Runtime request
++
++#### Scenario: A JSON suffix after an oversized prefix
++
++- **WHEN** the input is an oversized non-JSON prefix immediately followed by a well-formed `tools/call` suffix without a separating newline
++- **THEN** the suffix is never dispatched: the server answers only the `-32600` error and exits nonzero
++
++### Requirement: The Codex companion copy stays byte-identical
++
++The companion file `plugins/graphhelm-codex-hooks/hooks/task_handoff.py` SHALL be byte-identical
++to `plugins/graphhelm/hooks/task_handoff.py`, so that the graphhelm plugin and the Codex
++companion ship the same adapter behavior. Any change to one file MUST be applied to both.
++
++#### Scenario: Both copies compared after a change
++
++- **WHEN** the two files are byte-compared after any edit to either one
++- **THEN** their bytes are equal
+diff --git a/openspec/changes/bench-feature/tasks.md b/openspec/changes/bench-feature/tasks.md
+new file mode 100644
+index 0000000..8ad23e7
+--- /dev/null
++++ b/openspec/changes/bench-feature/tasks.md
+@@ -0,0 +1,22 @@
++# Tasks
++
++## 1. New failing/passing guard tests (`plugins/graphhelm/hooks/test_task_handoff.py`)
++
++Add the tests first so the change has red and green observations. All tests follow the existing
++subprocess-over-stdio pattern of `test_mcp_stdio_lists_closed_tools_and_reaches_real_status_adapter`
++(same environment setup, `RuntimeHandler.requests` count as the no-side-effect witness).
++
++- [x] 1.1 Add a test that a `tools/call` with `params` of `{"name": "status", "arguments": {}, "_meta": {"progressToken": "pt-1"}}` returns a JSON-RPC result with `isError` false and text content, and that an otherwise identical call without `_meta` returns the same result (proves acceptance and that `_meta` is ignored at dispatch). Verify: running `python -m unittest test_task_handoff -v` from `plugins/graphhelm/hooks/` shows this test FAILING against the current code (the response is a `-32602` error), with every pre-existing test still passing.
++- [x] 1.2 Add a test that a `tools/call` with any top-level `params` field other than `name`, `arguments`, and `_meta` (for example `"host"`) still gets JSON-RPC `-32602`, and that a `tools/call` with `params._meta` set to a non-object (for example a string) also gets `-32602`, in both cases with `RuntimeHandler.requests` count unchanged (no Runtime side effects). Verify: `python -m unittest test_task_handoff -v` shows the test passing against the current code AND required to keep passing after the fix (it guards against over-accepting).
++- [x] 1.3 Add a test that `arguments` containing `_meta` (for example `{"_meta": {"progressToken": "pt-1"}}` for `status`, sent together with a valid `_meta` object at the `params` level) returns an `isError: true` tool result, and extend or mirror the existing identity-override case so `arguments` of `{"host": "claude"}` is exercised with a valid `_meta` object at the `params` level and still fails with no Runtime request. Verify: `python -m unittest test_task_handoff -v` shows the test passing against the current code AND required to keep passing after the fix.
++
++## 2. Implementation and companion sync
++
++- [x] 2.1 In `plugins/graphhelm/hooks/task_handoff.py`, in the `tools/call` branch of `_mcp_stdio()`: change the allow-list check from `set(params) - {"name", "arguments"}` to `set(params) - {"name", "arguments", "_meta"}`, and add a guard that a present `_meta` must be a JSON object (`isinstance(params["_meta"], dict)`), raising `ValueError` otherwise so both failures map to the existing `-32602 invalid request` response. Do not touch `_mcp_tool_call()`, the argument closure, the frame bounds, or any other method. Verify: `python -m unittest test_task_handoff -v` from `plugins/graphhelm/hooks/` passes with zero failures, including the new 1.1 test (now green) and the guard tests 1.2/1.3.
++- [x] 2.2 Copy the updated `plugins/graphhelm/hooks/task_handoff.py` byte-for-byte to `plugins/graphhelm-codex-hooks/hooks/task_handoff.py` (no per-copy edits). Verify: SHA-256 of both files is identical (for example `Get-FileHash` on both paths), confirming the byte-identical shipping contract.
++- [x] 2.3 Add a test to `plugins/graphhelm/hooks/test_task_handoff.py` asserting the two checked-in copies are byte-identical: compare SHA-256 digests of `Path(__file__)`'s sibling `task_handoff.py` and `Path(__file__).resolve().parents[2] / "graphhelm-codex-hooks" / "hooks" / "task_handoff.py"`, with the assertion failure message naming both paths so a layout move fails distinctly from a drift. Verify: `python -m unittest test_task_handoff -v` passes; temporarily append one byte to the companion copy and re-run to see this specific test fail, then restore the copy and re-run to green.
++
++## 3. Documentation and final observation
++
++- [x] 3.1 In `plugins/graphhelm/README.md`, update the stdio MCP paragraph (currently "Requests are bounded and unknown fields fail closed.") to state explicitly that a standard `_meta` object in `tools/call` params is accepted and ignored, while every other unknown field still fails closed. Verify: re-read the sentence against the implemented behavior in step 2.1 and against the spec scenarios in `specs/task-handoff-mcp/spec.md`; prose and behavior agree.
++- [x] 3.2 Run the complete test file one final time from a clean shell and record the outcome in the PR/delivery notes: `python -m unittest test_task_handoff -v` from `plugins/graphhelm/hooks/` must report every case (all pre-existing plus all new) passed, with the pre-existing oversized-frame and identity-override refusals unchanged. Verify: the final run exits 0 with zero failures, and the SHA-256 pair from task 2.2 is re-checked after all edits are in place.
+diff --git a/openspec/config.yaml b/openspec/config.yaml
+new file mode 100644
+index 0000000..2805cb6
+--- /dev/null
++++ b/openspec/config.yaml
+@@ -0,0 +1,32 @@
++schema: spec-driven
++
++# Project context (optional)
++# Add only constraints that should guide OpenSpec artifacts and workflows.
++# Include constraints an agent cannot infer by reading the code.
++# Keep general project documentation and discoverable codebase facts out.
++# Example:
++#   context: |
++#     Designs and tasks must cover Windows, macOS, and Linux
++#     Write all artifacts in Spanish
++
++# Per-artifact rules (optional)
++# Add custom rules for specific artifacts.
++# Example:
++#   rules:
++#     proposal:
++#       - Keep proposals under 500 words
++#       - Always state what is out of scope
++#     tasks:
++#       - Break tasks into chunks of max 2 hours
++
++# Per-operation guidance (optional)
++# Add advisory guidance for how apply and archive work should be conducted.
++# This is separate from artifact rules above.
++# Example:
++#   operations:
++#     apply:
++#       guidance:
++#         - Keep test summaries concise
++#     archive:
++#       guidance:
++#         - Summarize the archive outcome before finishing
+diff --git a/openspec/specs/.gitkeep b/openspec/specs/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/plugins/graphhelm-codex-hooks/hooks/task_handoff.py b/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
+index 22d68b4..b8588f1 100644
+--- a/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
++++ b/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
+@@ -492,8 +492,10 @@ def _mcp_stdio() -> int:
+                 params = request_value.get("params")
+                 if not isinstance(params, dict):
+                     raise ValueError("tools/call params must be an object")
+-                if set(params) - {"name", "arguments"}:
++                if set(params) - {"name", "arguments", "_meta"}:
+                     raise ValueError("tools/call params contain an unsupported field")
++                if "_meta" in params and not isinstance(params["_meta"], dict):
++                    raise ValueError("tools/call _meta must be an object")
+                 response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
+             else:
+                 response = _mcp_error(request_id, -32601, "method not found")
+diff --git a/plugins/graphhelm/README.md b/plugins/graphhelm/README.md
+index 9118bfb..4ed8248 100644
+--- a/plugins/graphhelm/README.md
++++ b/plugins/graphhelm/README.md
+@@ -162,7 +162,9 @@ python <installed-plugin>/hooks/task_handoff.py --mcp-stdio
+ The server exposes `offer`, `receive`, and `status` through standard newline-delimited MCP
+ JSON-RPC. Host, session, execution, Runtime URL, and token path come only from the server
+ environment. Tool arguments can name the recipient or offer, but cannot replace that binding.
+-Requests are bounded and unknown fields fail closed. A tool failure returns MCP `isError: true`
++Requests are bounded and unknown fields fail closed; the one exception is a standard `_meta`
++object in `tools/call` params, which is accepted and ignored at dispatch, while every other
++unknown field is still refused. A tool failure returns MCP `isError: true`
+ and an unobserved result. An oversized or unterminated frame closes the transport after a sanitized
+ error; its remaining bytes cannot become another request. This local transport proves adapter behavior only; native host trust and
+ activation still need a separate fresh-session observation.
+diff --git a/plugins/graphhelm/hooks/task_handoff.py b/plugins/graphhelm/hooks/task_handoff.py
+index 22d68b4..b8588f1 100644
+--- a/plugins/graphhelm/hooks/task_handoff.py
++++ b/plugins/graphhelm/hooks/task_handoff.py
+@@ -492,8 +492,10 @@ def _mcp_stdio() -> int:
+                 params = request_value.get("params")
+                 if not isinstance(params, dict):
+                     raise ValueError("tools/call params must be an object")
+-                if set(params) - {"name", "arguments"}:
++                if set(params) - {"name", "arguments", "_meta"}:
+                     raise ValueError("tools/call params contain an unsupported field")
++                if "_meta" in params and not isinstance(params["_meta"], dict):
++                    raise ValueError("tools/call _meta must be an object")
+                 response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
+             else:
+                 response = _mcp_error(request_id, -32601, "method not found")

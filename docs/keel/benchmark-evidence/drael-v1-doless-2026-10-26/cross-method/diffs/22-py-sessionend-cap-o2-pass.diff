@@ -1,0 +1,275 @@
+diff --git a/openspec/changes/archive/.gitkeep b/openspec/changes/archive/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/openspec/changes/bench-feature/.openspec.yaml b/openspec/changes/bench-feature/.openspec.yaml
+new file mode 100644
+index 0000000..97e3642
+--- /dev/null
++++ b/openspec/changes/bench-feature/.openspec.yaml
+@@ -0,0 +1,2 @@
++schema: spec-driven
++created: 2026-10-27
+diff --git a/openspec/changes/bench-feature/design.md b/openspec/changes/bench-feature/design.md
+new file mode 100644
+index 0000000..39a6c0d
+--- /dev/null
++++ b/openspec/changes/bench-feature/design.md
+@@ -0,0 +1,35 @@
++# Design
++
++## Context
++
++See proposal.md for motivation. Current state that shapes the approach:
++
++- One script serves both hosts: `session_hook.py end --host <claude|codex>`. Both plugin copies (`plugins/graphhelm/hooks/` and `plugins/graphhelm-codex-hooks/hooks/`) MUST remain byte-identical; `test_codex_compatibility_package_keeps_one_hook_source` asserts this for both `session_hook.py` and `codex-hooks.json`.
++- `session_hook.py` sends the end acknowledgement with an explicit `timeout=3.0` on the shared `request()` helper (its default is `timeout=1.0`, used by the briefing read). That value is socket inactivity per blocking operation, not a wall-time deadline — a fact the README already states.
++- The installed Codex CLI clamps each SessionEnd hook command to 3 seconds of process lifetime. Claude Code enforces the declared `"timeout"` (5 for both events in `hooks.json`).
++- `test_end_accepts_slow_matching_ack_without_extra_posts` holds a real HTTP response for 1.25 s and requires delivery — the reduced wait must stay above that demonstrated boundary.
++
++## Goals / Non-Goals
++
++**Goals:**
++- Declare 3 for Codex's `SessionEnd` in both `codex-hooks.json` copies, leaving every other timeout entry untouched.
++- Reduce the end acknowledgement's socket-inactivity limit so a slow-but-durable acknowledgement is either confirmed or the hook gives up before Codex's 3-second clamp fires.
++- Correct the README budget paragraph to describe per-host budgets instead of a uniform five seconds.
++
++**Non-Goals:**
++- No change to signal body, idempotency key, state format, lock handling, retry semantics, or what a timeout means (`unobserved`, never success).
++- No change to SessionStart behavior or to Claude's declared budgets.
++- No attempt to turn socket inactivity into a hard wall-time guarantee.
++
++## Decisions
++
++1. **One reduced constant for both hosts: 2.5 s.** Pass `timeout=2.5` at the single end-request call site, mirroring today's explicit `timeout=3.0`.
++   - Alternative considered: host-aware limits (2.5 s for `codex`, keep 3.0 s for `claude`). Rejected — `_end_impl` receives the host, but the difference buys only 0.5 s for one host while doubling the constants, the README wording, and any future budget reasoning for two hosts. One limit that fits the tightest declared clamp is simpler and still valid under Claude's larger budget.
++   - Alternative considered: shrink further toward 1 s. Rejected — acknowledgements between 1 s and 2.5 s are demonstrably real (the existing test releases one at 1.25 s) and shrinking below the demonstrated boundary discards confirmed deliveries that work today.
++2. **Declare exactly 3 in the Codex files, not less.** Declaring less than the host's clamp would waste budget the host offers (a host that enforces the declared value would cut the hook off earlier than necessary); declaring more than the clamp is the current defect. 3 matches the measured clamp exactly.
++3. **README correction is a factual rewrite of the existing paragraph**, not a new section: Codex bounds SessionEnd to three seconds (the value now also declared), Claude keeps five, and the end acknowledgement allows up to 2.5 s of socket inactivity so it fits inside Codex's clamp. Keep the existing caveats that the socket limit alone is not a wall-time deadline and that a timeout remains unobserved, never task success.
++
++## Risks / Trade-offs
++
++- [2.5 s of socket inactivity still does not bound total wall time] → Mitigation: unchanged from today's documented posture; process startup, connection setup, and state writes happen around the request, and the 0.5 s difference is the accepted margin, not a proof. A still-too-slow Runtime makes the end `unobserved`, which is retryable with identical signal bytes — delivery semantics are unaffected.
++- [Installed plugin copies on user machines keep the old values until updated] → Mitigation: expected for a plugin change; no migration, no compatibility break (hooks are re-read per host session, and old state remains valid since state format is untouched). Rollback is reverting the five file changes; no data or format changes require cleanup.
+diff --git a/openspec/changes/bench-feature/proposal.md b/openspec/changes/bench-feature/proposal.md
+new file mode 100644
+index 0000000..2d560ba
+--- /dev/null
++++ b/openspec/changes/bench-feature/proposal.md
+@@ -0,0 +1,30 @@
++# Proposal
++
++## Why
++
++The installed Codex CLI clamps each `SessionEnd` hook command to three seconds, but both Codex hook registrations declare `"timeout": 5` and the session hook's end acknowledgement allows up to 3.0 seconds of socket inactivity. The declared budget exceeds the host's real clamp, so Codex can kill the hook process while it is still waiting on the acknowledgement, leaving a durable delivery unobserved and forcing a retry under the same condition.
++
++## What Changes
++
++- Declare `timeout: 3` for the `SessionEnd` entry in `plugins/graphhelm/hooks/codex-hooks.json` (down from 5).
++- Declare `timeout: 3` for the `SessionEnd` entry in `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json` (down from 5). Both `codex-hooks.json` copies remain byte-identical, as the existing parity test requires.
++- Reduce the end acknowledgement's socket-inactivity limit in `session_hook.py` from 3.0 s to a value that fits inside Codex's 3-second process clamp (recorded in design.md), applied identically in both copies of `plugins/graphhelm/hooks/session_hook.py` and `plugins/graphhelm-codex-hooks/hooks/session_hook.py`.
++- Correct the budget paragraph in `plugins/graphhelm/README.md`: Codex bounds the `SessionEnd` command to three seconds, Claude keeps its five-second budget, and the end acknowledgement's socket-inactivity limit fits inside the tighter Codex clamp.
++- Unchanged: Claude's `hooks.json` keeps `timeout: 5` for both events; all `SessionStart` entries keep `timeout: 5`; the one-second briefing socket limit is unchanged; signal body, idempotency key, state format, and retry semantics are unchanged.
++- No behavior change is made to what a timeout means: an expired wait remains `unobserved`, never success.
++
++## Capabilities
++
++### New Capabilities
++
++- `session-hooks`: Host-facing timeout budgets for the GraphHelm SessionStart/SessionEnd command hooks — the per-host declared hook timeouts (Codex vs Claude) and the contract that the end acknowledgement's socket-inactivity limit fits inside the tightest declaring host's process clamp.
++
++### Modified Capabilities
++
++(none — no specs exist yet under `openspec/specs/`)
++
++## Impact
++
++- Files: `plugins/graphhelm/hooks/codex-hooks.json`, `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json`, both `session_hook.py` copies (must stay byte-identical), `plugins/graphhelm/README.md`.
++- Observable effect: a slow but durable Runtime acknowledgement that arrives within the reduced end-ack window is still confirmed; on Codex a hook that exceeds its 3-second budget is killed by the host with its true bound, not by a mismatched declared value. Existing behavior tests in `plugins/graphhelm/hooks/test_session_hook.py` must stay green, including the slow-acknowledgement test (a response released after 1.25 s must still be delivered).
++- No Runtime API, wire-format, dependency, or CLI change. Installed hosts pick up the new values on next plugin update; already-running hosts are unaffected until updated.
+diff --git a/openspec/changes/bench-feature/specs/session-hooks/spec.md b/openspec/changes/bench-feature/specs/session-hooks/spec.md
+new file mode 100644
+index 0000000..8cb2b4e
+--- /dev/null
++++ b/openspec/changes/bench-feature/specs/session-hooks/spec.md
+@@ -0,0 +1,43 @@
++# Spec Delta
++
++## Purpose
++
++Defines the host-facing timeout budgets of the GraphHelm SessionStart and SessionEnd command hooks: what each agent host declares per event, and how the hook's own request waits must fit inside the declaring host's real process clamp so a timed-out delivery stays observable as `unobserved` instead of being killed mid-wait.
++
++## ADDED Requirements
++
++### Requirement: Codex SessionEnd declares its real host budget
++Every Codex hook registration (`codex-hooks.json`, both the `graphhelm` plugin copy and the `graphhelm-codex-hooks` companion copy) SHALL declare `"timeout": 3` for the `SessionEnd` command, matching the three-second clamp the installed Codex CLI applies to SessionEnd hook commands. The two files MUST remain byte-identical.
++
++#### Scenario: Codex SessionEnd declares three seconds
++- **WHEN** the `SessionEnd` entries of either `codex-hooks.json` are read
++- **THEN** the entry declares `"timeout": 3`
++
++#### Scenario: Companion copy stays byte-identical to the plugin copy
++- **WHEN** the byte contents of `plugins/graphhelm/hooks/codex-hooks.json` are compared with `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json`
++- **THEN** they are identical, as the existing parity test observes
++
++### Requirement: Codex SessionStart and Claude budgets are unchanged
++The `SessionStart` entries in both `codex-hooks.json` files SHALL keep `"timeout": 5`, and Claude's `hooks.json` SHALL keep `"timeout": 5` for both `SessionStart` and `SessionEnd`.
++
++#### Scenario: Claude keeps its five-second budget
++- **WHEN** `plugins/graphhelm/hooks/hooks.json` is read after the change
++- **THEN** both events declare `"timeout": 5` and only the two Codex `SessionEnd` entries changed across all hook registrations
++
++### Requirement: End acknowledgement wait fits inside the tightest host clamp
++The socket-inactivity limit used by the hook's end-of-session acknowledgement request SHALL be strictly less than the smallest declared SessionEnd process budget (the 3-second Codex clamp), specifically no more than 2.5 seconds. The one-second limit on the SessionStart briefing read SHALL remain unchanged. Both copies of the hook script (`session_hook.py`) MUST remain byte-identical.
++
++#### Scenario: Durable acknowledgement inside the window is still confirmed
++- **WHEN** the Runtime delays its matching acknowledgement by 1.25 seconds, which exceeds one second of socket inactivity but stays inside the reduced limit
++- **THEN** the hook records the delivery as delivered without sending a second request
++
++#### Scenario: Unresponsive acknowledgement stays within the host budget
++- **WHEN** the Runtime accepts the POST but sends no response
++- **THEN** the hook gives up on the acknowledgement after at most 2.5 seconds of socket inactivity, inside Codex's 3-second process clamp, rather than waiting 3.0 seconds of socket inactivity under a 3-second wall budget
++
++### Requirement: An expired end wait remains unobserved and retryable
++When the end acknowledgement request fails or its wait expires, the hook SHALL exit successfully, print an `unobserved` diagnostic to stderr without token material, and leave local state such that the next end invocation resends the identical signal body with the same idempotency key. No timeout or failure SHALL be recorded as delivery or task success.
++
++#### Scenario: Expired or refused acknowledgement is retried with identical bytes
++- **WHEN** an end invocation fails or times out and a later end invocation succeeds
++- **THEN** both attempts send byte-identical signal bodies with the same idempotency key, and delivery is recorded only after the successful matching acknowledgement
+diff --git a/openspec/changes/bench-feature/tasks.md b/openspec/changes/bench-feature/tasks.md
+new file mode 100644
+index 0000000..9350fde
+--- /dev/null
++++ b/openspec/changes/bench-feature/tasks.md
+@@ -0,0 +1,19 @@
++# Tasks
++
++## 1. Codex hook registrations
++
++- [x] 1.1 In `plugins/graphhelm/hooks/codex-hooks.json`, change only the `SessionEnd` entry's `"timeout"` from `5` to `3` (SessionStart stays `5`), then verify with a JSON read of the file that `SessionEnd.timeout == 3` and `SessionStart[0].hooks[0].timeout == 5`.
++- [x] 1.2 Apply the identical edit to `plugins/graphhelm-codex-hooks/hooks/codex-hooks.json`, then verify the two `codex-hooks.json` files remain byte-identical (`git diff --no-index --stat` between them prints nothing; the parity test observes this too).
++
++## 2. End acknowledgement wait
++
++- [x] 2.1 In `plugins/graphhelm/hooks/session_hook.py`, change the end request call in `_end_impl` from `timeout=3.0` to `timeout=2.5` (the only call site that passes an explicit timeout), then make `plugins/graphhelm-codex-hooks/hooks/session_hook.py` byte-identical to it again and verify with `git diff --no-index --stat` between the two files printing nothing.
++- [x] 2.2 Verify the reduced wait still accepts a slow durable acknowledgement by running `python plugins\graphhelm\hooks\test_session_hook.py SessionHookTests.test_end_accepts_slow_matching_ack_without_extra_posts` from the repository root and observing it pass (the test releases the response after 1.25 s, inside the new 2.5 s limit).
++
++## 3. README budget paragraph
++
++- [x] 3.1 Rewrite lines 57-61 of `plugins/graphhelm/README.md`: Codex bounds and now declares three seconds for the `SessionEnd` command process, Claude keeps its five-second budget, and the end acknowledgement allows up to 2.5 s of socket inactivity so it fits inside Codex's clamp; keep the caveats that the socket limit alone is not a wall-time deadline and that a timeout remains unobserved, never task success. Verify by re-reading the paragraph and confirming no sentence still claims both hosts bound SessionEnd to five seconds or three seconds of socket inactivity.
++
++## 4. Full hook verification
++
++- [x] 4.1 Run the entire contract suite `python plugins\graphhelm\hooks\test_session_hook.py -v` from the repository root and verify every test passes, including `test_codex_compatibility_package_keeps_one_hook_source` (byte parity of both script and manifest copies) and all unobserved/retry tests (unchanged semantics for failed or expired ends).
+diff --git a/openspec/config.yaml b/openspec/config.yaml
+new file mode 100644
+index 0000000..2805cb6
+--- /dev/null
++++ b/openspec/config.yaml
+@@ -0,0 +1,32 @@
++schema: spec-driven
++
++# Project context (optional)
++# Add only constraints that should guide OpenSpec artifacts and workflows.
++# Include constraints an agent cannot infer by reading the code.
++# Keep general project documentation and discoverable codebase facts out.
++# Example:
++#   context: |
++#     Designs and tasks must cover Windows, macOS, and Linux
++#     Write all artifacts in Spanish
++
++# Per-artifact rules (optional)
++# Add custom rules for specific artifacts.
++# Example:
++#   rules:
++#     proposal:
++#       - Keep proposals under 500 words
++#       - Always state what is out of scope
++#     tasks:
++#       - Break tasks into chunks of max 2 hours
++
++# Per-operation guidance (optional)
++# Add advisory guidance for how apply and archive work should be conducted.
++# This is separate from artifact rules above.
++# Example:
++#   operations:
++#     apply:
++#       guidance:
++#         - Keep test summaries concise
++#     archive:
++#       guidance:
++#         - Summarize the archive outcome before finishing
+diff --git a/openspec/specs/.gitkeep b/openspec/specs/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json b/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json
+index 1ef47a4..043c400 100644
+--- a/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json
++++ b/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json
+@@ -20,7 +20,7 @@
+           {
+             "type": "command",
+             "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" end --host codex",
+-            "timeout": 5
++            "timeout": 3
+           }
+         ]
+       }
+diff --git a/plugins/graphhelm-codex-hooks/hooks/session_hook.py b/plugins/graphhelm-codex-hooks/hooks/session_hook.py
+index 3d4b7ea..8bd6eef 100644
+--- a/plugins/graphhelm-codex-hooks/hooks/session_hook.py
++++ b/plugins/graphhelm-codex-hooks/hooks/session_hook.py
+@@ -348,7 +348,7 @@ def _end_impl(payload: dict, host: str) -> None:
+     signal_id = delivery.get("signalId")
+     if not isinstance(signal, dict) or not isinstance(signal_id, str):
+         raise ValueError("invalid delivery state")
+-    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=3.0)
++    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=2.5)
+     data = reply.get("data")
+     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
+         raise ValueError("signal acknowledgment did not match")
+diff --git a/plugins/graphhelm/README.md b/plugins/graphhelm/README.md
+index a80d3c2..7e91a7c 100644
+--- a/plugins/graphhelm/README.md
++++ b/plugins/graphhelm/README.md
+@@ -55,9 +55,12 @@ the current state. `SessionEnd` records an attributed
+ run, pick a run by project name, or forward the host's raw payload.
+ 
+ SessionStart keeps its one-second socket inactivity limit. SessionEnd allows one
+-request up to three seconds of socket inactivity, so a durable acknowledgement
+-slower than one second can be confirmed without another request. Both hosts bound
+-the SessionEnd command process to five seconds. The socket limit alone is not a
++request up to 2.5 s of socket inactivity, so a durable acknowledgement
++slower than one second can be confirmed without another request. Codex bounds the
++SessionEnd command process to three seconds, which its hook registration now
++declares; Claude keeps its five-second budget for both events. The 2.5 s socket
++limit fits inside Codex's tighter clamp, so an unresponsive acknowledgement gives
++up before the host can cut the process off. The socket limit alone is not a
+ wall-time deadline. A timeout remains unobserved; it never becomes task success.
+ 
+ Python 3 must be on the host's `PATH`. Set these variables in the environment that launches the
+diff --git a/plugins/graphhelm/hooks/codex-hooks.json b/plugins/graphhelm/hooks/codex-hooks.json
+index 1ef47a4..043c400 100644
+--- a/plugins/graphhelm/hooks/codex-hooks.json
++++ b/plugins/graphhelm/hooks/codex-hooks.json
+@@ -20,7 +20,7 @@
+           {
+             "type": "command",
+             "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" end --host codex",
+-            "timeout": 5
++            "timeout": 3
+           }
+         ]
+       }
+diff --git a/plugins/graphhelm/hooks/session_hook.py b/plugins/graphhelm/hooks/session_hook.py
+index 3d4b7ea..8bd6eef 100644
+--- a/plugins/graphhelm/hooks/session_hook.py
++++ b/plugins/graphhelm/hooks/session_hook.py
+@@ -348,7 +348,7 @@ def _end_impl(payload: dict, host: str) -> None:
+     signal_id = delivery.get("signalId")
+     if not isinstance(signal, dict) or not isinstance(signal_id, str):
+         raise ValueError("invalid delivery state")
+-    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=3.0)
++    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=2.5)
+     data = reply.get("data")
+     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
+         raise ValueError("signal acknowledgment did not match")

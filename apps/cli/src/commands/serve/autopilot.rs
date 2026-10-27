@@ -231,6 +231,11 @@ const LOGIN_FAILURES: &[&str] = &[
 /// autopilot. Past either bound the exit is an ordinary failure.
 const STARTUP_LOG_BYTES: u64 = 4 * 1024;
 const STARTUP_SECONDS: u64 = 120;
+/// How long a launcher must stay alive before the slice is routed to its lane (#2150). A launcher
+/// that dies at once never took the work, so it must not leave the slice handed to a lane that
+/// never started: the diagnosis would clear, and the attempt cap and the owner escalation would
+/// never run.
+const ROUTE_AFTER_SECONDS: u64 = 5;
 
 /// The first login-failure pattern in `log`, only when the whole log is a startup failure's size.
 fn login_failure(log: &Path, patterns: &[String]) -> Option<String> {
@@ -614,26 +619,43 @@ async fn note(
 }
 
 /// #1045: append the owner's task record that routes `diagnosis` to `lane` (`pilot::route`).
-async fn route(
-    state: &ServeState,
-    execution_id: &str,
+/// The routing record for a launch, built while the snapshot is at hand and appended by [`route`]
+/// once the launcher has stayed alive (or ended well).
+#[derive(Clone)]
+struct Route {
+    id: String,
+    kind: graphhelm_execution::tasks::TaskEventKind,
+    document: serde_json::Value,
+    at: String,
+}
+
+fn plan_route(
     snapshot: &Snapshot,
     diagnosis: &Diagnosis,
     lane: &str,
     action_id: &str,
-) {
-    let Some(task) = snapshot
+) -> Option<Route> {
+    let task = snapshot
         .tasks
         .iter()
-        .find(|task| diagnosis.item == format!("slice:{}", task.key))
-    else {
-        return;
-    };
+        .find(|task| diagnosis.item == format!("slice:{}", task.key))?;
     let at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let Some((kind, document)) = pilot::route(diagnosis, task, lane, OWNER, &at) else {
-        return;
-    };
-    let id = pilot::route_signal_id(action_id);
+    let (kind, document) = pilot::route(diagnosis, task, lane, OWNER, &at)?;
+    Some(Route {
+        id: pilot::route_signal_id(action_id),
+        kind,
+        document,
+        at,
+    })
+}
+
+async fn route(state: &ServeState, execution_id: &str, route: Route) {
+    let Route {
+        id,
+        kind,
+        document,
+        at,
+    } = route;
     let body = serde_json::json!({ "signal": {
         "id": id,
         "type": kind.as_str(),
@@ -723,16 +745,10 @@ async fn launch(
     }
     // #1045: the verdict routes the slice, not only reports it: the typed record that hands it to
     // the started lane, under an id derived from the launch note's, so a racing tick appends it
-    // once. A refused route is logged; the launched agent can still record its own.
-    route(
-        state,
-        &autopilot.execution,
-        snapshot,
-        &diagnosis,
-        &lane,
-        &id,
-    )
-    .await;
+    // once. It is appended only once the launcher has stayed alive (`run` calls `alive`): a launcher
+    // that fails at once never took the slice, which must stay diagnosed so the attempt cap and the
+    // owner escalation run. A refused route is logged; the launched agent can still record its own.
+    let planned = plan_route(snapshot, &diagnosis, &lane, &id);
     let key = key(&diagnosis);
     lock(&autopilot.running).insert(key.clone());
     lock(&autopilot.launched).insert(key.clone());
@@ -743,10 +759,21 @@ async fn launch(
     // The agent runs on its own task: the tick (and its lock) ends now, not when the agent does.
     let state = state.clone();
     let autopilot = Arc::clone(autopilot);
+    let handle = tokio::runtime::Handle::current();
     tokio::spawn(async move {
         let worker = Arc::clone(&autopilot);
-        let ended =
-            routes::off_reactor(move || run(&worker, &lane, role, stage, attempt, &brief)).await;
+        let routing = state.clone();
+        let execution = autopilot.execution.clone();
+        let ended = routes::off_reactor(move || {
+            let alive = move || {
+                if let Some(planned) = planned.clone() {
+                    let (state, execution) = (routing.clone(), execution.clone());
+                    handle.spawn(async move { route(&state, &execution, planned).await });
+                }
+            };
+            run(&worker, &lane, role, stage, attempt, &brief, &alive)
+        })
+        .await;
         if let Some(reason) = settle(&autopilot, &key, &id, ended) {
             pause_note(&state, &autopilot, &reason).await;
         }
@@ -829,6 +856,7 @@ fn run(
     stage: &str,
     attempt: u32,
     brief: &str,
+    alive: &(dyn Fn() + Sync),
 ) -> Result<(), Ended> {
     let failed =
         |what: &str, error: &dyn std::fmt::Display| Ended::Failed(format!("{what}: {error}"));
@@ -923,6 +951,7 @@ fn run(
             }
         });
     }
+    let mut routed = false;
     let ended = loop {
         // Asked without reaping, so the group still names the tree when it is closed.
         match graphhelm_process_tree::leader_exited(&mut child) {
@@ -937,7 +966,13 @@ fn run(
                     "the launcher ran past timeoutSeconds and its tree was killed{swept}"
                 )));
             }
-            Ok(false) => std::thread::sleep(Duration::from_millis(200)),
+            Ok(false) => {
+                if !routed && started.elapsed() >= Duration::from_secs(ROUTE_AFTER_SECONDS) {
+                    routed = true;
+                    alive();
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
             Err(error) => break Some(failed("the launcher could not be waited on", &error)),
         }
     };
@@ -956,6 +991,9 @@ fn run(
         Err(error) => return Err(failed("the launcher could not be waited on", &error)),
     };
     if status.success() {
+        if !routed {
+            alive();
+        }
         return Ok(());
     }
     let code = status.code();
@@ -1088,7 +1126,15 @@ mod tests {
     fn run_bounded(autopilot: Autopilot, brief: String, within: Duration) -> Result<(), Ended> {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(run(&autopilot, "lane-x", "author", "stage", 0, &brief));
+            let _ = tx.send(run(
+                &autopilot,
+                "lane-x",
+                "author",
+                "stage",
+                0,
+                &brief,
+                &|| {},
+            ));
         });
         rx.recv_timeout(within)
             .expect("run did not return within its bound")
@@ -1182,7 +1228,7 @@ mod tests {
             "",
             "p",
         );
-        let ended = run(&autopilot, "lane-x", "author", "stage", 0, "{}");
+        let ended = run(&autopilot, "lane-x", "author", "stage", 0, "{}", &|| {});
         assert!(
             matches!(&ended, Err(Ended::Pause(r)) if r.contains("not found")),
             "{}",

@@ -698,7 +698,8 @@ def reach(changed, packages, embedded, repo=None):
         handoff_scenario = ".graphhelm/fixtures/keel-task-handoff/scenario.py"
         handoff_readme = ".graphhelm/fixtures/keel-task-handoff/README.md"
         handoff_test = ".graphhelm/fixtures/keel-task-handoff/test_scenario.py"
-        if path in {handoff_scenario, handoff_readme, handoff_test}:
+        handoff_graph = ".graphhelm/fixtures/keel-task-handoff/graph.yaml"
+        if path in {handoff_scenario, handoff_readme, handoff_test, handoff_graph}:
             if root is not None and (root / handoff_scenario).is_file():
                 wrong_store = " --wrong-store" if os.environ.get("GRAPHHELM_HANDOFF_WRONG_STORE") == "1" else ""
                 tools.add(f"python {handoff_scenario}{wrong_store}")
@@ -708,6 +709,12 @@ def reach(changed, packages, embedded, repo=None):
                 hit = True
             elif root is not None and (root / handoff_scenario).is_file():
                 other.append({"path": handoff_test, "reason": "handoff adapter-selection observer is missing"})
+        # #2158: the watchdog routing scenario is its own offline observer (temp store, the CLI).
+        watchdog_scenario = ".graphhelm/fixtures/keel-watchdog-routing/scenario.py"
+        if path.startswith(".graphhelm/fixtures/keel-watchdog-routing/"):
+            if root is not None and (root / watchdog_scenario).is_file():
+                tools.add(f"python {watchdog_scenario}")
+                hit = True
         if path.startswith(".graphhelm/fixtures/keel-pinned-verdict-merge/"):
             target = target_of(packages, "graphhelm-cli", "journey_backend_observer")
             if target:
@@ -1232,6 +1239,7 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
                 ".graphhelm/fixtures/keel-task-handoff/scenario.py": {(), ("--wrong-store",)},
                 ".graphhelm/fixtures/keel-task-handoff/test_scenario.py": {()},
                 ".graphhelm/fixtures/keel-proportional-rows/test_run.py": {()},
+                ".graphhelm/fixtures/keel-watchdog-routing/scenario.py": {()},
                 "tools/reached-tests/claude_plugin_check.py": {("plugins/journey-review",)},
             }
             if script not in allowed or tuple(args) not in allowed[script]:

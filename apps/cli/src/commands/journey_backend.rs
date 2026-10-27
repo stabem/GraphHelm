@@ -227,6 +227,8 @@ pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String>
     let program = words.next().ok_or("empty argv")?;
     let mut child = graphhelm_process::command(program)
         .args(words)
+        // #2008: a run must not write `__pycache__` into the reviewed tree it was vouched by.
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .current_dir(project)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

@@ -1,0 +1,320 @@
+diff --git a/openspec/changes/archive/.gitkeep b/openspec/changes/archive/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/openspec/changes/bench-feature/.openspec.yaml b/openspec/changes/bench-feature/.openspec.yaml
+new file mode 100644
+index 0000000..d58ba02
+--- /dev/null
++++ b/openspec/changes/bench-feature/.openspec.yaml
+@@ -0,0 +1,2 @@
++schema: spec-driven
++created: 2026-10-26
+diff --git a/openspec/changes/bench-feature/design.md b/openspec/changes/bench-feature/design.md
+new file mode 100644
+index 0000000..71783e0
+--- /dev/null
++++ b/openspec/changes/bench-feature/design.md
+@@ -0,0 +1,73 @@
++# Design
++
++## Context
++
++See proposal.md for motivation. Current-state facts the approach rests on (all verified in this
++checkout):
++
++- `plugins/graphhelm/hooks/session_hook.py::_end_impl` already holds the validated host session
++  id in `session` (from `_session(payload)`: regex-bounded to at most 128 visible-ASCII
++  characters, cross-checked against `GRAPHHELM_SESSION_ID`). The end `POST .../signal` call is
++  the single request site in `_end_impl` and passes its headers as one inline dict literal
++  (`X-GraphHelm-Actor`, `X-GraphHelm-Actor-Type`, `Idempotency-Key`).
++- The Runtime signal endpoint already reads, bounds, and persists
++  `x-graphhelm-actor-session` as an optional presence declaration
++  (`apps/cli/src/commands/serve/mod.rs`, `declared_session`, issue #1057). No Rust, schema, or
++  wire-schema change is needed for this header to take effect.
++- The hook test suite runs the script as a subprocess against an in-process `http.server`
++  (`RuntimeHandler.requests` captures `(method, path, dict(self.headers), body)`). The existing
++  end-request test asserts captured header keys with per-segment Title Case, e.g.
++  `sent[0][2]["X-Graphhelm-Actor-Type"]` — a casing produced by `http.server`'s header parsing
++  on Python 3.11, verified empirically on this machine (wire bytes are `urllib`-capitalized,
++  e.g. `x-graphhelm-actor-session` form, and are normalized back to Title Case on read).
++
++## Goals / Non-Goals
++
++**Goals:**
++- The end request declares the host session id via `X-GraphHelm-Actor-Session`.
++- The one existing end-request contract test asserts the header; the rest of the suite stays
++  green unmodified.
++
++**Non-Goals:**
++- No Runtime/Rust changes, no schema changes, no new dependencies.
++- No change to the start (briefing) request, to `request()` itself, or to retry/idempotency
++  semantics. No new header helper function.
++
++## Decisions
++
++1. **Header value is the existing `session` variable, taken as-is.** It is validated upstream
++   (regex, length, environment binding) before any HTTP happens. *Alternative rejected:* parsing
++   the session out of the composite actor id `<host>-session-<id>` — unnecessary string surgery
++   on a value that can itself contain dashes or dots, when the validated original is already in
++   scope.
++2. **Add the key inline to the existing headers dict literal** at the end-request call site
++   (`"X-GraphHelm-Actor-Session": session`). *Alternatives rejected:* a new helper function
++   (explicitly out of scope for this request); folding it into `request()`'s defaults (would
++   put an end-only concern on the shared path used by the start request too).
++3. **Retries recompute the header from the payload, which is safe.** Delivery receipts are
++   scoped by session: the state identity check in `_read_state` refuses to load a receipt whose
++   `sessionId` differs before any POST, so every request made under one receipt carries the same
++   value. No receipt-format change, no stored field added.
++4. **Test assertion uses the normalized key `sent[0][2]["X-Graphhelm-Actor-Session"] ==
++   "session-123"`**, matching the established style of the adjacent
++   `X-Graphhelm-Actor-Type` assertion. *Alternative rejected:* making the handler normalize keys
++   case-insensitively — larger surface than the request allows, and the current style is what the
++   green suite already relies on.
++
++## Risks / Trade-offs
++
++- **Observed header casing depends on `http.server`'s parser normalization** (Python 3.11
++  behavior, verified here). A future swap of the test's HTTP layer could shift the key spelling
++  → the assertion sits next to its sibling assertion; both would need updating together, which
++  makes the shift visible rather than silent.
++- **Presence-event counts are unchanged by design:** the Runtime appends an
++  `agent_presence_declared` event only when a declaration differs from the actor's newest one
++  (#1054). Repeated identical ends still append the signal only — now with a session attached.
++  No mitigation needed; noted so reviewers do not mistake flat event counts for a miss.
++- **Older Runtimes ignore the new header** (optional, additive) → mixed-version operation is
++  safe in either order; nothing to migrate.
++
++## Migration Plan
++
++One small change touching the two named files. Rollback is reverting those files: the header
++disappears from the wire and the Runtime records absence again, which it already handles.
+diff --git a/openspec/changes/bench-feature/proposal.md b/openspec/changes/bench-feature/proposal.md
+new file mode 100644
+index 0000000..57ce2dc
+--- /dev/null
++++ b/openspec/changes/bench-feature/proposal.md
+@@ -0,0 +1,50 @@
++# Proposal
++
++## Why
++
++When a GraphHelm-bound session ends, the `SessionEnd` hook posts an `agent_session_ended`
++signal to the Runtime naming its actor in `X-GraphHelm-Actor` (`<host>-session-<id>`), but the
++end request carries no host session id. The Runtime already reads an optional
++`X-GraphHelm-Actor-Session` declaration on signal requests and persists it with the actor
++presence record (`apps/cli/src/commands/serve/mod.rs`, #1057); because the hook never sends it,
++every presence record created from these ends lacks the session id. This closes the gap on the
++client side so the Runtime's structured presence records can attribute the ending session.
++
++## What Changes
++
++- The `SessionEnd` request built in `plugins/graphhelm/hooks/session_hook.py` sends
++  `X-GraphHelm-Actor-Session` carrying the validated host session id, inline in the existing
++  end-request headers dict (no new header helper).
++- The existing end-request contract test in `plugins/graphhelm/hooks/test_session_hook.py`
++  (`test_end_posts_an_attributed_idempotent_observation_without_success_claim`) is extended to
++  assert the new header is present with the session id value.
++- No other changes: the `SessionStart` request, all other end-request headers, the retry/idempotency
++  behavior, and the rest of the hook test suite are untouched. No Rust, schema, or dependency changes.
++
++## Capabilities
++
++### New Capabilities
++
++- `session-hooks`: wire and local-state behavior of the GraphHelm plugin's bounded SessionStart /
++  SessionEnd host hooks — specifically here, what the end (signal) request declares about the
++  acting session.
++
++### Modified Capabilities
++
++(None — `openspec/specs/` currently holds no capabilities.)
++
++## Impact
++
++- **Code**: `plugins/graphhelm/hooks/session_hook.py` (one header added to the end-request
++  headers dict in `_end_impl`) and `plugins/graphhelm/hooks/test_session_hook.py` (assertions in
++  the one existing end-request test). Nothing else.
++- **Wire**: adds one previously-unused optional header to one existing POST. The Runtime already
++  parses and bounds `X-GraphHelm-Actor-Session` (visible ASCII, ≤ 128 chars, non-blank); the
++  hook's session id is already regex-validated to at most 128 visible-ASCII characters before
++  use, so every value the hook can send is accepted by the existing Runtime bound. Runtimes or
++  servers that ignore unknown headers are unaffected (header is additive).
++- **Compatibility**: additive; **no breaking changes**. Signal bytes, idempotency keys, and
++  delivery receipts are unchanged, so stored undelivered retries behave exactly as before.
++- **Dependencies**: none added.
++- **Rollback**: revert the two files; the header disappears from the wire and the Runtime simply
++  records absence again, which it already handles.
+diff --git a/openspec/changes/bench-feature/specs/session-hooks/spec.md b/openspec/changes/bench-feature/specs/session-hooks/spec.md
+new file mode 100644
+index 0000000..60aa255
+--- /dev/null
++++ b/openspec/changes/bench-feature/specs/session-hooks/spec.md
+@@ -0,0 +1,70 @@
++# Spec Delta
++
++## Purpose
++
++Defines the wire and local-state behavior of the GraphHelm plugin's bounded SessionStart /
++SessionEnd host hooks that bridge a host coding session to a Runtime execution.
++
++## ADDED Requirements
++
++### Requirement: Session-end signal declares the host session id
++
++When a bound session ends and the hook delivers its `agent_session_ended` signal to the
++Runtime, the end request SHALL carry the `X-GraphHelm-Actor-Session` header whose value is the
++host session id of the ending session. The value SHALL be the raw session id, not the composite
++actor identifier carried by `X-GraphHelm-Actor`.
++
++#### Scenario: First delivery carries the session header
++
++- **WHEN** a host ends a session bound to a GraphHelm execution and the hook posts the
++  `agent_session_ended` signal for the first time
++- **THEN** the request includes `X-GraphHelm-Actor-Session` equal to that session's session id,
++  in addition to the existing actor, actor-type, and idempotency headers
++
++#### Scenario: Header value is the raw session id
++
++- **WHEN** the hook posts an end signal for host `claude` and session `session-123`
++- **THEN** `X-GraphHelm-Actor-Session` is `session-123` while `X-GraphHelm-Actor` remains
++  `claude-session-session-123`
++
++#### Scenario: Retried delivery re-declares the same session
++
++- **WHEN** a previous delivery attempt was refused or lost and the hook retries the same stored
++  signal
++- **THEN** the retried request carries the same `X-GraphHelm-Actor-Session` value as the
++  original, because the delivery receipt is scoped to that session
++
++### Requirement: The header addition is wire-additive
++
++Sending `X-GraphHelm-Actor-Session` SHALL NOT alter any other element of the end request: the
++signal body, the idempotency key, the existing headers, or the acknowledgment match check. The
++session-start (briefing) request SHALL NOT gain this header.
++
++#### Scenario: Existing end-request elements are unchanged
++
++- **WHEN** the hook posts an end signal with the session header in place
++- **THEN** the signal body bytes, `Idempotency-Key`, `X-GraphHelm-Actor`, and
++  `X-GraphHelm-Actor-Type` are exactly as they were before the header existed, and the
++  acknowledgment is still matched on execution id and signal id
++
++#### Scenario: Start request gains no header
++
++- **WHEN** the hook reads the live briefing at session start
++- **THEN** the request does not carry `X-GraphHelm-Actor-Session`
++
++### Requirement: The end-request contract test observes the header
++
++The hook's existing end-request contract test SHALL assert that the captured end request carries
++`X-GraphHelm-Actor-Session` with the session id value, and the rest of the hook test suite SHALL
++continue to pass unmodified.
++
++#### Scenario: Contract test asserts the header
++
++- **WHEN** the hook's end-request contract test runs against its in-process Runtime
++- **THEN** it asserts the captured request's `X-GraphHelm-Actor-Session` equals the session id
++  used for the run
++
++#### Scenario: Remaining hook tests stay green
++
++- **WHEN** the full hook test suite is run
++- **THEN** every pre-existing test passes without modification
+diff --git a/openspec/changes/bench-feature/tasks.md b/openspec/changes/bench-feature/tasks.md
+new file mode 100644
+index 0000000..726cdf4
+--- /dev/null
++++ b/openspec/changes/bench-feature/tasks.md
+@@ -0,0 +1,38 @@
++# Tasks
++
++Keel card for the whole change: paths `plugins/graphhelm/hooks/session_hook.py`,
++`plugins/graphhelm/hooks/test_session_hook.py`; promise: the bound `SessionEnd` signal POST
++carries `X-GraphHelm-Actor-Session` set to the validated host session id, asserted by the
++existing end-request test, rest of the suite green; observation command:
++`python plugins/graphhelm/hooks/test_session_hook.py`.
++
++## 1. Contract test observes the header (red first)
++
++- [x] 1.1 Extend `test_end_posts_an_attributed_idempotent_observation_without_success_claim`
++      in `plugins/graphhelm/hooks/test_session_hook.py` to also assert
++      `sent[0][2]["X-Graphhelm-Actor-Session"] == "session-123"` — the same normalized key style
++      as the adjacent `X-Graphhelm-Actor-Type` assertion on line 186, value taken from the
++      session id the harness already uses. No changes to any other test or to
++      `RuntimeHandler`. Verify RED: run
++      `python plugins/graphhelm/hooks/test_session_hook.py SessionHookTests.test_end_posts_an_attributed_idempotent_observation_without_success_claim`
++      before touching the hook and confirm it fails on exactly this missing header.
++
++## 2. Send the header (green)
++
++- [x] 2.1 In `plugins/graphhelm/hooks/session_hook.py::_end_impl`, add
++      `"X-GraphHelm-Actor-Session": session` to the existing inline headers dict literal passed
++      to the `request(...)` end-call (the dict that already holds `X-GraphHelm-Actor`,
++      `X-GraphHelm-Actor-Type`, `Idempotency-Key`). No new helper function, no change to
++      `request()`, no change to the `SessionStart` path, no change to signal bytes or delivery
++      state. Verify GREEN: re-run the single test from 1.1 and confirm it passes.
++
++## 3. Boundary checks
++
++- [x] 3.1 Run the full hook suite: `python plugins/graphhelm/hooks/test_session_hook.py` and
++      confirm every pre-existing test passes unmodified (baseline at plan time: 26 tests OK on
++      Python 3.11.9).
++- [x] 3.2 Confirm the start request stays header-free and the diff is contained: review
++      `git diff --stat` — only `plugins/graphhelm/hooks/session_hook.py`,
++      `plugins/graphhelm/hooks/test_session_hook.py` (plus `openspec/changes/bench-feature/`)
++      changed; the hook diff adds exactly one dict entry and the test diff adds assertions to
++      the one named test.
+diff --git a/openspec/config.yaml b/openspec/config.yaml
+new file mode 100644
+index 0000000..2805cb6
+--- /dev/null
++++ b/openspec/config.yaml
+@@ -0,0 +1,32 @@
++schema: spec-driven
++
++# Project context (optional)
++# Add only constraints that should guide OpenSpec artifacts and workflows.
++# Include constraints an agent cannot infer by reading the code.
++# Keep general project documentation and discoverable codebase facts out.
++# Example:
++#   context: |
++#     Designs and tasks must cover Windows, macOS, and Linux
++#     Write all artifacts in Spanish
++
++# Per-artifact rules (optional)
++# Add custom rules for specific artifacts.
++# Example:
++#   rules:
++#     proposal:
++#       - Keep proposals under 500 words
++#       - Always state what is out of scope
++#     tasks:
++#       - Break tasks into chunks of max 2 hours
++
++# Per-operation guidance (optional)
++# Add advisory guidance for how apply and archive work should be conducted.
++# This is separate from artifact rules above.
++# Example:
++#   operations:
++#     apply:
++#       guidance:
++#         - Keep test summaries concise
++#     archive:
++#       guidance:
++#         - Summarize the archive outcome before finishing
+diff --git a/openspec/specs/.gitkeep b/openspec/specs/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/plugins/graphhelm/hooks/session_hook.py b/plugins/graphhelm/hooks/session_hook.py
+index 7280989..e0df4ab 100644
+--- a/plugins/graphhelm/hooks/session_hook.py
++++ b/plugins/graphhelm/hooks/session_hook.py
+@@ -346,7 +346,7 @@ def _end_impl(payload: dict, host: str) -> None:
+     signal_id = delivery.get("signalId")
+     if not isinstance(signal, dict) or not isinstance(signal_id, str):
+         raise ValueError("invalid delivery state")
+-    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "Idempotency-Key": signal_id})
++    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id})
+     data = reply.get("data")
+     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
+         raise ValueError("signal acknowledgment did not match")

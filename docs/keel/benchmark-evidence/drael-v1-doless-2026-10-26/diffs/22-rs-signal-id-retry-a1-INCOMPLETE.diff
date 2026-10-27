@@ -1,0 +1,280 @@
+diff --git a/apps/cli/src/commands/serve/mod.rs b/apps/cli/src/commands/serve/mod.rs
+index 713e780..a448bbe 100644
+--- a/apps/cli/src/commands/serve/mod.rs
++++ b/apps/cli/src/commands/serve/mod.rs
+@@ -1454,14 +1454,8 @@ async fn run_idempotent_mutation_inner<'a>(
+     run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
+ ) -> Response {
+     match classify_existing_keys(events, execution, &identity) {
+-        Ok(KeyState::Complete(original_decision_sequence)) => {
+-            return reply_with_current_status(
+-                events,
+-                execution,
+-                command,
+-                wiring,
+-                original_decision_sequence,
+-            );
++        Ok(KeyState::Complete(proof)) => {
++            return reply_with_current_status(events, execution, command, wiring, proof);
+         }
+         Ok(KeyState::Partial(stuck)) => {
+             return partial_conflict_response(events, execution, command, &stuck);
+@@ -1589,13 +1583,9 @@ async fn run_idempotent_mutation_inner<'a>(
+             // the pre-flight check above and this append. Classify again against the store's
+             // now-current state rather than trusting the in-flight guess either way.
+             match classify_existing_keys(events, execution, &identity) {
+-                Ok(KeyState::Complete(original_decision_sequence)) => reply_with_current_status(
+-                    events,
+-                    execution,
+-                    command,
+-                    wiring,
+-                    original_decision_sequence,
+-                ),
++                Ok(KeyState::Complete(proof)) => {
++                    reply_with_current_status(events, execution, command, wiring, proof)
++                }
+                 Ok(KeyState::Partial(stuck)) => {
+                     partial_conflict_response(events, execution, command, &stuck)
+                 }
+@@ -1623,9 +1613,9 @@ async fn run_idempotent_mutation_inner<'a>(
+ /// second store open): see `classify_one_key`.
+ enum KeyState {
+     Absent,
+-    /// Every expected key exists. Carries the committed sequence of the command's first
+-    /// server-derived decision key, never the current head or a caller-supplied sequence.
+-    Complete(u64),
++    /// Every expected key exists. Carries where the decision committed and — for
++    /// `execution.signal` — the durable `signalId` it recorded.
++    Complete(RetryProof),
+     Partial(OpaqueId),
+     /// A committed event's key shares this command's `{command-key}-{suffix}-` prefix but was
+     /// derived from a *different* request body (a different content digest) — the caller reused
+@@ -1633,6 +1623,18 @@ enum KeyState {
+     Divergent(String),
+ }
+ 
++/// The proof the ledger can show for a recognized retry: the committed sequence of the command's
++/// first server-derived decision key (never the current head or a caller-supplied sequence), and
++/// — for `execution.signal` only — the `signalId` of the committed `signal_recorded` decision
++/// event. That value is what the ORIGINAL reply carried, so a client that lost its acknowledgement
++/// can match its retry to the record that is actually on the ledger; it is read from the event
++/// payload, not from the retried request body. `None` for every other command and for every
++/// unrecognized retry, so those replies keep exactly the shape they had before this field existed.
++struct RetryProof {
++    original_decision_sequence: u64,
++    signal_id: Option<OpaqueId>,
++}
++
+ /// One derived key's status against already-committed `history`. An exact match (suffix *and*
+ /// content digest both) means this exact command already happened — `Present`, unconditionally,
+ /// regardless of any other sibling below (this is what keeps `Complete` classification "unchanged
+@@ -1757,19 +1759,50 @@ fn classify_existing_keys(
+     Ok(if present == 0 {
+         KeyState::Absent
+     } else if present == identity.keys.len() {
+-        KeyState::Complete(
+-            original_decision_sequence
+-                .expect("a complete non-empty derived-key set has a first decision sequence"),
+-        )
++        let sequence = original_decision_sequence
++            .expect("a complete non-empty derived-key set has a first decision sequence");
++        KeyState::Complete(RetryProof {
++            original_decision_sequence: sequence,
++            signal_id: committed_signal_id(&history, &identity.keys, &expected),
++        })
+     } else {
+         KeyState::Partial(first_missing.expect("some but not all present implies one missing"))
+     })
+ }
+ 
++/// The durable `signalId` of the committed decision event behind a recognized `execution.signal`
++/// retry — the same value the original reply returned. Read from the ledger, not from the retried
++/// request body: the body is caller-controlled, the event is the record. `None` for every other
++/// command kind, whose decision event carries no signal id at all.
++fn committed_signal_id(
++    history: &[EventEnvelope],
++    keys: &[DerivedKey],
++    expected: &ExpectedDecision<'_>,
++) -> Option<OpaqueId> {
++    if !matches!(expected.kind, MutationDecisionKind::SignalRecorded) {
++        return None;
++    }
++    for event in history {
++        let keyed_by_this_command = keys
++            .iter()
++            .any(|derived| event.idempotency_key.as_str() == derived.full.as_str());
++        if !keyed_by_this_command || !expected.matches(event) {
++            continue;
++        }
++        return match &event.kind {
++            EventKind::SignalRecorded(payload) => Some(payload.signal_id.clone()),
++            // Unreachable for a recognized retry: `expected.matches` proved the event kind.
++            _ => None,
++        };
++    }
++    None
++}
++
+ /// "Reply 200 with current state, because the caller's command has already happened" (the plan's
+ /// own words for the full-retry case) — literally the same `execution.status` read the CLI and
+ /// `GET /v1/executions/{id}` both use, plus one additive `idempotency` proof naming the original
+-/// decision sequence. This is a deliberate divergence from a *fresh* success's own bespoke
++/// decision sequence and, for a recognized retry of `execution.signal`, the durable `signalId`
++/// that sequence recorded. This is a deliberate divergence from a *fresh* success's own bespoke
+ /// response shape (`signal`'s `decision`/`mayProposeMutation`, for one) — recomputing that bespoke
+ /// shape on retry would mean re-deriving a governance verdict against already-advanced state, the
+ /// same category of problem `run_idempotent_mutation`'s pre-flight check exists to avoid;
+@@ -1781,17 +1814,10 @@ fn reply_with_current_status(
+     execution: &str,
+     command: &'static str,
+     wiring: ExecutorWiring,
+-    original_decision_sequence: u64,
++    proof: RetryProof,
+ ) -> Response {
+     match execution::status::execute(events, Some(execution)) {
+-        Ok(value) => reply_with_status_value(
+-            events,
+-            execution,
+-            command,
+-            wiring,
+-            value,
+-            original_decision_sequence,
+-        ),
++        Ok(value) => reply_with_status_value(events, execution, command, wiring, value, proof),
+         Err(failure) => respond_failure(command, failure),
+     }
+ }
+@@ -1802,9 +1828,9 @@ fn reply_with_status_value(
+     command: &'static str,
+     wiring: ExecutorWiring,
+     mut value: serde_json::Value,
+-    original_decision_sequence: u64,
++    proof: RetryProof,
+ ) -> Response {
+-    if let Err(diagnostic) = annotate_recognized_retry(&mut value, original_decision_sequence) {
++    if let Err(diagnostic) = annotate_recognized_retry(&mut value, proof) {
+         return respond(
+             StatusCode::INTERNAL_SERVER_ERROR,
+             Outcome::domain(command, vec![diagnostic]).output,
+@@ -1817,7 +1843,7 @@ fn reply_with_status_value(
+ 
+ fn annotate_recognized_retry(
+     status: &mut serde_json::Value,
+-    original_decision_sequence: u64,
++    proof: RetryProof,
+ ) -> Result<(), Diagnostic> {
+     let serde_json::Value::Object(data) = status else {
+         return Err(Diagnostic::error(
+@@ -1827,13 +1853,17 @@ fn annotate_recognized_retry(
+             SOURCE,
+         ));
+     };
+-    data.insert(
+-        "idempotency".to_owned(),
+-        serde_json::json!({
+-            "recognizedRetry": true,
+-            "originalDecisionSequence": original_decision_sequence,
+-        }),
+-    );
++    let mut idempotency = serde_json::json!({
++        "recognizedRetry": true,
++        "originalDecisionSequence": proof.original_decision_sequence,
++    });
++    // For a recognized retry of `execution.signal`, name the durable signal id the original
++    // reply carried, so a client that lost its acknowledgement can match this retry to the
++    // record actually on the ledger. No other command's proof carries one.
++    if let Some(signal_id) = proof.signal_id {
++        idempotency["signalId"] = serde_json::json!(signal_id.as_str());
++    }
++    data.insert("idempotency".to_owned(), idempotency);
+     Ok(())
+ }
+ 
+@@ -2780,7 +2810,10 @@ mod tests {
+             "execution.signal",
+             ExecutorWiring::FIXTURE_ONLY,
+             serde_json::json!("not-an-object"),
+-            17,
++            RetryProof {
++                original_decision_sequence: 17,
++                signal_id: None,
++            },
+         );
+         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+@@ -2958,11 +2991,16 @@ mod tests {
+             1,
+             "exactly one reply is the recognized loser"
+         );
++        let signal_id = match &matching[0].kind {
++            EventKind::SignalRecorded(payload) => payload.signal_id.clone(),
++            _ => unreachable!("the decision event was proven SignalRecorded above"),
++        };
+         assert_eq!(
+             recognized[0]["data"]["idempotency"],
+             serde_json::json!({
+                 "recognizedRetry": true,
+                 "originalDecisionSequence": matching[0].sequence,
++                "signalId": signal_id.as_str(),
+             })
+         );
+     }
+diff --git a/apps/cli/tests/api_http.rs b/apps/cli/tests/api_http.rs
+index f6e166c..a793761 100644
+--- a/apps/cli/tests/api_http.rs
++++ b/apps/cli/tests/api_http.rs
+@@ -2179,6 +2179,20 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
+         ("X-GraphHelm-Actor-Type", "agent"),
+         ("If-Match", stale_if_match.as_str()),
+     ];
++    // The durable signal id the first reply carried, read back from the committed event: the
++    // retry must return this value, or a client that lost its acknowledgement cannot match the
++    // retry against what the first attempt actually recorded.
++    let original_signal_id = original_event["kind"]["data"]["signalId"]
++        .as_str()
++        .unwrap_or_else(|| {
++            panic!("the original signal event carried no signal id: {original_event}")
++        })
++        .to_owned();
++    assert_eq!(
++        first_reply["data"]["signalId"],
++        serde_json::json!(original_signal_id),
++        "the durable signalId must be the one the first reply carried"
++    );
+     let (retry_status, retry_reply) = post_json(&url, &token, &retry_headers, &body);
+     assert_eq!(
+         retry_status, 200,
+@@ -2189,8 +2203,10 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
+         serde_json::json!({
+             "recognizedRetry": true,
+             "originalDecisionSequence": original_sequence,
++            "signalId": original_signal_id,
+         }),
+-        "the retry marker must identify the exact committed decision: {retry_reply}"
++        "the retry marker must identify the exact committed decision, including the durable \
++         signalId the first reply carried: {retry_reply}"
+     );
+     assert_ne!(
+         original_sequence,
+@@ -2279,6 +2295,10 @@ fn the_same_key_and_body_from_a_different_actor_is_not_a_recognized_retry() {
+         second_reply["data"].get("idempotency").is_none(),
+         "a mismatched actor must never receive a retry proof: {second_reply}"
+     );
++    assert!(
++        !second_reply.to_string().contains("signalId"),
++        "a mismatched actor must receive no signalId: {second_reply}"
++    );
+     assert_eq!(
+         second_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+         "{second_reply}"
+@@ -2402,6 +2422,10 @@ fn an_event_of_the_wrong_kind_with_the_same_key_is_not_a_recognized_retry() {
+         retry_reply["data"].get("idempotency").is_none(),
+         "a wrong-kind event must never produce a retry proof: {retry_reply}"
+     );
++    assert!(
++        !retry_reply.to_string().contains("signalId"),
++        "a wrong-kind event must not return a signalId: {retry_reply}"
++    );
+     assert_eq!(
+         retry_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+         "{retry_reply}"

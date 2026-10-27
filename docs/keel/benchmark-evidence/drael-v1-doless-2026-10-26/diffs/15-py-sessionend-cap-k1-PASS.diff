@@ -1,0 +1,74 @@
+diff --git a/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json b/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json
+index 1ef47a4..043c400 100644
+--- a/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json
++++ b/plugins/graphhelm-codex-hooks/hooks/codex-hooks.json
+@@ -20,7 +20,7 @@
+           {
+             "type": "command",
+             "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" end --host codex",
+-            "timeout": 5
++            "timeout": 3
+           }
+         ]
+       }
+diff --git a/plugins/graphhelm-codex-hooks/hooks/session_hook.py b/plugins/graphhelm-codex-hooks/hooks/session_hook.py
+index 3d4b7ea..8bd6eef 100644
+--- a/plugins/graphhelm-codex-hooks/hooks/session_hook.py
++++ b/plugins/graphhelm-codex-hooks/hooks/session_hook.py
+@@ -348,7 +348,7 @@ def _end_impl(payload: dict, host: str) -> None:
+     signal_id = delivery.get("signalId")
+     if not isinstance(signal, dict) or not isinstance(signal_id, str):
+         raise ValueError("invalid delivery state")
+-    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=3.0)
++    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=2.5)
+     data = reply.get("data")
+     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
+         raise ValueError("signal acknowledgment did not match")
+diff --git a/plugins/graphhelm/README.md b/plugins/graphhelm/README.md
+index a80d3c2..fc9a37c 100644
+--- a/plugins/graphhelm/README.md
++++ b/plugins/graphhelm/README.md
+@@ -55,10 +55,13 @@ the current state. `SessionEnd` records an attributed
+ run, pick a run by project name, or forward the host's raw payload.
+ 
+ SessionStart keeps its one-second socket inactivity limit. SessionEnd allows one
+-request up to three seconds of socket inactivity, so a durable acknowledgement
+-slower than one second can be confirmed without another request. Both hosts bound
+-the SessionEnd command process to five seconds. The socket limit alone is not a
+-wall-time deadline. A timeout remains unobserved; it never becomes task success.
++request up to two and a half seconds of socket inactivity, so a durable
++acknowledgement slower than one second can be confirmed without another request.
++Claude declares a five-second process budget for the SessionEnd command; the Codex
++hook files declare three seconds, matching the three-second clamp installed Codex
++applies to SessionEnd commands, so the acknowledgement wait finishes before the
++host kills the process. The socket limit alone is not a wall-time deadline. A
++timeout remains unobserved; it never becomes task success.
+ 
+ Python 3 must be on the host's `PATH`. Set these variables in the environment that launches the
+ agent host:
+diff --git a/plugins/graphhelm/hooks/codex-hooks.json b/plugins/graphhelm/hooks/codex-hooks.json
+index 1ef47a4..043c400 100644
+--- a/plugins/graphhelm/hooks/codex-hooks.json
++++ b/plugins/graphhelm/hooks/codex-hooks.json
+@@ -20,7 +20,7 @@
+           {
+             "type": "command",
+             "command": "python \"${PLUGIN_ROOT}/hooks/session_hook.py\" end --host codex",
+-            "timeout": 5
++            "timeout": 3
+           }
+         ]
+       }
+diff --git a/plugins/graphhelm/hooks/session_hook.py b/plugins/graphhelm/hooks/session_hook.py
+index 3d4b7ea..8bd6eef 100644
+--- a/plugins/graphhelm/hooks/session_hook.py
++++ b/plugins/graphhelm/hooks/session_hook.py
+@@ -348,7 +348,7 @@ def _end_impl(payload: dict, host: str) -> None:
+     signal_id = delivery.get("signalId")
+     if not isinstance(signal, dict) or not isinstance(signal_id, str):
+         raise ValueError("invalid delivery state")
+-    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=3.0)
++    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=2.5)
+     data = reply.get("data")
+     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
+         raise ValueError("signal acknowledgment did not match")

@@ -1,0 +1,306 @@
+diff --git a/apps/cli/src/commands/execution/mod.rs b/apps/cli/src/commands/execution/mod.rs
+index 1a50948..03d246c 100644
+--- a/apps/cli/src/commands/execution/mod.rs
++++ b/apps/cli/src/commands/execution/mod.rs
+@@ -205,17 +205,6 @@ pub(super) fn load_fixtures(path: Option<&Path>) -> Result<SimulationFixtures, F
+     })
+ }
+ 
+-/// The ONE scope the `execution` verbs can address for a given execution id.
+-///
+-/// **Every consumer of this rule must call THIS function (#560).** The rule used to be written
+-/// out where `resolve_stream` needed it, and `execution list` enumerated the repository without
+-/// it -- so the index offered rows under any scope the generic `events` commands can write,
+-/// while `status`, `events` and every other follow-up verb reconstructed only this one. A row
+-/// the rest of the API cannot answer for is worse than a missing row: the caller reads it as an
+-/// execution that exists and then gets an empty history back.
+-///
+-/// # Errors
+-/// [`Failure`] when `execution` is not a valid identifier.
+ /// The same addressing rule as [`addressable_scope`] for records that belong to the local
+ /// repository rather than to one execution stream (for example the Dreams shadow ledger). One
+ /// home for the workspace and project literals, so the two constructions cannot drift apart.
+@@ -227,6 +216,17 @@ pub(crate) fn repository_scope() -> RepositoryScope {
+     )
+ }
+ 
++/// The ONE scope the `execution` verbs can address for a given execution id.
++///
++/// **Every consumer of this rule must call THIS function (#560).** The rule used to be written
++/// out where `resolve_stream` needed it, and `execution list` enumerated the repository without
++/// it -- so the index offered rows under any scope the generic `events` commands can write,
++/// while `status`, `events` and every other follow-up verb reconstructed only this one. A row
++/// the rest of the API cannot answer for is worse than a missing row: the caller reads it as an
++/// execution that exists and then gets an empty history back.
++///
++/// # Errors
++/// [`Failure`] when `execution` is not a valid identifier.
+ pub(crate) fn addressable_scope(execution: &str) -> Result<RepositoryScope, Failure> {
+     Ok(RepositoryScope::new(
+         WorkspaceId::parse(WORKSPACE).expect("constant workspace id is valid"),
+diff --git a/apps/cli/src/commands/mcp/tools.rs b/apps/cli/src/commands/mcp/tools.rs
+index 07eb5fd..d5ecb6b 100644
+--- a/apps/cli/src/commands/mcp/tools.rs
++++ b/apps/cli/src/commands/mcp/tools.rs
+@@ -738,10 +738,6 @@ fn wake_wait_schema() -> serde_json::Value {
+     )
+ }
+ 
+-/// Closed like every other schema here. `fixture` and `route` are both optional and the route
+-/// refuses the pair: the "exactly one door" rule lives on the server (`serve::routes::
+-/// synthesize`), where the CLI's `--fixture`/`--manifest --route` rule already lives, for the
+-/// same reason `start_schema` does not encode file-or-graph.
+ fn assign_schema() -> serde_json::Value {
+     mutating_schema(
+         serde_json::json!({
+@@ -753,6 +749,10 @@ fn assign_schema() -> serde_json::Value {
+     )
+ }
+ 
++/// Closed like every other schema here. `fixture` and `route` are both optional and the route
++/// refuses the pair: the "exactly one door" rule lives on the server (`serve::routes::
++/// synthesize`), where the CLI's `--fixture`/`--manifest --route` rule already lives, for the
++/// same reason `start_schema` does not encode file-or-graph.
+ fn synthesize_schema() -> serde_json::Value {
+     object_schema(
+         serde_json::json!({
+diff --git a/openspec/changes/archive/.gitkeep b/openspec/changes/archive/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/openspec/changes/bench-feature/.openspec.yaml b/openspec/changes/bench-feature/.openspec.yaml
+new file mode 100644
+index 0000000..d58ba02
+--- /dev/null
++++ b/openspec/changes/bench-feature/.openspec.yaml
+@@ -0,0 +1,2 @@
++schema: spec-driven
++created: 2026-10-26
+diff --git a/openspec/changes/bench-feature/proposal.md b/openspec/changes/bench-feature/proposal.md
+new file mode 100644
+index 0000000..687b4eb
+--- /dev/null
++++ b/openspec/changes/bench-feature/proposal.md
+@@ -0,0 +1,59 @@
++# Proposal
++
++## Why
++
++A merge inserted two new functions between an existing rustdoc block and the function the
++block documents. Rustdoc now attaches those blocks to the wrong items:
++
++- In `apps/cli/src/commands/execution/mod.rs`, `repository_scope` was inserted between
++  `addressable_scope`'s doc block ("The ONE scope the `execution` verbs can address for a
++  given execution id.", including its `# Errors` section) and `addressable_scope` itself. The
++  error contract is documented on a function that takes no arguments and cannot fail.
++- In `apps/cli/src/commands/mcp/tools.rs`, `assign_schema` was inserted between
++  `synthesize_schema`'s doc block ("Closed like every other schema here. `fixture` and
++  `route` are both optional…") and `synthesize_schema` itself. The doc names fields
++  (`fixture`, `route`) that exist only in the `synthesize` schema.
++
++Anyone reading the crate's rustdoc — operator-facing tool tables, `cargo doc` output, IDE
++hovers — sees another function's documentation. The blocks describe the displaced functions'
++signatures and failure modes, not the items they now sit on.
++
++## What Changes
++
++- Move `addressable_scope`'s displaced doc block (the "The ONE scope …" paragraph group,
++  including its `# Errors` section) back directly above
++  `pub(crate) fn addressable_scope` in
++  `apps/cli/src/commands/execution/mod.rs`. `repository_scope` keeps the three-line block that
++  already describes it ("The same addressing rule as [`addressable_scope`]…").
++- Move `synthesize_schema`'s displaced doc block (the "Closed like every other schema here…"
++  paragraph) back directly above `fn synthesize_schema` in
++  `apps/cli/src/commands/mcp/tools.rs`. `assign_schema` keeps no doc block of its own (it has
++  none to restore).
++- Comments only: no code tokens, no signatures, no reformatting, no other files changed. No
++  runtime, wire, CLI-output, or dependency impact.
++
++## Capabilities
++
++### New Capabilities
++
++- `cli-rustdoc`: the CLI crate's rustdoc attributes every doc block to the item it documents —
++  in particular the execution scope-addressing helpers (`addressable_scope`,
++  `repository_scope`) and the MCP tool-schema builders (`synthesize_schema`, `assign_schema`).
++
++### Modified Capabilities
++
++(none — the repository has no existing specs; this is a new capability for a repo whose
++`openspec/specs/` was just initialized.)
++
++## Impact
++
++- Files touched: exactly two, both inside `apps/cli/src/commands/` —
++  `execution/mod.rs` and `mcp/tools.rs`. Each diff moves a contiguous block of `///` lines
++  within the same file; every line is removed once and re-added once, unchanged.
++- Observability: the observable contract is rustdoc attachment. It can be observed from this
++  checkout by (a) checking the source adjacency of each doc block and its function, and (b)
++  building `cargo doc -p graphhelm-cli --no-deps --document-private-items` and asserting each
++  generated HTML page documents the intended text for the intended function. A workspace-wide
++  build or full test suite is not required; a comments-only move cannot change codegen.
++- Risk: minimal. The only hazard is an edit that touches more than the two comment blocks
++  (verified by a clean, block-only diff and `cargo fmt --check` staying green).
+diff --git a/openspec/changes/bench-feature/specs/cli-rustdoc/spec.md b/openspec/changes/bench-feature/specs/cli-rustdoc/spec.md
+new file mode 100644
+index 0000000..e2734ee
+--- /dev/null
++++ b/openspec/changes/bench-feature/specs/cli-rustdoc/spec.md
+@@ -0,0 +1,57 @@
++# Spec Delta
++
++## Purpose
++
++Ensures the graphhelm CLI crate's rustdoc attributes every doc block to the very item it
++documents, so an operator or developer reading any execution or MCP-tool helper sees the
++documentation of that helper — with that helper's own arguments, fields, and failure modes —
++never the documentation of a neighbouring function.
++
++## ADDED Requirements
++
++### Requirement: Execution scope helpers carry their own documentation
++
++The crate's rendered documentation SHALL attach the "one scope" block — the ONE scope the
++`execution` verbs can address for a given execution id, with an `# Errors` section refusing an
++invalid identifier — to the helper resolving the execution-addressed scope, and the "same
++addressing rule" block — repository-level records sharing the workspace/project literals, no
++execution id — to the helper building that scope.
++
++#### Scenario: Rustdoc renders the execution scope helpers
++- **WHEN** the CLI crate's documentation is built with private items included
++- **THEN** the item page for the execution-addressed scope helper contains the "ONE scope" statement and its `# Errors` section
++- **AND** the item page for the repository-scope helper contains the "same addressing rule" statement and contains no `# Errors` section
++
++#### Scenario: Source keeps each block adjacent to its own item
++- **WHEN** `apps/cli/src/commands/execution/mod.rs` is read as text
++- **THEN** every line between the first line of the "ONE scope" block and the `addressable_scope` signature is a `///` doc line
++- **AND** every line between the first line of the "same addressing rule" block and the `repository_scope` signature is a `///` doc line
++
++### Requirement: MCP tool-schema builders carry their own documentation
++
++The crate's rendered documentation SHALL attach the closed-schema block — the block explaining
++that `fixture` and `route` are both optional and refused as a pair, with the "exactly one door"
++rule lived on the server side — to the MCP `synthesize` tool-schema builder, and SHALL NOT
++present that block on the MCP `assign` tool-schema builder.
++
++#### Scenario: Rustdoc renders the MCP schema builders
++- **WHEN** the CLI crate's documentation is built with private items included
++- **THEN** the item page for the `synthesize` schema builder contains the closed-schema statement naming `fixture` and `route`
++- **AND** the item page for the `assign` schema builder does not contain that statement
++
++#### Scenario: Source keeps the block adjacent to its own item
++- **WHEN** `apps/cli/src/commands/mcp/tools.rs` is read as text
++- **THEN** every line between the first line of the closed-schema block and the `synthesize_schema` signature is a `///` doc line
++- **AND** no `///` doc line immediately precedes the `assign_schema` signature
++
++### Requirement: Reattachment leaves behaviour byte-identical
++
++Reattaching the two displaced blocks SHALL leave the CLI's runtime, wire, and printed-output
++behaviour unchanged: the two-file diff SHALL consist solely of the displaced `///` lines being
++removed from one position and re-added, unmodified, at their original position above their own
++functions in the same files.
++
++#### Scenario: Diff contains only the moved doc lines
++- **WHEN** the change's diff is computed against the pre-change tree
++- **THEN** in each affected file every removed line is a `///` doc line and every added line is one of those same `///` lines, with no other file, code token, or formatting change
++- **AND** `cargo +1.97.1 fmt --all -- --check` still passes
+diff --git a/openspec/changes/bench-feature/tasks.md b/openspec/changes/bench-feature/tasks.md
+new file mode 100644
+index 0000000..ef34bb1
+--- /dev/null
++++ b/openspec/changes/bench-feature/tasks.md
+@@ -0,0 +1,54 @@
++# Tasks
++
++Card (Keel direct route): paths in scope are `apps/cli/src/commands/execution/mod.rs` and
++`apps/cli/src/commands/mcp/tools.rs`; the promise is that each displaced rustdoc block sits
++directly above its own function again and nothing else changes; the proof is task 2.3.
++
++## 1. Reattach the displaced doc blocks
++
++- [x] 1.1 In `apps/cli/src/commands/execution/mod.rs`, move the doc block currently above
++      `pub(crate) fn repository_scope` that reads "The ONE scope the `execution` verbs can
++      address for a given execution id." (through its `# Errors` line "[`Failure`] when
++      `execution` is not a valid identifier.") back to directly above
++      `pub(crate) fn addressable_scope`, leaving the three-line "The same addressing rule as
++      [`addressable_scope`]…" block in place above `repository_scope`. Verify by reading the
++      file: every line between the "ONE scope" first line and the `addressable_scope`
++      signature is a `///` line, and every line between the "same addressing rule" first line
++      and the `repository_scope` signature is a `///` line.
++- [x] 1.2 In `apps/cli/src/commands/mcp/tools.rs`, move the doc block currently above
++      `fn assign_schema` that reads "Closed like every other schema here. `fixture` and
++      `route` are both optional…" back to directly above `fn synthesize_schema`, leaving
++      `assign_schema` with no doc block. Verify by reading the file: every line between the
++      "Closed like every other schema" first line and the `synthesize_schema` signature is a
++      `///` line, and no `///` line immediately precedes the `assign_schema` signature.
++
++## 2. Prove the change is comments-only and that rustdoc now attaches correctly
++
++- [x] 2.1 Run `git status --short` and `git diff -U0 -- apps/cli` from the repo root: confirm
++      exactly the two `.rs` files changed, that in each file every removed line starts with
++      `///`, every added line starts with `///`, and added-line set equals removed-line set
++      per file (pure move, no rewording).
++- [x] 2.2 Run `cargo +1.97.1 fmt --all -- --check`: confirm it exits 0 (the move broke no
++      formatting invariant). NOTE 2026-10-26: the combined `--all` invocation fails even at
++      HEAD on this checkout with "The filename or extension is too long. (os error 206)" —
++      the deep scratch path plus the batched file list overruns Windows' 260-char limit
++      before rustfmt runs; measured identical on the pre-change tree. Equivalent observer
++      used instead: `cargo +1.97.1 fmt -p <member> -- --check` for every one of the 28
++      workspace members (no path dependencies live outside the workspace), all exit 0,
++      including graphhelm-cli which owns both changed files.
++- [x] 2.3 From the repo root run
++      `cargo +1.97.1 doc -p graphhelm-cli --no-deps --locked --document-private-items` (this is
++      the single-crate observer; do not run workspace builds or the full test suite), then in
++      `target/doc/graphhelm_cli/` assert: `commands/execution/fn.addressable_scope.html`
++      contains "ONE scope"; `commands/execution/fn.repository_scope.html` contains "same
++      addressing rule" and does NOT contain "Errors" as a doc heading;
++      `commands/mcp/tools/fn.synthesize_schema.html` contains "Closed like every other schema
++      here"; `commands/mcp/tools/fn.assign_schema.html` does NOT contain "Closed like every
++      other schema here". NOTE 2026-10-26: assertions ran against `<CARGO_TARGET_DIR>/doc/
++      graphhelm/` — the crate's doc directory is named after its bin target (`graphhelm`),
++      not `graphhelm_cli`, and `CARGO_TARGET_DIR` pointed at a short path because this
++      checkout's deep location overruns the Windows 260-char limit for cargo builds. All
++      four page-level assertions passed, including the spec's extra check that
++      addressable_scope carries its `# Errors` heading while repository_scope has none;
++      the run's single warning (unresolved intra-doc link to KNOWN_NUMBER_COLLISIONS in
++      error_codes.rs) is untouched by this change.
+diff --git a/openspec/config.yaml b/openspec/config.yaml
+new file mode 100644
+index 0000000..2805cb6
+--- /dev/null
++++ b/openspec/config.yaml
+@@ -0,0 +1,32 @@
++schema: spec-driven
++
++# Project context (optional)
++# Add only constraints that should guide OpenSpec artifacts and workflows.
++# Include constraints an agent cannot infer by reading the code.
++# Keep general project documentation and discoverable codebase facts out.
++# Example:
++#   context: |
++#     Designs and tasks must cover Windows, macOS, and Linux
++#     Write all artifacts in Spanish
++
++# Per-artifact rules (optional)
++# Add custom rules for specific artifacts.
++# Example:
++#   rules:
++#     proposal:
++#       - Keep proposals under 500 words
++#       - Always state what is out of scope
++#     tasks:
++#       - Break tasks into chunks of max 2 hours
++
++# Per-operation guidance (optional)
++# Add advisory guidance for how apply and archive work should be conducted.
++# This is separate from artifact rules above.
++# Example:
++#   operations:
++#     apply:
++#       guidance:
++#         - Keep test summaries concise
++#     archive:
++#       guidance:
++#         - Summarize the archive outcome before finishing
+diff --git a/openspec/specs/.gitkeep b/openspec/specs/.gitkeep
+new file mode 100644
+index 0000000..e69de29

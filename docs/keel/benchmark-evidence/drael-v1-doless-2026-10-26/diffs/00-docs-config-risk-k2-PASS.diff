@@ -1,0 +1,45 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index e51860c..f91ac39 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -138,10 +138,15 @@ guidance alone (paper, section 7).
+ 
+ | The change | What Keel asks |
+ |---|---|
+-| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the task record. |
++| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the task record. |
+ | A bounded code change on the direct route (above) | A three-line card in the PR body: the paths in scope, the promise, the command that proves it. |
+ | New public surface: a new module, type, public function, dependency or test file | The full card, and the new surface named in the PR body. |
+-| The expanded route: persistence, permissions, compatibility, security, external effects | The full card and the JPD flow above. |
++| The expanded route: persistence, permissions, compatibility, security, external effects, runtime- or security-affecting config | The full card and the JPD flow above; for config, behavioural evidence that the value takes effect — parsing or shape validation alone is not proof. |
++
++Inert config is the only kind the light row admits: changing its value alters nothing observable
++about behaviour or access. A Runtime timeout or a permission setting changed on one line still
++needs the expanded row and behavioural evidence, exactly as the Journey-Proven Development rules
++above say.
+ 
+ **The four moves, when Keel applies:**
+ 
+diff --git a/docs/process/DELIVERY.md b/docs/process/DELIVERY.md
+index ba7d532..e239b1f 100644
+--- a/docs/process/DELIVERY.md
++++ b/docs/process/DELIVERY.md
+@@ -22,13 +22,15 @@ Keel is proportional. Use only as much of it as the change needs.
+ 
+ | The change | What goes in the PR body |
+ |---|---|
+-| Docs, comments, config values, a one-line fix, a test-only fix | Nothing beyond the summary. |
++| Docs, comments, inert config values, a one-line fix, a test-only fix | Nothing beyond the summary. |
+ | A bounded code change | A three-line card: the paths in scope, the promise, the command that proves it. |
+ | New public surface: a module, type, public function, dependency or test file | The full card, and the new surface named. |
+-| Persistence, permissions, compatibility, security, external effects | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development). |
++| Persistence, permissions, compatibility, security, external effects, runtime- or security-affecting config | The full card and the JPD flow (`AGENTS.md`, Journey-Proven Development); for config, behavioural evidence that the value takes effect — parsing or shape validation alone is not proof. |
+ 
+ A card lists paths, not globs. A new dependency is always named. Risk is read from what the change
+-touches, not from how big it is: a one-line change can remove a permission check.
++touches, not from how big it is: a one-line change can remove a permission check, and a one-line
++timeout change is runtime-affecting config, not an inert value. Inert means nothing observable
++about behaviour or access changes if the value changes.
+ 
+ ## 3. Work
+ 

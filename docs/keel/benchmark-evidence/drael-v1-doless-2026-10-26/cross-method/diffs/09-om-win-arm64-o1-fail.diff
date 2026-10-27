@@ -1,0 +1,408 @@
+diff --git a/openspec/changes/archive/.gitkeep b/openspec/changes/archive/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/openspec/changes/bench-feature/.openspec.yaml b/openspec/changes/bench-feature/.openspec.yaml
+new file mode 100644
+index 0000000..d58ba02
+--- /dev/null
++++ b/openspec/changes/bench-feature/.openspec.yaml
+@@ -0,0 +1,2 @@
++schema: spec-driven
++created: 2026-10-26
+diff --git a/openspec/changes/bench-feature/design.md b/openspec/changes/bench-feature/design.md
+new file mode 100644
+index 0000000..54f0c55
+--- /dev/null
++++ b/openspec/changes/bench-feature/design.md
+@@ -0,0 +1,117 @@
++# Design
++
++## Context
++
++See `proposal.md` for motivation. Current state this design works with:
++
++- `docs/install/GETTING_STARTED.md` §1 is the only place in that document claiming platform
++  verification: it says the `v0.1.0` release "provides verified Windows and Ubuntu x86-64
++  archives" and routes "macOS or another platform" to a source build. There is no separate
++  verified-platforms table in the file.
++- The `v0.1.0` release ships exactly two archives — `windows-x86_64.zip` and
++  `linux-x86_64.tar.gz` (`docs/releases/0.1.0.md`). No `windows-aarch64` archive exists, so on an
++  ARM64 laptop the only install path is the documented source build:
++  `cargo +1.97.1 install --locked --path apps/cli`, then `graphhelm --version`.
++- This repository runs no hosted CI ("GitHub Actions are intentionally disabled" per the release
++  notes), so platform verification is a local, recorded run: the acceptance convention is a dated
++  file under `docs/acceptance/` with a host/commit/result header table and a command transcript
++  (format of `docs/acceptance/install-rehearsal-2026-09-13.md`, cited by GETTING_STARTED.md).
++- `graphhelm --version` is clap-derived from the workspace version in `Cargo.toml`
++  (`version = "0.1.0"`), so at the current tree it prints `graphhelm 0.1.0`. The `VERSION` file
++  says `0.1.1-spec`; the observable value is the Cargo workspace one.
++- The machine used to plan and check in this change is **not** the observer: Windows 11 Pro on an
++  AMD Ryzen 9 9950X (AMD64). The promise ("installed and `graphhelm --version` runs on a
++  Snapdragon laptop") can only be observed on the laptop itself.
++- Keel rule 5 / the Journey-Proven rules of `AGENTS.md`: a proxy (another OS, an emulator, a VM,
++  a cross-compile) is not an observation; an unobserved promise ends `OBSERVER_MISSING`.
++
++## Goals / Non-Goals
++
++**Goals:**
++
++- A one-time, reproducible rehearsal recipe that produces the required evidence on a Windows 11
++  ARM64 (aarch64, Snapdragon) laptop: source install of the CLI and a successful `graphhelm
++  --version` from the installed binary.
++- A checked-in acceptance record for that run, following the existing `docs/acceptance/` format.
++- A documentation edit confined to the verified-platforms statement in `docs/install/GETTING_STARTED.md`,
++  precise about what was exercised.
++
++**Non-Goals:**
++
++- Shipping a `windows-aarch64` release archive or touching `docs/releases/0.1.0.md`'s archive
++  table (that is a release change, not a documentation claim).
++- Rehearsing the full getting-started journey (init, serve, Studio, harness) on ARM64; the claim
++  covers exactly what is exercised.
++- Adding an ARM64 job to any CI matrix (no hosted CI exists).
++- Performance benchmarking or comparison with x86-64 build/run times.
++
++## Decisions
++
++- **D1 — Observer: native bare-metal Windows 11 ARM64 laptop (Snapdragon).**
++  Why: the promise names that hardware class, and every substitute is a proxy under the
++  repository's proof rules. Alternatives considered and rejected: cross-compiling
++  `aarch64-pc-windows-msvc` from the AMD64 planning host (proves compilation, not execution;
++  linking also needs the MSVC ARM64 cross toolchain); WSL2/emulated runs (proxies); a hosted arm64
++  runner (none exists — hosted CI is intentionally off).
++- **D2 — Install path: the documented source build.** `cargo +1.97.1 install --locked --path
++  apps/cli` exactly as GETTING_STARTED.md §1 gives it, because no ARM64 archive ships in `v0.1.0`.
++  Alternative considered: cut a new ARM64 archive now — rejected, out of scope (release artifact,
++  separate change).
++- **D3 — Evidence record: new `docs/acceptance/windows-arm64-<YYYY-MM-DD>.md`.** Format copied
++  from `install-rehearsal-2026-09-13.md`: header table (commit under test, host identity from
++  `systeminfo` / `(Get-CimInstance Win32_Processor).Name` / `$env:PROCESSOR_ARCHITECTURE` / OS
++  build, source, started/ended, result) plus the command transcript with outputs, elisions marked.
++  The date in the filename is the rehearsal date, matching the naming convention already used in
++  `docs/acceptance/`.
++- **D4 — Doc edit: amend the §1 statement in place; do not invent a new section layout.** The
++  sentence at lines ~88–92 becomes: the release archives verify Windows x86-64 and Ubuntu x86-64;
++  Windows 11 ARM64 (aarch64, e.g., Snapdragon laptops) is verified **from source** with a link to
++  the acceptance record; other platforms still build from source. Precise wording about scope
++  (install + version) follows the spec's claim requirement. Layout (sentence vs. small table) is a
++  styling choice open to reviewer preference; the behavior contract is the spec's, not the layout.
++- **D5 — Observed commands (the evidence set).** Prerequisite checks as listed in GETTING_STARTED.md
++  (`cargo +1.97.1 --version`, `git --version`, PATH state); clone/copy of the exact commit under
++  test; the `cargo +1.97.1 install --locked --path apps/cli` line; `(Get-Command graphhelm).Source`
++  to show the binary is the installed one on PATH; `graphhelm --version` expecting
++  `graphhelm 0.1.0`. To match the bar the `v0.1.0` "Release checks" apply to its binaries, also
++  capture `graphhelm --help` and one canonical offline command
++  (`graph validate examples/graphs/software-feature.yaml`) — but the mandatory promise remains
++  install + `--version`; the extras are evidence polish the transcript makes cheap.
++- **D6 — No code or configuration changes reach a build.** A Markdown-only diff needs no cargo
++  check on the planning host (Keel: "a Markdown edit that no code reads needs no build"). The
++  smallest checks observing the change: re-read the edited text against the record; `git diff
++  --check` and a scoped `git diff --stat` confirming only docs touched. The compile+run happens on
++  the laptop, and its transcript is itself the observation — not something re-run here.
++
++## Risks / Trade-offs
++
++- [No ARM64 laptop available when apply starts] → the change ends `OBSERVER_MISSING: Windows 11
++  ARM64 (aarch64, Snapdragon) laptop` and no doc entry lands; the rehearsal recipe stays reusable.
++  Mitigation: tasks order hardware availability first, so nothing else is spent before it.
++- [First ARM64 native build fails (toolchain/linker gap specific to aarch64-pc-windows-msvc)] → an
++  honest `OBSERVER_MISSING` plus a defect named in the acceptance record (or issue) is the correct
++  outcome; the doc claim is not weakened to absorb the failure.
++- [Prerequisite gap on the fresh ARM64 host, e.g. MSVC C++ Build Tools needed for the linker while
++  GETTING_STARTED.md's Windows block does not list them] → fix the Windows prerequisites text in
++  the same change only if the rehearsal actually hit it; otherwise record it as observed state.
++- [Version drift between `VERSION` (`0.1.1-spec`) and the Cargo workspace version (`0.1.0`)] → the
++  record asserts the expected line against the commit under test, so it stays true; the doc entry
++  says "`graphhelm --version` prints the workspace version" rather than pinning prose to a number
++  that will move.
++- [The claim reads narrower than the x86-64 claim (archive install + release-check battery vs.
++  source install + version)] → accepted: precision over symmetry is the point of this capability;
++  widening the exercise set is a future change.
++
++## Migration Plan
++
++Not applicable beyond rollback: revert the documentation commit and delete the acceptance record to
++restore the pre-change claims. No data, state, or compatibility surface is involved.
++
++## Open Questions
++
++- The exact model/SoC of the owner's Snapdragon laptop and whether it is reachable at apply time.
++  Deferrable: the acceptance record captures whatever identity the host reports; the task breakdown
++  does not change either way (unreachable → `OBSERVER_MISSING`).
++- Whether maintainers prefer a dedicated "Verified platforms" subsection/table in GETTING_STARTED.md
++  over an in-place sentence amendment. Deferrable: D4 fixes the behavior contract; layout is a
++  review-time style choice.
+diff --git a/openspec/changes/bench-feature/proposal.md b/openspec/changes/bench-feature/proposal.md
+new file mode 100644
+index 0000000..b6c09d7
+--- /dev/null
++++ b/openspec/changes/bench-feature/proposal.md
+@@ -0,0 +1,58 @@
++# Proposal
++
++## Why
++
++GraphHelm's install documentation currently claims platform verification only for Windows x86-64
++and Ubuntu x86-64 (the two `v0.1.0` release archives), and routes everyone else — including
++Windows 11 on ARM64 (e.g., Snapdragon laptops) — to "build from source" with no recorded proof
++that the build actually succeeds or runs on that hardware. Windows on ARM is a mainstream laptop
++class today; users on it get no answer for whether `graphhelm` installs and runs natively. This
++change verifies that promise once, on real Snapdragon hardware, and records the result so the
++documentation can claim it.
++
++## What Changes
++
++- Perform a one-time installation rehearsal of the `graphhelm` CLI on a Windows 11 ARM64
++  (aarch64, Snapdragon) laptop using the documented source path
++  (`cargo +1.97.1 install --locked --path apps/cli`), and confirm `graphhelm --version` prints
++  `graphhelm 0.1.0` from the installed binary on PATH.
++- Add a dated acceptance record under `docs/acceptance/` following the existing transcript format
++  (`docs/acceptance/install-rehearsal-2026-09-13.md`): host identification (SoC/OS/version), the
++  commit under test, and the command transcript with outputs.
++- Update `docs/install/GETTING_STARTED.md` §1 so that Windows ARM64 appears as a verified
++  platform (verified from source, with a pointer to the acceptance record), alongside the existing
++  verified-archive claim.
++- Record any prerequisite gap discovered during the rehearsal (for example, the Windows
++  prerequisites block does not list the MSVC linker Build Tools) in the acceptance record; a
++  matching fix to the prerequisites text in `docs/install/GETTING_STARTED.md` is included only if
++  the rehearsal actually hit the gap.
++
++No code, schema, dependency, or release-archive changes. No new archive is added to the `v0.1.0`
++release table (`docs/releases/0.1.0.md` stays as is: it documents the shipped archives, and there
++is no `windows-aarch64` archive in this change).
++
++## Capabilities
++
++### New Capabilities
++
++- `install/verified-platforms`: which platforms are claimed as verified for installing and running
++  the `graphhelm` CLI, how each claim must be evidenced (checked-in acceptance record naming the
++  host hardware, commit, and transcript), and the rule that a platform may not be listed until its
++  observer has been run on native hardware (emulation, VMs, and cross-compilation are not
++  observers). This capability owns the platform-verification claims of the install documentation
++  going forward.
++
++### Modified Capabilities
++
++(None — `openspec/specs/` is empty; this change introduces the first capability.)
++
++## Impact
++
++- Documentation: `docs/install/GETTING_STARTED.md` (verified-platforms statement in §1; possibly
++  the Windows prerequisites block), plus one new file under `docs/acceptance/`.
++- Evidence host: a Windows 11 ARM64 (aarch64, Snapdragon) laptop must be available at apply time.
++  The machine used for this planning checkout is AMD64 (Windows 11 Pro, AMD Ryzen 9 9950X), so the
++  hardware observer cannot be run from here — see `design.md` for the consequence (an apply run
++  without the laptop ends `OBSERVER_MISSING` rather than claiming verification).
++- No effect on code, CI (hosted CI is intentionally disabled in this repository), dependencies,
++  schemas, or the release artifacts of `v0.1.0`.
+diff --git a/openspec/changes/bench-feature/specs/install/verified-platforms/spec.md b/openspec/changes/bench-feature/specs/install/verified-platforms/spec.md
+new file mode 100644
+index 0000000..8a5236f
+--- /dev/null
++++ b/openspec/changes/bench-feature/specs/install/verified-platforms/spec.md
+@@ -0,0 +1,77 @@
++# Spec Delta
++
++## Purpose
++
++Defines which platforms are claimed as verified for installing and running the `graphhelm` CLI, and the evidence bar every such claim must carry in the install documentation.
++
++## ADDED Requirements
++
++### Requirement: Verified platforms are listed in the install documentation
++
++`docs/install/GETTING_STARTED.md` SHALL name every platform claimed as verified for installing and running the `graphhelm` CLI, and for each one SHALL state the verified install path (release archive or source build) and link the checked-in acceptance record under `docs/acceptance/` that carries the evidence.
++
++#### Scenario: Windows ARM64 appears as verified
++
++- **WHEN** this change is applied and section 1 of `docs/install/GETTING_STARTED.md` is read
++- **THEN** Windows ARM64 (aarch64, e.g., Snapdragon laptops) is named as verified
++- **AND** the entry states the source build as the verified install path
++- **AND** it links an acceptance record that exists in the repository
++
++#### Scenario: Existing archive claim is preserved
++
++- **WHEN** the document names the `v0.1.0` release archives as verified
++- **THEN** it still lists only the platforms those archives cover (Windows x86-64, Ubuntu x86-64), consistent with `docs/releases/0.1.0.md`
++
++### Requirement: Every verified-platform claim carries an evidence record
++
++A platform MAY be added to the verified list only together with a dated acceptance record committed under `docs/acceptance/` in the same change. The record SHALL identify the host hardware (OS edition and version, architecture, SoC or CPU model), the commit under test, and contain the installation commands as executed plus the output of `graphhelm --version`.
++
++#### Scenario: Record fields present
++
++- **WHEN** the Windows ARM64 acceptance record is reviewed
++- **THEN** it names the OS edition and version, the aarch64 architecture, the SoC or CPU model, and the commit under test
++- **AND** its transcript includes the `cargo` install command and a `graphhelm --version` line
++
++#### Scenario: Platform listed without its record
++
++- **WHEN** a documentation change adds a platform to the verified list
++- **AND** no acceptance record it links exists in the repository at review time
++- **THEN** the addition is rejected and the platform stays unlisted
++
++### Requirement: Verification runs on native bare-metal hardware
++
++A platform's verification SHALL be observed on native bare-metal hardware of the claimed operating system and architecture. Cross-compiling from another host, OS-level emulation, virtual machines, and containers are not observers for a platform claim; they may be run, but their results SHALL be reported as unobserved for the claim, never as verification.
++
++#### Scenario: Cross-compiled binary does not verify the platform
++
++- **WHEN** a binary is built for the `aarch64-pc-windows-msvc` target on an x86-64 Windows machine and is never executed on ARM64 hardware
++- **THEN** Windows ARM64 is not added to the verified list and the outcome is recorded as not-verified
++
++#### Scenario: Emulated execution does not verify the platform
++
++- **WHEN** `graphhelm --version` succeeds only under emulation, a virtual machine, or WSL
++- **THEN** the run is reported as unobserved for the native-hardware claim
++
++### Requirement: The claim states exactly what was exercised
++
++Each verified-platform entry SHALL name the operations it covers, and the documentation MUST NOT imply operations beyond those exercised. For this change the Windows ARM64 entry covers installing the CLI from source and `graphhelm --version` printing `graphhelm <workspace version>` — the workspace version of the commit under test (`0.1.0` at planning time).
++
++#### Scenario: Version output matches the workspace version
++
++- **WHEN** `graphhelm --version` is run on the verified ARM64 host
++- **THEN** it prints `graphhelm 0.1.0` for a commit whose workspace version is `0.1.0`
++
++#### Scenario: Unexercised parts are not implied
++
++- **WHEN** the ARM64 entry states the source install and the version command only
++- **THEN** the entry does not claim parts of the getting-started journey that were not run on that host
++
++### Requirement: Missing observer is a recorded outcome
++
++When the required hardware for a platform claim is not available, the work SHALL end by reporting `OBSERVER_MISSING` naming the missing host, and the documentation SHALL NOT gain a verified-platform entry for that platform.
++
++#### Scenario: Snapdragon laptop unavailable
++
++- **WHEN** the rehearsal cannot be run on a Windows 11 ARM64 (aarch64, Snapdragon) laptop before the change is completed
++- **THEN** the completion report ends `OBSERVER_MISSING: Windows 11 ARM64 (aarch64, Snapdragon) laptop`
++- **AND** `docs/install/GETTING_STARTED.md` carries no Windows ARM64 entry
+diff --git a/openspec/changes/bench-feature/tasks.md b/openspec/changes/bench-feature/tasks.md
+new file mode 100644
+index 0000000..a92cff0
+--- /dev/null
++++ b/openspec/changes/bench-feature/tasks.md
+@@ -0,0 +1,80 @@
++# Tasks
++
++## 1. Observer host and prerequisites (on the Windows 11 ARM64 laptop)
++
++- [ ] 1.1 Confirm a Windows 11 ARM64 (aarch64, Snapdragon) laptop is available and power it through
++      host identification: capture OS edition/build (`systeminfo`), CPU/SoC model
++      (`(Get-CimInstance Win32_Processor).Name`), and `$env:PROCESSOR_ARCHITECTURE`. Verify:
++      `$env:PROCESSOR_ARCHITECTURE` reads `ARM64` and the SoC is recorded; if no such laptop is
++      reachable, STOP here — report `OBSERVER_MISSING: Windows 11 ARM64 (aarch64, Snapdragon)
++      laptop`, leave `docs/install/GETTING_STARTED.md` untouched, and do not proceed to any later
++      group.
++- [ ] 1.2 Install the documented prerequisites on that host exactly as
++      `docs/install/GETTING_STARTED.md` §Prerequisites gives them (Rustup via winget,
++      `rustup toolchain install 1.97.1 --profile minimal --component rustfmt clippy`, git).
++      Verify: `cargo +1.97.1 --version` prints the pinned version, `git --version` answers, and a
++      fresh shell finds `graphhelm` nowhere yet (`Get-Command graphhelm` fails). Note every
++      prerequisite the guide did not list but the host actually needed (for example MSVC C++ Build
++      Tools for the linker) with the exact error — that note drives task 3.2.
++
++## 2. Rehearsal: install the CLI and observe `graphhelm --version` (on the laptop)
++
++- [ ] 2.1 Name the commit under test: record the exact commit (full sha of the current `main` tip)
++      whose tree will be built. Verify: the sha is written down before any build starts and will be
++      the "Commit under test" of the acceptance record.
++- [ ] 2.2 Obtain that exact tree on the laptop (clone or copy of 2.1's commit — not a later one)
++      and run the documented install: `cargo +1.97.1 install --locked --path apps/cli`. Verify:
++      exit code 0, `graphhelm.exe` present in `%USERPROFILE%\.cargo\bin`, transcript line kept.
++- [ ] 2.3 Prove the observed binary is the installed one and runs: `(Get-Command graphhelm).Source`
++      then `graphhelm --version`. Verify: the Source path is
++      `%USERPROFILE%\.cargo\bin\graphhelm.exe` and the last line is exactly `graphhelm 0.1.0`
++      (the workspace version of the commit under test — if the recorded sha carries a different
++      workspace version, the expectation is `graphhelm <that version>` and both values are noted).
++- [ ] 2.4 Capture the release-check parity extras from the clone root with the installed binary:
++      `graphhelm --help`, then `graphhelm graph validate examples/graphs/software-feature.yaml`.
++      Verify: `--help` lists the command groups, and the validate run returns the
++      `"ok": true` envelope for the example graph; both transcripts kept (these are evidence
++      polish beyond the install + version promise, per design D5).
++
++## 3. Evidence record and documentation (in this checkout)
++
++- [ ] 3.1 Write `docs/acceptance/windows-arm64-<YYYY-MM-DD>.md` (rehearsal date, format copied
++      from `docs/acceptance/install-rehearsal-2026-09-13.md`): header table with commit under test
++      (2.1), host identity (1.1), source, started/ended times, result **pass**, secrets policy
++      (none expected — token/key never enter this recipe); transcript sections covering tasks
++      1.2–2.4 as executed, elisions marked. Verify: the file satisfies the spec's "Record fields
++      present" scenario — OS edition/version, aarch64 architecture, SoC/CPU model, commit, the
++      `cargo` install command, and the `graphhelm --version` line are all present and true.
++- [ ] 3.2 Amend section 1 of `docs/install/GETTING_STARTED.md`: add Windows ARM64 (aarch64, e.g.,
++      Snapdragon laptops) to the verified-platform statement as verified **from source** with a
++      relative link to the new acceptance record; keep the existing verified-archive claim limited
++      to Windows x86-64 / Ubuntu x86-64 and keep the build-from-source routing for other
++      platforms; scope the entry to exactly the operations exercised (source install +
++      `graphhelm --version`, per the spec). If task 1.2 recorded an undocumented prerequisite the
++      rehearsal actually needed, add it to the Windows prerequisites text in the same edit — and
++      only then. Verify: re-read the edited section end-to-end; the claim names what was
++      exercised only; `git diff --stat` shows only `docs/install/GETTING_STARTED.md` plus the
++      acceptance record touched so far.
++- [ ] 3.3 Cross-check the pair before finishing: the GETTING_STARTED.md link resolves to the
++      acceptance file that exists in the tree, the record's stated host matches what the record's
++      own transcript reported, and the record's commit under test equals the tree that was built.
++      Verify: `git status` shows the intended two documentation files; opening the link target and
++      comparing host/commit lines passes by eye; `git diff --check` is clean.
++
++## 4. Completion report
++
++- [ ] 4.1 State the outcome separately, per the repository's proof rules: passed = the rehearsal
++      transcript observations (2.2–2.4) with commands named; failed/skipped = any task that was
++      not reached; unobserved = the rest of the getting-started journey on ARM64 (init, serve,
++      Studio, harness) which this change deliberately does not claim. Verify: the report names
++      every executed command and its result, and asserts no code or configuration file changed
++      (`git diff --name-only` lists documentation only, so no build or test suite was run on the
++      planning host — a Markdown-only diff reaches none).
++
++## Workflow follow-up
++
++- Archive the change after the project's review requirements are satisfied:
++  `openspec archive bench-feature`, which promotes the delta to the main spec at
++  `openspec/specs/install/verified-platforms/spec.md`.
++- If task 1.1 stopped with `OBSERVER_MISSING`, leave the change open (do not archive); the
++  recipe in groups 1–3 stands ready for the next time the laptop is available.
+diff --git a/openspec/config.yaml b/openspec/config.yaml
+new file mode 100644
+index 0000000..2805cb6
+--- /dev/null
++++ b/openspec/config.yaml
+@@ -0,0 +1,32 @@
++schema: spec-driven
++
++# Project context (optional)
++# Add only constraints that should guide OpenSpec artifacts and workflows.
++# Include constraints an agent cannot infer by reading the code.
++# Keep general project documentation and discoverable codebase facts out.
++# Example:
++#   context: |
++#     Designs and tasks must cover Windows, macOS, and Linux
++#     Write all artifacts in Spanish
++
++# Per-artifact rules (optional)
++# Add custom rules for specific artifacts.
++# Example:
++#   rules:
++#     proposal:
++#       - Keep proposals under 500 words
++#       - Always state what is out of scope
++#     tasks:
++#       - Break tasks into chunks of max 2 hours
++
++# Per-operation guidance (optional)
++# Add advisory guidance for how apply and archive work should be conducted.
++# This is separate from artifact rules above.
++# Example:
++#   operations:
++#     apply:
++#       guidance:
++#         - Keep test summaries concise
++#     archive:
++#       guidance:
++#         - Summarize the archive outcome before finishing
+diff --git a/openspec/specs/.gitkeep b/openspec/specs/.gitkeep
+new file mode 100644
+index 0000000..e69de29

@@ -1,0 +1,1489 @@
+diff --git a/.specify/feature.json b/.specify/feature.json
+new file mode 100644
+index 0000000..72ba549
+--- /dev/null
++++ b/.specify/feature.json
+@@ -0,0 +1,3 @@
++{
++  "feature_directory": "specs/001-bench"
++}
+diff --git a/.specify/templates/constitution-template.md b/.specify/templates/constitution-template.md
+new file mode 100644
+index 0000000..a4670ff
+--- /dev/null
++++ b/.specify/templates/constitution-template.md
+@@ -0,0 +1,50 @@
++# [PROJECT_NAME] Constitution
++<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
++
++## Core Principles
++
++### [PRINCIPLE_1_NAME]
++<!-- Example: I. Library-First -->
++[PRINCIPLE_1_DESCRIPTION]
++<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
++
++### [PRINCIPLE_2_NAME]
++<!-- Example: II. CLI Interface -->
++[PRINCIPLE_2_DESCRIPTION]
++<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
++
++### [PRINCIPLE_3_NAME]
++<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
++[PRINCIPLE_3_DESCRIPTION]
++<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
++
++### [PRINCIPLE_4_NAME]
++<!-- Example: IV. Integration Testing -->
++[PRINCIPLE_4_DESCRIPTION]
++<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
++
++### [PRINCIPLE_5_NAME]
++<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
++[PRINCIPLE_5_DESCRIPTION]
++<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
++
++## [SECTION_2_NAME]
++<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
++
++[SECTION_2_CONTENT]
++<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
++
++## [SECTION_3_NAME]
++<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
++
++[SECTION_3_CONTENT]
++<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
++
++## Governance
++<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
++
++[GOVERNANCE_RULES]
++<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
++
++**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
++<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+diff --git a/.specify/templates/plan-template.md b/.specify/templates/plan-template.md
+new file mode 100644
+index 0000000..36f2eab
+--- /dev/null
++++ b/.specify/templates/plan-template.md
+@@ -0,0 +1,113 @@
++# Implementation Plan: [FEATURE]
++
++**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
++
++**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
++
++**Note**: This template is filled in by the `__SPECKIT_COMMAND_PLAN__` command; its definition describes the execution workflow.
++
++## Summary
++
++[Extract from feature spec: primary requirement + technical approach from research]
++
++## Technical Context
++
++<!--
++  ACTION REQUIRED: Replace the content in this section with the technical details
++  for the project. The structure here is presented in advisory capacity to guide
++  the iteration process.
++-->
++
++**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]
++
++**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]
++
++**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
++
++**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]
++
++**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
++
++**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]
++
++**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]
++
++**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]
++
++**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++[Gates determined based on constitution file]
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/[###-feature]/
++├── plan.md              # This file (__SPECKIT_COMMAND_PLAN__ command output)
++├── research.md          # Phase 0 output (__SPECKIT_COMMAND_PLAN__ command)
++├── data-model.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── quickstart.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── contracts/           # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++└── tasks.md             # Phase 2 output (__SPECKIT_COMMAND_TASKS__ command - NOT created by __SPECKIT_COMMAND_PLAN__)
++```
++
++### Source Code (repository root)
++<!--
++  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
++  for this feature. Delete unused options and expand the chosen structure with
++  real paths (e.g., apps/admin, packages/something). The delivered plan must
++  not include Option labels.
++-->
++
++```text
++# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
++src/
++├── models/
++├── services/
++├── cli/
++└── lib/
++
++tests/
++├── contract/
++├── integration/
++└── unit/
++
++# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
++backend/
++├── src/
++│   ├── models/
++│   ├── services/
++│   └── api/
++└── tests/
++
++frontend/
++├── src/
++│   ├── components/
++│   ├── pages/
++│   └── services/
++└── tests/
++
++# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
++api/
++└── [same as backend above]
++
++ios/ or android/
++└── [platform-specific structure: feature modules, UI flows, platform tests]
++```
++
++**Structure Decision**: [Document the selected structure and reference the real
++directories captured above]
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++| Violation | Why Needed | Simpler Alternative Rejected Because |
++|-----------|------------|-------------------------------------|
++| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
++| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+diff --git a/.specify/templates/spec-template.md b/.specify/templates/spec-template.md
+new file mode 100644
+index 0000000..ceb2877
+--- /dev/null
++++ b/.specify/templates/spec-template.md
+@@ -0,0 +1,131 @@
++# Feature Specification: [FEATURE NAME]
++
++**Feature Branch**: `[###-feature-name]`
++
++**Created**: [DATE]
++
++**Status**: Draft
++
++**Input**: User description: "$ARGUMENTS"
++
++## User Scenarios & Testing *(mandatory)*
++
++<!--
++  IMPORTANT: User stories should be PRIORITIZED as user journeys ordered by importance.
++  Each user story/journey must be INDEPENDENTLY TESTABLE - meaning if you implement just ONE of them,
++  you should still have a viable MVP (Minimum Viable Product) that delivers value.
++
++  Assign priorities (P1, P2, P3, etc.) to each story, where P1 is the most critical.
++  Think of each story as a standalone slice of functionality that can be:
++  - Developed independently
++  - Tested independently
++  - Deployed independently
++  - Demonstrated to users independently
++-->
++
++### User Story 1 - [Brief Title] (Priority: P1)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently - e.g., "Can be fully tested by [specific action] and delivers [specific value]"]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++2. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 2 - [Brief Title] (Priority: P2)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 3 - [Brief Title] (Priority: P3)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++[Add more user stories as needed, each with an assigned priority]
++
++### Edge Cases
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right edge cases.
++-->
++
++- What happens when [boundary condition]?
++- How does system handle [error scenario]?
++
++## Requirements *(mandatory)*
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right functional requirements.
++-->
++
++### Functional Requirements
++
++- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
++- **FR-002**: System MUST [specific capability, e.g., "validate email addresses"]
++- **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
++- **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
++- **FR-005**: System MUST [behavior, e.g., "log all security events"]
++
++*Example of marking unclear requirements:*
++
++- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
++- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
++
++### Key Entities *(include if feature involves data)*
++
++- **[Entity 1]**: [What it represents, key attributes without implementation]
++- **[Entity 2]**: [What it represents, relationships to other entities]
++
++## Success Criteria *(mandatory)*
++
++<!--
++  ACTION REQUIRED: Define measurable success criteria.
++  These must be technology-agnostic and measurable.
++-->
++
++### Measurable Outcomes
++
++- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
++- **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
++- **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
++- **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
++
++## Assumptions
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right assumptions based on reasonable defaults
++  chosen when the feature description did not specify certain details.
++-->
++
++- [Assumption about target users, e.g., "Users have stable internet connectivity"]
++- [Assumption about scope boundaries, e.g., "Mobile support is out of scope for v1"]
++- [Assumption about data/environment, e.g., "Existing authentication system will be reused"]
++- [Dependency on existing system/service, e.g., "Requires access to the existing user profile API"]
+diff --git a/.specify/templates/tasks-template.md b/.specify/templates/tasks-template.md
+new file mode 100644
+index 0000000..7fff087
+--- /dev/null
++++ b/.specify/templates/tasks-template.md
+@@ -0,0 +1,252 @@
++---
++
++description: "Task list template for feature implementation"
++---
++
++# Tasks: [FEATURE NAME]
++
++**Input**: Design documents from `/specs/[###-feature-name]/`
++
++**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
++
++**Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
++
++**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies)
++- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
++- Include exact file paths in descriptions
++
++## Path Conventions
++
++- **Single project**: `src/`, `tests/` at repository root
++- **Web app**: `backend/src/`, `frontend/src/`
++- **Mobile**: `api/src/`, `ios/src/` or `android/src/`
++- Paths shown below assume single project - adjust based on plan.md structure
++
++<!--
++  ============================================================================
++  IMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.
++
++  The __SPECKIT_COMMAND_TASKS__ command MUST replace these with actual tasks based on:
++  - User stories from spec.md (with their priorities P1, P2, P3...)
++  - Feature requirements from plan.md
++  - Entities from data-model.md
++  - Endpoints from contracts/
++
++  Tasks MUST be organized by user story so each story can be:
++  - Implemented independently
++  - Tested independently
++  - Delivered as an MVP increment
++
++  DO NOT keep these sample tasks in the generated tasks.md file.
++  ============================================================================
++-->
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Project initialization and basic structure
++
++- [ ] T001 Create project structure per implementation plan
++- [ ] T002 Initialize [language] project with [framework] dependencies
++- [ ] T003 [P] Configure linting and formatting tools
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
++
++**⚠️ CRITICAL**: No user story work can begin until this phase is complete
++
++Examples of foundational tasks (adjust based on your project):
++
++- [ ] T004 Setup database schema and migrations framework
++- [ ] T005 [P] Implement authentication/authorization framework
++- [ ] T006 [P] Setup API routing and middleware structure
++- [ ] T007 Create base models/entities that all stories depend on
++- [ ] T008 Configure error handling and logging infrastructure
++- [ ] T009 Setup environment configuration management
++
++**Checkpoint**: Foundation ready - user story implementation can now begin in parallel
++
++---
++
++## Phase 3: User Story 1 - [Title] (Priority: P1) 🎯 MVP
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 1 (OPTIONAL - only if tests requested) ⚠️
++
++> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
++
++- [ ] T010 [P] [US1] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T011 [P] [US1] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 1
++
++- [ ] T012 [P] [US1] Create [Entity1] model in src/models/[entity1].py
++- [ ] T013 [P] [US1] Create [Entity2] model in src/models/[entity2].py
++- [ ] T014 [US1] Implement [Service] in src/services/[service].py (depends on T012, T013)
++- [ ] T015 [US1] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T016 [US1] Add validation and error handling
++- [ ] T017 [US1] Add logging for user story 1 operations
++
++**Checkpoint**: At this point, User Story 1 should be fully functional and testable independently
++
++---
++
++## Phase 4: User Story 2 - [Title] (Priority: P2)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 2 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T018 [P] [US2] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T019 [P] [US2] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 2
++
++- [ ] T020 [P] [US2] Create [Entity] model in src/models/[entity].py
++- [ ] T021 [US2] Implement [Service] in src/services/[service].py
++- [ ] T022 [US2] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T023 [US2] Integrate with User Story 1 components (if needed)
++
++**Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
++
++---
++
++## Phase 5: User Story 3 - [Title] (Priority: P3)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 3 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T024 [P] [US3] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T025 [P] [US3] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 3
++
++- [ ] T026 [P] [US3] Create [Entity] model in src/models/[entity].py
++- [ ] T027 [US3] Implement [Service] in src/services/[service].py
++- [ ] T028 [US3] Implement [endpoint/feature] in src/[location]/[file].py
++
++**Checkpoint**: All user stories should now be independently functional
++
++---
++
++[Add more user story phases as needed, following the same pattern]
++
++---
++
++## Phase N: Polish & Cross-Cutting Concerns
++
++**Purpose**: Improvements that affect multiple user stories
++
++- [ ] TXXX [P] Documentation updates in docs/
++- [ ] TXXX Code cleanup and refactoring
++- [ ] TXXX Performance optimization across all stories
++- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
++- [ ] TXXX Security hardening
++- [ ] TXXX Run quickstart.md validation
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies - can start immediately
++- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
++- **User Stories (Phase 3+)**: All depend on Foundational phase completion
++  - User stories can then proceed in parallel (if staffed)
++  - Or sequentially in priority order (P1 → P2 → P3)
++- **Polish (Final Phase)**: Depends on all desired user stories being complete
++
++### User Story Dependencies
++
++- **User Story 1 (P1)**: Can start after Foundational (Phase 2) - No dependencies on other stories
++- **User Story 2 (P2)**: Can start after Foundational (Phase 2) - May integrate with US1 but should be independently testable
++- **User Story 3 (P3)**: Can start after Foundational (Phase 2) - May integrate with US1/US2 but should be independently testable
++
++### Within Each User Story
++
++- Tests (if included) MUST be written and FAIL before implementation
++- Models before services
++- Services before endpoints
++- Core implementation before integration
++- Story complete before moving to next priority
++
++### Parallel Opportunities
++
++- All Setup tasks marked [P] can run in parallel
++- All Foundational tasks marked [P] can run in parallel (within Phase 2)
++- Once Foundational phase completes, all user stories can start in parallel (if team capacity allows)
++- All tests for a user story marked [P] can run in parallel
++- Models within a story marked [P] can run in parallel
++- Different user stories can be worked on in parallel by different team members
++
++---
++
++## Parallel Example: User Story 1
++
++```bash
++# Launch all tests for User Story 1 together (if tests requested):
++Task: "Contract test for [endpoint] in tests/contract/test_[name].py"
++Task: "Integration test for [user journey] in tests/integration/test_[name].py"
++
++# Launch all models for User Story 1 together:
++Task: "Create [Entity1] model in src/models/[entity1].py"
++Task: "Create [Entity2] model in src/models/[entity2].py"
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup
++2. Complete Phase 2: Foundational (CRITICAL - blocks all stories)
++3. Complete Phase 3: User Story 1
++4. **STOP and VALIDATE**: Test User Story 1 independently
++5. Deploy/demo if ready
++
++### Incremental Delivery
++
++1. Complete Setup + Foundational → Foundation ready
++2. Add User Story 1 → Test independently → Deploy/Demo (MVP!)
++3. Add User Story 2 → Test independently → Deploy/Demo
++4. Add User Story 3 → Test independently → Deploy/Demo
++5. Each story adds value without breaking previous stories
++
++### Parallel Team Strategy
++
++With multiple developers:
++
++1. Team completes Setup + Foundational together
++2. Once Foundational is done:
++   - Developer A: User Story 1
++   - Developer B: User Story 2
++   - Developer C: User Story 3
++3. Stories complete and integrate independently
++
++---
++
++## Notes
++
++- [P] tasks = different files, no dependencies
++- [Story] label maps task to specific user story for traceability
++- Each user story should be independently completable and testable
++- Verify tests fail before implementing
++- Commit after each task or logical group
++- Stop at any checkpoint to validate story independently
++- Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
+diff --git a/plugins/graphhelm/hooks/session_hook.py b/plugins/graphhelm/hooks/session_hook.py
+index 7280989..0b4141f 100644
+--- a/plugins/graphhelm/hooks/session_hook.py
++++ b/plugins/graphhelm/hooks/session_hook.py
+@@ -346,7 +346,7 @@ def _end_impl(payload: dict, host: str) -> None:
+     signal_id = delivery.get("signalId")
+     if not isinstance(signal, dict) or not isinstance(signal_id, str):
+         raise ValueError("invalid delivery state")
+-    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "Idempotency-Key": signal_id})
++    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "Idempotency-Key": signal_id, "X-GraphHelm-Actor-Session": session})
+     data = reply.get("data")
+     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
+         raise ValueError("signal acknowledgment did not match")
+diff --git a/specs/001-bench/checklists/requirements.md b/specs/001-bench/checklists/requirements.md
+new file mode 100644
+index 0000000..81c6a7e
+--- /dev/null
++++ b/specs/001-bench/checklists/requirements.md
+@@ -0,0 +1,43 @@
++# Specification Quality Checklist: Session End Host-Session Attribution Header
++
++**Purpose**: Validate specification completeness and quality before proceeding to planning
++**Created**: 2026-10-26
++**Feature**: [spec.md](../spec.md)
++
++## Content Quality
++
++- [x] No implementation details (languages, frameworks, APIs)
++- [x] Focused on user value and business needs
++- [x] Written for non-technical stakeholders
++- [x] All mandatory sections completed
++
++## Requirement Completeness
++
++- [x] No [NEEDS CLARIFICATION] markers remain
++- [x] Requirements are testable and unambiguous
++- [x] Success criteria are measurable
++- [x] Success criteria are technology-agnostic (no implementation details)
++- [x] All acceptance scenarios are defined
++- [x] Edge cases are identified
++- [x] Scope is clearly bounded
++- [x] Dependencies and assumptions identified
++
++## Feature Readiness
++
++- [x] All functional requirements have clear acceptance criteria
++- [x] User scenarios cover primary flows
++- [x] Feature meets measurable outcomes defined in Success Criteria
++- [x] No implementation details leak into specification
++
++## Notes
++
++- All items pass on the first validation iteration. No `[NEEDS CLARIFICATION]` markers were introduced.
++- **Wire-contract naming (intentional, documented):** The specification names concrete headers
++  (`X-GraphHelm-Actor-Session`, and by reference `X-GraphHelm-Actor`, actor type, idempotency key)
++  because the observable contract of this feature *is* the presence of a specific wire header. These
++  are treated as part of the agreed Runtime wire contract, not as implementation detail (no language,
++  framework, library, or code structure is referenced). This is recorded in the spec's Assumptions.
++- **Provisioned-checkout substitutions recorded:** No `.specify/extensions.yml` exists (all
++  `before_specify`/`after_specify` hooks skipped); no project constitution file exists, so `AGENTS.md`
++  at the repository root is used as the governance reference. Both are noted in the spec's Assumptions.
++- Items marked incomplete would require spec updates before `/speckit.clarify` or `/speckit.plan`.
+diff --git a/specs/001-bench/contracts/end-signal-request.md b/specs/001-bench/contracts/end-signal-request.md
+new file mode 100644
+index 0000000..99bda43
+--- /dev/null
++++ b/specs/001-bench/contracts/end-signal-request.md
+@@ -0,0 +1,89 @@
++# Contract: End-of-Session Signal Request
++
++**Feature**: [spec.md](../spec.md) | **Date**: 2026-10-26 | **Status**: Normative for this feature
++
++This is the wire contract between the host hook (`plugins/graphhelm/hooks/session_hook.py`) and
++the GraphHelm Runtime for the `agent_session_ended` signal. The only change this feature makes to
++the contract is the addition of one request header, `X-GraphHelm-Actor-Session`.
++
++## Transport
++
++| Property | Value |
++|----------|-------|
++| Method | `POST` |
++| Path | `/v1/executions/{execution}/signal` — `execution` URL-quoted with `safe=''` |
++| Base URL | `GRAPHHELM_RUNTIME_URL` (default `http://127.0.0.1:8791`), trailing slash stripped |
++| Auth | `Authorization: Bearer {token}` where the token is read from `GRAPHHELM_TOKEN_FILE` |
++| Content-Type | `application/json` |
++| Timeout | 1.0 s (client-side, unchanged) |
++| Redirects | Not followed (client suppresses them) |
++
++## Request body
++
++Unchanged JSON object:
++
++```json
++{ "signal": <signal object> }
++```
++
++The `signal` object is produced by `_signal()` and is unchanged by this feature. Its shape:
++
++```json
++{
++  "id": "session-end-v2-<24-hex>",
++  "source": { "type": "tool", "id": "<host>-session-<session>" },
++  "type": "agent_session_ended",
++  "severity": "low",
++  "description": "<actor> session ended; task outcome was not verified by this hook.",
++  "evidence": ["<execution>"],
++  "emittedAt": "<ISO-8601 with timezone>"
++}
++```
++
++When a declared node binding is present, a descriptive suffix is appended to `description`; it does
++not affect any header (spec Edge Case "Declared node binding present").
++
++## Request headers
++
++### Unchanged (present before and after, values unchanged — FR-003)
++
++| Header | Value |
++|--------|-------|
++| `Authorization` | `Bearer {token}` |
++| `Content-Type` | `application/json` |
++| `X-GraphHelm-Actor` | composite actor identity `{host}-session-{session}` |
++| `X-GraphHelm-Actor-Type` | `agent` |
++| `Idempotency-Key` | `session-end-v2-<24-hex>` derived from `(execution, session, host, origin)` |
++
++### Added by this feature (FR-001)
++
++| Header | Value | Rules |
++|--------|-------|-------|
++| `X-GraphHelm-Actor-Session` | The validated host session identifier from the hook payload `session_id` | Equals the value already used to build `X-GraphHelm-Actor`'s session portion and to scope local state (FR-002). Raw session id only: no host prefix, no execution id, no secret/token material (FR-006). Non-empty. Byte-for-byte identical across retried deliveries (SC-004). Present on the end request **only**; absent from the start request (FR-004). |
++
++**Case-sensitivity note**: HTTP header field names are case-insensitive. The normative name is
++`X-GraphHelm-Actor-Session`. Under Python 3.11's stdlib client the emitted bytes are the title-cased
++`X-Graphhelm-Actor-Session` (see research.md R-4); a conforming Runtime must match this header
++case-insensitively, exactly as it already does for the existing actor headers.
++
++## Response contract
++
++Unchanged. The client requires a JSON object with top-level `"ok": true` and `"data"` containing
++`executionId` equal to the bound execution and `signalId` equal to the stored idempotency key. Any
++other response (non-`ok`, wrong fields, oversized, transport error, redirect) is treated as
++unobserved: the receipt stays `delivered=false` and delivery remains retryable with identical bytes.
++
++## Idempotency & retry semantics
++
++- The `(signal body, Idempotency-Key, X-GraphHelm-Actor-Session)` triple is stable across all
++  attempts for one logical session end, because every member derives from the identity tuple
++  `(execution, session, host, origin)` that `_validate_delivery()` re-proves on each retry.
++- A change of Runtime origin changes the identity tuple, which yields a different
++  `Idempotency-Key` (existing behavior, asserted by `test_runtime_origin_is_part_of_delivery_receipt_scope`).
++
++## Out of scope
++
++- The session-start briefing request (`GET /v1/executions/{execution}/briefing`) — unchanged.
++- The Runtime-side parsing/acceptance of the new header (Runtime presence subsystem) — consumer
++  side, not part of this feature's hook-boundary change.
++- Signal body contents, token handling, redirect policy, timeouts, and state schema.
+diff --git a/specs/001-bench/data-model.md b/specs/001-bench/data-model.md
+new file mode 100644
+index 0000000..5a83564
+--- /dev/null
++++ b/specs/001-bench/data-model.md
+@@ -0,0 +1,94 @@
++# Data Model: Session End Host-Session Attribution Header
++
++**Feature**: [spec.md](spec.md) | **Date**: 2026-10-26
++
++No persistence schema changes are introduced by this feature. The entities below describe the
++runtime values the feature touches and how they relate; the only new element is one field on the
++end-of-session request entity.
++
++## Entity 1: Host Session Identifier
++
++| Property | Value |
++|----------|-------|
++| Name | `session` (in `_end_impl()`); wire source: hook payload key `session_id` |
++| Type | `str` |
++| Source | Host hook payload (`{"hook_event_name": "SessionEnd", "session_id": "..."}` read via `hook_input()`) |
++| Validation | `_session(payload)`: must be a string fully matching `ID = [A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z`; if the environment variable `GRAPHHELM_SESSION_ID` is set, the payload value must also equal it. Any failure raises before HTTP traffic is sent. |
++| Length bound | 1..128 characters (from the grammar) |
++| Secrecy | Non-secret by construction: identifier grammar only; the same value already travels in today's `X-GraphHelm-Actor` composite and in state-file derivation. Token material never enters it. |
++| Uses after validation | Composite actor identity (`{host}-session-{session}`), local state path derivation, delivery receipt `sessionId`, **and (new)** the `X-GraphHelm-Actor-Session` header value |
++
++**Constraints (from FR-002, FR-006):**
++- MUST equal the validated payload `session_id` — not the composite actor string, not the
++  execution identifier.
++- MUST NOT contain a host-name prefix (e.g. `claude-session-`), an execution identifier, or any
++  secret/token material.
++
++## Entity 2: End-of-Session Signal Request
++
++The HTTP request `_end_impl()` posts when a bound, not-yet-delivered session end occurs.
++**This feature adds exactly one field to this entity.**
++
++### Fields (unchanged)
++
++| Field | Location | Value | Change |
++|-------|----------|-------|--------|
++| Method | request | `POST` | unchanged |
++| Path | request | `/v1/executions/{execution}` with `execution` URL-quoted (`safe=''`) | unchanged |
++| Authorization | header | `Bearer {token}` from the token file | unchanged |
++| Content-Type | header | `application/json` (added by `request()` because a body is present) | unchanged |
++| Body `signal` | JSON | stored signal object built by `_signal()` (`id`, `source.type="tool"`, `source.id=<composite actor>`, `type="agent_session_ended"`, `severity`, `description`, `evidence=[execution]`, `emittedAt`) | unchanged |
++| `X-GraphHelm-Actor` | header | composite actor identity `{host}-session-{session}` | unchanged (FR-003) |
++| `X-GraphHelm-Actor-Type` | header | `agent` | unchanged (FR-003) |
++| `Idempotency-Key` | header | `session-end-v2-<digest>` derived from `(execution, session, host, origin)` | unchanged (FR-003) |
++
++### Field (new)
++
++| Field | Location | Value | Rules |
++|-------|----------|-------|-------|
++| `X-GraphHelm-Actor-Session` | header (inline in the same dict as the other attribution headers) | The validated host session identifier (Entity 1) | FR-001/FR-002/FR-006; byte-for-byte identical across retries (SC-004); additive only (FR-003); end request only — absent from the start flow (FR-004) |
++
++Note: the *normative* header name is `X-GraphHelm-Actor-Session`. Because Python 3.11's
++`urllib.request` title-cases outgoing header names, the bytes on the wire under the existing
++stdlib transport are `X-Graphhelm-Actor-Session`; HTTP consumers (including the Runtime) must
++treat the name case-insensitively, as with the existing actor headers (see
++[research.md R-4](research.md)).
++
++## Entity 3: Delivery Receipt (local hook state) — unchanged
++
++For reference of relationships only; schema stays at `version: 2`.
++
++| Field | Relation to this feature |
++|-------|--------------------------|
++| `sessionId` | Already equals the Entity 1 value; `_validate_delivery()` proves equality on every reload, which is what makes the new header retry-stable without storing anything new |
++| `signalId`, `signal`, `declaredNodeId`, `delivered` | Unchanged; no new persisted fields |
++| identity tuple (`executionId`, `host`, `origin`) | Unchanged scoping keys |
++
++## Relationships & flow
++
++```text
++hook payload.session_id
++        │  _session(): grammar + GRAPHHELM_SESSION_ID check (fail closed, pre-HTTP)
++        ▼
++   session ────────────────────────────────────────────────┐
++        │                                                  │
++        ├──► composite actor "{host}-session-{session}"    │
++        │        │                                         │
++        │        ▼                                         ▼
++        │   X-GraphHelm-Actor header          X-GraphHelm-Actor-Session header  (NEW)
++        │                                                  ▲ byte-identical on retry:
++        ├──► signal body + Idempotency-Key                 │ _validate_delivery pins
++        └──► state path / receipt sessionId ───────────────┘ receipt sessionId == session
++```
++
++## State transitions
++
++Unchanged from current behavior:
++
++- First end event (bound, no receipt): receipt created with `delivered=false`, one POST sent.
++- Ack matches `(executionId, signalId)`: receipt updated `delivered=true`; later ends send nothing.
++- Refused/mismatched ack or transport failure: receipt unchanged (`delivered=false`); the next end
++  event resends the identical body, `Idempotency-Key`, and now the identical
++  `X-GraphHelm-Actor-Session` value.
++- Unbound end: no receipt, no request — no header involved.
++- Corrupt receipt: fail closed — no POST at all.
+diff --git a/specs/001-bench/plan.md b/specs/001-bench/plan.md
+new file mode 100644
+index 0000000..7b418e7
+--- /dev/null
++++ b/specs/001-bench/plan.md
+@@ -0,0 +1,129 @@
++# Implementation Plan: Session End Host-Session Attribution Header
++
++**Branch**: `main` | **Date**: 2026-10-26 | **Spec**: [spec.md](spec.md)
++
++**Input**: Feature specification from `/specs/001-bench/spec.md`
++
++**Provisioned-checkout notes** (recorded per task instructions):
++
++- No `.specify/extensions.yml` exists, so all extension hooks (`before_plan`, `after_plan`) are skipped; the `setup-plan` JSON was taken from Stage Setup.
++- No project constitution file exists in this checkout; the `AGENTS.md` file at the repository root is used as the governance reference in place of `/memory/constitution.md`.
++- The setup scripts under `.specify/scripts/` are not present in this checkout; the Stage Setup JSON is treated as their output.
++
++## Summary
++
++When a GraphHelm-bound agent session ends, `plugins/graphhelm/hooks/session_hook.py` posts an
++`agent_session_ended` signal to the Runtime but identifies only the composite actor
++(e.g. `claude-session-session-123`) in the `X-GraphHelm-Actor` header. This feature adds one
++attribution header — `X-GraphHelm-Actor-Session` — to that end-of-session POST, carrying the raw
++validated host session identifier from the hook payload. The change is strictly additive and
++inline (no new header helper), leaves every existing end-request header unchanged, does not touch
++the session-start request, and extends the existing end-request contract test to assert the new
++header's presence and exact value while keeping the whole hook test suite green.
++
++## Technical Context
++
++**Language/Version**: Python 3.11 (measured `Python 3.11.9` on this machine); the hook already
++uses `from __future__ import annotations` and stays stdlib-only.
++
++**Primary Dependencies**: None new. Existing stdlib modules only: `urllib.request`, `json`,
++`hashlib`, `re`, `argparse`, `tempfile`, `os`, `sys`, `subprocess`/`http.server` (tests).
++
++**Storage**: N/A for this change. The hook's local state file (JSON, 32 KiB bound) already persists
++the delivery receipt with `sessionId`; its schema is unchanged.
++
++**Testing**: Python `unittest` (`plugins/graphhelm/hooks/test_session_hook.py`), which drives the
++hook through real subprocess calls against an in-process loopback `ThreadingHTTPServer` Runtime
++stub. No internet, Docker, credentials, provider accounts, or browser sessions.
++
++**Target Platform**: Windows PowerShell checkout (this machine); the hook must keep working on
++Windows, macOS, and Linux unchanged (existing `msvcrt`/`fcntl` branching untouched).
++
++**Project Type**: CLI lifecycle-hook script inside a plugin directory of an otherwise Rust
++workspace. Only two Python files in `plugins/graphhelm/hooks/` are in scope.
++
++**Performance Goals**: Unchanged. Hook HTTP timeout remains 1.0 s; input bound 64 KiB; reply
++bound 256 KiB.
++
++**Constraints**:
++
++- Additive only on the end POST: `X-GraphHelm-Actor`, `X-GraphHelm-Actor-Type`, `Idempotency-Key`
++  stay present with unchanged values (FR-003).
++- No new reusable header-helper abstraction; the header is added inline to the end request (FR-005).
++- Session-start request must not gain the header and must otherwise be unchanged (FR-004).
++- Header value is the validated host session id only — no host-name prefix, execution id, or
++  secret/token material (FR-006).
++- Retried deliveries reuse the byte-for-byte identical value (SC-004).
++- All documentation stays in English (AGENTS.md documentation-language rule).
++
++**Scale/Scope**: One expression added to the inline header dict in `_end_impl` in
++`plugins/graphhelm/hooks/session_hook.py` (line 349), plus assertions appended to the existing
++end-request test in `plugins/graphhelm/hooks/test_session_hook.py`
++(`test_end_posts_an_attributed_idempotent_observation_without_success_claim`).
++
++**Measured on-wire detail (see research.md)**: Python 3.11's `urllib.request` rewrites outgoing
++header names with `str.title()` in `AbstractHTTPHandler.do_request_`, so the stub server observes
++keys such as `X-Graphhelm-Actor`. The new header is therefore asserted in the stub as
++`X-Graphhelm-Actor-Session`; HTTP header case-insensitivity keeps the wire contract
++`X-GraphHelm-Actor-Session` itself independent of that transport artifact.
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++Governance reference: `AGENTS.md` at the repository root (substituted for the absent project
++constitution file; see provisioned-checkout notes).
++
++| # | Gate (from AGENTS.md) | Result | Justification |
++|---|-----------------------|--------|---------------|
++| 1 | Documentation language: all docs in English | PASS | All artifacts in this feature directory are written in English. |
++| 2 | Smallest adequate observer; meaningful tests (Journey-Proven Development) | PASS | The promised behavior ("end request carries the host session id header") is observed directly by extending the existing contract test with presence + exact-value assertions against a real in-process stub — no proxy, no ceremony, no new test ritual. SC-001..SC-004 are each covered by an existing or extended test (see research.md). |
++| 3 | No scaffold/stub/TODO; minimal surface (FR-005 mirrors Keel "add only surface the promise needs") | PASS | One inline header entry in the existing request call; no new module, type, function, or helper. |
++| 4 | Security rules: secrets never appear in wire material | PASS | The value is the payload `session_id` after it has passed the strict identifier grammar `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}` (and, when configured, the `GRAPHHELM_SESSION_ID` equality check) in `_session()`; it is the same non-secret value already used to build the actor identity and key local state. Token material stays confined to `Authorization`. |
++| 5 | Tests run offline: no internet, Docker, credentials, or external infra | PASS | Reuses the existing in-process loopback `ThreadingHTTPServer` fixture and subprocess harness. |
++| 6 | Deterministic, bounded behavior; retries stable (append-only delivery semantics) | PASS | The header value derives from the validated payload session, which `_validate_delivery` already pins equal to the stored delivery `sessionId`; byte-for-byte stability across retries follows (SC-004, verified by the existing retry test pattern). |
++| 7 | Studio/CLI layering and crate boundaries (Rust workspace rules) | N/A | Change is confined to the Python plugin; no crate, schema, or wire-identifier migration touched. Provisional `p50.dev` identifiers untouched. |
++| 8 | No regression: previously passing tests stay green | PASS by design | Start flow code path (`_start_impl` briefing GET) is not modified; full-suite run in quickstart is the observer (SC-002, SC-003). |
++
++**Post-design re-evaluation (after Phase 1)**: re-checked against data-model.md and
++contracts/end-signal-request.md — no violation introduced; gate results unchanged. No
++complexity justification required.
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/001-bench/
++├── plan.md              # This file (__SPECKIT_COMMAND_PLAN__ command output)
++├── research.md          # Phase 0 output (__SPECKIT_COMMAND_PLAN__ command)
++├── data-model.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── quickstart.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── contracts/           # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++│   └── end-signal-request.md
++└── tasks.md             # Phase 2 output (__SPECKIT_COMMAND_TASKS__ command - NOT created by __SPECKIT_COMMAND_PLAN__)
++```
++
++### Source Code (repository root)
++
++```text
++plugins/
++└── graphhelm/
++    ├── hooks/
++    │   ├── session_hook.py        # In scope: +1 inline header on the end POST (line ~349)
++    │   └── test_session_hook.py   # In scope: extend the existing end-request test only
++    ├── .claude-plugin/            # Out of scope: plugin manifest, install config
++    └── README.md                  # Out of scope (no behavior described there changes)
++```
++
++**Structure Decision**: Single-project layout; both changes land in the two existing files under
++`plugins/graphhelm/hooks/`. No new directories, modules, or files are introduced anywhere in the
++repository. The REST endpoint consumed (`POST /v1/executions/{execution}/signal`) is served by
++the Rust Runtime (`adapters/tool-host`); the hook side sends the header and the Runtime's
++presence subsystem is the agreed consumer per the spec — no Rust change is part of this feature.
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++No violations; table intentionally empty.
+diff --git a/specs/001-bench/quickstart.md b/specs/001-bench/quickstart.md
+new file mode 100644
+index 0000000..8c22310
+--- /dev/null
++++ b/specs/001-bench/quickstart.md
+@@ -0,0 +1,78 @@
++# Quickstart: Validate Session End Host-Session Attribution Header
++
++**Feature**: [spec.md](spec.md) | **Date**: 2026-10-26
++
++Runnable validation that proves the feature works end-to-end from this checkout, using the hook's
++own in-process Runtime stub. No network, Docker, credentials, provider account, or browser session
++is required. The full test suite is the observer for both the new behavior (SC-001) and the
++no-regression promise (SC-002/SC-003); SC-004 is observed by the existing retry test which the
++implementation must extend.
++
++## Prerequisites
++
++- Python 3.11 (`python --version` → `3.11.x`). Only the standard library is used.
++- Run from the repository root so `plugins/graphhelm/hooks/session_hook.py` resolves relative to
++  its own directory (the test computes the script path from `__file__`).
++
++There is no build step and no setup command: the hook and its tests are plain Python files.
++
++## Validation 1 — End request carries the new header (SC-001, FR-001/FR-002/FR-006)
++
++Run only the end-request contract test:
++
++```powershell
++python plugins/graphhelm/hooks/test_session_hook.py SessionHookTests.test_end_posts_an_attributed_idempotent_observation_without_success_claim
++```
++
++**Expected outcome**: exit code 0, `Ran 1 test`, `OK`. After implementation, this test must also
++assert — and pass — that the recorded end POST includes the header carrying the raw host session
++identifier. Under the stdlib client the stub records the key title-cased
++(`X-Graphhelm-Actor-Session`; see research.md R-4), with value exactly `session-123` (the value the
++test's payload supplies), while `X-Graphhelm-Actor` still equals the composite
++`claude-session-session-123`.
++
++Baseline before implementation (measured on this checkout): the same command already passes with
++the *old* assertions; the change extends the assertions.
++
++## Validation 2 — Retry reuses the identical header value (SC-004)
++
++The existing retry test is the observer once extended to compare the new header across attempts:
++
++```powershell
++python plugins/graphhelm/hooks/test_session_hook.py SessionHookTests.test_failed_delivery_is_retryable_with_the_same_signal_bytes
++```
++
++**Expected outcome**: exit code 0, `OK`. It exercises a refused first delivery (`reply_ok=False`)
++followed by a successful retry and asserts byte-for-byte equality of the signal body and the
++`Idempotency-Key` across both POSTs; the implementation adds the same equality assertion for the
++`X-GraphHelm-Actor-Session` value.
++
++## Validation 3 — Start flow unchanged and no regressions (SC-002, SC-003, FR-003/FR-004)
++
++Run the full hook suite:
++
++```powershell
++python plugins/graphhelm/hooks/test_session_hook.py -v
++```
++
++**Expected outcome**: exit code 0, every test `ok`, a final `OK`. This covers:
++
++- Every pre-existing test continues to pass (no regressions — SC-002).
++- The start-flow tests (e.g. `test_bound_start_reads_live_briefing_but_does_not_promote_objective_to_instructions`)
++  keep passing unchanged, which — combined with the fact that the only edit is inside `_end_impl`'s
++  POST call — proves the start request gains no `X-GraphHelm-Actor-Session` header (SC-003 / FR-004).
++- Secret-non-leakage assertions (`test-token`, objective text, `tool_input`) remain green.
++
++## What is NOT validated here (out of scope)
++
++- Building or exercising the Rust Runtime's acceptance of the new header — that is the consumer
++  side owned by the Runtime presence subsystem, not this hook-boundary feature. See the project's
++  normal Rust commands (`ci/gate.ps1` etc.) if a full workspace check is wanted; it is deliberately
++  not part of this feature's minimal observation.
++
++## Stop conditions
++
++- If any of the three commands above exits non-zero, stop and report it; do not treat a skipped or
++  unavailable observer as passing.
++- If the expected header cannot be observed because the stub does not record it (i.e. the transport
++  no longer emits the header), report `OBSERVER_MISSING` rather than inferring presence.
+diff --git a/specs/001-bench/research.md b/specs/001-bench/research.md
+new file mode 100644
+index 0000000..5254f38
+--- /dev/null
++++ b/specs/001-bench/research.md
+@@ -0,0 +1,142 @@
++# Research: Session End Host-Session Attribution Header
++
++**Feature**: [specs/001-bench](spec.md) | **Date**: 2026-10-26
++
++All NEEDS CLARIFICATION items from the Technical Context were resolved by direct inspection of
++the checked-out sources and one on-machine probe. No item remains open. Governance reference:
++`AGENTS.md` at the repository root (substituted for the absent project constitution file).
++
++## R-1: Exact attachment point for the new header
++
++**Question**: Where exactly does the end-of-session request get its attribution headers?
++
++**Decision**: The headers are an inline dict literal passed to `request(...)` inside
++`_end_impl()` in `plugins/graphhelm/hooks/session_hook.py` (line 349):
++
++```python
++reply = request(f"{url}/v1/executions/{...}/signal", token_from_file(token_file), "POST",
++                {"signal": signal},
++                {"X-GraphHelm-Actor": signal["source"]["id"],
++                 "X-GraphHelm-Actor-Type": "agent",
++                 "Idempotency-Key": signal_id})
++```
++
++The new entry `"X-GraphHelm-Actor-Session": session` is added to this same dict. There is no
++other code path that posts the end signal; the start flow (`_start_impl`) issues a briefing GET
++without any of these headers.
++
++**Rationale**: One insertion point covers first attempts, retries, and mismatched-ack redeliveries
++(boundaries B1-B3), because all of them go through `_end_impl`. Adding it inline satisfies FR-005
++(no new helper) and FR-003 (additive only).
++
++**Alternatives considered**:
++
++- A shared "attribution headers" builder used by both start and end — rejected: FR-005 forbids a
++  new reusable header-helper abstraction, and FR-004 keeps the start flow header-free.
++- Extending `request()` itself to derive the header from state — rejected: larger surface, would
++  couple transport to identity, and still needs an explicit opt-out for the start flow.
++
++## R-2: Value source for `X-GraphHelm-Actor-Session`
++
++**Question**: Which variable carries "the validated host session identifier supplied by the host
++hook payload" (FR-002)?
++
++**Decision**: The local `session` in `_end_impl()`, i.e. the return of `_session(payload)`.
++`_session()` enforces the strict identifier grammar
++`[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z` and, when `GRAPHHELM_SESSION_ID` is configured, an equality
++check against it — otherwise it raises before any HTTP traffic. This is the same value already
++used to build the composite actor (`f"{host}-session-{session}"` in `_signal()`), to key the local
++state file (`state_path(execution, session, host, origin)`), and to scope delivery identity.
++
++**Rationale**: Using the same validated string guarantees FR-006 (raw session id only — no host
++prefix, execution id, or secrets) by construction: the value cannot differ from what is already
++proven non-secret on the wire via the actor header and idempotency key derivation.
++
++**Alternatives considered**:
++
++- Reading `delivery["sessionId"]` from persisted state — semantically identical
++  (`_validate_delivery()` already proves `delivery.sessionId == session`) but indirection with no
++  benefit; rejected as unnecessary surface.
++- Parsing the session out of the composite actor string — rejected: reintroduces the exact
++  reverse-engineering the spec says the Runtime should stop doing.
++
++## R-3: Retry stability (SC-004)
++
++**Question**: Does the new header stay byte-for-byte identical across retried deliveries?
++
++**Decision**: Yes, by construction, with no extra mechanism. On a retry, `_read_state()` reloads
++the delivery receipt and `_validate_delivery()` raises unless the stored `sessionId` equals the
++freshly validated `session` from the current payload (identity mismatch → no POST sent). The header
++is derived from that same validated `session`, and the stored signal body / `Idempotency-Key` are
++already asserted stable by the existing tests
++(`test_failed_delivery_is_retryable_with_the_same_signal_bytes`,
++`test_killed_end_hook_releases_lock_and_retries_same_signal`). The test extension should therefore
++assert header equality across the two attempted POSTs, mirroring the existing idempotency-key
++assertion.
++
++**Rationale**: The stability question reduces to "is the value source stable?", and R-2 pins the
++source to a value the receipt-validation machinery already treats as stable identity.
++
++**Alternatives considered**: Persisting the header value in the delivery receipt — rejected: the
++value is derivable and already implicitly stored (`sessionId`); storing it twice would add schema
++surface the spec excludes.
++
++## R-4: On-wire header casing observed by the stub
++
++**Question**: With what exact key spelling does the new header arrive in the in-process stub's
++`dict(self.headers)`, so the test asserts the right thing?
++
++**Decision**: `X-Graphhelm-Actor-Session`. Measured on this machine (Python 3.11.9): when
++`urllib.request` sends a request, `AbstractHTTPHandler.do_request_` rewrites header names with
++`str.title()` (`headers = {name.title(): val for name, val in headers.items()}`), so a header set
++as `X-GraphHelm-Actor-Session` leaves the client as `X-Graphhelm-Actor-Session` and the
++`http.server` stub records exactly that key (raw wire bytes verified by probe; the existing suite
++already relies on this — e.g. line 186 asserts `sent[0][2]["X-Graphhelm-Actor-Type"]` for a header
++sent as `X-GraphHelm-Actor-Type`).
++
++**Rationale**: A probe POST through the same stack (`urllib.request.Request` → `ThreadingHTTPServer`
++handler) returned recorded keys `X-Graphhelm-Actor`, `X-Graphhelm-Actor-Type`, `Idempotency-Key`.
++The spec's wire name `X-GraphHelm-Actor-Session` remains the normative contract name
++(case-insensitive per HTTP); only the stub-side assertion uses the title-cased key.
++
++**Alternatives considered**: Asserting via a case-insensitive dict lookup in the stub — more
++robust to transport changes but alters the shared fixture's recording behavior for all tests; the
++spec's smallest-change boundary prefers the established exact-key pattern already used at line 186.
++
++## R-5: Start-flow isolation (FR-004, SC-003)
++
++**Question**: Can the change accidentally touch the start request's header set?
++
++**Decision**: No. The only edit is inside `_end_impl()`'s POST call. The start flow's sole HTTP
++call is the briefing GET in `_start_impl()` (line 268), which passes no extra headers dict and is
++not modified; its start request therefore keeps exactly `Authorization` + `Content-*` defaults.
++No previously passing test changes result because no assertion anywhere references
++`X-GraphHelm-Actor-Session` yet, and the end-request assertions being added are pure additions to
++an existing test.
++
++**Rationale**: Verified by reading both flows; the test suite's start tests
++(e.g. `test_bound_start_reads_live_briefing_but_does_not_promote_objective_to_instructions`)
++assert specific header values and remain satisfied unchanged.
++
++**Alternatives considered**: A negative test asserting the start request lacks the header — a
++reasonable add, but the spec bounds test changes to extending the *end* test (FR-007); the full
++suite staying green plus R-5's flow isolation is the required observer, and optional hardening
++belongs in tasks, not the plan's mandatory surface.
++
++## R-6: Success-criteria observability mapping
++
++**Decision**: Every success criterion has an observer available from this checkout:
++
++| Criterion | Observer |
++|-----------|----------|
++| SC-001 | Extended end-request test: header present, non-empty, value == payload `session_id` (`session-123`) in the recorded POST. |
++| SC-002 | Same extended test passing + full hook suite (`python plugins/graphhelm/hooks/test_session_hook.py`) green; baseline green run measured on this checkout (see quickstart.md). |
++| SC-003 | Start-flow code path unmodified (R-5) + start tests green in the full-suite run. |
++| SC-004 | Retry-stability assertion on the header added to the existing retry test (`test_failed_delivery_is_retryable_with_the_same_signal_bytes`), mirroring its idempotency-key assertion. |
++
++**Rationale**: No criterion depends on the real Runtime or network; the in-process stub records the
++exact header dict, so presence/value are directly observable, not inferred.
++
++**Alternatives considered**: A live Runtime check against `adapters/tool-host` — out of scope
++(spec bounds the work to hook + its tests) and would require building the Rust workspace,
++explicitly disfavored for verification here.
+diff --git a/specs/001-bench/spec.md b/specs/001-bench/spec.md
+new file mode 100644
+index 0000000..7c03fdf
+--- /dev/null
++++ b/specs/001-bench/spec.md
+@@ -0,0 +1,82 @@
++# Feature Specification: Session End Host-Session Attribution Header
++
++**Feature Branch**: `n/a` (branch creation is handled by the `before_specify` hook, which is skipped in this provisioned checkout; no `.specify/extensions.yml` exists)
++
++**Created**: 2026-10-26
++
++**Status**: Draft
++
++**Input**: User description: "When a GraphHelm-bound session ends, `plugins/graphhelm/hooks/session_hook.py` posts an `agent_session_ended` signal to the Runtime. The request names the actor (`X-GraphHelm-Actor`) but not the host session, so the Runtime's structured presence record has no session id. Send the host session id in the `X-GraphHelm-Actor-Session` header of that end request, and extend the existing end-request test in `plugins/graphhelm/hooks/test_session_hook.py` to assert it. Do not add a new header helper or change the start request; the hook's other tests must stay green."
++
++## User Scenarios & Testing *(mandatory)*
++
++### User Story 1 - Attribute an ended session to its host session (Priority: P1)
++
++When a GraphHelm-bound agent session ends, the hook posts an `agent_session_ended` signal to the Runtime. Today the request identifies the *actor* (a composite of host and session, e.g. `claude-session-session-123`) but not the raw host session identifier on its own, so the Runtime's structured presence record cannot record which originating host session produced the observation. After this feature, every end-of-session signal request carries the host session identifier in a dedicated `X-GraphHelm-Actor-Session` header, so the Runtime can attribute the presence record to the exact originating session without having to reverse-engineer it from the composite actor name.
++
++**Why this priority**: This is the core value of the feature. Without it the Runtime's presence record remains ambiguous about the originating session; with it, presence accounting is directly attributable per session. It is the minimal slice that delivers the complete user need on its own.
++
++**Independent Test**: Fully testable by running the existing end-of-session contract test against the in-process Runtime stub and asserting that the recorded end request contains the `X-GraphHelm-Actor-Session` header carrying the host session identifier. That single assertion delivers the observable outcome.
++
++**Acceptance Scenarios**:
++
++1. **Given** a bound session (an execution binding is configured) whose host payload carries a valid host session identifier, **When** the hook handles the session-end event and posts the `agent_session_ended` signal, **Then** the request sent to the Runtime includes the `X-GraphHelm-Actor-Session` header whose value equals that host session identifier.
++2. **Given** the same end request described above, **When** it is posted, **Then** all headers the request carried before this change (actor identity, actor type, idempotency key) are still present with unchanged values, and the new header is additive only.
++3. **Given** the existing contract test for the end request, **When** the test suite runs, **Then** it asserts the new header's presence and value and passes, and every other hook test in the suite continues to pass.
++
++---
++
++### User Story 2 - Keep the session-start flow unchanged (Priority: P2)
++
++The new header belongs specifically to the end-of-session signal request. The session-start flow already behaves correctly and must not gain a new header or otherwise change as a side effect of this work.
++
++**Why this priority**: Protects against regression. The value delivered by Story 1 is only trustworthy if the rest of the hook's observable behavior is provably unchanged.
++
++**Independent Test**: Testable by running the session-start contract tests and confirming the start request's header set is exactly what it was before the change (no `X-GraphHelm-Actor-Session` header appears on the start request).
++
++**Acceptance Scenarios**:
++
++1. **Given** a bound session at start time, **When** the hook handles the session-start event, **Then** the briefing request it sends does not include the `X-GraphHelm-Actor-Session` header.
++2. **Given** the full hook test suite before and after the change, **When** both are run, **Then** no previously passing test changes result (the change introduces no regressions).
++
++---
++
++### Edge Cases
++
++- **Unbound end (no execution configured):** No request is sent to the Runtime at all, so there is nothing to attach a header to. Behavior and silence are unchanged from today.
++- **Retry after a refused or mismatched acknowledgment:** Delivery is retried using the same stored signal. The retried end request MUST reuse the identical `X-GraphHelm-Actor-Session` value as the original attempt, consistent with how the signal body and idempotency key already stay stable across retries.
++- **Declared node binding present:** A configured node label affects only the descriptive text of the signal. The `X-GraphHelm-Actor-Session` header still carries only the raw host session identifier and is not affected by node binding.
++- **Header value source:** The value sent MUST be the validated host session identifier taken from the host payload, not the composite actor string and not the execution identifier. It MUST NOT contain secret or token material.
++
++## Requirements *(mandatory)*
++
++### Functional Requirements
++
++- **FR-001**: The system MUST include the host session identifier in the end-of-session signal request sent to the Runtime, transmitted in the `X-GraphHelm-Actor-Session` header.
++- **FR-002**: The value of `X-GraphHelm-Actor-Session` MUST equal the validated host session identifier supplied by the host hook payload — the same identifier the hook already uses to build the actor identity and to scope local hook state.
++- **FR-003**: The change MUST be additive on the end request: every header the end request carried before the change (actor identity, actor type, idempotency key) MUST remain present with unchanged values.
++- **FR-004**: The session-start request MUST NOT gain the `X-GraphHelm-Actor-Session` header, and the start flow MUST otherwise be unchanged.
++- **FR-005**: No new reusable header-helper abstraction MAY be introduced for this change; the header is added inline to the end request.
++- **FR-006**: The `X-GraphHelm-Actor-Session` value MUST be the raw host session identifier only — it MUST NOT include the host-name prefix (e.g. `claude-session-`), the execution identifier, or any secret/token material.
++- **FR-007**: The existing end-request contract test MUST be extended to assert the presence and value of the `X-GraphHelm-Actor-Session` header on the posted end request, and the extension MUST pass while leaving all other hook tests green.
++
++### Key Entities
++
++- **End-of-session signal request**: The HTTP request the hook sends to the Runtime when a bound session ends. It carries the signal body plus attribution headers (actor identity, actor type, idempotency key). This feature adds one more attribution header (`X-GraphHelm-Actor-Session`) to it.
++- **Host session identifier**: The session identifier the host supplies in the end-of-session payload and that the hook validates against its identifier grammar. It is the single source of the new header's value and is distinct from both the composite actor identity and the execution identifier.
++
++## Success Criteria *(mandatory)*
++
++### Measurable Outcomes
++
++- **SC-001**: 100% of bound end-of-session signal requests observed by the Runtime carry a non-empty `X-GraphHelm-Actor-Session` header whose value equals the originating host session identifier.
++- **SC-002**: In the end-request contract test, the new header's presence and exact value are asserted and pass, and zero previously passing hook tests regress (the full hook suite stays green).
++- **SC-003**: Zero new headers appear on the session-start request relative to the pre-change behavior.
++- **SC-004**: For any retried end-of-session delivery, the `X-GraphHelm-Actor-Session` value is byte-for-byte identical across attempts (idempotent), matching the stability already required of the signal body and idempotency key.
++
++## Assumptions
++
++- **Host session identifier = the validated `session_id` from the host hook payload.** This is the identifier the hook already validates and uses for the actor and state keying; it is bounded by the existing identifier grammar and contains no secrets.
++- **The wire identifier `X-GraphHelm-Actor-Session` is the agreed header name shared with the Runtime presence subsystem.** The header name is treated here as part of the wire contract that makes the outcome verifiable (it is what the contract test asserts), even though the surrounding behavior is described technology-agnostically.
++- **Provisioned-checkout substitutions:** No `.specify/extensions.yml` exists, so both `before_specify` and `after_specify` hooks are skipped, and branch creation did not occur. No project constitution file exists in this checkout; `AGENTS.md` at the repository root is used as the governance reference in its place.
++- **Scope is strictly bounded to the end request** of `session_hook.py` and its end-request contract test. The start request, the signal body contents, the idempotency scheme, and local state schema are out of scope and must remain unchanged.
+diff --git a/specs/001-bench/tasks.md b/specs/001-bench/tasks.md
+new file mode 100644
+index 0000000..c93a6f9
+--- /dev/null
++++ b/specs/001-bench/tasks.md
+@@ -0,0 +1,192 @@
++# Tasks: Session End Host-Session Attribution Header
++
++**Input**: Design documents from `/specs/001-bench/`
++
++**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/end-signal-request.md, quickstart.md — all present in FEATURE_DIR
++
++**Tests**: Explicitly requested by this feature (FR-007 extends the end-request contract test; SC-004 requires a retry-stability assertion), so test tasks are included below. They are written FIRST and observed to FAIL (red) before implementation.
++
++**Organization**: Tasks are grouped by user story so each story can be implemented and tested independently.
++
++**Provisioned-checkout notes** (recorded per task instructions):
++
++- No `.specify/extensions.yml` exists in this checkout; all extension hooks (`before_tasks`, `after_tasks`) are skipped, including any mandatory ones (there are none registered).
++- No project constitution file exists; `AGENTS.md` at the repository root is used as the governance reference in place of `/memory/constitution.md`.
++- The setup scripts under `.specify/scripts/` are not present; the Stage Setup JSON (`FEATURE_DIR: specs/001-bench`, `TASKS_TEMPLATE: .specify/templates/tasks-template.md`, `AVAILABLE_DOCS: []`) is treated as their output, with the relative paths resolved against the repository root. The setup JSON omitted `TASKS_TEMPLATE_CONTENT`, so the structure of `.specify/templates/tasks-template.md` is used.
++- `AVAILABLE_DOCS` was empty in the JSON, but all six design documents listed above exist on disk under `specs/001-bench/` and were used; nothing further was assumed.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files/concerns, no dependencies on incomplete tasks)
++- **[Story]**: Which user story this task belongs to (US1, US2)
++- Exact file paths are included in every task description
++
++## Path Conventions
++
++Single-project layout; every path below is relative to the repository root. All source changes are
++confined to the two existing files (plan.md Structure Decision — no new directories, modules, or
++files anywhere):
++
++```text
++plugins/graphhelm/hooks/session_hook.py        # implementation: one inline header entry in _end_impl()
++plugins/graphhelm/hooks/test_session_hook.py   # test extensions only
++```
++
++---
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Establish the measured pre-change baseline so the no-regression promise (SC-002) has recorded evidence on both sides, per quickstart.md's stop conditions ("a skipped or unavailable observer never counts as a pass").
++
++- [X] T001 Confirm `python --version` reports 3.11.x, then run the full hook suite from the repository root with `python plugins/graphhelm/hooks/test_session_hook.py -v` and record exit code 0 with every test `ok` as the pre-change baseline next to the change (the "before" side of SC-002); the suite target is `plugins/graphhelm/hooks/test_session_hook.py`
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
++
++**None required** — documented rather than omitted, so an implementer does not infer a skipped step. The insertion point (the inline header dict literal passed to `request(...)` inside `_end_impl()` at `plugins/graphhelm/hooks/session_hook.py` line ~349) and the value source (the local `session` returned by `_session(payload)`) both already exist and stay unchanged in structure (research.md R-1, R-2). There is no schema, dependency, module, helper, or fixture work blocking either story. Do not invent foundation tasks.
++
++**Checkpoint**: Foundation complete (trivially) — user story implementation can begin.
++
++---
++
++## Phase 3: User Story 1 - Attribute an ended session to its host session (Priority: P1) 🎯 MVP
++
++**Goal**: Every bound end-of-session signal POST carries the new attribution header `X-GraphHelm-Actor-Session`, whose value equals the validated raw host session identifier, so the Runtime's presence record can attribute the observation to the originating session without parsing the composite actor name (FR-001, FR-002, FR-006; SC-001, SC-004).
++
++**Independent Test**: With US1 implemented, from the repository root run
++`python plugins/graphhelm/hooks/test_session_hook.py SessionHookTests.test_end_posts_an_attributed_idempotent_observation_without_success_claim`
++→ exit 0, `Ran 1 test`, `OK`, with the new presence + exact-value assertions passing, then
++`python plugins/graphhelm/hooks/test_session_hook.py SessionHookTests.test_failed_delivery_is_retryable_with_the_same_signal_bytes`
++→ exit 0, `OK`, with the cross-attempt header-equality assertion passing. No Runtime build, network, Docker, or credentials needed (quickstart.md Validations 1–2).
++
++### Tests for User Story 1 ⚠️
++
++> **Write these tests FIRST and ensure they FAIL before implementation.**
++
++- [X] T002 [US1] Extend `SessionHookTests.test_end_posts_an_attributed_idempotent_observation_without_success_claim` (line ~179) in `plugins/graphhelm/hooks/test_session_hook.py`: after the existing `X-Graphhelm-Actor-Type` assertion (line ~186) add (a) `self.assertEqual(sent[0][2]["X-Graphhelm-Actor-Session"], "session-123")` — the stub key is the title-cased form because Python 3.11's `urllib.request` rewrites outgoing header names via `str.title()` (research.md R-4; the normative wire name remains `X-GraphHelm-Actor-Session`), where `"session-123"` is the value the test's payload supplies; (b) a non-emptiness guard on that same recorded value; (c) an assertion that the new header value contains no secret/token material (mirror the existing `self.assertNotIn("test-token", ...)` style applied to the recorded body); and (d) a re-assertion that `sent[0][2]["X-Graphhelm-Actor"]` still equals the composite `claude-session-session-123` — i.e. the new value MUST equal the validated payload `session_id`, NOT the composite actor string and NOT the execution identifier, and MUST NOT contain a host-name prefix such as `claude-session-` (data-model.md Entity 1 constraints from FR-002/FR-006; grammar `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z`, length bound 1..128 chars, enforced upstream by `_session()`). Run only this test; it MUST fail before T004 lands (red).
++- [X] T003 [US1] Extend `SessionHookTests.test_failed_delivery_is_retryable_with_the_same_signal_bytes` (line ~209) in `plugins/graphhelm/hooks/test_session_hook.py`: directly beneath the existing idempotency-key equality assertion (line ~218) add `self.assertEqual(sent[0][2]["X-Graphhelm-Actor-Session"], sent[1][2]["X-Graphhelm-Actor-Session"])` so the retried end delivery's header value is asserted byte-for-byte identical across attempts (SC-004, mirroring research.md R-3). Same file as T002, so run after T002. Run only this test; it MUST fail before T004 lands (red).
++
++### Implementation for User Story 1
++
++- [X] T004 [US1] In `_end_impl()` in `plugins/graphhelm/hooks/session_hook.py` (line ~349), add exactly one entry to the existing inline header dict literal passed to `request(...)`: `"X-GraphHelm-Actor-Session": session`, where `session` is the local variable produced by `_session(payload)` (already validated against the identifier grammar `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z` and, when `GRAPHHELM_SESSION_ID` is set, equality-checked against it). Constraints: no new helper function, module, type, or parameter anywhere (FR-005); `X-GraphHelm-Actor`, `X-GraphHelm-Actor-Type`, and `Idempotency-Key` keep their exact current expressions and values (FR-003); `_start_impl()` and every other line of the file stay byte-identical (FR-004). Depends on T002+T003 (their red state proves absence first). After the edit, run quickstart.md Validation 1 and Validation 2 commands; both MUST exit 0 with `OK` (green).
++
++**Checkpoint**: At this point User Story 1 is fully functional and testable independently — the extended end-request test passes with the new header asserted present and correctly valued, and the retry test asserts header stability across attempts.
++
++---
++
++## Phase 4: User Story 2 - Keep the session-start flow unchanged (Priority: P2)
++
++**Goal**: Prove the change is confined to the end POST: the session-start briefing GET gains no `X-GraphHelm-Actor-Session` header and no other observable behavior changes (FR-003, FR-004; SC-002, SC-003).
++
++**Independent Test**: From the repository root run `python plugins/graphhelm/hooks/test_session_hook.py -v` → exit 0, every test `ok`, final `OK`; and confirm via the working-tree diff that the only edit in `plugins/graphhelm/hooks/session_hook.py` sits inside `_end_impl()`'s POST call (quickstart.md Validation 3 + research.md R-5).
++
++### Verification for User Story 2
++
++No code is written in this story; it observes that US1's change broke nothing. **No new test is added**: FR-007 bounds test changes to extending the end-request test, and the unchanged start-flow tests plus the limited diff are the agreed observers for SC-003 (research.md R-5).
++
++- [X] T005 [P] [US2] Diff-isolation check: inspect the working-tree diff and confirm the ONLY change to `plugins/graphhelm/hooks/session_hook.py` is the single added header entry inside the `_end_impl()` POST call (line ~349); `_start_impl()`'s briefing GET (line ~268) still passes no extra headers dict and is untouched, `request()` is untouched, no TODO/TBD/stub marker was introduced, and no file outside `plugins/graphhelm/hooks/session_hook.py` and `plugins/graphhelm/hooks/test_session_hook.py` was modified.
++- [X] T006 [P] [US2] Run the full hook suite from the repository root: `python plugins/graphhelm/hooks/test_session_hook.py -v` — expected exit 0, every test `ok`, final `OK`. The unchanged start-flow tests (e.g. `test_bound_start_reads_live_briefing_but_does_not_promote_objective_to_instructions`) are the observer that the start request keeps exactly its pre-change header set with zero new headers (SC-003), and the suite-wide green against the T001 baseline is the observer for SC-002.
++
++**Checkpoint**: At this point User Stories 1 AND 2 are both verified independently — US1's behavior observed directly on the end request; US2's non-regression observed on the full suite and the isolated diff.
++
++---
++
++## Phase 5: Polish & Cross-Cutting Concerns
++
++**Purpose**: Contract-level conformance sweep over the finished change.
++
++- [X] T007 [P] Re-read `specs/001-bench/contracts/end-signal-request.md` and check each row of its Request headers table against the final diff: unchanged headers keep identical expressions; the added header's value equals the validated `session_id`; the retry-stability triple `(signal body, Idempotency-Key, X-GraphHelm-Actor-Session)` still derives solely from `(execution, session, host, origin)`; the stub-side assertion uses the title-cased key `X-Graphhelm-Actor-Session` while all documentation keeps the normative spelling `X-GraphHelm-Actor-Session`; every touched text stays in English (AGENTS.md documentation-language rule).
++- [X] T008 Run all three quickstart.md validation commands against `plugins/graphhelm/hooks/test_session_hook.py` from the repository root in order — Validation 1 and Validation 2 as single-test runs, then Validation 3 as `python plugins/graphhelm/hooks/test_session_hook.py -v` — and record each exit code: any non-zero exit halts the feature (stop condition); if the stub no longer records the header at all, report OBSERVER_MISSING instead of inferring presence. Also confirm no new dependencies were introduced (stdlib-only invariant, plan.md Technical Context).
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies — can start immediately; records the pre-change baseline.
++- **Foundational (Phase 2)**: No tasks — intentionally empty (insertion point and value source already exist, research.md R-1/R-2); blocks nothing.
++- **User Story 1 (Phase 3)**: Depends on Phase 1 (baseline recorded). Internal order is fixed: T002 → T003 (both edit `plugins/graphhelm/hooks/test_session_hook.py`) → T004 (red tests must fail before the fix lands).
++- **User Story 2 (Phase 4)**: Depends on T004 (it verifies the change US1 made); T005 and T006 are independent of each other.
++- **Polish (Phase 5)**: Depends on both stories being complete; T007 and T008 are independent of each other.
++
++### User Story Dependencies
++
++- **User Story 1 (P1)**: Can start after Setup (Phase 1) — no dependencies on other stories. This is the MVP.
++- **User Story 2 (P2)**: Can start once T004 lands — it verifies US1's isolation and contains no implementation work of its own, so it never blocks anything.
++
++### Within Each User Story
++
++- Tests are written and observed to FAIL before implementation (T002/T003 red, T004 green).
++- One file at a time: T002 and T003 share `plugins/graphhelm/hooks/test_session_hook.py`, so they are serialized.
++- Each story checkpoint is reached and validated before moving to the next priority.
++
++### Parallel Opportunities
++
++- T005 ∥ T006 (US2: diff inspection and the full-suite run are independent observers of the same completed head).
++- T007 ∥ T008 (Polish: contract sweep and final validation runs are independent).
++- Everything else is sequential by design: single-file edits and the RED-before-GREEN ordering.
++
++---
++
++## Parallel Example: User Story 2
++
++```bash
++# After T004 lands, launch together:
++Task: "Diff-isolation check over plugins/graphhelm/hooks/session_hook.py"                # T005
++Task: "python plugins/graphhelm/hooks/test_session_hook.py -v"                          # T006
++```
++
++User Story 1 has no parallel pair: T002 → T003 share one file, and T004 must land only after both fail red.
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup — record the green baseline (T001).
++2. Complete Phase 2: confirm intentionally empty (no tasks).
++3. Complete Phase 3: T002, T003 (red), then T004 (green).
++4. **STOP and VALIDATE**: run quickstart.md Validations 1 and 2 independently; both must exit 0.
++5. At this point the end request carries the attributable header — the complete user need (SC-001, SC-004) is delivered on its own.
++
++### Incremental Delivery
++
++1. Complete Setup (Phase 1) → baseline recorded.
++2. Add User Story 1 → validate independently → MVP.
++3. Add User Story 2's verification → full suite green, diff isolated (SC-002/SC-003 proven against the baseline).
++4. Polish (Phase 5) → contract sweep + final three-command validation.
++5. Each increment adds value without re-opening the previous story's files beyond observation.
++
++### Scope Discipline (Keel, AGENTS.md)
++
++- The only production edit is one dict entry in one function. Any temptation to factor out a header builder, persist the header value in the delivery receipt, or touch `request()` / `_start_impl` is a deviation from FR-004/FR-005 and must be rejected (research.md R-1, R-2, R-5 alternatives, all considered and rejected there).
++- Keep commits small and independently buildable with conventional commit messages (AGENTS.md).
++- A later green result never erases an earlier red one: keep T002/T003's failing output as evidence distinct from T004's passing output.
++
++---
++
++## Notes
++
++- [P] tasks = different files/concerns, no dependency on incomplete work
++- [Story] label maps each task to a specific user story for traceability
++- Each user story is independently completable and testable (criteria above)
++- Verify tests fail before implementing; verify the suite green after
++- Commit after each task or logical group
++- Stop at any checkpoint to validate the story independently
++- Avoid: vague tasks, same-file conflicts, cross-story dependencies that break independence
++
++## Implementation Evidence (measured on this checkout, 2026-10-26, Python 3.11.9)
++
++- **T001 (baseline, before any change)**: `python plugins/graphhelm/hooks/test_session_hook.py -v` → exit 0, 26 tests, all `ok`, final `OK`.
++- **T002 (red)**: after the test extension only, single-test run → exit 1, `KeyError: 'X-Graphhelm-Actor-Session'` (the stub recorded no such header; absence proven before the fix).
++- **T003 (red)**: the retry test's new header-equality assertion reads from the same absent key and fails for the same reason; kept as a distinct red observation of SC-004's new dimension.
++- **T004 (green)**: after the one-line production edit, Validation 1 → exit 0, `Ran 1 test`, `OK`; Validation 2 → exit 0, `Ran 1 test`, `OK`.
++- **T005 (diff isolation)**: `git diff` shows exactly one added entry (`"X-GraphHelm-Actor-Session": session`) inside `_end_impl()`'s POST call; `_start_impl()`, `request()`, and all other lines unchanged; no file outside the two in-scope files modified among tracked paths.
++- **T006**: full suite → exit 0, 26 tests, all `ok`, final `OK` (identical to the T001 baseline plus the extended assertions).
++- **T007**: contract table rows checked against the final diff (see Phase 5 report); all touched text in English.
++- **T008**: Validation 1 exit 0, Validation 2 exit 0, Validation 3 exit 0 (final `OK`); stub records the header on both POSTs, so OBSERVER_MISSING does not apply; no new imports/dependencies (stdlib-only kept).

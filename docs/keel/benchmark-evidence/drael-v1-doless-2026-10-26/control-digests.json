@@ -1,0 +1,151 @@
+{
+ "note": "Frozen-control digests for the 2026-10-26 drael-v1 do-less battery. Surface digests are the values recorded in every row (SHA-256 over the decoded text, as computed by tools/token-bench/run.py digest_bytes). Arm-k surface files were verified identical to the repository state at report-writing time; keel-digest.md is CRLF on disk, so its raw-file SHA differs from the row digest computed over decoded text.",
+ "repoHeadAtReportTime": "8469dc1894bc20645eaea953195d031c1bead4a5",
+ "opencodeCli": {
+  "path": "C:\\Users\\gabri\\AppData\\Roaming\\npm\\node_modules\\@opencode\\cli\\bin\\opencode.exe",
+  "version": "opencode v2.1.4",
+  "sha256": "b12b0613e9b4a491e5b12d90a5e9bbae6d261fe9688c82bf73125a036963d399"
+ },
+ "graphhelmCli": {
+  "path": "C:\\Users\\gabri\\.cargo\\bin\\graphhelm.exe",
+  "sha256": "14b1c732d95bf1e1f8b528266ad58c4019e803e3ae18db9829386cd573f117df"
+ },
+ "resultsJsonlSha256": "0aeb5d47a30a8dd4b9232d6d02dede1600bd9f7c22ffa8bb7cd9061eb0e6344a",
+ "perArmSurfaceDigestsAsRecordedInRows": {
+  "k": [
+   "{\"agentsKeel\": \"sha256:1c78f2c98c467e28e2fb5588dd7e5dda1e9ebf6c00321e24bf10ea89f541e50a\", \"keelYaml\": \"sha256:9671bf52659715f3abaabc7801567f47f8bc148a18adbfc2bcb91d393eb68e6c\", \"skill\": \"sha256:a1ad951f68ab85f42b652b75dc6b0d77a56984154ea40fd0dd2ab6e876986100\"}"
+  ],
+  "a": [
+   "null"
+  ],
+  "d": [
+   "{\"digest\": \"sha256:5076244fecbcd4db74490fa1f3226aef3bfd4b206ade8098191d7b3a4833e885\"}"
+  ]
+ },
+ "taskControls": {
+  "py-actor-session-header": {
+   "parentSha": "08dc05c486e76edc0f9a4a3de2dbf336adc07e31",
+   "fixSha": "4cc5ab0ec5f1c35846efbd3440cba5d3cca742f1",
+   "split": "train",
+   "promptSha256": "de34684ef47b621447da03e1662f8fb49c1c8b1714ad930070050c9d9e1dc698",
+   "cardSha256": "76bd750a29b83d509ed8eeefe48a7fa87ff0056787cb8e6e19dff060c39ced0a",
+   "oracleSha256": "90b39b1c2f930877dc2c99759ad29707ff4c9859424d3c7ee15fb091084598a4",
+   "regressionObsSha256": {}
+  },
+  "py-mcp-meta": {
+   "parentSha": "2edb5b989ed6bbcd251dc95dbf5f431e3f8c93ef",
+   "fixSha": "5f3e500b9ec69584ef0ac8ca39edebc64de2d7fc",
+   "split": "train",
+   "promptSha256": "e02fb8578b0b84aa6da34febc802bbd11f8780b39a9543603ade8a52a112a220",
+   "cardSha256": "78529b140f2a34239d59069c65a7dc4cca776e76ba356a530934dbfcfc31a295",
+   "oracleSha256": "2fa91e97238cca6fdb6fb05aadaff5f261b73ccb48b8ecf843fb67d88eb8acf7",
+   "regressionObsSha256": {}
+  },
+  "py-sessionend-cap": {
+   "parentSha": "e6ef2719fae30b1b3d63af8c92b638948b1686b8",
+   "fixSha": "98dbd5904248c1983cedc270149cc6d07310116f",
+   "split": "test",
+   "promptSha256": "a57ef2ee974242797bdd76a922bc033968830d47a45dd0290da0fa24f8cbf47c",
+   "cardSha256": "cf8ba7cb8ff2794dd554da2f6f2f90ddb93f4356009203f2b48825b90ce8dc78",
+   "oracleSha256": "b6867d39b1cd1925027c0e4095d0126b7539e29f3ecaf96717efa6a326d5cf73",
+   "regressionObsSha256": {}
+  },
+  "docs-config-risk": {
+   "parentSha": "69dd973db243a6da180fd33409b83e270024e0b8",
+   "fixSha": "08dc05c486e76edc0f9a4a3de2dbf336adc07e31",
+   "split": "train",
+   "promptSha256": "5398510bf195500645a43f869ed99ec688be6401d7d1039e169b7f4c1ea26091",
+   "cardSha256": "274befb05a86e64ea98ca0fe5208127991342cc0096fb22b01d96cb317ad901d",
+   "oracleSha256": "24d80af97fcd014c5d25ed6d388ea153128fb55aae1a9380f7d21b83e22afd57",
+   "regressionObsSha256": {}
+  },
+  "docs-doc-comments": {
+   "parentSha": "25b34edc900699548e15beaba489f94693af84e3",
+   "fixSha": "28eb9c6a01c089ff2e5dc1aa8e3ffcc213f3da17",
+   "split": "test",
+   "promptSha256": "c922fc4720eafde92a00473d1450daf408227c8e1b3bcf30f8a271277c84c807",
+   "cardSha256": "bf35ab18424df6eac7c307ad4ce383219ac44337a98c39db4ca281dcbc32276c",
+   "oracleSha256": "2172400e87c15173286fe18bb31a43d7e978c2360ccc0f439a6980f4dd9ce631",
+   "regressionObsSha256": {}
+  },
+  "rs-signal-id-retry": {
+   "parentSha": "a2bf7d97f29971c68541ba5268d9f74854331863",
+   "fixSha": "28ab6f00148670236f573179f698cb578f8c5383",
+   "split": "train",
+   "promptSha256": "34cda5cb4d97d2ba08f21c1b4e74a1b78bd9f868f7c4c99cda4841aab8c5efda",
+   "cardSha256": "f4ff2cf10b89acc2c2aa5b06b9bbb3e6ece42e0dbb094fde211a507755ab9598",
+   "oracleSha256": "549c2b0b959a521b98a546ccf55f70b0758cd4002bb81499414f08923afa3424",
+   "regressionObsSha256": {}
+  },
+  "om-win-arm64": {
+   "parentSha": "708cd9075ef496d9c6add3ebdcf9055956928e10",
+   "fixSha": null,
+   "split": "test",
+   "promptSha256": "fb8e886c23f96fe27a19f337ffa82fdfe424f52cdd27b548ae1ddcf0b88ca6e5",
+   "cardSha256": "37f1b51f93b878ce15014d1a72c93f2ca2f8b2105e1746537f199a6347f2ebbd",
+   "oracleSha256": "eeddadcbb40dfc63de68ad78a3d44aa96b4a39b8feb32cfb0095f118a2e06e14",
+   "regressionObsSha256": {}
+  }
+ },
+ "evaluatorScriptsSha256": {
+  "tools/token-bench/doless/oracles/docs_config_risk.py": "24d80af97fcd014c5d25ed6d388ea153128fb55aae1a9380f7d21b83e22afd57",
+  "tools/token-bench/doless/oracles/docs_doc_comments.py": "2172400e87c15173286fe18bb31a43d7e978c2360ccc0f439a6980f4dd9ce631",
+  "tools/token-bench/doless/oracles/explore_routing.py": "bcf14bb81c4e1a219a205f8090e89d128632d6fbde6b6b79d9cc742a9b6705b0",
+  "tools/token-bench/doless/oracles/explore_status_delegation.py": "ec31a3232e459e4e29e199ce90f0558d00647d53792c0992bbdc89f338750faa",
+  "tools/token-bench/doless/oracles/observer_missing.py": "eeddadcbb40dfc63de68ad78a3d44aa96b4a39b8feb32cfb0095f118a2e06e14",
+  "tools/token-bench/doless/oracles/py_actor_session_header.py": "90b39b1c2f930877dc2c99759ad29707ff4c9859424d3c7ee15fb091084598a4",
+  "tools/token-bench/doless/oracles/py_mcp_meta.py": "2fa91e97238cca6fdb6fb05aadaff5f261b73ccb48b8ecf843fb67d88eb8acf7",
+  "tools/token-bench/doless/oracles/py_sessionend_cap.py": "b6867d39b1cd1925027c0e4095d0126b7539e29f3ecaf96717efa6a326d5cf73",
+  "tools/token-bench/doless/oracles/review_end_ack.py": "1ac6886e858eff4226b26a9b5306eca29ec7d97ab34fa7f8631fb5866bc00b85",
+  "tools/token-bench/doless/oracles/review_hook_framing.py": "6be123719d97c444b54f4ee0ff910e6d0a325537f1a5c0b8120b42a0be0fc444",
+  "tools/token-bench/doless/oracles/rs_signal_id_retry.py": "549c2b0b959a521b98a546ccf55f70b0758cd4002bb81499414f08923afa3424",
+  "tools/token-bench/doless/oracles/verify_end_ack_evidence.py": "2243b048a75e51e2af16398f8252a8144427dd923736b5695e9cdba038515d22",
+  "tools/token-bench/doless/oracles/_lib.py": "c4c0e52432b7abddca6c8366f9dd11a6fb35e85beeea96acec8ee0b75dcc1bd4",
+  "tools/token-bench/doless/regressions/diff_check.py": "a5977a1b3a60c4c0f27c1f75a03d366fd56f6fb35dee0ed380c24f83b8c4e862"
+ },
+ "crossMethod": {
+  "note": "Cross-method comparison battery (arms s = Spec Kit 4-stage, o = OpenSpec 2-stage), same executor/tasks/scorer as the main battery. Surface digests below are raw-file SHA-256 of the pinned command markdown in tools/token-bench/doless/surfaces/{spec-kit,openspec}/; each ledger row also carries its per-stage prompt digests (surfaceDigests/promptDigest fields), so row scoring does not depend on the driver file's later state. Committed drivers carry documented post-run fixes (ARTIFACT_PREFIXES 'o' string-to-tuple fix, top-level import traceback, repo-relative env-overridable path resolution); see the driver docstrings and CROSS-METHOD.md section 9.",
+  "windowUtc": {
+   "firstRowAt": "2026-10-26T19:45:44Z",
+   "lastRowAt": "2026-10-27T06:53:52Z",
+   "rows": 28
+  },
+  "openspecCli": {
+   "version": "1.15.0",
+   "install": "npm global (Fission-AI/OpenSpec)",
+   "telemetryEnv": "OPENSPEC_TELEMETRY=0"
+  },
+  "specKitSource": "github/spec-kit@main templates (fetched 2026-10-26, no .specify scripts present in checkout; JSON outputs given inline per driver prelude)",
+  "surfaceFileSha256": {
+   "s/specify.md": "7d5a88e6afa504f1d16503df6bf8664f30e3df812b83f9a456a2eaccaeb638ee",
+   "s/plan.md": "206a0386d20b3eed4c087a4d9de247a3e7b2b59348bf3c801fc74f63ca2726a5",
+   "s/tasks.md": "2f9176c6e7c23d2a83d2bd018ffa1e67aee977389a57f2a3fe35fe987b425944",
+   "s/implement.md": "feab334232940cfd4ecbcdae41cf63ccb7d581a60380230837385f296f7b49bd",
+   "s/templates/spec-template.md": "3945437fc35cd30a5b2bf7beea680337c3516826d3efa5a6b92c4a7eca1ba28e",
+   "s/templates/plan-template.md": "dfba43da2b2a207ff8c177a0fba03af074fd45e261696b4b64172041fad2e992",
+   "s/templates/tasks-template.md": "1e448e9153462e8c5b5a55231a54c756d870a82950d4dd9425a2bf5b7008a0d9",
+   "s/templates/constitution-template.md": "ce7549540fa45543cca797a150201d868e64495fdff39dc38246fb17bd4024b3",
+   "o/opsx-propose.md": "aac98d42f525b00de334d0147b4217b35991176bcfd3baa0647feb4bd9bb9d6a",
+   "o/opsx-apply.md": "edd84d85092b2ffda664f5964de6d66acbe9ed5c1792fa8425b9b5a2d18a6e80",
+   "o/config.yaml": "f0082e9c22e8ce1d611c0f3b4d4915ce445e7ff2553cda6b713b6c25f390984c"
+  },
+  "driverCrossPySha256": "1361c284237ec2c4ddcdf963bae76dbcadceba6a89f10af40d03236d394f6e2f",
+  "driverBattery1PySha256": "2b1c5171d9e8e2a79d2af33a53c1b1c97e7637d69e88171483f1be2d2bf86b6c",
+  "planCrossJsonSha256": "27b4a6a2c00670fc150c70cdd1e5f6d9329b4190a06d6463795e0ecf1298bb61",
+  "timeoutCapSecondsPerStage": 2400,
+  "artifactsExcludedFromBlockingColumns": {
+   "s": [
+    "specs/",
+    ".specify/"
+   ],
+   "o": [
+    "openspec/"
+   ]
+  }
+ },
+ "resultsJsonlSha256AfterCrossBattery": {
+  "note": "Full ledger (96 rows: 37 Codex + 29 Drael battery-1 + 30 Drael cross incl. 2 smoke run-0) after BOM strip, at cross-report time.",
+  "sha256": "1a0addd7064a67cd8e59e334b67b56750bdd07ee216532414f4a11a3fd29bb97",
+  "sizeBytes": 315609
+ }
+}

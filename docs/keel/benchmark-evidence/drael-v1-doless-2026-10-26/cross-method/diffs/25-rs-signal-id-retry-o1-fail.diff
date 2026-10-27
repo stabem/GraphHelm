@@ -1,0 +1,620 @@
+diff --git a/apps/cli/src/commands/serve/mod.rs b/apps/cli/src/commands/serve/mod.rs
+index 713e780..24a2c87 100644
+--- a/apps/cli/src/commands/serve/mod.rs
++++ b/apps/cli/src/commands/serve/mod.rs
+@@ -1454,13 +1454,14 @@ async fn run_idempotent_mutation_inner<'a>(
+     run: impl FnOnce(PersistedActor, OpaqueId) -> MutationFuture<'a>,
+ ) -> Response {
+     match classify_existing_keys(events, execution, &identity) {
+-        Ok(KeyState::Complete(original_decision_sequence)) => {
++        Ok(KeyState::Complete(original_decision_sequence, decision_signal_id)) => {
+             return reply_with_current_status(
+                 events,
+                 execution,
+                 command,
+                 wiring,
+                 original_decision_sequence,
++                decision_signal_id,
+             );
+         }
+         Ok(KeyState::Partial(stuck)) => {
+@@ -1589,13 +1590,16 @@ async fn run_idempotent_mutation_inner<'a>(
+             // the pre-flight check above and this append. Classify again against the store's
+             // now-current state rather than trusting the in-flight guess either way.
+             match classify_existing_keys(events, execution, &identity) {
+-                Ok(KeyState::Complete(original_decision_sequence)) => reply_with_current_status(
+-                    events,
+-                    execution,
+-                    command,
+-                    wiring,
+-                    original_decision_sequence,
+-                ),
++                Ok(KeyState::Complete(original_decision_sequence, decision_signal_id)) => {
++                    reply_with_current_status(
++                        events,
++                        execution,
++                        command,
++                        wiring,
++                        original_decision_sequence,
++                        decision_signal_id,
++                    )
++                }
+                 Ok(KeyState::Partial(stuck)) => {
+                     partial_conflict_response(events, execution, command, &stuck)
+                 }
+@@ -1624,8 +1628,11 @@ async fn run_idempotent_mutation_inner<'a>(
+ enum KeyState {
+     Absent,
+     /// Every expected key exists. Carries the committed sequence of the command's first
+-    /// server-derived decision key, never the current head or a caller-supplied sequence.
+-    Complete(u64),
++    /// server-derived decision key, never the current head or a caller-supplied sequence, plus —
++    /// only when that first decision was a `signal_recorded` — the record's durable `signal_id`,
++    /// extracted from the authenticated envelope itself (design D2). Every other command's
++    /// decision yields `None`, so its recognized retries carry no `signalId` by construction.
++    Complete(u64, Option<String>),
+     Partial(OpaqueId),
+     /// A committed event's key shares this command's `{command-key}-{suffix}-` prefix but was
+     /// derived from a *different* request body (a different content digest) — the caller reused
+@@ -1641,9 +1648,11 @@ enum KeyState {
+ /// match, a committed event whose key shares this one's `prefix` but carries a *different* digest
+ /// means the caller's header was already spent on a different authenticated mutation identity —
+ /// `Divergent`. Neither found at all — genuinely fresh — `Missing`.
+-enum KeyPresence {
+-    /// The exact derived key exists at this committed event sequence.
+-    Present(u64),
++enum KeyPresence<'a> {
++    /// The exact derived key exists at this committed event. Carries the matched envelope itself
++    /// so `classify_existing_keys` extracts whatever the authenticated record holds — the value
++    /// comes out of the very event `expected.matches` just vouched for, never from a second read.
++    Present(&'a EventEnvelope),
+     Divergent,
+     Missing,
+ }
+@@ -1685,18 +1694,18 @@ impl ExpectedDecision<'_> {
+ /// cannot authorize it: the exact-key path below additionally requires the committed actor,
+ /// scope/stream, execution and decision kind. The digest is divergence *detection*, not a
+ /// cryptographic boundary; see `request_digest16`'s doc comment.
+-fn classify_one_key(
+-    history: &[EventEnvelope],
++fn classify_one_key<'history>(
++    history: &'history [EventEnvelope],
+     derived: &DerivedKey,
+     expected: &ExpectedDecision<'_>,
+-) -> KeyPresence {
++) -> KeyPresence<'history> {
+     let reused_prefix = format!("{}-", derived.prefix);
+     let mut divergent = false;
+     for event in history {
+         let existing = event.idempotency_key.as_str();
+         if existing == derived.full.as_str() {
+             return if expected.matches(event) {
+-                KeyPresence::Present(event.sequence)
++                KeyPresence::Present(event)
+             } else {
+                 KeyPresence::Divergent
+             };
+@@ -1735,13 +1744,21 @@ fn classify_existing_keys(
+     };
+     let mut present = 0_usize;
+     let mut original_decision_sequence = None;
++    // Design D2: the durable signal identifier of the event that becomes the original decision,
++    // captured here — after the exact `expected.matches` identity gate vouched for this envelope —
++    // instead of re-reading the stream inside the reply. Only a `signal_recorded` decision yields
++    // one; every other command's recognized retry stays `signalId`-less by construction.
++    let mut decision_signal_id = None;
+     let mut first_missing = None;
+     for derived in &identity.keys {
+         match classify_one_key(&history, derived, &expected) {
+-            KeyPresence::Present(sequence) => {
++            KeyPresence::Present(event) => {
+                 present += 1;
+                 if original_decision_sequence.is_none() {
+-                    original_decision_sequence = Some(sequence);
++                    original_decision_sequence = Some(event.sequence);
++                    if let EventKind::SignalRecorded(payload) = &event.kind {
++                        decision_signal_id = Some(payload.signal_id.as_str().to_owned());
++                    }
+                 }
+             }
+             KeyPresence::Divergent => {
+@@ -1760,6 +1777,7 @@ fn classify_existing_keys(
+         KeyState::Complete(
+             original_decision_sequence
+                 .expect("a complete non-empty derived-key set has a first decision sequence"),
++            decision_signal_id,
+         )
+     } else {
+         KeyState::Partial(first_missing.expect("some but not all present implies one missing"))
+@@ -1769,19 +1787,21 @@ fn classify_existing_keys(
+ /// "Reply 200 with current state, because the caller's command has already happened" (the plan's
+ /// own words for the full-retry case) — literally the same `execution.status` read the CLI and
+ /// `GET /v1/executions/{id}` both use, plus one additive `idempotency` proof naming the original
+-/// decision sequence. This is a deliberate divergence from a *fresh* success's own bespoke
+-/// response shape (`signal`'s `decision`/`mayProposeMutation`, for one) — recomputing that bespoke
+-/// shape on retry would mean re-deriving a governance verdict against already-advanced state, the
+-/// same category of problem `run_idempotent_mutation`'s pre-flight check exists to avoid;
+-/// "current status" is the one shape every mutation can report honestly no matter how long ago
+-/// the original attempt actually committed, while the proof distinguishes that history from a
+-/// fresh application.
++/// decision sequence, plus — for a signal command, whose classification captured the record's
++/// durable identifier (design D2) — that identifier as a top-level `data.signalId`. This is a
++/// deliberate divergence from a *fresh* success's own bespoke response shape (`signal`'s
++/// `decision`/`mayProposeMutation`, for one) — recomputing that bespoke shape on retry would mean
++/// re-deriving a governance verdict against already-advanced state, the same category of problem
++/// `run_idempotent_mutation`'s pre-flight check exists to avoid; "current status" is the one shape
++/// every mutation can report honestly no matter how long ago the original attempt actually
++/// committed, while the proof distinguishes that history from a fresh application.
+ fn reply_with_current_status(
+     events: &Path,
+     execution: &str,
+     command: &'static str,
+     wiring: ExecutorWiring,
+     original_decision_sequence: u64,
++    decision_signal_id: Option<String>,
+ ) -> Response {
+     match execution::status::execute(events, Some(execution)) {
+         Ok(value) => reply_with_status_value(
+@@ -1791,6 +1811,7 @@ fn reply_with_current_status(
+             wiring,
+             value,
+             original_decision_sequence,
++            decision_signal_id,
+         ),
+         Err(failure) => respond_failure(command, failure),
+     }
+@@ -1803,8 +1824,13 @@ fn reply_with_status_value(
+     wiring: ExecutorWiring,
+     mut value: serde_json::Value,
+     original_decision_sequence: u64,
++    decision_signal_id: Option<String>,
+ ) -> Response {
+-    if let Err(diagnostic) = annotate_recognized_retry(&mut value, original_decision_sequence) {
++    if let Err(diagnostic) = annotate_recognized_retry(
++        &mut value,
++        original_decision_sequence,
++        decision_signal_id.as_deref(),
++    ) {
+         return respond(
+             StatusCode::INTERNAL_SERVER_ERROR,
+             Outcome::domain(command, vec![diagnostic]).output,
+@@ -1818,6 +1844,7 @@ fn reply_with_status_value(
+ fn annotate_recognized_retry(
+     status: &mut serde_json::Value,
+     original_decision_sequence: u64,
++    decision_signal_id: Option<&str>,
+ ) -> Result<(), Diagnostic> {
+     let serde_json::Value::Object(data) = status else {
+         return Err(Diagnostic::error(
+@@ -1827,6 +1854,16 @@ fn annotate_recognized_retry(
+             SOURCE,
+         ));
+     };
++    // Design D1: `signalId` sits NEXT TO the proof, not inside it, so a caller reads
++    // `reply.data.signalId` identically whether or not the retry was recognized. Inserted only
++    // when classification captured one — every non-signal command (and every refusal path, which
++    // never reaches this function) therefore answers with no `signalId` at all.
++    if let Some(signal_id) = decision_signal_id {
++        data.insert(
++            "signalId".to_owned(),
++            serde_json::Value::String(signal_id.to_owned()),
++        );
++    }
+     data.insert(
+         "idempotency".to_owned(),
+         serde_json::json!({
+@@ -2781,6 +2818,8 @@ mod tests {
+             ExecutorWiring::FIXTURE_ONLY,
+             serde_json::json!("not-an-object"),
+             17,
++            // Unreached: annotation fails on the non-object before any `signalId` insertion.
++            None,
+         );
+         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+@@ -2965,6 +3004,25 @@ mod tests {
+                 "originalDecisionSequence": matching[0].sequence,
+             })
+         );
++        // The observed loser reached `Complete` through the POST-APPEND re-classification, the
++        // second call site no HTTP test reaches deterministically. Its reply must carry the
++        // durable signal identity straight off the committed record, not anything re-derived from
++        // the request.
++        let committed_signal_id = match &matching[0].kind {
++            graphhelm_protocols::EventKind::SignalRecorded(payload) => {
++                payload.signal_id.as_str().to_owned()
++            }
++            other => panic!(
++                "the committed decision event must be the signal record: {:?}",
++                other.wire_name()
++            ),
++        };
++        assert_eq!(
++            recognized[0]["data"]["signalId"],
++            committed_signal_id.as_str(),
++            "the recognized loser must carry the committed record's durable signal identity: {}",
++            recognized[0]
++        );
+     }
+ 
+     /// #1054 fix round 2: the planned sequence is the one the STORE would answer, on a quiescent
+diff --git a/apps/cli/tests/api_http.rs b/apps/cli/tests/api_http.rs
+index f6e166c..13c44a9 100644
+--- a/apps/cli/tests/api_http.rs
++++ b/apps/cli/tests/api_http.rs
+@@ -2192,6 +2192,15 @@ fn a_retried_mutation_with_the_same_idempotency_key_appends_nothing() {
+         }),
+         "the retry marker must identify the exact committed decision: {retry_reply}"
+     );
++    assert_eq!(
++        retry_reply["data"]["signalId"],
++        serde_json::json!("signal-http-retry"),
++        "the recognized retry must return the original durable signal identity: {retry_reply}"
++    );
++    assert_eq!(
++        retry_reply["data"]["signalId"], first_reply["data"]["signalId"],
++        "the retry's signalId must equal what the original reply carried: {retry_reply}"
++    );
+     assert_ne!(
+         original_sequence,
+         stale_if_match.parse::<u64>().unwrap(),
+@@ -2279,6 +2288,14 @@ fn the_same_key_and_body_from_a_different_actor_is_not_a_recognized_retry() {
+         second_reply["data"].get("idempotency").is_none(),
+         "a mismatched actor must never receive a retry proof: {second_reply}"
+     );
++    assert!(
++        second_reply["data"].get("signalId").is_none(),
++        "a mismatched actor must never receive the original signal identity: {second_reply}"
++    );
++    assert!(
++        !second_reply.to_string().contains("\"signalId\""),
++        "the refusal body must carry no signalId anywhere: {second_reply}"
++    );
+     assert_eq!(
+         second_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+         "{second_reply}"
+@@ -2402,6 +2419,14 @@ fn an_event_of_the_wrong_kind_with_the_same_key_is_not_a_recognized_retry() {
+         retry_reply["data"].get("idempotency").is_none(),
+         "a wrong-kind event must never produce a retry proof: {retry_reply}"
+     );
++    assert!(
++        retry_reply["data"].get("signalId").is_none(),
++        "a wrong-kind event must never expose the original signal identity: {retry_reply}"
++    );
++    assert!(
++        !retry_reply.to_string().contains("\"signalId\""),
++        "the refusal body must carry no signalId anywhere: {retry_reply}"
++    );
+     assert_eq!(
+         retry_reply["diagnostics"][0]["code"], "GHE003_IDEMPOTENCY_CONFLICT",
+         "{retry_reply}"
+diff --git a/openspec/changes/archive/.gitkeep b/openspec/changes/archive/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/openspec/changes/bench-feature/.openspec.yaml b/openspec/changes/bench-feature/.openspec.yaml
+new file mode 100644
+index 0000000..97e3642
+--- /dev/null
++++ b/openspec/changes/bench-feature/.openspec.yaml
+@@ -0,0 +1,2 @@
++schema: spec-driven
++created: 2026-10-27
+diff --git a/openspec/changes/bench-feature/design.md b/openspec/changes/bench-feature/design.md
+new file mode 100644
+index 0000000..4cc7ef2
+--- /dev/null
++++ b/openspec/changes/bench-feature/design.md
+@@ -0,0 +1,131 @@
++# Design
++
++## Context
++
++See proposal.md for motivation. Observed current state (all verified in this checkout):
++
++- A recognised retry of any mutation reaches one shared path: `run_idempotent_mutation_inner`
++  classifies the request via `classify_existing_keys`; `KeyState::Complete(original_decision_sequence)`
++  flows to `reply_with_current_status`, which renders `execution::status::execute` and lets
++  `annotate_recognized_retry` insert `data.idempotency = {recognizedRetry: true,
++  originalDecisionSequence}` (`apps/cli/src/commands/serve/mod.rs`). There are exactly two call
++  sites producing `Complete`: the initial pre-flight and the post-append re-classification after a
++  `GHE003_IDEMPOTENCY_CONFLICT` race loser. Both must get the new value for free.
++- Classification is already identity-exact: `KeyPresence::Present` requires the committed key to
++  equal the derived key **and** `ExpectedDecision::matches(event)`, which for the signal command
++  compares actor, scope/stream, execution, event kind, and the signal payload fields including
++  `payload.signal_id == request body signal.id`. A `Present` match for `execution.signal` is
++  therefore guaranteed to be the `signal_recorded` event carrying the exact durable `signalId` the
++  first reply returned.
++- The fresh success shape comes from `execution::signal::execute`, which puts `signalId` at
++  `data.signalId`. The status rendering (`render_read`) has no top-level `signalId` key today, so
++  inserting one shadows nothing.
++- An in-process race test (`mod.rs`, two-attempt signal) asserts **exact equality of the
++  `data.idempotency` sub-object**; `apps/cli/tests/api_http.rs` already contains the three tests
++  named in the proposal (recognised retry, mismatched actor, wrong-kind event under the same key).
++- No `openspec/specs/` capability existed before this change; `execution-signal` is introduced here.
++
++## Goals / Non-Goals
++
++**Goals:**
++
++- A recognised retry of `execution.signal` returns the original durable `signalId`, sourced from
++  the matched committed event (never re-derived from the request).
++- Both `Complete` call sites (pre-flight and post-append re-classification) behave identically.
++- Refusal paths (mismatched actor, wrong kind → `Divergent`; partial → `Partial`) keep their
++  current shape and gain no `signalId`.
++
++**Non-Goals:**
++
++- No `signalId` on recognised retries of any other mutation endpoint.
++- No change to fresh signal replies, to the `idempotency` proof object's own contents, to other
++  refusal bodies, or to any core crate, schema, or CLI command surface.
++- No change to how `Divergent`/`Partial` classify (no new matching rules).
++
++## Decisions
++
++### D1: Place `signalId` at `data.signalId`, mirroring the fresh reply
++
++A recognised-retry reply's `data` gains a top-level `signalId` next to (not inside) the
++`idempotency` object.
++
++- Why: a client correlating "my lost-ACK retry" with the original reads `reply.data.signalId`
++  identically whether or not the retry was recognised. Putting it inside `idempotency` would make
++  the two lookups asymmetric and would break the in-process race test's exact-equality assertion on
++  the `idempotency` sub-object.
++- Alternative considered: `data.idempotency.signalId`. Rejected for the two reasons above; it would
++  also blur the distinction between "proof this is a retry" and "identity of the retried record".
++- Alternative considered: post-processing in the route handler (`routes.rs`). Rejected: the route
++  does not know whether classification recognised the retry, so it would have to re-read the
++  classification result or the stream.
++
++### D2: Carry the value out of classification; do not re-read the stream for it
++
++Extend the recognised-retry data flow so the matched event's durable `signalId` travels with
++`KeyState::Complete` to `reply_with_current_status`:
++
++- In `classify_one_key`/`classify_existing_keys`, when a key classifies `Present` and its matched
++  envelope is `EventKind::SignalRecorded(payload)`, record `payload.signal_id` alongside the
++  recorded sequence — specifically for the event whose sequence becomes `original_decision_sequence`
++  (for the signal command that is the single matched decision event; the rule is stated generally
++  so multi-key commands stay correct by construction, not by assumption).
++- `reply_with_current_status` / `annotate_recognized_retry` insert `data.signalId` iff that value
++  was captured. No re-open of the store, no second identity check: the `matches()` gate that made
++  the event `Present` is the single authority for both the recognition and the extracted value.
++
++- Alternative considered: re-locate the event at `originalDecisionSequence` inside the reply
++  function and validate it again. Rejected: second read of an untrusted repository file, second
++  place to express the kind/identity gate, and the value could disagree with what classification
++  actually authenticated if the read raced (it cannot today, since the pre-flight already returned
++  before any append, but the re-validation would duplicate rules rather than share them).
++- Alternative considered: compute `signalId` from the request body. Rejected: the durable record is
++  the source of truth; the body is caller-owned input that `matches()` merely *compared* against the
++  committed payload.
++
++### D3: Failure and non-recognition behavior is untouched
++
++- The existing 500 path when the status value cannot carry the proof (`IDEMPOTENCY_REPLY_CODE`)
++  behaves exactly as today.
++- `Divergent` (mismatched actor, wrong-kind event, divergent digest) and `Partial` responses keep
++  their current bodies: `GHE003_IDEMPOTENCY_CONFLICT`, `data.currentHead`, no `idempotency`, and —
++  because they never reach `annotate_recognized_retry` — no `signalId`.
++
++## Risks / Trade-offs
++
++- [Additive wire field read by unknown future clients] → Field is purely additive JSON on one
++  success path; consumers ignoring unknown keys are unaffected. The new capability spec pins that
++  no other endpoint's path gains `signalId`.
++- [Existing assertions freeze current shapes] → The in-process race test asserts the
++  `idempotency` sub-object exactly (unaffected by a top-level `data` field); the `api_http.rs`
++  retry tests assert selected fields, and this change extends them rather than rewriting them.
++  Residual risk noted: if any other golden-style comparison of the full retry body exists
++  elsewhere in the suite, the reached tests will surface it during verification — verification runs
++  the whole `api_http` suite plus the `serve` module unit tests.
++- [Value extracted from untrusted repository bytes] → Extraction happens only after the same
++  `matches()` identity gate that authenticates the retry; a wrong-kind or mismatched-actor event
++  classifies `Divergent` instead of `Present` and is never read for a `signalId`.
++- [Rollback] → Single-purpose change in two files; reverting the implementation commit removes the
++  field from the wire with no state migration (nothing is persisted differently).
++
++## Migration Plan
++
++1. Implement D2 in `apps/cli/src/commands/serve/mod.rs`; extend the three `api_http.rs` tests per
++   the proposal (positive assertion first to observe RED, then implement to GREEN).
++2. Verification evidence: the extended `api_http` tests red without the code change and green with
++   it, plus the existing serve-layer unit tests staying green.
++3. No deploy order, no data migration; rollback = revert.
++
++## Open Questions
++
++None. Placement (D1) and sourcing (D2) were resolved here; both were required before tasks could be
++broken down, so nothing deferrable remains.
++
++**Recorded assumption:** the change name `bench-feature` was supplied by the task and is used
++verbatim although the work concerns the signal retry reply; the name carries no semantic weight in
++this artifact set.
++
++**Recorded assumption (apply):** the lib-side verification commands are written as
++`cargo +1.97.1 test -p graphhelm-cli --lib --locked …`, but `graphhelm-cli` declares no library
++target (a bin named `graphhelm` only) — the crate's unit tests live under the binary target. Every
++`--lib` invocation above was therefore run as `--bin graphhelm`; the test names, filters, and pass
++criteria are otherwise exactly as written.
+diff --git a/openspec/changes/bench-feature/proposal.md b/openspec/changes/bench-feature/proposal.md
+new file mode 100644
+index 0000000..ae88ddc
+--- /dev/null
++++ b/openspec/changes/bench-feature/proposal.md
+@@ -0,0 +1,56 @@
++# Proposal
++
++## Why
++
++A client that POSTs `POST /v1/executions/{id}/signal` with an `Idempotency-Key` and then retries
++after a lost acknowledgement gets back the current status plus an `idempotency` proof
++(`recognizedRetry`, `originalDecisionSequence`) — but not the `signalId` the first reply carried.
++With no `signalId` on the retry reply, a caller cannot match the retried call to the original
++durable signal record without scanning the event log for the event at `originalDecisionSequence`.
++The value already exists durably: the recognised retry authenticates itself *against* the committed
++`signal_recorded` event, whose payload carries the exact `signalId` the first reply returned.
++
++## What Changes
++
++- On a **recognised idempotent retry** of `execution.signal` (same `Idempotency-Key`, same request
++  body, same actor), the `200` reply's `data` additionally carries `signalId` — the original
++  durable value read from the committed `signal_recorded` event the retry matches, so it is always
++  equal to the `data.signalId` the first (fresh) reply carried. The existing `idempotency` block
++  (`recognizedRetry`, `originalDecisionSequence`) is unchanged.
++- The change is additive wire surface on ONE path: the recognised-retry reply of `execution.signal`
++  only. Fresh signal replies are byte-for-byte unchanged.
++- **Unchanged refusal semantics:** a mismatched actor or a wrong-kind committed event under the
++  same key still produces a `409` `GHE003_IDEMPOTENCY_CONFLICT` with no `idempotency` proof — and it
++  must also carry no `signalId` anywhere in the reply, so a non-recognised caller never receives
++  retry proof or another caller's signal identity.
++- No other mutation endpoint (`approve`, `pause`, `resume`, `cancel`, `start`, `sweep`,
++  `wake-lease`, `claim`, `clear`, `amend_budget`) gains a `signalId`: none of them mints one.
++- Regression assertions added to the existing HTTP tests in `apps/cli/tests/api_http.rs`:
++  - the recognised-retry test asserts the retry reply carries the original `signalId`;
++  - the mismatched-actor and wrong-kind tests assert their replies carry no `signalId`.
++  The positive assertion must fail without the implementation change.
++
++## Capabilities
++
++### New Capabilities
++
++- `execution-signal`: The Runtime HTTP API's contract for submitting a signal to an execution and
++  for the endpoint's idempotent-retry behaviour — which replies prove a recognised retry, which do
++  not, and what identity information a recognised retry must return so callers can correlate it
++  with the original submission.
++
++### Modified Capabilities
++
++<!-- none: the openspec/specs inventory is empty; this change introduces the first capability spec -->
++
++## Impact
++
++- `apps/cli/src/commands/serve/mod.rs` — idempotent-mutation classification
++  (`KeyState::Complete`) and the recognised-retry reply construction
++  (`reply_with_current_status` / `annotate_recognized_retry`).
++- `apps/cli/tests/api_http.rs` — regression assertions in the three existing
++  idempotent-signal tests (recognised retry, mismatched actor, wrong kind).
++- Wire: additive `data.signalId` on the recognised-retry success path of
++  `POST /v1/executions/{id}/signal` only; no schema, core-crate, or dependency changes.
++- No CLI behaviour change: the CLI mints a fresh key per invocation and never takes the
++  recognised-retry path through these changes.
+diff --git a/openspec/changes/bench-feature/specs/execution-signal/spec.md b/openspec/changes/bench-feature/specs/execution-signal/spec.md
+new file mode 100644
+index 0000000..84c5617
+--- /dev/null
++++ b/openspec/changes/bench-feature/specs/execution-signal/spec.md
+@@ -0,0 +1,47 @@
++# Spec Delta
++
++## Purpose
++
++Defines how the Runtime HTTP API treats retries of the execution signal endpoint: what authenticates a recognised idempotent retry, which durable identity that reply must return so a caller can correlate the retry with the original submission, and what a refused key reuse must never return.
++
++## ADDED Requirements
++
++### Requirement: Recognised signal retry returns the original durable signal identity
++When a `POST /v1/executions/{id}/signal` request is classified as a recognised idempotent retry (the same `Idempotency-Key`, request body, and actor as an already-committed signal), the reply's `data` SHALL carry `signalId` set to the durable signal identifier of the matched committed record. It MUST equal the `data.signalId` the original submission's reply carried and the `signalId` recorded in the committed signal event.
++
++#### Scenario: Retry after the stream has advanced
++- **WHEN** a signal is committed under `Idempotency-Key K` by actor A, further unrelated events advance the stream, and actor A resends the byte-identical request with key `K`
++- **THEN** the reply is `200` and `data.signalId` equals the `data.signalId` of the original reply and of the committed signal event
++
++#### Scenario: Retry signalId comes from the committed record
++- **WHEN** a recognised retry is answered after the original signal event was committed
++- **THEN** `data.signalId` equals the `signalId` field of the committed signal event at the original decision sequence, not any value supplied or altered in the retry request
++
++### Requirement: Recognised signal retry reports the proof without appending
++A recognised idempotent retry of a signal SHALL be answered `200` with the current execution status and an `idempotency` proof object in `data` carrying `recognizedRetry: true` and `originalDecisionSequence` set to the committed sequence of the matched signal record. The retry MUST append no new events to the execution stream.
++
++#### Scenario: Proof names the original decision
++- **WHEN** actor A retries a signal already committed at sequence S after unrelated events advanced the stream
++- **THEN** the reply's `data.idempotency` equals `{"recognizedRetry": true, "originalDecisionSequence": S}` and the stream head is unchanged
++
++### Requirement: Refused key reuse exposes no retry proof and no signal identity
++When a request carries an `Idempotency-Key` whose matching committed event disagrees with the request on actor identity or event kind, the endpoint SHALL refuse with `409` and diagnostic code `GHE003_IDEMPOTENCY_CONFLICT`, append no events, and SHALL include no idempotency proof in the reply. The reply MUST NOT carry a `signalId` in `data` or anywhere else, and MUST NOT disclose the original actor or the mismatched event kind.
++
++#### Scenario: Same key and body from a different actor
++- **WHEN** actor B submits a byte-identical body and `Idempotency-Key` that actor A already used to commit a signal
++- **THEN** the reply is `409` with `GHE003_IDEMPOTENCY_CONFLICT`, `data` carries no `idempotency` object and no `signalId`, the reply names no actor, and the stream head is unchanged
++
++#### Scenario: Committed event of the wrong kind under the same key
++- **WHEN** an event of a different kind than the requested signal decision is committed under the exact derived key of the request
++- **THEN** the reply is `409` with `GHE003_IDEMPOTENCY_CONFLICT`, `data` carries no `idempotency` object and no `signalId`, the reply does not name the mismatched event kind, and the stream head is unchanged
++
++### Requirement: Fresh signal submissions are unchanged by the retry extension
++A first-time (non-retry) successful `POST /v1/executions/{id}/signal` SHALL respond with its established success shape, including `data.signalId` naming the submitted signal, and SHALL carry no `idempotency` object in `data`. No mutation endpoint other than the signal endpoint returns a `signalId` on any path, including recognised retries.
++
++#### Scenario: Fresh submission keeps its established reply
++- **WHEN** a signal is submitted for the first time under a fresh `Idempotency-Key`
++- **THEN** the reply is `200`, `data.signalId` equals the signal identifier from the submitted envelope, and `data` carries no `idempotency` object
++
++#### Scenario: Recognised retry of a non-signal mutation carries no signalId
++- **WHEN** a recognised idempotent retry of a mutation endpoint other than the signal endpoint (for example sweep or pause) is answered
++- **THEN** the reply carries the `idempotency` proof with `recognizedRetry: true` and no `signalId` in `data`
+diff --git a/openspec/changes/bench-feature/tasks.md b/openspec/changes/bench-feature/tasks.md
+new file mode 100644
+index 0000000..56fc50b
+--- /dev/null
++++ b/openspec/changes/bench-feature/tasks.md
+@@ -0,0 +1,20 @@
++# Tasks
++
++Reference: specs/execution-signal/spec.md (what), design.md (how — D1 wire placement, D2 value sourcing, D3 untouched paths).
++
++## 1. Regression assertions (RED observed before implementation)
++
++- [x] 1.1 Extend `a_retried_mutation_with_the_same_idempotency_key_appends_nothing` in `apps/cli/tests/api_http.rs`: after the recognised-retry POST, assert `retry_reply["data"]["signalId"]` equals `"signal-http-retry"` and equals `first_reply["data"]["signalId"]`. Run `cargo +1.97.1 test -p graphhelm-cli --test api_http a_retried_mutation_with_the_same_idempotency_key_appends_nothing --locked`, record the failing (RED) output as evidence — this assertion must fail while the implementation is absent.
++- [x] 1.2 Extend `the_same_key_and_body_from_a_different_actor_is_not_a_recognized_retry`: alongside the existing `idempotency` absence assertion, assert `second_reply["data"].get("signalId").is_none()` and that the serialised body contains no `"signalId"`. Verify with the same single-test `cargo test -p graphhelm-cli --test api_http …` invocation — it passes before the implementation and guards the post-change behaviour.
++- [x] 1.3 Extend `an_event_of_the_wrong_kind_with_the_same_key_is_not_a_recognized_retry`: assert `retry_reply["data"].get("signalId").is_none()` and no `"signalId"` in the serialised 409 body. Verify with the single-test invocation — passes before the implementation.
++
++## 2. Implementation (GREEN)
++
++- [x] 2.1 In `apps/cli/src/commands/serve/mod.rs`, capture the durable signal identifier during classification: when a derived key classifies `Present` and its matched envelope is `EventKind::SignalRecorded(payload)` and its sequence becomes `original_decision_sequence`, record `payload.signal_id`; widen `KeyState::Complete` accordingly (design D2). Verify: `cargo +1.97.1 test -p graphhelm-cli --lib --locked -- commands::serve` compiles and the existing serve-module unit tests stay green.
++- [x] 2.2 Emit the field on the recognised-retry reply only: in the `reply_with_current_status` / `annotate_recognized_retry` path insert `data.signalId` iff the classified value was captured; keep the `idempotency` sub-object byte-identical and leave every refusal path (`Divergent`, `Partial`, conflicts, 500) unchanged (design D1/D3). Verify: the single-test invocations from 1.1–1.3 all pass (GREEN), and the in-process two-writer race test's exact-equality assertion on `data.idempotency` is untouched and green.
++- [x] 2.3 Strengthen the in-process two-writer race test (same file, `#[cfg(test)]` module) to assert the recognised loser's reply carries `data.signalId` equal to the committed `signal_recorded` payload's identifier — this is the observer for the second `Complete` call site (post-append `GHE003` reclassification) that no HTTP test reaches deterministically. Verify: `cargo +1.97.1 test -p graphhelm-cli --lib --locked -- commands::serve` green.
++
++## 3. Verification of the reached surface
++
++- [x] 3.1 Run the full reached suites: `cargo +1.97.1 test -p graphhelm-cli --test api_http --locked` (entire file, catching any other frozen-shape assertion) and `cargo +1.97.1 test -p graphhelm-cli --lib --locked` (module unit tests). All green, no skips reported as passes.
++- [x] 3.2 Run `cargo +1.97.1 fmt -p graphhelm-cli -- --check` and `git diff --check` on the touched files; both clean. No workspace-wide gate is required for this planning-scoped change unless the reviewer asks for it.
+diff --git a/openspec/config.yaml b/openspec/config.yaml
+new file mode 100644
+index 0000000..2805cb6
+--- /dev/null
++++ b/openspec/config.yaml
+@@ -0,0 +1,32 @@
++schema: spec-driven
++
++# Project context (optional)
++# Add only constraints that should guide OpenSpec artifacts and workflows.
++# Include constraints an agent cannot infer by reading the code.
++# Keep general project documentation and discoverable codebase facts out.
++# Example:
++#   context: |
++#     Designs and tasks must cover Windows, macOS, and Linux
++#     Write all artifacts in Spanish
++
++# Per-artifact rules (optional)
++# Add custom rules for specific artifacts.
++# Example:
++#   rules:
++#     proposal:
++#       - Keep proposals under 500 words
++#       - Always state what is out of scope
++#     tasks:
++#       - Break tasks into chunks of max 2 hours
++
++# Per-operation guidance (optional)
++# Add advisory guidance for how apply and archive work should be conducted.
++# This is separate from artifact rules above.
++# Example:
++#   operations:
++#     apply:
++#       guidance:
++#         - Keep test summaries concise
++#     archive:
++#       guidance:
++#         - Summarize the archive outcome before finishing
+diff --git a/openspec/specs/.gitkeep b/openspec/specs/.gitkeep
+new file mode 100644
+index 0000000..e69de29

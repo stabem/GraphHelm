@@ -1,0 +1,274 @@
+diff --git a/apps/cli/src/commands/execution/mod.rs b/apps/cli/src/commands/execution/mod.rs
+index 1a50948..03d246c 100644
+--- a/apps/cli/src/commands/execution/mod.rs
++++ b/apps/cli/src/commands/execution/mod.rs
+@@ -205,17 +205,6 @@ pub(super) fn load_fixtures(path: Option<&Path>) -> Result<SimulationFixtures, F
+     })
+ }
+ 
+-/// The ONE scope the `execution` verbs can address for a given execution id.
+-///
+-/// **Every consumer of this rule must call THIS function (#560).** The rule used to be written
+-/// out where `resolve_stream` needed it, and `execution list` enumerated the repository without
+-/// it -- so the index offered rows under any scope the generic `events` commands can write,
+-/// while `status`, `events` and every other follow-up verb reconstructed only this one. A row
+-/// the rest of the API cannot answer for is worse than a missing row: the caller reads it as an
+-/// execution that exists and then gets an empty history back.
+-///
+-/// # Errors
+-/// [`Failure`] when `execution` is not a valid identifier.
+ /// The same addressing rule as [`addressable_scope`] for records that belong to the local
+ /// repository rather than to one execution stream (for example the Dreams shadow ledger). One
+ /// home for the workspace and project literals, so the two constructions cannot drift apart.
+@@ -227,6 +216,17 @@ pub(crate) fn repository_scope() -> RepositoryScope {
+     )
+ }
+ 
++/// The ONE scope the `execution` verbs can address for a given execution id.
++///
++/// **Every consumer of this rule must call THIS function (#560).** The rule used to be written
++/// out where `resolve_stream` needed it, and `execution list` enumerated the repository without
++/// it -- so the index offered rows under any scope the generic `events` commands can write,
++/// while `status`, `events` and every other follow-up verb reconstructed only this one. A row
++/// the rest of the API cannot answer for is worse than a missing row: the caller reads it as an
++/// execution that exists and then gets an empty history back.
++///
++/// # Errors
++/// [`Failure`] when `execution` is not a valid identifier.
+ pub(crate) fn addressable_scope(execution: &str) -> Result<RepositoryScope, Failure> {
+     Ok(RepositoryScope::new(
+         WorkspaceId::parse(WORKSPACE).expect("constant workspace id is valid"),
+diff --git a/apps/cli/src/commands/mcp/tools.rs b/apps/cli/src/commands/mcp/tools.rs
+index 07eb5fd..d5ecb6b 100644
+--- a/apps/cli/src/commands/mcp/tools.rs
++++ b/apps/cli/src/commands/mcp/tools.rs
+@@ -738,10 +738,6 @@ fn wake_wait_schema() -> serde_json::Value {
+     )
+ }
+ 
+-/// Closed like every other schema here. `fixture` and `route` are both optional and the route
+-/// refuses the pair: the "exactly one door" rule lives on the server (`serve::routes::
+-/// synthesize`), where the CLI's `--fixture`/`--manifest --route` rule already lives, for the
+-/// same reason `start_schema` does not encode file-or-graph.
+ fn assign_schema() -> serde_json::Value {
+     mutating_schema(
+         serde_json::json!({
+@@ -753,6 +749,10 @@ fn assign_schema() -> serde_json::Value {
+     )
+ }
+ 
++/// Closed like every other schema here. `fixture` and `route` are both optional and the route
++/// refuses the pair: the "exactly one door" rule lives on the server (`serve::routes::
++/// synthesize`), where the CLI's `--fixture`/`--manifest --route` rule already lives, for the
++/// same reason `start_schema` does not encode file-or-graph.
+ fn synthesize_schema() -> serde_json::Value {
+     object_schema(
+         serde_json::json!({
+diff --git a/openspec/changes/archive/.gitkeep b/openspec/changes/archive/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/openspec/changes/bench-feature/.openspec.yaml b/openspec/changes/bench-feature/.openspec.yaml
+new file mode 100644
+index 0000000..7b65ee7
+--- /dev/null
++++ b/openspec/changes/bench-feature/.openspec.yaml
+@@ -0,0 +1,3 @@
++schema: spec-driven
++created: 2026-10-26
++skip_specs: true
+diff --git a/openspec/changes/bench-feature/design.md b/openspec/changes/bench-feature/design.md
+new file mode 100644
+index 0000000..0bfe550
+--- /dev/null
++++ b/openspec/changes/bench-feature/design.md
+@@ -0,0 +1,53 @@
++# Design
++
++## Context
++
++Two adjacent `///` doc blocks got welded together by a merge, and rustdoc binds a doc comment to
++the item directly below it. The fix is to re-split the fused blocks so each documents its own
++function. No code, signatures, ordering, or formatting change — only which comment lines sit above
++which function. See proposal.md for motivation.
++
++## Goals / Non-Goals
++
++**Goals:**
++- Each of the four affected functions (`addressable_scope`, `repository_scope`, `assign_schema`,
++  `synthesize_schema`) carries exactly the doc block written for it.
++- Edits are comments-only: no code line changes, no reformatting, no changes outside the two files.
++
++**Non-Goals:**
++- No new doc text is authored for functions that end up undocumented.
++- No reordering of functions; functions stay in their current file order.
++
++## Decisions
++
++**Split the fused block on the semantic seam, not at an arbitrary line.** In
++`apps/cli/src/commands/execution/mod.rs` the block above `repository_scope` currently contains TWO
++documented items concatenated:
++- `addressable_scope`'s block ends at the `# Errors` paragraph
++  ("`[`Failure`] when `execution` is not a valid identifier.`") — it takes an `execution` arg and
++  returns `Result`.
++- `repository_scope`'s block begins at "The same addressing rule as [`addressable_scope`]… One home
++  for the workspace and project literals…" and correctly ends above `fn repository_scope`.
++
++The `# Errors` heading belongs to `addressable_scope` (it is the only one returning a `Result`), so
++that is the cut line. Move the `addressable_scope` portion (through the `# Errors` line) to directly
++above `fn addressable_scope`; leave the `repository_scope` portion where it is.
++
++**Keep `assign_schema`'s loss honest.** In `apps/cli/src/commands/mcp/tools.rs`, the "Closed like
++every other schema here… `serve::routes::synthesize` … `start_schema`" block clearly documents the
++synthesize path (it names `fixture`, `route`, and the synthesize server route). It currently sits
++above `assign_schema`. Move it to directly above `fn synthesize_schema`. `assign_schema` then has
++no doc block; we do NOT invent one, consistent with the "comments only" constraint.
++
++*Alternatives considered:* (a) reorder the functions so their natural docs fall into place —
++rejected, because reordering touches code position, not just comments. (b) add new doc blocks for
++the now-undocumented functions — rejected, out of the stated scope.
++
++## Risks / Trade-offs
++
++- [Cutting the fused block at the wrong line] → the `# Errors` heading is the unambiguous anchor
++  (only `addressable_scope` returns a `Result`); verify after editing that `repository_scope` has
++  no `# Errors` and `addressable_scope` does.
++- [A stray blank/contiguous `///` line leaving two blocks still merged] → rustdoc still treats all
++  consecutive `///` lines as one block; the moved block must end with a blank line before the next
++  function's block starts. Verify by reading the final region.
+diff --git a/openspec/changes/bench-feature/proposal.md b/openspec/changes/bench-feature/proposal.md
+new file mode 100644
+index 0000000..e216488
+--- /dev/null
++++ b/openspec/changes/bench-feature/proposal.md
+@@ -0,0 +1,42 @@
++# Proposal
++
++## Why
++
++A merge left two rustdoc comment blocks detached from the functions they document. Rustdoc
++attaches a `///` block to the item that immediately follows it, so today those docs are bound to
++the wrong items (a function inserted above them during the merge), while the functions they were
++written for carry no documentation. This makes the generated docs mislead readers about which item
++each explanation describes.
++
++## What Changes
++
++- In `apps/cli/src/commands/execution/mod.rs`: move the `addressable_scope` doc block (the
++  "ONE scope … / # Errors" block currently sitting directly above `repository_scope`) back to sit
++  directly above `fn addressable_scope`. The `repository_scope` doc block ("The same addressing
++  rule as [`addressable_scope`]…") stays above `repository_scope`. The two merged blocks are split
++  so each function documents only itself.
++- In `apps/cli/src/commands/mcp/tools.rs`: move the `synthesize_schema` doc block (the "Closed
++  like every other schema here…" block currently sitting directly above `assign_schema`) back to
++  sit directly above `fn synthesize_schema`. `assign_schema` will then carry no doc block of its own.
++
++Both edits move existing comment lines only. No function bodies, signatures, ordering, or
++whitespace formatting change, and no file besides these two is touched.
++
++## Capabilities
++
++### New Capabilities
++<!-- None: no new system behavior is introduced. -->
++
++### Modified Capabilities
++<!-- None: this is a documentation-only repositioning; no requirement-level behavior changes. -->
++
++This change declares `skip_specs: true` — it alters only doc-comment placement, not behavior.
++
++## Impact
++
++- `apps/cli/src/commands/execution/mod.rs` — two adjacent functions (`repository_scope`,
++  `addressable_scope`) get the correct doc blocks. No code change.
++- `apps/cli/src/commands/mcp/tools.rs` — `synthesize_schema` regains its intended doc block;
++  `assign_schema` loses the doc it was wrongly inheriting. No code change.
++- Regenerated rustdoc will now describe the correct items. No API, wire-format, dependency, or
++  runtime effect.
+diff --git a/openspec/changes/bench-feature/tasks.md b/openspec/changes/bench-feature/tasks.md
+new file mode 100644
+index 0000000..37b33f1
+--- /dev/null
++++ b/openspec/changes/bench-feature/tasks.md
+@@ -0,0 +1,42 @@
++# Tasks
++
++## 1. execution/mod.rs — restore `addressable_scope`'s doc block
++
++- [x] 1.1 Split the fused block currently sitting above `fn repository_scope`
++      (`apps/cli/src/commands/execution/mod.rs`). Keep only the
++      "The same addressing rule as [`addressable_scope`]… One home for the workspace and project
++      literals…" lines above `repository_scope`; move the remainder — through the
++      "`# Errors` / `[`Failure`] when `execution` is not a valid identifier.`" paragraph — so it
++      sits directly above `fn addressable_scope`. Move comment lines only. **Verify:** re-read the
++      region (~lines 208–240): `repository_scope` is preceded only by its own block (no `# Errors`),
++      and `addressable_scope` is preceded directly by the block ending in the `# Errors` paragraph.
++- [x] 1.2 Confirm the two blocks are no longer a single contiguous `///` run: there must be a blank
++      (non-`///`) line between `repository_scope`'s doc and any following doc, and `addressable_scope`'s
++      doc must end immediately above its `fn`. **Verify:** grep the region for back-to-back `///`
++      lines spanning both functions and confirm they no longer merge into one item's doc.
++
++## 2. mcp/tools.rs — restore `synthesize_schema`'s doc block
++
++- [x] 2.1 Move the "Closed like every other schema here… `serve::routes::synthesize` …
++      `start_schema`" block from directly above `fn assign_schema` to directly above
++      `fn synthesize_schema` (`apps/cli/src/commands/mcp/tools.rs`). Move comment lines only; do not
++      author a new doc block for `assign_schema`. **Verify:** re-read the region (~lines 740–760):
++      `assign_schema` has no doc block above it, and `synthesize_schema` is preceded directly by the
++      "Closed like every other schema here…" block.
++
++## 3. Integration verification (smallest observers)
++
++- [x] 3.1 Confirm the change is comments-only and scoped to the two files. **Verify:**
++      `git diff --stat` lists only `apps/cli/src/commands/execution/mod.rs` and
++      `apps/cli/src/commands/mcp/tools.rs`; `git diff` shows relocated `///` comment lines with no
++      code/signature changes; `git diff --check` reports no whitespace errors.
++- [x] 3.2 Confirm rustdoc binds the moved blocks to the intended items (catches broken intra-doc
++      links such as `[`addressable_scope`]`/`[`Failure`]`). Run the crate-scoped, non-workspace
++      `cargo +1.97.1 doc -p graphhelm-cli --no-deps --locked`; expect it to finish without NEW
++      intra-doc-link warnings versus baseline. If the toolchain/cargo cache cannot be used in this
++      environment, fall back to the manual region reads in 1.1/2.1 as the observer and record that
++      `cargo doc` was not run here.
++
++## Workflow follow-up
++
++- Archive the change after the project's review requirements are satisfied.
+diff --git a/openspec/config.yaml b/openspec/config.yaml
+new file mode 100644
+index 0000000..2805cb6
+--- /dev/null
++++ b/openspec/config.yaml
+@@ -0,0 +1,32 @@
++schema: spec-driven
++
++# Project context (optional)
++# Add only constraints that should guide OpenSpec artifacts and workflows.
++# Include constraints an agent cannot infer by reading the code.
++# Keep general project documentation and discoverable codebase facts out.
++# Example:
++#   context: |
++#     Designs and tasks must cover Windows, macOS, and Linux
++#     Write all artifacts in Spanish
++
++# Per-artifact rules (optional)
++# Add custom rules for specific artifacts.
++# Example:
++#   rules:
++#     proposal:
++#       - Keep proposals under 500 words
++#       - Always state what is out of scope
++#     tasks:
++#       - Break tasks into chunks of max 2 hours
++
++# Per-operation guidance (optional)
++# Add advisory guidance for how apply and archive work should be conducted.
++# This is separate from artifact rules above.
++# Example:
++#   operations:
++#     apply:
++#       guidance:
++#         - Keep test summaries concise
++#     archive:
++#       guidance:
++#         - Summarize the archive outcome before finishing
+diff --git a/openspec/specs/.gitkeep b/openspec/specs/.gitkeep
+new file mode 100644
+index 0000000..e69de29

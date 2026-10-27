@@ -1,0 +1,1594 @@
+diff --git a/.specify/feature.json b/.specify/feature.json
+new file mode 100644
+index 0000000..72ba549
+--- /dev/null
++++ b/.specify/feature.json
+@@ -0,0 +1,3 @@
++{
++  "feature_directory": "specs/001-bench"
++}
+diff --git a/.specify/templates/constitution-template.md b/.specify/templates/constitution-template.md
+new file mode 100644
+index 0000000..a4670ff
+--- /dev/null
++++ b/.specify/templates/constitution-template.md
+@@ -0,0 +1,50 @@
++# [PROJECT_NAME] Constitution
++<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
++
++## Core Principles
++
++### [PRINCIPLE_1_NAME]
++<!-- Example: I. Library-First -->
++[PRINCIPLE_1_DESCRIPTION]
++<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
++
++### [PRINCIPLE_2_NAME]
++<!-- Example: II. CLI Interface -->
++[PRINCIPLE_2_DESCRIPTION]
++<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
++
++### [PRINCIPLE_3_NAME]
++<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
++[PRINCIPLE_3_DESCRIPTION]
++<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
++
++### [PRINCIPLE_4_NAME]
++<!-- Example: IV. Integration Testing -->
++[PRINCIPLE_4_DESCRIPTION]
++<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
++
++### [PRINCIPLE_5_NAME]
++<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
++[PRINCIPLE_5_DESCRIPTION]
++<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
++
++## [SECTION_2_NAME]
++<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
++
++[SECTION_2_CONTENT]
++<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
++
++## [SECTION_3_NAME]
++<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
++
++[SECTION_3_CONTENT]
++<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
++
++## Governance
++<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
++
++[GOVERNANCE_RULES]
++<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
++
++**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
++<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+diff --git a/.specify/templates/plan-template.md b/.specify/templates/plan-template.md
+new file mode 100644
+index 0000000..36f2eab
+--- /dev/null
++++ b/.specify/templates/plan-template.md
+@@ -0,0 +1,113 @@
++# Implementation Plan: [FEATURE]
++
++**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
++
++**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
++
++**Note**: This template is filled in by the `__SPECKIT_COMMAND_PLAN__` command; its definition describes the execution workflow.
++
++## Summary
++
++[Extract from feature spec: primary requirement + technical approach from research]
++
++## Technical Context
++
++<!--
++  ACTION REQUIRED: Replace the content in this section with the technical details
++  for the project. The structure here is presented in advisory capacity to guide
++  the iteration process.
++-->
++
++**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]
++
++**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]
++
++**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
++
++**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]
++
++**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
++
++**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]
++
++**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]
++
++**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]
++
++**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++[Gates determined based on constitution file]
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/[###-feature]/
++├── plan.md              # This file (__SPECKIT_COMMAND_PLAN__ command output)
++├── research.md          # Phase 0 output (__SPECKIT_COMMAND_PLAN__ command)
++├── data-model.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── quickstart.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── contracts/           # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++└── tasks.md             # Phase 2 output (__SPECKIT_COMMAND_TASKS__ command - NOT created by __SPECKIT_COMMAND_PLAN__)
++```
++
++### Source Code (repository root)
++<!--
++  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
++  for this feature. Delete unused options and expand the chosen structure with
++  real paths (e.g., apps/admin, packages/something). The delivered plan must
++  not include Option labels.
++-->
++
++```text
++# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
++src/
++├── models/
++├── services/
++├── cli/
++└── lib/
++
++tests/
++├── contract/
++├── integration/
++└── unit/
++
++# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
++backend/
++├── src/
++│   ├── models/
++│   ├── services/
++│   └── api/
++└── tests/
++
++frontend/
++├── src/
++│   ├── components/
++│   ├── pages/
++│   └── services/
++└── tests/
++
++# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
++api/
++└── [same as backend above]
++
++ios/ or android/
++└── [platform-specific structure: feature modules, UI flows, platform tests]
++```
++
++**Structure Decision**: [Document the selected structure and reference the real
++directories captured above]
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++| Violation | Why Needed | Simpler Alternative Rejected Because |
++|-----------|------------|-------------------------------------|
++| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
++| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+diff --git a/.specify/templates/spec-template.md b/.specify/templates/spec-template.md
+new file mode 100644
+index 0000000..ceb2877
+--- /dev/null
++++ b/.specify/templates/spec-template.md
+@@ -0,0 +1,131 @@
++# Feature Specification: [FEATURE NAME]
++
++**Feature Branch**: `[###-feature-name]`
++
++**Created**: [DATE]
++
++**Status**: Draft
++
++**Input**: User description: "$ARGUMENTS"
++
++## User Scenarios & Testing *(mandatory)*
++
++<!--
++  IMPORTANT: User stories should be PRIORITIZED as user journeys ordered by importance.
++  Each user story/journey must be INDEPENDENTLY TESTABLE - meaning if you implement just ONE of them,
++  you should still have a viable MVP (Minimum Viable Product) that delivers value.
++
++  Assign priorities (P1, P2, P3, etc.) to each story, where P1 is the most critical.
++  Think of each story as a standalone slice of functionality that can be:
++  - Developed independently
++  - Tested independently
++  - Deployed independently
++  - Demonstrated to users independently
++-->
++
++### User Story 1 - [Brief Title] (Priority: P1)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently - e.g., "Can be fully tested by [specific action] and delivers [specific value]"]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++2. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 2 - [Brief Title] (Priority: P2)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 3 - [Brief Title] (Priority: P3)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++[Add more user stories as needed, each with an assigned priority]
++
++### Edge Cases
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right edge cases.
++-->
++
++- What happens when [boundary condition]?
++- How does system handle [error scenario]?
++
++## Requirements *(mandatory)*
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right functional requirements.
++-->
++
++### Functional Requirements
++
++- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
++- **FR-002**: System MUST [specific capability, e.g., "validate email addresses"]
++- **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
++- **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
++- **FR-005**: System MUST [behavior, e.g., "log all security events"]
++
++*Example of marking unclear requirements:*
++
++- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
++- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
++
++### Key Entities *(include if feature involves data)*
++
++- **[Entity 1]**: [What it represents, key attributes without implementation]
++- **[Entity 2]**: [What it represents, relationships to other entities]
++
++## Success Criteria *(mandatory)*
++
++<!--
++  ACTION REQUIRED: Define measurable success criteria.
++  These must be technology-agnostic and measurable.
++-->
++
++### Measurable Outcomes
++
++- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
++- **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
++- **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
++- **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
++
++## Assumptions
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right assumptions based on reasonable defaults
++  chosen when the feature description did not specify certain details.
++-->
++
++- [Assumption about target users, e.g., "Users have stable internet connectivity"]
++- [Assumption about scope boundaries, e.g., "Mobile support is out of scope for v1"]
++- [Assumption about data/environment, e.g., "Existing authentication system will be reused"]
++- [Dependency on existing system/service, e.g., "Requires access to the existing user profile API"]
+diff --git a/.specify/templates/tasks-template.md b/.specify/templates/tasks-template.md
+new file mode 100644
+index 0000000..7fff087
+--- /dev/null
++++ b/.specify/templates/tasks-template.md
+@@ -0,0 +1,252 @@
++---
++
++description: "Task list template for feature implementation"
++---
++
++# Tasks: [FEATURE NAME]
++
++**Input**: Design documents from `/specs/[###-feature-name]/`
++
++**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
++
++**Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
++
++**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies)
++- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
++- Include exact file paths in descriptions
++
++## Path Conventions
++
++- **Single project**: `src/`, `tests/` at repository root
++- **Web app**: `backend/src/`, `frontend/src/`
++- **Mobile**: `api/src/`, `ios/src/` or `android/src/`
++- Paths shown below assume single project - adjust based on plan.md structure
++
++<!--
++  ============================================================================
++  IMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.
++
++  The __SPECKIT_COMMAND_TASKS__ command MUST replace these with actual tasks based on:
++  - User stories from spec.md (with their priorities P1, P2, P3...)
++  - Feature requirements from plan.md
++  - Entities from data-model.md
++  - Endpoints from contracts/
++
++  Tasks MUST be organized by user story so each story can be:
++  - Implemented independently
++  - Tested independently
++  - Delivered as an MVP increment
++
++  DO NOT keep these sample tasks in the generated tasks.md file.
++  ============================================================================
++-->
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Project initialization and basic structure
++
++- [ ] T001 Create project structure per implementation plan
++- [ ] T002 Initialize [language] project with [framework] dependencies
++- [ ] T003 [P] Configure linting and formatting tools
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
++
++**⚠️ CRITICAL**: No user story work can begin until this phase is complete
++
++Examples of foundational tasks (adjust based on your project):
++
++- [ ] T004 Setup database schema and migrations framework
++- [ ] T005 [P] Implement authentication/authorization framework
++- [ ] T006 [P] Setup API routing and middleware structure
++- [ ] T007 Create base models/entities that all stories depend on
++- [ ] T008 Configure error handling and logging infrastructure
++- [ ] T009 Setup environment configuration management
++
++**Checkpoint**: Foundation ready - user story implementation can now begin in parallel
++
++---
++
++## Phase 3: User Story 1 - [Title] (Priority: P1) 🎯 MVP
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 1 (OPTIONAL - only if tests requested) ⚠️
++
++> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
++
++- [ ] T010 [P] [US1] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T011 [P] [US1] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 1
++
++- [ ] T012 [P] [US1] Create [Entity1] model in src/models/[entity1].py
++- [ ] T013 [P] [US1] Create [Entity2] model in src/models/[entity2].py
++- [ ] T014 [US1] Implement [Service] in src/services/[service].py (depends on T012, T013)
++- [ ] T015 [US1] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T016 [US1] Add validation and error handling
++- [ ] T017 [US1] Add logging for user story 1 operations
++
++**Checkpoint**: At this point, User Story 1 should be fully functional and testable independently
++
++---
++
++## Phase 4: User Story 2 - [Title] (Priority: P2)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 2 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T018 [P] [US2] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T019 [P] [US2] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 2
++
++- [ ] T020 [P] [US2] Create [Entity] model in src/models/[entity].py
++- [ ] T021 [US2] Implement [Service] in src/services/[service].py
++- [ ] T022 [US2] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T023 [US2] Integrate with User Story 1 components (if needed)
++
++**Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
++
++---
++
++## Phase 5: User Story 3 - [Title] (Priority: P3)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 3 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T024 [P] [US3] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T025 [P] [US3] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 3
++
++- [ ] T026 [P] [US3] Create [Entity] model in src/models/[entity].py
++- [ ] T027 [US3] Implement [Service] in src/services/[service].py
++- [ ] T028 [US3] Implement [endpoint/feature] in src/[location]/[file].py
++
++**Checkpoint**: All user stories should now be independently functional
++
++---
++
++[Add more user story phases as needed, following the same pattern]
++
++---
++
++## Phase N: Polish & Cross-Cutting Concerns
++
++**Purpose**: Improvements that affect multiple user stories
++
++- [ ] TXXX [P] Documentation updates in docs/
++- [ ] TXXX Code cleanup and refactoring
++- [ ] TXXX Performance optimization across all stories
++- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
++- [ ] TXXX Security hardening
++- [ ] TXXX Run quickstart.md validation
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies - can start immediately
++- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
++- **User Stories (Phase 3+)**: All depend on Foundational phase completion
++  - User stories can then proceed in parallel (if staffed)
++  - Or sequentially in priority order (P1 → P2 → P3)
++- **Polish (Final Phase)**: Depends on all desired user stories being complete
++
++### User Story Dependencies
++
++- **User Story 1 (P1)**: Can start after Foundational (Phase 2) - No dependencies on other stories
++- **User Story 2 (P2)**: Can start after Foundational (Phase 2) - May integrate with US1 but should be independently testable
++- **User Story 3 (P3)**: Can start after Foundational (Phase 2) - May integrate with US1/US2 but should be independently testable
++
++### Within Each User Story
++
++- Tests (if included) MUST be written and FAIL before implementation
++- Models before services
++- Services before endpoints
++- Core implementation before integration
++- Story complete before moving to next priority
++
++### Parallel Opportunities
++
++- All Setup tasks marked [P] can run in parallel
++- All Foundational tasks marked [P] can run in parallel (within Phase 2)
++- Once Foundational phase completes, all user stories can start in parallel (if team capacity allows)
++- All tests for a user story marked [P] can run in parallel
++- Models within a story marked [P] can run in parallel
++- Different user stories can be worked on in parallel by different team members
++
++---
++
++## Parallel Example: User Story 1
++
++```bash
++# Launch all tests for User Story 1 together (if tests requested):
++Task: "Contract test for [endpoint] in tests/contract/test_[name].py"
++Task: "Integration test for [user journey] in tests/integration/test_[name].py"
++
++# Launch all models for User Story 1 together:
++Task: "Create [Entity1] model in src/models/[entity1].py"
++Task: "Create [Entity2] model in src/models/[entity2].py"
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup
++2. Complete Phase 2: Foundational (CRITICAL - blocks all stories)
++3. Complete Phase 3: User Story 1
++4. **STOP and VALIDATE**: Test User Story 1 independently
++5. Deploy/demo if ready
++
++### Incremental Delivery
++
++1. Complete Setup + Foundational → Foundation ready
++2. Add User Story 1 → Test independently → Deploy/Demo (MVP!)
++3. Add User Story 2 → Test independently → Deploy/Demo
++4. Add User Story 3 → Test independently → Deploy/Demo
++5. Each story adds value without breaking previous stories
++
++### Parallel Team Strategy
++
++With multiple developers:
++
++1. Team completes Setup + Foundational together
++2. Once Foundational is done:
++   - Developer A: User Story 1
++   - Developer B: User Story 2
++   - Developer C: User Story 3
++3. Stories complete and integrate independently
++
++---
++
++## Notes
++
++- [P] tasks = different files, no dependencies
++- [Story] label maps task to specific user story for traceability
++- Each user story should be independently completable and testable
++- Verify tests fail before implementing
++- Commit after each task or logical group
++- Stop at any checkpoint to validate story independently
++- Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
+diff --git a/plugins/graphhelm-codex-hooks/hooks/task_handoff.py b/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
+index 22d68b4..3068e6e 100644
+--- a/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
++++ b/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
+@@ -492,8 +492,10 @@ def _mcp_stdio() -> int:
+                 params = request_value.get("params")
+                 if not isinstance(params, dict):
+                     raise ValueError("tools/call params must be an object")
+-                if set(params) - {"name", "arguments"}:
++                if set(params) - {"name", "arguments", "_meta"}:
+                     raise ValueError("tools/call params contain an unsupported field")
++                if "_meta" in params and not isinstance(params["_meta"], dict):
++                    raise ValueError("tools/call metadata must be an object")
+                 response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
+             else:
+                 response = _mcp_error(request_id, -32601, "method not found")
+diff --git a/plugins/graphhelm/hooks/task_handoff.py b/plugins/graphhelm/hooks/task_handoff.py
+index 22d68b4..3068e6e 100644
+--- a/plugins/graphhelm/hooks/task_handoff.py
++++ b/plugins/graphhelm/hooks/task_handoff.py
+@@ -492,8 +492,10 @@ def _mcp_stdio() -> int:
+                 params = request_value.get("params")
+                 if not isinstance(params, dict):
+                     raise ValueError("tools/call params must be an object")
+-                if set(params) - {"name", "arguments"}:
++                if set(params) - {"name", "arguments", "_meta"}:
+                     raise ValueError("tools/call params contain an unsupported field")
++                if "_meta" in params and not isinstance(params["_meta"], dict):
++                    raise ValueError("tools/call metadata must be an object")
+                 response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
+             else:
+                 response = _mcp_error(request_id, -32601, "method not found")
+diff --git a/specs/001-bench/checklists/requirements.md b/specs/001-bench/checklists/requirements.md
+new file mode 100644
+index 0000000..582f989
+--- /dev/null
++++ b/specs/001-bench/checklists/requirements.md
+@@ -0,0 +1,53 @@
++# Specification Quality Checklist: Accept the MCP Standard Metadata Field in Handoff Tool Calls
++
++**Purpose**: Validate specification completeness and quality before proceeding to planning
++**Created**: 2026-10-27
++**Feature**: [spec.md](../spec.md)
++
++## Content Quality
++
++- [x] No implementation details (languages, frameworks, APIs)
++  - Domain vocabulary only (`_meta`, MCP, stdio, tool call) is used because it is given by the problem; no language, framework, file-path, or code-structure choices are prescribed in the requirements.
++- [x] Focused on user value and business needs
++  - Centered on "native MCP clients can actually call handoff tools" plus "no guardrail is weakened" and "both deployments stay in parity."
++- [x] Written for non-technical stakeholders
++  - User stories and success criteria describe outcomes a stakeholder can reason about; the metadata object is described as opaque and dispatch-neutral.
++- [x] All mandatory sections completed
++  - User Scenarios & Testing, Requirements (Functional + Key Entities), Success Criteria, and Assumptions are all filled.
++
++## Requirement Completeness
++
++- [x] No [NEEDS CLARIFICATION] markers remain
++  - None present. Every open aspect was resolved with an informed default recorded under Assumptions.
++- [x] Requirements are testable and unambiguous
++  - Each FR states a capability plus its observable rejection/acceptance outcome; each maps to a concrete acceptance scenario.
++- [x] Success criteria are measurable
++  - SC-001..SC-004 use 100% / 0-regression / 100%-content-match / zero-difference targets that can be checked from tests and a content comparison.
++- [x] Success criteria are technology-agnostic (no implementation details)
++  - Metrics express outcomes (dispatch success, regressions, parity, no behavior difference) rather than internal mechanisms; "byte-identical" is retained as the owner's explicit parity condition.
++- [x] All acceptance scenarios are defined
++  - Given/When/Then scenarios cover the three user stories and all listed edge cases.
++- [x] Edge cases are identified
++  - Empty/nested/non-object metadata, metadata + unknown field, non-tool-call methods, oversized frame with metadata, multi-frame streams, missing name/arguments.
++- [x] Scope is clearly bounded
++  - Change is limited to accepting `_meta` on tool calls while preserving existing rejections and shipping both adapters identically; handshake/ping/list/plain-call behavior explicitly unchanged (FR-007).
++- [x] Dependencies and assumptions identified
++  - Assumptions capture protocol revision, opaque-object semantics, "object" definition, current byte-identity, no new dependency, and the AGENTS.md governance substitution.
++
++## Feature Readiness
++
++- [x] All functional requirements have clear acceptance criteria
++  - FR-001..FR-008 each correspond to named acceptance scenarios in User Stories 1-3 or to a stated observable guardrail.
++- [x] User scenarios cover primary flows
++  - Primary flow is the successful metadata-bearing tool call (P1); guardrail preservation (P2) and cross-deployment parity (P3) are independently testable slices.
++- [x] Feature meets measurable outcomes defined in Success Criteria
++  - Each SC is directly exercised by the acceptance scenarios (successful dispatch, preserved rejections, byte-identity, unchanged baseline behavior).
++- [x] No implementation details leak into specification
++  - Requirements are behavioral; file paths appear only in the verbatim user input quote and one traceability reference (FR-008 names the hook contract test surface without dictating code layout).
++
++## Notes
++
++- Items marked incomplete require spec updates before `/speckit.clarify` or `/speckit.plan`.
++- Validation result: all items pass on the first iteration. No `[NEEDS CLARIFICATION]` markers were introduced, so no clarification round is required.
++- Constitution note: this checkout has no dedicated constitution file; `AGENTS.md` at the repository root was used as the governance reference per the command guidance. This is recorded in the spec Assumptions as well.
++- Readiness: SPEC READY FOR PLANNING — proceed to `/speckit.clarify` (optional) or `/speckit.plan`.
+diff --git a/specs/001-bench/contracts/mcp-stdio-tools-call.md b/specs/001-bench/contracts/mcp-stdio-tools-call.md
+new file mode 100644
+index 0000000..83cbd64
+--- /dev/null
++++ b/specs/001-bench/contracts/mcp-stdio-tools-call.md
+@@ -0,0 +1,122 @@
++# Contract: `tools/call` over MCP stdio (task-handoff adapter)
++
++**Feature**: 001-bench | **Date**: 2026-10-26 | **Wire**: newline-delimited JSON-RPC 2.0 over stdio
++
++Phase 1 of `/speckit.plan`. The task-handoff adapter exposes an external interface to other systems (native MCP clients): a newline-delimited JSON-RPC 2.0 server over stdio (`task_handoff.py --mcp-stdio`). This contract documents the **changed** method's parameter acceptance rule in context of the **stable** surrounding envelope, so an implementer and a reviewer can verify both that `_meta` is now accepted and that nothing else moved (SC-004). Field semantics live in [`../data-model.md`](../data-model.md); this file is the wire-level observable contract only.
++
++## Transport frame rules (unchanged)
++
++- One JSON-RPC message per line, terminated by `\n`.
++- A physical frame longer than `MAX_MCP_MESSAGE` (`32 * 1024` bytes), or not ending in `\n`, is refused **before** JSON parsing with a single `id:null` error of code `-32600 invalid request`, the remaining bytes are never consumed as a second request, and no Runtime work is performed (FR-005). An oversized frame that also carries `_meta` is still refused by size first.
++
++## Envelope (stable)
++
++Every response is a single JSON object on one line, compact separators (`separators=(",", ":")`).
++
++- Success: `{"jsonrpc":"2.0","id":<reqId>,"result":<result>}`
++- Error: `{"jsonrpc":"2.0","id":<reqId>,"error":{"code":<int>,"message":<string>}}`
++
++Error codes used by this surface:
++
++| Code | Meaning | Raised when |
++|------|---------|-------------|
++| `-32600` | invalid request | frame too large or unterminated (before parse); malformed envelope is otherwise `-32602`/`-32603`. |
++| `-32601` | method not found | unknown `method`. |
++| `-32602` | invalid request | `tools/call` `params` fail the closed-set / object / `_meta`-object guard below; or non-object envelope fields. |
++| `-32603` | internal error | unexpected exception while handling a request. |
++
++Note: a well-formed `tools/call` whose *arguments* are bad (unknown tool, missing required argument, unsupported argument key, identity override) does **not** become a transport error; it returns a **result** with `isError:true` and body text `handoff tool failed; result is unobserved`. Distinguish the two failure bands: **params-level** refusals → `-32602`; **tool-level** failures → `result.isError:true`.
++
++## Methods
++
++### `initialize` (unchanged)
++
++Request: `{"jsonrpc":"2.0","id":<n>,"method":"initialize","params":{...}}`
++Result: `{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"graphhelm-task-handoff","version":"0.1.11"}}`
++The `serverInfo.version` must equal `plugins/graphhelm/plugin.json` `version` (the test asserts this).
++
++### `ping` (unchanged)
++
++Request: `{"jsonrpc":"2.0","id":<n>,"method":"ping"}`
++Result: `{}` (empty object).
++
++### `tools/list` (unchanged)
++
++Request: `{"jsonrpc":"2.0","id":<n>,"method":"tools/list"}`
++Result: `{"tools":[{offer},{receive},{status}]}` — the closed three-tool surface with `additionalProperties:false` argument schemas (see data model `ToolArgumentSchema`).
++
++### `tools/call` (CHANGED — the subject of this feature)
++
++Request:
++```json
++{"jsonrpc":"2.0","id":<n>,"method":"tools/call",
++ "params":{"name":"<offer|receive|status>","arguments":{...},"_meta":{...}}}
++```
++
++**Accepted `params` keys (closed set): `name`, `arguments`, `_meta`.** Any other key → `-32602` (unchanged guardrail, FR-003).
++
++**`_meta` acceptance rule (new):** optional. If present it MUST be a JSON object; if its value is any other JSON type (string, number, boolean, list, or `null`) → `-32602` before dispatch (FR-002). When present-and-an-object (including `{}`), it is accepted and **ignored for dispatch**: the dispatcher receives only `name`, `arguments`, and the process identity, so routing and argument interpretation are unchanged (FR-001, SC-001, SC-004).
++
++Result (success): `{"content":[{"type":"text","text":"<compact JSON of the tool result>"}],"isError":false}`
++Result (tool-level failure, e.g. unsupported argument key / identity override / missing required arg / unknown tool): `{"content":[{"type":"text","text":"handoff tool failed; result is unobserved"}],"isError":true}`
++
++## Worked examples (mirror the spec's acceptance scenarios)
++
++Each request is one stdin line. "No Runtime side effect" means zero HTTP calls reach the Runtime for params-level refusals.
++
++### 1. Metadata object accepted, dispatched as if absent — SC-001 / FR-001 (User Story 1)
++
++Request (progress token present):
++```json
++{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"status","arguments":{},"_meta":{"progressToken":"tok-1"}}}
++```
++Response: same as the no-metadata equivalent — `...,"result":{"content":[{"type":"text","text":"{\"format\":\"graphhelm-portable-v1\",\"phase\":\"status\",...}"}],"isError":false},...`
++
++### 2. Empty metadata object accepted — User Story 1, scenario 2
++
++Request:
++```json
++{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"status","arguments":{},"_meta":{}}}
++```
++Response: `result.isError:false`, identical shape to scenario 1 without `_meta`. Empty metadata has no effect on dispatch.
++
++### 3. Unknown field still refused even with valid `_meta` — FR-003 (User Story 2, scenario 3)
++
++Request:
++```json
++{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"status","arguments":{},"_meta":{},"bogus":1}}
++```
++Response: `{"jsonrpc":"2.0","id":5,"error":{"code":-32602,"message":"invalid request"}}`
++A valid metadata object does not excuse another unknown key. No tool runs; no Runtime call.
++
++### 4. Non-object metadata refused — FR-002 (User Story 2, scenario 2)
++
++For each `badMeta` in `"a string"`, `7`, `true`, `[1]`, `null`:
++```json
++{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"status","arguments":{},"_meta":<badMeta>}}
++```
++Response: `{"jsonrpc":"2.0","id":6,"error":{"code":-32602,"message":"invalid request"}}` before dispatch. `null` is rejected (present key, not an object). No Runtime call.
++
++### 5. Identity override through arguments still refused — FR-004 (User Story 2, scenario 4)
++
++Request:
++```json
++{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"status","arguments":{"host":"claude"}}}
++```
++Response: `...,"result":{"content":[{"type":"text","text":"handoff tool failed; result is unobserved"}],"isError":true},...` (tool-level refusal because `host` is not in the `status` argument schema). Unchanged by this feature.
++
++### 6. Oversized frame refused before parse — FR-005 (User Story 2, scenario 5)
++
++A single frame of length `> MAX_MCP_MESSAGE` (with or without `_meta` inside it):
++Response: exactly one line `{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"invalid request"}}`; process exits non-zero; no second request parsed; no Runtime call.
++
++### 7. Parity across deployments — FR-006 / SC-003 (User Story 3)
++
++Identical request bytes sent to either `plugins/graphhelm/hooks/task_handoff.py --mcp-stdio` or `plugins/graphhelm-codex-hooks/hooks/task_handoff.py --mcp-stdio` produce the same acceptance decision and the same result shape, because the two files are byte-identical (verified by equal SHA-256 — see `quickstart.md`).
++
++## Invariants of the change
++
++1. Only `name`, `arguments`, `_meta` are ever accepted as `params` keys; everything else stays refused.
++2. `_meta` presence changes only whether a call that previously read as "unsupported field" now proceeds to dispatch; for requests **without** `_meta`, every response is byte-for-byte identical to the pre-change behavior (SC-004).
++3. Refusals in steps 1–3 of the data-model decision flow occur before dispatch ⇒ no Runtime work.
++4. Dispatch consumes only `(name, arguments, identity)`; `_meta` is never forwarded, logged, persisted, or executed.
+diff --git a/specs/001-bench/data-model.md b/specs/001-bench/data-model.md
+new file mode 100644
+index 0000000..b04dadd
+--- /dev/null
++++ b/specs/001-bench/data-model.md
+@@ -0,0 +1,123 @@
++# Data Model: Accept the MCP Standard Metadata Field in Handoff Tool Calls
++
++**Feature**: 001-bench | **Date**: 2026-10-26
++
++Phase 1 of `/speckit.plan`. This feature has **no persistent data store**; its "model" is the shape of the inbound `tools/call` request envelope and the closed-set validation that decides acceptance before dispatch. The entities below are wire shapes and their rules, extracted from the spec's Key Entities and confirmed against `task_handoff.py`.
++
++## Entity summary
++
++| Entity | Kind | Persisted? | Changed by this feature? |
++|--------|------|-----------|--------------------------|
++| `ToolCallRequest` | inbound JSON-RPC `params` object for `tools/call` | No (transient frame) | Yes — `_meta` becomes an accepted optional key |
++| `StandardMetadataObject` | value of `params._meta` | No | Yes — now explicitly validated as an object when present, otherwise opaque |
++| `AdapterIdentity` | process-bound `(host, session)` from environment | No (process config) | No — unchanged; still not overridable by a caller |
++| `ToolArgumentSchema` | per-tool closed set of allowed/required argument keys | No | No — unchanged (source of the identity-override refusal) |
++
++## ToolCallRequest
++
++The `params` object of a `tools/call` request. It must be a JSON object. Its keys form a **closed set**.
++
++### Fields
++
++| Field | Type | Required | Accepted keys rule | Notes |
++|-------|------|----------|--------------------|-------|
++| `name` | string | Present in practice; dispatch requires it to be one of `{offer, receive, status}` or the call fails inside dispatch with "unknown handoff tool" | member of closed set `{name, arguments, _meta}` | Not interpreted here; selected by dispatch. |
++| `arguments` | object (JSON object) | Optional; if absent/`null`, dispatch treats it as `{}` | member of closed set `{name, arguments, _meta}` | Must be an object when non-null, else dispatch raises "tool arguments must be an object". |
++| `_meta` | **object (JSON object)** | **Optional** | member of closed set `{name, arguments, _meta}` | **Accepted by this feature.** When present, MUST be an object (a mapping). Contents are opaque: not read, not forwarded, not executed. Absent → fine. Present-and-not-an-object (string/number/list/bool/`null`) → rejected. |
++
++### Validation rules (the pre-dispatch guard, evaluated in order)
++
++1. `params` is a JSON object, else refuse (`tools/call params must be an object`). *(unchanged)*
++2. Closed set: no key outside `{name, arguments, _meta}` may appear, else refuse (`tools/call params contain an unsupported field`). *(changed: `_meta` added to the permitted set; every other unknown key still refused — FR-003)*
++3. `_meta` type: if the key `_meta` is present, its value MUST be an object, else refuse (`tools/call metadata must be an object`). *(added — FR-002; covers string/number/list/bool/null)*
++4. Dispatch proceeds with only `(name, arguments, host, session)`. `name` must be a known tool and `arguments` must satisfy the tool's schema; failures here surface as a tool-level error, independent of metadata handling. *(unchanged)*
++
++All refusals in steps 1–3 map to JSON-RPC error `-32602 invalid request` and occur **before** any tool runs, so they cause **no Runtime side effect** (no HTTP to the Runtime).
++
++### Relationships
++
++- `ToolCallRequest` **has at most 1** `StandardMetadataObject` (the `_meta` value).
++- `ToolCallRequest` names exactly one of the three tools via `name` (or none, if the call is refused before dispatch).
++- Every request is evaluated against the single process-scoped `AdapterIdentity`.
++
++## StandardMetadataObject
++
++The optional per-call metadata a conforming MCP client attaches (e.g. `{"progressToken": ...}`).
++
++### Fields / structure
++
++- Value type constraint: **object (mapping)** only. Any other JSON type is invalid.
++- Contents: **opaque**. The adapter performs no interpretation beyond confirming it is an object. Nested values of any shape are allowed and ignored.
++- Lifecycle: exists for the duration of one frame; never carried across frames, never written to a projection/event, never forwarded to the Runtime.
++
++### Rules
++
++- Absent → accepted (dispatch unaffected).
++- Present + object (including `{}`) → accepted (dispatch unaffected). SC-001 / FR-001.
++- Present + non-object (string/number/list/bool/`null`) → rejected before dispatch. SC-002 / FR-002.
++
++## AdapterIdentity
++
++The host/session identity the server process is configured with; it fixes who is acting.
++
++### Fields
++
++| Source | Env var | Validator | Overridable by caller? |
++|--------|---------|-----------|------------------------|
++| host | `GRAPHHELM_MCP_HOST` | `PORTABLE_HOST` regex via `_host()` at startup | No |
++| session | `GRAPHHELM_SESSION_ID` | `ID` regex via `_id()` at startup; cross-checked in `_session` per dispatch | No |
++
++### Relationship & rule
++
++- One `AdapterIdentity` per running process; shared by all frames on that connection.
++- **Identity-override refusal (FR-004, unchanged):** because the per-tool `ToolArgumentSchema` does not include host/session/identity keys, passing them inside `arguments` trips the existing `set(arguments) - allowed` check and is refused. Adding `_meta` to the *params* closed set does not change the *arguments* closed set, so this refusal is preserved verbatim.
++
++## ToolArgumentSchema (per tool, from `_mcp_tools`)
++
++Unchanged by this feature; listed so the model is complete and the identity-override rule is grounded.
++
++| Tool | Allowed argument keys | Required argument keys |
++|------|----------------------|------------------------|
++| `offer` | `recipientHost`, `recipientSessionId`, `handoffId` | `recipientHost`, `recipientSessionId` |
++| `receive` | `offerId` | `offerId` |
++| `status` | `offerId` | — (none) |
++
++Any other key in `arguments` (including any identity/host/session key) → refused ("tool arguments contain an unsupported field").
++
++## State transitions
++
++This feature introduces **no new persistent state machine**. The only state change in scope is the **pre-dispatch decision**, which is a pure function of the request:
++
++```
++                       +-------------------------------------------+
++   tools/call frame --> | 1. params is an object?                   |  no  -> -32602 (no tool runs)
++                       +-------------------------------------------+
++                                     yes
++                       +-------------------------------------------+
++                       | 2. keys subset of {name,arguments,_meta}? |  no  -> -32602 (no tool runs)   [FR-003]
++                       +-------------------------------------------+
++                                     yes
++                       +-------------------------------------------+
++                       | 3. if _meta present, is it an object?     |  no  -> -32602 (no tool runs)   [FR-002]
++                       +-------------------------------------------+
++                                     yes
++                       +-------------------------------------------+
++                       | 4. dispatch(name, arguments, identity)    |      [FR-001: _meta invisible]
++                       +-------------------------------------------+
++                            |                         |
++                     known tool + valid args      unknown tool / bad args
++                            v                         v
++                 result.isError = false        result.isError = true (tool-level; may touch Runtime)
++
++   Oversized / unterminated frame --> -32600 BEFORE json.loads (framed size > MAX_MCP_MESSAGE)   [FR-005]
++```
++
++The downstream recorded-state outcomes (`recorded` / `already_recorded` returned by `offer`/`receive`, and the status listing) are **out of scope** and byte-for-byte unchanged; metadata cannot reach them because dispatch receives only `name` and `arguments`.
++
++## Invariants preserved (cross-referenced)
++
++- Closed-set strictness except for `_meta` (FR-003).
++- Object-only metadata (FR-002); metadata is dispatch-neutral (FR-001 / SC-001 / SC-004).
++- Identity cannot be overridden through arguments (FR-004).
++- Frame-size bound precedes all parameter inspection (FR-005).
++- Requests without `_meta` behave identically to before (SC-004): for such requests, the step-2 set difference equals the old one and step 3 is skipped.
+diff --git a/specs/001-bench/plan.md b/specs/001-bench/plan.md
+new file mode 100644
+index 0000000..0334217
+--- /dev/null
++++ b/specs/001-bench/plan.md
+@@ -0,0 +1,106 @@
++# Implementation Plan: Accept the MCP Standard Metadata Field in Handoff Tool Calls
++
++**Branch**: `main` | **Date**: 2026-10-26 | **Spec**: [spec.md](./spec.md)
++
++**Input**: Feature specification from `/specs/001-bench/spec.md`
++
++**Note**: This plan is the output of the `/speckit.plan` command. It fills the `.specify/templates/plan-template.md` structure and is followed by the Phase 0 artifact `research.md`, the Phase 1 artifacts `data-model.md`, `contracts/`, and `quickstart.md`.
++
++## Summary
++
++The task-handoff MCP stdio adapter (`plugins/graphhelm/hooks/task_handoff.py`, run as `task_handoff.py --mcp-stdio`) rejects every `tools/call` whose `params` object carries any key other than `name` and `arguments` (a one-set-difference guard at the `tools/call` branch of `_mcp_stdio`). Native, conforming MCP clients attach the standard per-call `_meta` object (e.g. `{"progressToken": ...}`), so every handoff tool fails before dispatch. The technical approach is a **minimal, additive relaxation** of that single guard: admit `_meta` into the closed set of allowed `params` keys, and add one companion check that, when `_meta` is present, its value is a JSON object. Only `params.get("name")` and `params.get("arguments")` are forwarded to dispatch, so `_meta` is structurally ignored for routing and argument interpretation. Every other guardrail (unknown-field refusal, identity-override refusal, oversized-frame refusal) is untouched because the edit adds keys to a permitted set rather than widening the other checks. The identical edit is applied byte-for-byte to the Codex companion copy (`plugins/graphhelm-codex-hooks/hooks/task_handoff.py`) so the two shipped adapters remain byte-identical, and one dedicated `_meta` case is added to `plugins/graphhelm/hooks/test_task_handoff.py` exercising the acceptance alongside the existing rejection cases in the same suite.
++
++## Technical Context
++
++**Language/Version**: Python, CPython **3.11.9** (measured on this machine; `python --version`). Standard library only. The adapter already runs under `from __future__ import annotations` and PEP 604 hints, consistent with 3.11.
++
++**Primary Dependencies**: None new. The module uses only the standard library (`json`, `os`, `sys`, `hashlib`, `argparse`, `urllib.parse`, `datetime`, and the sibling `session_hook` module). No third-party package, MCP SDK, or framework is introduced and none is required.
++
++**Storage**: N/A for this change. Validation is in-memory. Dispatch reads a bearer-token file and talks to the Runtime over loopback HTTP, but the relaxation happens entirely *before* any dispatch/Runtime call, so no persistence is touched by the accepted/rejected decision itself.
++
++**Testing**: Python standard-library **`unittest`** (the existing suite `test_task_handoff.py` uses `unittest.TestCase`, subprocess, and a local `ThreadingHTTPServer` on loopback). Driven via `python -m unittest`. No pytest dependency exists in this plugin. Tests require no internet, Docker, credentials, provider account, browser, or production infrastructure — loopback only.
++
++**Target Platform**: Windows (this machine; PowerShell 5.1; CPython 3.11.9 64-bit). Cross-platform by construction: pure standard library, with POSIX/Windows branches already present in `session_hook` (`msvcrt` vs `fcntl`).
++
++**Project Type**: stdio MCP server / CLI hook shipped as a host plugin (Python). It is one of two plugins (`graphhelm`, `graphhelm-codex-hooks`) that intentionally bundle the identical `task_handoff.py`.
++
++**Performance Goals**: N/A beyond what already exists. There is no hot path; the change is O(1) set-difference plus an `in` + `isinstance` per `tools/call`. Frames are bounded by `MAX_MCP_MESSAGE = 32 KiB` (`readline(MAX_MCP_MESSAGE + 1)`). No new scaling target.
++
++**Constraints**:
++- Offline: the reaching test must not need network beyond `127.0.0.1`.
++- No execution during validation: the `_meta` contents are never executed, deserialized-for-effect, or forwarded; only its JSON type (object vs not) is checked.
++- Bounded frame: the oversized-frame refusal (size > `MAX_MCP_MESSAGE`) takes precedence and fires before any `params` inspection.
++- Byte-identity: the primary and Codex companion adapters must stay byte-for-byte identical (SC-003 / FR-006).
++
++**Scale/Scope**: Tiny and local. One logical function body in one shared ~544-line file, duplicated verbatim into two plugin directories, plus one added test case in one existing test file. Nothing else in the tree is touched.
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-checked after Phase 1 design.*
++
++> **Governance substitution (recorded per command guidance):** No project constitution file exists in this checkout (there is no `memory/constitution.md` / `.specify/memory/constitution.md`). Per the command, the repository-root `AGENTS.md` is used as the governance reference. Many `AGENTS.md` invariants target the Rust Graph Kernel workspace (`core/*`, `apps/cli`) and do not directly bind a Python hook plugin; the gates below are the subset that genuinely applies to this change. Items marked (informational) are noted but not gating.
++
++| # | Gate (source) | Requirement | Applies? | Status | Justification |
++|---|---|---|---|---|---|
++| 1 | Documentation language (AGENTS.md "Documentation language") | All new/edited documentation is English | Yes | PASS | All artifacts under `specs/001-bench/` are written in English; no Portuguese/non-English prose. |
++| 2 | Smallest adequate observer (JPD "Proof rules"; Keel) | Prove the promise with the smallest observer; name the contract a test would catch | Yes | PASS | The observer is a dedicated `_meta` case in the existing contract suite plus the byte-identity hash check; both reach exactly the touched behavior. See `quickstart.md`. |
++| 3 | No ceremonial scaffold (JPD; "Repository boundaries") | No TODO/TBD/unimplemented!, no empty handlers, no unused modules/stubs | Yes | PASS | The change extends an existing branch with two checks; no new module, type, helper, or stub is introduced. |
++| 4 | Treat input as untrusted; bound before work (AGENTS.md "Security rules") | Repository/DSL/MCP frames treated as untrusted; bounded size; no execution during validation | Yes | PASS | The relaxation type-checks `_meta` only as "is it an object"; its contents are opaque and never executed, forwarded, or parsed for effect. Frame bound precedes parameter inspection. |
++| 5 | Deterministic enforcement (Constitutional invariants; JPD) | Deterministic code enforces transitions; no dependence on time/randomness/iteration order/locale | Yes | PASS | The guard is a pure set difference plus `in`/`isinstance`; fully deterministic. Tests use fixed env vars and fixed IDs. |
++| 6 | No new external dependency (Keel objective contract; Security) | A new dependency is named in the PR body | Yes | PASS | Zero new dependencies (stdlib only) — nothing to name. |
++| 7 | Secrets hygiene (AGENTS.md "Security rules") | No secrets in DSL/fixtures/logs/crash output | Yes | PASS | The `_meta` test case embeds no secret; existing tests use a fixed `"test-token"`. No fixture golden values change. |
++| 8 | Proportional card (Keel card table) | Bounded code change → three-line card; behavioral evidence required for security-relevant validation | Yes | PASS | Scope = 2 files (twin `task_handoff.py`) + 1 test case; promise = "accept object-valued `_meta`, keep all other refusals"; proof command = the plugin contract suite. Card recorded in "Project Structure" below. |
++| 9 | Byte-identical deployed adapters (spec FR-006 / SC-003; repo twin-file convention) | Primary and Codex companion `task_handoff.py` remain byte-identical | Yes | PASS (design) | Same literal edit applied to both; verified post-change by equal SHA-256 (see `quickstart.md`). Noted as a hard acceptance gate. |
++| 10 | Delivery process (AGENTS.md "Delivery: issue, review, merge") | Issue-first, identity line, one review by a non-author lane, PR content, closing-keyword check, merge = delivery | Informational | PASS (deferred to delivery) | Process gate satisfied at PR/merge time (not at plan time). No closing keyword is written beside an issue this plan does not intend to close. |
++| 11 | Rust workspace gate / core crate boundaries (AGENTS.md "Toolchain", "Repository boundaries") | `cargo fmt/clippy/test`, crate layout, no circular deps | Informational | N/A (out of scope) | `plugins/` is **not** a member of the root cargo workspace (verified: `Cargo.toml` lists no `plugins/*`). The change is Python and outside the Rust kernel; the Rust gate neither builds nor observes it. The reaching observer is the Python contract suite, per item 2. |
++
++**GATE RESULT**: PASS. No unjustified violations, therefore the **Complexity Tracking** table below is left empty (no violations to justify).
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/001-bench/
++├── plan.md              # This file (command output)
++├── research.md          # Phase 0 output (decisions, rationale, alternatives)
++├── data-model.md        # Phase 1 output (entities, fields, validation, state)
++├── quickstart.md        # Phase 1 output (runnable validation guide)
++├── contracts/           # Phase 1 output
++│   └── mcp-stdio-tools-call.md   # Changed tools/call wire contract + stable envelope
++└── tasks.md             # Phase 2 output (speckit.tasks — NOT created by this command)
++```
++
++### Source Code (repository root)
++
++Real layout for this feature. `[CHANGE]` marks the only three files touched; nothing else moves.
++
++```text
++plugins/
++├── graphhelm/                          # primary deployment
++│   ├── plugin.json                     # declares serverInfo version "0.1.11", asserted by the test (UNCHANGED)
++│   └── hooks/
++│       ├── task_handoff.py             # [CHANGE] admit object-valued _meta in the tools/call guard
++│       ├── session_hook.py             # imported by task_handoff (host/_id/_session/request binding) (UNCHANGED)
++│       └── test_task_handoff.py        # [CHANGE] add one dedicated _meta contract case; whole suite must pass
++└── graphhelm-codex-hooks/              # Codex companion deployment
++    └── hooks/
++        ├── codex-hooks.json            # (UNCHANGED)
++        ├── session_hook.py             # (UNCHANGED; twin of the primary session_hook)
++        └── task_handoff.py             # [CHANGE] byte-identical twin of the primary file above
++```
++
++**Structure Decision**: In-place, minimal edits within the existing plugin layout. No new directory, module, package, or dependency is created (Keel "add only surface the promise needs"). The two `task_handoff.py` copies remain the single shared source of truth for the wire behavior, kept byte-identical.
++
++**Scope card (three-line, per Keel bounded-change route)**:
++- **Paths in scope**: `plugins/graphhelm/hooks/task_handoff.py`, `plugins/graphhelm-codex-hooks/hooks/task_handoff.py`, `plugins/graphhelm/hooks/test_task_handoff.py`.
++- **Promise**: A `tools/call` whose `params` are exactly `{name, arguments}` optionally plus an object-valued `_meta` is accepted and dispatched as if `_meta` were absent; any other `params` key, a non-object `_meta` (including `null`), an identity-override attempt through `arguments`, and an oversized frame are all still refused with no Runtime side effect; the two adapters stay byte-identical.
++- **Command that proves it**: `python -m unittest plugins.graphhelm.hooks.test_task_handoff` (full suite green, including the new `_meta` case) **and** an equal-SHA-256 comparison of the two `task_handoff.py` files (see `quickstart.md`).
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++| Violation | Why Needed | Simpler Alternative Rejected Because |
++|-----------|------------|-------------------------------------|
++| — (none) — | — | — |
+diff --git a/specs/001-bench/quickstart.md b/specs/001-bench/quickstart.md
+new file mode 100644
+index 0000000..c13a6e7
+--- /dev/null
++++ b/specs/001-bench/quickstart.md
+@@ -0,0 +1,94 @@
++# Quickstart Validation: Accept `_meta` in Handoff Tool Calls
++
++**Feature**: 001-bench | **Date**: 2026-10-26 | **Type**: runnable validation guide (not implementation)
++
++Phase 1 of `/speckit.plan`. These are the runnable scenarios that prove the feature end-to-end from this checkout. Field/decision semantics are in [`./data-model.md`](./data-model.md); the wire shapes and worked request/response examples are in [`./contracts/mcp-stdio-tools-call.md`](./contracts/mcp-stdio-tools-call.md). Implementation steps themselves belong in `tasks.md`.
++
++## Prerequisites
++
++- CPython 3.11.x available as `python` (measured here: **3.11.9**, `C:\...\WindowsApps\python.exe`). No `py` launcher is required.
++- No third-party packages — the adapter and its tests use only the standard library.
++- Offline. The observer uses loopback (`127.0.0.1`) only; no internet, Docker, credentials, provider account, or browser.
++- Run commands from the **repository root** (the directory containing `plugins/` and `.specify/`).
++
++> **PowerShell exit-code caveat (observed).** On PowerShell 5.1, redirecting a native process's stderr (`python ... 2>&1`) makes PowerShell treat unittest's stderr progress lines as error records and can report a spurious non-zero exit even when the suite is green. Treat the summary line (`Ran N tests ... OK`) as authoritative, or run without `2>&1`. This mirrors the repo-wide rule to read the gate output rather than trust a piped exit code.
++
++## Scenario A — The two adapters stay byte-identical (FR-006 / SC-003)
++
++**Promise**: the primary and Codex companion adapters are byte-for-byte identical after the edit.
++
++**Command** (PowerShell):
++```powershell
++Get-FileHash plugins/graphhelm/hooks/task_handoff.py,plugins/graphhelm-codex-hooks/hooks/task_handoff.py -Algorithm SHA256 | Format-Table Hash,Path -AutoSize
++```
++Equivalent (`git`, shows the object blob id):
++```bash
++git hash-object plugins/graphhelm/hooks/task_handoff.py plugins/graphhelm-codex-hooks/hooks/task_handoff.py
++```
++
++**Expected**: **two identical hashes** (one per file; the SHA-256 differs from the pre-change `2AEAE452...` only because the content changed — the point is the two files now agree with each other). If they differ, a twin drifted and SC-003 fails.
++
++## Scenario B — Full contract suite is green, including the new `_meta` case (FR-008; proves FR-001..FR-005)
++
++**Promise**: the relaxation accepts an object-valued `_meta` and every other guardrail (unknown field, non-object `_meta`/null, identity override, oversized frame) still refuses with no Runtime side effect; the whole suite passes.
++
++**Command**:
++```bash
++python -m unittest plugins.graphhelm.hooks.test_task_handoff
++```
++(On Windows PowerShell: `python -m unittest plugins.graphhelm.hooks.test_task_handoff` — do **not** rely on `$?`/`$LASTEXITCODE` when combined with `2>&1`; read the summary.)
++
++**Expected**: a final summary line of the form `Ran <N> tests in <t>s` followed by `OK`, with `<N>` equal to the 9 pre-existing cases **plus** the new dedicated `_meta` acceptance case (i.e. `>= 10`), and **zero failures/errors**. The new case drives the real `--mcp-stdio` server through subprocess, sends a `tools/call` whose `params` carry `name`, `arguments`, and an object-valued `_meta` (e.g. `{"progressToken": ...}`), and asserts a successful result whose shape equals the no-metadata equivalent — the same observable boundary the other rejection cases use.
++
++**Why this is the observer**: it exercises the actual guard (not a reimplementation), runs in the same process/suite as the rejection cases (per FR-008), and, because refused calls return before dispatch, the negative cases can assert no Runtime request was made. Note the Rust cargo gate / `./ci/gate.ps1` is **not** the observer for this change: `plugins/` is not a member of the root cargo workspace.
++
++## Scenario C — Manual stdio smoke of the NEW refusal band (FR-002, optional; no live Runtime needed)
++
++**Purpose**: an independent, self-contained check that a *present-but-non-object* `_meta` is refused with `-32602` before dispatch, with no HTTP to the Runtime. This only needs the server to get past startup (valid binding env vars); a params-level refusal never reads the token file or calls the Runtime.
++
++**Setup (PowerShell)**:
++```powershell
++$env:GRAPHHELM_MCP_HOST      = "codex"
++$env:GRAPHHELM_SESSION_ID    = "receiver-1"
++$env:GRAPHHELM_EXECUTION_ID  = "run-1"
++$env:GRAPHHELM_TOKEN_FILE    = "run-1"            # non-empty ID string; content not read on this path
++$env:GRAPHHELM_RUNTIME_URL   = "http://127.0.0.1:8791"
++```
++
++**Drive (PowerShell)** — one frame with `_meta` a string (must refuse):
++```powershell
++'{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"status","arguments":{},"_meta":"oops"}}' |
++  python plugins/graphhelm/hooks/task_handoff.py --mcp-stdio
++```
++
++**Expected**: exactly one stdout line,
++```json
++{"jsonrpc":"2.0","id":6,"error":{"code":-32602,"message":"invalid request"}}
++```
++Substitute `_meta` values `"7"`, `true`, `[1]`, and `null` (e.g. `"...,"_meta":null}`) — each yields the same `-32602`. A control with `"bogus":1` added alongside a valid `_meta` also yields `-32602` (unknown-field guardrail, FR-003).
++
++> The **accepted** object-`_meta` path is best proven by Scenario B, because dispatching `status` there contacts the local loopback Runtime that the test harness starts; driving it manually would require that server. Both bands share the same guard, and Scenario B covers the acceptance while Scenario C independently covers the refusal with no external dependency.
++
++## Scenario D — Baseline sanity (optional, to confirm no drift before implementing)
++
++Re-running Scenario B **before** touching code should show the original `Ran 9 tests ... OK`. This is the red/green anchor: implementers can confirm the starting state is green, add the `_meta` handling + case, and re-run to green at `>= 10`.
++
++## Requirement → observer map
++
++| Req / Success criterion | Proven by | Observable expectation |
++|-------------------------|-----------|------------------------|
++| FR-001 / SC-001 (metadata dispatched as if absent, all tools) | B (+ C control for shape) | `result.isError:false`; result text equals no-metadata equivalent |
++| FR-002 / SC-002 (non-object / null `_meta` refused pre-dispatch) | B, C | `-32602`; zero Runtime requests |
++| FR-003 / SC-002 (other unknown fields still refused) | B, C | `-32602` on unknown key, with or without valid `_meta` |
++| FR-004 (identity override through args refused) | B (existing case) | `result.isError:true`, unchanged behavior |
++| FR-005 / SC-002 (oversized frame refused before parse) | B (existing cases) | single `-32600`; non-zero exit; no second parse; no Runtime work |
++| FR-006 / SC-003 (byte-identical twins) | A | equal SHA-256 for both `task_handoff.py` |
++| FR-007 / SC-004 (no behavior change without `_meta`) | B (all 9 prior cases stay green) | identical responses for handshake/ping/list/plain calls |
++| FR-008 (dedicated in-suite `_meta` case; whole suite passes) | B | `Ran >= 10 tests ... OK`, zero failures/errors |
++
++## Done means
++
++- Scenario A prints two equal hashes.
++- Scenario B prints `OK` with the new `_meta` acceptance case present and no failures or errors.
++- Scenarios C/D (optional) behave as stated.
++- No tracked file outside the three in-scope paths changed.
+diff --git a/specs/001-bench/research.md b/specs/001-bench/research.md
+new file mode 100644
+index 0000000..48ddb81
+--- /dev/null
++++ b/specs/001-bench/research.md
+@@ -0,0 +1,101 @@
++# Research: Accept the MCP Standard Metadata Field in Handoff Tool Calls
++
++**Feature**: 001-bench | **Date**: 2026-10-26 | **Status**: Complete (no open NEEDS CLARIFICATION)
++
++Phase 0 of `/speckit.plan`. Every technical-context item that began as an unknown or "NEEDS CLARIFICATION" is resolved below against facts measured in this checkout, plus the non-obvious design decisions the implementation must make. Format per the command: **Decision / Rationale / Alternatives considered**.
++
++## 0. Unknowns from Technical Context — resolved
++
++These were the only values the template left open. Each is now fixed by measurement, so none remains "NEEDS CLARIFICATION."
++
++| Item | Resolved value | Evidence (measured in this checkout) |
++|------|----------------|---------------------------------------|
++| Language/Version | Python, CPython **3.11.9**, stdlib only | `python --version` → `3.11.9 ... [MSC v.1938 64 bit (AMD64)]`; module imports are stdlib + sibling `session_hook`. |
++| Primary Dependencies | None new | `task_handoff.py` imports: `argparse`, `datetime`, `hashlib`, `json`, `os`, `sys`, `urllib.parse`, `session_hook`. No third-party import anywhere in either plugin's hook dir. |
++| Storage | N/A for the change | Validation is in-memory; dispatch (unchanged) uses a token file + loopback HTTP only *after* the relaxed guard. |
++| Testing harness | stdlib **`unittest`** via `python -m unittest`; loopback `ThreadingHTTPServer` + subprocess | `test_task_handoff.py` uses `unittest.TestCase`, `subprocess.run([sys.executable, ...])`, `ThreadingHTTPServer(("127.0.0.1", 0), ...)`. Baseline run: `Ran 9 tests ... OK`. |
++| Target Platform | Windows / PowerShell 5.1 / CPython 3.11.9; cross-platform by construction | Machine is `win32`; `session_hook` already branches `msvcrt` vs `fcntl`. |
++| Project Type | stdio MCP server / CLI hook shipped as a host plugin | `task_handoff.py --mcp-stdio` JSON-RPC server + `offer/receive/status` CLI phases. |
++| Which files hold the behavior | The `tools/call` branch of `_mcp_stdio()` at lines 491–497, in TWO byte-identical copies | grep shows `set(params) - {"name", "arguments"}` and `"tools/call params contain an unsupported field"` exist only at line 495/496 of both `task_handoff.py` copies; no `_meta` reference exists yet. |
++| Baseline green? | Yes — 9/9 before any change | `python -m unittest plugins.graphhelm.hooks.test_task_handoff` → `Ran 9 tests in 1.371s OK`. |
++
++## 1. Where the relaxation lives (and why it is the only place)
++
++**Decision**: Edit only the `tools/call` branch of `_mcp_stdio()`. Change the permitted-key set from `{"name", "arguments"}` to `{"name", "arguments", "_meta"}` and add one guard that `_meta`, when present, is a `dict`. Forward to dispatch unchanged (`params.get("name")`, `params.get("arguments")`).
++
++**Rationale**: This is the single site that decides whether a `tools/call` `params` object is accepted before dispatch. Because the dispatch call already selects only `name` and `arguments`, admitting `_meta` into the accepted set makes it **structurally invisible** to routing and argument interpretation without touching `_mcp_tool_call`, `_mcp_tools`, the per-tool `allowed` sets, identity handling, or the frame-size check. Both refusal families that must be preserved are produced by *other* checks that remain byte-for-byte unchanged: the identity-override refusal is the `set(arguments) - allowed` test inside `_mcp_tool_call` (line 428), and the oversized-frame refusal is the `len(raw) > MAX_MCP_MESSAGE` / `not raw.endswith(b"\n")` test (lines 462–470) that runs **before** JSON parsing.
++
++**Alternatives considered**:
++- *Strip `_meta` out of `params` then reuse the existing set-difference.* Rejected: adds a mutation step and a second mental model for no benefit; the closed-set extension is the smaller change (Keel "add only surface the promise needs").
++- *Add `_meta` handling inside `_mcp_tool_call`.* Rejected: that function already trusts its caller for shape (it is invoked only after `params` validation) and takes `name`/`arguments` explicitly; pushing protocol-envelope concerns into it would blur the layering the file already maintains.
++- *Introduce a named helper `_validate_call_params(params)`.* Rejected for this size: it would add public-ish surface used once. The two inline checks are clearer than a one-caller wrapper. (See decision D-4 on constants.)
++
++## 2. Presence-vs-value semantics for `_meta` (the subtle one)
++
++**Decision**: Reject when the key `_meta` is **present** and its value is not a `dict`. Test presence with `"_meta" in params` (NOT `params.get("_meta")`), i.e.:
++
++```python
++if "_meta" in params and not isinstance(params["_meta"], dict):
++    raise ValueError("tools/call metadata must be an object")
++```
++
++**Rationale**: The spec edge cases require that **`null` be rejected** ("Metadata value that is not an object (string, number, list, boolean, or null): rejected as invalid before dispatch"). A `params.get("_meta")` + `is not None` guard would treat an explicit JSON `null` the same as an absent key and **accept** it — a silent spec violation. The `in` check distinguishes "key absent" (accept, skip) from "key present but not an object" (reject), covering string/number/list/bool/null uniformly while accepting `{}` and `{"progressToken": ...}`.
++
++**Alternatives considered**:
++- *`if (meta := params.get("_meta")) is not None and not isinstance(meta, dict)`.* Rejected: drops `null` and empty-object nuance incorrectly (a falsy-but-valid `{}` handled, but `null` slips through).
++- *Accept `null` as "effectively absent."* Rejected: contradicts the explicit spec edge case; would make acceptance depend on value truthiness rather than the documented rule.
++
++## 3. Ordering and precedence among the refusals
++
++**Decision**: Keep the existing order and extend it minimally: (a) `params` must be a dict; (b) closed-set check with `_meta` added; (c) new `_meta`-must-be-dict check; (d) dispatch. Do **not** reorder existing checks.
++
++**Rationale**: (a)→(b)→(c) all raise `ValueError` inside the same `try` that maps to a JSON-RPC `-32602 invalid request`, so any of them refusing yields an identical observable refusal class and **no Runtime work** (dispatch is never reached). Ordering them b-then-c keeps the preserved unknown-field guardrail textually adjacent and unchanged except for the added set element, minimizing diff risk. The frame-size precedence (FR-005: "an oversized frame that also carries metadata" → frame wins) is guaranteed structurally because size is checked at read time, before `json.loads`, independent of where parameter checks run.
++
++**Alternatives considered**:
++- *Check `_meta` type before the closed-set.* Functionally equivalent (both refuse as `-32602`), but interleaves the new logic ahead of the preserved guardrail and grows the conceptual diff. Rejected on diff-minimality.
++
++## 4. Naming: inline literal vs. module constant
++
++**Decision**: Use the literal `"_meta"` at the single usage site. Do not introduce a module-level constant for this change.
++
++**Rationale**: There is exactly one usage site. Per Keel "add only surface the promise needs," a single-use literal avoids unused-surface. `_meta` is a stable wire token from the MCP protocol, not project state.
++
++**Alternatives considered**:
++- *`_META_KEY = "_meta"` at module scope.* Legitimate but currently single-use; keep in reserve in case a future second reader of `_meta` appears (it does not today). Recorded so a reviewer sees the trade-off rather than an unexplained choice.
++
++## 5. Dispatch neutrality (why SC-001 / FR-001 follow automatically)
++
++**Decision**: Rely on the existing dispatch signature `_mcp_tool_call(params.get("name"), params.get("arguments"), host, session)` rather than threading `_meta` through.
++
++**Rationale**: SC-001 (metadata calls dispatch identically across all three tools) and FR-001 (metadata must not influence which tool runs nor how arguments are read) are satisfied **by construction**: the dispatcher receives exactly `(name, arguments, host, session)` and never sees `_meta`. This is stronger and cheaper than adding assertions that the result equals the no-metadata result — though the contract test still asserts result-shape equivalence as the observable proof.
++
++## 6. Byte-identity of the two adapters (FR-006 / SC-003)
++
++**Decision**: Apply the identical edit to both `plugins/graphhelm/hooks/task_handoff.py` and `plugins/graphhelm-codex-hooks/hooks/task_handoff.py`, then prove equality by comparing SHA-256 (and/or `git hash-object`) of both files after the edit.
++
++**Rationale**: Measured pre-change, both files are already byte-identical (git blob `22d68b491bc538797a2485f4036d65edfa02272e`; SHA-256 `2AEAE452...`). A single edit duplicated verbatim preserves equality; the hash check is the smallest adequate observer for the byte-identity promise and catches accidental drift (e.g., editing only one copy).
++
++**Alternatives considered**:
++- *Symlink/hardlink the twin.* Rejected: not how the repo ships these plugins; changing packaging is out of scope and itself a delivery risk.
++- *A generated-file step.* Rejected: no codegen infrastructure exists for hooks; a manual-but-hash-checked duplicate matches current practice.
++
++## 7. Observer selection (smallest adequate proof)
++
++**Decision**: The observer is (i) one dedicated `_meta` case in `test_task_handoff.py` running **in the same process/suite** as the existing rejection cases, and (ii) a post-edit SHA-256 comparison of the two adapters. Full suite run via `python -m unittest plugins.graphhelm.hooks.test_task_handoff`.
++
++**Rationale**: FR-008 requires the acceptance "exercised by a dedicated case ... running in the same process as the existing rejection cases, and the whole suite MUST pass." Driving the real `--mcp-stdio` server via subprocess (as the existing MCP tests do) is the correct boundary: it exercises the actual guard, not a reimplementation. Because refused calls return before dispatch, the negative cases can assert **no Runtime request** was made (reusing the existing `RuntimeHandler.requests` length pattern) to observe "no side effect." The Rust gate is explicitly **not** the observer here because `plugins/` is not a cargo-workspace member.
++
++**Plausible defect this catches** (per JPD "name the defect a test would catch"): the exact regression the feature fixes — a conforming client sending `_meta` being rejected as an unsupported field — plus the regression the fix must not cause — an accidentally too-loose guard accepting a non-object `_meta` or another unknown key. The byte-identity hash catches a twin drifting out of sync.
++
++**Alternatives considered**:
++- *Unit-test `_mcp_stdio`'s inner logic by refactoring a pure function out.* Rejected now: it would add surface and move code just to make a test easier, when the subprocess boundary already observes the promise directly and the suite has a proven pattern for it.
++
++## 8. Windows/PowerShell verification nuance (affects quickstart, not correctness)
++
++**Decision**: In `quickstart.md`, state that on PowerShell 5.1 redirecting a native command's stderr (`python ... 2>&1`) can surface a spurious non-zero exit even when the suite is green, so the authoritative signal is the summary line (`Ran N tests ... OK`), or run without `2>&1`.
++
++**Rationale**: Observed during baseline capture: the compound command returned exit code 1 purely from PowerShell treating the native process's stderr (unittest progress) as error records, while the output clearly read `OK`. Documenting this prevents a false RED reading (the repo's own AGENTS.md flags exactly this class of "pipe/redirect corrupts the exit code" trap).
++
++## Open questions
++
++None blocking. The sole assumption carried forward (already recorded in `spec.md` Assumptions): "object" means a JSON object (a mapping); any other JSON type for `_meta` is invalid. Everything else is fixed by measurement and the decisions above.
+diff --git a/specs/001-bench/spec.md b/specs/001-bench/spec.md
+new file mode 100644
+index 0000000..c938668
+--- /dev/null
++++ b/specs/001-bench/spec.md
+@@ -0,0 +1,113 @@
++# Feature Specification: Accept the MCP Standard Metadata Field in Handoff Tool Calls
++
++**Feature Branch**: `001-bench`
++
++**Created**: 2026-10-27
++
++**Status**: Draft
++
++**Input**: User description: "The task-handoff MCP stdio adapter (`plugins/graphhelm/hooks/task_handoff.py`, `--mcp-stdio`) refuses any `tools/call` whose `params` has a field other than `name` and `arguments`. Native MCP clients send the standard `_meta` object (for example `{\"progressToken\": ...}`), so every tool call from them fails before dispatch. Accept `_meta` when it is an object; every other unknown params field, the identity-override refusal and the oversized-frame refusal must keep working. The Codex companion (`plugins/graphhelm-codex-hooks/hooks/task_handoff.py`) ships the same file and must stay byte-identical. Cover the `_meta` call in `plugins/graphhelm/hooks/test_task_handoff.py`."
++
++## Summary
++
++Today the task-handoff server rejects a tool call the moment its request parameters carry anything besides the tool name and its arguments. Conforming native MCP clients routinely attach a small standard metadata object to every tool call, so from such a client **every** handoff tool fails before any work happens. This feature accepts that standard metadata object (treating it as opaque and dispatch-neutral) while keeping every other existing guardrail intact — unknown fields, non-object metadata, identity-override attempts, and oversized frames must all still be refused — and it ships to both deployed adapters from the one shared file so they stay identical.
++
++## User Scenarios & Testing *(mandatory)*
++
++### User Story 1 - Native MCP clients can call handoff tools without spurious rejection (Priority: P1)
++
++A native MCP client connects to the task-handoff server over stdio, completes the handshake, lists the available tools, and then invokes one of the handoff tools. Per the MCP protocol, the client attaches a standard per-call metadata object alongside the tool name and its arguments. As things stand, the server sees that extra metadata field, concludes the call carries an "unsupported field," and refuses it before doing any work — so none of the three handoff tools are usable from a mainstream client. After this change the metadata object is accepted and ignored for dispatch, so the call proceeds exactly as it would if the metadata were not there.
++
++**Why this priority**: Until this works, every tool call from a conforming native MCP client fails before dispatch, which makes the entire adapter effectively unusable from the clients most people run. Clearing this single gate restores the whole offering.
++
++**Independent Test**: Drive the stdio adapter with a valid handshake followed by a tool call whose parameters carry the tool name, its arguments, and an object-valued metadata field (for example one holding a progress token). Observe a successful, non-error tool result that is the same shape as the result for an equivalent call without metadata. Deliverable value: the client completes its intended handoff operation instead of getting a spurious failure.
++
++**Acceptance Scenarios**:
++
++1. **Given** a connected native MCP client, **When** it calls a handoff tool and the call's metadata field is a proper object (for example carrying a progress token), **Then** the tool executes normally and returns the same result it would return without the metadata field.
++2. **Given** a connected native MCP client, **When** it calls a handoff tool carrying a metadata object with no recognizable keys (an empty object), **Then** the tool executes normally and the empty metadata has no effect on dispatch or on the result.
++3. **Given** a metadata-bearing tool call that is otherwise valid, **When** it is processed, **Then** the presence of metadata does not change which tool runs nor how its arguments are read.
++
++---
++
++### User Story 2 - The relaxation is minimal; every existing guardrail still holds (Priority: P2)
++
++A maintainer defending the adapter's strictness verifies that accepting the metadata object did not loosen anything else. Unknown fields, badly typed metadata, identity-override attempts, and oversized frames must all still be refused, and none may cause any Runtime work when refused.
++
++**Why this priority**: The adapter's safety model depends on tight validation before it touches the Runtime. The fix must remove the false rejection without opening a new hole, so the guardrails are the second thing to prove.
++
++**Independent Test**: Run each previously-rejected scenario — a call with an unrecognized field, a call whose metadata value is not an object, a call that overrides identity through its tool arguments, and an oversized frame — and confirm each is still refused, with no Runtime side effect.
++
++**Acceptance Scenarios**:
++
++1. **Given** a tool call whose parameters include a field other than the tool name, the tool arguments, and the metadata object, **When** it is processed, **Then** it is rejected as invalid and no tool executes.
++2. **Given** a tool call whose metadata field is present but holds a value that is not an object (a string, number, list, or similar), **When** it is processed, **Then** the call is rejected as invalid before dispatch.
++3. **Given** a tool call that combines a valid metadata object with another unrecognized field, **When** it is processed, **Then** the call is still rejected because the extra field remains unrecognized.
++4. **Given** a tool call that tries to override the adapter's identity by passing an identity or host field inside the tool arguments, **When** it is processed, **Then** the call is rejected (the identity-override refusal still applies).
++5. **Given** a request frame larger than the allowed maximum size, **When** it is read, **Then** it is rejected as an invalid request, is not partially parsed into a second request, and no Runtime work is performed (the oversized-frame refusal still applies).
++
++---
++
++### User Story 3 - Both deployed adapters behave identically (Priority: P3)
++
++The operator maintains two deployments of the task-handoff adapter (the primary plugin and the Codex companion plugin) that intentionally ship the identical adapter file. The fix lands once in that shared file, so both deployments accept metadata and reject everything else in exactly the same way.
++
++**Why this priority**: Drift between the two deployments would reintroduce inconsistent behavior for different users of the same capability. Keeping them identical guarantees parity and removes an entire class of "works here, fails there" reports.
++
++**Independent Test**: Confirm the two adapter files are byte-for-byte identical after the change, and confirm that an identical metadata-bearing tool call sent to either deployment produces the same acceptance decision and the same result shape.
++
++**Acceptance Scenarios**:
++
++1. **Given** the primary adapter and the Codex companion adapter after the change, **When** their adapter files are compared, **Then** they are byte-identical.
++2. **Given** an identical metadata-bearing tool call, **When** it is sent to either deployment, **Then** each produces the same acceptance decision and the same result shape.
++
++---
++
++### Edge Cases
++
++- **Empty metadata object**: accepted; dispatch is unaffected.
++- **Metadata object with arbitrary nested values**: accepted; its contents are ignored for dispatch.
++- **Metadata value that is not an object** (string, number, list, boolean, or null): rejected as invalid before dispatch.
++- **Valid metadata object plus another unknown field**: still rejected, because the extra field remains unrecognized — a valid metadata object does not excuse other unknowns.
++- **Metadata present on a method that is not a tool call** (handshake, ping, tool listing): behavior is unchanged; those operations already ignore parameter content.
++- **Oversized frame that also carries metadata**: the frame-size refusal takes precedence; the frame is rejected before any parameter inspection.
++- **A stream of many frames where some carry metadata and some do not**: each frame is handled independently; metadata never carries across frames or influences a later frame.
++- **Missing tool name or arguments on a metadata-bearing call**: handled by the ordinary tool-call rules (unknown tool, or missing required argument), independently of metadata handling.
++
++## Requirements *(mandatory)*
++
++### Functional Requirements
++
++- **FR-001**: A tool call whose parameters consist of the tool name and its arguments plus an optional metadata object MUST be accepted and dispatched exactly as if the metadata were absent; the metadata MUST NOT influence which tool runs nor how its arguments are interpreted.
++- **FR-002**: A tool call whose metadata field holds a value that is not an object MUST be rejected as invalid before dispatch, with no tool-side effect.
++- **FR-003**: A tool call whose parameters include any field other than the tool name, the tool arguments, and the metadata object MUST be rejected as invalid (the existing unknown-field guardrail is preserved).
++- **FR-004**: The identity-override refusal MUST be preserved: a tool call that attempts to override the adapter's identity through its tool arguments MUST still be rejected.
++- **FR-005**: The oversized-frame refusal MUST be preserved: a request frame exceeding the maximum message size MUST still be rejected as an invalid request, MUST NOT be partially consumed as a second request, and MUST cause no Runtime work.
++- **FR-006**: The Codex companion adapter MUST remain byte-identical to the primary adapter after the change, so both accept metadata and enforce every guardrail identically.
++- **FR-007**: All previously supported operations (server handshake, ping, tool listing, and tool calls that do not carry metadata) MUST behave identically to before the change.
++- **FR-008**: The acceptance of a metadata-bearing tool call MUST be exercised by a dedicated case in the task-handoff hook's contract test suite, running in the same process as the existing rejection cases, and the whole suite MUST pass.
++
++### Key Entities *(include if feature involves data)*
++
++- **Tool Call Request**: an inbound message naming one of the handoff tools, carrying that tool's arguments and optionally a standard per-call metadata object.
++- **Standard Metadata Object**: the optional per-call metadata that a conforming MCP client attaches to a tool call (for example, a progress token). Its contents are opaque to the adapter and require no interpretation beyond the value being an object.
++- **Adapter Identity**: the host/session identity the server process is configured with. It fixes who is acting and cannot be overridden by a caller through tool arguments.
++
++## Success Criteria *(mandatory)*
++
++### Measurable Outcomes
++
++- **SC-001**: 100% of tool calls from a conforming native MCP client that carry a properly formed metadata object are dispatched successfully across all three exposed tools (zero spurious "unsupported field" failures attributable to the metadata object).
++- **SC-002**: 0 regressions in rejection: an unrecognized field (other than the metadata object), a non-object metadata value, an identity-override attempt, and an oversized frame are each still refused, and none produces a tool-side effect or a partial parse.
++- **SC-003**: The two shipped adapters are byte-identical (100% content match) after the change.
++- **SC-004**: Zero observable behavior difference for any request that does not carry the metadata field (handshake, ping, tool listing, and plain tool calls).
++
++## Assumptions
++
++- A "native MCP client" follows the Model Context Protocol revision pinned by the adapter and attaches its standard metadata field (`_meta`) to tool calls; the adapter treats the field's contents as opaque.
++- "Accepting the metadata" means ignoring it for dispatch: the adapter neither reads nor forwards it and validates it only to the extent of confirming the value is an object.
++- "Object" means a JSON object (a mapping); any other JSON type used for the metadata field is treated as invalid and rejected.
++- The relaxation is localized to the tool-call parameter validation; the dispatch logic, identity handling, and the frame-size limit are otherwise unchanged.
++- The primary and Codex companion adapters currently ship the identical file (verified as an equal content hash in this checkout), so applying the same edit to that shared file keeps them byte-identical; no drift is expected.
++- No new external dependency is introduced; the change is confined to the existing adapter and its existing contract tests.
++- Governance: no dedicated constitution file exists in this checkout, so the repository-root `AGENTS.md` is used as the governance reference for this feature; this substitution is recorded here per the command guidance.
+diff --git a/specs/001-bench/tasks.md b/specs/001-bench/tasks.md
+new file mode 100644
+index 0000000..e8117b6
+--- /dev/null
++++ b/specs/001-bench/tasks.md
+@@ -0,0 +1,223 @@
++# Tasks: Accept the MCP Standard Metadata Field in Handoff Tool Calls
++
++**Input**: Design documents from `/specs/001-bench/` (plan.md, spec.md, research.md, data-model.md, contracts/mcp-stdio-tools-call.md, quickstart.md).
++
++**Prerequisites**: plan.md ✅ · spec.md ✅ · research.md ✅ · data-model.md ✅ · contracts/ ✅ · quickstart.md ✅
++
++**Tests**: **INCLUDED** — not optional here. The feature explicitly requires them: FR-008 states the acceptance of a metadata-bearing tool call "MUST be exercised by a dedicated case in the task-handoff hook's contract test suite, running in the same process as the existing rejection cases, and the whole suite MUST pass." The test tasks below therefore precede their implementation in RED→GREEN order (verify the new case fails, then make it pass).
++
++**Organization**: Tasks are grouped by user story (US1 = P1/MVP, US2 = P2, US3 = P3) to enable independent implementation and testing of each story.
++
++**Governance substitution (recorded per command guidance)**: No project constitution file exists in this checkout (no `memory/constitution.md`). Per the command, the repository-root `AGENTS.md` is used as the governance reference. Two invariants bind these tasks directly and are enforced as checkpoints, not prose: (a) *smallest adequate observer* — the reaching proof is the Python contract suite plus a byte-identity hash, never the Rust cargo gate (`plugins/` is not a cargo-workspace member); and (b) *byte-identical shipped adapters* — every code edit lands on BOTH `task_handoff.py` twins and is verified by equal SHA-256.
++
++**Scope (from plan.md scope card)** — exactly three files change, nothing else:
++- `plugins/graphhelm/hooks/task_handoff.py`
++- `plugins/graphhelm-codex-hooks/hooks/task_handoff.py` (byte-identical twin)
++- `plugins/graphhelm/hooks/test_task_handoff.py`
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies on incomplete tasks)
++- **[Story]**: Which user story this task belongs to (US1, US2, US3); Setup / Foundational / Polish carry no story label
++- Exact file paths are included in every task description
++
++## Path Conventions
++
++Single Rust-workspace-plus-Python-plugins repo rooted at `plugins/`. The stdio MCP adapter lives at `plugins/<plugin>/hooks/task_handoff.py`; its contract suite at `plugins/graphhelm/hooks/test_task_handoff.py` (`HandoffTests(unittest.TestCase)`). Run every command from the **repository root**. Baseline interpreter measured in `research.md`: CPython 3.11.9, invoked as `python`, stdlib only.
++
++---
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Confirm the pre-existing environment and capture the red/green baseline. No project scaffolding is needed — the Rust workspace and both Python plugins already exist; this feature edits an existing plugin **in place**. Do not create directories, modules, or dependencies (Keel: "add only surface the promise needs").
++
++- [X] T001 Confirm the adapter's interpreter is invocable and record the exact version to use for all runs (expected CPython ≥ 3.11; measured 3.11.9): run `python --version` from the repository root against `plugins/graphhelm/hooks/task_handoff.py`. If absent, install CPython 3.11.x — no third-party package is ever added.
++- [X] T002 Capture the green baseline before touching any code: run `python -m unittest plugins.graphhelm.hooks.test_task_handoff` from the repository root and confirm the summary line reads `Ran 9 tests ... OK` with zero failures/errors (quickstart.md Scenario D). This is the red/green anchor every story re-checks against.
++
++**Checkpoint**: Environment confirmed; baseline suite is green (9/9). On PowerShell 5.1 do not trust `$LASTEXITCODE` when combined with `2>&1` — treat the `Ran N tests ... OK` summary as authoritative (research.md §8).
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Verify the single real precondition for this change — that the two adapters are byte-identical today — so that applying the same literal edit to each keeps them in lockstep for the whole duration of the work. This blocks US1–US3.
++
++- [X] T003 [P] Verify the two adapters are currently byte-for-byte identical before any edit, by hashing both and confirming the two values agree: `git hash-object plugins/graphhelm/hooks/task_handoff.py plugins/graphhelm-codex-hooks/hooks/task_handoff.py` (equivalently `Get-FileHash plugins/graphhelm/hooks/task_handoff.py,plugins/graphhelm-codex-hooks/hooks/task_handoff.py -Algorithm SHA256`) must return two EQUAL hashes (measured baseline blob `22d68b49…`). Record the "before" hash; if they already differ, stop and report drift instead of editing.
++
++**Checkpoint**: Parity precondition holds (equal hash recorded). User-story implementation can now begin.
++
++---
++
++## Phase 3: User Story 1 - Native MCP clients can call handoff tools without spurious rejection (Priority: P1) 🎯 MVP
++
++**Goal**: A `tools/call` whose `params` are exactly `{name, arguments}` optionally plus an object-valued `_meta` is accepted and dispatched exactly as if `_meta` were absent. The dispatcher already receives only `name` and `arguments`, so making `_meta` part of the accepted set renders it structurally invisible to routing and argument interpretation (FR-001, SC-001, SC-004).
++
++**Independent Test**: Drive the real `--mcp-stdio` server through the existing contract harness and send a `tools/call` whose `params` carry `name`, `arguments`, and `_meta: {"progressToken": "tok-1"}`; observe a successful result (`isError:false`) whose result text equals the equivalent no-`_meta` call (quickstart.md Scenario B).
++
++### Tests for User Story 1 (requested by FR-008) ⚠️
++
++> **NOTE**: Write this case FIRST and confirm it FAILS against the current (unchanged) guard — the current closed set is `{"name","arguments"}`, so a `_meta` key is still refused as an "unsupported field" — then proceed to implementation to turn it green.
++
++- [X] T004 [US1] Add a dedicated `_meta`-acceptance case to the existing `HandoffTests(unittest.TestCase)` class in `plugins/graphhelm/hooks/test_task_handoff.py` (same class/suite as the rejection cases, so FR-008 "same process" holds). Mirror the harness pattern at the existing `test_mcp_stdio_lists_closed_tools_and_reaches_real_status_adapter` method (env via `os.environ.copy()` + `GRAPHHELM_MCP_HOST`/`GRAPHHELM_SESSION_ID`; newline-joined JSON-RPC frames fed to `subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], …)`). Send, after `initialize`: id=2 `{"method":"tools/call","params":{"name":"status","arguments":{},"_meta":{"progressToken":"tok-1"}}}` and id=3 the identical call with NO `_meta`. Assert `result.returncode == 0`, `replies[1]["result"]["isError"]` is False, `replies[1]["result"]["content"][0]["type"] == "text"`, and `replies[1]["result"]["content"][0]["text"] == replies[2]["result"]["content"][0]["text"]` (metadata has no effect on dispatch or result shape — SC-004). Confirm this test FAILS before T005/T006.
++
++### Implementation for User Story 1
++
++In the `tools/call` branch of `_mcp_stdio()` (currently lines ~491–497), change ONLY the permitted-key set so `_meta` becomes accepted; leave the object check, the dispatch call, and everything else untouched:
++
++```python
++# BEFORE (line ~495)
++if set(params) - {"name", "arguments"}:
++    raise ValueError("tools/call params contain an unsupported field")
++
++# AFTER
++if set(params) - {"name", "arguments", "_meta"}:
++    raise ValueError("tools/call params contain an unsupported field")
++```
++
++Do NOT forward `_meta` — keep dispatch as `_mcp_tool_call(params.get("name"), params.get("arguments"), host, session)`. Apply the IDENTICAL edit to both twins:
++
++- [X] T005 [P] [US1] In the `tools/call` branch of `_mcp_stdio()` in `plugins/graphhelm/hooks/task_handoff.py`, extend the accepted `params` key set from `{"name", "arguments"}` to `{"name", "arguments", "_meta"}` (the `set(params) - {…}` check, line ~495). Leave the `isinstance(params, dict)` check, the error message, and the `_mcp_tool_call(...)` dispatch call unchanged so `_meta` stays invisible to routing and arguments.
++- [X] T006 [P] [US1] Apply the byte-identical one-line set extension to the twin at `plugins/graphhelm-codex-hooks/hooks/task_handoff.py` (same `tools/call` branch, same `set(params) - {…}` check). The edit text must match T005 character-for-character.
++
++**Checkpoint (MVP)**: Run `python -m unittest plugins.graphhelm.hooks.test_task_handoff` — the new T004 acceptance case passes AND all 9 prior cases stay green (now `Ran 10 tests ... OK`). Then confirm T005/T006 kept the twins equal by re-running T003's hash comparison (equal SHA-256). US1 is independently functional: a conforming client's metadata-bearing call is now dispatched.
++
++> Note: with only US1 applied, a NON-object `_meta` would slip through to dispatch (still ignored). That is expected mid-delivery; US2 adds the object-only guard and closes it. SC-001 (object-`_meta` dispatched across all three tools) is already satisfied because dispatch selects only `name`/`arguments`.
++
++---
++
++## Phase 4: User Story 2 - The relaxation is minimal; every existing guardrail still holds (Priority: P2)
++
++**Goal**: Accepting an object `_meta` loosens nothing else. A non-object `_meta` (string, number, list, boolean, or `null`) is refused before dispatch; any other unknown `params` key (even alongside a valid `_meta`) is refused; the identity-override refusal and the oversized-frame refusal are unchanged, and none of these refusals causes Runtime work (FR-002, FR-003, FR-004, FR-005, SC-002).
++
++**Independent Test**: Run each previously-rejected scenario — a call carrying a non-object `_meta`, a valid `_meta` plus another unknown field, an identity override through `arguments`, and an oversized frame — and confirm each is still refused (params-level refusals return `-32602`; the oversized frame returns a single `-32600`) with **no** Runtime request observed (data-model.md decision-flow steps 2–3; contract worked examples 3 & 4).
++
++### Tests for User Story 2 (requested by FR-008 / SC-002) ⚠️
++
++> **NOTE**: Write this case FIRST and confirm the non-object-`_meta` sub-case FAILS (before T008/T009 the extended set accepts any `_meta` value, so `"oops"` is not yet refused), then proceed to implementation to turn it green.
++
++- [X] T007 [US2] Add a dedicated refusal case to the existing `HandoffTests(unittest.TestCase)` class in `plugins/graphhelm/hooks/test_task_handoff.py`. Reuse the `RuntimeHandler.requests` length pattern from `test_mcp_rejects_identity_override_and_oversized_request_before_runtime_io`. Capture `before = len(RuntimeHandler.requests)`, then feed, as separate stdin frames to `subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], …)` (env `GRAPHHELM_MCP_HOST="codex"`, `GRAPHHELM_SESSION_ID="receiver-1"`): for EACH bad `_meta` value in `["oops", 7, True, [1], None]` a `{"jsonrpc":"2.0","id":<n>,"method":"tools/call","params":{"name":"status","arguments":{},"_meta":<bad>}}` frame, PLUS one control frame `{"params":{"name":"status","arguments":{},"_meta":{},"bogus":1}}` (valid object `_meta` with an extra unknown key — FR-003). Assert every reply has `replies[i]["error"]["code"] == -32602`, `result.returncode == 0`, and `len(RuntimeHandler.requests) == before` (refusal happens before dispatch ⇒ no Runtime side effect). Confirm the non-object `_meta` sub-case FAILS before T008/T009.
++
++### Implementation for User Story 2
++
++Immediately after the (already-extended) unsupported-field check in the `tools/call` branch of `_mcp_stdio()`, add ONE object-only guard using an `in` presence test (NOT `params.get("_meta")`, which would wrongly accept an explicit JSON `null` — research.md §2):
++
++```python
++if set(params) - {"name", "arguments", "_meta"}:
++    raise ValueError("tools/call params contain an unsupported field")
++if "_meta" in params and not isinstance(params["_meta"], dict):
++    raise ValueError("tools/call metadata must be an object")   # NEW (FR-002)
++response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
++```
++
++The guard raises inside the same `try` that maps to JSON-RPC `-32602 invalid request`, before `_mcp_tool_call`, so it causes no Runtime work. It preserves `null` rejection and accepts `{}`.
++
++- [X] T008 [P] [US2] In the `tools/call` branch of `_mcp_stdio()` in `plugins/graphhelm/hooks/task_handoff.py`, insert (between the `set(params) - {…}` check and the `_mcp_tool_call(...)` dispatch) exactly `if "_meta" in params and not isinstance(params["_meta"], dict):` followed by indented `raise ValueError("tools/call metadata must be an object")`. Use the `"_meta" in params` presence test so an explicit `null` is rejected. Do not reorder or alter the surrounding checks (research.md §3).
++- [X] T009 [P] [US2] Apply the byte-identical two-line guard insertion to the twin at `plugins/graphhelm-codex-hooks/hooks/task_handoff.py`, at the same position relative to the same surrounding lines, matching T008 character-for-character.
++
++**Checkpoint**: Run `python -m unittest plugins.graphhelm.hooks.test_task_handoff` — the new T007 refusal case passes, T004 still passes, and all 9 prior cases (including `test_mcp_rejects_identity_override_and_oversized_request_before_runtime_io` and `test_oversized_frame_cannot_execute_a_json_suffix_as_another_request`) stay green (now `Ran 11 tests ... OK`, zero failures/errors). Re-run T003's hash comparison to confirm the twins are still byte-identical after this edit.
++
++---
++
++## Phase 5: User Story 3 - Both deployed adapters behave identically (Priority: P3)
++
++**Goal**: Because the fix lands once in the shared file shape and is mirrored verbatim into both deployments, the primary and Codex companions accept metadata and reject everything else identically (FR-006, SC-003).
++
++**Independent Test**: Confirm the two adapter files are byte-for-byte identical after the change, and confirm that an identical metadata-bearing tool call sent to either deployment produces the same acceptance decision and the same result shape (quickstart.md Scenarios A & B; contract worked example 7).
++
++- [X] T010 [P] [US3] Prove byte-identity of the two adapters after all edits (quickstart.md Scenario A): run `Get-FileHash plugins/graphhelm/hooks/task_handoff.py,plugins/graphhelm-codex-hooks/hooks/task_handoff.py -Algorithm SHA256 | Format-Table Hash,Path -AutoSize` (or `git hash-object` on both) and assert the TWO returned hashes are EQUAL to each other (they will differ from the T003 "before" hash because the content changed — the point is the two files now agree). Record the final equal SHA-256 in the PR body. A mismatch means a twin drifted and SC-003 fails — stop and re-sync the drifted copy.
++- [X] T011 [P] [US3] Prove behavioral parity across deployments (contract worked example 7): drive the Codex companion server `python plugins/graphhelm-codex-hooks/hooks/task_handoff.py --mcp-stdio` with the SAME metadata-bearing `tools/call` frame used in T004 (`params {"name":"status","arguments":{},"_meta":{"progressToken":"tok-1"}}`) under the same env vars, and assert it returns the SAME acceptance decision and result shape as the primary adapter does in the contract suite (`isError:false`, `content[0].type=="text"`). This is acceptable inline or, if preferred, as an additional assertion in `plugins/graphhelm/hooks/test_task_handoff.py` that points `SCRIPT` at the codex copy; byte-identity (T010) is the authoritative parity guarantee, so this behavioral check is confirmatory.
++
++**Checkpoint**: T010 prints two equal hashes and T011 confirms identical behavior. US1 + US2 + US3 all independently satisfied.
++
++---
++
++## Phase 6: Polish & Cross-Cutting Concerns
++
++**Purpose**: Whole-feature validation and scope discipline across all user stories.
++
++- [X] T012 Run the full validation guide from `specs/001-bench/quickstart.md`: Scenario A (equal hashes) and Scenario B (`python -m unittest plugins.graphhelm.hooks.test_task_handoff` → `Ran >= 11 tests ... OK`, zero failures/errors), and, as optional independent corroboration, Scenario C (manual `-32602` smoke for non-object `_meta` / `null` / string / number / bool / list, plus a valid-`_meta`-plus-`bogus` control) and Scenario D (confirm the pre-change baseline was the green anchor). Report passed vs skipped separately; a skipped optional scenario is never counted as a pass.
++- [X] T013 [P] Confirm scope discipline: run `git status --porcelain` and `git diff --stat` from the repository root and assert the ONLY modified tracked files are the three in-scope paths — `plugins/graphhelm/hooks/task_handoff.py`, `plugins/graphhelm-codex-hooks/hooks/task_handoff.py`, and `plugins/graphhelm/hooks/test_task_handoff.py` — plus the new `specs/001-bench/tasks.md` documentation artifact. No tracked file outside those paths may have changed (quickstart.md "Done means"; no ceremonial scaffold left behind).
++
++**Checkpoint**: Scenarios A+B green, C/D behaving as stated, and the working tree dirty only where intended. Feature complete.
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies — can start immediately (T001 → T002, both from the repository root).
++- **Foundational (Phase 2)**: Depends on the interpreter being available (T001). **Blocks all user stories.**
++- **User Stories (Phases 3+)**: All depend on Phase 2 (parity precondition). They are delivered sequentially in priority order because the code edits target the SAME function body across the same twins — see note below.
++- **Polish (Phase 6)**: Depends on US1 + US2 + US3 being complete.
++
++### User Story Dependencies
++
++- **US1 (P1/MVP)**: Can start after Phase 2. No dependency on US2/US3. Its acceptance case (T004) is the red anchor.
++- **US2 (P2)**: Builds directly on US1 — T007's red anchor only becomes reachable because US1's edit (T005/T006) widened the closed set first. Must run after US1's code edits. Independently testable once US1 is in place.
++- **US3 (P3)**: Depends on US1 AND US2 both having edited both twins; verifies the cumulative result is byte-identical and behaviorally parallel. Independently verifiable by hash + dual-drive.
++
++> **Why sequential, not three parallel lanes**: Unlike a greenfield feature with disjoint modules, all three stories converge on the SAME contiguous function body (the `tools/call` branch, lines ~491–497) duplicated into two files. US1 and US2 each insert into that exact block, so their source edits cannot truly run in parallel without file conflict. The only genuine parallelism is the twin pair (primary vs codex copy), which is why the code-edit pairs are marked `[P]`. This is proportionate to a change of three files and ~3 lines of logic; inventing more parallelism would just create conflicts (Keel: smallest adequate surface).
++
++### Within Each User Story
++
++- Tests (requested) MUST be written and confirmed FAILING (red) before implementation (T004 before T005/T006; T007 before T008/T009).
++- Within a story, the primary and codex edits are independent files and MAY be written together (`[P]`), then verified equal.
++- Story complete (checkpoint green) before starting the next priority.
++
++### Parallel Opportunities
++
++- T005 ∥ T006 (US1): identical set extension into two different `task_handoff.py` files.
++- T008 ∥ T009 (US2): identical `_meta`-guard insertion into the two different `task_handoff.py` files.
++- T010 ∥ T011 (US3): hash-identity check and cross-deployment behavioral check are independent observers.
++- T013 (Phase 6) is independent of T012 and may run alongside it.
++
++---
++
++## Parallel Example: User Story 1 (twin-pair parallelism)
++
++```text
++# Step 1 (red anchor, serial): write and confirm-failing
++Task: T004  "Add _meta-acceptance case to HandoffTests in plugins/graphhelm/hooks/test_task_handoff.py"
++
++# Step 2 (launch together — different files, no dependency between the two copies):
++Task: T005  "Extend closed set in plugins/graphhelm/hooks/task_handoff.py"
++Task: T006  "Apply identical set extension to plugins/graphhelm-codex-hooks/hooks/task_handoff.py"
++
++# Step 3 (serial verification): rerun suite (now 10 green) + re-hash twins (equal)
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup (interpreter + green baseline).
++2. Complete Phase 2: Foundational (record the pre-change byte-identity hash).
++3. Complete Phase 3: User Story 1 (acceptance test red → extend the closed set in both twins → green; re-hash twins).
++4. **STOP and VALIDATE**: drive a metadata-bearing `tools/call` over stdio and confirm it dispatches identically to the no-`_meta` call.
++
++### Incremental Delivery
++
++1. Setup + Foundational → parity precondition established.
++2. Add US1 → validate independently → MVP live (conforming clients can call handoff tools).
++3. Add US2 → validate independently (every guardrail still refuses; zero Runtime side effect).
++4. Add US3 → validate independently (twins byte-identical; behaviorally parallel).
++5. Each story adds value without breaking the previous one.
++
++### Final Gate
++
++6. Phase 6 → full quickstart validation + scope discipline. Delivery requires merge per AGENTS.md (open PR ≠ delivery); the identity line, one non-author review, closing-keyword check, and named reach-proof commands ride along at PR time (deferred — not a tasks.md concern).
++
++---
++
++## Notes
++
++- **[P]** tasks = different files, no dependencies on incomplete tasks.
++- **[Story]** labels map each task to a specific user story for traceability to spec.md FR/SC ids.
++- Every refusal in the pre-dispatch band maps to JSON-RPC `-32602` and occurs before dispatch ⇒ no Runtime HTTP call; negative tests observe this via `RuntimeHandler.requests` length staying constant (smallest adequate observer per research.md §7).
++- The Rust cargo gate / `./ci/gate.ps1` is explicitly **not** the observer for this change: `plugins/` is not a member of the root cargo workspace. The reaching observers are the Python contract suite (`python -m unittest plugins.graphhelm.hooks.test_task_handoff`) and the twin-file SHA-256 comparison.
++- Commit after each story checkpoint (small, independently buildable, conventional messages) rather than as one batch.
++- **Constraints honored** (from data-model.md / research.md): `params` must be a JSON object (else refuse); the closed set is exactly `{name, arguments, _meta}` (any other key refused, FR-003); `_meta` present ⇒ MUST be a JSON object/mapping, absent ⇒ fine, present-and-non-object (string/number/list/bool/null) ⇒ refused before dispatch (FR-002); the metadata object's contents are opaque — never read, forwarded, persisted, or executed (FR-001/SC-004).
++- Avoided: vague tasks, editing both twins in one ambiguous step, inventing cross-story module boundaries, adding a helper/constant that has a single caller (research.md §4 keeps the `"_meta"` literal inline).

@@ -1,0 +1,63 @@
+diff --git a/plugins/graphhelm-codex-hooks/hooks/task_handoff.py b/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
+index 22d68b4..df5c3a7 100644
+--- a/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
++++ b/plugins/graphhelm-codex-hooks/hooks/task_handoff.py
+@@ -492,7 +492,9 @@ def _mcp_stdio() -> int:
+                 params = request_value.get("params")
+                 if not isinstance(params, dict):
+                     raise ValueError("tools/call params must be an object")
+-                if set(params) - {"name", "arguments"}:
++                if set(params) - {"name", "arguments", "_meta"}:
++                    raise ValueError("tools/call params contain an unsupported field")
++                if "_meta" in params and not isinstance(params["_meta"], dict):
+                     raise ValueError("tools/call params contain an unsupported field")
+                 response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
+             else:
+diff --git a/plugins/graphhelm/hooks/task_handoff.py b/plugins/graphhelm/hooks/task_handoff.py
+index 22d68b4..df5c3a7 100644
+--- a/plugins/graphhelm/hooks/task_handoff.py
++++ b/plugins/graphhelm/hooks/task_handoff.py
+@@ -492,7 +492,9 @@ def _mcp_stdio() -> int:
+                 params = request_value.get("params")
+                 if not isinstance(params, dict):
+                     raise ValueError("tools/call params must be an object")
+-                if set(params) - {"name", "arguments"}:
++                if set(params) - {"name", "arguments", "_meta"}:
++                    raise ValueError("tools/call params contain an unsupported field")
++                if "_meta" in params and not isinstance(params["_meta"], dict):
+                     raise ValueError("tools/call params contain an unsupported field")
+                 response = _mcp_result(request_id, _mcp_tool_call(params.get("name"), params.get("arguments"), host, session))
+             else:
+diff --git a/plugins/graphhelm/hooks/test_task_handoff.py b/plugins/graphhelm/hooks/test_task_handoff.py
+index 07025a0..4e0b1ea 100644
+--- a/plugins/graphhelm/hooks/test_task_handoff.py
++++ b/plugins/graphhelm/hooks/test_task_handoff.py
+@@ -198,6 +198,28 @@ class HandoffTests(unittest.TestCase):
+         self.assertFalse(replies[2]["result"]["isError"])
+         self.assertEqual(replies[2]["result"]["content"][0]["type"], "text")
+ 
++    def test_mcp_stdio_accepts_meta_object_and_rejects_meta_that_is_not_an_object(self):
++        env = os.environ.copy(); env.update(self.env)
++        env["GRAPHHELM_MCP_HOST"] = "codex"
++        env["GRAPHHELM_SESSION_ID"] = "receiver-1"
++        accepted = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
++                    "params": {"name": "status", "arguments": {}, "_meta": {"progressToken": 7}}}
++        result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
++                                input=json.dumps(accepted) + "\n", capture_output=True, text=True)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        replies = [json.loads(line) for line in result.stdout.splitlines()]
++        self.assertFalse(replies[0]["result"]["isError"])
++        self.assertEqual(replies[0]["result"]["content"][0]["type"], "text")
++        before = len(RuntimeHandler.requests)
++        rejected = {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
++                    "params": {"name": "status", "arguments": {}, "_meta": "progress"}}
++        result = subprocess.run([sys.executable, str(SCRIPT), "--mcp-stdio"], env=env,
++                                input=json.dumps(rejected) + "\n", capture_output=True, text=True)
++        self.assertEqual(result.returncode, 0, result.stderr)
++        replies = [json.loads(line) for line in result.stdout.splitlines()]
++        self.assertEqual(replies[0]["error"]["code"], -32602)
++        self.assertEqual(len(RuntimeHandler.requests), before)
++
+     def test_mcp_rejects_identity_override_and_oversized_request_before_runtime_io(self):
+         env = os.environ.copy(); env.update(self.env)
+         env["GRAPHHELM_MCP_HOST"] = "codex"

@@ -1,0 +1,1700 @@
+diff --git a/.specify/feature.json b/.specify/feature.json
+new file mode 100644
+index 0000000..72ba549
+--- /dev/null
++++ b/.specify/feature.json
+@@ -0,0 +1,3 @@
++{
++  "feature_directory": "specs/001-bench"
++}
+diff --git a/.specify/templates/constitution-template.md b/.specify/templates/constitution-template.md
+new file mode 100644
+index 0000000..a4670ff
+--- /dev/null
++++ b/.specify/templates/constitution-template.md
+@@ -0,0 +1,50 @@
++# [PROJECT_NAME] Constitution
++<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
++
++## Core Principles
++
++### [PRINCIPLE_1_NAME]
++<!-- Example: I. Library-First -->
++[PRINCIPLE_1_DESCRIPTION]
++<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
++
++### [PRINCIPLE_2_NAME]
++<!-- Example: II. CLI Interface -->
++[PRINCIPLE_2_DESCRIPTION]
++<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
++
++### [PRINCIPLE_3_NAME]
++<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
++[PRINCIPLE_3_DESCRIPTION]
++<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
++
++### [PRINCIPLE_4_NAME]
++<!-- Example: IV. Integration Testing -->
++[PRINCIPLE_4_DESCRIPTION]
++<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
++
++### [PRINCIPLE_5_NAME]
++<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
++[PRINCIPLE_5_DESCRIPTION]
++<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
++
++## [SECTION_2_NAME]
++<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
++
++[SECTION_2_CONTENT]
++<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
++
++## [SECTION_3_NAME]
++<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
++
++[SECTION_3_CONTENT]
++<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
++
++## Governance
++<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
++
++[GOVERNANCE_RULES]
++<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
++
++**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
++<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+diff --git a/.specify/templates/plan-template.md b/.specify/templates/plan-template.md
+new file mode 100644
+index 0000000..36f2eab
+--- /dev/null
++++ b/.specify/templates/plan-template.md
+@@ -0,0 +1,113 @@
++# Implementation Plan: [FEATURE]
++
++**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
++
++**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
++
++**Note**: This template is filled in by the `__SPECKIT_COMMAND_PLAN__` command; its definition describes the execution workflow.
++
++## Summary
++
++[Extract from feature spec: primary requirement + technical approach from research]
++
++## Technical Context
++
++<!--
++  ACTION REQUIRED: Replace the content in this section with the technical details
++  for the project. The structure here is presented in advisory capacity to guide
++  the iteration process.
++-->
++
++**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]
++
++**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]
++
++**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
++
++**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]
++
++**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
++
++**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]
++
++**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]
++
++**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]
++
++**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++[Gates determined based on constitution file]
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/[###-feature]/
++├── plan.md              # This file (__SPECKIT_COMMAND_PLAN__ command output)
++├── research.md          # Phase 0 output (__SPECKIT_COMMAND_PLAN__ command)
++├── data-model.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── quickstart.md        # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++├── contracts/           # Phase 1 output (__SPECKIT_COMMAND_PLAN__ command)
++└── tasks.md             # Phase 2 output (__SPECKIT_COMMAND_TASKS__ command - NOT created by __SPECKIT_COMMAND_PLAN__)
++```
++
++### Source Code (repository root)
++<!--
++  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
++  for this feature. Delete unused options and expand the chosen structure with
++  real paths (e.g., apps/admin, packages/something). The delivered plan must
++  not include Option labels.
++-->
++
++```text
++# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
++src/
++├── models/
++├── services/
++├── cli/
++└── lib/
++
++tests/
++├── contract/
++├── integration/
++└── unit/
++
++# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
++backend/
++├── src/
++│   ├── models/
++│   ├── services/
++│   └── api/
++└── tests/
++
++frontend/
++├── src/
++│   ├── components/
++│   ├── pages/
++│   └── services/
++└── tests/
++
++# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
++api/
++└── [same as backend above]
++
++ios/ or android/
++└── [platform-specific structure: feature modules, UI flows, platform tests]
++```
++
++**Structure Decision**: [Document the selected structure and reference the real
++directories captured above]
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++| Violation | Why Needed | Simpler Alternative Rejected Because |
++|-----------|------------|-------------------------------------|
++| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
++| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+diff --git a/.specify/templates/spec-template.md b/.specify/templates/spec-template.md
+new file mode 100644
+index 0000000..ceb2877
+--- /dev/null
++++ b/.specify/templates/spec-template.md
+@@ -0,0 +1,131 @@
++# Feature Specification: [FEATURE NAME]
++
++**Feature Branch**: `[###-feature-name]`
++
++**Created**: [DATE]
++
++**Status**: Draft
++
++**Input**: User description: "$ARGUMENTS"
++
++## User Scenarios & Testing *(mandatory)*
++
++<!--
++  IMPORTANT: User stories should be PRIORITIZED as user journeys ordered by importance.
++  Each user story/journey must be INDEPENDENTLY TESTABLE - meaning if you implement just ONE of them,
++  you should still have a viable MVP (Minimum Viable Product) that delivers value.
++
++  Assign priorities (P1, P2, P3, etc.) to each story, where P1 is the most critical.
++  Think of each story as a standalone slice of functionality that can be:
++  - Developed independently
++  - Tested independently
++  - Deployed independently
++  - Demonstrated to users independently
++-->
++
++### User Story 1 - [Brief Title] (Priority: P1)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently - e.g., "Can be fully tested by [specific action] and delivers [specific value]"]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++2. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 2 - [Brief Title] (Priority: P2)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++### User Story 3 - [Brief Title] (Priority: P3)
++
++[Describe this user journey in plain language]
++
++**Why this priority**: [Explain the value and why it has this priority level]
++
++**Independent Test**: [Describe how this can be tested independently]
++
++**Acceptance Scenarios**:
++
++1. **Given** [initial state], **When** [action], **Then** [expected outcome]
++
++---
++
++[Add more user stories as needed, each with an assigned priority]
++
++### Edge Cases
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right edge cases.
++-->
++
++- What happens when [boundary condition]?
++- How does system handle [error scenario]?
++
++## Requirements *(mandatory)*
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right functional requirements.
++-->
++
++### Functional Requirements
++
++- **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]
++- **FR-002**: System MUST [specific capability, e.g., "validate email addresses"]
++- **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
++- **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
++- **FR-005**: System MUST [behavior, e.g., "log all security events"]
++
++*Example of marking unclear requirements:*
++
++- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
++- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
++
++### Key Entities *(include if feature involves data)*
++
++- **[Entity 1]**: [What it represents, key attributes without implementation]
++- **[Entity 2]**: [What it represents, relationships to other entities]
++
++## Success Criteria *(mandatory)*
++
++<!--
++  ACTION REQUIRED: Define measurable success criteria.
++  These must be technology-agnostic and measurable.
++-->
++
++### Measurable Outcomes
++
++- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
++- **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
++- **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
++- **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
++
++## Assumptions
++
++<!--
++  ACTION REQUIRED: The content in this section represents placeholders.
++  Fill them out with the right assumptions based on reasonable defaults
++  chosen when the feature description did not specify certain details.
++-->
++
++- [Assumption about target users, e.g., "Users have stable internet connectivity"]
++- [Assumption about scope boundaries, e.g., "Mobile support is out of scope for v1"]
++- [Assumption about data/environment, e.g., "Existing authentication system will be reused"]
++- [Dependency on existing system/service, e.g., "Requires access to the existing user profile API"]
+diff --git a/.specify/templates/tasks-template.md b/.specify/templates/tasks-template.md
+new file mode 100644
+index 0000000..7fff087
+--- /dev/null
++++ b/.specify/templates/tasks-template.md
+@@ -0,0 +1,252 @@
++---
++
++description: "Task list template for feature implementation"
++---
++
++# Tasks: [FEATURE NAME]
++
++**Input**: Design documents from `/specs/[###-feature-name]/`
++
++**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
++
++**Tests**: The examples below include test tasks. Tests are OPTIONAL - only include them if explicitly requested in the feature specification.
++
++**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependencies)
++- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
++- Include exact file paths in descriptions
++
++## Path Conventions
++
++- **Single project**: `src/`, `tests/` at repository root
++- **Web app**: `backend/src/`, `frontend/src/`
++- **Mobile**: `api/src/`, `ios/src/` or `android/src/`
++- Paths shown below assume single project - adjust based on plan.md structure
++
++<!--
++  ============================================================================
++  IMPORTANT: The tasks below are SAMPLE TASKS for illustration purposes only.
++
++  The __SPECKIT_COMMAND_TASKS__ command MUST replace these with actual tasks based on:
++  - User stories from spec.md (with their priorities P1, P2, P3...)
++  - Feature requirements from plan.md
++  - Entities from data-model.md
++  - Endpoints from contracts/
++
++  Tasks MUST be organized by user story so each story can be:
++  - Implemented independently
++  - Tested independently
++  - Delivered as an MVP increment
++
++  DO NOT keep these sample tasks in the generated tasks.md file.
++  ============================================================================
++-->
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: Project initialization and basic structure
++
++- [ ] T001 Create project structure per implementation plan
++- [ ] T002 Initialize [language] project with [framework] dependencies
++- [ ] T003 [P] Configure linting and formatting tools
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
++
++**⚠️ CRITICAL**: No user story work can begin until this phase is complete
++
++Examples of foundational tasks (adjust based on your project):
++
++- [ ] T004 Setup database schema and migrations framework
++- [ ] T005 [P] Implement authentication/authorization framework
++- [ ] T006 [P] Setup API routing and middleware structure
++- [ ] T007 Create base models/entities that all stories depend on
++- [ ] T008 Configure error handling and logging infrastructure
++- [ ] T009 Setup environment configuration management
++
++**Checkpoint**: Foundation ready - user story implementation can now begin in parallel
++
++---
++
++## Phase 3: User Story 1 - [Title] (Priority: P1) 🎯 MVP
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 1 (OPTIONAL - only if tests requested) ⚠️
++
++> **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
++
++- [ ] T010 [P] [US1] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T011 [P] [US1] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 1
++
++- [ ] T012 [P] [US1] Create [Entity1] model in src/models/[entity1].py
++- [ ] T013 [P] [US1] Create [Entity2] model in src/models/[entity2].py
++- [ ] T014 [US1] Implement [Service] in src/services/[service].py (depends on T012, T013)
++- [ ] T015 [US1] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T016 [US1] Add validation and error handling
++- [ ] T017 [US1] Add logging for user story 1 operations
++
++**Checkpoint**: At this point, User Story 1 should be fully functional and testable independently
++
++---
++
++## Phase 4: User Story 2 - [Title] (Priority: P2)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 2 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T018 [P] [US2] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T019 [P] [US2] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 2
++
++- [ ] T020 [P] [US2] Create [Entity] model in src/models/[entity].py
++- [ ] T021 [US2] Implement [Service] in src/services/[service].py
++- [ ] T022 [US2] Implement [endpoint/feature] in src/[location]/[file].py
++- [ ] T023 [US2] Integrate with User Story 1 components (if needed)
++
++**Checkpoint**: At this point, User Stories 1 AND 2 should both work independently
++
++---
++
++## Phase 5: User Story 3 - [Title] (Priority: P3)
++
++**Goal**: [Brief description of what this story delivers]
++
++**Independent Test**: [How to verify this story works on its own]
++
++### Tests for User Story 3 (OPTIONAL - only if tests requested) ⚠️
++
++- [ ] T024 [P] [US3] Contract test for [endpoint] in tests/contract/test_[name].py
++- [ ] T025 [P] [US3] Integration test for [user journey] in tests/integration/test_[name].py
++
++### Implementation for User Story 3
++
++- [ ] T026 [P] [US3] Create [Entity] model in src/models/[entity].py
++- [ ] T027 [US3] Implement [Service] in src/services/[service].py
++- [ ] T028 [US3] Implement [endpoint/feature] in src/[location]/[file].py
++
++**Checkpoint**: All user stories should now be independently functional
++
++---
++
++[Add more user story phases as needed, following the same pattern]
++
++---
++
++## Phase N: Polish & Cross-Cutting Concerns
++
++**Purpose**: Improvements that affect multiple user stories
++
++- [ ] TXXX [P] Documentation updates in docs/
++- [ ] TXXX Code cleanup and refactoring
++- [ ] TXXX Performance optimization across all stories
++- [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
++- [ ] TXXX Security hardening
++- [ ] TXXX Run quickstart.md validation
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies - can start immediately
++- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all user stories
++- **User Stories (Phase 3+)**: All depend on Foundational phase completion
++  - User stories can then proceed in parallel (if staffed)
++  - Or sequentially in priority order (P1 → P2 → P3)
++- **Polish (Final Phase)**: Depends on all desired user stories being complete
++
++### User Story Dependencies
++
++- **User Story 1 (P1)**: Can start after Foundational (Phase 2) - No dependencies on other stories
++- **User Story 2 (P2)**: Can start after Foundational (Phase 2) - May integrate with US1 but should be independently testable
++- **User Story 3 (P3)**: Can start after Foundational (Phase 2) - May integrate with US1/US2 but should be independently testable
++
++### Within Each User Story
++
++- Tests (if included) MUST be written and FAIL before implementation
++- Models before services
++- Services before endpoints
++- Core implementation before integration
++- Story complete before moving to next priority
++
++### Parallel Opportunities
++
++- All Setup tasks marked [P] can run in parallel
++- All Foundational tasks marked [P] can run in parallel (within Phase 2)
++- Once Foundational phase completes, all user stories can start in parallel (if team capacity allows)
++- All tests for a user story marked [P] can run in parallel
++- Models within a story marked [P] can run in parallel
++- Different user stories can be worked on in parallel by different team members
++
++---
++
++## Parallel Example: User Story 1
++
++```bash
++# Launch all tests for User Story 1 together (if tests requested):
++Task: "Contract test for [endpoint] in tests/contract/test_[name].py"
++Task: "Integration test for [user journey] in tests/integration/test_[name].py"
++
++# Launch all models for User Story 1 together:
++Task: "Create [Entity1] model in src/models/[entity1].py"
++Task: "Create [Entity2] model in src/models/[entity2].py"
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup
++2. Complete Phase 2: Foundational (CRITICAL - blocks all stories)
++3. Complete Phase 3: User Story 1
++4. **STOP and VALIDATE**: Test User Story 1 independently
++5. Deploy/demo if ready
++
++### Incremental Delivery
++
++1. Complete Setup + Foundational → Foundation ready
++2. Add User Story 1 → Test independently → Deploy/Demo (MVP!)
++3. Add User Story 2 → Test independently → Deploy/Demo
++4. Add User Story 3 → Test independently → Deploy/Demo
++5. Each story adds value without breaking previous stories
++
++### Parallel Team Strategy
++
++With multiple developers:
++
++1. Team completes Setup + Foundational together
++2. Once Foundational is done:
++   - Developer A: User Story 1
++   - Developer B: User Story 2
++   - Developer C: User Story 3
++3. Stories complete and integrate independently
++
++---
++
++## Notes
++
++- [P] tasks = different files, no dependencies
++- [Story] label maps task to specific user story for traceability
++- Each user story should be independently completable and testable
++- Verify tests fail before implementing
++- Commit after each task or logical group
++- Stop at any checkpoint to validate story independently
++- Avoid: vague tasks, same file conflicts, cross-story dependencies that break independence
+diff --git a/apps/cli/src/commands/execution/mod.rs b/apps/cli/src/commands/execution/mod.rs
+index 1a50948..03d246c 100644
+--- a/apps/cli/src/commands/execution/mod.rs
++++ b/apps/cli/src/commands/execution/mod.rs
+@@ -205,17 +205,6 @@ pub(super) fn load_fixtures(path: Option<&Path>) -> Result<SimulationFixtures, F
+     })
+ }
+ 
+-/// The ONE scope the `execution` verbs can address for a given execution id.
+-///
+-/// **Every consumer of this rule must call THIS function (#560).** The rule used to be written
+-/// out where `resolve_stream` needed it, and `execution list` enumerated the repository without
+-/// it -- so the index offered rows under any scope the generic `events` commands can write,
+-/// while `status`, `events` and every other follow-up verb reconstructed only this one. A row
+-/// the rest of the API cannot answer for is worse than a missing row: the caller reads it as an
+-/// execution that exists and then gets an empty history back.
+-///
+-/// # Errors
+-/// [`Failure`] when `execution` is not a valid identifier.
+ /// The same addressing rule as [`addressable_scope`] for records that belong to the local
+ /// repository rather than to one execution stream (for example the Dreams shadow ledger). One
+ /// home for the workspace and project literals, so the two constructions cannot drift apart.
+@@ -227,6 +216,17 @@ pub(crate) fn repository_scope() -> RepositoryScope {
+     )
+ }
+ 
++/// The ONE scope the `execution` verbs can address for a given execution id.
++///
++/// **Every consumer of this rule must call THIS function (#560).** The rule used to be written
++/// out where `resolve_stream` needed it, and `execution list` enumerated the repository without
++/// it -- so the index offered rows under any scope the generic `events` commands can write,
++/// while `status`, `events` and every other follow-up verb reconstructed only this one. A row
++/// the rest of the API cannot answer for is worse than a missing row: the caller reads it as an
++/// execution that exists and then gets an empty history back.
++///
++/// # Errors
++/// [`Failure`] when `execution` is not a valid identifier.
+ pub(crate) fn addressable_scope(execution: &str) -> Result<RepositoryScope, Failure> {
+     Ok(RepositoryScope::new(
+         WorkspaceId::parse(WORKSPACE).expect("constant workspace id is valid"),
+diff --git a/apps/cli/src/commands/mcp/tools.rs b/apps/cli/src/commands/mcp/tools.rs
+index 07eb5fd..d5ecb6b 100644
+--- a/apps/cli/src/commands/mcp/tools.rs
++++ b/apps/cli/src/commands/mcp/tools.rs
+@@ -738,10 +738,6 @@ fn wake_wait_schema() -> serde_json::Value {
+     )
+ }
+ 
+-/// Closed like every other schema here. `fixture` and `route` are both optional and the route
+-/// refuses the pair: the "exactly one door" rule lives on the server (`serve::routes::
+-/// synthesize`), where the CLI's `--fixture`/`--manifest --route` rule already lives, for the
+-/// same reason `start_schema` does not encode file-or-graph.
+ fn assign_schema() -> serde_json::Value {
+     mutating_schema(
+         serde_json::json!({
+@@ -753,6 +749,10 @@ fn assign_schema() -> serde_json::Value {
+     )
+ }
+ 
++/// Closed like every other schema here. `fixture` and `route` are both optional and the route
++/// refuses the pair: the "exactly one door" rule lives on the server (`serve::routes::
++/// synthesize`), where the CLI's `--fixture`/`--manifest --route` rule already lives, for the
++/// same reason `start_schema` does not encode file-or-graph.
+ fn synthesize_schema() -> serde_json::Value {
+     object_schema(
+         serde_json::json!({
+diff --git a/specs/001-bench/checklists/requirements.md b/specs/001-bench/checklists/requirements.md
+new file mode 100644
+index 0000000..a14c523
+--- /dev/null
++++ b/specs/001-bench/checklists/requirements.md
+@@ -0,0 +1,55 @@
++# Specification Quality Checklist: Restore Displaced Documentation Comments
++
++**Purpose**: Validate specification completeness and quality before proceeding to planning
++**Created**: 2026-10-26
++**Feature**: [spec.md](../spec.md)
++
++## Content Quality
++
++- [x] No implementation details (languages, frameworks, APIs)
++- [x] Focused on user value and business needs
++- [x] Written for non-technical stakeholders
++- [x] All mandatory sections completed
++
++## Requirement Completeness
++
++- [x] No [NEEDS CLARIFICATION] markers remain
++- [x] Requirements are testable and unambiguous
++- [x] Success criteria are measurable
++- [x] Success criteria are technology-agnostic (no implementation details)
++- [x] All acceptance scenarios are defined
++- [x] Edge cases are identified
++- [x] Scope is clearly bounded
++- [x] Dependencies and assumptions identified
++
++## Feature Readiness
++
++- [x] All functional requirements have clear acceptance criteria
++- [x] User scenarios cover primary flows
++- [x] Feature meets measurable outcomes defined in Success Criteria
++- [x] No implementation details leak into specification
++
++## Notes
++
++- **Validation result**: All 18 items passed on iteration 1 (2026-10-26); no spec revision was
++  required and no `[NEEDS CLARIFICATION]` markers were raised — every ambiguous point had a
++  content-based answer, recorded as assumptions A1–A3 in the spec.
++- **Named source identifiers**: FR-001…FR-003 name two files and four functions. These are not a
++  technology choice but the defect surface itself, fixed by the user description; the spec makes
++  no stack, framework, or API decisions beyond them. This is the only reason the "no
++  implementation details" items carry this note rather than standing bare.
++- **Block attribution evidence** (supports A1, checked against the working tree on 2026-10-26):
++  - `apps/cli/src/commands/execution/mod.rs` lines 208–218 describe an `execution` parameter and a
++    `Failure` return — attributes of `addressable_scope` only (line 230); they currently sit above
++    `repository_scope` (line 222). Lines 219–221 reference `[addressable_scope]` and local
++    repository records and correctly sit above `repository_scope`, so they stay put.
++  - `apps/cli/src/commands/mcp/tools.rs` lines 741–744 cite `fixture`/`route` fields and
++    `serve::routes::synthesize` — attributes of `synthesize_schema` only (line 756); they
++    currently sit above `assign_schema` (line 745).
++- **Governance substitution**: `/memory/constitution.md` does not exist in this checkout; per the
++  run instructions, the repository-root `AGENTS.md` was used as the governance reference instead
++  (also recorded in spec.md, Assumption A5). Notably, AGENTS.md's "Change comments only / no
++  reformatting" discipline for the fix maps directly onto FR-004/FR-005.
++- **Extension hooks**: `.specify/extensions.yml` is absent, so no pre- or post-specify hooks were
++  checked or executed.
++- Ready for `/speckit.plan` (or `/speckit.clarify` if stakeholders want to interrogate A1–A4).
+diff --git a/specs/001-bench/contracts/rustdoc-attachment.md b/specs/001-bench/contracts/rustdoc-attachment.md
+new file mode 100644
+index 0000000..8b4ee7a
+--- /dev/null
++++ b/specs/001-bench/contracts/rustdoc-attachment.md
+@@ -0,0 +1,56 @@
++# Contract: Rustdoc Attachment and Diff Discipline
++
++**Feature**: [../spec.md](../spec.md) · **Applies to**: `apps/cli/src/commands/execution/mod.rs`,
++`apps/cli/src/commands/mcp/tools.rs`
++
++This feature has no wire, CLI-surface, or storage interface change; its observable interface is
++(a) the documented text each of four functions renders (the promise users of hover help / rustdoc
++read) and (b) the shape of the change itself (FR-004). Both are contracted here.
++
++## 1. Documented-text contract (post-change, SC-001)
++
++The rendered documentation of each named item MUST equal the following, line for line, with no
++additional text. Blocks are identified by their first and last lines (sentinels from
++[../data-model.md](../data-model.md)); interior lines are fixed by FR-005 (verbatim, pre-existing).
++
++| Item | Module | Rendered documentation MUST | Rendered documentation MUST NOT |
++|------|--------|------------------------------|---------------------------------|
++| `addressable_scope` | `commands::execution` | Begin with "The ONE scope the `execution` verbs can address for a given execution id.", contain the full body, and end with the `# Errors` subsection whose last line is "``[`Failure`] when `execution` is not a valid identifier.`" | Contain any line of `repository_scope`'s block (no "same addressing rule … records that belong to the local repository" text; no Dreams shadow ledger reference; no "two constructions cannot drift apart") |
++| `repository_scope` | `commands::execution` | Be exactly its own 3-line block: "The same addressing rule as [`addressable_scope`] for records that belong to the local repository rather than to one execution stream (for example the Dreams shadow ledger). One home for the workspace and project literals, so the two constructions cannot drift apart." | Contain any line of `addressable_scope`'s block — in particular no "ONE scope" text, no "# Errors" heading, no failure contract (the function takes no parameter and cannot fail) |
++| `assign_schema` | `commands::mcp::tools` | Nothing (zero doc-comment lines attached) | Contain "`fixture` and `route` are both optional", the "exactly one door" rule text, or any line of `synthesize_schema`'s block |
++| `synthesize_schema` | `commands::mcp::tools` | Be exactly the 4-line block beginning "Closed like every other schema here. `fixture` and `route` are both optional and the route refuses the pair…" and ending "…for the same reason `start_schema` does not encode file-or-graph." | Contain borrowed text about `assign`'s fields (`node`, `actorId`) — none exists in the source, so none may appear |
++
++All other items in both files keep exactly the documentation they had at baseline head `25b34ed`
++(SC-003 second half).
++
++## 2. Reference-resolution contract (FR-006, SC-003)
++
++Intra-doc links inside moved blocks must resolve to the same targets as before the move:
++
++| Link | Occurs in | Target | Target location after fix | Resolvable? |
++|------|-----------|--------|---------------------------|-------------|
++| `` [`Failure`] `` | moved execution block | `Failure` struct | same module, `execution/mod.rs` (declared at baseline line 80) | Yes — unchanged |
++| `` [`addressable_scope`] `` | moved execution block AND staying 3-line block | `addressable_scope` fn | same module, now directly below its own block | Yes — unchanged scope |
++| backtick spans `serve::routes:: synthesize`, `start_schema` | moved tools.rs block | plain code spans, not intra-doc links | n/a (no link resolution involved) | Yes — unchanged |
++
++No new links are introduced or removed by the change.
++
++## 3. Diff-shape contract (FR-004, FR-005, SC-002)
++
++Against the pre-change tree, the delivered change MUST satisfy all of:
++
++1. `git status --porcelain` lists no modified path other than the two files above (feature
++   artifacts under `specs/001-bench/` and `.specify/` excluded as pipeline output, not part of the
++   source change).
++2. Every added or removed content line matches `^[+-]\s*///`; zero non-comment lines differ.
++3. The multiset of removed comment lines equals the multiset of added comment lines (a pure
++   permutation): per file, 11 removed == 11 added in `execution/mod.rs`, 4 removed == 4 added in
++   `mcp/tools.rs`.
++4. No blank line is added or removed anywhere; the hunks reposition whole contiguous runs only.
++5. Line endings normalize to LF for both `.rs` paths (`.gitattributes`: `*.rs text eol=lf`).
++
++## 4. Behavior-neutrality contract (SC-004)
++
++Any verification reachable from this checkout yields identical results before and after the
++change. The concrete observers and their expected before == after outcomes are listed in
++[../quickstart.md](../quickstart.md) (S1–S5); nothing in this contract adds a runtime promise.
+diff --git a/specs/001-bench/data-model.md b/specs/001-bench/data-model.md
+new file mode 100644
+index 0000000..1e8bc74
+--- /dev/null
++++ b/specs/001-bench/data-model.md
+@@ -0,0 +1,78 @@
++# Data Model: Restore Displaced Documentation Comments
++
++**Feature**: [spec.md](spec.md) · **Plan**: [plan.md](plan.md) · **Date**: 2026-10-26
++
++Line numbers reference the clean baseline head `25b34ed` in this checkout. This feature has no
++persisted data and adds no storage; the "data" it manipulates is source text. The entities below
++are the spec's Key Entities made concrete against the measured baseline (research R1, R2).
++
++## Entities
++
++### Documentation Block (unit of work)
++
++A run of consecutive `///` doc-comment lines belonging to exactly one function. Attributes:
++verbatim text (immutable in this change), intended owning function, current attachment, corrected
++position.
++
++| ID | Source file | Baseline lines | Length | Owning function (after fix) | Attached to before | Moves? | First line (sentinel) | Last line (sentinel) |
++|----|-------------|----------------|--------|------------------------------|--------------------|--------|------------------------|-----------------------|
++| `B-EXEC-A` | `apps/cli/src/commands/execution/mod.rs` | 208–218 | 11 | `addressable_scope` | `repository_scope` (as one contiguous 15-line block with `B-EXEC-B`) | **Yes** — to directly above `addressable_scope` (baseline line 230) | `/// The ONE scope the \`execution\` verbs can address for a given execution id.` | `/// [\`Failure\`] when \`execution\` is not a valid identifier.` |
++| `B-EXEC-B` | `apps/cli/src/commands/execution/mod.rs` | 219–221 | 3 | `repository_scope` | `repository_scope` | **No** — stays in place; becomes its sole attachment after `B-EXEC-A` leaves | `/// The same addressing rule as [\`addressable_scope\`] for records that belong to the local` | `/// home for the workspace and project literals, so the two constructions cannot drift apart.` |
++| `B-MCP-C` | `apps/cli/src/commands/mcp/tools.rs` | 741–744 | 4 | `synthesize_schema` | `assign_schema` | **Yes** — to directly above `synthesize_schema` (baseline line 756) | `/// Closed like every other schema here. \`fixture\` and \`route\` are both optional and the route` | `/// same reason \`start_schema\` does not encode file-or-graph.` |
++
++Ownership attribution ground truth (from each function's signature/body at baseline):
++
++- `addressable_scope(execution: &str) -> Result<RepositoryScope, Failure>` — takes the `execution`
++  argument; can fail (`ExecutionId::parse` → argument diagnostic). Only candidate for a block
++  with an `# Errors` subsection about an `execution` identifier.
++- `repository_scope() -> RepositoryScope` — no parameters, infallible body (constant parsing under
++  `expect`). Keeps only `B-EXEC-B`.
++- `assign_schema() -> serde_json::Value` — declares `executionId`, `node`, `actorId`; no
++  `fixture`/`route`. No own block exists anywhere in the file; ends the change **undocumented**
++  (zero `///` lines attached).
++- `synthesize_schema() -> serde_json::Value` — declares `fixture`, `route`, `judgeRoute`,
++  `judgeFixture`, … the fields `B-MCP-C` cites. Receives `B-MCP-C`.
++
++### Owning Function (observable outcome carrier)
++
++Identity (name + file), parameter/failure surface, documented text after the fix:
++
++| Function | File | Signature (baseline) | Documented text AFTER | Contract detail |
++|----------|------|----------------------|------------------------|-----------------|
++| `addressable_scope` | `apps/cli/src/commands/execution/mod.rs` | `pub(crate) fn addressable_scope(execution: &str) -> Result<RepositoryScope, Failure>` (line 230) | Exactly `B-EXEC-A`, verbatim, including the `# Errors` subsection | FR-001; SC-001 |
++| `repository_scope` | same | `pub(crate) fn repository_scope() -> RepositoryScope` (line 222) | Exactly `B-EXEC-B` (3 lines); no line of `B-EXEC-A` remains on it — in particular the `# Errors` subsection must not be stranded here | FR-002; SC-001 |
++| `assign_schema` | `apps/cli/src/commands/mcp/tools.rs` | `fn assign_schema() -> serde_json::Value` (line 745) | None (no borrowed text remains) | FR-003 (negative half); SC-001 |
++| `synthesize_schema` | same | `fn synthesize_schema() -> serde_json::Value` (line 756) | Exactly `B-MCP-C`, verbatim | FR-003; SC-001 |
++
++## Validation Rules (from requirements)
++
++| Rule | Enforced by | Check |
++|------|-------------|-------|
++| FR-001 / FR-003: each moved block sits directly above its owner's item header; block end is the line immediately preceding the header | quickstart S2 | expected final/first doc line above each signature |
++| FR-002: `repository_scope` retains precisely its 3-line block | quickstart S2 + S3 | sentinel counts; contiguous region above it is exactly 3 lines |
++| FR-004: comment-only, two files, no reformatting | quickstart S1 | diff census: every changed content line matches `^[+-]\s*///`; modified paths == the two files; nothing else dirty |
++| FR-005: verbatim whole-block relocation, no add/remove/reword/split/re-wrap | quickstart S1 + S3 | per-file `///` line count identical before/after; every removed line reappears verbatim among added lines (and vice versa); sentinel uniqueness |
++| FR-006 / SC-003: intra-doc links keep their targets; no new unresolvable references | research R4 | `[`Failure`]` → same-module `Failure` (mod.rs line 80); `[`addressable_scope`]` → same-module function; tools.rs block uses plain backtick code spans; all unchanged |
++| Whitespace discipline (edge case): no re-indent, no spacing change around neighbors | quickstart S1 | hunks contain no blank-line additions/removals; moved lines keep column-0 start and exact text |
++
++## State Transitions
++
++Per file, one transition, applied as one atomic edit:
++
++```text
++B-EXEC-A on repository_scope ──move──▶ B-EXEC-A on addressable_scope
++    repository_scope docs:  A+B (15 lines)          repository_scope docs:  B (3 lines)
++    addressable_scope docs: none                    addressable_scope docs: A (11 lines)
++
++B-MCP-C on assign_schema ──move──▶ B-MCP-C on synthesize_schema
++    assign_schema docs:     C (4 lines)              assign_schema docs:     none
++    synthesize_schema docs: none                     synthesize_schema docs: C (4 lines)
++```
++
++Invariant across both transitions: total `///` line count per file is constant; item order and
++item signatures are constant; the only positional delta is each block's new location directly
++above its owner.
++
++See [contracts/rustdoc-attachment.md](contracts/rustdoc-attachment.md) for the per-item
++post-change documented-text contract and [quickstart.md](quickstart.md) for how each rule is
++observed.
+diff --git a/specs/001-bench/plan.md b/specs/001-bench/plan.md
+new file mode 100644
+index 0000000..1e5ab97
+--- /dev/null
++++ b/specs/001-bench/plan.md
+@@ -0,0 +1,137 @@
++# Implementation Plan: Restore Displaced Documentation Comments
++
++**Branch**: `main` | **Date**: 2026-10-26 | **Spec**: [spec.md](spec.md)
++
++**Input**: Feature specification from `/specs/001-bench/spec.md`
++
++## Summary
++
++A merge displaced two rustdoc blocks from their functions: in
++`apps/cli/src/commands/execution/mod.rs` the 11-line block documenting
++`addressable_scope` (including its `# Errors` section) now sits above the intervening
++`repository_scope`; in `apps/cli/src/commands/mcp/tools.rs` the 4-line block describing
++`synthesize_schema`'s `fixture`/`route` fields and the server-side "exactly one door" rule
++now sits above `assign_schema`. The fix is a pure comment relocation: move each contiguous
++`///` run back directly above its own function, preserving every line verbatim (FR-001,
++FR-003, FR-005). No code, signatures, bodies, reformatting, or other files change
++(FR-004). Block ownership is attributed from block content against each function's
++parameter/failure surface (research R1); all moved blocks stay in their own module, so
++intra-doc links keep resolving (research R4, FR-006).
++
++## Technical Context
++
++**Language/Version**: Rust 1.97.1, pinned by `rust-toolchain.toml` (components: rustfmt, clippy)
++
++**Primary Dependencies**: None touched by this change. Both files live in the `graphhelm-cli`
++crate (v0.1.0, edition 2024) of the Rust workspace; the change adds, removes, and alters no
++dependency. Workspace-internal crates referenced by the touched modules (`graphhelm-protocols`,
++`graphhelm-execution`, `graphhelm-events`, …) are untouched.
++
++**Storage**: N/A (no data access in or altered by this change)
++
++**Testing**: Comment-only change; per Journey-Proven Development ("smallest proof method
++strong enough for the obligation"), the primary observers are diff-discipline checks and
++documentation-attachment inspection over the two files (scenario set in [quickstart.md](quickstart.md)),
++with optional crate-scoped equivalence checks (`cargo +1.97.1 fmt -p graphhelm-cli -- --check`,
++`cargo +1.97.1 doc -p graphhelm-cli --no-deps --locked`). No new tests are required: there is no
++runtime behavior to prove (spec A4).
++
++**Target Platform**: Windows PowerShell development environment (all repository commands must
++work there); the change is platform-neutral comment text in files pinned to LF via
++`.gitattributes` (`*.rs text eol=lf`). Core crates must also compile on Linux; comment text in
++`apps/cli` is unaffected by platform.
++
++**Project Type**: cli — the cross-platform `graphhelm` CLI within a Rust workspace (per AGENTS.md
++repository boundaries; business rules live in core crates, this change touches none)
++
++**Performance Goals**: N/A — behavior-neutral by construction (FR-004); no runtime path changes
++
++**Constraints**:
++- FR-004/FR-005: comment-only; lines preserved verbatim; whole contiguous blocks; no re-indent,
++  re-wrap, or re-flow; no spacing change around neighboring items; exactly the two named files.
++- AGENTS.md documentation-language rule: all repository documentation is English — the change
++  relocates existing English prose and adds none.
++- Moved lines are already rustfmt-stable (they compile and pass `-D warnings` today); relocation
++  must keep them so `cargo fmt --check` stays green.
++- Keel proportionality (AGENTS.md): comments-only on the direct route — no new public surface, no
++  new module/type/function/file.
++
++**Scale/Scope**: Exactly 2 source files, 2 relocated blocks — an 11-line run
++(`execution/mod.rs` lines 208–218 at baseline) and a 4-line run (`mcp/tools.rs` lines 741–744 at
++baseline). Line numbers refer to the clean baseline head `25b34ed`.
++
++No `NEEDS CLARIFICATION` items remain: every unknown from the spec was resolved against this
++checkout in Phase 0 ([research.md](research.md)).
++
++## Constitution Check
++
++*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
++
++**Governance substitution (recorded)**: this checkout contains no `/memory/constitution.md`; per
++the run instructions, the repository-root `AGENTS.md` serves as the governance reference here
++(also recorded as spec assumption A5). `.specify/extensions.yml` does not exist, so all extension
++hooks are skipped.
++
++Gates applied from `AGENTS.md`:
++
++| Gate (source in AGENTS.md) | Verdict |
++|---|---|
++| Documentation language: English only, no other prose merged | **PASS** — existing English prose relocated verbatim; no new wording (FR-005) |
++| Toolchain: Rust 1.97.1, `cargo fmt --check`, Clippy `-D warnings` must hold | **PASS** — no code changes; moved lines already formatted and compiling; scoped fmt check re-verifies (quickstart S5) |
++| Keel proportionality: comments-only change needs nothing beyond the task record / 3-line card, known observer, direct route | **PASS** — observer is the diff + attachment inspection; no expanded-route risk (no persistence, permission, compatibility, security, external effect, or runtime-affecting config) |
++| Journey-Proven Development: smallest adequate proof; no universal test ritual | **PASS** — proof is observation of rendered/documented text, the comment-only two-file diff, and equivalence of reachable checks (spec A4, SC-004); no test quota applies to a comment-only fix |
++| "Every public method must have working behavior in the same commit; no TODO/TBD/unimplemented!/scaffold" | **PASS (vacuous)** — no method, type, or module added |
++| Security rules (untrusted input bounds, no execution during validate/lint/policy/replay/simulation, canonicalization purity, structured errors) | **PASS (vacuous)** — no executable logic touched |
++| Constitutional architecture invariants (Graph Versions, Governor, Event Store, Policy Engine, workspace boundaries) | **N/A** — no core-crate or protocol surface touched |
++| Delivery process: merge required, issue-first, one review by another session/subagent, identity line, closing-keyword hygiene | **PROCESS GATE** — binds the implementation/merge phase, not this plan; no violation |
++
++**Gate result: PASS — proceed to Phase 0. No violations requiring justification.**
++
++### Post-design re-evaluation (after Phase 1)
++
++The Phase 1 artifacts ([data-model.md](data-model.md),
++[contracts/rustdoc-attachment.md](contracts/rustdoc-attachment.md), [quickstart.md](quickstart.md))
++introduce no new public surface, dependency, storage, or runtime path; every gate verdict above
++stands unchanged. **Re-check result: PASS.**
++
++## Project Structure
++
++### Documentation (this feature)
++
++```text
++specs/001-bench/
++├── checklists/
++│   └── requirements.md    # pre-existing (specification stage)
++├── spec.md                # feature specification
++├── plan.md                # this file (speckit.plan output)
++├── research.md            # Phase 0 output (speckit.plan command)
++├── data-model.md          # Phase 1 output (speckit.plan command)
++├── quickstart.md          # Phase 1 output (speckit.plan command)
++├── contracts/             # Phase 1 output (speckit.plan command)
++│   └── rustdoc-attachment.md
++└── tasks.md               # Phase 2 output (speckit.tasks command - NOT created by speckit.plan)
++```
++
++### Source Code (repository root)
++
++```text
++apps/cli/src/commands/
++├── execution/
++│   └── mod.rs     # Displacement 1: relocate the 11-line run (baseline lines 208-218)
++                   # from above `repository_scope` to directly above `addressable_scope`
++                   # (baseline line 230). `repository_scope` keeps its own 3-line block (219-221).
++└── mcp/
++    └── tools.rs   # Displacement 2: relocate the 4-line run (baseline lines 741-744) from
++                   # above `assign_schema` (baseline line 745) to directly above
++                   # `synthesize_schema` (baseline line 756).
++```
++
++**Structure Decision**: the existing workspace layout is kept exactly as-is. No new directory,
++module, file, type, or function is introduced (Keel: add only surface the promise needs); the
++entire change is two intra-file comment relocations within `apps/cli`.
++
++## Complexity Tracking
++
++> **Fill ONLY if Constitution Check has violations that must be justified**
++
++No Constitution Check violations — nothing to justify.
+diff --git a/specs/001-bench/quickstart.md b/specs/001-bench/quickstart.md
+new file mode 100644
+index 0000000..0f5c249
+--- /dev/null
++++ b/specs/001-bench/quickstart.md
+@@ -0,0 +1,124 @@
++# Quickstart Validation: Restore Displaced Documentation Comments
++
++**Feature**: [spec.md](spec.md) · **Plan**: [plan.md](plan.md) · **Contracts**:
++[contracts/rustdoc-attachment.md](contracts/rustdoc-attachment.md) · **Data model**:
++[data-model.md](data-model.md)
++
++Validation guide for the delivered (implemented) change: it proves, with the smallest checks that
++observe the change from this checkout, that (1) both displaced blocks render on their own
++functions again, and (2) nothing besides those comment lines changed.
++
++## Prerequisites
++
++- This checkout at a clean baseline (head `25b34ed`; only untracked paths `.specify/`, `specs/`).
++- Rust toolchain 1.97.1 available on `PATH` (`rustup` per `AGENTS.md`), for the optional steps S5a/S5b only.
++- Git for PowerShell; all commands run from the repository root.
++
++Record the "before" measurements in step 0 first — several scenarios assert before == after.
++
++### Step 0 — Record baseline measurements
++
++```powershell
++Get-Content apps\cli\src\commands\execution\mod.rs | Select-String -Pattern '^\s*///' | Measure-Object | Select-Object -ExpandProperty Count
++Get-Content apps\cli\src\commands\mcp\tools.rs    | Select-String -Pattern '^\s*///' | Measure-Object | Select-Object -ExpandProperty Count
++git diff --numstat
++```
++
++## Scenario 1 — Diff discipline: comment-only, two files, verbatim move (SC-002; contract §3)
++
++**After implementing the change**, run:
++
++```powershell
++git status --porcelain
++git diff --numstat -- apps/cli/src/commands/execution/mod.rs apps/cli/src/commands/mcp/tools.rs
++git diff -U0 -- apps/cli/src/commands/execution/mod.rs apps/cli/src/commands/mcp/tools.rs |
++  Select-String -Pattern '^[+-]' | Where-Object { $_ -notmatch '^(\+\+\+|---)' } |
++  Where-Object { $_ -notmatch '^[+-]\s*///' }
++```
++
++**Expected outcome**:
++- `git status --porcelain` shows exactly two modified source files (` M apps/cli/.../execution/mod.rs`, ` M apps/cli/.../mcp/tools.rs`) plus the untracked feature artifacts — no other path (FR-004).
++- numstat reports `11 11` for `execution/mod.rs` and `4 4` for `tools.rs` — equal added/removed counts per file (contract §3.3).
++- The third command prints **nothing**: every changed content line is a `///` doc line (FR-005). If it prints anything, the diff contains a non-comment or reworded line and the change fails SC-002.
++
++A stronger duplicate of the same promise — each removed line reappears verbatim as an added line:
++
++```powershell
++$d = git diff -U0 -- apps/cli/src/commands/execution/mod.rs apps/cli/src/commands/mcp/tools.rs
++$removed = $d | Where-Object { $_ -match '^-'  -and $_ -notmatch '^---' } | ForEach-Object { $_.Substring(1) } | Sort-Object
++$added   = $d | Where-Object { $_ -match '^\+' -and $_ -notmatch '^\+\+\+' } | ForEach-Object { $_.Substring(1) } | Sort-Object
++(Compare-Object $removed $added | Measure-Object).Count   # expected: 0
++```
++
++## Scenario 2 — Attachment: each block renders only on its own function (SC-001; contract §1)
++
++```powershell
++Select-String -Path apps\cli\src\commands\execution\mod.rs -Pattern 'pub\(crate\) fn (addressable_scope|repository_scope)\(' -Context 3,0
++Select-String -Path apps\cli\src\commands\mcp\tools.rs     -Pattern 'fn (assign_schema|synthesize_schema)\(\)'      -Context 3,0
++```
++
++Rustdoc attaches a doc run to the immediately following item, so the context lines above each
++signature ARE its rendered documentation (research R3). **Expected outcome** (details in contract §1):
++
++- Above `pub(crate) fn addressable_scope(` the last context line is
++  `/// [\`Failure\`] when \`execution\` is not a valid identifier.` — the error section traveled with its block (edge case: subsection not stranded).
++- Above `pub(crate) fn repository_scope(` the block is exactly its own 3 lines, beginning
++  `/// The same addressing rule as [\`addressable_scope\`] for records that belong to the local` — no `# Errors` heading anywhere in its context (FR-002).
++- Above `fn synthesize_schema()` the block begins `/// Closed like every other schema here. \`fixture\` and \`route\` are both optional and the route`.
++- Above `fn assign_schema()` there is **no** `///` context line at all (blank line after the previous item's closing brace) — the borrowed text is gone (FR-003).
++
++## Scenario 3 — No duplication, no loss (SC-001, SC-002)
++
++```powershell
++$files = @('apps\cli\src\commands\execution\mod.rs', 'apps\cli\src\commands\mcp\tools.rs')
++foreach ($f in $files) {
++  (Select-String -Path $f -Pattern '^\s*///').Count   # must equal the Step 0 count for this file
++}
++(Select-String -Path $files[0] -Pattern 'The ONE scope the').Count        # expected 1
++(Select-String -Path $files[0] -Pattern '# Errors').Count                 # expected: same as Step 0 file count, all pre-existing
++(Select-String -Path $files[1] -Pattern 'exactly one door').Count         # expected 1
++(Select-String -Path $files[1] -Pattern 'Closed like every other schema here').Count   # expected 1
++```
++
++**Expected outcome**: per-file `///` totals unchanged from Step 0 (nothing added or removed); each
++block sentinel appears exactly once (no copy left at the old position, no orphan produced).
++
++## Scenario 4 — Cross-references still resolve (SC-003; contract §2)
++
++Static check (no build): the moved blocks remain in the modules where their link targets are
++declared — `[`Failure`]` targets the struct at `execution/mod.rs` (baseline line 80) and
++`[`addressable_scope`]` targets the function now directly below its own block; both stay
++same-module after the move, and the tools.rs block uses plain backtick code spans, so no link
++target changed module. Verify no link syntax was altered by the diff itself:
++
++```powershell
++git diff -U0 -- apps/cli/src/commands/execution/mod.rs apps/cli/src/commands/mcp/tools.rs |
++  Select-String -Pattern '^[+-]' | Where-Object { $_ -match '\[[^\]]*\]' -and $_ -notmatch '^[+-]\s*///' }
++```
++
++**Expected outcome**: prints nothing — every changed line carrying bracket-link syntax is a `///`
++line already accounted for by Scenario 1.
++
++## Scenario 5 — Behavior neutrality (SC-004)
++
++The change touches no executable code; equivalence of reachable checks is the neutrality proof.
++
++- **S5a (always run; no compilation)**:
++  ```powershell
++  cargo +1.97.1 fmt -p graphhelm-cli -- --check; echo "exit=$LASTEXITCODE"
++  ```
++  **Expected**: exit 0 both before (Step 0 era) and after the change — the relocated lines were
++  already rustfmt-stable and stayed unindented and unwrapped.
++- **S5b (optional secondary observer; compiles the one touched crate)**:
++  ```powershell
++  cargo +1.97.1 doc -p graphhelm-cli --no-deps --locked 2>&1 | Select-String -Pattern 'unresolved link|warning' | Sort-Object -Unique
++  ```
++  Run before and after the implementation; **expected**: identical output (no newly unresolved
++  intra-doc links, no new warnings). The affected items are non-public, so their text is not on
++  published rustdoc pages — this observer covers link resolution, while Scenarios 2–4 cover the
++  attachment promise directly (research R3/R5).
++
++## Out of scope for validation here
++
++Per spec edge cases: a sweep for *other* misattached blocks across the repository is out of scope;
++the full workspace gate belongs to the delivery process, not to this feature's proof set.
+diff --git a/specs/001-bench/research.md b/specs/001-bench/research.md
+new file mode 100644
+index 0000000..9786abe
+--- /dev/null
++++ b/specs/001-bench/research.md
+@@ -0,0 +1,143 @@
++# Research: Restore Displaced Documentation Comments
++
++**Feature**: [spec.md](spec.md) · **Plan**: [plan.md](plan.md) · **Date**: 2026-10-26
++
++**Baseline**: clean working tree at head `25b34ed` (only untracked paths: `.specify/`, `specs/`).
++All line numbers below are from that baseline. No `NEEDS CLARIFICATION` item in the plan remains
++unresolved after this phase.
++
++## R1 — Block attribution: which function owns each displaced block?
++
++- **Decision**: Confirmed spec assumption A1 against source.
++  - `apps/cli/src/commands/execution/mod.rs` lines 208–218 (11 lines, beginning "The ONE scope the
++    `execution` verbs can address for a given execution id.", containing the `# Errors` subsection
++    "[`Failure`] when `execution` is not a valid identifier.") belongs to `addressable_scope`.
++    Its own block, lines 219–221 (3 lines, "The same addressing rule as [`addressable_scope`] for
++    records that belong to the local repository rather than to one execution stream …"), belongs to
++    `repository_scope`.
++  - `apps/cli/src/commands/mcp/tools.rs` lines 741–744 (4 lines, citing `fixture` and `route` and
++    the server's `synthesize` route) belongs to `synthesize_schema`, not to `assign_schema`.
++- **Rationale**: measured against each function's parameter/failure surface (the ground-truth test
++  named by the spec):
++  - `addressable_scope(execution: &str) -> Result<RepositoryScope, Failure>` (line 230) is the only
++    one of the two scoping helpers that takes an `execution` argument and can return a failure
++    (`ExecutionId::parse` mapped to the argument diagnostic). The block's error subsection names
++    exactly that parameter. `repository_scope() -> RepositoryScope` (line 222) takes no parameters
++    and cannot fail — its body parses compile-time constants under `expect` — so an error contract
++    about an `execution` argument cannot describe it.
++  - `synthesize_schema()` (tools.rs line 756) declares the `fixture` and `route` fields (lines
++    772–781); `assign_schema()` (line 745) declares only `executionId`, `node`, `actorId`. A block
++    stating "`fixture` and `route` are both optional" cannot be `assign_schema`'s description.
++  - A file-wide scan of `///` lines in tools.rs found no separate block describing
++    `assign_schema` anywhere; per A2 the merge inserted the displaced block above `assign_schema`,
++    so `assign_schema` ends the change undocumented — which is what the spec describes ("the
++    function it describes is undocumented"; after the fix "the first function's documentation no
++    longer includes it").
++- **Alternatives considered**:
++  - *Attribute by position (block sits above the function)* — rejected: that is precisely the
++    state the merge created and it misdescribes both functions.
++  - *Split the contiguous 15-line run into "both blocks describe both functions"* — rejected: the
++    `# Errors` subsection and the `execution` citations occur once, verbatim, and tie to a single
++    function's signature; the spec's edge-case section requires the intervening function to keep
++    precisely its own three-line block.
++
++## R2 — Displacement shape: exact block boundaries in the execution file
++
++- **Decision**: In `execution/mod.rs` the displaced run and `repository_scope`'s own block are
++  one contiguous `///` region (lines 208–221, no separating blank line), currently rendering as
++  one documentation block on `repository_scope`. The fix moves exactly lines 208–218; lines 219–221
++  stay where they are. After the move the file reads, in order: blank line → 3-line block →
++  `pub(crate) fn repository_scope` → body → closing brace → blank line (existing line 229) →
++  11-line block → `pub(crate) fn addressable_scope`.
++- **Rationale**: rustdoc attaches a run of consecutive inner doc-comment lines to the immediately
++  following item. The measured layout (baseline lines 207–230: blank 207, docs 208–221, fn 222,
++  fn 230 with only a blank line between) shows the boundary between the two logical blocks sits
++  after the `# Errors` line (218) — the 219th line reopens with a complete sentence about a
++  different subject ("The same addressing rule as [`addressable_scope`] for records that belong to
++  the local repository…"), which matches the spec's edge case ("contiguous … only the displaced
++  portion moves; the intervening function keeps precisely its own three-line block"). Spacing
++  around all neighboring items is therefore unchanged automatically: no blank line is added or
++  removed anywhere.
++- **Alternatives considered**:
++  - *Insert a separating blank line inside the comment run before splitting* — rejected: it would
++    add a line (FR-005 forbids additions) and would alter spacing around the block (edge case on
++    whitespace discipline).
++
++## R3 — Rustdoc attachment semantics used as the correctness model
++
++- **Decision**: Correctness is defined operationally as source-position correctness: a
++  documentation block renders on function X if and only if its consecutive `///` lines end on the
++  line directly above X's item header (modulo the standard blank-line-before-block spacing that
++  already exists). Both fixes are "cut a contiguous run and paste it with no surrounding-byte
++  change directly above the owner's signature".
++- **Rationale**: the observable promise (SC-001, "blocks render on their intended functions")
++  reduces to that positional rule because rustdoc's attachment is purely local and lexical; no
++  configuration or attribute in either file (e.g. `#[doc(hidden)]`, doc aliases) changes
++  attachment for these items — verified by inspection of the item headers at baseline lines 222,
++  230, 745, 756. The affected items are `pub(crate)`/private, so their rendered text surfaces in
++  hover help / IDE tooling and any rustdoc pass rather than in the published public pages; position
++  inspection plus, optionally, a `cargo doc` pass covers the same attachment decision.
++- **Alternatives considered**:
++  - *Proof via published rustdoc HTML pages only* — rejected as the primary observer: the items are
++    not public, so the pages do not expose them; it would be a weaker observer than source
++    inspection, not a stronger one.
++
++## R4 — Cross-reference resolution after the move
++
++- **Decision**: All references inside moved blocks keep resolving identically after the move.
++  - Moved block (execution/mod.rs 208–218) contains intra-doc links `[`Failure`]` and
++    `[`addressable_scope`]`; the staying block (219–221) contains `[`addressable_scope`]`. Targets:
++    `Failure` is declared in the same module (mod.rs line 80) and `addressable_scope` is the moved
++    block's own new neighbor (same module). The move is within the module, so resolution paths are
++    unchanged (FR-006, SC-003).
++  - Moved block (tools.rs 741–744) mentions `serve::routes:: synthesize` and `start_schema` inside
++    backticks (plain code spans, not `[...]` intra-doc links); `start_schema` is in the same file
++    (line 424). No link target changes module either way.
++- **Rationale**: intra-doc links resolve by name within the defining scope of the documenting
++  item; same-module relocation preserves the scope, so no reference can break and none can newly
++  resolve (SC-003's second half: documented text of the remaining items is unchanged).
++- **Alternatives considered**: rewriting or adding links to improve discoverability — rejected:
++  any textual edit violates FR-005.
++
++## R5 — Verification surface: smallest adequate proof
++
++- **Decision**: Primary observers, in ascending cost:
++  1. Diff discipline over the two files (git): changed-line census proves FR-004/FR-005 and
++     SC-002 (every +/- content line is a `///` line; each moved line appears verbatim elsewhere in
++     the diff; exactly two paths modified; no other working-tree modification beyond this feature's
++     artifacts).
++  2. Attachment inspection (quickstart S2/S3): the line directly above each of the four signatures
++     equals the expected final/first doc line, and sentinel strings appear exactly once in each
++     file — proves SC-001 and that no block was duplicated or lost.
++  3. Optional equivalence checks for SC-004 (behavior neutrality): crate-scoped
++     `cargo +1.97.1 fmt -p graphhelm-cli -- --check` before/after (no compilation) and, if a build
++     is acceptable at implementation time, `cargo +1.97.1 doc -p graphhelm-cli --no-deps --locked`
++     comparing warnings before/after. No new automated tests are justified: there is no executable
++     behavior change, and adding a test that froze comment positions would be a proxy the Keel
++     rules ("smallest adequate observer", "reject … checks that merely freeze incidental source
++     spelling") say not to add.
++- **Rationale**: Journey-Proven Development obliges selecting the smallest proof strong enough for
++  the obligation and risk; the obligations here are textual and positional, so text/position
++  observers are the direct ones. HTTP-style proxies are absent by construction (spec A4).
++- **Alternatives considered**:
++  - *Add unit tests asserting doc-comment positions* — rejected: they would assert against
++    incidental source spelling/positions of an unchanging property, exactly the class of tests the
++    repository rules reject.
++  - *Full workspace gate* — rejected as overkill for two comment moves in one crate; reserved for
++    the delivery process outside this feature's proof.
++
++## R6 — Byte fidelity of the relocation on this platform
++
++- **Decision**: Treat the move as byte-exact at the git level: both files match
++  `.gitattributes` `*.rs text eol=lf`, so git compares LF-normalized content; the relocated lines
++  must be written back with their exact characters (indentation included: all moved lines begin
++  at column 0 — top-level `///` items, no nested indentation exists in these runs) and the tool
++  performing the edit must preserve the files' existing line endings. `git diff` against the
++  baseline is the authoritative check; raw working-copy byte counts are not (CRLF normalization on
++  Windows checkouts makes raw comparisons noisy without changing what git sees).
++- **Rationale**: FR-005 requires verbatim lines and the repo pins `.rs` to LF, which gives a stable
++  comparison basis independent of the machine editing; the diff census (quickstart S1) then needs
++  no tolerance logic.
++- **Alternatives considered**: byte-for-byte whole-file hash comparison of untouched regions —
++  useful as an extra assertion but subsumed by the hunk-level git diff, which also attributes
++  every change to a line.
+diff --git a/specs/001-bench/spec.md b/specs/001-bench/spec.md
+new file mode 100644
+index 0000000..46c2a7a
+--- /dev/null
++++ b/specs/001-bench/spec.md
+@@ -0,0 +1,183 @@
++# Feature Specification: Restore Displaced Documentation Comments
++
++**Feature Branch**: `[001-bench]`
++
++**Created**: 2026-10-26
++
++**Status**: Draft
++
++**Input**: User description: "A merge inserted `repository_scope` between `addressable_scope`'s doc block and `addressable_scope` in `apps/cli/src/commands/execution/mod.rs`, and `assign_schema` between `synthesize_schema`'s doc block and `synthesize_schema` in `apps/cli/src/commands/mcp/tools.rs`. rustdoc now attaches those docs to the wrong items. Move each displaced doc block back directly above its own function. Change comments only: no code, no reformatting, no other files."
++
++## User Scenarios & Testing *(mandatory)*
++
++### User Story 1 - Each scoping helper documents only itself (Priority: P1)
++
++A maintainer opens the generated documentation (rendered docs or hover help) for the two
++execution-scoping helpers in the CLI's execution command module. One of the helper's
++documentation blocks was separated from its function when a merge inserted another function
++between the block and the function. Today the block renders under the *wrong* function, so a
++reader sees an error contract that belongs to a sibling function and misses the block that
++actually belongs to the one they are reading. After this change, the displaced block sits
++directly above its own function, and each of the two helpers displays exactly the text written
++for it — nothing more, nothing less.
++
++**Why this priority**: This is the core defect. A documentation block describing function A's
++parameters and error behavior rendered on function B is actively misleading — readers make
++wrong assumptions about which values can fail and how. Restoring attachment on the first file
++delivers the primary value on its own.
++
++**Independent Test**: Inspect the documented text of each affected function after the change:
++the previously displaced function shows its full block (including its error section), the
++function standing between them shows only its own pre-existing block, and no block is duplicated
++or lost.
++
++**Acceptance Scenarios**:
++
++1. **Given** the execution-scoping module in which one function's documentation block was
++   separated from the function by an intervening item, **When** the displaced block is moved
++   back directly above its own function, **Then** the function's rendered documentation contains
++   exactly its original block — body and error section intact — and the intervening function's
++   documentation contains only the block that always described it.
++2. **Given** a cross-reference inside a documentation block that points at a sibling item,
++   **When** the block is moved within the same module, **Then** the reference still resolves to
++   the same target and no new broken references appear.
++3. **Given** the change is complete, **When** any reader compares the documented set of lines
++   before and after, **Then** every line is preserved verbatim — moved as whole blocks, never
++   reworded, added, or removed.
++
++---
++
++### User Story 2 - The schema builder documents its own routing rule (Priority: P2)
++
++An integrator reads the documentation for the MCP tool-schema builders in the CLI's MCP module.
++The block explaining the synthesize tool's field options and its "exactly one door" routing rule
++currently renders on an unrelated, adjacent schema builder, while the function it describes is
++undocumented. After this change, the block sits directly above the synthesize schema function,
++and the adjacent builder no longer borrows its description.
++
++**Why this priority**: Same defect class as P1 in the second named location; fixing this file
++completes the reported damage and is independently valuable and testable.
++
++**Independent Test**: Inspect the documented text of the two adjacent schema-builder functions:
++the one whose fields the block names now carries it, the other shows no borrowed text, and no
++block is duplicated or lost.
++
++**Acceptance Scenarios**:
++
++1. **Given** two adjacent schema-builder functions where the second's documentation block was
++   inserted above the first, **When** the block is moved directly above the second function,
++   **Then** the second function's documentation matches its original block verbatim and the first
++   function's documentation no longer includes it.
++2. **Given** the relocated block still references the shared "exactly one door" server-side rule,
++   **When** the move keeps it in the same module, **Then** all of its cross-references still
++   resolve and none of them break.
++
++---
++
++### User Story 3 - The repair proves it changed nothing but comments (Priority: P3)
++
++A reviewer evaluates the change and needs evidence that it is behavior-neutral before trusting it.
++The diff must show only documentation-comment lines moving position — no signatures, no bodies,
++no reformatting of untouched lines, no files beyond the two named locations.
++
++**Why this priority**: The trust property that makes this low-risk change acceptable; it can be
++verified against either fix slice independently, and it protects reviewers of both files.
++
++**Independent Test**: Compare the before/after state of the working tree: every changed line is a
++documentation comment line verbatim-relocated, the non-comment lines are byte-for-byte identical,
++and no path outside the two named files appears in the change.
++
++**Acceptance Scenarios**:
++
++1. **Given** the completed change, **When** the reviewer inspects the diff, **Then** every added
++   or removed line is a documentation comment line, each moved line appears unchanged elsewhere
++   in the diff, and no executable code line differs.
++2. **Given** the completed change, **When** the reviewer lists the modified paths, **Then**
++   exactly the two named source files are present.
++
++---
++
++### Edge Cases
++
++- The execution-scoping file's displaced block and the intervening function's own block are
++  contiguous (no separating blank comment): only the displaced portion moves; the intervening
++  function keeps precisely its own three-line block, which already referenced the sibling — so
++  the move must not create a duplicate reference pair or orphan the block.
++- The displaced block in the scoping file ends with an error-contract subsection tied to that
++  function's single string parameter; the subsection must travel with the whole block and must
++  not be left stranded on the intervening function (which takes no parameter and cannot fail).
++- The relocated block in the MCP module cites field names that exist only on one of the two
++  adjacent functions; ownership is decided by those citations, so the move must land the block on
++  the function that actually declares the cited fields.
++- Whitespace discipline: moving a block must not re-indent, re-wrap, or re-flow any line, and
++  must not alter spacing around neighboring functions.
++- No third location shares this defect: scope is bounded to the two merge displacements reported;
++  a sweep finding other misattached blocks is out of scope for this feature.
++
++## Requirements *(mandatory)*
++
++### Functional Requirements
++
++- **FR-001**: System MUST restore the documentation block displaced in
++  `apps/cli/src/commands/execution/mod.rs` directly above `addressable_scope`, so the function's
++  rendered documentation again contains its full original block, including its error section.
++- **FR-002**: In the same file, `repository_scope` MUST retain exactly its own pre-existing
++  documentation block (the one referencing `addressable_scope` and describing records that belong
++  to the local repository rather than to one execution stream) directly above itself, with none of
++  the displaced block's lines remaining attached to it.
++- **FR-003**: System MUST move the documentation block currently sitting above `assign_schema` in
++  `apps/cli/src/commands/mcp/tools.rs` directly above `synthesize_schema`, since the block
++  describes the synthesize schema's fields and the server-side "exactly one door" routing rule.
++- **FR-004**: The change MUST be comment-only: no function signature, body, or any other code may
++  change; no line outside the moved blocks may be reformatted; no file other than the two named
++  files may be touched.
++- **FR-005**: Documentation lines MUST be preserved verbatim and moved as whole contiguous blocks:
++  no line may be added, removed, reworded, split, or re-wrapped.
++- **FR-006**: Every cross-reference contained in a moved block MUST continue to resolve to the
++  same target after the move (all moved blocks remain in the same module as their targets).
++
++### Key Entities *(include if feature involves data)*
++
++- **Documentation Block**: the unit of work — a run of consecutive documentation-comment lines
++  that belongs to exactly one function. Attributes: verbatim text (immutable in this change),
++  intended owning function, current (wrong) position and corrected position.
++- **Owning Function**: the internal helper whose rendered documentation is the observable
++  outcome. Attributes: identity (name and file), parameter/failure surface (the ground truth used
++  to attribute a block), documented text after the fix.
++
++## Success Criteria *(mandatory)*
++
++### Measurable Outcomes
++
++- **SC-001**: 2 of 2 (100%) displaced documentation blocks render on their intended functions
++  after the change, with 0 blocks remaining attached to a wrong item.
++- **SC-002**: 100% of the changed lines are documentation-comment lines that are verbatim copies
++  of pre-change lines; 0 non-comment lines differ and 0 files outside the two named files change.
++- **SC-003**: 0 newly unresolvable cross-references across the two files after the move, and the
++  documented text of the remaining items is unchanged.
++- **SC-004**: Any verification available for the touched areas yields identical results before
++  and after the change, demonstrating the change is behavior-neutral.
++
++## Assumptions
++
++- **A1 (block attribution)**: Ownership of each disputed block is determined from its content:
++  the block stating "the ONE scope the `execution` verbs can address" with an error section about
++  an `execution` argument belongs to `addressable_scope`, because only that function takes an
++  `execution` parameter and can fail; the block referencing `[addressable_scope]` and describing
++  local-repository records (e.g. the Dreams shadow ledger) belongs to `repository_scope`. In the
++  MCP module, the block citing `fixture`/`route` fields and the server's `synthesize` route
++  belongs to `synthesize_schema`, because those fields exist only there.
++- **A2 (displacement shape)**: The merge inserted the intervening function together with its own
++  (correct) documentation block; therefore correcting the defect moves exactly one block per
++  file and leaves the intervening function's own block untouched, keeping existing function order.
++- **A3 (verbatim relocation)**: The documentation prose is treated as authoritative; the correct
++  remedy is relocation, not rewording, so no line content is edited.
++- **A4 (verification surface)**: Because no executable logic changes, proof is observation of the
++  rendered/documented text, the diff (comment-only, two files), and equivalence of any reachable
++  automated checks; no new runtime behavior exists to prove.
++- **A5 (governance substitution)**: This checkout contains no `/memory/constitution.md`; per the
++  run instructions, the repository-root `AGENTS.md` file serves as the governance reference for
++  this specification, recorded here as the required substitution.
++- **A6 (naming)**: The feature directory is fixed by the run to `specs/001-bench`; the short name
++  generated from the description (`restore-displaced-docs`) informs the title and branch label
++  only, not the directory path.
+diff --git a/specs/001-bench/tasks.md b/specs/001-bench/tasks.md
+new file mode 100644
+index 0000000..39d9617
+--- /dev/null
++++ b/specs/001-bench/tasks.md
+@@ -0,0 +1,231 @@
++---
++description: "Task list for Restore Displaced Documentation Comments"
++---
++
++# Tasks: Restore Displaced Documentation Comments
++
++**Input**: Design documents from `/specs/001-bench/`
++
++**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/rustdoc-attachment.md, quickstart.md — all present in `specs/001-bench/`.
++
++**Governance substitution (recorded)**: this checkout has no `/memory/constitution.md`; per the run
++instructions the repository-root `AGENTS.md` is used as the governance reference here (also spec A5).
++`.specify/extensions.yml` does not exist, so **all extension hooks (pre- and post-tasks) are skipped**.
++
++**Baseline head**: every line number below refers to clean baseline head `25b34ed` (confirmed at task
++generation: `git rev-parse --short HEAD` = `25b34ed`; only untracked paths are `.specify/` and `specs/`).
++
++**Tests**: Not requested. The spec states no runtime behavior changes (A4) and research R5 rejects new
++automated tests as proxies that would freeze incidental source spelling/positions. Each story is verified
++by **observation** of the rendered/documented text and the diff (quickstart Scenarios 1–5), not by new
++unit/integration test files. There are therefore no "Tests for User Story N" subsections.
++
++## Format: `[ID] [P?] [Story] Description`
++
++- **[P]**: Can run in parallel (different files, no dependency on an incomplete task)
++- **[Story]**: Which user story this task belongs to (US1, US2, US3)
++- Exact file paths are included in every description.
++
++## Path Conventions
++
++Single Rust workspace; both edits are intra-file comment relocations inside the existing
++`graphhelm-cli` crate. The only two source files touched (FR-004):
++
++- `apps/cli/src/commands/execution/mod.rs`
++- `apps/cli/src/commands/mcp/tools.rs`
++
++---
++
++## Phase 1: Setup (Shared Infrastructure)
++
++**Purpose**: No project scaffolding is created — the change edits two existing files in an existing crate.
++This phase confirms a clean baseline and records the "before" measurements that later scenarios assert
++against (before == after). Both tasks are read-only observers; no source bytes change yet.
++
++- [X] T001 Confirm a clean baseline working tree from the repo root with `git status --porcelain`: no modified source path exists and the only untracked paths are `.specify/` and `specs/` (FR-004 baseline precondition — nothing pre-existing to misattribute)
++- [X] T002 Record the "before" measurements (quickstart Step 0) into the working notes: count `^\s*///` lines in `apps/cli/src/commands/execution/mod.rs` and in `apps/cli/src/commands/mcp/tools.rs`, and capture `git diff --numstat` (expected empty); keep the two per-file counts — Scenario 3 asserts they are unchanged after the edits
++
++**Checkpoint**: Baseline head confirmed clean; before-measurements recorded for the before == after assertions.
++
++---
++
++## Phase 2: Foundational (Blocking Prerequisites)
++
++**Purpose**: Establish that the recorded displacement shapes match the source before any edit, and pin the
++single cross-story invariant that bounds BOTH stories. No code prerequisite exists (no models, services,
++migrations, or shared types are created — Keel: add only surface the promise needs), so this phase is one
++blocking verification plus a shared working constraint.
++
++**Shared invariant governing every story task (FR-004 / FR-005, contract §3)**: exactly two files may
++change; every added or removed content line must match `^[+-]\s*///`; the removed-line multiset must equal
++the added-line multiset per file (`11 == 11` in `apps/cli/src/commands/execution/mod.rs`, `4 == 4` in
++`apps/cli/src/commands/mcp/tools.rs`); no blank line is added or removed anywhere; both `.rs` paths stay LF.
++
++**⚠️ CRITICAL**: If T003 fails, no user-story work should begin.
++
++- [X] T003 Verify both displacement shapes match baseline head `25b34ed` (research R1/R2) before any edit, STOP with `OBSERVER_MISSING` if any sentinel is absent: (a) in `apps/cli/src/commands/execution/mod.rs` confirm lines 208–218 form B-EXEC-A (first line "The ONE scope the `execution` verbs can address for a given execution id.", last line "[`Failure`] when `execution` is not a valid identifier.") directly above lines 219–221 B-EXEC-B, which sits above `pub(crate) fn repository_scope()` (line 222) and `pub(crate) fn addressable_scope(...)` (line 230); and (b) in `apps/cli/src/commands/mcp/tools.rs` confirm lines 741–744 form B-MCP-C (first line "Closed like every other schema here. `fixture` and `route` are both optional and the route", last line "same reason `start_schema` does not encode file-or-graph.") directly above `fn assign_schema()` (line 745) with `fn synthesize_schema()` at line 756
++
++**Checkpoint**: Foundation ready — displacement shapes confirmed and the shared diff-discipline invariant pinned; the two story edits touch disjoint files and may proceed in parallel.
++
++---
++
++## Phase 3: User Story 1 - Each scoping helper documents only itself (Priority: P1) 🎯 MVP
++
++**Goal**: Move B-EXEC-A (the 11-line run containing the `# Errors` subsection) in
++`apps/cli/src/commands/execution/mod.rs` so it renders on `addressable_scope`, while `repository_scope`
++keeps exactly its own 3-line block B-EXEC-B.
++
++**Independent Test**: quickstart Scenario 2 scoped to `apps/cli/src/commands/execution/mod.rs` only (the
++first `Select-String … execution\mod.rs -Context 3,0` command): context above `addressable_scope(` ends
++with the `# Errors` last line; context above `repository_scope(` is exactly its own 3 lines with no
++`# Errors` heading. Additionally the file's `///` count equals the T002 baseline. This story is fully
++testable without touching the second file.
++
++### Implementation for User Story 1
++
++- [X] T004 [P] [US1] Relocate B-EXEC-A verbatim in `apps/cli/src/commands/execution/mod.rs`: cut the contiguous run at baseline lines 208–218 (first line "The ONE scope the `execution` verbs can address for a given execution id."; last line "[`Failure`] when `execution` is not a valid identifier.") and paste it directly above `pub(crate) fn addressable_scope(execution: &str)` (baseline line 230), so the run's last line is the line immediately preceding that header (FR-001). Preserve every line byte-for-byte — no re-indent, re-wrap, or re-flow (FR-005); the `# Errors` subsection travels with the whole block and is not stranded on the intervening function (spec edge case). After the edit the file reads, in order: blank → B-EXEC-B (3 lines) → `pub(crate) fn repository_scope()` → body → closing brace → blank (existing line 229) → B-EXEC-A (11 lines) → `pub(crate) fn addressable_scope(...)`. Runs in parallel with US2 (disjoint file).
++- [X] T005 [US1] Verify Story 1 attachment via quickstart Scenario 2 scoped to `apps/cli/src/commands/execution/mod.rs`: run `Select-String -Path apps\cli\src\commands\execution\mod.rs -Pattern 'pub\(crate\) fn (addressable_scope|repository_scope)\(' -Context 3,0`; assert context above `addressable_scope(` ends with "[`Failure`] when `execution` is not a valid identifier." (error section traveled, FR-001) and context above `repository_scope(` is exactly its 3 lines beginning "The same addressing rule as [`addressable_scope`] for records that belong to the local" with no "# Errors" (FR-002); assert the file's `///` count equals the T002 baseline. (Depends on T004; same file, not parallel.)
++
++**Checkpoint**: `addressable_scope` renders its full original block (body + error section) and
++`repository_scope` renders only its own 3-line block; no line duplicated or lost in this file. US1 is
++independently functional and testable.
++
++---
++
++## Phase 4: User Story 2 - The schema builder documents its own routing rule (Priority: P2)
++
++**Goal**: Move B-MCP-C (the 4-line block citing `fixture`/`route` and the server-side "exactly one door"
++rule) in `apps/cli/src/commands/mcp/tools.rs` so it renders on `synthesize_schema`, leaving `assign_schema`
++undocumented.
++
++**Independent Test**: quickstart Scenario 2 scoped to `apps/cli/src/commands/mcp/tools.rs` only (the second
++`Select-String … mcp\tools.rs -Context 3,0` command): context above `fn synthesize_schema()` begins with the
++moved block's first line; context above `fn assign_schema()` contains no `///` line. Additionally the
++file's `///` count equals the T002 baseline. This story is fully testable without depending on US1's result.
++
++### Implementation for User Story 2
++
++- [X] T006 [P] [US2] Relocate B-MCP-C verbatim in `apps/cli/src/commands/mcp/tools.rs`: cut the contiguous run at baseline lines 741–744 (first line "Closed like every other schema here. `fixture` and `route` are both optional and the route"; last line "same reason `start_schema` does not encode file-or-graph.") and paste it directly above `fn synthesize_schema()` (baseline line 756), so the run's last line is the line immediately preceding that header (FR-003). Preserve every line byte-for-byte — no re-indent, re-wrap, or re-flow (FR-005). `assign_schema()` ends with zero attached `///` lines; the move keeps the block in the same module so its references stay resolvable (FR-006). Runs in parallel with US1 (disjoint file).
++- [X] T007 [US2] Verify Story 2 attachment via quickstart Scenario 2 scoped to `apps/cli/src/commands/mcp/tools.rs`: run `Select-String -Path apps\cli\src\commands\mcp\tools.rs -Pattern 'fn (assign_schema|synthesize_schema)\(\)' -Context 3,0`; assert context above `fn synthesize_schema()` begins "Closed like every other schema here. `fixture` and `route` are both optional and the route" (FR-003) and context above `fn assign_schema()` has no `///` line (negative half, FR-003); assert the file's `///` count equals the T002 baseline. (Depends on T006; same file, not parallel.)
++
++**Checkpoint**: `synthesize_schema` renders exactly B-MCP-C and `assign_schema` borrows no text; no line
++duplicated or lost in this file. US2 is independently functional and testable.
++
++---
++
++## Phase 5: User Story 3 - The repair proves it changed nothing but comments (Priority: P3)
++
++**Goal**: Provide the reviewer with evidence the delivered, two-file change is comment-only, verbatim, free of
++newly broken references, and behavior-neutral. This story makes no further edits; it observes the finished
++change over both files together.
++
++**Independent Test**: quickstart Scenarios 1, 3, 4, and 5 run over both files: the changed-line census shows
++only `///` lines (pure permutation, `11==11` / `4==4`), sentinels appear exactly once with per-file `///`
++totals unchanged, the link-syntax diff filter prints nothing, and `cargo +1.97.1 fmt -p graphhelm-cli --
++--check` is exit 0 (with optional `cargo doc` equivalence).
++
++### Verification for User Story 3 (no code changes)
++
++- [X] T008 [US3] Run quickstart Scenario 1 (diff discipline) over `apps/cli/src/commands/execution/mod.rs` and `apps/cli/src/commands/mcp/tools.rs`: `git status --porcelain` shows no modified path beyond those two files; `git diff --numstat -- <both files>` reports `11 11` and `4 4`; the census filter `git diff -U0 -- <both files> | Select-String '^[+-]' | Where-Object { $_ -notmatch '^(\+\+\+|---)' } | Where-Object { $_ -notmatch '^[+-]\s*///' }` prints nothing; and `Compare-Object $removed $added | Measure-Object` returns Count `0` (pure permutation, SC-002, contract §3). (Requires T004/T005/T006/T007 complete.)
++- [X] T009 [US3] Run quickstart Scenario 3 (no duplication, no loss) over `apps/cli/src/commands/execution/mod.rs` and `apps/cli/src/commands/mcp/tools.rs`: each file's `^\s*///` count equals its T002 baseline; sentinel 'The ONE scope the' count is 1 and '# Errors' count equals the T002 baseline in `apps/cli/src/commands/execution/mod.rs`; sentinel 'exactly one door' count is 1 and 'Closed like every other schema here' count is 1 in `apps/cli/src/commands/mcp/tools.rs` (SC-001/SC-002).
++- [X] T010 [US3] Run quickstart Scenario 4 (cross-references still resolve) over both files: the filter `git diff -U0 -- <both files> | Select-String '^[+-]' | Where-Object { $_ -match '\[[^\]]*\]' -and $_ -notmatch '^[+-]\s*///' }` prints nothing (every changed bracket-link line is an already-counted `///` line); confirm B-EXEC-A stays same-module so `[`Failure`]` and `[`addressable_scope`]` keep their targets and B-MCP-C's backtick spans need no resolution (FR-006, SC-003).
++- [X] T011 [US3] Run quickstart Scenario 5 (behavior neutrality, SC-004): mandatory S5a `cargo +1.97.1 fmt -p graphhelm-cli -- --check` returns exit 0 after the change (matches the before state); optionally S5b `cargo +1.97.1 doc -p graphhelm-cli --no-deps --locked 2>&1 | Select-String 'unresolved link|warning' | Sort-Object -Unique` yields output identical to before. Per the run instructions S5a is the smallest check and is required; S5b compiles the single touched crate and is optional.
++
++**Checkpoint**: The whole delivered change is proven comment-only, two-file, verbatim, reference-stable, and
++behavior-neutral (SC-001…SC-004).
++
++---
++
++## Phase 6: Polish & Cross-Cutting Concerns
++
++**Purpose**: One consolidated acceptance pass over the finished feature and the delivery record that AGENTS.md
++requires before handoff. These cross-cut tasks depend on all three user stories being complete.
++
++- [X] T012 Run the full quickstart.md validation (Scenarios 1–5) as one end-to-end acceptance pass over `apps/cli/src/commands/execution/mod.rs` and `apps/cli/src/commands/mcp/tools.rs`; assert SC-001…SC-004 all hold and `git status --porcelain` lists no modified path other than the two files (plus the untracked `.specify/` and `specs/` artifacts).
++- [X] T013 Assert scope is bounded to the two reported displacements (spec edge case: "a sweep finding other misattached blocks is out of scope for this feature"): confirm no third source file was edited and no additional documentation block was moved (FR-004), so the change set remains exactly the two named blocks.
++- [X] T014 Prepare the delivery record per `AGENTS.md`: add the Keel 3-line card to the PR body (paths in scope: the two `.rs` files named above; the promise: comment-only, verbatim, two-block relocation, no other file; the proving command: quickstart S1 + S2), note the AGENTS.md-for-constitution governance substitution, and use `Refs #N` rather than any closing keyword next to an unrelated issue number.
++
++---
++
++## Dependencies & Execution Order
++
++### Phase Dependencies
++
++- **Setup (Phase 1)**: No dependencies — can start immediately.
++- **Foundational (Phase 2)**: Depends on Setup completion — **BLOCKS all user stories** (displacement-shape verification + shared invariant).
++- **User Story 1 (Phase 3)**: Depends on Foundational. No dependency on US2/US3.
++- **User Story 2 (Phase 4)**: Depends on Foundational. No dependency on US1 — different file, so it may run in parallel with US1.
++- **User Story 3 (Phase 5)**: Depends on US1 **and** US2 (it verifies the whole delivered, two-file change).
++- **Polish (Phase 6)**: Depends on US3 (consolidated acceptance + delivery record).
++
++### User Story Dependencies
++
++- **User Story 1 (P1)**: Start after Foundational (Phase 2) — independent of other stories.
++- **User Story 2 (P2)**: Start after Foundational (Phase 2) — independent of US1 (disjoint file), runs in parallel.
++- **User Story 3 (P3)**: Start after US1 and US2 — cross-cutting proof over both files.
++
++### Within Each User Story
++
++- The implementation task precedes its own-file verification task (same file ⇒ not parallel).
++- No automated tests are written first (none requested; see Tests note) — verification is by quickstart observation of the edited file.
++- Story complete and independently validated before relying on the next story.
++
++### Parallel Opportunities
++
++- **Primary**: T004 (US1, `apps/cli/src/commands/execution/mod.rs`) ∥ T006 (US2, `apps/cli/src/commands/mcp/tools.rs`) — disjoint files, both unblocked once Phase 2 completes.
++- Secondary (read-only, batchable once US1+US2 land): the four US3 checks T008–T011 are independent observations over the finished diff and can be batched, though they share the two files so they are not flagged [P].
++
++---
++
++## Parallel Example: User Stories 1 & 2
++
++```text
++After Phase 2 (Foundational) completes, launch both file-scoped implementations together:
++  Task T004: Relocate B-EXEC-A in apps/cli/src/commands/execution/mod.rs   (developer A / subagent A)
++  Task T006: Relocate B-MCP-C in apps/cli/src/commands/mcp/tools.rs         (developer B / subagent B)
++
++Each then verifies its own file:
++  Task T005: Verify US1 attachment (execution/mod.rs)          depends on T004
++  Task T007: Verify US2 attachment (mcp/tools.rs)              depends on T006
++
++Both land -> Phase 5 (US3 proof) -> Phase 6 (Polish).
++```
++
++---
++
++## Implementation Strategy
++
++### MVP First (User Story 1 Only)
++
++1. Complete Phase 1: Setup (confirm clean baseline, record before-measurements).
++2. Complete Phase 2: Foundational (verify both displacement shapes; pin the shared invariant).
++3. Complete Phase 3: User Story 1 (relocate B-EXEC-A in `execution/mod.rs`).
++4. **STOP and VALIDATE**: run US1's independent test (Scenario 2 scoped to `execution/mod.rs`); the core P1 defect is fixed and observable on its own.
++
++### Incremental Delivery
++
++1. Setup + Foundational → foundation ready.
++2. Add User Story 1 → validate independently (MVP: primary scoping-helper defect fixed).
++3. Add User Story 2 → validate independently (completes the reported damage, disjoint file).
++4. Add User Story 3 → validate (whole-change comment-only / behavior-neutral proof).
++5. Polish → consolidated acceptance pass + delivery record.
++6. Each increment adds value without breaking earlier ones.
++
++### Parallel Team Strategy
++
++With multiple workers (or fresh-context subagents):
++
++1. One worker completes Setup + Foundational.
++2. Once Foundational is done: Worker A takes US1, Worker B takes US2 (disjoint files).
++3. After both land, US3 (cross-file proof) then Polish run sequentially over the combined diff.
++
++---
++
++## Notes
++
++- [P] = different files and no dependency on an incomplete task; here it flags the US1∥US2 launch points.
++- [Story] maps each task to its user story for traceability back to FR/SC in `spec.md`.
++- Every story is independently completable and testable (US3 being the cross-cutting exception that needs US1+US2).
++- Comment-only discipline (FR-004/FR-005) and the per-file `11==11` / `4==4` permutation invariant bound every edit task.
++- Commit after each story (or logical group); stop at any checkpoint to validate that story independently.
++- Avoid: rewording/splitting any moved line, editing either file's non-comment lines, touching any third file, or adding a separating blank line inside a comment run.

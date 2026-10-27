@@ -107,3 +107,6 @@ apps/cli/tests/fixtures/classify-red/flake-utf16.log.txt binary
 # project copy to equal them; a CRLF checkout embedded CRLF and every LF copy then failed.
 tools/journey-driver/*.mjs text eol=lf
 .graphhelm/journeys/*.json text eol=lf
+# drael-v1 cross-method pins (control-digests.json crossMethod.surfaceFileSha256) bind raw LF
+# bytes of these pinned method surfaces; driver_cross.verify_pins() hashes the file as checked out.
+tools/token-bench/doless/surfaces/** text eol=lf

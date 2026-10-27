@@ -4,8 +4,8 @@ SessionEnd budget is left as it was. The known fix's test file (98dbd590) runs g
 checkout.
 
 The socket wait is read from the `/signal` call's `timeout` argument in `_end_impl` and evaluated
-with `host = "codex"`: literals, module or local constants, conditionals on the host, arithmetic
-and min/max resolve; anything else fails with the expression named. (#139: a literal-only regex
+with `host = "codex"`: literals, module or local constants, conditionals on the host, arithmetic,
+min/max and lookups in literal dicts or lists resolve; anything else fails with the expression named. (#139: a literal-only regex
 failed `timeout=CODEX_END_WAIT if host == "codex" else 3.0`.)"""
 import ast
 import json
@@ -36,6 +36,21 @@ def evaluate(node: ast.AST, env: dict):
         raise Unresolved(node.id)
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
         return [evaluate(e, env) for e in node.elts]
+    if isinstance(node, ast.Dict):
+        if any(k is None for k in node.keys):
+            raise Unresolved(ast.unparse(node))
+        return {evaluate(k, env): evaluate(v, env) for k, v in zip(node.keys, node.values)}
+    if isinstance(node, ast.Subscript) and not isinstance(node.slice, ast.Slice):
+        # A lookup in a mapping or sequence this evaluator built itself (literal keys and values):
+        # `END_ACK_TIMEOUTS[host]` with `END_ACK_TIMEOUTS = {"codex": 2.0, ...}`.
+        container = evaluate(node.value, env)
+        key = evaluate(node.slice, env)
+        if not isinstance(container, (dict, list)):
+            raise Unresolved(ast.unparse(node))
+        try:
+            return container[key]
+        except (KeyError, IndexError, TypeError):
+            raise Unresolved(ast.unparse(node)) from None
     if isinstance(node, ast.IfExp):
         return evaluate(node.body if evaluate(node.test, env) else node.orelse, env)
     if isinstance(node, ast.Compare):

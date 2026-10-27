@@ -190,6 +190,24 @@ async fn mutate<'a>(
     .await
 }
 
+/// #2144: a mutation's synchronous command body, run off the reactor like every other step of the
+/// mutation (#1679). Serve has ONE runtime thread, and a body run inline (a sweep or a pause
+/// replaying a long stream) held every other request, reads included, for its whole length.
+fn body_off_reactor(
+    work: impl FnOnce() -> Result<serde_json::Value, execution::Failure> + Send + 'static,
+) -> MutationFuture<'static> {
+    Box::pin(async move {
+        match off_reactor(work).await {
+            Some(result) => Ok(result?),
+            None => Err(MutationError::Command(execution::Failure {
+                code: "GHI001_INTERNAL",
+                message: "the mutation's command task failed".to_owned(),
+                pointer: "/".to_owned(),
+            })),
+        }
+    })
+}
+
 pub(super) async fn graph_topology(State(state): State<ServeState>, body: Bytes) -> Response {
     topology_reply(state.path_roots.as_deref(), body).await
 }
@@ -4481,14 +4499,14 @@ pub(super) async fn approve(
             APPROVE_COMMAND,
             identity,
             move |actor, key| {
-                Box::pin(async move {
-                    Ok(execution::approve::execute(
+                body_off_reactor(move || {
+                    execution::approve::execute(
                         &events,
                         Some(execution.as_str()),
                         &node,
                         actor,
                         key,
-                    )?)
+                    )
                 })
             },
         )
@@ -4635,15 +4653,15 @@ pub(super) async fn assign(
         ASSIGN_COMMAND,
         identity,
         move |actor, key| {
-            Box::pin(async move {
-                Ok(execution::assign::execute(
+            body_off_reactor(move || {
+                execution::assign::execute(
                     &events,
                     Some(execution.as_str()),
                     &node,
                     &actor_id,
                     actor,
                     key,
-                )?)
+                )
             })
         },
     )
@@ -4706,8 +4724,8 @@ pub(super) async fn amend_budget(
         AMEND_BUDGET_COMMAND,
         identity,
         |actor, key| {
-            Box::pin(async move {
-                Ok(execution::amend::execute(
+            body_off_reactor(move || {
+                execution::amend::execute(
                     &events,
                     Some(target.as_str()),
                     &node,
@@ -4715,7 +4733,7 @@ pub(super) async fn amend_budget(
                     at,
                     actor,
                     key,
-                )?)
+                )
             })
         },
     )
@@ -4940,8 +4958,8 @@ pub(super) async fn pause(
         PAUSE_COMMAND,
         identity,
         |actor, key| {
-            Box::pin(async move {
-                Ok(execution::pause::execute(
+            body_off_reactor(move || {
+                execution::pause::execute(
                     &events,
                     Some(drive_execution_id.as_str()),
                     actor,
@@ -4954,7 +4972,7 @@ pub(super) async fn pause(
                     // status from events; it does not replay a stored response, so it carries no
                     // edge evidence. #157 stays open for a persisted form.
                     None,
-                )?)
+                )
             })
         },
     )
@@ -5148,13 +5166,8 @@ pub(super) async fn cancel(
         CANCEL_COMMAND,
         identity,
         |actor, key| {
-            Box::pin(async move {
-                Ok(execution::cancel::execute(
-                    &events,
-                    Some(drive_execution_id.as_str()),
-                    actor,
-                    key,
-                )?)
+            body_off_reactor(move || {
+                execution::cancel::execute(&events, Some(drive_execution_id.as_str()), actor, key)
             })
         },
     )
@@ -5213,14 +5226,14 @@ pub(super) async fn sweep(
         SWEEP_COMMAND,
         identity,
         |actor, key| {
-            Box::pin(async move {
-                Ok(execution::sweep::execute(
+            body_off_reactor(move || {
+                execution::sweep::execute(
                     &events,
                     Some(drive_execution_id.as_str()),
                     as_of.as_deref(),
                     actor,
                     Some(key),
-                )?)
+                )
             })
         },
     )
@@ -7875,6 +7888,40 @@ pub(super) mod tests {
             vec![worker],
             "the witness saw exactly this run, on the worker"
         );
+    }
+
+    /// #2144: a mutation's command body (sweep, pause, cancel, approve, assign, amend) ran inline
+    /// on serve's ONE runtime thread, so a sweep replaying a long stream held every read for
+    /// seconds. Through `body_off_reactor` the body runs on a worker, and its refusal still
+    /// reaches the mutation as the command's own failure.
+    #[test]
+    fn a_mutation_body_runs_off_the_reactor() {
+        let _serial = SERIAL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reactor = std::thread::current().id();
+        let ran = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let seen = ran.clone();
+        let (value, runs) = measured(super::body_off_reactor(move || {
+            *seen.lock().unwrap() = Some(std::thread::current().id());
+            Ok(serde_json::json!({"ok": true}))
+        }));
+        let worker = ran.lock().unwrap().expect("the body ran");
+        assert_ne!(worker, reactor, "the body ran ON the reactor thread");
+        assert_eq!(runs, vec![worker]);
+        assert_eq!(value.ok(), Some(serde_json::json!({"ok": true})));
+
+        let (refused, _) = measured(super::body_off_reactor(|| {
+            Err(crate::commands::execution::Failure {
+                code: "GHE001_SEQUENCE_CONFLICT",
+                message: "conflict".to_owned(),
+                pointer: "/".to_owned(),
+            })
+        }));
+        assert!(matches!(
+            refused,
+            Err(super::MutationError::Command(failure)) if failure.code == "GHE001_SEQUENCE_CONFLICT"
+        ));
     }
 
     #[test]

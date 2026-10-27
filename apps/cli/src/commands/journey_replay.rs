@@ -2073,6 +2073,14 @@ pub(crate) fn run(args: &JourneyReplayArgs) -> Outcome {
             Some(failure("replay.recording_incomplete", "/recording", 3)),
         );
     }
+    // #2156: a flow of commands has no page for the browser worker; it replays its commands as
+    // the preview plays them, under the same guard.
+    if !args.replay_worker
+        && let Some((project, flow)) = super::journey_replay_cli::flow_of(args)
+    {
+        let result = super::journey_replay_cli::replay(args, &project, &flow, &mut data);
+        return report(data, result.err());
+    }
     if args.replay_worker {
         if std::env::var_os("GRAPHHELM_REPLAY_WORKER").is_none() {
             return report(data, Some(failure("replay.worker_invalid", "/worker", 3)));

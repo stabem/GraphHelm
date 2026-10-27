@@ -298,7 +298,8 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
       label: edge === null ? `Opens ${url}` : does(edge),
       status,
       viewports,
-      frame: seen?.frame === true,
+      // #2155: a `cli` screen's frame is its command output (kind text), not an image to fetch.
+      frame: seen?.frame === true && seen.kind !== "text",
       frameSize: seen?.frame === true && typeof seen.width === "number" && typeof seen.height === "number" ? { width: seen.width, height: seen.height } : null,
       title: screens.get(screen)?.title ?? null,
       url,

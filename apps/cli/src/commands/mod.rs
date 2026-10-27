@@ -20,6 +20,7 @@ mod journey_live;
 mod journey_owner;
 mod journey_preview;
 mod journey_replay;
+mod journey_replay_cli;
 mod journey_report;
 mod journey_validate;
 mod journeys;

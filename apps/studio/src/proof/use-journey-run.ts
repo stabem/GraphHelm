@@ -107,13 +107,13 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     const stamp = `${attempt}:${run.startedAt ?? ""}:${run.ranAt ?? ""}`;
     // #1777: the first viewport's frames are the top level (today's URLs); a mobile pass that came
     // after it is fetched with `?viewport=mobile` and kept under `mobile:<screen>`.
-    const wanted: [string, string, { frame: boolean; result?: string }, "mobile" | undefined][] =
+    const wanted: [string, string, { frame: boolean; kind?: "text"; result?: string }, "mobile" | undefined][] =
       Object.entries(run.screens ?? {}).map(([screen, seen]) => [screen, screen, seen, undefined]);
     if (run.viewportsPlanned?.[0] !== "mobile") {
       for (const [screen, seen] of Object.entries(run.viewports?.mobile?.screens ?? {})) wanted.push([`mobile:${screen}`, screen, seen, "mobile"]);
     }
     for (const [slot, screen, seen, viewport] of wanted) {
-      if (!seen.frame) continue;
+      if (!seen.frame || seen.kind === "text") continue;
       const key = `${stamp}:${seen.result ?? ""}`;
       const held = urls.current.get(slot);
       if (held?.key === key) continue;

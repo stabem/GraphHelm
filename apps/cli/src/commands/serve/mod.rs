@@ -939,6 +939,7 @@ async fn serve_forever(
     // project's owner record store; a request that arrives first waits on the same single-flight
     // walk (#1721), never a second one.
     let warm = warm_stores(&state.events, state.project.as_deref());
+    let runtime_events = state.events.to_path_buf();
     tokio::task::spawn_blocking(move || {
         for store in warm {
             execution::timing::request("background.warm_prefix", || {
@@ -951,6 +952,11 @@ async fn serve_forever(
                 }
             });
         }
+        // Then every stream's fold, after the journal proof it reads through: the first status
+        // read after a start resumes a kept fold, or joins this one, instead of refusing.
+        execution::timing::request("background.warm_folds", || {
+            execution::status::prewarm(&runtime_events);
+        });
     });
 
     if let Some(seconds) = state.sweep_interval {

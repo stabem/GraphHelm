@@ -306,8 +306,9 @@ fn glance_status(
     })
     .map_err(|error| repository_failure(&error))?;
     let (scope, stream) = super::stream_of(execution)?;
-    let glance = glance(&store, events, &scope, &stream, &budget)
-        .map_err(|error| repository_failure(&error))?;
+    let (glance, budget) =
+        glance_joining(SHARED_FOLDS.get(), &store, events, &scope, &stream, budget)
+            .map_err(|error| repository_failure(&error))?;
     let projection = glance.projection.map_err(|error| replay_failure(&error))?;
     if glance.digest.len == 0 {
         return Err(super::not_found());
@@ -531,6 +532,23 @@ impl FoldCache {
             .is_ok_and(|warming| !warming.is_empty())
     }
 
+    /// Waits until no fold of `key` runs (a warmer or a foreground fold), at most `cap`; `true`
+    /// when none does by then.
+    fn wait_warmed(&self, key: &FoldKey, cap: std::time::Duration) -> bool {
+        let started = std::time::Instant::now();
+        loop {
+            match self.0.warming.lock() {
+                Ok(warming) if !warming.contains(key) => return true,
+                Ok(_) => {}
+                Err(_) => return false,
+            }
+            if started.elapsed() >= cap {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+    }
+
     /// Marks `key` as warming, or `None` when a warmer already runs for it.
     fn claim_warming(&self, key: &FoldKey) -> Option<WarmingClaim> {
         let mut warming = self.0.warming.lock().ok()?;
@@ -655,13 +673,95 @@ pub(crate) fn glance(
     stream: &str,
     budget: &graphhelm_events::ReadBudget,
 ) -> Result<Glance, graphhelm_events::EventRepositoryError> {
-    if let Some(cache) = SHARED_FOLDS.get()
-        && let Some(kept) = glance_kept(cache, store, events, scope, stream)?
+    match SHARED_FOLDS.get() {
+        Some(cache) => glance_from(cache, store, events, scope, stream, budget),
+        None => glance_whole(None, store, events, scope, stream, budget),
+    }
+}
+
+/// [`glance`] for a read an operator waits on, and the budget its answer was bounded by.
+///
+/// Cold start (a Runtime just started or handed over): the first read of a long stream runs out
+/// of its budget part-way through the fold and hands the rest to one background warmer.
+/// Refusing then made the very first request a 500 for a read that was merely warming. With
+/// serve's cache the read instead waits for that one fold (bounded by `WARM_JOIN`) and answers
+/// from what it stored, under a renewed budget: the retry resumes the kept fold and walks only
+/// the events appended meanwhile. One retry only; a second refusal is the read's own. Without the
+/// cache (one-shot commands) there is no warmer, and the refusal stands.
+fn glance_joining(
+    cache: Option<&FoldCache>,
+    store: &graphhelm_events::LocalEventRepository,
+    events: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+    budget: graphhelm_events::ReadBudget,
+) -> Result<(Glance, graphhelm_events::ReadBudget), graphhelm_events::EventRepositoryError> {
+    let Some(cache) = cache else {
+        let glance = glance_whole(None, store, events, scope, stream, &budget)?;
+        return Ok((glance, budget));
+    };
+    let glance = glance_from(cache, store, events, scope, stream, &budget)?;
+    if matches!(
+        glance.projection,
+        Err(graphhelm_events::ReplayError::BudgetExceeded { .. })
+    ) && let Ok(key) = fold_key(events, scope, stream)
+        && cache.wait_warmed(&key, WARM_JOIN)
     {
+        let budget = budget.renewed();
+        let glance = super::timing::phase("warm.join", || {
+            glance_from(cache, store, events, scope, stream, &budget)
+        })?;
+        return Ok((glance, budget));
+    }
+    Ok((glance, budget))
+}
+
+/// Serve start: folds every addressable stream once into serve's cache, off the request path,
+/// so the first status read after a start or handover resumes a kept fold instead of starting
+/// one. A read that arrives first waits on the same single-flight fold (`claim_fold`, then
+/// `glance_status`'s join), never a second one. Errors only leave a stream cold.
+pub(crate) fn prewarm(events: &Path) {
+    if SHARED_FOLDS.get().is_none() {
+        return;
+    }
+    let Ok(store) = crate::commands::event_store(events) else {
+        return;
+    };
+    let Ok(streams) = store.list_streams() else {
+        return;
+    };
+    for stream in streams {
+        if super::addressable_scope(&stream.stream_id).is_ok_and(|scope| scope == stream.scope) {
+            let _ = glance(
+                &store,
+                events,
+                &stream.scope,
+                &stream.stream_id,
+                &graphhelm_events::ReadBudget::unbounded(),
+            );
+        }
+    }
+}
+
+/// [`glance`] on serve's cache: the kept read when it resumes exactly, else the whole one.
+fn glance_from(
+    cache: &FoldCache,
+    store: &graphhelm_events::LocalEventRepository,
+    events: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+    budget: &graphhelm_events::ReadBudget,
+) -> Result<Glance, graphhelm_events::EventRepositoryError> {
+    if let Some(kept) = glance_kept(cache, store, events, scope, stream)? {
         return Ok(kept);
     }
-    glance_whole(SHARED_FOLDS.get(), store, events, scope, stream, budget)
+    glance_whole(Some(cache), store, events, scope, stream, budget)
 }
+
+/// How long a cold status read waits for the stream's one in-flight fold before it refuses
+/// (see `glance_status`). Several budgets' worth: the warmer only finishes a fold a budgeted read
+/// already started, and a long stream's cold fold has been measured at about one budget more.
+const WARM_JOIN: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// [`glance`] over the whole history, keeping its digest when `cache` is on and the fold answered.
 fn glance_whole(
@@ -678,7 +778,14 @@ fn glance_whole(
         Some(cache) => fold_cached(cache, events, scope, stream, &history, budget),
         None => graphhelm_events::replay_within(scope, stream, &history, budget),
     });
-    if let (Some(cache), Ok(_)) = (cache, &projection)
+    // Kept also when the fold ran out of budget: the digest describes the history read, and a
+    // later read uses it only once a generation aligned to its head by sequence AND hash is kept
+    // (`glance_kept`), which is what the warmer leaves behind when it finishes.
+    let usable = matches!(
+        projection,
+        Ok(_) | Err(graphhelm_events::ReplayError::BudgetExceeded { .. })
+    );
+    if let (Some(cache), true) = (cache, usable)
         && let Ok(key) = fold_key(events, scope, stream)
     {
         cache.store_digest(&key, digest.clone());
@@ -1325,6 +1432,74 @@ pub(crate) mod tests {
             serde_json::to_value(&direct).unwrap(),
             "the resumed fold must equal a full replay"
         );
+    }
+
+    /// Cold start after a Runtime start or handover: the first status read of a long stream ran
+    /// out of its budget mid-fold, handed the rest to the warmer, and refused (a 500 for a read
+    /// that was only warming). On serve's cache the read now waits for that one fold and answers
+    /// exactly what a full replay answers, with the history's head. Credible regression: the
+    /// refusal returned as before, which the control below shows is what the cold read alone does.
+    /// Cost: 2,500 events in a tempdir.
+    #[test]
+    fn a_cold_status_read_that_runs_out_mid_fold_joins_the_warmer_and_answers() {
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 2_500);
+        let (scope, stream, history) = read_seeded(directory.path());
+        let direct =
+            serde_json::to_value(graphhelm_events::replay(&scope, &stream, &history).unwrap())
+                .unwrap();
+        let store = crate::commands::event_store(directory.path()).unwrap();
+        let lapsing = || {
+            ReadBudget::starting_now(
+                Arc::new(LapsingClock(AtomicU64::new(0))),
+                chrono::Duration::seconds(5),
+            )
+        };
+
+        // Control: the same cold read without the join refuses on the budget.
+        let control = super::FoldCache::default();
+        let refused = super::glance_from(
+            &control,
+            &store,
+            directory.path(),
+            &scope,
+            &stream,
+            &lapsing(),
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                refused.projection,
+                Err(graphhelm_events::ReplayError::BudgetExceeded { .. })
+            ),
+            "control: a cold read whose budget lapses at its first check refuses on its own"
+        );
+
+        let cache = super::FoldCache::default();
+        let (glance, budget) = super::glance_joining(
+            Some(&cache),
+            &store,
+            directory.path(),
+            &scope,
+            &stream,
+            lapsing(),
+        )
+        .unwrap();
+        let projection = glance.projection.expect("the joined read answers");
+        assert_eq!(serde_json::to_value(&projection).unwrap(), direct);
+        assert_eq!(glance.digest.len, 2_500);
+        budget
+            .check_now(2_500)
+            .expect("the answer is bounded by the renewed budget, not the spent one");
+
+        // Without serve's cache (a one-shot command) there is no warmer to join.
+        let (alone, _) =
+            super::glance_joining(None, &store, directory.path(), &scope, &stream, lapsing())
+                .unwrap();
+        assert!(matches!(
+            alone.projection,
+            Err(graphhelm_events::ReplayError::BudgetExceeded { .. })
+        ));
     }
 
     fn fold_key(name: &str) -> super::FoldKey {

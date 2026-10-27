@@ -81,6 +81,20 @@ impl ReadBudget {
         }
     }
 
+    /// The same limit on the same clock, starting again at the clock's current instant; an
+    /// unbounded budget stays unbounded. For a caller that waited on work it did not do (another
+    /// read's fold finishing) and now makes one fresh, separately bounded attempt.
+    #[must_use]
+    pub fn renewed(&self) -> Self {
+        match &self.bound {
+            None => Self::unbounded(),
+            Some(bound) => Self::starting_now(
+                bound.clock.clone(),
+                chrono::Duration::milliseconds(bound.limit_millis),
+            ),
+        }
+    }
+
     /// Whether this budget can ever refuse. Callers use it to keep an unbounded walk on the
     /// exact code path it had before, rather than paying a branch that can never fire.
     #[must_use]

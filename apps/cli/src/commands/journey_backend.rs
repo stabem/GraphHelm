@@ -269,7 +269,7 @@ pub(super) fn cli_refusal(argv: &str) -> Option<(&'static str, &'static str)> {
             }
             break *word;
         };
-        if !script.contains(['/', '\\']) {
+        if script_directory_depth(script).is_none_or(|depth| depth == 0) {
             return Some((
                 "flow.cli_root_script",
                 "a python script at the project root imports unchecked root modules; move it into a directory",
@@ -279,10 +279,21 @@ pub(super) fn cli_refusal(argv: &str) -> Option<(&'static str, &'static str)> {
     }
     let first = args.first().map(|word| word.to_ascii_lowercase());
     let refused = match stem.as_str() {
-        "sh" | "bash" | "dash" | "zsh" | "ksh" => args
-            .iter()
-            .take_while(|word| word.starts_with('-'))
-            .any(|word| !word.starts_with("--") && word.contains('c')),
+        // Options can take values (`-o pipefail`, `--init-file x`), so `-c` is looked for in
+        // every word; a script argument spelled like `-c` is refused too (fail closed).
+        "sh" | "bash" | "dash" | "zsh" | "ksh" => args.iter().any(|word| {
+            (word.starts_with('-') || word.starts_with('+'))
+                && !word.starts_with("--")
+                && word.contains('c')
+        }),
+        // Exec-wrappers run another argv (and `env` can set PYTHONPATH back), so nothing they
+        // start is checked. A deny list, not a program allowlist: an allowlist would refuse every
+        // project tool (`git`, `cargo`, a fixture binary) the flows legitimately run.
+        "env" | "xargs" | "nice" | "nohup" | "timeout" | "stdbuf" | "setsid" | "sudo" | "doas"
+        | "su" | "runuser" | "chroot" | "busybox" | "start" | "time" | "command" | "exec"
+        | "ionice" | "taskset" | "strace" | "ltrace" | "unbuffer" | "script" | "watch"
+        | "parallel" | "find" | "flock" | "chrt" | "fakeroot" | "proot" | "runas" | "wsl" => true,
+        "perl" | "ruby" | "php" | "lua" | "tclsh" | "awk" | "gawk" | "osascript" => true,
         "node" | "nodejs" | "deno" | "bun" => args.iter().any(|word| {
             matches!(*word, "-e" | "-p" | "--eval" | "--print" | "-pe" | "-")
                 || word.starts_with("--eval=")
@@ -293,6 +304,25 @@ pub(super) fn cli_refusal(argv: &str) -> Option<(&'static str, &'static str)> {
         _ => false,
     };
     refused.then_some(inline)
+}
+
+/// #2187: how many directories below the project root a script sits, read lexically (`.` dropped,
+/// `..` pops); `None` when the path is absolute or climbs above the root.
+fn script_directory_depth(script: &str) -> Option<usize> {
+    if script.starts_with(['/', '\\']) || script.get(1..2) == Some(":") {
+        return None;
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for part in script.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            part => parts.push(part),
+        }
+    }
+    parts.len().checked_sub(1)
 }
 
 fn program_stem(program: &str) -> String {
@@ -663,7 +693,18 @@ mod tests {
             ("node -e 1", inline),
             ("cmd /c dir", inline),
             ("pwsh -Command id", inline),
+            ("sh -o pipefail -c id", inline),
+            ("bash --init-file x -c id", inline),
+            ("env python -c print(1)", inline),
+            ("env PYTHONPATH=x python d/run.py", inline),
+            ("xargs python", inline),
+            ("timeout 5 sh -c id", inline),
+            ("perl -e 1", inline),
             ("python run.py", Some("flow.cli_root_script")),
+            ("python ./run.py", Some("flow.cli_root_script")),
+            ("python sub/../json.py", Some("flow.cli_root_script")),
+            ("python ../outside.py", Some("flow.cli_root_script")),
+            ("python ./d/./run.py", None),
             ("python.exe -W ignore json.py", Some("flow.cli_root_script")),
             ("python .graphhelm/fixtures/x/run.py a", None),
             ("python -W ignore -X utf8 tools/x.py", None),

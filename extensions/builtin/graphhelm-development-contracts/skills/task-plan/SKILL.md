@@ -1,12 +1,13 @@
 ---
 name: task-plan
-description: "First step of a task after its issue: decide the paths, promise, proof kind (journey, tests, both, none), review count and skills for the change, and record them as one keel.plan record. Use before writing any code for an issue."
+description: "First step of a task after its issue: decide the paths, promise, proof kind (journey, tests, both, none), review count and skills for the change, and record them as one keel.plan record. Use before writing any code for an issue; when the plan is recorded, invoke the implement skill next."
 ---
 
 # Task plan
 
 Step 1 of the per-task graph (issue, **plan**, implement, prove, review, merge). The plan decides
-how much process the change needs. It never writes code.
+how much process the change needs. It never writes code. **When the plan is recorded, invoke the
+`implement` skill next; stopping at the plan, or coding without `implement`, skips step 2.**
 
 **Load the project's `KEEL.md` and `keel/KEEL_PLAN.md` first, when the project has them; their rules bind and win over this skill where they differ.**
 

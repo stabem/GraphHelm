@@ -71,3 +71,6 @@ decided. Pass `--critic` only to overrule the plan, and say why in the PR body.
 
 Done when one plan record exists for the task (or the hand-written card, outside an execution)
 and it names paths, promise, proof and skills. A plan with no proof kind is not done.
+
+A plan is not the change. Next, invoke the `implement` skill and follow it; a task that stops
+after the plan, or writes code without `implement`, has skipped step 2.

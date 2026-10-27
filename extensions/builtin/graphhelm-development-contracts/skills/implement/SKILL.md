@@ -49,3 +49,6 @@ adds what to do around them.
 
 Done when the PR is open at a committed head whose listed tests were run on that head. A claim
 you did not observe ends with `OBSERVER_MISSING: <what>`.
+
+Next, prove the promise: invoke `journey-prove` when the plan's proof is `journey` or `both`;
+for `tests`, the listed test run on the head is the proof. Then the change goes to one review.

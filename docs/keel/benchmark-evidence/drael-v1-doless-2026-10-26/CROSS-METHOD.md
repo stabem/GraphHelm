@@ -377,3 +377,33 @@ Expected cost at list prices: ≈ $70 total for the 28 runs; ≈ 11 h wall seque
 Canonical ledger: `tools/token-bench/doless/results.jsonl` (untracked by design) — 96 rows after
 this battery (37 Codex + 29 Drael parent + 30 Drael cross incl. 2 smoke run-0). SHA-256 after BOM
 strip: see `control-digests.json → resultsJsonlSha256AfterCrossBattery`.
+
+## 13. Post-report verification (2026-10-27, #2141)
+
+An independent pass recomputed every headline in this report and in `README.md` from the raw ledger
+rows (not through the drivers) and found them unchanged: `s` 6/14, 79,693,476 tokens, $6.824/proven;
+`o` 5/13, 57,984,717 as-scored (68,773,729 corrected), $5.888/proven as-scored. Ledger SHA-256,
+size and row composition, every pin in `control-digests.json`, and the `rows.json`/ledger
+agreement on verdict, oracle, regression and tokens all held. Notes it adds:
+
+- **`doless.py table`/`pareto` count the smoke rows.** Run against the canonical ledger they print
+  `drael:s` 6/15 and `drael:o` 5/14: the two run-0 smoke rows (§1) are in the ledger and the tool
+  does not filter them. This report's 6/14 and 5/13 exclude them; both views come from the same rows.
+- **Pins need LF checkouts.** `driver_cross.verify_pins()` hashes the surface files as checked out;
+  on a Windows clone with `core.autocrlf=true` every pin drifted. `.gitattributes` now checks
+  `tools/token-bench/doless/surfaces/**` out with LF; no pin changed.
+- **Token sampling policy (§9 defect 5).** The drivers sample a stage's session tokens once, right
+  after the stage ends or times out. A timed-out stage can flush usage later; the ledger keeps the
+  as-sampled value as canonical and the report carries any later-observed delta as a footnote, as
+  done for `om-win-arm64 o2` above. The drivers stay as committed, so their pinned digests still
+  identify what produced these rows; a future battery that resamples on the timeout path records it
+  as a new driver digest.
+- **`keel.rel.no_panic` stays INCOMPLETE.** `BENCHMARK_PROTOCOL.md` makes a refused method step
+  INCOMPLETE, and INCOMPLETE is excluded from score but counted in cost. Mapping the rule to a
+  scoring column would be a protocol change; none is made here.
+- **Oracle fixes are forward-only.** The `rs-signal-id-retry`, `docs-config-risk`,
+  `py-sessionend-cap` and observer-missing oracles were repaired for the defects in §5 and §9 (the
+  observer-missing artifact allowance applies only to a task entry that names `artifactAllowlist`,
+  and none does yet). No verdict in this report or in the ledger is rescored. The
+  `taskControls.*.oracleSha256` values in `control-digests.json` name the oracle bytes that scored
+  these rows; after this change the four repaired oracle files hash differently, by design.

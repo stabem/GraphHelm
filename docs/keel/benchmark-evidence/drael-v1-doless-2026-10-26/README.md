@@ -361,3 +361,7 @@ drael:k | 13 | 13 | 0 | 9/13 = 69% [42%, 87%] | - (13 without cost) | - | - | un
 
 Repo HEAD at report time: `8469dc1894bc20645eaea953195d031c1bead4a5` (`main`). Battery checkouts
 were frozen at their per-task parent SHAs throughout.
+
+Post-report verification (2026-10-27, #2141): headlines recomputed independently and unchanged;
+see `CROSS-METHOD.md` §13 for the notes it adds (smoke rows in `doless.py table`, LF pins, token
+sampling policy, `keel.rel.no_panic`, forward-only oracle fixes).

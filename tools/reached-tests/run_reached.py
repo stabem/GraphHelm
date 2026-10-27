@@ -807,9 +807,9 @@ class _ExecutableCapture:
             raise RuntimeError("executable identity capture exceeded its deadline")
         return min(5.0, remaining)
 
-    def _program(self, name: str, cwd: Path) -> str:
+    def _program(self, name: str, cwd: Path, *, allow_batch: bool = False) -> str:
         self._remaining()
-        cache_key = (name, str(cwd))
+        cache_key = (name, str(cwd), allow_batch)
         if cache_key in self.programs:
             return self.programs[cache_key]
         env = {key.upper(): value for key, value in self.env.items()} if os.name == "nt" else self.env
@@ -830,11 +830,26 @@ class _ExecutableCapture:
                     raise RuntimeError("executable identity PATH search exceeded its bound")
                 candidate = invocation + extension
                 if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-                    if os.name == "nt" and Path(candidate).suffix.lower() in (".cmd", ".bat"):
+                    if os.name == "nt" and not allow_batch and Path(candidate).suffix.lower() in (".cmd", ".bat"):
                         raise RuntimeError("existing Windows batch invocation runs without reusable identity")
                     self.programs[cache_key] = candidate
                     return candidate
         raise _MissingExecutable("required reached executable is missing or not executable")
+
+    def _npm(self, cwd: Path) -> str:
+        """npm for the Studio preparation identity.
+
+        On Windows `npm` resolves to the `npm.cmd` batch wrapper, which has no reusable identity (#1789).
+        A standard install's wrapper only runs node on the npm CLI script beside it, so that script is
+        the identity. A wrapper without that script keeps the batch refusal: no identity is invented.
+        """
+        if os.name != "nt":
+            return self._program("npm", cwd)
+        wrapper = self._program("npm", cwd, allow_batch=True)
+        cli = os.path.join(os.path.dirname(wrapper), "node_modules", "npm", "bin", "npm-cli.js")
+        if Path(wrapper).suffix.lower() in (".cmd", ".bat") and os.path.isfile(cli):
+            return cli
+        return self._program("npm", cwd)
 
     def _identity(self, invocation: str, cwd: Path, *, python_selected: bool = False) -> dict[str, Any]:
         import stat
@@ -983,7 +998,7 @@ def _tool_fingerprint(steps: list[dict[str, Any]], graphhelm: Path | None,
                 tools["node"] = "0:" + capture._discover([invocation, "--version"], cwd)
             if step["argv"][0] == "npx" and _needs_studio_preparation(repo, cwd):
                 tools["preparationSteps"].append(index)
-                npm = capture._program("npm", cwd)
+                npm = capture._npm(cwd)
                 tools["executables"].append(capture._identity(npm, cwd))
                 tools["executables"].append(capture._identity(capture._program("node", cwd), cwd))
         tools["compilerConfigs"] = capture.configs

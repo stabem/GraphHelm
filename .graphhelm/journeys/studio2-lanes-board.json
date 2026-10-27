@@ -1,0 +1,115 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "See every agent on the Lanes board",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-lanes-board",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "lanes.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows region \"What I asked\" saying \"Show the work graph for the fixture run In progress · 0 of 1\", list \"Blocked\" saying \"planner\", group \"Request\" saying \"#1556 Show what each lane is doing\", group \"For request\" saying \"for: Show the work graph for the fixture run\", group \"Last action\" saying \"planned\", no group \"Not linked\", region \"Question\" saying \"Should the deploy go to staging first, or straight to production?\", complementary \"Agent\" saying \"REPLY TO planner\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "lanes"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "idle.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows listitem \"Blocked, empty\", no region \"Question\", no complementary \"Agent\", region \"What I asked\" saying \"Show the work graph for the fixture run\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "idle"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen lanes not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/asked.ts",
+          "apps/studio/src/lanes/board.ts",
+          "apps/studio/src/topbar/Topbar.tsx"
+        ],
+        "screenId": "lanes",
+        "title": "The planner's card is in the Blocked column"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=lanes"
+        }
+      },
+      "stepId": "lanes"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen idle not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/lanes/LanesView.tsx",
+          "apps/studio/src/lanes/asked.ts",
+          "apps/studio/src/lanes/board.ts",
+          "apps/studio/src/topbar/Topbar.tsx"
+        ],
+        "screenId": "idle",
+        "title": "Narrowed to idle agents, the active planner leaves the board"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "0 idle over 30 min"
+        }
+      },
+      "stepId": "idle"
+    }
+  ],
+  "taskScope": "journey-flow studio2-lanes-board path main",
+  "title": "See every agent on the Lanes board",
+  "version": 1
+}

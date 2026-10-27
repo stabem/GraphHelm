@@ -2,8 +2,8 @@ schema: graphhelm.journey-flow/1
 id: keel-task-handoff
 title: A Codex session recovers a Claude handoff from Runtime history
 purpose: "A second agent session picks up a handoff left by another one from Runtime history, with nothing lost."
-status: draft
-approved: null
+status: approved
+approved: {revision: d7c290c986126bdecd76ede16c3c68627b6ba1aa, digest: sha256:f8469ca655967a4b4f4bb1909e48f004a76d369b1de5a8aeb18b112fd04ddf3c}
 base: http://127.0.0.1:8794
 actors: [claude, codex]
 secrets: []

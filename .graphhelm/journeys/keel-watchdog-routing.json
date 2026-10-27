@@ -1,0 +1,93 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "A Keel verdict routes the task",
+      "name": "owner"
+    }
+  ],
+  "contractId": "keel-watchdog-routing",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "task-started.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", no stdout \"route-correction\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "task-started"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "routing-report.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"keel.scope.path_outside_card\", stdout \"\\\"afterBlocked\\\": {\\\"route-correction\\\": \\\"ready\\\", \\\"route-review\\\": null}\", stdout \"\\\"afterCorrected\\\": {\\\"route-review\\\": \\\"ready\\\"}\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "routing-report"
+    }
+  ],
+  "riskSignals": [],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen task-started not reached"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/task"
+        }
+      },
+      "stepId": "task-started"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen routing-report not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-watchdog-routing/scenario.py"
+        }
+      },
+      "stepId": "routing-report"
+    }
+  ],
+  "taskScope": "journey-flow keel-watchdog-routing path main",
+  "title": "A Keel verdict routes the task",
+  "version": 1
+}

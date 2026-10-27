@@ -1,0 +1,204 @@
+{
+  "actors": [
+    {
+      "actorId": "reviewer",
+      "goal": "A reviewer verdict belongs to the exact Git head",
+      "name": "reviewer"
+    }
+  ],
+  "contractId": "keel-pinned-verdict-merge",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "start.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", no stdout \"\\\"verdicts\\\":\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "start"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "approved-a.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"\\\"verdicts\\\":[\\\"approval-a\\\"]\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "approved-a"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "stale-a.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"\\\"verdicts\\\":[]\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "stale-a"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "approved-b.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"\\\"verdicts\\\":[\\\"approval-b\\\"]\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "approved-b"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "blocked-b.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"\\\"matchingBlockIds\\\":[\\\"block-b\\\"]\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "blocked-b"
+    }
+  ],
+  "riskSignals": [],
+  "steps": [
+    {
+      "actorId": "reviewer",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen start not reached"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "start"
+    },
+    {
+      "actorId": "reviewer",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen approved-a not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py a"
+        }
+      },
+      "stepId": "approved-a"
+    },
+    {
+      "actorId": "reviewer",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen stale-a not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py stale"
+        }
+      },
+      "stepId": "stale-a"
+    },
+    {
+      "actorId": "reviewer",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen approved-b not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py b"
+        }
+      },
+      "stepId": "approved-b"
+    },
+    {
+      "actorId": "reviewer",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen blocked-b not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-pinned-verdict-merge/run.py block"
+        }
+      },
+      "stepId": "blocked-b"
+    }
+  ],
+  "taskScope": "journey-flow keel-pinned-verdict-merge path main",
+  "title": "A reviewer verdict belongs to the exact Git head",
+  "version": 1
+}

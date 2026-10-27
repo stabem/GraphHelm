@@ -2,8 +2,8 @@ schema: graphhelm.journey-flow/1
 id: keel-card-accepted
 title: Accept in-scope work and refuse work outside the Keel card
 purpose: "A contributor learns at once when a change leaves its Keel card: inside the card exits 0, outside exits 2 naming the stray path."
-status: draft
-approved: null
+status: approved
+approved: {revision: d7c290c986126bdecd76ede16c3c68627b6ba1aa, digest: sha256:e7cbb4f546970477104dcf66137f4f8debbfa76325d84df4d7c6d50343fc883d}
 base: http://127.0.0.1:5184
 actors: [contributor]
 secrets: []

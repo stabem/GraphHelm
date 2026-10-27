@@ -115,7 +115,12 @@ JSON reply and the state it writes, per viewport. `REJECT` unless **all** of the
 - every edge on every path has `result: pass`;
 - no screen has `reason: not_reached`, no edge is `skipped`, and nothing is waiting on
   `confirm_needed` or `review_needed`;
-- every screen reached has a frame.
+- every screen reached has a frame. A browser screen's frame is an image (`frame: true` with a
+  `file`). A screen of a `cli`-only path has no picture: its frame is the command output the
+  preview kept for it (`frame: true`, `kind: text`, with `exit`, `stdout`, `stderr` and their
+  sha256). Its start screen's text frame is the empty observation (`precondition: true`, no exit,
+  no output), because no command has run there yet. A `kind: text` frame on a browser screen is
+  no frame.
 
 A red is reported with its JSON pointer and code, exactly as printed.
 
@@ -133,6 +138,9 @@ A green row is a claim; look at what it stands on.
 - For every `cli` act, read the **terminal output** the preview kept (stdout, stderr, exit code).
   It shows the effect the promise needs, with no error, warning or usage text hidden behind a
   zero exit.
+- For a `cli` screen, the text frame **is** the frame: read its exit and the stdout excerpt each
+  expect reads, and confirm every expect is met by that output and not by a literal the scenario
+  prints regardless of what happened. An expect on a start screen is judged against no output.
 - Name each frame you opened. "Looked fine" with no list is a skipped point.
 
 ### 6. Sabotage: it must turn red

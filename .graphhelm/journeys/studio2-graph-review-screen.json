@@ -1,0 +1,351 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Review a card's screens in the large modal",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-graph-review-screen",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "board.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"Issue #721\" saying \"in review\", group \"Pull request of #721\" saying \"PR #721 waits for a reviewer\", complementary \"Journeys with work\" saying \"1 of 24\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "board"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "modal.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows dialog \"Review\" saying \"Observe issue graph and work kanban\", img \"bad-ticket before\", group \"Viewport\" saying \"1280 × 800\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "modal"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "side.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows img \"bad-ticket before\", img \"bad-ticket now\", combobox \"Review screen\" saying \"bad-ticket\", region \"Review frame\" saying \"Now · PR #721 at 721abcde\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "side"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "changes.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows figure \"Changes: Now against Before (unchanged pixels are black)\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "changes"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "overlay.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows slider \"Now opacity\", figure \"Now over Before at 50%\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "overlay"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "mobile.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows group \"Viewport\" saying \"390 × 844\", img \"bad-ticket before\", no img \"bad-ticket now\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "mobile"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "closed.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows no dialog \"Review\", list \"In review\" saying \"Observe issue graph and work kanban\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "closed"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "accessibility"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen board not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/ReviewModal.tsx",
+          "apps/studio/src/graph/review.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "board",
+        "title": "Issue #721 is in review"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo"
+        }
+      },
+      "stepId": "board"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen modal not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/ReviewModal.tsx",
+          "apps/studio/src/graph/review.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "modal",
+        "title": "The review modal opens on issue #721's journey screen"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Open review"
+        }
+      },
+      "stepId": "modal"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen side not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/ReviewModal.tsx",
+          "apps/studio/src/graph/review.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "side",
+        "title": "Side by side shows Before and Now together"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Side by side"
+        }
+      },
+      "stepId": "side"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen changes not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/ReviewModal.tsx",
+          "apps/studio/src/graph/review.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "changes",
+        "title": "Changes shows only the pixels that moved"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Changes"
+        }
+      },
+      "stepId": "changes"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen overlay not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/ReviewModal.tsx",
+          "apps/studio/src/graph/review.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "overlay",
+        "title": "Overlay lays Now over Before with a slider"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Overlay"
+        }
+      },
+      "stepId": "overlay"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen mobile not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/ReviewModal.tsx",
+          "apps/studio/src/graph/review.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "mobile",
+        "title": "Mobile shows the main run's mobile frame (a PR head capture is web only)"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Mobile"
+        }
+      },
+      "stepId": "mobile"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen closed not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/ReviewModal.tsx",
+          "apps/studio/src/graph/review.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "closed",
+        "title": "Close shuts the modal and the card is still in review"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Close review"
+        }
+      },
+      "stepId": "closed"
+    }
+  ],
+  "taskScope": "journey-flow studio2-graph-review-screen path main",
+  "title": "Review a card's screens in the large modal",
+  "version": 1
+}

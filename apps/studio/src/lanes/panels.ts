@@ -99,6 +99,22 @@ export function needsAction(board: TasksBoard, requests: readonly OwnerRequest[]
     }
   }
   for (const stall of board.stalls) {
+    // #1993: each stall reason becomes an item. A stall whose task already shows an Assign or Merge
+    // item (a review with no reviewer, an approved PR) adds nothing; otherwise the lane that owes the
+    // next step is woken, or, with no owner, a free lane is asked to review.
+    if (stall.reason === "awaiting_verdict" || stall.reason === "awaiting_merge") {
+      const shown = needs.some((need) => need.slice?.key === stall.key && (need.verb === "Assign" || need.verb === "Merge"));
+      if (shown) continue;
+      const slice = board.tasks.find((task) => task.key === stall.key) ?? null;
+      const pr = `PR #${stall.pr ?? "?"}`;
+      if (stall.owner) {
+        const what = stall.reason === "awaiting_verdict" ? `${pr}: a verdict waits on ${stall.owner}` : `${pr}: approved, the merge waits on ${stall.owner}`;
+        needs.push({ id: `wake:${stall.key}`, verb: "Wake", tone: stall.reason === "awaiting_verdict" ? "blue" : "green", what, since: stall.idleSince ?? null, lane: stall.owner, to: null, slice: null });
+      } else if (stall.reason === "awaiting_verdict" && slice?.lane) {
+        needs.push({ id: `assign:${stall.key}`, verb: "Assign", tone: "blue", what: `${pr} waits for a reviewer`, since: stall.idleSince ?? null, lane: slice.lane, to: freeLane(board, [slice.lane]), slice });
+      }
+      continue;
+    }
     if (stall.reason !== "block_unanswered" || !stall.owner) continue;
     needs.push({ id: `wake:${stall.key}`, verb: "Wake", tone: "orange", what: `PR #${stall.pr ?? "?"}: a BLOCK waits on ${stall.owner}`, since: stall.idleSince ?? null, lane: stall.owner, to: null, slice: null });
   }

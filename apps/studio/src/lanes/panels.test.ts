@@ -55,6 +55,32 @@ describe("lanes panels", () => {
     ]);
   });
 
+  it("turns awaiting_verdict and awaiting_merge stalls into Needs action items (#1993)", () => {
+    const board: TasksBoard = {
+      now: "2026-10-22T12:00:00Z",
+      tasks: [
+        task("v#1", "lane-a", "review", { pr: 21, currentReviewer: "lane-r" }),
+        task("g#1", "lane-b", "review", { pr: 22 }),
+        task("m#1", "lane-c", "merge", { pr: 23, currentReviewer: "lane-r", clock: { since: "2026-10-22T08:00:00Z" } }),
+        task("n#1", "lane-d", "implement", { pr: 24 }),
+      ],
+      liveness: { lanes: [live("lane-free", { free: true })] },
+      stalls: [
+        { key: "v#1", owner: "lane-r", pr: 21, reason: "awaiting_verdict", idleSince: "2026-10-22T07:00:00Z" },
+        { key: "g#1", owner: null, pr: 22, reason: "awaiting_verdict", idleSince: "2026-10-22T06:00:00Z" },
+        { key: "m#1", owner: "lane-r", pr: 23, reason: "awaiting_merge", idleSince: "2026-10-22T05:00:00Z" },
+        { key: "n#1", owner: "lane-r", pr: 24, reason: "awaiting_merge", idleSince: "2026-10-22T04:00:00Z" },
+      ],
+      waiting: [],
+    };
+    expect(needsAction(board).map((need) => [need.verb, need.lane, need.what])).toEqual([
+      ["Wake", "lane-r", "PR #24: approved, the merge waits on lane-r"],
+      ["Wake", "lane-r", "PR #21: a verdict waits on lane-r"],
+      ["Merge", "lane-c", "PR #23 approved, ready to merge"],
+      ["Assign", "lane-b", "PR #22 has no reviewer started"],
+    ]);
+  });
+
   it("drops an Assign, Merge or Wake item once the Runtime recorded its note, and keeps it before", () => {
     const board: TasksBoard = {
       now: "2026-10-22T12:00:00Z",

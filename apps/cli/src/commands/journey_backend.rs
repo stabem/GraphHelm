@@ -6,7 +6,7 @@
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
@@ -98,6 +98,11 @@ pub(super) fn findings(flow: &Value) -> Vec<(&'static str, String, &'static str)
                     format!("{pointer}/headers"),
                     "an http act may not set Host, Content-Length, Connection or Transfer-Encoding",
                 ));
+            }
+            if act["kind"] == "cli"
+                && let Some((code, message)) = cli_refusal(name)
+            {
+                found.push((code, pointer.clone(), message));
             }
             if !valid {
                 found.push((
@@ -220,12 +225,190 @@ fn dechunk(mut rest: &str) -> String {
     out
 }
 
+/// #2187: why an argv cannot be run as checked code, as `(code, message)`. Pure on the argv, so
+/// lint and the runner refuse the same commands. A command whose code is not a file the reviewed
+/// check reads (`python -m`/`-c`, `sh -c`, `node -e`, `cmd`, `powershell` without `-File`), or a
+/// Python script at the project root (the root is the script's import directory and is not
+/// checked whole), is refused.
+pub(super) fn cli_refusal(argv: &str) -> Option<(&'static str, &'static str)> {
+    let mut words = argv.split_whitespace();
+    let program = words.next()?;
+    let args: Vec<&str> = words.collect();
+    let stem = program_stem(program);
+    let inline = (
+        "flow.cli_inline_code",
+        "a cli act must run a script file; -m, -c, -e, stdin and command-string forms name none",
+    );
+    if is_python(&stem) {
+        let mut rest = args.iter();
+        let script = loop {
+            let Some(word) = rest.next() else {
+                return Some(inline);
+            };
+            if *word == "-" {
+                return Some(inline);
+            }
+            if word.starts_with("--") {
+                continue;
+            }
+            if let Some(cluster) = word.strip_prefix('-') {
+                for (i, flag) in cluster.char_indices() {
+                    match flag {
+                        'c' | 'm' => return Some(inline),
+                        // The rest of the word, or the next word, is the option's value.
+                        'W' | 'X' => {
+                            if i + 1 == cluster.len() {
+                                rest.next();
+                            }
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+            break *word;
+        };
+        if !script.contains(['/', '\\']) {
+            return Some((
+                "flow.cli_root_script",
+                "a python script at the project root imports unchecked root modules; move it into a directory",
+            ));
+        }
+        return None;
+    }
+    let first = args.first().map(|word| word.to_ascii_lowercase());
+    let refused = match stem.as_str() {
+        "sh" | "bash" | "dash" | "zsh" | "ksh" => args
+            .iter()
+            .take_while(|word| word.starts_with('-'))
+            .any(|word| !word.starts_with("--") && word.contains('c')),
+        "node" | "nodejs" | "deno" | "bun" => args.iter().any(|word| {
+            matches!(*word, "-e" | "-p" | "--eval" | "--print" | "-pe" | "-")
+                || word.starts_with("--eval=")
+                || word.starts_with("--print=")
+        }),
+        "cmd" => true,
+        "powershell" | "pwsh" => !matches!(first.as_deref(), Some("-file" | "-f")),
+        _ => false,
+    };
+    refused.then_some(inline)
+}
+
+fn program_stem(program: &str) -> String {
+    let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+    let lower = name.to_ascii_lowercase();
+    match lower.rsplit_once('.') {
+        Some((stem, "exe" | "cmd" | "bat" | "com")) => stem.to_owned(),
+        _ => lower,
+    }
+}
+
+fn is_python(stem: &str) -> bool {
+    let Some(rest) = stem
+        .strip_prefix("pythonw")
+        .or_else(|| stem.strip_prefix("python"))
+    else {
+        return stem == "py" || stem == "pyw";
+    };
+    rest.chars().all(|c| c.is_ascii_digit() || c == '.')
+}
+
+/// #2187: the variables a step keeps from the Runtime's environment; every other one (PYTHONPATH,
+/// PYTHONSTARTUP, NODE_OPTIONS, BASH_ENV, LD_PRELOAD, ...) is dropped. None of these names code.
+const KEPT_ENV: &[&str] = &[
+    "SYSTEMROOT",
+    "WINDIR",
+    "SYSTEMDRIVE",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "HOME",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "LANG",
+    "LC_ALL",
+    "USER",
+    "USERNAME",
+];
+
+/// #2187: the PATH a step resolves its program against and inherits: the Runtime's PATH without
+/// relative entries and without any entry inside the project (a program planted there runs
+/// unchecked).
+fn pinned_path(project: &Path, path: Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let root = std::fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+    path.map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|dir| dir.is_absolute())
+        .filter(|dir| {
+            let real = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
+            !real.starts_with(&root)
+        })
+        .collect()
+}
+
+/// #2187: a bare program name resolved to one absolute file in `dirs`; a name with a path
+/// separator is spawned as written (a project path is what the reviewed check reads).
+fn resolve_program(program: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
+    if program.contains(['/', '\\']) {
+        return Some(PathBuf::from(program));
+    }
+    let names: Vec<String> = if cfg!(windows) && !program.contains('.') {
+        ["exe", "com", "cmd", "bat"]
+            .iter()
+            .map(|ext| format!("{program}.{ext}"))
+            .collect()
+    } else {
+        vec![program.to_owned()]
+    };
+    dirs.iter()
+        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
+        .find(|candidate| candidate.is_file())
+}
+
 /// Runs one `cli` act: argv split on whitespace, no shell, in the project, bounded by
 /// [`ACT_LIMIT`]. The child is killed at the limit.
+///
+/// #2187: fail closed on what the reviewed check cannot see. The argv must pass [`cli_refusal`];
+/// the environment is cleared to [`KEPT_ENV`] plus a pinned PATH; a bare program resolves only
+/// through that PATH; Python runs with `-E -s -B` (no `PYTHON*` variables, no user site, no
+/// bytecode written).
 pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String> {
+    if let Some((code, message)) = cli_refusal(argv) {
+        return Err(format!("{code}: {message}"));
+    }
     let mut words = argv.split_whitespace();
     let program = words.next().ok_or("empty argv")?;
-    let mut child = graphhelm_process::command(program)
+    let dirs = pinned_path(project, std::env::var_os("PATH"));
+    let resolved = resolve_program(program, &dirs).ok_or_else(|| {
+        "flow.cli_program_unresolved: the program is not on the pinned PATH \
+         (absolute entries outside the project)"
+            .to_owned()
+    })?;
+    let mut spawn = graphhelm_process::command(&resolved);
+    spawn.env_clear();
+    for (key, value) in std::env::vars_os() {
+        let upper = key.to_string_lossy().to_ascii_uppercase();
+        if KEPT_ENV.contains(&upper.as_str()) {
+            spawn.env(key, value);
+        }
+    }
+    if let Ok(path) = std::env::join_paths(&dirs) {
+        spawn.env("PATH", path);
+    }
+    if is_python(&program_stem(program)) {
+        spawn.args(["-E", "-s", "-B"]);
+    }
+    let mut child = spawn
         .args(words)
         // #2008: a run must not write `__pycache__` into the reviewed tree it was vouched by.
         .env("PYTHONDONTWRITEBYTECODE", "1")
@@ -459,5 +642,114 @@ mod tests {
             Some("json item.tags.1=b")
         );
         assert_eq!(dechunk("3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n"), "abcde");
+    }
+
+    /// #2187 gaps 2 and 3: a command whose code is no file the reviewed check reads, or a Python
+    /// script whose import directory is the unchecked project root, is refused with a stable code
+    /// by lint and by the runner alike. Controls: a script in a directory, with valued options
+    /// before it, and a plain `sh` script are not refused.
+    #[test]
+    fn a_cli_act_without_a_checked_script_is_refused() {
+        let inline = Some("flow.cli_inline_code");
+        for (argv, code) in [
+            ("python -m http.server", inline),
+            ("python3 -c print(1)", inline),
+            ("python -Bc print(1)", inline),
+            ("py -3 -m pip", inline),
+            ("python -", inline),
+            ("python", inline),
+            ("sh -c id", inline),
+            ("bash -ec id", inline),
+            ("node -e 1", inline),
+            ("cmd /c dir", inline),
+            ("pwsh -Command id", inline),
+            ("python run.py", Some("flow.cli_root_script")),
+            ("python.exe -W ignore json.py", Some("flow.cli_root_script")),
+            ("python .graphhelm/fixtures/x/run.py a", None),
+            ("python -W ignore -X utf8 tools/x.py", None),
+            ("sh greet.sh", None),
+            ("pwsh -File tools/x.ps1", None),
+            ("git status", None),
+        ] {
+            assert_eq!(cli_refusal(argv).map(|(code, _)| code), code, "{argv}");
+            let flow = json!({"edges":[{"acts":[{"kind":"cli","role":"exec","name":argv}]}]});
+            let found: Vec<_> = findings(&flow).into_iter().map(|f| (f.0, f.1)).collect();
+            let expected: Vec<_> = code
+                .map(|code| (code, "/edges/0/acts/0".to_owned()))
+                .into_iter()
+                .collect();
+            assert_eq!(found, expected, "{argv}");
+            if let Some(code) = code {
+                let refused = command(Path::new("."), argv).unwrap_err();
+                assert!(refused.starts_with(code), "{argv}: {refused}");
+            }
+        }
+    }
+
+    /// #2187 gap 4: a program is found only through absolute PATH entries outside the project;
+    /// one found nowhere there is refused with a stable code instead of being looked up anyway.
+    #[test]
+    fn a_cli_program_resolves_only_through_the_pinned_path() {
+        let project = tempfile::tempdir().unwrap();
+        let inside = project.path().join("bin");
+        std::fs::create_dir_all(&inside).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let path = std::env::join_paths([
+            PathBuf::from("relative-bin"),
+            inside.clone(),
+            outside.path().to_path_buf(),
+        ])
+        .unwrap();
+        let dirs = pinned_path(project.path(), Some(path));
+        assert_eq!(dirs, vec![outside.path().to_path_buf()]);
+        let refused = command(project.path(), "graphhelm-absent-program-2187").unwrap_err();
+        assert!(
+            refused.starts_with("flow.cli_program_unresolved"),
+            "{refused}"
+        );
+    }
+
+    /// #2187 gap 1: the step does not inherit the Runtime's environment. The test process carries
+    /// variables outside the kept list (Cargo sets `CARGO_*` for every test); none reaches the
+    /// child.
+    #[test]
+    fn a_cli_step_sees_only_the_kept_environment() {
+        assert!(std::env::vars().any(|(key, _)| key.starts_with("CARGO")));
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join("s")).unwrap();
+        std::fs::write(project.path().join("s/env.sh"), "env\n").unwrap();
+        let seen = command(project.path(), "sh s/env.sh").unwrap();
+        assert_eq!(seen.exit, Some(0), "{}", seen.stderr);
+        for line in seen.body.lines() {
+            let key = line.split_once('=').map_or(line, |(key, _)| key);
+            let upper = key.to_ascii_uppercase();
+            assert!(
+                !upper.starts_with("CARGO") && !upper.starts_with("RUST"),
+                "inherited {key}"
+            );
+        }
+        assert!(seen.body.lines().any(|line| line.starts_with("PATH=")));
+    }
+
+    /// #2187 gap 5: a Python step runs with `-E -s -B`, and a module planted at the project root
+    /// (outside the script's checked directory) is not importable from the script.
+    #[test]
+    fn a_python_step_cannot_import_from_outside_its_directory() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join("d")).unwrap();
+        std::fs::write(project.path().join("planted2187.py"), "print('PLANTED')\n").unwrap();
+        std::fs::write(
+            project.path().join("d/run.py"),
+            "import sys\n\
+             print(*(int(f) for f in (sys.flags.ignore_environment, sys.flags.no_user_site, sys.flags.dont_write_bytecode)))\n\
+             try:\n    import planted2187\nexcept ImportError:\n    print('blocked')\n",
+        )
+        .unwrap();
+        let seen = command(project.path(), "python d/run.py").unwrap();
+        assert_eq!(seen.exit, Some(0), "{}", seen.stderr);
+        assert_eq!(
+            seen.body.split_whitespace().collect::<Vec<_>>(),
+            ["1", "1", "1", "blocked"]
+        );
     }
 }

@@ -49,6 +49,11 @@ expected verdict, you are not blind: say so and do not review.
    permissions, security, compatibility or the plan selector itself. Name what you reused and what
    you reran, each command and its result, and the size of each population (for example, how many
    test files ran).
+   **Await the checkout before any proof.** A checkout, fetch or reset that returns a live or
+   background session is not finished: wait for it to exit, then read `git rev-parse HEAD` and an
+   empty `git status --short`, and pass that full sha to the runner as `--head`. A run started
+   while the head is still moving ends `incomplete` ("HEAD changed while running") and is not
+   evidence; rerun it with a new `--output` (#2030).
 3. **List only the values in `KEEL.md` that do not hold** on the diff, plus every value the
    card's risk row names, whether it holds or not. A value marked `to build` is checked by reading.
 4. **Check every exception** the change adds: is the reason true, and does it expire? Refuse one

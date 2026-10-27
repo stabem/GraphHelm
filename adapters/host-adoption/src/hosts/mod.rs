@@ -283,7 +283,7 @@ fn run_contained(operation: &HostOperation) -> Result<HostReply, AdoptionError> 
         // are the remaining observable boundary for descendants that inherited them, and an EOF
         // on both pipes is required before the operation can return. A deadline reached with an
         // open pipe means cleanup is incomplete, even when TerminateJobObject succeeded.
-        return Err(cleanup_unconfirmed());
+        return Err(cleanup_unconfirmed("pipe-eof", deadline));
     }
     reply.success = !reply.timed_out && status.is_some_and(|s| s.success());
     // Dropping the pipes cannot block on a descendant holding a write handle. The retained handles
@@ -416,13 +416,13 @@ impl ProcessTree {
                 )
             };
             if queried == 0 {
-                return Err(cleanup_unconfirmed());
+                return Err(cleanup_unconfirmed("job-membership-query", deadline));
             }
             let list = unsafe { &*buffer.cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
             let assigned = list.NumberOfAssignedProcesses as usize;
             let listed = list.NumberOfProcessIdsInList as usize;
             if assigned > MEMBER_CAP || listed > MEMBER_CAP || listed != assigned {
-                return Err(cleanup_unconfirmed());
+                return Err(cleanup_unconfirmed("job-membership-count", deadline));
             }
             let process_ids = unsafe {
                 buffer
@@ -436,7 +436,7 @@ impl ProcessTree {
             for index in 0..listed {
                 let pid = unsafe { *process_ids.add(index) };
                 let Ok(pid) = u32::try_from(pid) else {
-                    return Err(cleanup_unconfirmed());
+                    return Err(cleanup_unconfirmed("job-member-pid", deadline));
                 };
                 pids.push(pid);
             }
@@ -461,18 +461,20 @@ impl ProcessTree {
                     if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
                         continue;
                     }
+                    let refused = cleanup_unconfirmed("open-member", deadline);
                     for handle in handles {
                         unsafe { CloseHandle(handle) };
                     }
-                    return Err(cleanup_unconfirmed());
+                    return Err(refused);
                 }
                 handles.push(handle);
             }
             if unsafe { TerminateJobObject(self.0, 1) } == 0 {
+                let refused = cleanup_unconfirmed("terminate-job", deadline);
                 for handle in handles {
                     unsafe { CloseHandle(handle) };
                 }
-                return Err(cleanup_unconfirmed());
+                return Err(refused);
             }
             let mut complete = true;
             for handle in handles {
@@ -485,18 +487,30 @@ impl ProcessTree {
                 }
             }
             if !complete {
-                return Err(cleanup_unconfirmed());
+                return Err(cleanup_unconfirmed("member-exit-wait", deadline));
             }
             pids = query_members()?;
             if !pids.is_empty() && Instant::now() >= deadline {
-                return Err(cleanup_unconfirmed());
+                return Err(cleanup_unconfirmed("members-remain", deadline));
             }
         }
     }
 }
 
+/// #1974: the refusal names, on stderr, which fail-closed exit refused confirmation, the calling
+/// thread's last Win32 error and how far from the operation deadline it was, so a refusal under
+/// load can be told apart from an API failure. No path, pid, handle or secret is printed. The last
+/// error is meaningful only for the API stages; the others print whatever the thread last set.
 #[cfg(windows)]
-fn cleanup_unconfirmed() -> AdoptionError {
+fn cleanup_unconfirmed(stage: &str, deadline: Instant) -> AdoptionError {
+    let win32 = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+    let now = Instant::now();
+    let budget = if now >= deadline {
+        format!("{} ms past the deadline", (now - deadline).as_millis())
+    } else {
+        format!("{} ms before the deadline", (deadline - now).as_millis())
+    };
+    eprintln!("host.cleanup unconfirmed at {stage} (win32 {win32}, {budget})");
     AdoptionError {
         reason: AdoptionReason::HostCleanupUnconfirmed,
     }

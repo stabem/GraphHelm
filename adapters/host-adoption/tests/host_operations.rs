@@ -344,6 +344,23 @@ fn timeout_includes_termination_and_inherited_pipe_collection() {
     assert!(start.elapsed() < std::time::Duration::from_secs(3));
 }
 
+/// #1974: a termination that starts with no budget left is refused, never reported as closed.
+/// Forced deterministically with a 1 ms operation budget (the loaded-host shape: the poll thread
+/// reaches termination after the deadline), instead of waiting for a loaded machine to starve it.
+#[test]
+#[cfg(windows)]
+fn termination_started_after_the_deadline_fails_closed() {
+    let child = tempfile::tempdir().unwrap();
+    let path = child.path().join("hang.json");
+    std::fs::write(&path, br#"{"hang":true}"#).unwrap();
+    let (_temp, op) = fixture(serde_json::json!({"descendant":true,"childInput":path}), 1);
+    let error = run_host(&op).unwrap_err();
+    assert_eq!(
+        error.reason,
+        graphhelm_protocols::adoption::AdoptionReason::HostCleanupUnconfirmed
+    );
+}
+
 #[test]
 fn only_accepted_claude_plugin_ids_change() {
     use graphhelm_host_adoption::hosts::claude::disable_plugins;

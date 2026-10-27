@@ -422,8 +422,11 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
             stale = (isinstance(consumed, dict) and
                      consumed.get("reason") == "stale_rendezvous" and
                      not data.get("misBurn"))
+            # #2152: a ring aimed at this lane whose byte never reached the pipe is still a ring;
+            # without this the rewake heard it only at the lease's maturity or its fallback.
+            missed = data.get("missedRing") is True if isinstance(data, dict) else False
         except (TypeError, ValueError):
-            stale = False
+            stale = missed = False
         if result.returncode not in (0, 2, 3) and not stale:
             failures += 1
             tail = " ".join((getattr(result, "stderr", None) or "").split())[-STDERR_TAIL:]
@@ -439,7 +442,7 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
         else:
             failures = 0
             exit_reason = "heartbeat_stale"
-            if result.returncode == 0:
+            if result.returncode == 0 or stale or missed:
                 try:
                     _rang_path(payload, bound, host).touch()
                 except OSError:

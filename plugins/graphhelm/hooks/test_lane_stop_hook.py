@@ -1263,10 +1263,18 @@ class LaneStopTests(unittest.TestCase):
             _out, err = child.communicate(timeout=25 * time_scale())
         except subprocess.TimeoutExpired:
             self.fail("an idle lane was not woken by a note addressed to it")
+        latency = time.monotonic() - asked
         self.assertEqual(child.returncode, 2, err)
         self.assertIn("addressed to your lane", err)
-        self.assertLess(time.monotonic() - asked, lane_stop_hook_module().REWAKE_FALLBACK_SECONDS,
-                        "woken by the waiter's ring, not by the fallback scan")
+        # #2152: the wake carries the note's own text, so the lane can act on it directly.
+        self.assertIn("status-1: Status please", err)
+        print(f"rewake latency after the note: {latency:.2f}s", flush=True)
+        self.assertLess(latency, 10 * time_scale(), "woken within seconds of the note")
+        # #2152: the waiter (one process) touched the very file this rewake (another) polls, and
+        # the scan it caused left its line: trigger=ring, not the fallback.
+        logs = list(self.hook_state_dir.glob("*.rewake.log"))
+        self.assertEqual(len(logs), 1, logs)
+        self.assertRegex(logs[0].read_text(encoding="utf-8").splitlines()[-1], r" trigger=ring outcome=wake ms=\d+$")
         # Woken once for that note: the next rewake does not repeat it, but a new ask wakes it.
         again = self.rewake()
         self.note("room-1")
@@ -1275,6 +1283,24 @@ class LaneStopTests(unittest.TestCase):
         self.note("status-2", to="codex-4")
         _out, err = again.communicate(timeout=25 * time_scale())
         self.assertEqual(again.returncode, 2, err)
+
+    def test_a_failed_rewake_scan_is_logged_and_retried_within_seconds(self):
+        # #2152: a scan that raised used to vanish (`except Exception: continue`) and the lane
+        # waited for the next ring or the 30 s fallback. Now it leaves a line naming the exception
+        # class and is retried after REWAKE_RETRY_SECONDS.
+        module = lane_stop_hook_module()
+        self.assertEqual(self.stop(MANIFESTS[0]), [])
+        found = {"note-1": {"kind": {"data": {}}}}
+        with mock.patch.dict(os.environ, self.env, clear=True),                 mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.5),                 mock.patch.object(module, "unanswered_events", side_effect=[TimeoutError("slow"), found]),                 mock.patch.object(sys, "stderr", io.StringIO()) as err:
+            started = time.monotonic()
+            code = module.rewake({"cwd": self.tmp.name, "session_id": "retry-session"})
+            elapsed = time.monotonic() - started
+        self.assertEqual(code, 2)
+        self.assertIn("note-1: (text unavailable", err.getvalue())
+        self.assertLess(elapsed, 0.5 + module.REWAKE_RETRY_SECONDS + 2 * time_scale())
+        lines = next(self.hook_state_dir.glob("*.rewake.log")).read_text(encoding="utf-8").splitlines()
+        self.assertRegex(lines[0], r" trigger=fallback outcome=error ms=\d+ error=TimeoutError$")
+        self.assertRegex(lines[1], r" trigger=retry outcome=wake ms=\d+$")
 
     def test_no_addressed_note_allows_stop(self):
         self.note("other-1", to="codex-5")

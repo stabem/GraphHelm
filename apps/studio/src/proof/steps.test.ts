@@ -146,6 +146,7 @@ describe("a run that waits", () => {
     expect(liveCard(flow, held)?.text).toBe("waits for your confirmation");
     const last = { ranAt: "t", reason: null, kind: "preview" as const, flowChanged: false, status: "failed" as const };
     expect(lastRunChip({ ...last, failingStep: { kind: "edge", id: "list.item", result: "skipped", reason: "review_needed" } }).text).toBe("waits for review");
+    expect(lastRunChip({ ...last, status: "held", failingStep: null }).text).toBe("waiting");
     expect(lastRunChip({ ...last, failingStep: { kind: "edge", id: "list.item", result: "fail", reason: null } }).text).toBe("✕ failed · preview, not proof");
   });
 });

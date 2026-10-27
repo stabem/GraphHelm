@@ -192,7 +192,8 @@ fn a_killed_runtime_comes_back_and_a_clean_stop_does_not_restart() {
     );
 }
 
-// #1963 review: after a #1523 handover the successor owns the lock before the supervisor looks.
+// #1963 review: after a #1523 handover the successor owns the lock before the supervisor looks
+// (forced by the #1964 seam, not left to the race).
 // The supervisor must keep watching it, not read the held lock as a stop and close its
 // kill-on-close job under the successor. Past the old 60 s settle window, both must still live,
 // and a clean stop of the successor must still end the supervisor.
@@ -220,6 +221,9 @@ fn a_handed_over_successor_and_its_supervisor_outlive_the_settle_window() {
         .args(["--key-id", "signal-key", "--handover-install"])
         .arg(&install)
         .env("GRAPHHELM_EVENTS_KEY", KEY_HEX)
+        // #1964: the old Runtime exits only once the successor holds the lock, so the supervisor
+        // always meets the held-lock path instead of winning the race on a fast machine.
+        .env("GRAPHHELM_TEST_EXIT_AFTER_TAKEOVER", "1")
         .env("GRAPHHELM_TEST_SHUTDOWN_FILE", &fixture.shutdown)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

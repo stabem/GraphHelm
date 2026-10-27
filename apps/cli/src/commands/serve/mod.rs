@@ -984,6 +984,7 @@ async fn serve_forever(
     }
     let drain_signal = handover_signal.clone();
     let handed_over_at_end = handover_signal.clone();
+    let lifecycle_events = state.events.to_path_buf();
     let app = build_router(state);
     let served = axum::serve(listener, app).with_graceful_shutdown(async move {
         tokio::select! {
@@ -1002,8 +1003,29 @@ async fn serve_forever(
         () = drained => Ok(()),
     }
     .map_err(|_| serve_invalid("the server loop ended unexpectedly", "/"));
-    lifecycle.finish(result.is_ok(), *handed_over_at_end.borrow())?;
+    let handed = *handed_over_at_end.borrow();
+    lifecycle.finish(result.is_ok(), handed)?;
+    drop(lifecycle);
+    if handed {
+        exit_after_takeover(&lifecycle_events).await;
+    }
     result
+}
+
+/// #1964: isolated integration harness only. With `GRAPHHELM_TEST_EXIT_AFTER_TAKEOVER` set, a
+/// handed-over Runtime that has released its lifecycle lock does not exit until a successor holds
+/// that lock (bounded), so a supervisor deterministically finds the lock still held when its child
+/// exits. Release builds have no such seam and exit at once.
+async fn exit_after_takeover(events: &Path) {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("GRAPHHELM_TEST_EXIT_AFTER_TAKEOVER").is_some() {
+        let deadline = Instant::now() + handover::TAKEOVER_DEADLINE;
+        while lifecycle::ending(events).is_some() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = events;
 }
 
 /// #1980: the stores whose prefix cache `serve` warms at start: its own events directory and, when

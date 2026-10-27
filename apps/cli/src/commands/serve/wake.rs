@@ -51,32 +51,60 @@ pub(crate) struct DueLease {
     pub(crate) armed_at_sequence: u64,
 }
 
-/// Writes the one content-free byte. `Rung` when it crossed; `StaleRendezvous` for every
-/// failure shape (missing pipe is the designed one — the sleeper died; anything else is
-/// equally a dead rendezvous from the ring's point of view).
-#[cfg(windows)]
+/// How long a ring waits for a rendezvous that is not there yet (#1058, #1118).
+///
+/// A sleeper arms its lease FIRST and creates the rendezvous after (it must: the rendezvous
+/// id is read back from the lease). An append in that window used to find no rendezvous and
+/// burn the lease `stale_rendezvous` at once, and the arm's own sweep did the same to a lease
+/// armed below an ask that had already landed: the sleeper then blocked on a dead lease and
+/// re-armed past the ask, which never rang. Retrying the open for a short bound lets a sleeper
+/// that is still starting be rung; a sleeper that really died is burned once the bound passes.
+/// The sweep is fire-and-forget, so the wait never delays the route that triggered it.
+const RENDEZVOUS_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+const RENDEZVOUS_RETRY: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Rings once the rendezvous can be opened, or answers `StaleRendezvous` when it still cannot
+/// be after [`RENDEZVOUS_GRACE`].
 async fn ring(rendezvous_id: &str) -> WakeConsumeReason {
+    let deadline = tokio::time::Instant::now() + RENDEZVOUS_GRACE;
+    loop {
+        match ring_once(rendezvous_id).await {
+            Some(reason) => return reason,
+            None if tokio::time::Instant::now() >= deadline => {
+                return WakeConsumeReason::StaleRendezvous;
+            }
+            None => tokio::time::sleep(RENDEZVOUS_RETRY).await,
+        }
+    }
+}
+
+/// One attempt to write the one content-free byte. `Rung` when it crossed, `StaleRendezvous`
+/// when the rendezvous opened but the write failed, `None` when it could not be opened (not
+/// created yet, or the sleeper died): the caller decides whether to try again.
+#[cfg(windows)]
+async fn ring_once(rendezvous_id: &str) -> Option<WakeConsumeReason> {
     use tokio::io::AsyncWriteExt;
     let path = rendezvous_path(rendezvous_id);
     match tokio::net::windows::named_pipe::ClientOptions::new().open(&path) {
-        Ok(mut client) => match client.write_all(&[1_u8]).await {
+        Ok(mut client) => Some(match client.write_all(&[1_u8]).await {
             Ok(()) => WakeConsumeReason::Rung,
             Err(_) => WakeConsumeReason::StaleRendezvous,
-        },
-        Err(_) => WakeConsumeReason::StaleRendezvous,
+        }),
+        // Absent or busy: nothing was written, so it may be tried again.
+        Err(_) => None,
     }
 }
 
 #[cfg(not(windows))]
-async fn ring(rendezvous_id: &str) -> WakeConsumeReason {
+async fn ring_once(rendezvous_id: &str) -> Option<WakeConsumeReason> {
     use tokio::io::AsyncWriteExt;
     let path = rendezvous_path(rendezvous_id);
     match tokio::net::UnixStream::connect(&path).await {
-        Ok(mut stream) => match stream.write_all(&[1_u8]).await {
+        Ok(mut stream) => Some(match stream.write_all(&[1_u8]).await {
             Ok(()) => WakeConsumeReason::Rung,
             Err(_) => WakeConsumeReason::StaleRendezvous,
-        },
-        Err(_) => WakeConsumeReason::StaleRendezvous,
+        }),
+        Err(_) => None,
     }
 }
 
@@ -251,10 +279,19 @@ pub(super) async fn sweep(
     }
 
     // Phase 2: ring each rendezvous; the reason is what actually happened.
-    let mut consumptions = Vec::with_capacity(due.len());
+    // Concurrently: one sleeper still starting (or dead) must not hold up the others' rings.
+    let mut rings = tokio::task::JoinSet::new();
     for lease in due {
-        let reason = ring(&lease.rendezvous_id).await;
-        consumptions.push((lease, reason));
+        rings.spawn(async move {
+            let reason = ring(&lease.rendezvous_id).await;
+            (lease, reason)
+        });
+    }
+    let mut consumptions = Vec::with_capacity(rings.len());
+    while let Some(rung) = rings.join_next().await {
+        if let Ok(consumption) = rung {
+            consumptions.push(consumption);
+        }
     }
 
     // Phase 3 (blocking): record every consumption in one follow-up append — through the

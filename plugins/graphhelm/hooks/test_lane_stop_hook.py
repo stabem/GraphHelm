@@ -33,6 +33,13 @@ MANIFESTS = (HERE / "hooks.json", HERE / "codex-hooks.json",
              REPO / "plugins/graphhelm-codex-hooks/hooks/codex-hooks.json")
 
 
+def lane_stop_hook_module():
+    if str(HERE) not in sys.path:
+        sys.path.insert(0, str(HERE))  # lane_stop_hook imports its siblings bare, as the hosts run it
+    import lane_stop_hook
+    return lane_stop_hook
+
+
 def time_scale() -> int:
     """#1199: `GRAPHHELM_TEST_TIME_SCALE` (LANES.md §3) multiplies this file's wall-clock ceilings
     (the 300-note reminder budget, the Stop hang catcher) when the slot's outer script declares a
@@ -948,6 +955,8 @@ class LaneStopTests(unittest.TestCase):
         manifest = HERE / manifest
         for group in json.loads(manifest.read_text())["hooks"].get("Stop", []):
             for hook in group["hooks"]:
+                if hook.get("asyncRewake"):  # #1058: background rewake, driven by its own tests
+                    continue
                 name = re.search(r"/hooks/([a-z_]+\.py)", hook["command"]).group(1)
                 started = time.monotonic()
                 args = ["--host=codex"] if "--host=codex" in hook["command"] else []
@@ -1228,6 +1237,44 @@ class LaneStopTests(unittest.TestCase):
                         self.assertEqual(self.stop(manifest, active=True), [])
                     else:
                         self.assertEqual(self.stop(manifest), [])
+
+    def rewake(self, session="test-session"):
+        rewakes = [hook for group in json.loads((HERE / "hooks.json").read_text())["hooks"]["Stop"]
+                   for hook in group["hooks"] if hook.get("asyncRewake")]
+        self.assertEqual(len(rewakes), 1, "Claude registers one background rewake on Stop")
+        self.assertIn("/hooks/lane_stop_hook.py\" --rewake", rewakes[0]["command"])
+        child = subprocess.Popen([sys.executable, str(HERE / "lane_stop_hook.py"), "--rewake"], env=self.env,
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 text=True, creationflags=NO_WINDOW)
+        self.addCleanup(lambda: child.poll() is None and (child.kill(), child.wait(timeout=10)))
+        child.stdin.write(json.dumps({"cwd": self.tmp.name, "session_id": session}))
+        child.stdin.close()
+        return child
+
+    def test_an_idle_lane_is_woken_by_a_note_addressed_to_it(self):
+        # #1058: the journey. The lane's turn ends (Stop starts its waiter and the background
+        # rewake), it sits idle, the owner asks it; the rewake exits 2, which wakes the host,
+        # in seconds (the waiter's ring), not at the fallback scan.
+        self.assertEqual(self.stop(MANIFESTS[0]), [])
+        child = self.rewake()
+        self.note("status-1", to="codex-4")
+        asked = time.monotonic()
+        try:
+            _out, err = child.communicate(timeout=25 * time_scale())
+        except subprocess.TimeoutExpired:
+            self.fail("an idle lane was not woken by a note addressed to it")
+        self.assertEqual(child.returncode, 2, err)
+        self.assertIn("addressed to your lane", err)
+        self.assertLess(time.monotonic() - asked, lane_stop_hook_module().REWAKE_FALLBACK_SECONDS,
+                        "woken by the waiter's ring, not by the fallback scan")
+        # Woken once for that note: the next rewake does not repeat it, but a new ask wakes it.
+        again = self.rewake()
+        self.note("room-1")
+        time.sleep(2)
+        self.assertIsNone(again.poll(), "a note it was already woken for must not wake it again")
+        self.note("status-2", to="codex-4")
+        _out, err = again.communicate(timeout=25 * time_scale())
+        self.assertEqual(again.returncode, 2, err)
 
     def test_no_addressed_note_allows_stop(self):
         self.note("other-1", to="codex-5")

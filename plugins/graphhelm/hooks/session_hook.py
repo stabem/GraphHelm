@@ -291,6 +291,11 @@ def _heartbeat_path(payload: dict, bound: tuple[str, str, str, str, str | None],
     return state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".waiter.alive")
 
 
+def _rang_path(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> Path:
+    """Touched on every ring, so an idle host's rewake (lane_stop_hook --rewake) wakes at once."""
+    return state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".waiter.rang")
+
+
 def _waiter_log_path(session: str) -> Path:
     return _state_root() / f"{session}.waiter.log"
 
@@ -434,6 +439,11 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
         else:
             failures = 0
             exit_reason = "heartbeat_stale"
+            if result.returncode == 0:
+                try:
+                    _rang_path(payload, bound, host).touch()
+                except OSError:
+                    pass
         if not heartbeat.exists():
             return
         if stale:

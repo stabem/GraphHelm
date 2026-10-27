@@ -1613,6 +1613,20 @@ class ProtocolGoldens(unittest.TestCase):
         self.assertIn("graphhelm-protocols", whole)
 
 
+class SchemaBreakingChange(unittest.TestCase):
+    """#1816: a schema-only diff plans the test that refuses a breaking change (#1810)."""
+
+    def test_a_schema_change_plans_baseline_origin_and_other_files_do_not(self):
+        repo = Path(__file__).resolve().parents[2]
+        packages = rt.workspace(repo)
+        embeds = rt.embeds(repo, packages)
+        _, single, *_ = rt.reach(["schemas/journey-flow.schema.json"], packages, embeds, repo)
+        targets = {t[:2] for t in single}
+        self.assertIn(("graphhelm-schema-evolution", "baseline_origin"), targets)
+        _, single, *_ = rt.reach(["schemas/mcp-tools.json"], packages, embeds, repo)
+        self.assertNotIn(("graphhelm-schema-evolution", "baseline_origin"), {t[:2] for t in single})
+
+
 class RealWorkspace(unittest.TestCase):
     """#1608: the real args.rs reaches the whole CLI package, whose plan runs the help golden."""
 

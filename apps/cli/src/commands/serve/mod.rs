@@ -840,9 +840,12 @@ async fn serve_forever(
             Err(_) if successor && takeover.elapsed() < handover::TAKEOVER_DEADLINE => {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
-            Err(_) => {
+            Err(error) => {
                 return Err(serve_invalid(
-                    "the requested address could not be bound",
+                    &format!(
+                        "the requested address could not be bound ({})",
+                        bind_refusal(&error)
+                    ),
                     "/bind",
                 ));
             }
@@ -3968,6 +3971,16 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         diff |= x ^ y;
     }
     diff == 0
+}
+
+/// #1959: the operating system's own reason for a bind refusal, as its error kind and code, so a
+/// refusal names its cause (in use, permission, no buffer space) instead of one shared message.
+/// Neither carries a path, a secret or locale-dependent text.
+fn bind_refusal(error: &std::io::Error) -> String {
+    match error.raw_os_error() {
+        Some(code) => format!("{:?}, os error {code}", error.kind()),
+        None => format!("{:?}", error.kind()),
+    }
 }
 
 fn parse_loopback_bind(bind: &str) -> Result<SocketAddr, Failure> {

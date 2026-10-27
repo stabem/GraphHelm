@@ -1679,6 +1679,58 @@ fn a_non_loopback_bind_is_refused_fail_closed_before_anything_is_opened() {
     );
 }
 
+/// #1959: a bind the operating system refuses names the system's own reason. One shared message
+/// for every refusal left an intermittent Windows port-0 refusal without a cause; the diagnostic
+/// now carries the error kind and OS code (no path, no secret). The refusal is forced here by
+/// holding the requested loopback port, so it does not depend on load or timing.
+#[test]
+fn a_refused_bind_names_the_operating_system_reason() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = held.local_addr().unwrap().port();
+    let mut child = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+        .args(["serve", "--events", events.to_str().unwrap(), "--bind"])
+        .arg(format!("127.0.0.1:{port}"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let budget = scaled(Duration::from_secs(30));
+    let deadline = Instant::now() + budget;
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("serve did not refuse a held port within {budget:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    drop(held);
+    let mut stdout_text = String::new();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut stdout_text)
+        .unwrap();
+    assert!(!status.success(), "{stdout_text}");
+    let value: Value = serde_json::from_str(&stdout_text).unwrap_or_else(|error| {
+        panic!("stdout must be one JSON envelope ({error}): {stdout_text:?}")
+    });
+    let diagnostic = &value["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "GHCLI006_SERVE_INVALID", "{value}");
+    assert_eq!(diagnostic["path"], "/bind", "{value}");
+    let message = diagnostic["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("AddrInUse") && message.contains("os error "),
+        "the refusal must name the OS reason: {message}"
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Milestone 05a Task 2: the read surface — status and the paged events tail.
 //

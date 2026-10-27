@@ -141,7 +141,7 @@ fn require_activation_claim_directory() {
     });
     assert!(
         usable,
-        "activation-claim prerequisite missing: {path} must be a directory owned by uid {uid}          with mode 0700 (a login or systemd user session provides it); this host has none, so          the lifecycle commands cannot take their claim"
+        "activation-claim prerequisite missing: {path} must be a directory owned by uid {uid} with mode 0700 (a login or systemd user session provides it); this host has none, so the lifecycle commands cannot take their claim"
     );
 }
 

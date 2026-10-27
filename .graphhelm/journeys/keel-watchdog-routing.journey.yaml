@@ -13,13 +13,13 @@ screens:
     title: "The blocked check routes back, the corrected check advances to review"
     url: /report
     state: stable
-    expect: [{role: exit, name: "0", because: scenario.py exits 0 only when both routes happened as expected}, {role: stdout, name: keel.scope.path_outside_card, because: "the blocked diff touches a path outside the card, so the finding is keel.scope.path_outside_card"}, {role: stdout, name: blocked=routed-to-implement; corrected=advanced-to-review, because: the scenario prints this line only after the blocked check readied route-correction and the corrected check readied route-review}]
+    expect: [{role: exit, name: "0", because: scenario.py exits 0 only when both routes happened as expected}, {role: stdout, name: keel.scope.path_outside_card, because: "the blocked diff touches a path outside the card, so the finding is keel.scope.path_outside_card"}, {role: stdout, name: "\"afterBlocked\": {\"route-correction\": \"ready\", \"route-review\": null}", because: "after the blocked check's implement draft is approved, execution status shows route-correction ready and no route-review node, so the task went back to implement and not on to review"}, {role: stdout, name: "\"afterCorrected\": {\"route-review\": \"ready\"}", because: "after the corrected head passes and its review draft is approved, execution status shows route-review ready"}]
     scope: unknown
   - id: task-started
     title: A task starts with a scoped card
     url: /task
     state: stable
-    expect: [{role: stdout, name: blocked=routed-to-implement; corrected=advanced-to-review, because: "the scenario prints the same summary line from its start screen, since one command observes the whole route"}]
+    expect: [{role: exit, name: "0", because: "the run has started and no command has run yet, which is all a start screen of commands can show"}, {role: stdout, name: route-correction, absent: true, because: "no command has run yet, so nothing has routed the task: no route-correction node is shown"}]
     scope: unknown
 edges:
   - id: route-by-verdict

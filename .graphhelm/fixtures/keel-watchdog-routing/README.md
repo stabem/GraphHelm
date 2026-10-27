@@ -2,7 +2,7 @@
 
 This draft journey replays the five user steps of governed routing through the real CLI:
 
-1. `execution start` a held task on `examples/graphs/software-feature.yaml`.
+1. `execution start` a held task on `graph.yaml` (a copy of `examples/graphs/software-feature.yaml` kept beside the scenario, so a copy of the fixture needs no `examples/`).
 2. `keel check --route-proposal` on a diff with a path outside the card: exit 2, finding
    `keel.scope.path_outside_card`, a `keel.blocked` route proposal.
 3. `execution status` shows the implement draft pending; after its exact approval the
@@ -11,7 +11,7 @@ This draft journey replays the five user steps of governed routing through the r
    bind the published version by the safe hash `graph replay` shows (`expectedSafeHash`).
 5. After the review draft's approval, `route-review` is ready.
 
-Everything runs on a temporary local event store and keyring under this fixture, removed on exit.
+Everything runs on a temporary local event store and keyring under the system temp directory, removed on exit (a cleanup Windows refuses is ignored).
 The keyring key is a fixture constant; the shared Runtime at 127.0.0.1:8793 is never touched and
 `GRAPHHELM_EVENTS_KEY` from the caller is not passed through. Child processes are hidden on
 Windows and bounded by deadlines.

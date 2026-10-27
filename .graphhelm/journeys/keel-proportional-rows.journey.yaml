@@ -31,7 +31,7 @@ screens:
     title: Begin proportional guidance checks
     url: /
     state: stable
-    expect: [{role: exit, name: "0", because: "the fixture needs no setup command: the step only marks where the commands start, and exit 0 is the shell being ready"}]
+    expect: [{role: exit, name: "0", because: "the run has started and no command has run yet, which is all a start screen of commands can show"}, {role: stdout, name: "\"kind\":", absent: true, because: "no change has been sized yet, so no Keel row kind is shown"}]
     scope: unknown
 edges:
   - id: bounded-code.check

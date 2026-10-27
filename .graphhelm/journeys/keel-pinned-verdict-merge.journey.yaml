@@ -37,7 +37,7 @@ screens:
     title: A local review fixture is ready
     url: /
     state: stable
-    expect: [{role: exit, name: "0", because: "the fixture needs no setup command: the step only marks where the commands start, and exit 0 is the shell being ready"}]
+    expect: [{role: exit, name: "0", because: "the run has started and no command has run yet, which is all a start screen of commands can show"}, {role: stdout, name: "\"verdicts\":", absent: true, because: "no verdict check has run yet, so no verdict list exists"}]
     scope: unknown
 edges:
   - id: review.a

@@ -10,14 +10,51 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
+# #1943: every hook call starts an interpreter first, and on a busy host (or through the Windows
+# Store `python` alias) that start alone has taken seconds, so fixed 3-6 s deadlines failed hook
+# tests whose behavior was fine. A deadline is the hook's own budget plus a multiple of the
+# interpreter start measured at that moment; a hung hook still fails, only later, and no assertion
+# about what the hook does is relaxed.
+STARTUP_FACTOR = 20
+STARTUP_CAP_SECONDS = 60.0
+
+
+def startup_seconds():
+    """One bare interpreter start, measured now."""
+    began = time.monotonic()
+    subprocess.run([sys.executable, "-c", "pass"], capture_output=True, timeout=120,
+                   check=False, creationflags=NO_WINDOW)
+    return time.monotonic() - began
+
+
+def deadline(budget, startup=None):
+    """The test deadline for a hook step that has `budget` seconds of its own."""
+    measured = startup_seconds() if startup is None else startup
+    return budget + min(STARTUP_CAP_SECONDS, STARTUP_FACTOR * measured)
+
 
 SCRIPT = Path(__file__).with_name("session_hook.py")
+
+
+class Deadline(unittest.TestCase):
+    """#1943: the deadline grows with a measured slow start and stays bounded."""
+
+    def test_deadline_adds_a_bounded_multiple_of_the_measured_start(self):
+        self.assertEqual(deadline(6, startup=0.0), 6)
+        self.assertEqual(deadline(6, startup=0.5), 6 + STARTUP_FACTOR * 0.5)
+        self.assertEqual(deadline(6, startup=3600), 6 + STARTUP_CAP_SECONDS)
+
+    def test_a_hung_hook_still_fails_after_the_deadline(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            subprocess.run([sys.executable, "-c", "import time; time.sleep(30)"],
+                           timeout=deadline(0.2, startup=0.0), creationflags=NO_WINDOW)
 
 
 class RuntimeHandler(BaseHTTPRequestHandler):
@@ -613,7 +650,7 @@ class SessionHookTests(unittest.TestCase):
                     pid = int(marker.read_text(encoding="ascii"))
                     if os.name == "nt":
                         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                                       capture_output=True, timeout=5, creationflags=NO_WINDOW)
+                                       capture_output=True, timeout=deadline(5), creationflags=NO_WINDOW)
                     else:
                         os.kill(pid, signal.SIGTERM)
                     live.append(pid)
@@ -647,7 +684,7 @@ class SessionHookTests(unittest.TestCase):
                 result = subprocess.run(args,
                     input=json.dumps({"hook_event_name": "SessionStart", "session_id": "s1",
                                       "session_title": "just words here"}), text=True,
-                    capture_output=True, env=env, timeout=12, creationflags=NO_WINDOW)
+                    capture_output=True, env=env, timeout=deadline(12), creationflags=NO_WINDOW)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIsInstance(json.loads(result.stdout), dict)
                 self.assertIn("lane not bound: title has no lane id", result.stderr)
@@ -683,7 +720,7 @@ class SessionHookTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, str(SCRIPT), phase, "--host", host],
             input=json.dumps({"hook_event_name": event, "session_id": "session-123", **payload}),
-            text=True, capture_output=True, env=self.env, timeout=6, check=False, creationflags=NO_WINDOW
+            text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW
         )
 
     def test_unbound_start_is_silent_without_explicit_keel_opt_in(self):
@@ -697,7 +734,7 @@ class SessionHookTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "start", "--host", "claude", "--format", "portable"],
             input=json.dumps({"hook_event_name": "SessionStart", "session_id": "session-123"}),
-            text=True, capture_output=True, env=self.env, timeout=6, check=False, creationflags=NO_WINDOW
+            text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         report = json.loads(result.stdout)
@@ -727,7 +764,7 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(json.loads(end.stdout)["delivery"], "acknowledged")
         inspect = subprocess.run(
             [sys.executable, str(SCRIPT), "inspect", "--host", "third-party-agent"],
-            text=True, capture_output=True, env=self.env, timeout=6, check=False, creationflags=NO_WINDOW
+            text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW
         )
         report = json.loads(inspect.stdout)
         self.assertEqual(report["format"], "graphhelm-portable-v1")
@@ -779,7 +816,7 @@ class SessionHookTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(SCRIPT.with_name("lane_stop_hook.py"))],
             input=json.dumps({"hook_event_name": "Stop", "session_id": "session-123"}),
-            text=True, capture_output=True, env=self.env, timeout=6, creationflags=NO_WINDOW,
+            text=True, capture_output=True, env=self.env, timeout=deadline(6), creationflags=NO_WINDOW,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         arms = [item for item in RuntimeHandler.requests if item[1] == "/v1/executions/run-test/wake-lease"]
@@ -819,17 +856,17 @@ class SessionHookTests(unittest.TestCase):
         process.stdin.flush()
         release = threading.Timer(3.0, RuntimeHandler.get_release.set)
         try:
-            self.assertTrue(RuntimeHandler.get_started.wait(timeout=3))
+            self.assertTrue(RuntimeHandler.get_started.wait(timeout=deadline(3)))
             release.start()
             process.stdin.close()
             process.stdin = None
-            stdout, stderr = process.communicate(timeout=6)
+            stdout, stderr = process.communicate(timeout=deadline(6))
         finally:
             release.cancel()
             RuntimeHandler.get_release.set()
             if process.poll() is None:
                 process.kill()
-                process.communicate(timeout=6)
+                process.communicate(timeout=deadline(6))
         self.assertEqual((process.returncode, stderr), (0, ""))
         context = json.loads(stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("FRESH", context)
@@ -1006,15 +1043,15 @@ class SessionHookTests(unittest.TestCase):
         process.stdin = None
         release = threading.Timer(3.0, RuntimeHandler.post_release.set)
         try:
-            self.assertTrue(RuntimeHandler.post_started.wait(timeout=3))
+            self.assertTrue(RuntimeHandler.post_started.wait(timeout=deadline(3)))
             release.start()
-            stdout, stderr = process.communicate(timeout=10)
+            stdout, stderr = process.communicate(timeout=deadline(10))
         finally:
             release.cancel()
             RuntimeHandler.post_release.set()
             if process.poll() is None:
                 process.kill()
-                process.communicate(timeout=10)
+                process.communicate(timeout=deadline(10))
         self.assertEqual((process.returncode, stdout, stderr), (0, "", ""))
         state = next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json"))
         self.assertTrue(json.loads(state.read_text())["delivery"]["delivered"])
@@ -1072,7 +1109,7 @@ class SessionHookTests(unittest.TestCase):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "inspect", "--host", "claude", "--session-id", "session-123"],
-            text=True, capture_output=True, env=self.env, timeout=6, check=False, creationflags=NO_WINDOW
+            text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW
         )
         self.assertEqual(result.returncode, 0)
         report = json.loads(result.stdout)
@@ -1087,7 +1124,7 @@ class SessionHookTests(unittest.TestCase):
         root.mkdir(parents=True)
         (root / "oversized.json").write_text("x" * 100_000, encoding="utf-8")
         self.env["GRAPHHELM_TOKEN_FILE"] = str(Path(self.temp.name) / "missing-token")
-        result = subprocess.run([sys.executable, str(SCRIPT), "inspect", "--host", "claude"], text=True, capture_output=True, env=self.env, timeout=6, check=False, creationflags=NO_WINDOW)
+        result = subprocess.run([sys.executable, str(SCRIPT), "inspect", "--host", "claude"], text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
         self.assertEqual(result.returncode, 0)
         report = json.loads(result.stdout)
         self.assertEqual(report["localObservations"], [])
@@ -1102,12 +1139,12 @@ class SessionHookTests(unittest.TestCase):
         process.stdin.close()
         process.stdin = None
         try:
-            self.assertTrue(RuntimeHandler.post_started.wait(timeout=3), "first end never reached HTTP")
+            self.assertTrue(RuntimeHandler.post_started.wait(timeout=deadline(3)), "first end never reached HTTP")
             overlapping = self.run_hook("end")
             self.assertIn("unobserved", overlapping.stderr)
         finally:
             RuntimeHandler.post_release.set()
-            process.communicate(timeout=6)
+            process.communicate(timeout=deadline(6))
         self.assertEqual(self.run_hook("end").stderr, "")
         sent = [item for item in RuntimeHandler.requests if item[0] == "POST"]
         self.assertEqual(len(sent), 1)
@@ -1139,10 +1176,10 @@ class SessionHookTests(unittest.TestCase):
         process.stdin.close()
         process.stdin = None
         try:
-            self.assertTrue(RuntimeHandler.post_started.wait(timeout=3))
+            self.assertTrue(RuntimeHandler.post_started.wait(timeout=deadline(3)))
         finally:
             process.kill()
-            process.communicate(timeout=6)
+            process.communicate(timeout=deadline(6))
             RuntimeHandler.post_release.set()
         result = self.run_hook("end")
         self.assertEqual(result.stderr, "")
@@ -1156,7 +1193,7 @@ class SessionHookTests(unittest.TestCase):
         self.env["LOCALAPPDATA"] = str(Path(self.temp.name) / "local")
         self.run_hook("end")
         def inspect():
-            result = subprocess.run([sys.executable, str(SCRIPT), "inspect", "--host", "claude", "--session-id", "session-123"], env=self.env, capture_output=True, text=True, timeout=6, creationflags=NO_WINDOW)
+            result = subprocess.run([sys.executable, str(SCRIPT), "inspect", "--host", "claude", "--session-id", "session-123"], env=self.env, capture_output=True, text=True, timeout=deadline(6), creationflags=NO_WINDOW)
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
         report = inspect()

@@ -1996,6 +1996,30 @@ class StudioInstallCheck(unittest.TestCase):
             run.assert_not_called()
 
 
+class WindowsNpmPreparationIdentity(unittest.TestCase):
+    """#1789: a Windows `npm` is the npm.cmd batch wrapper; its identity is the npm CLI script beside the wrapper."""
+
+    @unittest.skipUnless(os.name == "nt" and __import__("shutil").which("node"), "OBSERVER_MISSING: native Windows PATH/PATHEXT executable launch")
+    def test_npm_cmd_wrapper_is_attested_through_the_npm_cli_script(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as raw:
+            bin_dir = Path(raw) / "nodejs"
+            (bin_dir / "node_modules/npm/bin").mkdir(parents=True)
+            shutil.copyfile(shutil.which("node"), bin_dir / "node.exe")
+            (bin_dir / "npm.cmd").write_text("@echo off", encoding="utf-8")
+            (bin_dir / "node_modules/npm/bin/npm-cli.js").write_text("// npm", encoding="utf-8")
+            env = {**os.environ, "PATH": str(bin_dir), "PATHEXT": ".EXE;.CMD"}
+            capture = rr._ExecutableCapture(env)
+            with self.assertRaisesRegex(RuntimeError, "batch invocation"):
+                capture._program("npm", Path(raw))
+            identity = capture._identity(capture._npm(Path(raw)), Path(raw))
+            self.assertTrue(identity["invocationPath"].endswith("npm-cli.js"))
+            self.assertEqual(len(identity["sha256"]), 64)
+            (bin_dir / "node_modules/npm/bin/npm-cli.js").unlink()
+            with self.assertRaisesRegex(RuntimeError, "batch invocation"):
+                rr._ExecutableCapture(env)._npm(Path(raw))
+
+
 class SlotProgramSpelling(unittest.TestCase):
     """#1842: a resolved `cargo.EXE` reaches the slot as `cargo.exe`, which every slot admits."""
 

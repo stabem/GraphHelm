@@ -28,9 +28,14 @@ SCAN_CHILD_TIMEOUT_SECONDS = 6.0
 
 
 def pending(payload: dict | None = None) -> bool:
+    return bool(unanswered(payload))
+
+
+def unanswered(payload: dict | None = None) -> set[str]:
+    """The signal ids of operator notes addressed to this lane that it has not answered."""
     bound = binding(payload)
     if bound is None:
-        return False
+        return set()
     execution, token_file, url, _origin, _node = bound
     lane = os.environ.get("GRAPHHELM_ACTOR", "")
     if not lane and payload is not None:
@@ -87,7 +92,7 @@ def pending(payload: dict | None = None) -> bool:
             if to == lane:
                 unanswered.add(signal_id)
         if after >= head:
-            return bool(unanswered)
+            return unanswered
     raise ValueError("note scan exceeded bound")
 
 
@@ -228,7 +233,81 @@ def evaluate(payload: dict, host: str = "claude") -> str | None:
     return NOTES_REASON if scan_status(payload) == 1 else None
 
 
+# #1058: how often an idle lane's rewake looks for its waiter's ring, and how long it goes
+# without one before it scans the notes anyway (a waiter that died must not make it deaf).
+REWAKE_POLL_SECONDS = 0.25
+REWAKE_FALLBACK_SECONDS = 30.0
+REWAKE_REASON = ("GraphHelm: a note addressed to your lane arrived while you were idle. Read the notes "
+                 "addressed to you, act on them, then record your operator_note reply with replyTo.")
+
+
+def _mtime(path: Path) -> int | None:
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+def _read_notified(path: Path) -> set[str]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return {item for item in value if isinstance(item, str)} if isinstance(value, list) else set()
+
+
+def rewake(payload: dict, host: str = "claude") -> int:
+    """#1058: the host runs this in the background after every Stop (`asyncRewake`); exit 2 wakes
+    the idle host. It waits for the lane waiter's ring (or the fallback interval), then scans the
+    notes and wakes for an unanswered note addressed to this lane that no earlier rewake already
+    woke it for, so a note the lane chose to leave is not repeated every interval. The Stop that
+    started it has already reminded the lane of what was waiting then. A newer Stop's rewake
+    supersedes this one."""
+    bound = binding(payload)
+    lane = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
+    session = payload.get("session_id")
+    if (bound is None or not lane or not ID.fullmatch(lane)
+            or not isinstance(session, str) or not ID.fullmatch(session)):
+        return 0
+    base = state_path(bound[0], session, host, bound[3])
+    owner, rang = base.with_suffix(".rewake.pid"), base.with_suffix(".waiter.rang")
+    notified = base.with_suffix(".rewake.notified")
+    me = str(os.getpid())
+    owner.parent.mkdir(parents=True, exist_ok=True)
+    owner.write_text(me, encoding="ascii")
+    seen = _mtime(rang)
+    next_scan = time.monotonic() + REWAKE_FALLBACK_SECONDS
+    while True:
+        time.sleep(REWAKE_POLL_SECONDS)
+        try:
+            if owner.read_text(encoding="ascii") != me:
+                return 0
+        except OSError:
+            return 0
+        now = _mtime(rang)
+        if now == seen and time.monotonic() < next_scan:
+            continue
+        seen, next_scan = now, time.monotonic() + REWAKE_FALLBACK_SECONDS
+        try:
+            waiting = unanswered(payload)
+        except Exception:
+            continue
+        if waiting - _read_notified(notified):
+            try:
+                notified.write_text(json.dumps(sorted(waiting)), encoding="utf-8")
+            except OSError:
+                pass
+            print(REWAKE_REASON, file=sys.stderr)
+            return 2
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--rewake"]:
+        try:
+            payload = hook_input()
+        except (ValueError, OSError):
+            return 0
+        return rewake(payload, "claude")
     if sys.argv[1:] == ["--scan"]:  # kept for callers of the old child form
         try:
             payload = hook_input()

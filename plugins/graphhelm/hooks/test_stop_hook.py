@@ -117,10 +117,11 @@ class HookProcessCount(unittest.TestCase):
         return counted, out.getvalue()
 
     def test_the_claude_stop_is_one_registered_process(self):
-        stops = [group for group in json.loads((HERE / "hooks.json").read_text())["hooks"]["Stop"]
-                 for _hook in group["hooks"]]
-        self.assertEqual(len(stops), 1, "Claude registers one Stop process")
-        self.assertIn("/hooks/stop_hook.py", stops[0]["hooks"][0]["command"])
+        # The #1058 rewake runs in the background (`asyncRewake`): it never holds the turn end.
+        stops = [hook for group in json.loads((HERE / "hooks.json").read_text())["hooks"]["Stop"]
+                 for hook in group["hooks"] if not hook.get("asyncRewake")]
+        self.assertEqual(len(stops), 1, "Claude registers one blocking Stop process")
+        self.assertIn("/hooks/stop_hook.py", stops[0]["command"])
 
     def test_a_stop_starts_no_interpreter_and_a_warm_stop_three_git_calls(self):
         first, _ = self.stop()

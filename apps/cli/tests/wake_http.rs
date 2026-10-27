@@ -2176,7 +2176,9 @@ fn a_missing_rendezvous_consumes_the_lease_without_a_serve_error() {
         "a wake failure must never fail the append: {reply}"
     );
 
-    let deadline = Instant::now() + scaled(Duration::from_secs(5));
+    // The serve waits a bounded grace (5 s, #1058) for a rendezvous that may still be starting
+    // before it burns the lease, so this receipt comes after that grace.
+    let deadline = Instant::now() + scaled(Duration::from_secs(15));
     loop {
         let kinds = kinds_after(&events, before);
         if kinds.iter().any(|kind| kind == "wake_lease_consumed") {
@@ -2188,6 +2190,40 @@ fn a_missing_rendezvous_consumes_the_lease_without_a_serve_error() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// #1058/#1118: a sleeper arms its lease first and creates its rendezvous after. An append that
+/// lands in that gap used to find no rendezvous and burn the lease `stale_rendezvous`, so the
+/// sleeper parked on a dead lease and the append never rang it. It must ring once it parks.
+#[cfg(windows)]
+#[test]
+fn an_append_before_the_sleeper_parks_rings_it_once_it_parks() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-wake-late");
+    let rendezvous = fixture_scoped_rendezvous_id("rvz-late-1", &events);
+    arm_lease(&events, "exec-wake-late", &rendezvous, head(&events));
+    let (_guard, address, token) = serve(&events);
+
+    let before = head(&events);
+    let (status, reply) = post_json(
+        &address,
+        &token,
+        "/v1/executions/exec-wake-late/signal",
+        "wake-late-1",
+        &signal_body("signal-late-1"),
+    );
+    assert_eq!(status, 200, "{reply}");
+    // The sleeper is still starting when the append lands; it parks well inside the grace.
+    std::thread::sleep(Duration::from_millis(1500));
+    let sleeper = Sleeper::arm("rvz-late-1", &events);
+    let (bytes, _) = sleeper.wait();
+    assert_eq!(
+        bytes,
+        vec![1_u8],
+        "an append before the sleeper parked must ring it once it parks: {}",
+        missing_ring_diagnosis(&events, before)
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

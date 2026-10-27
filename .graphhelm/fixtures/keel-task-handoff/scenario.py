@@ -16,6 +16,8 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[3]
+# The graph ships beside the scenario, so a copy of the fixture runs without examples/.
+GRAPH = Path(__file__).resolve().parent / "graph.yaml"
 ADAPTERS = {
     "claude": ROOT / "plugins" / "graphhelm" / "hooks" / "task_handoff.py",
     "codex": ROOT / "plugins" / "graphhelm-codex-hooks" / "hooks" / "task_handoff.py",
@@ -382,8 +384,9 @@ def _discard_fixture_hook_cache(owned: Path) -> None:
 def run(wrong_store_only: bool = False) -> dict:
     binary = _runtime_binary()
     runtime_identity = _runtime_identity(binary)
-    fixture_dir = Path(__file__).resolve().parent
-    with tempfile.TemporaryDirectory(prefix="graphhelm-keel-handoff-", dir=fixture_dir) as temp:
+    # The scratch lives under the short system temp dir, not beside a deep checkout, and a cleanup
+    # that Windows refuses (WinError 145) does not turn a finished scenario red.
+    with tempfile.TemporaryDirectory(prefix="kth-", ignore_cleanup_errors=True) as temp:
         owned = Path(temp)
         store = owned / "store"
         keyring = owned / "keyring"
@@ -414,7 +417,7 @@ def run(wrong_store_only: bool = False) -> dict:
             env = runtime_env.copy()
             env["GRAPHHELM_CLI"] = str(binary)
             setup = subprocess.run([str(binary), "execution", "start", "--file",
-                                    str(ROOT / "examples/graphs/software-feature.yaml"),
+                                    str(GRAPH),
                                     "--events", str(store), "--execution", EXECUTION,
                                     "--mode", "manual", "--held"],
                                    cwd=ROOT, env=env, capture_output=True, text=True,
@@ -490,6 +493,7 @@ def run(wrong_store_only: bool = False) -> dict:
                     raise ScenarioFailure("empty-store negative control unexpectedly received a handoff")
                 if negative.get("missingOffer") is not True:
                     raise ScenarioFailure("empty-store rejection did not identify the original offer as missing")
+                empty_store_missing_offer = negative.get("missingOffer")
                 if wrong_store_only:
                     raise ScenarioFailure(
                         f"continuity assertion failed: original offer {offer_id} and its sealed evidence "
@@ -497,7 +501,7 @@ def run(wrong_store_only: bool = False) -> dict:
                     )
                 empty_setup = subprocess.run(
                     [str(binary), "execution", "start", "--file",
-                     str(ROOT / "examples/graphs/software-feature.yaml"), "--events", str(empty),
+                     str(GRAPH), "--events", str(empty),
                      "--execution", EXECUTION, "--mode", "manual", "--held"],
                     cwd=ROOT, env=runtime_env, capture_output=True, text=True,
                     timeout=CHILD_TIMEOUT, creationflags=NO_WINDOW)
@@ -670,6 +674,8 @@ def run(wrong_store_only: bool = False) -> dict:
                     "runtimeCli": runtime_identity,
                     "receiptId": first["receiptId"], "negativeControl": "missing offer rejected",
                     "repeatReceive": second["state"], "wrongRecipient": "rejected",
+                    "wrongRecipientReason": wrong.get("reason"),
+                    "emptyStoreMissingOffer": empty_store_missing_offer,
                     "sourceBriefingSequence": first["offeredBriefing"]["asOfSequence"],
                     "offerSequence": offer_event.get("sequence"),
                     "pendingDuty": pending_duty,

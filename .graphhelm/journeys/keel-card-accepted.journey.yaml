@@ -25,22 +25,21 @@ screens:
     title: A contributor change is ready for its scope check
     url: /
     state: stable
-    expect: [{role: exit, name: "0", because: "the fixture needs no setup command: the step only marks where the commands start, and exit 0 is the shell being ready"}]
+    expect: [{role: exit, name: "0", because: "the run has started and no command has run yet, which is all a start screen of commands can show"}, {role: stdout, name: keel.scope.path_outside_card, absent: true, because: "no check has run yet, so no refusal has named a path outside the card"}]
     scope: unknown
 edges:
+  - id: accepted.refuse-out-of-scope
+    from: accepted
+    to: refused
+    why: "A change that touches a file outside the card is refused and the stray file is named, so the contributor knows what to fix."
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-card-accepted/run.py outside}
   - id: start.accept-in-scope
     from: start
     to: accepted
     why: "A change that stays inside its Keel card's paths passes the scope check, so in-scope work is never blocked."
     acts:
       - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-card-accepted/run.py inside}
-  - id: start.refuse-out-of-scope
-    from: accepted
-    to: refused
-    why: "A change that touches a file outside the card is refused and the stray file is named, so the contributor knows what to fix."
-    acts:
-      - {kind: cli, role: exec, name: python .graphhelm/fixtures/keel-card-accepted/run.py outside}
 paths:
-  main: [start.accept-in-scope, start.refuse-out-of-scope]
-  refusal-only: [start.accept-in-scope, start.refuse-out-of-scope]
+  main: [start.accept-in-scope, accepted.refuse-out-of-scope]
 drift: []

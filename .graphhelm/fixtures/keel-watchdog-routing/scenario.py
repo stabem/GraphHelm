@@ -20,8 +20,8 @@ TIMEOUT_SECONDS = 180
 # A fixture key for the temporary keyring only; it seals nothing outside this scenario.
 FIXTURE_KEY = "01" * 32
 EXECUTION = "exec_feature"
-ROOT = Path(__file__).resolve().parents[3]
-GRAPH = ROOT / "examples" / "graphs" / "software-feature.yaml"
+# The graph ships beside the scenario, so a copy of the fixture runs without examples/.
+GRAPH = Path(__file__).resolve().parent / "graph.yaml"
 
 
 def run_git(cwd: Path, *args: str) -> str:
@@ -102,7 +102,9 @@ def run_scenario() -> dict:
         raise RuntimeError(f"GraphHelm CLI not found: {cli_value}")
     binary = Path(cli_path).resolve()
 
-    with tempfile.TemporaryDirectory(prefix="scenario-", dir=Path(__file__).resolve().parent) as name:
+    # The scratch lives under the short system temp dir, not beside a deep checkout, and a cleanup
+    # that Windows refuses (WinError 145) does not turn a finished scenario red.
+    with tempfile.TemporaryDirectory(prefix="kwr-", ignore_cleanup_errors=True) as name:
         scratch = Path(name)
         events, keyring, repo = scratch / "events", scratch / "keyring", scratch / "repo"
         keyring.mkdir()
@@ -196,7 +198,9 @@ def run_scenario() -> dict:
 
         return {
             "status": "passed",
-            "summary": "blocked=routed-to-implement; corrected=advanced-to-review",
+            "afterBlocked": {"route-correction": routed.get("route-correction"),
+                             "route-review": routed.get("route-review")},
+            "afterCorrected": {"route-review": final.get("route-review")},
             "blockedFindings": rules,
             "graphVersions": [1, published["number"], published["number"] + 1],
         }
@@ -204,7 +208,7 @@ def run_scenario() -> dict:
 
 if __name__ == "__main__":
     try:
-        print(json.dumps(run_scenario(), indent=2, sort_keys=True))
+        print(json.dumps(run_scenario(), sort_keys=True))
     except Exception as error:
         print(f"scenario failed: {error}", file=sys.stderr)
         raise

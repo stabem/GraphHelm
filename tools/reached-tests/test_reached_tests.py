@@ -225,6 +225,25 @@ class Reach(unittest.TestCase):
             self.assertIn(expected_test, missing_tools)
             self.assertEqual(missing_other, [])
 
+    def test_cli_fixture_graph_copies_select_their_scenarios(self):
+        """#2158: the graph copy a CLI fixture ships beside its scenario reaches that scenario, so a
+        changed copy is observed, not left unmapped. Cost: temporary files only; milliseconds.
+        """
+        watchdog = ".graphhelm/fixtures/keel-watchdog-routing/scenario.py"
+        handoff = ".graphhelm/fixtures/keel-task-handoff/scenario.py"
+        with tempfile.TemporaryDirectory() as repo:
+            for script in (watchdog, handoff):
+                Path(repo, script).parent.mkdir(parents=True, exist_ok=True)
+                Path(repo, script).write_text("", encoding="utf-8")
+            with patch.dict("os.environ", {"GRAPHHELM_HANDOFF_WRONG_STORE": ""}):
+                *_, tools, _, other = reach(".graphhelm/fixtures/keel-watchdog-routing/graph.yaml",
+                                            ".graphhelm/fixtures/keel-task-handoff/graph.yaml", repo=repo)
+            self.assertIn(f"python {watchdog}", tools)
+            self.assertIn(f"python {handoff}", tools)
+            self.assertNotIn(".graphhelm/fixtures/keel-watchdog-routing/graph.yaml", other)
+            self.assertIn(("python", watchdog), {tuple(step["argv"]) for step in rt.steps(
+                set(), set(), [], [f"python {watchdog}"], repo=Path(repo))})
+
     def test_task_handoff_adapter_selection_test_is_executable_and_required(self):
         """Select the receiver-package regression once and refuse a missing observer.
 

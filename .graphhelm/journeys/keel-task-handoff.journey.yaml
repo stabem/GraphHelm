@@ -13,13 +13,13 @@ screens:
     title: The receiver recovers the persisted handoff
     url: /result
     state: stable
-    expect: [{role: exit, name: "0", because: scenario.py exits 0 only when every continuity check passes}, {role: stdout, name: "\"verdict\": \"passed\"", because: the scenario prints verdict passed only after the receiver recovered the same offer and receipt}, {role: stdout, name: "\"recoveredExecutionId\": \"keel-handoff-fixture\"", because: "keel-handoff-fixture is the execution the sender recorded the handoff in, so recovery must name that one"}, {role: stdout, name: "\"kind\": \"resume_held\"", because: "the recovered handoff is held for the receiver to resume, which the Runtime records as resume_held"}]
+    expect: [{role: exit, name: "0", because: scenario.py exits 0 only when every continuity check passes}, {role: stdout, name: "\"recoveredExecutionId\": \"keel-handoff-fixture\"", because: "keel-handoff-fixture is the execution the sender recorded the handoff in, so recovery must name that one"}, {role: stdout, name: "\"kind\": \"resume_held\"", because: "the recovered handoff is held for the receiver to resume, which the Runtime records as resume_held"}, {role: stdout, name: "\"wrongRecipientReason\": \"handoff offer recipient does not match this adapter\"", because: "a receiver the offer was not addressed to is refused with this reason, and the original receipt history stays unchanged"}, {role: stdout, name: "\"emptyStoreMissingOffer\": true", because: "a Runtime with an empty store refuses the receive because the original offer is not recorded there, so recovery really reads the sender's history"}, {role: stdout, name: "\"repeatReceive\": \"already_recorded\"", because: "receiving the same offer twice returns the first receipt, which the Runtime reports as already_recorded"}, {role: stdout, name: "\"restartReceiptState\": \"already_recorded\"", because: "after the Runtime restarts, receiving again finds the receipt recorded before the restart, so nothing was lost"}, {role: stdout, name: "\"journalStableAcrossRestart\": true", because: "the Runtime journal read before and after the restart is identical, so recovery reads changed nothing"}]
     scope: unknown
   - id: start
     title: The isolated handoff observer starts
     url: /start
     state: stable
-    expect: [{role: exit, name: "0", because: "the fixture needs no setup command: the step only marks where the commands start, and exit 0 is the shell being ready"}]
+    expect: [{role: exit, name: "0", because: "the run has started and no command has run yet, which is all a start screen of commands can show"}, {role: stdout, name: recoveredExecutionId, absent: true, because: "no session has run yet, so no handoff has been recovered"}]
     scope: unknown
 edges:
   - id: observe.handoff

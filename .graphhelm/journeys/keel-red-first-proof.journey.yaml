@@ -2,18 +2,18 @@ schema: graphhelm.journey-flow/1
 id: keel-red-first-proof
 title: Prove a regression test against its parent
 purpose: A regression test is shown to fail on the parent commit and pass on the fix.
-status: approved
-approved: {revision: d658cb7cf77ade01dafc41c8b995f1b7bce1d585, digest: sha256:cdcd2eac4818c1c448e087e1693183d7a05ac1d39f76a88a6a5b5be105f2690f}
+status: draft
+approved: null
 base: http://127.0.0.1:1
 actors: [owner]
 secrets: []
 risks: []
 screens:
   - id: defective-parent
-    title: The specimen drops the first value
+    title: A regression test is ready to be proved against its parent
     url: /specimen
     state: stable
-    expect: [{role: stdout, name: "regression=parent-failed,head-passed,earned", because: "the scenario's specimen parent drops the first value, so the sum regression fails there and passes on the fix"}]
+    expect: [{role: exit, name: "0", because: "the run has started and no command has run yet, which is all a start screen of commands can show"}, {role: stdout, name: "regression=parent-failed,head-passed,earned", absent: true, because: "the scenario has not run yet, so nothing has reported the regression as earned"}]
     scope: unknown
   - id: proof-report
     title: The CLI distinguishes an earned test from a vacuous test

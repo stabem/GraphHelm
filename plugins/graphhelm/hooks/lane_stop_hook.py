@@ -33,6 +33,12 @@ def pending(payload: dict | None = None) -> bool:
 
 def unanswered(payload: dict | None = None) -> set[str]:
     """The signal ids of operator notes addressed to this lane that it has not answered."""
+    return set(unanswered_events(payload))
+
+
+def unanswered_events(payload: dict | None = None) -> dict[str, dict]:
+    """#2152: the same scan as `unanswered`, keeping each unanswered note's journal event, so a
+    rewake can open the note's sealed text."""
     bound = binding(payload)
     if bound is None:
         return set()
@@ -52,7 +58,7 @@ def unanswered(payload: dict | None = None) -> set[str]:
     # Bound the window, not the execution's lifetime. A reply follows its note,
     # so replies to notes inside this window cannot precede the window.
     after = max(0, head - 4096)
-    unanswered = set()
+    unanswered: dict[str, dict] = {}
     # Size bound; the parent process imposes the wall-time bound even if a server
     # trickles bytes. request's timeout alone only bounds socket inactivity.
     for _ in range(8):
@@ -88,9 +94,9 @@ def unanswered(payload: dict | None = None) -> set[str]:
                 raise ValueError("invalid note routing")
             actor = event.get("actor", {})
             if actor.get("type") == "agent" and actor.get("id") == lane:
-                unanswered.discard(reply_to)
+                unanswered.pop(reply_to, None)
             if to == lane:
-                unanswered.add(signal_id)
+                unanswered[signal_id] = event
         if after >= head:
             return unanswered
     raise ValueError("note scan exceeded bound")
@@ -237,6 +243,14 @@ def evaluate(payload: dict, host: str = "claude") -> str | None:
 # without one before it scans the notes anyway (a waiter that died must not make it deaf).
 REWAKE_POLL_SECONDS = 0.25
 REWAKE_FALLBACK_SECONDS = 30.0
+# #2152: a scan that failed is retried this soon, not at the next fallback; a failed scan after
+# the ring used to leave the lane deaf for a further 30 s.
+REWAKE_RETRY_SECONDS = 2.0
+# #2152: one line per scan beside the rewake's state, kept under this size.
+REWAKE_LOG_MAX_BYTES = 16 * 1024
+# #2152: the wake carries the notes' own text, bounded.
+REWAKE_NOTES_SHOWN = 3
+REWAKE_NOTE_CHARS = 400
 REWAKE_REASON = ("GraphHelm: a note addressed to your lane arrived while you were idle. Read the notes "
                  "addressed to you, act on them, then record your operator_note reply with replyTo.")
 
@@ -256,13 +270,73 @@ def _read_notified(path: Path) -> set[str]:
     return {item for item in value if isinstance(item, str)} if isinstance(value, list) else set()
 
 
+def _log_scan(path: Path, trigger: str, outcome: str, started: float, error: BaseException | None = None) -> None:
+    """#2152: one bounded line per rewake scan: when, what started it, what it found, and the
+    class of the exception when it failed (never its message, which may carry a URL)."""
+    line = (f"{datetime.now(timezone.utc).isoformat(timespec='milliseconds')} trigger={trigger} "
+            f"outcome={outcome} ms={int((time.monotonic() - started) * 1000)}"
+            + (f" error={type(error).__name__}" if error is not None else "") + "\n")
+    try:
+        try:
+            if path.stat().st_size > REWAKE_LOG_MAX_BYTES:
+                kept = path.read_bytes()[-REWAKE_LOG_MAX_BYTES // 2:]
+                path.write_bytes(kept[kept.find(b"\n") + 1:])
+        except FileNotFoundError:
+            pass
+        with path.open("a", encoding="utf-8") as output:
+            output.write(line)
+    except OSError:
+        pass
+
+
+def _note_text(bound: tuple, event: dict) -> str | None:
+    """#2152: the description of one addressed note, read from its sealed evidence and checked
+    against the journal's envelope hash; None when it cannot be read."""
+    execution, token_file, url, _origin, _node = bound
+    refs = event.get("evidenceRefs")
+    record = event.get("kind", {}).get("data", {})
+    if not isinstance(refs, list) or len(refs) != 1 or not isinstance(refs[0], dict):
+        return None
+    evidence_id = refs[0].get("evidenceId")
+    if not isinstance(evidence_id, str) or not ID.fullmatch(evidence_id):
+        return None
+    data = request(f"{url}/v1/executions/{quote(execution, safe='')}/evidence/{quote(evidence_id, safe='')}",
+                   token_from_file(token_file), "GET", timeout=2.0, max_reply=256 * 1024).get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("content"), str):
+        return None
+    content = data["content"]
+    if hashlib.sha256(content.encode("utf-8")).hexdigest() != record.get("envelopeSha256"):
+        return None
+    signal = json.loads(content)
+    description = signal.get("description") if isinstance(signal, dict) else None
+    if not isinstance(description, str):
+        return None
+    text = " ".join(description.split())
+    return text if len(text) <= REWAKE_NOTE_CHARS else text[:REWAKE_NOTE_CHARS - 3] + "..."
+
+
+def wake_reason(bound: tuple, events: dict[str, dict]) -> str:
+    """#2152: the wake message, carrying the new notes' text (bounded) so the lane can act at once."""
+    lines = []
+    for signal_id in sorted(events)[:REWAKE_NOTES_SHOWN]:
+        try:
+            text = _note_text(bound, events[signal_id])
+        except Exception:  # noqa: BLE001 - the wake itself must not depend on reading the text
+            text = None
+        lines.append(f"- {signal_id}: {text}" if text else f"- {signal_id}: (text unavailable; read it from the notes)")
+    if len(events) > REWAKE_NOTES_SHOWN:
+        lines.append(f"- and {len(events) - REWAKE_NOTES_SHOWN} more")
+    return REWAKE_REASON + "\n" + "\n".join(lines)
+
+
 def rewake(payload: dict, host: str = "claude") -> int:
     """#1058: the host runs this in the background after every Stop (`asyncRewake`); exit 2 wakes
     the idle host. It waits for the lane waiter's ring (or the fallback interval), then scans the
     notes and wakes for an unanswered note addressed to this lane that no earlier rewake already
     woke it for, so a note the lane chose to leave is not repeated every interval. The Stop that
     started it has already reminded the lane of what was waiting then. A newer Stop's rewake
-    supersedes this one."""
+    supersedes this one. #2152: every scan leaves one line in `.rewake.log`, and a failed scan is
+    retried after `REWAKE_RETRY_SECONDS` instead of waiting for the next ring or fallback."""
     bound = binding(payload)
     lane = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
     session = payload.get("session_id")
@@ -271,12 +345,13 @@ def rewake(payload: dict, host: str = "claude") -> int:
         return 0
     base = state_path(bound[0], session, host, bound[3])
     owner, rang = base.with_suffix(".rewake.pid"), base.with_suffix(".waiter.rang")
-    notified = base.with_suffix(".rewake.notified")
+    notified, log = base.with_suffix(".rewake.notified"), base.with_suffix(".rewake.log")
     me = str(os.getpid())
     owner.parent.mkdir(parents=True, exist_ok=True)
     owner.write_text(me, encoding="ascii")
     seen = _mtime(rang)
     next_scan = time.monotonic() + REWAKE_FALLBACK_SECONDS
+    retrying = False
     while True:
         time.sleep(REWAKE_POLL_SECONDS)
         try:
@@ -287,17 +362,23 @@ def rewake(payload: dict, host: str = "claude") -> int:
         now = _mtime(rang)
         if now == seen and time.monotonic() < next_scan:
             continue
-        seen, next_scan = now, time.monotonic() + REWAKE_FALLBACK_SECONDS
+        trigger = "ring" if now != seen else ("retry" if retrying else "fallback")
+        seen, started = now, time.monotonic()
         try:
-            waiting = unanswered(payload)
-        except Exception:
+            waiting = unanswered_events(payload)
+        except Exception as error:  # noqa: BLE001 - an unreadable scan is logged and retried soon
+            _log_scan(log, trigger, "error", started, error)
+            retrying, next_scan = True, time.monotonic() + REWAKE_RETRY_SECONDS
             continue
-        if waiting - _read_notified(notified):
+        retrying, next_scan = False, time.monotonic() + REWAKE_FALLBACK_SECONDS
+        fresh = set(waiting) - _read_notified(notified)
+        _log_scan(log, trigger, "wake" if fresh else ("seen" if waiting else "none"), started)
+        if fresh:
             try:
                 notified.write_text(json.dumps(sorted(waiting)), encoding="utf-8")
             except OSError:
                 pass
-            print(REWAKE_REASON, file=sys.stderr)
+            print(wake_reason(bound, {key: waiting[key] for key in fresh}), file=sys.stderr)
             return 2
 
 

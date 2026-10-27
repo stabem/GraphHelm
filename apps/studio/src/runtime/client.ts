@@ -153,7 +153,8 @@ export interface JourneyScreen { id: string; url: string; title?: string }
 export interface JourneyEdge { id: string; from: string; to: string; /** #1955: what this step proves for the user. */ why?: string; acts?: { kind: string; role?: string; name?: string; text?: string }[] }
 
 export interface JourneyLastRun {
-  status: "passed" | "failed" | "not_run";
+  /** #2173: `held` is a run waiting for the owner (review or confirmation); it failed no step. */
+  status: "passed" | "failed" | "held" | "not_run";
   ranAt: string | null;
   kind: "replay" | "preview" | null;
   reason: string | null;

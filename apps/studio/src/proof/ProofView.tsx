@@ -129,7 +129,7 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
     if (last === undefined) continue;
     if (last.status === "not_run") counts.not_run += 1;
     else if (last.flowChanged === true) counts.stale += 1;
-    else if (last.kind === "replay") counts[last.status] += 1;
+    else if (last.kind === "replay" && last.status !== "held") counts[last.status] += 1;
   }
   const groups = new Map<string, JourneyFlow[]>();
   for (const flow of journeys) {

@@ -464,6 +464,7 @@ export function lastRunChip(lastRun: JourneyLastRun | undefined): { text: string
   const stop = lastRun.failingStep?.reason;
   if (stop === "review_needed") return { text: "waits for review", tone: "idle" };
   if (stop === "confirm_needed") return { text: "waits for your confirmation", tone: "idle" };
+  if (lastRun.status === "held") return { text: "waiting", tone: "idle" };
   const mark = lastRun.status === "passed" ? "✓ passed" : "✕ failed";
   if (lastRun.kind !== "replay") return { text: `${mark} · preview, not proof`, tone: "idle" };
   return { text: mark, tone: lastRun.status === "passed" ? "pass" : "fail" };

@@ -325,6 +325,8 @@ fn a_draft_command_runs_only_on_the_owners_confirm_of_what_they_saw() {
     // A draft holds before its command and names the digest and argv a confirm would allow.
     let (_, held) = preview(&[]);
     assert_eq!(held["edges"]["greet"]["reason"], "review_needed", "{held}");
+    // #2173: a held run is not a failure.
+    assert_eq!(held["result"], "held", "{held}");
     let shown = &held["held"]["cliConfirm"];
     assert_eq!(shown["argv"], serde_json::json!(["sh greet.sh"]), "{held}");
     let digest = shown["digest"]

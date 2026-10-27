@@ -1323,7 +1323,14 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     // viewport (#1777).
     fill_not_reached(&flow, &mut run.state);
     combine_views(&mut run.state);
-    let (worst, incomplete) = run_verdict(&flow, &run.state["screens"], &run.state["edges"]);
+    let (mut worst, mut incomplete) =
+        run_verdict(&flow, &run.state["screens"], &run.state["edges"]);
+    // #2173: a run held for the owner (review_needed / confirm_needed) failed no step; the steps
+    // after the held act were never reached, which is waiting, not a failure.
+    if !run.state["held"].is_null() && incomplete.is_some() {
+        worst = "held".to_owned();
+        incomplete = None;
+    }
     run.state["current"] = Value::Null;
     run.state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
     if let Some(object) = run.state.as_object_mut() {
@@ -2354,6 +2361,7 @@ pub(crate) fn last_run(project: &Path, id: &str, flow: Option<&Value>) -> Value 
     });
     let Some(state) = state else { return not_run };
     let passed = state["state"] == "ready" && state["result"] == "pass";
+    let held = state["state"] == "ready" && state["result"] == "held";
     let text = |key: &str| state[key].as_str().map_or(Value::Null, Value::from);
     let (viewports, fails_only_on) = viewport_statuses(&state, passed);
     let mut failing = if passed {
@@ -2380,7 +2388,7 @@ pub(crate) fn last_run(project: &Path, id: &str, flow: Option<&Value>) -> Value 
             _ => Value::Null,
         };
     }
-    json!({"status": if passed { "passed" } else { "failed" },
+    json!({"status": if passed { "passed" } else if held { "held" } else { "failed" },
     "ranAt": text("ranAt"), "kind": text("kind"), "reason": text("reason"),
     "failingStep": failing, "viewports": viewports, "failsOnlyOn": fails_only_on,
     "flowChanged": flow.map_or(Value::Null, |flow| {
@@ -2515,13 +2523,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         save_state(
             &dir,
-            &json!({"state": "ready", "result": "fail", "kind": "preview",
+            &json!({"state": "ready", "result": "held", "kind": "preview",
             "screens": {"start": {"result": "skipped", "reason": "review_needed"}, "ran": {"result": "not_reached"}},
             "edges": {"start.ran": {"result": "skipped", "reason": "review_needed"}},
             "held": {"edge": "start.ran", "act": "node --version", "base": "main"}}),
         );
         let last = last_run(project.path(), "cli-edited", Some(&flow));
-        assert_eq!(last["status"], "failed");
+        assert_eq!(last["status"], "held");
         assert_eq!(last["failingStep"]["id"], "start.ran");
         assert_eq!(last["failingStep"]["reason"], "review_needed");
     }

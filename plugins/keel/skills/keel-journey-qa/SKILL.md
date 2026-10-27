@@ -118,8 +118,8 @@ JSON reply and the state it writes, per viewport. `REJECT` unless **all** of the
 - every screen reached has a frame. A browser screen's frame is an image (`frame: true` with a
   `file`). A screen of a `cli`-only path has no picture: its frame is the command output the
   preview kept for it (`frame: true`, `kind: text`, with `exit`, `stdout`, `stderr` and their
-  sha256). Its start screen's text frame is the empty observation (`precondition: true`, no exit,
-  no output), because no command has run there yet. A `kind: text` frame on a browser screen is
+  sha256). Its start screen's text frame is the empty observation (`precondition: true`, `exit: 0`,
+  empty stdout and stderr), because no command has run there yet. A `kind: text` frame on a browser screen is
   no frame.
 
 A red is reported with its JSON pointer and code, exactly as printed.

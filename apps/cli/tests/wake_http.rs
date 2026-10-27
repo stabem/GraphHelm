@@ -4030,6 +4030,33 @@ fn wait_for_pipe(child: &mut Child, rendezvous_id: &str) {
     }
 }
 
+/// Waits until the sidecar has written `mark` to its causal transcript.
+///
+/// `startup-lease-validated` is written AFTER the sidecar re-read and accepted its own lease, and
+/// the pipe is created BEFORE that read. A test that burns the lease as soon as the pipe is visible
+/// can therefore land its burn between the two, and the sidecar then refuses with GHCLI017 "no live
+/// lease". The mark is the sidecar's own statement that it is past that point.
+#[cfg(windows)]
+fn wait_for_causal_mark(child: &mut Child, transcript: &Path, mark: &str) {
+    let deadline = Instant::now() + scaled(Duration::from_secs(PIPE_STARTUP_HANG_CATCHER_SECONDS));
+    loop {
+        if std::fs::read_to_string(transcript).is_ok_and(|text| text.lines().any(|l| l == mark)) {
+            return;
+        }
+        if let Some(status) = child.try_wait().expect("the sidecar handle is readable") {
+            panic!(
+                "the sidecar is no longer running and never wrote {mark}: {status}{}",
+                reported_refusal(child)
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the sidecar is still running but never wrote {mark}"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// Reaps a wake-wait child and parses the one JSON line it prints: (exit code, envelope).
 #[cfg(windows)]
 fn wake_wait_result(child: Child) -> (Option<i32>, serde_json::Value) {
@@ -4119,26 +4146,40 @@ fn a_burned_but_unrung_lease_names_its_missed_ring_at_the_deadline() {
 #[cfg(windows)]
 #[test]
 fn a_silent_deadline_reports_a_silent_receipt_not_just_silence() {
-    let directory = tempfile::tempdir().unwrap();
-    let events = directory.path().join("events");
-    let causal_transcript = directory.path().join("wake-wait-causal-transcript");
-    let execution = "exec-88-silent";
-    start_execution(&events, directory.path(), execution);
-    let logical_rendezvous_id = "rvz-88-silent";
-    let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
-    arm_lease_bounded(&events, execution, &rendezvous_id, head(&events), Some(1));
-    let child = spawn_wake_wait_with_env(
-        &events,
-        execution,
-        "session-sleeper-1",
-        logical_rendezvous_id,
-        &[(
-            TEST_WAKE_CAUSAL_TRANSCRIPT_ENV,
-            causal_transcript.to_str().unwrap(),
-        )],
-    );
-
-    let (code, value) = wake_wait_result(child);
+    // The lease matures one second after its arming append, whatever the sidecar is doing. On a
+    // loaded machine process start can take longer than that, and the sidecar then finds the
+    // deadline already past (`alreadyPast: true`) and answers before it validates anything: the
+    // scenario never began. That is the sidecar telling the test its precondition failed, so the
+    // attempt is repeated on a fresh store. A sidecar that really lost its marks fails every
+    // attempt and still fails the test.
+    const ATTEMPTS: usize = 5;
+    let mut attempt = 0;
+    let (directory, causal_transcript, code, value) = loop {
+        attempt += 1;
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let causal_transcript = directory.path().join("wake-wait-causal-transcript");
+        let execution = "exec-88-silent";
+        start_execution(&events, directory.path(), execution);
+        let logical_rendezvous_id = "rvz-88-silent";
+        let rendezvous_id = wake_wait_fixture_rendezvous_id(logical_rendezvous_id, &events);
+        arm_lease_bounded(&events, execution, &rendezvous_id, head(&events), Some(1));
+        let child = spawn_wake_wait_with_env(
+            &events,
+            execution,
+            "session-sleeper-1",
+            logical_rendezvous_id,
+            &[(
+                TEST_WAKE_CAUSAL_TRANSCRIPT_ENV,
+                causal_transcript.to_str().unwrap(),
+            )],
+        );
+        let (code, value) = wake_wait_result(child);
+        if value["data"]["alreadyPast"] != true || attempt == ATTEMPTS {
+            break (directory, causal_transcript, code, value);
+        }
+    };
+    let _keep_store_until_checked = &directory;
     // Post-child contention observer: the zero-capacity channel forces one bounded
     // scheduler rendezvous after the child is complete, without using wall-clock timing.
     let (post_child_contention_tx, post_child_contention_rx) = std::sync::mpsc::sync_channel(0);
@@ -4250,13 +4291,18 @@ fn a_ring_missed_and_a_re_arm_are_reported_as_different_worlds() {
         Some(racing_lease_seconds()),
     );
     let first_arming = head(&events);
-    let mut child = spawn_wake_wait(
+    let causal_transcript = directory.path().join("wake-wait-causal-transcript");
+    let mut child = spawn_wake_wait_with_env(
         &events,
         execution,
         "session-sleeper-1",
         first_logical_rendezvous_id,
+        &[(
+            TEST_WAKE_CAUSAL_TRANSCRIPT_ENV,
+            causal_transcript.to_str().unwrap(),
+        )],
     );
-    wait_for_pipe(&mut child, &first_rendezvous_id);
+    wait_for_causal_mark(&mut child, &causal_transcript, "startup-lease-validated");
     let consumed_at = consume_lease(
         &events,
         execution,
@@ -4427,13 +4473,18 @@ fn a_mis_aimed_burn_is_reported_as_the_folds_own_diagnosis() {
     );
     let live_arming = head(&events);
     assert!(captured_arming < live_arming);
-    let mut child = spawn_wake_wait(
+    let causal_transcript = directory.path().join("wake-wait-causal-transcript");
+    let mut child = spawn_wake_wait_with_env(
         &events,
         execution,
         "session-sleeper-1",
         logical_rendezvous_id,
+        &[(
+            TEST_WAKE_CAUSAL_TRANSCRIPT_ENV,
+            causal_transcript.to_str().unwrap(),
+        )],
     );
-    wait_for_pipe(&mut child, &rendezvous_id);
+    wait_for_causal_mark(&mut child, &causal_transcript, "startup-lease-validated");
     let burned_at = consume_lease(
         &events,
         execution,
@@ -4496,13 +4547,18 @@ fn a_second_cycles_burn_never_erases_the_first_armings_receipt() {
         Some(racing_lease_seconds()),
     );
     let first_arming = head(&events);
-    let mut child = spawn_wake_wait(
+    let causal_transcript = directory.path().join("wake-wait-causal-transcript");
+    let mut child = spawn_wake_wait_with_env(
         &events,
         execution,
         "session-sleeper-1",
         first_logical_rendezvous_id,
+        &[(
+            TEST_WAKE_CAUSAL_TRANSCRIPT_ENV,
+            causal_transcript.to_str().unwrap(),
+        )],
     );
-    wait_for_pipe(&mut child, &first_rendezvous_id);
+    wait_for_causal_mark(&mut child, &causal_transcript, "startup-lease-validated");
     // Sequence-spacer, same reason as G1's: an adjacent burn is guessable by armed+1.
     arm_decoy(&events, execution, "rvz-88-decoy-cycle");
     // Cycle one: MY burn, honest, rung — the byte never crosses.
@@ -4573,13 +4629,20 @@ fn a_lease_burned_stale_while_its_waiter_lived_names_the_rejection() {
         Some(racing_lease_seconds()),
     );
     let armed_at = head(&events);
-    let mut child = spawn_wake_wait(
+    let causal_transcript = directory.path().join("wake-wait-causal-transcript");
+    let mut child = spawn_wake_wait_with_env(
         &events,
         execution,
         "session-sleeper-1",
         logical_rendezvous_id,
+        &[(
+            TEST_WAKE_CAUSAL_TRANSCRIPT_ENV,
+            causal_transcript.to_str().unwrap(),
+        )],
     );
-    wait_for_pipe(&mut child, &rendezvous_id);
+    // The pipe is visible before the sidecar has validated its lease; burning on the pipe alone
+    // raced the sidecar's own lease read. Wait for the sidecar to say it is past that read.
+    wait_for_causal_mark(&mut child, &causal_transcript, "startup-lease-validated");
     let burned_at = consume_lease(
         &events,
         execution,

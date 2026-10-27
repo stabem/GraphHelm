@@ -243,6 +243,10 @@ def run_oracle(wt: Path, task: dict, answer: str) -> tuple[str, int | None, str]
     answer_file.write_text(answer or "", encoding="utf-8")
     env = dict(os.environ, DOLESS_ANSWER=str(answer_file), PYTHONIOENCODING="utf-8",
                CARGO_TARGET_DIR=str(run_target(wt) / "oracle"))
+    if task.get("artifactAllowlist"):  # opt-in per task entry; see oracles/observer_missing.py
+        env["DOLESS_ARTIFACT_PREFIXES"] = json.dumps(task["artifactAllowlist"])
+    else:
+        env.pop("DOLESS_ARTIFACT_PREFIXES", None)
     try:
         return run_command([sys.executable, str(DOLESS / task["oracle"]), str(wt)], wt, env=env)
     finally:
@@ -1109,7 +1113,7 @@ def pareto_svg(arms: dict, title: str = "do-less: score vs cost per run") -> str
 
 
 def read_rows(a: argparse.Namespace) -> list[dict]:
-    rows = [json.loads(l) for l in RESULTS.read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = [json.loads(l) for l in RESULTS.read_text(encoding="utf-8-sig").splitlines() if l.strip()]
     return [r for r in rows if (not a.split or r.get("split") == a.split) and (not a.arm or r["arm"] == a.arm)
             and (not a.prompt_style or r.get("promptStyle", "explicit") == a.prompt_style)]
 

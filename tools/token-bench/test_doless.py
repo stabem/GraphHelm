@@ -1337,3 +1337,79 @@ def test_routed_refuses_undeclared_kind_before_any_process(tmp_path, monkeypatch
     args = argparse.Namespace(task="task", treatment="routed", model=None, arm="a", inference_config=str(tmp_path / "absent.json"))
     with pytest.raises(ValueError, match="kind"):
         doless.cmd_run(args)
+
+
+# ---------------------------------------------------------------- #2141: drael-v1 verification pass
+
+
+def test_diff_check_reports_a_whitespace_finding_on_a_cp1252_console(tmp_path):
+    """Catches #2141: a trailing-whitespace line holding a box-drawing character crashed the observer
+    with UnicodeEncodeError instead of reporting the finding (om-win-arm64 s1)."""
+    def git(*args):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, creationflags=NO_WINDOW)
+    git("init", "-q"); git("config", "user.email", "bench@example.invalid"); git("config", "user.name", "bench")
+    (tmp_path / "a.md").write_text("x\n", encoding="utf-8")
+    git("add", "."); git("commit", "-qm", "base")
+    (tmp_path / "a.md").write_text("x\n| \u2502 cell | \n", encoding="utf-8")
+    proc = subprocess.run([sys.executable, str(HERE / "doless" / "regressions" / "diff_check.py")], cwd=tmp_path,
+                          capture_output=True, env=dict(os.environ, PYTHONIOENCODING="cp1252"),
+                          creationflags=NO_WINDOW)
+    out = proc.stdout.decode("utf-8")
+    assert proc.returncode == 1 and out.startswith("FAIL: git diff --check") and "\u2502" in out
+    assert b"Traceback" not in proc.stderr
+
+
+def test_sessionend_resolves_a_lookup_in_a_literal_timeout_table():
+    """Catches #2141: `END_ACK_TIMEOUTS[host]` (py-sessionend-cap o1) was Unresolved."""
+    oracle = _oracle("py_sessionend_cap")
+    source = END_IMPL.format(prelude='END_ACK_TIMEOUTS = {"codex": 2.0, "claude": 4.0}',
+                             timeout=", timeout=END_ACK_TIMEOUTS[host]")
+    assert oracle.end_signal_waits(source) == [2.0]
+    assert oracle.end_signal_waits(source, host="claude") == [4.0]
+    missing = END_IMPL.format(prelude='END_ACK_TIMEOUTS = {"claude": 4.0}', timeout=", timeout=END_ACK_TIMEOUTS[host]")
+    with pytest.raises(oracle.Unresolved):
+        oracle.end_signal_waits(missing)
+
+
+def test_the_reports_read_a_ledger_that_starts_with_a_bom(tmp_path, monkeypatch):
+    """Catches #2141: a ledger saved with a UTF-8 BOM made its first row a JSON decode error."""
+    import argparse
+    results = tmp_path / "results.jsonl"
+    results.write_bytes(b"\xef\xbb\xbf" + (json.dumps(dict(row("a", "PASS"), split="train")) + "\n").encode("utf-8"))
+    monkeypatch.setattr(doless, "RESULTS", results)
+    rows = doless.read_rows(argparse.Namespace(split=None, arm=None, prompt_style=None))
+    assert [r["verdict"] for r in rows] == ["PASS"]
+
+
+def test_signal_id_assertion_is_found_when_rustfmt_wraps_it():
+    """Catches #2141: every multi-line `assert_eq!(...signalId...)` failed a one-line search."""
+    oracle = _oracle("rs_signal_id_retry")
+    diff = "+++ b/apps/cli/tests/api_http.rs\n+    assert_eq!(\n+        retry[\"signalId\"],\n+        first[\"signalId\"]\n+    );\n"
+    assert any(oracle.asserts_on(r, "signalId") for r in oracle.added_runs(diff))
+    elsewhere = "+    let id = reply[\"signalId\"].clone();\n+    assert_eq!(status, 200);\n"
+    assert not any(oracle.asserts_on(r, "signalId") for r in oracle.added_runs(elsewhere))
+    in_string = "+    assert!(ok, \"no ) here signalId\");\n"
+    assert any(oracle.asserts_on(r, "signalId") for r in oracle.added_runs(in_string))
+    context_only = " assert_eq!(\n+        retry[\"other\"],\n );\n"
+    assert not any(oracle.asserts_on(r, "signalId") for r in oracle.added_runs(context_only))
+
+
+def test_config_risk_reads_the_evidence_rule_in_the_paragraph_under_the_table():
+    """Catches #2141: the rule written as prose right under the table failed a cell-only search."""
+    oracle = _oracle("docs_config_risk")
+    light = "| Docs, comments, inert config values, a one-line fix | Nothing beyond the summary. |"
+    heavy = "| Persistence, permissions, security, runtime-affecting config values | The full card. |"
+    text = f"{light}\n{heavy}\n\nRuntime-affecting config needs behavioral evidence; parsing is not proof.\n"
+    assert oracle.problems(oracle.rows(text), oracle.paragraph_after_table(text)) == []
+    unrelated = f"{light}\n{heavy}\n\nReviewers want behavioral evidence for journeys.\n"
+    assert oracle.problems(oracle.rows(unrelated), oracle.paragraph_after_table(unrelated)) == [
+        "no routing row says runtime-affecting config needs behavioural evidence"]
+
+
+def test_observer_missing_ignores_only_the_artifact_dirs_its_task_grants():
+    oracle = _oracle("observer_missing")
+    changed = ["openspec/changes/x/proposal.md", "specs/001/plan.md", "README.md"]
+    assert oracle.changes_outside(changed, ()) == changed
+    assert oracle.changes_outside(changed, oracle.allowed_prefixes('["openspec/"]')) == ["specs/001/plan.md", "README.md"]
+    with pytest.raises(SystemExit):
+        oracle.allowed_prefixes('["src/"]')

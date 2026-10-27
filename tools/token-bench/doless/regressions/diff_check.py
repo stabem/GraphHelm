@@ -8,6 +8,10 @@ import os
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+# The diff may carry any Unicode (box drawing in a Markdown table); a cp1252 console must not turn
+# a whitespace finding into a UnicodeEncodeError traceback.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 def run(*args: str) -> subprocess.CompletedProcess:

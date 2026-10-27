@@ -7265,4 +7265,12 @@ fn a_failing_launcher_is_capped_and_escalated_to_the_owner() {
         "{question}"
     );
     assert_eq!(asks[0]["waitsOn"], "studio-operator");
+    // #2150: a launcher that never stayed alive did not take the slice, so no reviewer was
+    // assigned: the diagnosis stayed, which is what let the cap and the escalation run.
+    let view = get_json(&format!("{base}/v1/executions/{run}/tasks"), Some(&token));
+    assert_eq!(
+        view["data"]["tasks"][0]["assignedReviewers"],
+        serde_json::json!([]),
+        "{view}"
+    );
 }

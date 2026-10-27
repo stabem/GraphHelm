@@ -33,6 +33,22 @@ class ClaudePluginCheck(unittest.TestCase):
         self.assertEqual(done.returncode, 7, done.stdout + done.stderr)
         self.assertNotIn("UNOBSERVED", done.stdout)
 
+    def test_a_plugin_without_hooks_skips_the_test_verb_and_a_failure_shows_its_text(self):
+        with tempfile.TemporaryDirectory() as bin_dir, tempfile.TemporaryDirectory() as plugin:
+            if os.name == "nt":
+                Path(bin_dir, "claude.cmd").write_text("@echo %2 ran\r\n@exit /b 0\r\n")
+            else:
+                shim = Path(bin_dir, "claude")
+                shim.write_text('#!/bin/sh\necho "$2 ran"\nexit 0\n')
+                shim.chmod(0o755)
+            env = {**os.environ, "PATH": bin_dir}
+            done = subprocess.run([sys.executable, str(SCRIPT), plugin], env=env, capture_output=True,
+                                  text=True, creationflags=NO_WINDOW)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("NOT APPLICABLE", done.stdout)
+        self.assertIn("validate ran", done.stdout)
+        self.assertNotIn("test ran", done.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

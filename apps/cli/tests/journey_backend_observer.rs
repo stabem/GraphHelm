@@ -603,3 +603,155 @@ fn a_draft_runs_unasked_only_when_the_runtimes_remote_main_holds_its_bytes() {
         "a flow that differs from the remote's main ran its command"
     );
 }
+
+/// A `cli`-only flow: one command from a start screen with no act before it.
+const CLI_ONLY: &str = "schema: graphhelm.journey-flow/1
+id: greeting
+title: Greeting journey
+purpose: A client runs the greet command and reads its greeting.
+status: draft
+approved: null
+base: http://127.0.0.1:1
+actors: [client]
+secrets: []
+risks: []
+screens:
+  - id: greeted
+    title: The greeting the command printed
+    url: /greeted
+    state: success
+    expect: [{role: exit, name: \"0\", because: greet.sh succeeds}, {role: stdout, name: hello, because: greet.sh prints hello}]
+    scope: unknown
+  - id: ready
+    title: Nothing has run yet
+    url: /ready
+    state: stable
+    expect: [{role: exit, name: \"0\", because: the run has started}, {role: stdout, name: hello, because: ORIGIN, absent: true}]
+    scope: unknown
+edges:
+  - id: greet
+    from: ready
+    to: greeted
+    why: The client runs the greet command.
+    acts:
+      - {kind: cli, role: exec, name: sh greet.sh}
+paths:
+  main: [greet]
+drift: []
+";
+
+/// #2155/#2156: a `cli`-only flow's start screen is judged when the run starts (never
+/// `not_reached`), each screen keeps the command output as its text frame, and `journey replay`
+/// of the approved flow runs the command instead of refusing `driver.unsupported_act`.
+/// Sabotage: an origin expect of output that cannot exist there drifts, and a broken command
+/// turns the replay red. Cost: a few short CLI/sh processes; no browser, network or Runtime.
+#[test]
+fn a_cli_only_flow_judges_its_start_screen_keeps_text_frames_and_replays() {
+    let preview_of = |flow: &str| -> Value {
+        let dir = project("greeting", flow);
+        let root = dir.path();
+        let token = root.join(".graphhelm/events.token");
+        let token = token.to_str().unwrap();
+        let read = || {
+            graphhelm(
+                &["journey", "preview", "greeting", "--read", "--project"],
+                root,
+                &[],
+            )
+            .1
+        };
+        let (code, started) =
+            graphhelm(&["journey", "preview", "greeting", "--project"], root, &[]);
+        assert_eq!(code, 0, "{started}");
+        let wait = || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            loop {
+                let seen = read();
+                if seen["data"]["state"] != "running" && seen["data"]["ranAt"].is_string() {
+                    return seen["data"].clone();
+                }
+                assert!(std::time::Instant::now() < deadline, "never ended: {seen}");
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        };
+        let first = wait();
+        // An origin that drifts ends the path before the command, so nothing is held.
+        let Some(digest) = first["held"]["cliConfirm"]["digest"]
+            .as_str()
+            .map(str::to_owned)
+        else {
+            return first;
+        };
+        let (code, reply) = graphhelm(
+            &[
+                "journey",
+                "preview",
+                "greeting",
+                "--confirm",
+                "--confirm-digest",
+                &digest,
+                "--token-file",
+                token,
+                "--project",
+            ],
+            root,
+            &[],
+        );
+        assert_eq!(code, 0, "{reply}");
+        wait()
+    };
+
+    let flow = CLI_ONLY.replace(
+        ", because: ORIGIN, absent: true",
+        ", because: \"nothing has run, so nothing is printed\", absent: true",
+    );
+    let played = preview_of(&flow);
+    assert_eq!(played["result"], "pass", "{played}");
+    let origin = &played["screens"]["ready"];
+    assert_eq!(origin["result"], "pass", "{played}");
+    assert_eq!(origin["kind"], "text", "{played}");
+    assert_eq!(origin["frame"], true, "{played}");
+    let greeted = &played["screens"]["greeted"];
+    assert_eq!(
+        (greeted["frame"].clone(), greeted["kind"].clone()),
+        (true.into(), "text".into()),
+        "{played}"
+    );
+    assert_eq!(greeted["exit"], 0, "{played}");
+    assert!(
+        greeted["stdout"].as_str().unwrap().contains("hello"),
+        "{played}"
+    );
+
+    // Sabotage of the origin: an expect of output there is judged and drifts.
+    let wrong = CLI_ONLY.replace(
+        ", because: ORIGIN, absent: true",
+        ", because: \"the start screen cannot print\"",
+    );
+    let drifted = preview_of(&wrong);
+    assert_eq!(drifted["screens"]["ready"]["result"], "drift", "{drifted}");
+    assert_eq!(
+        drifted["screens"]["ready"]["reason"], "expect_missing",
+        "{drifted}"
+    );
+
+    // Replay of the approved flow runs the command; a broken command turns it red.
+    let dir = project("greeting", &flow);
+    let root = dir.path();
+    approve(root, "greeting");
+    let (code, replay) = graphhelm(&["journey", "replay", "greeting", "--project"], root, &[]);
+    assert_eq!(code, 0, "{replay}");
+    assert_eq!(replay["data"]["paths"][0]["outcome"], "passed", "{replay}");
+    assert_eq!(
+        replay["data"]["paths"][0]["screens"]["greeted"]["evidence"]["exit"], 0,
+        "{replay}"
+    );
+    std::fs::write(root.join("greet.sh"), "echo goodbye\n").unwrap();
+    let (code, broken) = graphhelm(&["journey", "replay", "greeting", "--project"], root, &[]);
+    assert_ne!(code, 0, "{broken}");
+    assert_eq!(
+        broken["diagnostics"][0]["code"], "driver.expectation_failed",
+        "{broken}"
+    );
+    assert_eq!(broken["data"]["paths"][0]["outcome"], "drift", "{broken}");
+}

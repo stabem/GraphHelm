@@ -1835,7 +1835,7 @@ fn play_path(
 
 /// #927: one path of a backend flow, recorded exactly as a browser path is. The start screen is
 /// observed by a GET of its URL when the flow sends requests; a `cli`-only flow's start screen is
-/// its precondition and is not observed. Each act's observation is checked against the screen it
+/// its precondition, judged at the run's start against the start observation. Each act's observation is checked against the screen it
 /// reaches: an act that cannot run fails, an unmet expectation is drift. No coverage is collected.
 /// #1662 review: what a command printed, as kept in the run state and its evidence. stdout and
 /// stderr are masked like the driver's stderr (every `GRAPHHELM_SECRET_*` value and the user's
@@ -1846,6 +1846,31 @@ fn command_output(argv: &Value, seen: &super::journey_backend::Observation) -> V
         .filter_map(|(_, value)| value.into_string().ok())
         .collect();
     masked_output(argv, seen, &secrets)
+}
+
+/// A `cli` screen's frame (#2155): the output of the command that reached it, as the run keeps it
+/// (exit, masked stdout/stderr tails and the sha256 of the raw bytes). A command has no picture;
+/// what its expectations read is its evidence. Image routes keep reading only `file` frames.
+pub(super) fn text_frame(argv: &Value, seen: &super::journey_backend::Observation) -> Value {
+    let mut frame = command_output(argv, seen);
+    frame["frame"] = true.into();
+    frame["kind"] = "text".into();
+    frame
+}
+
+/// What a `cli`-only path's start screen is judged against: the run has started (exit 0) and no
+/// command has run yet, so nothing is printed.
+pub(super) fn origin_observation() -> super::journey_backend::Observation {
+    super::journey_backend::Observation {
+        exit: Some(0),
+        ..Default::default()
+    }
+}
+
+/// The text frame of a `cli`-only path's start screen: exactly the start observation its
+/// expectations were judged against.
+pub(super) fn origin_frame() -> Value {
+    json!({"frame":true,"kind":"text","precondition":true,"exit":0,"stdout":"","stderr":""})
 }
 
 fn masked_output(
@@ -1881,8 +1906,19 @@ fn play_backend_path(
     use super::journey_backend as backend;
     let mut walk = || -> &'static str {
         let first = edges[ids[0]]["from"].as_str().unwrap();
-        if backend::needs_app(&json!({"edges": ids.iter().map(|id| edges[id]).collect::<Vec<_>>()}))
-        {
+        let walked = json!({"edges": ids.iter().map(|id| edges[id]).collect::<Vec<_>>()});
+        if !backend::needs_app(&walked) {
+            // A `cli`-only path's start screen is its precondition: no act leads into it, so it is
+            // judged when the run starts, against the start observation (exit 0, nothing printed:
+            // the run is up and no command has run), which is its text frame. An expectation of
+            // output there is drift; an `absent` one says what must not exist before the command.
+            let frame = origin_frame();
+            if backend::unmet(screens[first], &origin_observation()).is_some() {
+                run.screen(first, "drift", Some("expect_missing"), Some(frame));
+                return "drift";
+            }
+            run.screen(first, "pass", None, Some(frame));
+        } else {
             let url = screens[first]["url"].as_str().unwrap();
             match backend::request(base, "GET", url, None, None) {
                 Ok(seen) => match backend::unmet(screens[first], &seen) {
@@ -1926,7 +1962,8 @@ fn play_backend_path(
                             outputs.push(command_output(&act["name"], &seen));
                             run.state["outputs"][id] = Value::Array(outputs);
                         }
-                        last = Some(seen);
+                        let frame = (act["kind"] == "cli").then(|| text_frame(&act["name"], &seen));
+                        last = Some((seen, frame));
                     }
                     Err(_) => {
                         run.edge(id, "fail", Some("act_failed"));
@@ -1935,11 +1972,15 @@ fn play_backend_path(
                     }
                 }
             }
-            if last.is_some_and(|seen| backend::unmet(screens[to], &seen).is_none()) {
-                run.screen(to, "pass", None, None);
+            let (met, frame) = match last {
+                Some((seen, frame)) => (backend::unmet(screens[to], &seen).is_none(), frame),
+                None => (false, None),
+            };
+            if met {
+                run.screen(to, "pass", None, frame);
                 run.edge(id, "pass", None);
             } else {
-                run.screen(to, "drift", Some("expect_missing"), None);
+                run.screen(to, "drift", Some("expect_missing"), frame);
                 run.edge(id, "drift", Some("expect_missing"));
                 return "drift";
             }

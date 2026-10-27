@@ -168,7 +168,7 @@ export interface JourneyLastRun {
 /** #1777: what one viewport of a run recorded. */
 export interface JourneyViewportRun {
   result?: StepResult;
-  screens?: Record<string, { frame: boolean; width?: number; height?: number; result?: StepResult; reason?: string }>;
+  screens?: Record<string, { frame: boolean; kind?: "text"; width?: number; height?: number; result?: StepResult; reason?: string }>;
   edges?: Record<string, { result?: StepResult | "skipped" | null; reason?: string }>;
 }
 
@@ -190,7 +190,7 @@ export interface JourneyRun {
   current?: string;
   result?: StepResult;
   reason?: string;
-  screens?: Record<string, { frame: boolean; width?: number; height?: number; result?: StepResult; reason?: string }>;
+  screens?: Record<string, { frame: boolean; kind?: "text"; width?: number; height?: number; result?: StepResult; reason?: string }>;
   edges?: Record<string, { result?: StepResult | "skipped" | null; reason?: string }>;
   /** #1777: the viewports this run plays, in order, and what each recorded. The top-level
    * `screens`/`edges` are the first one's frames with the worst result at any viewport. */
@@ -217,7 +217,7 @@ export interface JourneyPastRun {
   reason?: string;
   kind?: "replay" | "preview";
   digest?: string;
-  screens?: Record<string, { frame?: boolean; width?: number; height?: number; result?: StepResult; reason?: string }>;
+  screens?: Record<string, { frame?: boolean; kind?: "text"; width?: number; height?: number; result?: StepResult; reason?: string }>;
   edges?: Record<string, { result?: StepResult | "skipped" | null; reason?: string }>;
 }
 

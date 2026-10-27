@@ -151,9 +151,7 @@ def run_scenario() -> dict:
         raise RuntimeError(f"GraphHelm CLI not found: {cli_value}")
     cli = Path(cli_path).resolve()
 
-    scratch_parent = Path(__file__).resolve().parent
-    scratch_parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="scenario-", dir=scratch_parent) as scratch_name:
+    with tempfile.TemporaryDirectory(prefix="krf-", ignore_cleanup_errors=True) as scratch_name:
         scratch = Path(scratch_name)
         repo = scratch / "specimen"
         repo.mkdir()

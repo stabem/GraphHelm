@@ -108,6 +108,7 @@ class WholeRun(unittest.TestCase):
             (caller / '.graphhelm' / 'team.json').write_text(
                 json.dumps({'executionId': 'wrong-cwd'}), encoding='utf-8')
             (repo / '.graphhelm').mkdir(parents=True)
+            (repo / '.git').mkdir()  # the walk stops at a .git entry, so an ancestor's team.json is out of reach
             state = root / 'state.json'
             old_git, old_cwd = mw.git, os.getcwd()
             mw.git = lambda *args: self.fail('git must not run before binding refusal')

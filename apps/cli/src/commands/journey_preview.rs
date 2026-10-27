@@ -206,7 +206,18 @@ pub(crate) fn set_reviewed_remote(url: Option<String>) {
 /// system and global git config ignored, and the blob is read there. A lane can move
 /// `refs/remotes/origin/main` or edit `.git/config`; neither is consulted. No URL, a network
 /// failure, a timeout, a missing blob or different bytes all answer `false`: the commands wait.
-pub(crate) fn reviewed_on_main(remote: Option<&str>, id: &str, parsed: &[u8]) -> bool {
+///
+/// #2008: the flow file is not the only thing a command runs. Every project path a command names
+/// (the script after `sh`/`python`, a fixture directory) must also equal what `main` holds, and so
+/// must its whole directory (a script imports its siblings, and a planted sibling runs). See
+/// `called_files_reviewed`.
+pub(crate) fn reviewed_on_main(
+    remote: Option<&str>,
+    id: &str,
+    parsed: &[u8],
+    project: &Path,
+    commands: &[String],
+) -> bool {
     let Some(remote) = remote.filter(|url| !url.is_empty() && !url.starts_with('-')) else {
         return false;
     };
@@ -256,9 +267,183 @@ pub(crate) fn reviewed_on_main(remote: Option<&str>, id: &str, parsed: &[u8]) ->
             "blob",
             &format!("refs/reviewed/main:.graphhelm/journeys/{id}.journey.yaml"),
         ])
-        .is_some_and(|blob| blob == parsed);
+        .is_some_and(|blob| blob == parsed)
+        && called_files_reviewed(&git, project, commands);
     drop(std::fs::remove_dir_all(&scratch));
     answer
+}
+
+/// #2008: the most files one reviewed directory may hold; a larger one is not read, it waits.
+const REVIEWED_FILES_LIMIT: usize = 400;
+
+/// #2008: every project path the commands name is byte-identical to the reviewed `main`
+/// (`refs/reviewed/main` in the scratch repository `git` works in). A word that names an existing
+/// file is checked with every file beside it (recursively, so a planted sibling or `__pycache__`
+/// entry fails it); a word naming a directory is checked as that directory. A project-root file
+/// is checked alone. Fails closed: a symlink, an absolute or `..` path that exists, the project
+/// root itself, an unreadable entry, or more than `REVIEWED_FILES_LIMIT` files all answer `false`.
+/// Not covered, said plainly: code a script reaches outside its own directory (a module imported
+/// from elsewhere, a program found on PATH).
+fn called_files_reviewed(
+    git: &dyn Fn(&[&str]) -> Option<Vec<u8>>,
+    project: &Path,
+    commands: &[String],
+) -> bool {
+    let mut scopes = std::collections::BTreeSet::new();
+    for command in commands {
+        for (position, word) in command.split_whitespace().enumerate() {
+            let value = if word.starts_with("--") {
+                word.split_once('=').map_or(word, |(_, value)| value)
+            } else {
+                word
+            };
+            let mut names = vec![value.to_owned()];
+            if position == 0 {
+                // A program found in the working directory first (Windows) is a project path too.
+                names.extend(["exe", "bat", "cmd", "com"].map(|ext| format!("{value}.{ext}")));
+            }
+            for name in names {
+                match scope_of(project, &name) {
+                    Scope::Absent => {}
+                    Scope::Unsafe => return false,
+                    Scope::File(path) | Scope::Dir(path) => {
+                        scopes.insert(path);
+                    }
+                }
+            }
+        }
+    }
+    scopes
+        .iter()
+        .all(|scope| scope_reviewed(git, project, scope))
+}
+
+enum Scope {
+    /// Names nothing in the project (a program on PATH, a flag, a plain argument).
+    Absent,
+    /// Names something a reviewed tree cannot vouch for.
+    Unsafe,
+    /// A project-root file, alone: checked as `File`.
+    File(String),
+    /// A directory (or the directory of a nested file), checked whole.
+    Dir(String),
+}
+
+fn scope_of(project: &Path, word: &str) -> Scope {
+    let word = word.replace('\\', "/");
+    if word.is_empty() {
+        return Scope::Absent;
+    }
+    let path = Path::new(&word);
+    let Ok(meta) = std::fs::symlink_metadata(project.join(path)) else {
+        return Scope::Absent;
+    };
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => match part.to_str() {
+                Some(part) => parts.push(part.to_owned()),
+                None => return Scope::Unsafe,
+            },
+            std::path::Component::CurDir => {}
+            _ => return Scope::Unsafe,
+        }
+    }
+    if parts.is_empty() || meta.file_type().is_symlink() {
+        return Scope::Unsafe;
+    }
+    if meta.is_dir() {
+        return Scope::Dir(parts.join("/"));
+    }
+    if parts.len() == 1 {
+        return Scope::File(parts.remove(0));
+    }
+    parts.pop();
+    Scope::Dir(parts.join("/"))
+}
+
+fn scope_reviewed(git: &dyn Fn(&[&str]) -> Option<Vec<u8>>, project: &Path, scope: &str) -> bool {
+    let rev = |path: &str| format!("refs/reviewed/main:{path}");
+    // A project-root file has no `/`; a directory scope was inserted the same way, so tell them
+    // apart on disk.
+    let full = project.join(scope);
+    let is_dir = std::fs::symlink_metadata(&full).is_ok_and(|meta| meta.is_dir());
+    if !is_dir {
+        return match (
+            git(&["cat-file", "blob", &rev(scope)]),
+            std::fs::read(&full),
+        ) {
+            (Some(reviewed), Ok(now)) => reviewed == now,
+            _ => false,
+        };
+    }
+    let mut working = Vec::new();
+    if !walk_files(&full, scope, &mut working) {
+        return false;
+    }
+    let pathspec = format!("{scope}/");
+    let Some(listed) = git(&[
+        "--literal-pathspecs",
+        "ls-tree",
+        "-r",
+        "-z",
+        "--name-only",
+        "refs/reviewed/main",
+        "--",
+        &pathspec,
+    ]) else {
+        return false;
+    };
+    let mut reviewed: Vec<String> = listed
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+        .filter_map(|name| String::from_utf8(name.to_vec()).ok())
+        .collect();
+    working.sort();
+    reviewed.sort();
+    if working != reviewed || reviewed.is_empty() {
+        return false;
+    }
+    working.iter().all(|path| {
+        match (
+            git(&["cat-file", "blob", &rev(path)]),
+            std::fs::read(project.join(path)),
+        ) {
+            (Some(reviewed), Ok(now)) => reviewed == now,
+            _ => false,
+        }
+    })
+}
+
+/// Every file under `dir` as a `/`-separated path starting with `prefix`; `false` on a symlink, an
+/// unreadable entry, a non-UTF-8 name, or more than `REVIEWED_FILES_LIMIT` files.
+fn walk_files(dir: &Path, prefix: &str, out: &mut Vec<String>) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else { return false };
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            return false;
+        };
+        let Ok(kind) = entry.file_type() else {
+            return false;
+        };
+        let path = format!("{prefix}/{name}");
+        if kind.is_symlink() {
+            return false;
+        } else if kind.is_dir() {
+            if !walk_files(&entry.path(), &path, out) {
+                return false;
+            }
+        } else {
+            out.push(path);
+        }
+        if out.len() > REVIEWED_FILES_LIMIT {
+            return false;
+        }
+    }
+    true
 }
 
 /// How long each git step of the reviewed check may take (#1911).
@@ -1237,6 +1422,8 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             std::env::var(REVIEWED_REMOTE_ENV).ok().as_deref(),
             &args.id,
             source.as_bytes(),
+            &project,
+            &super::journey_backend::cli_argv(&flow),
         );
     // #1662 review: the runner does not re-confirm. The door recorded the owner's confirm before
     // spawning it, and `play` lets a draft's command run only when the owner store holds that
@@ -2978,24 +3165,59 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let url = Some(url.as_str());
 
         // Merged on the remote's main: these exact parsed bytes are reviewed.
-        assert!(super::reviewed_on_main(url, "greet", v1));
+        assert!(super::reviewed_on_main(
+            url,
+            "greet",
+            v1,
+            Path::new("."),
+            &[]
+        ));
         // No remote from the Runtime: nothing is known to be reviewed.
-        assert!(!super::reviewed_on_main(None, "greet", v1));
+        assert!(!super::reviewed_on_main(
+            None,
+            "greet",
+            v1,
+            Path::new("."),
+            &[]
+        ));
         // Tampered or edited bytes are not the reviewed ones.
-        assert!(!super::reviewed_on_main(url, "greet", v2));
-        assert!(!super::reviewed_on_main(url, "greet", b""));
+        assert!(!super::reviewed_on_main(
+            url,
+            "greet",
+            v2,
+            Path::new("."),
+            &[]
+        ));
+        assert!(!super::reviewed_on_main(
+            url,
+            "greet",
+            b"",
+            Path::new("."),
+            &[]
+        ));
         // A path outside the journeys directory is never looked up.
         for bad in ["../greet", "a/b", "", ".greet"] {
-            assert!(!super::reviewed_on_main(url, bad, v1), "{bad}");
+            assert!(
+                !super::reviewed_on_main(url, bad, v1, Path::new("."), &[]),
+                "{bad}"
+            );
         }
         // An option-shaped or unreachable URL fails closed.
         assert!(!super::reviewed_on_main(
             Some("--upload-pack=x"),
             "greet",
-            v1
+            v1,
+            Path::new("."),
+            &[],
         ));
         let gone = remote.path().join("missing-repo");
-        assert!(!super::reviewed_on_main(gone.to_str(), "greet", v1));
+        assert!(!super::reviewed_on_main(
+            gone.to_str(),
+            "greet",
+            v1,
+            Path::new("."),
+            &[]
+        ));
 
         // A lane's project with forged local anchors: its own commit holds v2, its
         // refs/remotes/origin/main points at that commit and its `origin` URL points at itself.
@@ -3012,12 +3234,173 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         );
         let own = project.path().to_str().unwrap().to_owned();
         git_in(project.path(), &["remote", "add", "origin", &own]);
-        assert!(!super::reviewed_on_main(url, "greet", v2));
+        assert!(!super::reviewed_on_main(
+            url,
+            "greet",
+            v2,
+            Path::new("."),
+            &[]
+        ));
 
         // Stale review: the remote's main moved to v2, so v1 is no longer the reviewed flow.
         commit_flow(remote.path(), "id: greet\nv: 2\n", "v2");
-        assert!(super::reviewed_on_main(url, "greet", v2));
-        assert!(!super::reviewed_on_main(url, "greet", v1));
+        assert!(super::reviewed_on_main(
+            url,
+            "greet",
+            v2,
+            Path::new("."),
+            &[]
+        ));
+        assert!(!super::reviewed_on_main(
+            url,
+            "greet",
+            v1,
+            Path::new("."),
+            &[]
+        ));
+    }
+
+    /// #2008: a reviewed flow runs the scripts its commands name from the working tree, which a
+    /// lane can edit. Defects named, each must answer "not reviewed": the called script edited, a
+    /// sibling it imports edited or planted, a reviewed file deleted, a root script edited, a
+    /// script that is not on main at all, and a path escaping the project that exists. Controls:
+    /// the identical tree is reviewed, and a word naming nothing in the project (a flag, a
+    /// program on PATH) never blocks. Cost: a few local git processes.
+    #[test]
+    fn a_reviewed_flow_runs_only_reviewed_scripts() {
+        let git_in = |dir: &Path, args: &[&str]| {
+            let out = graphhelm_process::command("git")
+                .current_dir(dir)
+                .args(["-c", "user.name=T", "-c", "user.email=t@example.test"])
+                .args(["-c", "core.autocrlf=false"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        let write = |root: &Path, files: &[(&str, &str)]| {
+            for (name, text) in files {
+                let file = root.join(name);
+                std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+                std::fs::write(file, text).unwrap();
+            }
+        };
+        let files = [
+            (
+                ".graphhelm/journeys/greet.journey.yaml",
+                "id: greet
+",
+            ),
+            (
+                ".graphhelm/fixtures/greet/run.py",
+                "import helper
+",
+            ),
+            (
+                ".graphhelm/fixtures/greet/helper.py",
+                "X = 1
+",
+            ),
+            (
+                "greet.sh", "echo hi
+",
+            ),
+        ];
+        let remote = tempfile::tempdir().unwrap();
+        git_in(
+            remote.path(),
+            &["init", "-q", "-b", "main", "--object-format=sha1"],
+        );
+        write(remote.path(), &files);
+        git_in(remote.path(), &["add", "-A"]);
+        git_in(remote.path(), &["commit", "-q", "-m", "reviewed"]);
+        let url = remote.path().to_str().unwrap().to_owned();
+        let project = tempfile::tempdir().unwrap();
+        write(project.path(), &files);
+        let flow = b"id: greet
+"
+        .as_slice();
+        let check = |commands: &[&str]| {
+            let commands: Vec<String> = commands.iter().map(|c| (*c).to_owned()).collect();
+            super::reviewed_on_main(Some(&url), "greet", flow, project.path(), &commands)
+        };
+        let run = "python .graphhelm/fixtures/greet/run.py arg --flag=1";
+        // Controls: identical tree, a root script, and words that name nothing in the project.
+        assert!(check(&[run]));
+        assert!(check(&[run, "sh greet.sh", "echo hello"]));
+        // The called script edited.
+        let script = project.path().join(".graphhelm/fixtures/greet/run.py");
+        std::fs::write(
+            &script,
+            "import os; os.system('evil')
+",
+        )
+        .unwrap();
+        assert!(!check(&[run]));
+        std::fs::write(
+            &script,
+            "import helper
+",
+        )
+        .unwrap();
+        assert!(check(&[run]));
+        // A sibling it imports edited, planted, or removed.
+        let helper = project.path().join(".graphhelm/fixtures/greet/helper.py");
+        std::fs::write(
+            &helper, "X = 2
+",
+        )
+        .unwrap();
+        assert!(!check(&[run]));
+        std::fs::write(
+            &helper, "X = 1
+",
+        )
+        .unwrap();
+        let planted = project.path().join(".graphhelm/fixtures/greet/json.py");
+        std::fs::write(&planted, "").unwrap();
+        assert!(!check(&[run]));
+        std::fs::remove_file(&planted).unwrap();
+        std::fs::remove_file(&helper).unwrap();
+        assert!(!check(&[run]));
+        std::fs::write(
+            &helper, "X = 1
+",
+        )
+        .unwrap();
+        assert!(check(&[run]));
+        // A project-root script edited, or one that main does not hold.
+        std::fs::write(
+            project.path().join("greet.sh"),
+            "rm -rf x
+",
+        )
+        .unwrap();
+        assert!(!check(&["sh greet.sh"]));
+        std::fs::write(
+            project.path().join("greet.sh"),
+            "echo hi
+",
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("new.sh"),
+            "echo
+",
+        )
+        .unwrap();
+        assert!(!check(&["sh new.sh"]));
+        // A path escaping the project that exists is refused; one that does not is just a word.
+        let outside = tempfile::tempdir().unwrap();
+        let evil = outside.path().join("evil.py");
+        std::fs::write(&evil, "").unwrap();
+        assert!(!check(&[&format!("python {}", evil.display())]));
+        assert!(!check(&["python ../"]));
+        assert!(check(&["python ../does-not-exist-anywhere.py"]));
     }
 
     /// #1911 (BLOCK on #2002): the reviewed check sees the bytes the run PARSED, never a second
@@ -3074,14 +3457,18 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         assert!(!super::reviewed_on_main(
             Some(&url),
             "backend",
-            source.as_bytes()
+            source.as_bytes(),
+            Path::new("."),
+            &[],
         ));
         // Control: the reviewed bytes, parsed, are reviewed.
         let (_, _, _, source) = super::flow_key_and_source(project.path(), "backend").unwrap();
         assert!(super::reviewed_on_main(
             Some(&url),
             "backend",
-            source.as_bytes()
+            source.as_bytes(),
+            Path::new("."),
+            &[],
         ));
     }
 

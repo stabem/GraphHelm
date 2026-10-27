@@ -810,11 +810,27 @@ fn glance_kept(
     let Some((last, last_hash)) = digest.head.clone() else {
         return Ok(None);
     };
-    let aligned = |generation: &graphhelm_events::ProjectionGeneration| {
-        generation.watermark().last_sequence() == last
-            && generation.watermark().last_event_hash() == Some(&last_hash)
+    // #2144: the kept generation may stand AT the digest's head or PAST it: a post-write reader
+    // (`replay_cached`, after every append) advances the generation without the digest. Past it,
+    // the read still resumes, provided the tail read below holds the generation's last event by
+    // sequence AND hash; it used to fall back to a whole-history read under the store's shared
+    // lock, seconds on a long stream, after every append.
+    let folded = |generation: &graphhelm_events::ProjectionGeneration,
+                  tail: &[graphhelm_protocols::EventEnvelope]|
+     -> Option<usize> {
+        let at = generation.watermark().last_sequence();
+        let hash = generation.watermark().last_event_hash();
+        if at == last {
+            return (hash == Some(&last_hash)).then_some(0);
+        }
+        let skip = usize::try_from(at.checked_sub(last)?).ok()?;
+        let event = tail.get(skip.checked_sub(1)?)?;
+        (event.sequence == at && Some(&event.event_hash) == hash).then_some(skip)
     };
-    if cache.read(&key, aligned) != Some(true) {
+    if cache.read(&key, |generation| {
+        generation.watermark().last_sequence() >= last
+    }) != Some(true)
+    {
         return Ok(None);
     }
     let (tail, head) = super::timing::phase("stream.tail", || {
@@ -842,21 +858,22 @@ fn glance_kept(
     let projection = if tail.is_empty() {
         cache
             .read(&key, |generation| {
-                aligned(generation).then(|| generation.projection().clone())
+                (folded(generation, &tail) == Some(0)).then(|| generation.projection().clone())
             })
             .flatten()
     } else {
-        cache
-            .get(&key)
-            .filter(|generation| aligned(generation))
-            .and_then(|mut generation| {
-                super::timing::phase("fold", || generation.apply_page(&tail)).ok()?;
-                digest.advance(&tail);
-                let projection = generation.projection().clone();
-                cache.store(&key, generation);
-                cache.store_digest(&key, digest.clone());
-                Some(projection)
-            })
+        cache.get(&key).and_then(|mut generation| {
+            let skip = folded(&generation, &tail)?;
+            let rest = &tail[skip..];
+            if !rest.is_empty() {
+                super::timing::phase("fold", || generation.apply_page(rest)).ok()?;
+            }
+            digest.advance(&tail);
+            let projection = generation.projection().clone();
+            cache.store(&key, generation);
+            cache.store_digest(&key, digest.clone());
+            Some(projection)
+        })
     };
     let Some(projection) = projection else {
         return Ok(None);
@@ -1833,6 +1850,52 @@ pub(crate) mod tests {
                 .is_none(),
             "a tail that does not chain to the kept head reads the whole history"
         );
+    }
+
+    /// #2144: after every append a post-write reader (`replay_cached`) advances serve's kept
+    /// generation past the kept digest. The next status read must still resume from the kept
+    /// state over the tail, not fall back to a whole-history read under the store's shared lock
+    /// (seconds on a long stream, during which a waiting writer holds every later reader back).
+    /// Credible regression: `glance_kept` accepting only a generation exactly at the digest head.
+    #[test]
+    fn a_generation_advanced_past_the_digest_still_resumes_over_the_tail() {
+        let directory = tempfile::tempdir().unwrap();
+        seed(directory.path(), 120);
+        let folds = super::FoldCache::default();
+        let store = crate::commands::event_store(directory.path()).unwrap();
+        let (scope, stream, _) = read_seeded(directory.path());
+        let budget = ReadBudget::unbounded();
+        super::glance_whole(
+            Some(&folds),
+            &store,
+            directory.path(),
+            &scope,
+            &stream,
+            &budget,
+        )
+        .unwrap();
+
+        // An append, then the post-write reader's fold: the generation moves, the digest does not.
+        seed_range(directory.path(), 121, 123, "implementation");
+        let (_, _, history) = read_seeded(directory.path());
+        super::fold_cached(&folds, directory.path(), &scope, &stream, &history, &budget).unwrap();
+        // A further append the generation has not seen, so the read also folds a remainder.
+        seed_range(directory.path(), 124, 125, "implementation");
+        let (_, _, history) = read_seeded(directory.path());
+        let rebuilt =
+            serde_json::to_value(graphhelm_events::replay(&scope, &stream, &history).unwrap())
+                .unwrap();
+
+        let store = crate::commands::event_store(directory.path()).unwrap();
+        let kept = super::glance_kept(&folds, &store, directory.path(), &scope, &stream)
+            .unwrap()
+            .expect("the kept state resumes over the tail");
+        assert_eq!(
+            serde_json::to_value(kept.projection.unwrap()).unwrap(),
+            rebuilt
+        );
+        assert_eq!(kept.digest.len, 125);
+        assert_eq!(kept.digest.at_sequence(), Some(125));
     }
 
     fn read_seeded(

@@ -885,17 +885,65 @@ impl LocalEventRepository {
                 // The clean checks are READ-ONLY mirrors of what recovery would write:
                 // nothing to reconcile, nothing to republish -> nothing needs the
                 // exclusive lock, and concurrent clean opens proceed in parallel.
-                if let Some(state) = &state
-                    && repository.plan_reconcile(state)?.is_noop()
+                // A serve process opens a store per request. The reconcile scan lists every blob
+                // and the journal sync is an fsync; on a store of thousands of blobs the two were
+                // most of every request's open. Both answer about entries and bytes that have not
+                // changed since the last settled open on this cache, so a matching stamp skips
+                // them. The marker check stays: it is cheap and reads the markers themselves.
+                let stamp = match prefix_cache {
+                    Some(_) => Some(repository.clean_open_stamp()?),
+                    None => None,
+                };
+                let remembered = prefix_cache
+                    .zip(stamp.as_ref())
+                    .is_some_and(|(cache, stamp)| {
+                        cache
+                            .clean_open
+                            .lock()
+                            .is_ok_and(|slot| slot.as_ref() == Some(stamp))
+                    });
+                if remembered
+                    && let Some(state) = &state
                     && repository.active_markers_clean(&published_in(state))?
                 {
-                    repository.sync_loaded_journal(state)?;
+                    #[cfg(test)]
+                    if let Some(cache) = prefix_cache {
+                        cache.clean_open_hits.fetch_add(1, Ordering::SeqCst);
+                    }
                     #[cfg(test)]
                     repository
                         .shared_fast_open_count
                         .fetch_add(1, Ordering::SeqCst);
                     return Ok(());
                 }
+                let plan = match &state {
+                    Some(state) => Some(repository.plan_reconcile(state)?),
+                    None => None,
+                };
+                if let (Some(state), Some(plan)) = (&state, &plan)
+                    && plan.is_noop()
+                    && repository.active_markers_clean(&published_in(state))?
+                {
+                    #[cfg(test)]
+                    if let Some(cache) = prefix_cache {
+                        cache.clean_open_scans.fetch_add(1, Ordering::SeqCst);
+                    }
+                    repository.sync_loaded_journal(state)?;
+                    if plan.settled()
+                        && let (Some(cache), Some(stamp)) = (prefix_cache, stamp)
+                        && let Ok(mut slot) = cache.clean_open.lock()
+                    {
+                        *slot = Some(stamp);
+                    }
+                    #[cfg(test)]
+                    repository
+                        .shared_fast_open_count
+                        .fetch_add(1, Ordering::SeqCst);
+                    return Ok(());
+                }
+                // The plan holds the handles it planned to delete through; the redo below plans
+                // again, and a handle kept from here would read to it as a foreign holder.
+                drop(plan);
                 // UPGRADE: release shared, take exclusive, and REDO from scratch —
                 // another process may have acted in the gap, so the cache is dropped
                 // and the world re-read; correctness equals a fresh exclusive open.
@@ -1388,6 +1436,27 @@ impl LocalEventRepository {
             return Err(EventRepositoryError::Integrity);
         }
         Ok(())
+    }
+
+    fn clean_open_stamp(&self) -> Result<CleanOpenStamp, EventRepositoryError> {
+        let directory = |handle: &File| -> Result<_, EventRepositoryError> {
+            Ok((file_identity(handle)?, handle.metadata()?.modified().ok()))
+        };
+        let journal = self
+            .journal
+            .lock()
+            .map_err(|_| EventRepositoryError::StorageAt {
+                site: "clean-open-stamp:journal-mutex-poisoned",
+                os: None,
+            })?;
+        Ok(CleanOpenStamp {
+            journal: (file_identity(&journal)?, journal.metadata()?.len()),
+            directories: [
+                directory(&self.blobs_handle)?,
+                directory(&self.temp_handle)?,
+                directory(&self.active_handle)?,
+            ],
+        })
     }
 
     fn sync_loaded_journal(&self, state: &LoadedState) -> Result<(), EventRepositoryError> {
@@ -2432,6 +2501,7 @@ impl LocalEventRepository {
             DirectoryBudget::with_limits(MAX_REPOSITORY_ENTRIES, MAX_REPOSITORY_NAME_BYTES);
         let mut delete_blobs = Vec::new();
         let mut metadata_bytes = 0_u64;
+        let mut deferred = false;
         let listed = listed_plain_file_sizes(&self.root.join("blobs"));
         for_each_child_name(
             &self.blobs_handle,
@@ -2489,6 +2559,7 @@ impl LocalEventRepository {
                     false,
                 )?
                 else {
+                    deferred = true;
                     return Ok(());
                 };
                 metadata_bytes = metadata_bytes
@@ -2543,6 +2614,7 @@ impl LocalEventRepository {
                     else {
                         // Contention, or a name that no longer resolves to the validated file.
                         // Neither is a verdict about the store: skip this cycle.
+                        deferred = true;
                         return Ok(());
                     };
                     delete_blobs.push(PlannedDelete {
@@ -2572,6 +2644,7 @@ impl LocalEventRepository {
                     true,
                 )?
                 else {
+                    deferred = true;
                     return Ok(());
                 };
                 metadata_bytes = metadata_bytes
@@ -2647,6 +2720,7 @@ impl LocalEventRepository {
         Ok(ReconcilePlan {
             delete_blobs,
             delete_temps,
+            deferred,
         })
     }
 
@@ -3128,6 +3202,15 @@ enum LoadPath {
 /// in-place rewrite is refused within `max_age` plus one walk.
 /// Contention: the slot mutex is held across a suffix read, so concurrent handles on one
 /// cache serialize their journal walk; a caught-up cache makes that walk empty.
+/// What a settled shared open's checks depended on: the active journal (identity and length, so
+/// the synced bytes are exactly these) and the three directories the reconcile scan lists
+/// (identity and last-write time, which an entry created, renamed or removed in them moves).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CleanOpenStamp {
+    journal: (FileIdentity, u64),
+    directories: [(FileIdentity, Option<std::time::SystemTime>); 3],
+}
+
 #[derive(Clone)]
 pub struct PrefixCache {
     slot: Arc<Mutex<Option<VerifiedPrefix>>>,
@@ -3137,6 +3220,15 @@ pub struct PrefixCache {
     /// empty, so concurrent cold opens on one cache never walk (and hold the whole history in
     /// memory) in parallel. The others wait on it within their own read budget.
     walker: Arc<Mutex<()>>,
+    /// The stamp of the last shared open whose reconcile scan was settled and whose journal was
+    /// synced. An open whose stamp equals it skips both (see `open_inner`).
+    clean_open: Arc<Mutex<Option<CleanOpenStamp>>>,
+    /// Test seam: how many shared opens on this cache ran the reconcile scan.
+    #[cfg(test)]
+    clean_open_scans: Arc<std::sync::atomic::AtomicU64>,
+    /// Test seam: how many shared opens on this cache skipped it on a remembered stamp.
+    #[cfg(test)]
+    clean_open_hits: Arc<std::sync::atomic::AtomicU64>,
     #[cfg(test)]
     walk_delay: Option<std::time::Duration>,
     /// Test seam: how many opens on this cache walked from genesis before the lock.
@@ -3153,6 +3245,11 @@ impl PrefixCache {
             max_age,
             auditing: Arc::new(AtomicBool::new(false)),
             walker: Arc::new(Mutex::new(())),
+            clean_open: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
+            clean_open_scans: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            #[cfg(test)]
+            clean_open_hits: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             #[cfg(test)]
             walk_delay: None,
             #[cfg(test)]
@@ -3809,6 +3906,9 @@ struct PlannedDelete {
 struct ReconcilePlan {
     delete_blobs: Vec<PlannedDelete>,
     delete_temps: Vec<PlannedDelete>,
+    /// A file the scan could not open this cycle (another handle holds it), so the plan is
+    /// silent about it rather than clean.
+    deferred: bool,
 }
 
 impl ReconcilePlan {
@@ -3828,6 +3928,12 @@ impl ReconcilePlan {
     /// comparison is skipped with it, and it guards only the removal that Unix never performs.
     fn is_noop(&self) -> bool {
         cfg!(unix) || (self.delete_blobs.is_empty() && self.delete_temps.is_empty())
+    }
+
+    /// True when the scan saw every file and found nothing to remove, on either platform: the
+    /// only verdict a [`PrefixCache`] may remember against a [`CleanOpenStamp`].
+    fn settled(&self) -> bool {
+        !self.deferred && self.delete_blobs.is_empty() && self.delete_temps.is_empty()
     }
 }
 
@@ -9286,6 +9392,65 @@ mod limit_tests {
             cache.cold_walks.load(Ordering::SeqCst),
             1,
             "one walk from genesis for four concurrent cold opens"
+        );
+    }
+
+    /// A serve process opens the store per request. On a clean store whose journal and
+    /// directories have not moved, the reconcile scan (a listing of every blob) and the journal
+    /// fsync run once per cache, not once per request; a temp left by a crashed writer, or an
+    /// append, makes the next open check again.
+    #[test]
+    fn a_shared_cache_scans_and_syncs_an_unchanged_clean_store_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let build = cache_repository(directory.path());
+        build
+            .append_atomic(&wake_append(1, "clean-open-first"))
+            .unwrap();
+        drop(build);
+        let cache = PrefixCache::new(std::time::Duration::from_secs(3600));
+        let scans = || cache.clean_open_scans.load(Ordering::SeqCst);
+        let hits = || cache.clean_open_hits.load(Ordering::SeqCst);
+        let syncs: u64 = (0..5)
+            .map(|_| {
+                let opened = shared_repository(directory.path(), &cache);
+                assert_eq!(opened.shared_fast_open_count.load(Ordering::SeqCst), 1);
+                opened.journal_sync_count.load(Ordering::SeqCst)
+            })
+            .sum();
+        assert_eq!(syncs, 1, "the unchanged journal is synced once");
+        assert_eq!(
+            (scans(), hits()),
+            (1, 4),
+            "five opens of an unchanged store scan once"
+        );
+
+        // A temp left by a crashed writer moves `.tmp/`: the remembered verdict no longer
+        // applies, and the open checks the store again.
+        let leftover = directory
+            .path()
+            .join(".tmp")
+            .join(format!("blob-{}.tmp", "a".repeat(64)));
+        std::fs::write(&leftover, b"{}").unwrap();
+        drop(shared_repository(directory.path(), &cache));
+        assert_eq!(
+            hits(),
+            4,
+            "a leftover is checked, never skipped on a stale stamp"
+        );
+        // Unix keeps a planned name by design (`ReconcilePlan::is_noop`); Windows removed it.
+        let _ = std::fs::remove_file(&leftover);
+
+        // An append moves the journal: checked again once, then remembered again.
+        shared_repository(directory.path(), &cache)
+            .append_atomic(&wake_append(2, "clean-open-after-append"))
+            .unwrap();
+        let before = scans();
+        drop(shared_repository(directory.path(), &cache));
+        drop(shared_repository(directory.path(), &cache));
+        assert_eq!(
+            scans(),
+            before + 1,
+            "the moved journal is scanned and synced once"
         );
     }
 

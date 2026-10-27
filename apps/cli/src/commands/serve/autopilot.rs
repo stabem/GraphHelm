@@ -613,6 +613,60 @@ async fn note(
     status
 }
 
+/// #1045: append the owner's task record that routes `diagnosis` to `lane` (`pilot::route`).
+async fn route(
+    state: &ServeState,
+    execution_id: &str,
+    snapshot: &Snapshot,
+    diagnosis: &Diagnosis,
+    lane: &str,
+    action_id: &str,
+) {
+    let Some(task) = snapshot
+        .tasks
+        .iter()
+        .find(|task| diagnosis.item == format!("slice:{}", task.key))
+    else {
+        return;
+    };
+    let at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let Some((kind, document)) = pilot::route(diagnosis, task, lane, OWNER, &at) else {
+        return;
+    };
+    let id = pilot::route_signal_id(action_id);
+    let body = serde_json::json!({ "signal": {
+        "id": id,
+        "type": kind.as_str(),
+        "severity": "low",
+        "source": {"type": "user", "id": OWNER},
+        "emittedAt": at,
+        "description": document.to_string(),
+        "evidence": ["autopilot"],
+    }});
+    let mut headers = HeaderMap::new();
+    for (name, value) in [
+        ("idempotency-key", id.as_str()),
+        ("x-graphhelm-actor", OWNER),
+        ("x-graphhelm-actor-type", "owner"),
+        ("content-type", "application/json"),
+    ] {
+        if let Ok(value) = HeaderValue::from_str(value) {
+            headers.insert(name, value);
+        }
+    }
+    let reply = routes::signal(
+        State(state.clone()),
+        UrlPath(execution_id.to_owned()),
+        headers,
+        Bytes::from(body.to_string()),
+    )
+    .await;
+    let status = reply.status();
+    if !status.is_success() && status != StatusCode::CONFLICT {
+        eprintln!("graphhelm serve: autopilot route {id} was refused ({status})");
+    }
+}
+
 /// The brief the agent reads: the item, as data. Untrusted text (the ask, titles) lives only here.
 fn brief(autopilot: &Autopilot, snapshot: &Snapshot, diagnosis: &Diagnosis, lane: &str) -> String {
     let request = diagnosis
@@ -667,6 +721,18 @@ async fn launch(
     {
         return;
     }
+    // #1045: the verdict routes the slice, not only reports it: the typed record that hands it to
+    // the started lane, under an id derived from the launch note's, so a racing tick appends it
+    // once. A refused route is logged; the launched agent can still record its own.
+    route(
+        state,
+        &autopilot.execution,
+        snapshot,
+        &diagnosis,
+        &lane,
+        &id,
+    )
+    .await;
     let key = key(&diagnosis);
     lock(&autopilot.running).insert(key.clone());
     lock(&autopilot.launched).insert(key.clone());

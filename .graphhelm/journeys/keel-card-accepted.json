@@ -1,0 +1,130 @@
+{
+  "actors": [
+    {
+      "actorId": "contributor",
+      "goal": "Accept in-scope work and refuse work outside the Keel card",
+      "name": "contributor"
+    }
+  ],
+  "contractId": "keel-card-accepted",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "start.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", no stdout \"keel.scope.path_outside_card\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "start"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "accepted.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"\\\"ok\\\":true\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "accepted"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "refused.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"2\", stdout \"keel.scope.path_outside_card\", stdout \"docs/notes.md\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "refused"
+    }
+  ],
+  "riskSignals": [],
+  "steps": [
+    {
+      "actorId": "contributor",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen start not reached"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "start"
+    },
+    {
+      "actorId": "contributor",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen accepted not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-card-accepted/run.py inside"
+        }
+      },
+      "stepId": "accepted"
+    },
+    {
+      "actorId": "contributor",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen refused not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-card-accepted/run.py outside"
+        }
+      },
+      "stepId": "refused"
+    }
+  ],
+  "taskScope": "journey-flow keel-card-accepted path main",
+  "title": "Accept in-scope work and refuse work outside the Keel card",
+  "version": 1
+}

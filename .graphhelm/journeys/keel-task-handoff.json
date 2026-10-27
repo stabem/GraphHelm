@@ -1,0 +1,100 @@
+{
+  "actors": [
+    {
+      "actorId": "claude",
+      "goal": "A Codex session recovers a Claude handoff from Runtime history",
+      "name": "claude"
+    },
+    {
+      "actorId": "codex",
+      "goal": "A Codex session recovers a Claude handoff from Runtime history",
+      "name": "codex"
+    }
+  ],
+  "contractId": "keel-task-handoff",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "start.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", no stdout \"recoveredExecutionId\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "start"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "result.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"\\\"recoveredExecutionId\\\": \\\"keel-handoff-fixture\\\"\", stdout \"\\\"kind\\\": \\\"resume_held\\\"\", stdout \"\\\"wrongRecipientReason\\\": \\\"handoff offer recipient does not match this adapter\\\"\", stdout \"\\\"emptyStoreMissingOffer\\\": true\", stdout \"\\\"repeatReceive\\\": \\\"already_recorded\\\"\", stdout \"\\\"restartReceiptState\\\": \\\"already_recorded\\\"\", stdout \"\\\"journalStableAcrossRestart\\\": true\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "result"
+    }
+  ],
+  "riskSignals": [
+    "recovery"
+  ],
+  "steps": [
+    {
+      "actorId": "claude",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen start not reached"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/start"
+        }
+      },
+      "stepId": "start"
+    },
+    {
+      "actorId": "claude",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen result not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-task-handoff/scenario.py"
+        }
+      },
+      "stepId": "result"
+    }
+  ],
+  "taskScope": "journey-flow keel-task-handoff path main",
+  "title": "A Codex session recovers a Claude handoff from Runtime history",
+  "version": 1
+}

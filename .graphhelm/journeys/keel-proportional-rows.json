@@ -1,0 +1,167 @@
+{
+  "actors": [
+    {
+      "actorId": "contributor",
+      "goal": "Show proportional Keel card guidance",
+      "name": "contributor"
+    }
+  ],
+  "contractId": "keel-proportional-rows",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "start.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", no stdout \"\\\"kind\\\":\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "start"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "docs.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"\\\"kind\\\":\\\"summary_only\\\"\", stdout \"\\\"required\\\":[]\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "docs"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "bounded-code.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"\\\"kind\\\":\\\"bounded_code\\\"\", stdout \"\\\"required\\\":[\\\"promise\\\",\\\"scope\\\",\\\"proof\\\"]\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "bounded-code"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "expanded.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"\\\"kind\\\":\\\"expanded\\\"\", stdout \"\\\"required\\\":[\\\"full_card\\\",\\\"defect_naming_proof\\\",\\\"jpd\\\"]\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "expanded"
+    }
+  ],
+  "riskSignals": [],
+  "steps": [
+    {
+      "actorId": "contributor",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen start not reached"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "start"
+    },
+    {
+      "actorId": "contributor",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen docs not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-proportional-rows/run.py docs"
+        }
+      },
+      "stepId": "docs"
+    },
+    {
+      "actorId": "contributor",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen bounded-code not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-proportional-rows/run.py bounded-code"
+        }
+      },
+      "stepId": "bounded-code"
+    },
+    {
+      "actorId": "contributor",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen expanded not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/keel-proportional-rows/run.py expanded"
+        }
+      },
+      "stepId": "expanded"
+    }
+  ],
+  "taskScope": "journey-flow keel-proportional-rows path main",
+  "title": "Show proportional Keel card guidance",
+  "version": 1
+}

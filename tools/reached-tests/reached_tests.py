@@ -693,6 +693,12 @@ def reach(changed, packages, embedded, repo=None):
                 if prefix == ".graphhelm/journeys/":
                     tools.add("graphhelm --json journey validate --all")
                 hit = True
+        if path.startswith("schemas/") and path.endswith(".schema.json"):
+            # #1816: a wire schema change also runs the test that refuses a breaking change against
+            # what landed on main; #1810 added a `not` clause the author's plan never ran.
+            target = target_of(packages, "graphhelm-schema-evolution", "baseline_origin")
+            if target:
+                single.add(target)
         if path.startswith(BROWSER_REACHERS):
             tools.add(BROWSER_OBSERVERS)
         handoff_scenario = ".graphhelm/fixtures/keel-task-handoff/scenario.py"

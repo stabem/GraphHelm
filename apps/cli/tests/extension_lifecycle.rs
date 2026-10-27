@@ -125,7 +125,31 @@ fn synthetic_package(marker: &str) -> (TempDir, PathBuf) {
     (directory, root)
 }
 
+/// #1755: on Linux every lifecycle command takes its activation claim under
+/// `/run/user/<effective uid>`, which must already exist, be a directory, belong to that user and
+/// be private (mode 0700). A host without it (a bare container running as root has no
+/// `/run/user/0`) refuses every command with `GHCLI024` before the operation under test runs. Say
+/// that prerequisite by name here, once, instead of failing on a pointer that looks like a domain
+/// refusal. The claim isolation itself is not touched, and nothing is created for the test.
+#[cfg(target_os = "linux")]
+fn require_activation_claim_directory() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let uid = unsafe { libc::geteuid() };
+    let path = format!("/run/user/{uid}");
+    let usable = std::fs::symlink_metadata(&path).is_ok_and(|metadata| {
+        metadata.is_dir() && metadata.uid() == uid && metadata.permissions().mode() & 0o077 == 0
+    });
+    assert!(
+        usable,
+        "activation-claim prerequisite missing: {path} must be a directory owned by uid {uid}          with mode 0700 (a login or systemd user session provides it); this host has none, so          the lifecycle commands cannot take their claim"
+    );
+}
+
+#[cfg(not(target_os = "linux"))]
+fn require_activation_claim_directory() {}
+
 fn extension(args: &[&str]) -> std::process::Output {
+    require_activation_claim_directory();
     Command::from_std(graphhelm_process::command(assert_cmd::cargo::cargo_bin!(
         "graphhelm"
     )))

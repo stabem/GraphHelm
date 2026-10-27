@@ -45,6 +45,22 @@ class KeelPreToolHook(unittest.TestCase):
         self.assertEqual(result["permissionDecision"], "deny")
         self.assertIn("keel-card.json", result["permissionDecisionReason"])
 
+    def test_master_only_repository_still_gates(self):
+        # #2180: a repo whose only base is master once let every edit through without a card.
+        with tempfile.TemporaryDirectory() as other:
+            repo = Path(other)
+            git(repo, "init", "-q", "-b", "master")
+            git(repo, "config", "user.email", "t@t")
+            git(repo, "config", "user.name", "t")
+            (repo / "README.md").write_text("x\n")
+            git(repo, "add", ".")
+            git(repo, "commit", "-qm", "base")
+            payload = {"cwd": str(repo), "tool_name": "Write",
+                       "tool_input": {"file_path": str(repo / "app.py"), "content": "x = 1\n" * 20}}
+            out = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(payload),
+                                 capture_output=True, text=True, check=True, creationflags=NO_WINDOW).stdout
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "deny")
+
     def test_small_code_edit_passes(self):
         self.assertIsNone(self.run_hook("app.py", old_string="a", new_string="b"))
 

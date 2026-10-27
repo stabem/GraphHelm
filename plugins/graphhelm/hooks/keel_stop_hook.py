@@ -30,7 +30,7 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 CARD = Path(".graphhelm") / "keel-card.json"
 TRIVIAL_LINES = 5
 DOC_SUFFIXES = (".md", ".txt", ".rst")
-BASES = ("origin/main", "main")
+BASES = ("origin/main", "main", "origin/master", "master")
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -39,7 +39,8 @@ def _git(repo: Path, *args: str) -> str:
 
 
 SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
-BASE_REFS = {"origin/main": "refs/remotes/origin/main", "main": "refs/heads/main"}
+BASE_REFS = {"origin/main": "refs/remotes/origin/main", "main": "refs/heads/main",
+             "origin/master": "refs/remotes/origin/master", "master": "refs/heads/master"}
 MERGE_BASE_CACHE = Path(".graphhelm") / "cache" / "merge-base.json"
 
 

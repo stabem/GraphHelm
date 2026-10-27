@@ -676,7 +676,9 @@ fn a_cli_only_flow_judges_its_start_screen_keeps_text_frames_and_replays() {
         };
         let first = wait();
         // An origin that drifts ends the path before the command, so nothing is held.
-        let Some(digest) = first["held"]["cliConfirm"]["digest"].as_str().map(str::to_owned)
+        let Some(digest) = first["held"]["cliConfirm"]["digest"]
+            .as_str()
+            .map(str::to_owned)
         else {
             return first;
         };

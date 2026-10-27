@@ -2,8 +2,8 @@ schema: graphhelm.journey-flow/1
 id: keel-watchdog-routing
 title: A Keel verdict routes the task
 purpose: "A blocked Keel check routes the task back to implement with its finding, and a corrected head advances it to review."
-status: draft
-approved: null
+status: approved
+approved: {revision: d7c290c986126bdecd76ede16c3c68627b6ba1aa, digest: sha256:dadd3135476063c18bb49e9c79d93a3b9e28ff9dd3a411161cb741795b238610}
 base: http://127.0.0.1:1
 actors: [owner]
 secrets: []

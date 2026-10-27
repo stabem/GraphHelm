@@ -407,6 +407,76 @@ pub fn plan(
     out
 }
 
+/// #1045: the typed task record that moves the work to the lane the executor starts, so the
+/// verdict routes the slice instead of only reporting it. Pure: the same diagnosis, slice, lane,
+/// owner and instant give the same record.
+///
+/// - `review_unassigned` / `reviewer_silent`: a `task.review_assigned` naming `lane` the reviewer
+///   of the diagnosed head; the fold makes it the current reviewer, so the stage clears.
+/// - `author_silent` / `block_unanswered` with a named stalled lane: the owner release by slice key
+///   with `reassignedTo: lane` (the record the owner's reassign control writes); the new lane's
+///   claim stays its own record.
+/// - `approved_not_merged` and `request_unclaimed`: `None`. No typed record assigns a merge or a
+///   request; the launch note addressed to the lane is the wake. Owner-only lane records
+///   (`task.lane_retired`) are never produced here.
+#[must_use]
+pub fn route(
+    diagnosis: &Diagnosis,
+    task: &TaskState,
+    lane: &str,
+    owner: &str,
+    at: &str,
+) -> Option<(TaskEventKind, serde_json::Value)> {
+    if diagnosis.item != format!("slice:{}", task.key) {
+        return None;
+    }
+    match diagnosis.stage {
+        Stage::ReviewUnassigned | Stage::ReviewerSilent => {
+            let (pr, head) = (diagnosis.pr?, diagnosis.head_sha.as_deref()?);
+            Some((
+                TaskEventKind::ReviewAssigned,
+                serde_json::json!({
+                    "schema": crate::tasks::TASK_EVENT_SCHEMA,
+                    "taskId": task.task_id,
+                    "revision": 1,
+                    "at": at,
+                    "pr": pr,
+                    "headSha": head,
+                    "reviewer": lane,
+                    "ordinal": 1,
+                }),
+            ))
+        }
+        Stage::AuthorSilent | Stage::BlockUnanswered => {
+            let stalled = diagnosis.stalled_lane.as_deref()?;
+            if stalled == lane {
+                return None;
+            }
+            Some((
+                TaskEventKind::Released,
+                serde_json::json!({
+                    "schema": crate::tasks::TASK_EVENT_SCHEMA,
+                    "taskId": task.task_id,
+                    "revision": 2,
+                    "at": at,
+                    "lane": stalled,
+                    "sliceKey": task.key,
+                    "releasedBy": owner,
+                    "reassignedTo": lane,
+                    "reason": format!("autopilot: {} (lane silent)", diagnosis.stage.as_str()),
+                }),
+            ))
+        }
+        Stage::ApprovedNotMerged | Stage::RequestUnclaimed => None,
+    }
+}
+
+/// The id of the routing record that goes with the action note `action_id`.
+#[must_use]
+pub fn route_signal_id(action_id: &str) -> String {
+    format!("{action_id}-route")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -758,5 +828,95 @@ mod tests {
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         );
         assert_eq!(diagnosis[0].subject(), "an owner request");
+    }
+    // #1045: a watchdog verdict routes the slice through a typed record, read back by the fold.
+    const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn record(kind: &str, actor: &str, document: &serde_json::Value, seq: u64) -> TaskEventRecord {
+        parse_task_event(kind, actor, &document.to_string(), seq, Some(at(OLD)))
+            .unwrap_or_else(|| panic!("{kind} must parse: {document}"))
+    }
+
+    fn claimed() -> TaskEventRecord {
+        let claim = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-7",
+            "revision": 1, "at": OLD, "issue": 7, "lane": "lane-a", "branch": "issue-7-x"});
+        record("task.claimed", "lane-a", &claim, 1)
+    }
+
+    fn opened_pr() -> Vec<TaskEventRecord> {
+        let pr = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-7",
+            "revision": 1, "at": OLD, "pr": 70, "headSha": HEAD, "lane": "lane-a",
+            "journeys": [], "repo": "stabem/GraphHelm"});
+        vec![claimed(), record("task.pr_opened", "lane-a", &pr, 2)]
+    }
+
+    /// Classify, route the one diagnosis, fold the routed record in and classify again.
+    fn routed(mut records: Vec<TaskEventRecord>, quiet: &[&str], want: Stage) -> TaskState {
+        let tasks = fold_task_events(&records);
+        let before = found(&tasks, &[], quiet);
+        assert_eq!(
+            before.iter().map(|d| d.stage).collect::<Vec<_>>(),
+            vec![want]
+        );
+        let diagnosis = &before[0];
+        let lane = lane_name(diagnosis);
+        let (kind, document) =
+            route(diagnosis, &tasks[0], &lane, "graphhelm", NOW).expect("the stage routes");
+        let next = u64::try_from(records.len()).unwrap() + 1;
+        records.push(record(kind.as_str(), "graphhelm", &document, next));
+        let after = fold_task_events(&records);
+        assert!(
+            found(&after, &[], quiet).is_empty(),
+            "routed, the stage clears"
+        );
+        after.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn review_unassigned_routes_the_head_to_the_started_reviewer() {
+        let state = routed(opened_pr(), &[], Stage::ReviewUnassigned);
+        assert_eq!(
+            state.current_reviewer.as_deref(),
+            Some("auto-reviewer-pr-70")
+        );
+    }
+
+    #[test]
+    fn a_silent_reviewer_is_replaced_by_the_started_reviewer() {
+        let mut records = opened_pr();
+        let assigned = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": "issue-7", "revision": 1, "at": OLD, "pr": 70, "headSha": HEAD,
+            "reviewer": "lane-r", "ordinal": 1});
+        records.push(record("task.review_assigned", "graphhelm", &assigned, 3));
+        let state = routed(records, &["lane-r"], Stage::ReviewerSilent);
+        assert_eq!(
+            state.current_reviewer.as_deref(),
+            Some("auto-reviewer-pr-70")
+        );
+    }
+
+    #[test]
+    fn a_silent_author_is_released_to_the_started_author() {
+        let state = routed(vec![claimed()], &["lane-a"], Stage::AuthorSilent);
+        assert_eq!(state.released_by.as_deref(), Some("graphhelm"));
+    }
+
+    #[test]
+    fn a_merge_or_a_request_has_no_typed_route_and_no_owner_only_record_is_made() {
+        let task = with_pr(slice("lane-a", TaskStep::Merge, OLD));
+        let merge = found(std::slice::from_ref(&task), &[], &[]);
+        assert_eq!(merge[0].stage, Stage::ApprovedNotMerged);
+        assert_eq!(
+            route(&merge[0], &task, "auto-merger-pr-70", "graphhelm", NOW),
+            None
+        );
+        // A diagnosis of another slice never routes this one.
+        let mut other = merge[0].clone();
+        other.item = "slice:someone-else".into();
+        other.stage = Stage::ReviewUnassigned;
+        assert_eq!(
+            route(&other, &task, "auto-reviewer-pr-70", "graphhelm", NOW),
+            None
+        );
     }
 }

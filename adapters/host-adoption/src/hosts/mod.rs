@@ -399,7 +399,7 @@ impl ProcessTree {
         const WAIT_OBJECT_0: u32 = 0;
         let header = std::mem::size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
         let bytes = header + std::mem::size_of::<usize>() * MEMBER_CAP;
-        let query_members = || -> Result<Vec<u32>, AdoptionError> {
+        let query_snapshot = || -> Result<Option<Vec<u32>>, AdoptionError> {
             // The storage is usize-aligned because the job structure contains a pointer-sized
             // flexible-array member. Do not cast an unaligned Vec<u8> allocation to this type.
             let words = bytes.div_ceil(std::mem::size_of::<usize>());
@@ -421,8 +421,15 @@ impl ProcessTree {
             let list = unsafe { &*buffer.cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
             let assigned = list.NumberOfAssignedProcesses as usize;
             let listed = list.NumberOfProcessIdsInList as usize;
-            if assigned > MEMBER_CAP || listed > MEMBER_CAP || listed != assigned {
+            if assigned > MEMBER_CAP || listed > MEMBER_CAP {
                 return Err(cleanup_unconfirmed("job-membership-count", deadline));
+            }
+            if listed != assigned {
+                return Ok(None);
+            }
+            #[cfg(test)]
+            if process_tree_seam::take_forced_mismatch() {
+                return Ok(None);
             }
             let process_ids = unsafe {
                 buffer
@@ -440,7 +447,12 @@ impl ProcessTree {
                 };
                 pids.push(pid);
             }
-            Ok(pids)
+            Ok(Some(pids))
+        };
+        let query_members = || -> Result<Vec<u32>, AdoptionError> {
+            settled_members(&query_snapshot, deadline, Instant::now).map_err(|stage| {
+                stage.unwrap_or_else(|| cleanup_unconfirmed("job-membership-count", deadline))
+            })
         };
 
         // Repeat the bounded snapshot, terminate, handle-drain, and post-termination membership
@@ -511,6 +523,8 @@ fn cleanup_unconfirmed(stage: &str, deadline: Instant) -> AdoptionError {
         format!("{} ms before the deadline", (deadline - now).as_millis())
     };
     eprintln!("host.cleanup unconfirmed at {stage} (win32 {win32}, {budget})");
+    #[cfg(test)]
+    process_tree_seam::record_stage(stage);
     AdoptionError {
         reason: AdoptionReason::HostCleanupUnconfirmed,
     }
@@ -525,5 +539,143 @@ impl Drop for ProcessTree {
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(self.0);
         }
+    }
+}
+
+/// #1974: a job's accounting count and its process-id list are not one atomic snapshot. A member
+/// that is exiting can still be counted as assigned after it has left the id list, so one
+/// disagreeing snapshot is a transient read, not proof of a hidden member. Re-query until the two
+/// agree, and fail closed (`Err(None)`) if they still disagree at the deadline. A query error is
+/// returned unchanged.
+#[cfg(windows)]
+fn settled_members<E>(
+    mut query: impl FnMut() -> Result<Option<Vec<u32>>, E>,
+    deadline: Instant,
+    now: impl Fn() -> Instant,
+) -> Result<Vec<u32>, Option<E>> {
+    loop {
+        if let Some(pids) = query().map_err(Some)? {
+            return Ok(pids);
+        }
+        let remaining = deadline.saturating_duration_since(now());
+        if remaining.is_zero() {
+            return Err(None);
+        }
+        std::thread::sleep(remaining.min(std::time::Duration::from_millis(5)));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod settled_members_tests {
+    use super::settled_members;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_transient_count_mismatch_is_requeried_until_the_list_agrees() {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut reads = vec![Ok(Some(vec![7])), Ok(None), Ok(None)];
+        let mut calls = 0;
+        let settled = settled_members(
+            || -> Result<_, ()> {
+                calls += 1;
+                reads.pop().unwrap()
+            },
+            deadline,
+            Instant::now,
+        );
+        assert_eq!(settled, Ok(vec![7]));
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn a_mismatch_that_outlives_the_deadline_fails_closed() {
+        let deadline = Instant::now();
+        let settled = settled_members(|| -> Result<_, ()> { Ok(None) }, deadline, Instant::now);
+        assert_eq!(settled, Err(None));
+    }
+
+    #[test]
+    fn a_query_error_is_returned_unchanged() {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let settled = settled_members(
+            || -> Result<Option<Vec<u32>>, u8> { Err(4) },
+            deadline,
+            Instant::now,
+        );
+        assert_eq!(settled, Err(Some(4)));
+    }
+}
+
+/// Test-only seam (#1974): forces the real `ProcessTree::terminate_until` snapshot to report a
+/// count/list mismatch and records the stage of the last refusal. It does not exist outside
+/// `cfg(test)`, so it adds no production surface.
+#[cfg(all(test, windows))]
+mod process_tree_seam {
+    use std::cell::{Cell, RefCell};
+
+    thread_local! {
+        static FORCED: Cell<u32> = const { Cell::new(0) };
+        static STAGE: RefCell<Option<String>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn force_mismatches(count: u32) {
+        FORCED.with(|c| c.set(count));
+        STAGE.with(|s| *s.borrow_mut() = None);
+    }
+    pub(super) fn take_forced_mismatch() -> bool {
+        FORCED.with(|c| {
+            let left = c.get();
+            if left == 0 {
+                return false;
+            }
+            if left != u32::MAX {
+                c.set(left - 1);
+            }
+            true
+        })
+    }
+    pub(super) fn record_stage(stage: &str) {
+        STAGE.with(|s| *s.borrow_mut() = Some(stage.to_owned()));
+    }
+    pub(super) fn last_stage() -> Option<String> {
+        STAGE.with(|s| s.borrow().clone())
+    }
+}
+
+#[cfg(all(test, windows))]
+mod terminate_until_tests {
+    use super::{AdoptionReason, ProcessTree, process_tree_seam};
+    use std::time::{Duration, Instant};
+    use windows_sys::Win32::System::JobObjects::CreateJobObjectW;
+
+    fn empty_tree() -> ProcessTree {
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        assert!(!job.is_null());
+        ProcessTree(job)
+    }
+
+    #[test]
+    fn a_transient_count_mismatch_on_the_real_path_settles() {
+        let tree = empty_tree();
+        process_tree_seam::force_mismatches(3);
+        let result = tree.terminate_until(Instant::now() + Duration::from_secs(30));
+        assert!(result.is_ok());
+        assert_eq!(process_tree_seam::last_stage(), None);
+    }
+
+    #[test]
+    fn a_persistent_count_mismatch_on_the_real_path_fails_closed_at_job_membership_count() {
+        let tree = empty_tree();
+        process_tree_seam::force_mismatches(u32::MAX);
+        let result = tree.terminate_until(Instant::now() + Duration::from_millis(300));
+        let refused = result.expect_err("a persistent mismatch must not confirm cleanup");
+        assert!(matches!(
+            refused.reason,
+            AdoptionReason::HostCleanupUnconfirmed
+        ));
+        assert_eq!(
+            process_tree_seam::last_stage().as_deref(),
+            Some("job-membership-count")
+        );
     }
 }

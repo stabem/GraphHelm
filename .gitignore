@@ -33,3 +33,4 @@ target/
 # The Claude Code harness writes this per-machine file into every worktree it creates; an untracked
 # copy made run_reached.py refuse the worktree as not clean (#1538).
 /.claude/settings.local.json
+!tools/evals/fixtures/selection/*.jsonl

@@ -39,6 +39,11 @@ def ignores_tool_name(lines):
             if b.get("type") == "tool_use" and (b.get("input") or {}).get("skill")]
 
 
+def substring_match(lines):
+    return [b["input"]["skill"] for b in blocks(lines) if b.get("type") == "tool_use" and b.get("name") == "Skill"
+            and "graphhelm-resume" in b["input"]["skill"]] and ["graphhelm-resume"] or []
+
+
 def keeps_plugin_prefix(lines):
     return [b["input"]["skill"] for b in blocks(lines)
             if b.get("type") == "tool_use" and b.get("name") == "Skill"]
@@ -69,6 +74,10 @@ class GraderQualification(unittest.TestCase):
         result = gq.qualify(ignores_tool_name, self.expected, self.rows)
         self.assertEqual(result["false_pass"], ["neg-other-tool-with-skill-field"])
         self.assertFalse(result["qualified"])
+
+    def test_a_grader_that_matches_substrings_is_caught(self):
+        result = gq.qualify(substring_match, self.expected, self.rows)
+        self.assertEqual(result["false_pass"], ["neg-longer-skill-name"])
 
     def test_a_grader_that_keeps_the_plugin_prefix_is_caught_as_a_false_fail(self):
         result = gq.qualify(keeps_plugin_prefix, self.expected, self.rows)

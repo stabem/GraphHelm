@@ -41,6 +41,7 @@ FIXTURES = {
     ],
     "neg-other-skill": [assistant(skill("graphhelm:graphhelm-setup")), assistant(text("done"))],
     "neg-other-tool-with-skill-field": [assistant(OTHER_TOOL_SKILL_FIELD)],
+    "neg-longer-skill-name": [assistant(skill("graphhelm:graphhelm-resume-extra")), assistant(text("done"))],
     "neg-no-calls": [assistant(text("Next: ask for the new head."))],
     "neg-malformed-line": ["not json {", assistant(text("plain answer"))],
 }

@@ -9,6 +9,7 @@
     "neg-tool-result-mention": "not_selected",
     "neg-other-skill": "not_selected",
     "neg-other-tool-with-skill-field": "not_selected",
+    "neg-longer-skill-name": "not_selected",
     "neg-no-calls": "not_selected",
     "neg-malformed-line": "not_selected"
   }

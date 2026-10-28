@@ -1,0 +1,16 @@
+{
+  "synthetic": true,
+  "expected_skill": "graphhelm-resume",
+  "labels": {
+    "pos-plugin-prefixed": "selected",
+    "pos-bare-name": "selected",
+    "pos-after-other-tool": "selected",
+    "neg-text-mention-only": "not_selected",
+    "neg-tool-result-mention": "not_selected",
+    "neg-other-skill": "not_selected",
+    "neg-other-tool-with-skill-field": "not_selected",
+    "neg-longer-skill-name": "not_selected",
+    "neg-no-calls": "not_selected",
+    "neg-malformed-line": "not_selected"
+  }
+}

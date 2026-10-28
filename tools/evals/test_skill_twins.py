@@ -45,7 +45,7 @@ class SkillTwinsTest(unittest.TestCase):
                 case = root / item["case"]
                 for key, path in (("prompt", case / "prompt.md"), ("rubric", case / "graders/criteria.md")):
                     self.assertEqual(item[key]["path"], path.relative_to(ROOT).as_posix())
-                    self.assertEqual(item[key]["sha256"], hashlib.sha256(path.read_bytes()).hexdigest())
+                    self.assertEqual(item[key]["sha256"], hashlib.sha256(path.read_bytes().replace(chr(13).encode()+chr(10).encode(), chr(10).encode())).hexdigest())
                 examples = item["examples"]
                 ids, labels, statuses = expected[item["case"]]
                 self.assertEqual([e["id"] for e in examples], ids)

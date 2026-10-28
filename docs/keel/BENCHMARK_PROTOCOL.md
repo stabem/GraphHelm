@@ -272,6 +272,9 @@ agent patches and blind-review outcomes. It is an instrument check, not a method
 The [test-proof sensitivity replay](benchmark-evidence/task-1279-proof-sensitivity/README.md)
 replays the three authored tests against the frozen defect and their patches. It does not
 measure the effect of deleting unit tests.
+The [drael-v1 do-less three-arm battery](benchmark-evidence/drael-v1-doless-2026-10-26/README.md)
+and its [cross-method follow-up](benchmark-evidence/drael-v1-doless-2026-10-26/CROSS-METHOD.md)
+are an instrument pilot on one executor; they do not establish a methodology win.
 
 ## Test-portfolio comparison to run next
 

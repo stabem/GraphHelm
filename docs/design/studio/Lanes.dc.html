@@ -121,8 +121,8 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 <sc-for list="{{todo}}" as="t">
 <div style="display: flex; gap: 8px; align-items: center; padding: 8px; border-radius: 8px; background: #1e1e22">
 <span style="width: 8px; height: 8px; border-radius: 50%; background: {{t.c}}; flex: none"></span>
-<div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{t.what}}</span><span class="mono" style="font-size: 11px; color: #8a8a96">{{t.meta}}</span></div>
-<button class="b" style="padding: 4px 12px; border-radius: 6px; border: 1px solid #34343c; white-space: nowrap">{{t.act}}</button>
+<div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px"><span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{t.what}}</span><span class="mono" style="font-size: 11px; color: {{t.mc}}">{{t.meta}}</span></div>
+<button class="b" style="padding: 4px 12px; border-radius: 6px; border: 1px solid #34343c; white-space: nowrap; opacity: {{t.op}}">{{t.act}}</button>
 </div>
 </sc-for>
 </section>
@@ -219,9 +219,10 @@ const todo = [
 { c: R, what: 'codex-1752 silent 2 h 12 m on #1752', meta: 'claim expires 21:40', act: 'Reassign' },
 { c: R, what: 'codex-1781 asks you: Lojas before or after Início?', meta: 'waiting 38 m', act: 'Answer' },
 { c: O, what: 'gh-claude-20 asks: rebase #1771 now or wait for #1774?', meta: 'waiting 14 m', act: 'Answer' },
-{ c: '#8ab4ff', what: 'PR #1786 has no reviewer started', meta: 'opened 12 m ago', act: 'Assign' },
-{ c: G, what: 'PR #1778 approved, ready to merge', meta: 'head 4be1c2a9', act: 'Merge' }
-];
+{ c: '#8ab4ff', what: 'PR #1790 has no reviewer started', meta: 'opened 12 m ago', act: 'Assign' },
+{ c: '#8ab4ff', what: 'PR #1786 assigned to gh-claude-20', meta: '✓ recorded 21:24 · reviewer woken', mc: G, act: 'Assigned', op: '0.5' },
+{ c: G, what: 'PR #1778 approved, ready to merge', meta: 'head 4be1c2a9 · approved by gh-claude-17', act: 'Ask to merge' }
+].map(t => ({ mc: '#8a8a96', op: '1', ...t }));
 const cap = [
 { n: 'Claude quota', v: '62% left', w: '62%', fc: G },
 { n: 'Codex quota', v: '18% left', w: '18%', fc: O },

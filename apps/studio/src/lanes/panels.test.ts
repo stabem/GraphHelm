@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { BoardTask, Capacity, LaneAction, TasksBoard } from "../runtime/client";
 import { agents } from "./board";
-import { capacityRows, feed, needTag, needsAction } from "./panels";
+import { RECORDED_MS, capacityRows, feed, needTag, needsAction, shownNeeds } from "./panels";
 
 const task = (key: string, lane: string, step: BoardTask["step"], extra: Partial<BoardTask> = {}): BoardTask => ({
   key, issue: 7, pr: null, lane, currentReviewer: null, step, blockedBy: null, title: "Work", prTitle: null, journeys: [], lastSequence: 1, ...extra,
@@ -184,5 +184,24 @@ describe("lanes panels", () => {
       stalls: [], waiting: [],
     };
     expect(needsAction(board).map((need) => need.id)).toEqual(["reassign:s#1"]);
+  });
+  it("#1889: Merge asks the reviewer who approved; a recorded Assign stays a minute, then leaves", () => {
+    const board: TasksBoard = {
+      now: "2026-10-28T21:00:00Z",
+      tasks: [
+        task("m#1", "lane-m", "merge", { pr: 12, currentReviewer: null, reviewers: ["lane-old", "lane-ok"] }),
+        task("p#1", "lane-p", "review", { pr: 11 }),
+        task("f#1", "lane-free", "implement", { releasedBy: "orch" }),
+      ],
+      liveness: { lanes: [live("lane-free", { free: true })] }, stalls: [], waiting: [],
+    };
+    const needs = needsAction(board);
+    expect(needs.map((need) => [need.verb, need.to])).toEqual([["Merge", "lane-ok"], ["Assign", "lane-free"]]);
+    const assign = needs[1];
+    const recorded = [{ need: assign, to: "lane-free", at: 1_000 }];
+    // Still listed: the row is replaced in place. Gone from the board after the refresh: kept anyway.
+    expect(shownNeeds(needs, recorded, 1_000).map((row) => [row.need.verb, row.recorded?.to ?? null])).toEqual([["Merge", null], ["Assign", "lane-free"]]);
+    expect(shownNeeds([needs[0]], recorded, 1_000 + RECORDED_MS - 1).map((row) => [row.need.verb, row.recorded?.to ?? null])).toEqual([["Merge", null], ["Assign", "lane-free"]]);
+    expect(shownNeeds([needs[0]], recorded, 1_000 + RECORDED_MS).map((row) => row.need.verb)).toEqual(["Merge"]);
   });
 });

@@ -60,6 +60,28 @@ function actedOn(board: TasksBoard, need: Need): boolean {
   });
 }
 
+/** #1889: the reviewer whose APPROVE moved the slice to merge: its current reviewer, else the
+ * newest named reviewer. By DELIVERY.md that reviewer merges; the Studio only asks. */
+export function approver(task: BoardTask): string | null {
+  return task.currentReviewer ?? task.reviewers?.at(-1) ?? null;
+}
+
+/** #1889: how long an Assign the Runtime recorded stays on the list, as "Assigned to X". */
+export const RECORDED_MS = 60_000;
+
+/** #1889: an Assign the Runtime recorded; `at` is when the Studio saw it recorded (epoch ms). */
+export interface Recorded { need: Need; to: string; at: number }
+
+/** The rows Needs action shows: each need, with a recorded Assign kept in its place (or added,
+ * once the board no longer lists it) for `RECORDED_MS`, then gone. */
+export function shownNeeds(needs: readonly Need[], recorded: readonly Recorded[], now: number): { need: Need; recorded: Recorded | null }[] {
+  const fresh = new Map(recorded.filter((row) => now - row.at < RECORDED_MS).map((row) => [row.need.id, row]));
+  const rows = needs.map((need) => ({ need, recorded: fresh.get(need.id) ?? null }));
+  const listed = new Set(needs.map((need) => need.id));
+  for (const row of fresh.values()) if (!listed.has(row.need.id)) rows.push({ need: row.need, recorded: row });
+  return rows;
+}
+
 /** Everything on the board that waits on the owner, oldest first (an item with no time last). */
 export function needsAction(board: TasksBoard, requests: readonly OwnerRequest[] = []): Need[] {
   const needs: Need[] = [];
@@ -95,7 +117,7 @@ export function needsAction(board: TasksBoard, requests: readonly OwnerRequest[]
     if (task.step === "review" && task.currentReviewer === null && task.blockedBy === null) {
       needs.push({ id: `assign:${task.key}`, verb: "Assign", tone: "blue", what: `PR #${task.pr} has no reviewer started`, since: task.clock?.since ?? null, lane: task.lane, to: freeLane(board, [task.lane]), slice: task });
     } else if (task.step === "merge") {
-      needs.push({ id: `merge:${task.key}`, verb: "Merge", tone: "green", what: `PR #${task.pr} approved, ready to merge`, since: task.clock?.since ?? null, lane: task.lane, to: task.currentReviewer ?? task.lane, slice: task });
+      needs.push({ id: `merge:${task.key}`, verb: "Merge", tone: "green", what: `PR #${task.pr} approved, ready to merge`, since: task.clock?.since ?? null, lane: task.lane, to: approver(task) ?? task.lane, slice: task });
     }
   }
   for (const stall of board.stalls) {

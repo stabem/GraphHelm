@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { OWNER, type Capacity, type FileCollisions, type LaneAction, type Runtime, type TasksBoard } from "../runtime/client";
-import { controlBody, draftFor, messageBody, newId, type Draft } from "./drafts";
+import { controlBody, draftFor, messageBody, newId, reviewAssignedBody, type Draft } from "./drafts";
 import { actionText } from "./format";
 import { When } from "../time/Stamp";
-import { capacityRows, feed, needTag, needsAction, type Need } from "./panels";
+import { RECORDED_MS, approver, capacityRows, feed, needTag, needsAction, shownNeeds, type Need, type Recorded } from "./panels";
 import { idleText } from "./board";
 import type { OwnerRequest } from "../graph/requests";
 
@@ -26,8 +26,18 @@ interface Props {
 }
 
 const DONE: Record<Need["verb"], string> = {
-  Answer: "Answering", Assign: "Assigned", Merge: "Merge requested", Archive: "Archived", Reassign: "Reassigned", Wake: "Woken", "Hand off": "Handed off",
+  Answer: "Answering", Assign: "Assigned", Merge: "Asked to merge", Archive: "Archived", Reassign: "Reassigned", Wake: "Woken", "Hand off": "Handed off",
 };
+
+/** #1889: the button's words; Merge only asks the approving reviewer, who merges. */
+const LABEL: Record<Need["verb"], string> = {
+  Answer: "Answer", Assign: "Assign", Merge: "Ask to merge", Archive: "Archive", Reassign: "Reassign", Wake: "Wake", "Hand off": "Hand off",
+};
+
+/** #1889: an Assign records `task.review_assigned`, which names the slice's task, PR and head. */
+const assignable = (need: Need) => need.slice !== null && need.slice.pr !== null && typeof need.slice.taskId === "string" && typeof need.slice.headSha === "string";
+
+const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 
 /** The design's bottom row (docs/design/studio/Lanes.dc.html): Needs action, file collisions with
  * capacity, and the live feed. Every read is a public Runtime route. */
@@ -41,6 +51,19 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
   const [failure, setFailure] = useState<string | null>(null);
   // #1837: a failed request is resent with the same id and bytes.
   const drafts = useRef(new Map<string, Draft>());
+  // #1889: Assigns the Runtime recorded, shown as "Assigned to X" for a minute.
+  const [recorded, setRecorded] = useState<Recorded[]>([]);
+  const [tick, setTick] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (recorded.length === 0) return;
+    const timer = setInterval(() => {
+      const at = Date.now();
+      setTick(at);
+      setRecorded((rows) => { const kept = rows.filter((row) => at - row.at < RECORDED_MS); return kept.length === rows.length ? rows : kept; });
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [recorded.length]);
 
   useEffect(() => {
     let live = true;
@@ -65,6 +88,7 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
   }, [runtime]);
 
   const needs = useMemo(() => needsAction(board, requests), [board, requests]);
+  const shown = useMemo(() => shownNeeds(needs, recorded, tick), [needs, recorded, tick]);
   const rows = useMemo(() => feed(actions, FEED_ROWS), [actions]);
   const now = Date.parse(board.now);
 
@@ -81,14 +105,20 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
     let intent: string;
     let make: () => { id: string; body: Record<string, unknown> };
     let post: (draft: Draft) => Promise<void>;
-    if (need.verb === "Assign" || need.verb === "Merge" || need.verb === "Hand off") {
+    if (need.verb === "Assign") {
+      const to = need.to;
+      const slice = need.slice;
+      if (to === null || slice === null || !assignable(need)) return;
+      const target = { taskId: slice.taskId as string, pr: slice.pr as number, headSha: slice.headSha as string };
+      intent = JSON.stringify([need.id, to, target.headSha]);
+      make = () => { const id = newId(`studio-assign-${needTag(need.id)}`); return { id, body: reviewAssignedBody(executionId, id, target, to, at, OWNER.id) }; };
+      post = (draft) => runtime.assignReview(executionId, draft);
+    } else if (need.verb === "Merge" || need.verb === "Hand off") {
       const to = need.to;
       if (to === null) return;
       const text = need.verb === "Hand off"
         ? `The owner hands you request ${need.request?.requestId}: open its issue, link it (task.request_linked) and fix it.\n\n${need.request?.ask ?? ""}`
-        : need.verb === "Assign"
-        ? `The owner assigns you the review of PR #${pr} (${need.lane}).`
-        : `The owner asks you to merge PR #${pr}, approved and ready.`;
+        : `The owner asks you to merge PR #${pr}: you approved it, and the approving reviewer merges.`;
       intent = JSON.stringify([need.id, to]);
       make = () => { const id = newId(`studio-need-${needTag(need.id)}`); return { id, body: messageBody(executionId, id, to, text, null, at, OWNER.id) }; };
       post = (draft) => runtime.messageLane(executionId, draft);
@@ -110,6 +140,7 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
     try {
       await post(draft);
       drafts.current.delete(need.id);
+      if (need.verb === "Assign" && need.to !== null) { const now = Date.now(); setTick(now); setRecorded((rows) => [...rows.filter((row) => row.need.id !== need.id), { need, to: need.to as string, at: now }]); }
       setLast(`${DONE[need.verb]} ${need.to !== null ? `${need.slice?.pr ? `PR #${need.slice.pr} ` : need.slice?.issue ? `#${need.slice.issue} ` : ""}to ${need.to}` : need.lane}`);
       await onSent();
     } catch (error) {
@@ -128,22 +159,32 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
   return (
     <div className="lane-panels">
       <section aria-label="Needs action" className="lane-box">
-        <div className="box-head"><strong className="mono">NEEDS ACTION</strong><span className="mono faint">· oldest first</span><span className="mono count late">{needs.length}</span></div>
+        <div className="box-head"><strong className="mono">NEEDS ACTION</strong><span className="mono faint">· oldest first</span><span className="mono count late">{shown.length}</span></div>
         {last !== null && <span role="status" aria-label="Last action" className="sent small">{last}</span>}
         {failure !== null && <span role="alert" className="error small">{failure}</span>}
-        {needs.length === 0 ? <span className="muted small">Nothing waits on you.</span> : (
+        {shown.length === 0 ? <span className="muted small">Nothing waits on you.</span> : (
           <ul aria-label="Needs action items" className="needs">
-            {needs.map((need, index) => (
-              <li key={need.id} aria-label={`Needs action item ${index + 1}`} className="need">
-                <span className={`need-dot ${need.tone}`} />
-                <span className="need-text"><span className="need-what">{need.what}</span><span className="mono faint">{waited(need.since)}{need.to !== null && need.verb !== "Merge" ? ` · to ${need.to}` : ""}</span></span>
-                {/* #1808: the verb and its lane name the button, so it is never confused with the
-                    agent panel's own Reassign or Wake, nor with the same verb on another item. */}
-                <button type="button" aria-label={`${need.verb} ${need.lane}`} className="b ghost small" disabled={sending !== null || ((need.verb === "Assign" || need.verb === "Reassign" || need.verb === "Hand off") && need.to === null)}
-                  title={(need.verb === "Assign" || need.verb === "Reassign" || need.verb === "Hand off") && need.to === null ? "No free live lane can take it." : undefined}
-                  onClick={() => void act(need)}>{need.verb}</button>
-              </li>
-            ))}
+            {shown.map(({ need, recorded: done }, index) => {
+              const noLane = (need.verb === "Assign" || need.verb === "Reassign" || need.verb === "Hand off") && need.to === null;
+              const noHead = need.verb === "Assign" && !noLane && !assignable(need);
+              const by = need.verb === "Merge" && need.slice !== null ? approver(need.slice) : null;
+              const meta = done !== null ? `✓ recorded ${clock(done.at)} · reviewer woken`
+                : need.verb === "Merge" ? [need.slice?.headSha ? `head ${need.slice.headSha.slice(0, 8)}` : waited(need.since), by !== null ? `approved by ${by}` : null].filter(Boolean).join(" · ")
+                : `${waited(need.since)}${need.to !== null ? ` · to ${need.to}` : ""}`;
+              return (
+                <li key={need.id} aria-label={`Needs action item ${index + 1}`} className="need">
+                  <span className={`need-dot ${need.tone}`} />
+                  <span className="need-text"><span className="need-what">{done !== null ? `PR #${need.slice?.pr} assigned to ${done.to}` : need.what}</span><span className={`mono ${done !== null ? "sent" : "faint"}`}>{meta}</span></span>
+                  {/* #1808: the verb and its lane name the button, so it is never confused with the
+                      agent panel's own Reassign or Wake, nor with the same verb on another item. */}
+                  {done !== null
+                    ? <button type="button" aria-label={`Assigned ${need.lane}`} className="b ghost small" disabled>Assigned</button>
+                    : <button type="button" aria-label={`${LABEL[need.verb]} ${need.lane}`} className="b ghost small" disabled={sending !== null || noLane || noHead}
+                      title={noLane ? "No free live lane can take it." : noHead ? "The board names no head for this PR yet." : need.verb === "Merge" && by !== null ? `Asks ${by} to merge; the approving reviewer merges.` : undefined}
+                      onClick={() => void act(need)}>{LABEL[need.verb]}</button>}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

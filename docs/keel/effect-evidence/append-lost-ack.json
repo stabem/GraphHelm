@@ -1,8 +1,8 @@
 {
   "guarantee": "idempotent under lost_ack",
   "observer": "cargo +1.97.1 test --locked -p graphhelm-events --test append_effect_contract",
-  "observed": "test result: ok. 9 passed; 0 failed (lane sub-1476-evidence, 2026-10-28)",
-  "commit": "9fa774a1e39f5117e4b7641cb0176d66ad493b14",
+  "observed": "test result: ok. 9 passed; 0 failed (lane-1476-effects, 2026-10-28)",
+  "commit": "112ec6ac22e2a1626654ad8087ffb45d430f6bad",
   "closure": [
     "core/events",
     "core/execution",
@@ -15,35 +15,31 @@
   ],
   "key": "sha256:c4f735090075132e22cad3d5bf532912868a8aabfaa0bc05f80013051f2cb4ba",
   "effects": {
-    "ffi": [
-      "core/events/src/local.rs",
-      "core/policy/src/keel_lines.rs",
-      "core/schema/src/bounded_value.rs",
-      "core/schema/src/document.rs",
-      "core/schema/src/extension.rs"
-    ],
-    "file_lock": [
-      "core/events/src/local.rs"
-    ],
-    "file_write": [
-      "core/events/src/local.rs",
-      "core/events/src/local/segments/checkpoints.rs",
-      "core/events/src/local/segments/tests.rs",
-      "core/policy/src/keel_prove.rs",
-      "core/process/src/lib.rs",
-      "core/schema/src/document.rs",
-      "core/schema/src/extension.rs",
-      "core/schema/src/extension_capability_tests.rs",
-      "core/schema/src/extension_security_tests.rs"
-    ],
-    "fsync": [
-      "core/events/src/local.rs",
-      "core/events/src/local/segments.rs"
-    ],
-    "process_spawn": [
-      "core/execution/src/journeys.rs",
-      "core/policy/src/keel_prove.rs",
-      "core/process/src/lib.rs"
-    ]
+    "by_kind": {
+      "ffi": [
+        "core/events/src/local.rs",
+        "core/schema/src/bounded_value.rs",
+        "core/schema/src/extension.rs"
+      ],
+      "file_lock": [
+        "core/events/src/local.rs"
+      ],
+      "file_write": [
+        "core/events/src/local.rs",
+        "core/events/src/local/segments/checkpoints.rs",
+        "core/policy/src/keel_prove.rs",
+        "core/schema/src/extension.rs"
+      ],
+      "fsync": [
+        "core/events/src/local.rs",
+        "core/events/src/local/segments.rs"
+      ],
+      "process_spawn": [
+        "core/execution/src/journeys.rs",
+        "core/policy/src/keel_prove.rs",
+        "core/process/src/lib.rs"
+      ]
+    },
+    "unlexed": []
   }
 }

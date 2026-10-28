@@ -1528,3 +1528,195 @@ fn an_owner_who_disabled_journey_review_is_not_asked_again() {
     );
     assert!(!ok, "{refused}");
 }
+
+/// #1139: a user-wide registration pinned to one project beside the plugin's own provider is
+/// reported as a duplicate that misroutes; the reviewed cleanup converges it to one provider,
+/// a rerun has nothing left to do and restore brings the duplicate back byte for byte.
+#[test]
+fn a_pinned_user_registration_beside_the_plugin_is_reported_and_converges_to_one_provider() {
+    let (p, h) = seeded();
+    let other = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(h.path().join(".claude/plugins")).unwrap();
+    let plugin = tempfile::tempdir().unwrap();
+    std::fs::write(plugin.path().join(".mcp.json"), serde_json::to_vec(&serde_json::json!({
+        "mcpServers": {"graphhelm": {"command": assert_cmd::cargo::cargo_bin!("graphhelm"), "args": ["mcp", "--discover", "--project", ".", "--actor", "agent-chat"]}}
+    })).unwrap()).unwrap();
+    std::fs::write(
+        h.path().join(".claude/settings.json"),
+        br#"{"enabledPlugins":{"graphhelm@local":true}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        h.path().join(".claude/plugins/installed_plugins.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "plugins": {"graphhelm@local": [{"installPath": plugin.path(), "scope": "user"}]}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let user_json = serde_json::to_vec(&serde_json::json!({
+        "keep": 1, "mcpServers": {"other": {"command": "other"}, "graphhelm": {"command": assert_cmd::cargo::cargo_bin!("graphhelm"), "args": ["mcp", "--discover", "--project", other.path(), "--actor", "agent-chat"]}}
+    }))
+    .unwrap();
+    std::fs::write(h.path().join(".claude.json"), &user_json).unwrap();
+
+    let (ok, preview) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{preview}");
+    let report = &preview["data"]["mcpProviders"];
+    assert_eq!(report["count"], 2, "{report}");
+    assert_eq!(report["duplicate"], true, "{report}");
+    assert_eq!(report["misrouted"], true, "{report}");
+    let user = report["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["source"] == "home/.claude.json")
+        .unwrap();
+    assert_eq!(user["routing"], "other-project", "{report}");
+    assert!(
+        !report
+            .to_string()
+            .contains(&other.path().display().to_string()),
+        "the pinned path is echoed: {report}"
+    );
+    assert!(
+        preview["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .contains(&"home/.claude.json=use-plugin-mcp".into()),
+        "{preview}"
+    );
+    // Reporting changes nothing.
+    assert_eq!(
+        std::fs::read(h.path().join(".claude.json")).unwrap(),
+        user_json
+    );
+
+    let state = private_dir();
+    let out = state.path().join("plan.json");
+    let (ok, resolved) = json(
+        setup(p.path(), h.path())
+            .args([
+                "--resolve",
+                "project/AGENTS.md=keep",
+                "--resolve",
+                "home/.claude.json=use-plugin-mcp",
+                "--out",
+            ])
+            .arg(&out)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{resolved}");
+    let digest = resolved["data"]["acceptance"]["digest"].as_str().unwrap();
+    let (ok, applied) = json(
+        setup(p.path(), h.path())
+            .arg("--state-root")
+            .arg(state.path())
+            .arg("--apply")
+            .arg(&out)
+            .arg("--accept")
+            .arg(digest)
+            .output()
+            .unwrap(),
+    );
+    assert!(ok, "{applied}");
+    let after: Value =
+        serde_json::from_slice(&std::fs::read(h.path().join(".claude.json")).unwrap()).unwrap();
+    assert!(after["mcpServers"]["graphhelm"].is_null());
+    assert_eq!(after["mcpServers"]["other"]["command"], "other");
+    assert_eq!(after["keep"], 1);
+
+    let (ok, again) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{again}");
+    let report = &again["data"]["mcpProviders"];
+    assert_eq!(report["count"], 1, "{report}");
+    assert_eq!(report["duplicate"], false, "{report}");
+    assert_eq!(report["misrouted"], false, "{report}");
+    assert_eq!(report["providers"][0]["source"], "plugin:graphhelm@local");
+    assert!(
+        !again["data"]["suggestedResolutions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str().is_some_and(|v| v.contains("mcp"))),
+        "a converged host still gets an MCP suggestion: {again}"
+    );
+
+    let restore = |extra: &[&std::ffi::OsStr]| {
+        let mut command = assert_cmd::Command::from_std(graphhelm_process::command(
+            assert_cmd::cargo::cargo_bin!("graphhelm"),
+        ));
+        json(
+            command
+                .arg("restore")
+                .arg("--state-root")
+                .arg(state.path())
+                .args(extra)
+                .output()
+                .unwrap(),
+        )
+    };
+    let (ok, planned) = restore(&[]);
+    assert!(ok, "{planned}");
+    let planfile = state.path().join("restore.json");
+    std::fs::write(
+        &planfile,
+        serde_json::to_vec(&planned["data"]["plan"]).unwrap(),
+    )
+    .unwrap();
+    let digest = planned["data"]["plan"]["digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (ok, restored) = restore(&[
+        "--apply".as_ref(),
+        planfile.as_os_str(),
+        "--accept".as_ref(),
+        digest.as_ref(),
+    ]);
+    assert!(ok, "{restored}");
+    assert_eq!(
+        std::fs::read(h.path().join(".claude.json")).unwrap(),
+        user_json
+    );
+    let (ok, back) = json(setup(p.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{back}");
+    assert_eq!(back["data"]["mcpProviders"]["duplicate"], true);
+}
+
+/// #1139: each project's registration routes to its own Runtime; one pinned to another project
+/// is reported as misrouted.
+#[test]
+fn each_project_registration_reports_the_runtime_it_routes_to() {
+    let h = tempfile::tempdir().unwrap();
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    let pin = |project: &Path, target: &Path| {
+        std::fs::write(project.join(".mcp.json"), serde_json::to_vec(&serde_json::json!({
+            "mcpServers": {"graphhelm": {"command": assert_cmd::cargo::cargo_bin!("graphhelm"), "args": ["mcp", "--discover", "--project", target, "--actor", "agent-chat"]}}
+        })).unwrap()).unwrap();
+    };
+    pin(a.path(), a.path());
+    pin(b.path(), b.path());
+    for project in [a.path(), b.path()] {
+        let (ok, value) = json(setup(project, h.path()).arg("--dry-run").output().unwrap());
+        assert!(ok, "{value}");
+        let report = &value["data"]["mcpProviders"];
+        assert_eq!(report["count"], 1, "{report}");
+        assert_eq!(
+            report["providers"][0]["routing"], "this-project",
+            "{report}"
+        );
+        assert_eq!(report["misrouted"], false, "{report}");
+    }
+    pin(a.path(), b.path());
+    let (ok, value) = json(setup(a.path(), h.path()).arg("--dry-run").output().unwrap());
+    assert!(ok, "{value}");
+    let report = &value["data"]["mcpProviders"];
+    assert_eq!(
+        report["providers"][0]["routing"], "other-project",
+        "{report}"
+    );
+    assert_eq!(report["misrouted"], true, "{report}");
+}

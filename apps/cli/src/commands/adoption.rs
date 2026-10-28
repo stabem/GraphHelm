@@ -68,6 +68,7 @@ pub(super) fn run(args: &AdoptionSetupArgs) -> Outcome {
                 "plan": plan,
                 "provisioning": provisioning,
                 "suggestedResolutions": suggestions(&inventory, args),
+                "mcpProviders": mcp_providers(&inventory, args),
                 "observers": super::observers::readiness(&args.project, &args.home),
             }));
         }
@@ -354,6 +355,96 @@ fn suggestions(inventory: &serde_json::Value, args: &AdoptionSetupArgs) -> Vec<S
         }
     }
     out
+}
+
+/// Every GraphHelm MCP provider a Claude Code session opened in `--project` starts: the
+/// `graphhelm` entry of the user and project registration files and each enabled GraphHelm plugin
+/// contribution (a plugin installed at two scopes is one provider). Each says which Runtime it
+/// routes to: `active-project` (derived from the session's directory), `this-project`,
+/// `other-project` (pinned elsewhere: this project would talk to another project's Runtime) or
+/// `unknown`. More than one provider is reported as `duplicate`; nothing is changed here, the
+/// existing `register-mcp` and `use-plugin-mcp` resolutions converge it through a reviewed,
+/// backed-up plan. A pinned path is compared, never echoed.
+fn mcp_providers(inventory: &serde_json::Value, args: &AdoptionSetupArgs) -> serde_json::Value {
+    let same = |a: &std::path::Path, b: &std::path::Path| match (
+        std::fs::canonicalize(a),
+        std::fs::canonicalize(b),
+    ) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    };
+    let routing = |entry: &serde_json::Value| -> &'static str {
+        let Some(list) = entry.get("args").and_then(serde_json::Value::as_array) else {
+            return "unknown";
+        };
+        let list = list
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>();
+        match list.iter().position(|a| *a == "--project") {
+            Some(at) => match list.get(at + 1).copied() {
+                Some("." | "${GRAPHHELM_PROJECT:-.}") => "active-project",
+                Some(path) if same(std::path::Path::new(path), &args.project) => "this-project",
+                Some(_) => "other-project",
+                None => "unknown",
+            },
+            None if list.contains(&"--discover") => "active-project",
+            None => "unknown",
+        }
+    };
+    let mut providers = Vec::new();
+    for (item, scope) in [
+        ("home/.claude.json", "user"),
+        ("project/.mcp.json", "project"),
+    ] {
+        let entry = item_path(item, args)
+            .and_then(|path| read_bytes(&path).ok())
+            .and_then(|bytes| {
+                let body = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+                serde_json::from_slice::<serde_json::Value>(body).ok()
+            })
+            .and_then(|document| document.get("mcpServers")?.get("graphhelm").cloned());
+        if let Some(entry) = entry {
+            providers.push(serde_json::json!({
+                "source": item,
+                "scope": scope,
+                "routing": routing(&entry),
+            }));
+        }
+    }
+    let mut plugins = std::collections::BTreeMap::new();
+    if let Some(contributions) = inventory["spec"]["hosts"]
+        .as_array()
+        .and_then(|hosts| hosts.iter().find(|host| host["host"] == "claude"))
+        .and_then(|host| host["pluginContributions"].as_array())
+    {
+        for contribution in contributions {
+            if let Some(name) = contribution["pluginName"].as_str() {
+                let scope = contribution["scope"].as_str().unwrap_or("user");
+                let kept = plugins.entry(name.to_owned()).or_insert(scope);
+                if scope == "project" {
+                    *kept = scope;
+                }
+            }
+        }
+    }
+    for (name, scope) in plugins {
+        providers.push(serde_json::json!({
+            "source": format!("plugin:{name}"),
+            "scope": scope,
+            "routing": "active-project",
+        }));
+    }
+    let misrouted = providers.iter().any(|provider| {
+        provider["routing"] == "other-project"
+            || (provider["scope"] == "user" && provider["routing"] == "this-project")
+    });
+    serde_json::json!({
+        "count": providers.len(),
+        "duplicate": providers.len() > 1,
+        "misrouted": misrouted,
+        "providers": providers,
+    })
 }
 
 /// The file an item id names: `home/<path>` under `--home`, `project/<path>` under `--project`.

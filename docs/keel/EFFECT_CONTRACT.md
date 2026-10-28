@@ -75,7 +75,12 @@ files that can change what the append path does. `tools/keel-effect/evidence_key
 set at a git revision from the repository's own manifests: `graphhelm-events`, every workspace
 member it reaches through `path` dependencies (normal, build and `[target.*]` forms), its own
 dev-dependencies with their normal closure, and `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,
-`.cargo/config.toml`. The key is SHA-256 over the sorted `path NUL blob-id` lines of those files.
+`.cargo/config.toml`, plus every file those crates' Rust sources embed with a literal `include!`,
+`include_str!` or `include_bytes!` (resolved from the source file, followed through embedded `.rs`,
+bounded at 5000 files and 4 MiB each), such as `schemas/*.schema.json` behind `core/schema`'s
+registry and `conformance/schemas/valid/*.json` in the event tests. An include whose argument is not
+one plain string literal, or names a file absent at the revision, makes `check` answer
+`invalidate` with an `unknown` list and makes `record` refuse. The key is SHA-256 over the sorted `path NUL blob-id` lines of those files.
 
 The record lives beside this file in `effect-evidence/append-lost-ack.json`: guarantee, observer
 command, observed result, the commit it ran on, the closure and the key. A reviewer asks:

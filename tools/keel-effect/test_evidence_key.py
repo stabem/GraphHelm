@@ -25,7 +25,12 @@ FILES = {
     "core/events/src/local.rs": "fn committed_events_for_idempotency() -> bool { true }\n",
     "core/events/tests/append_effect_contract.rs": "#[test] fn lost_ack() {}\n",
     "core/process/Cargo.toml": '[package]\nname = "graphhelm-process"\n',
-    "core/process/src/lib.rs": "pub fn command() {}\n",
+    "core/process/src/lib.rs": ('pub const SCHEMA: &str = include_str!(\n'
+                                '    "../../../schemas/event-envelope.schema.json"\n);\n'),
+    "core/events/tests/conformance.rs": 'const F: &[u8] = include_bytes!("../../../conformance/valid/event.json");\n',
+    "schemas/event-envelope.schema.json": '{"type": "object"}\n',
+    "conformance/valid/event.json": '{"id": "e1"}\n',
+    "schemas/unrelated.schema.json": '{}\n',
     "core/testkit/Cargo.toml": '[package]\nname = "testkit"\n',
     "core/testkit/src/lib.rs": "pub fn fixture() {}\n",
     "core/other/Cargo.toml": ('[package]\nname = "other"\n[dependencies]\n'
@@ -82,7 +87,7 @@ class EvidenceKey(unittest.TestCase):
         self.assertEqual(result["rerun"], ek.OBSERVER)
 
     def test_a_change_in_a_linked_dependency_or_the_lockfile_invalidates(self):
-        for path, text in (("core/process/src/lib.rs", "pub fn command() { }\n"),
+        for path, text in (("core/process/src/lib.rs", FILES["core/process/src/lib.rs"] + "pub fn command() {}\n"),
                            ("core/testkit/src/lib.rs", "pub fn fixture() { }\n"),
                            ("Cargo.lock", "# lock 2\n")):
             with self.subTest(path=path):
@@ -90,6 +95,33 @@ class EvidenceKey(unittest.TestCase):
                 result = ek.decide(self.repo, self.record, head)
                 self.assertEqual((result["decision"], result["changed"]), ("invalidate", [path]))
                 self.record = ek.make_record(self.repo, head, "rerun ok")
+
+    def test_a_schema_embedded_by_a_linked_crate_invalidates_on_a_one_space_edit(self):
+        head = commit(self.repo, {"schemas/event-envelope.schema.json": '{"type":  "object"}\n'}, "schema")
+        result = ek.decide(self.repo, self.record, head)
+        self.assertEqual((result["decision"], result["changed"]),
+                         ("invalidate", ["schemas/event-envelope.schema.json"]))
+
+    def test_a_conformance_fixture_embedded_by_an_observer_test_invalidates(self):
+        head = commit(self.repo, {"conformance/valid/event.json": '{"id": "e2"}\n'}, "fixture")
+        result = ek.decide(self.repo, self.record, head)
+        self.assertEqual((result["decision"], result["changed"]), ("invalidate", ["conformance/valid/event.json"]))
+
+    def test_a_schema_no_closure_crate_embeds_reuses(self):
+        head = commit(self.repo, {"schemas/unrelated.schema.json": '{"x": 1}\n'}, "unrelated")
+        self.assertEqual(ek.decide(self.repo, self.record, head)["decision"], "reuse")
+
+    def test_a_non_literal_include_fails_closed_and_cannot_be_recorded(self):
+        for text in ('const S: &str = include_str!(concat!(env!("OUT_DIR"), "/s.json"));\n',
+                     'const S: &str = include_str!(r"../../../schemas/event-envelope.schema.json");\n',
+                     'const S: &str = include_str!("../../../schemas/absent.json");\n'):
+            with self.subTest(text=text):
+                head = commit(self.repo, {"core/events/src/gen.rs": text}, "non-literal")
+                result = ek.decide(self.repo, self.record, head)
+                self.assertEqual(result["decision"], "invalidate")
+                self.assertEqual(len(result["unknown"]), 1)
+                with self.assertRaises(ValueError):
+                    ek.make_record(self.repo, head, "ok")
 
     def test_a_new_path_dependency_widens_the_closure_and_invalidates(self):
         manifest = FILES["core/events/Cargo.toml"].replace(

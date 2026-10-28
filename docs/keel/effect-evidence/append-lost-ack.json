@@ -2,7 +2,7 @@
   "guarantee": "idempotent under lost_ack",
   "observer": "cargo +1.97.1 test --locked -p graphhelm-events --test append_effect_contract",
   "observed": "test result: ok. 9 passed; 0 failed (lane-1476-effects, 2026-10-28)",
-  "commit": "112ec6ac22e2a1626654ad8087ffb45d430f6bad",
+  "commit": "661d359a16b4a0f6e58c800281b6ee0c8c96cb80",
   "closure": [
     "core/events",
     "core/execution",

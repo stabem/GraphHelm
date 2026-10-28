@@ -2,7 +2,7 @@
   "guarantee": "idempotent under lost_ack",
   "observer": "cargo +1.97.1 test --locked -p graphhelm-events --test append_effect_contract",
   "observed": "test result: ok. 9 passed; 0 failed (lane-1476-effects, 2026-10-28)",
-  "commit": "af0a7686b68a9cf7afafbeba1877398765f87407",
+  "commit": "be8fcba40fcff96f258ebb2868c085e1983cf5e6",
   "closure": [
     "core/events",
     "core/execution",
@@ -18,6 +18,7 @@
     "by_kind": {
       "ffi": [
         "core/events/src/local.rs",
+        "core/events/tests/local_atomicity.rs",
         "core/schema/src/bounded_value.rs",
         "core/schema/src/extension.rs"
       ],
@@ -27,17 +28,37 @@
       "file_write": [
         "core/events/src/local.rs",
         "core/events/src/local/segments/checkpoints.rs",
+        "core/events/src/local/segments/tests.rs",
+        "core/events/tests/append_effect_contract.rs",
+        "core/events/tests/held_file_contention.rs",
+        "core/events/tests/local_atomicity.rs",
+        "core/events/tests/persisted_node_bytes.rs",
+        "core/events/tests/recoverable_layout.rs",
+        "core/events/tests/repository_conformance.rs",
+        "core/events/tests/writer_liveness.rs",
+        "core/execution/tests/journeys_freshness.rs",
+        "core/execution/tests/tasks.rs",
         "core/policy/src/keel_prove.rs",
-        "core/schema/src/extension.rs"
+        "core/process/tests/no_console_window.rs",
+        "core/protocols/tests/authored_strings_across_the_workspace.rs",
+        "core/protocols/tests/canonical_golden.rs",
+        "core/schema/src/extension.rs",
+        "core/schema/src/extension_capability_tests.rs",
+        "core/schema/src/extension_security_tests.rs"
       ],
       "fsync": [
         "core/events/src/local.rs",
         "core/events/src/local/segments.rs"
       ],
       "process_spawn": [
+        "core/events/tests/local_atomicity.rs",
+        "core/events/tests/writer_liveness.rs",
         "core/execution/src/journeys.rs",
+        "core/execution/tests/journeys_freshness.rs",
         "core/policy/src/keel_prove.rs",
-        "core/process/src/lib.rs"
+        "core/policy/tests/determinism.rs",
+        "core/process/src/lib.rs",
+        "core/protocols/tests/authored_strings_across_the_workspace.rs"
       ]
     },
     "unlexed": []

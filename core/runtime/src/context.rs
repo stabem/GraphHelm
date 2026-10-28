@@ -35,7 +35,7 @@
 //! next frozen baseline.
 //!
 //! **Deterministic by construction.** No clock, no randomness: the terms are a pure function of
-//! the objective, the channel ranks by (distinct terms matched, path), and the capsule id is
+//! the objective, the channel ranks by BM25 over the scanned files (then path), and the capsule id is
 //! derived from the execution, node and attempt. The same tree and the same node compile to the
 //! same bytes and the same digest.
 //!

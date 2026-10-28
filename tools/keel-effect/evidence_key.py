@@ -203,11 +203,8 @@ EFFECT_KINDS = {
                                 r"\bCreateProcess[AW]?\b"),
     "ffi": re.compile(r"\bunsafe\b|\bextern\s+\"\"|\basm!"),
 }
-NOT_PRODUCTION = ("/tests/", "/benches/", "/examples/")
-MOD_DECL = re.compile(r"((?:#\s*\[[^\]]*\]\s*)*)(?:pub(?:\([^)]*\))?\s+)?\bmod\s+([A-Za-z_][A-Za-z0-9_]*)\s*([;{])")
+INLINE_TEST_MOD = re.compile(r"((?:#\s*\[[^\]]*\]\s*)*)(?:pub(?:\([^)]*\))?\s+)?\bmod\s+[A-Za-z_][A-Za-z0-9_]*\s*\{")
 CFG_ATTR = re.compile(r"#\s*\[\s*cfg\s*\((.*?)\)\s*\]", re.S)
-PATH_RAW = re.compile(r"#\s*\[\s*path\s*=\s*\"([^\"\\]+)\"\s*\]")
-PATH_LEXED = re.compile(r"#\s*\[\s*path\s*=\s*\"\"\s*\]")
 IDENT = re.compile(r"[A-Za-z0-9_]")
 
 
@@ -279,101 +276,50 @@ def strip_noise(text: str) -> str:
     return "".join(out)
 
 
-def _is_test_only(attrs: str) -> bool:
-    """True only for exactly one `#[cfg(test)]` and no `cfg_attr`: `not(test)`, `any(..)`, `all(..)`,
-    feature gates or a second cfg all compile the module into some non-test build."""
-    cfgs = CFG_ATTR.findall(attrs)
-    return len(cfgs) == 1 and cfgs[0].strip() == "test" and "cfg_attr" not in attrs
-
-
-def analyse(path: str, text: str) -> tuple[str, list[tuple[set[str], bool]]]:
-    """Lexed non-test code of one source, and every reference in it that can bring a file into a
-    build (`mod x;`, `#[path] mod`, `include!`, `include_str!`, `include_bytes!`) as (files, test-only).
-    A reference is test-only when it carries exactly `#[cfg(test)]` or sits inside an inline
-    `#[cfg(test)] mod { ... }`, whose body is cut from the code. Literals are read from the raw text
-    in order; a count that does not match the lexed text, a non-literal include, or a
-    `cfg_attr`-computed path raises `Unlexable`."""
-    code = strip_noise(text)
-    paths = PATH_RAW.findall(text)
-    if len(paths) != len(PATH_LEXED.findall(code)):
-        raise Unlexable("#[path] attributes not attributable")
-    path_at = {m.start(): paths[i] for i, m in enumerate(PATH_LEXED.finditer(code))}
-    cuts, decls = [], []
-    for m in MOD_DECL.finditer(code):
-        attrs, name, end = m.group(1), m.group(2), m.group(3)
-        if "cfg_attr" in attrs and "path" in attrs:
-            raise Unlexable("cfg_attr path")
-        test_only = _is_test_only(attrs)
-        if end == "{":
-            if test_only:
-                depth, j = 1, m.end()
-                while depth and j < len(code):
-                    depth += {"{": 1, "}": -1}.get(code[j], 0)
-                    j += 1
-                if depth:
-                    raise Unlexable("unbalanced test module")
-                cuts.append((m.start(), j))
+def drop_test_bodies(code: str) -> str:
+    """Lexed `code` without the bodies of inline modules carrying exactly one `#[cfg(test)]` (and no
+    `cfg_attr`). Nothing else is dropped: no file is ever excluded, because deciding which files a
+    build loads (`mod` nesting, `#[path]`, `include!`) is where a scan can err toward hiding code."""
+    at = 0
+    while (m := INLINE_TEST_MOD.search(code, at)):
+        cfgs = CFG_ATTR.findall(m.group(1))
+        if not (len(cfgs) == 1 and cfgs[0].strip() == "test" and "cfg_attr" not in m.group(1)):
+            at = m.end()
             continue
-        explicit = [p for at, p in path_at.items() if m.start() <= at < m.end()]
-        here = Path(path)
-        if explicit:
-            files = {_normalise(f"{here.parent.as_posix()}/{explicit[0]}")}
-        else:
-            base = here.parent if here.name in ("lib.rs", "main.rs", "mod.rs") else here.parent / here.stem
-            files = {(base / f).as_posix() for f in (f"{name}.rs", f"{name}/mod.rs")}
-        decls.append((m.start(), files, test_only))
-    # `include!`/`include_str!`/`include_bytes!` bring a file into the build as surely as `mod`.
-    # Literals are paired with the lexed sites in order; a non-literal or uncountable site raises.
-    literals = [m.group(1) for m in INCLUDE_LITERAL.finditer(text)]
-    sites = list(INCLUDE_SITE.finditer(code))
-    if len(literals) != len(sites) or len(INCLUDE_SITE.findall(text)) != len(sites):
-        raise Unlexable("include! reference not attributable")
-    for site, literal in zip(sites, literals):
-        decls.append((site.start(), {_normalise(f"{Path(path).parent.as_posix()}/{literal}")}, False))
-    # Every reference is test-only when it sits inside a `#[cfg(test)]` body, else by its own attrs.
-    inside = lambda at: any(a <= at < b for a, b in cuts)
-    kept = [(files, test_only or inside(at)) for at, files, test_only in decls]
-    for a, b in reversed(cuts):
-        code = code[:a] + code[b:]
-    return code, kept
+        depth, j = 1, m.end()
+        while depth and j < len(code):
+            depth += {"{": 1, "}": -1}.get(code[j], 0)
+            j += 1
+        if depth:
+            raise Unlexable("unbalanced test module")
+        code, at = code[:m.start()] + code[j:], m.start()
+    return code
 
 
-def effects_of(text: str, path: str = "src/lib.rs") -> set[str]:
-    """Effect kinds one Rust source's non-test code can perform; raises `Unlexable`."""
-    code, _ = analyse(path, text)
+def effects_of(text: str) -> set[str]:
+    """Effect kinds one Rust source can perform outside inline `#[cfg(test)]` bodies; raises
+    `Unlexable`."""
+    code = drop_test_bodies(strip_noise(text))
     return {kind for kind, pattern in EFFECT_KINDS.items() if pattern.search(code)}
 
 
 def effect_set(repo: Path, blobs: dict[str, str]) -> dict:
-    """`{"by_kind": {kind: [sources]}, "unlexed": [sources]}` over the closure's production `.rs`
-    files: not under tests/, benches/ or examples/, and not a file whose every declaration in the
-    closure is exactly `#[cfg(test)] mod`. One non-test declaration (plain, `not(test)`, `any(..)`,
-    a feature gate, a `#[path]` to the same file) keeps it production. Bounded by the include
-    scan's file and byte limits."""
-    paths = sorted(p for p in blobs if p.endswith(".rs") and not any(d in f"/{p}" for d in NOT_PRODUCTION))
+    """`{"by_kind": {kind: [sources]}, "unlexed": [sources]}` over every `.rs` file in the closure,
+    test files included (an accepted over-report). Bounded by the include scan's limits."""
+    paths = sorted(p for p in blobs if p.endswith(".rs"))
     if len(paths) > MAX_SCAN_FILES:
         raise ValueError(f"effect scan over {MAX_SCAN_FILES} files")
-    kinds: dict[str, set[str]] = {}
-    declared: dict[str, list[bool]] = {}
+    by_kind: dict[str, list[str]] = {}
     unlexed: list[str] = []
     for path, text in zip(paths, _blob_texts(repo, [blobs[p] for p in paths])):
         try:
-            code, decls = analyse(path, text)
+            kinds = effects_of(text)
         except Unlexable:
             unlexed.append(path)
             continue
-        for files, test_only in decls:
-            for f in files:
-                declared.setdefault(f, []).append(test_only)
-        kinds[path] = {k for k, pattern in EFFECT_KINDS.items() if pattern.search(code)}
-    tests = {f for f, flags in declared.items() if all(flags)}
-    by_kind: dict[str, list[str]] = {}
-    for path in sorted(kinds.keys() - tests):
-        for kind in sorted(kinds[path]):
+        for kind in sorted(kinds):
             by_kind.setdefault(kind, []).append(path)
-    # An unlexed source may declare any module, so no exclusion is trusted: it stays listed and
-    # makes the answer `unknown`.
-    return {"by_kind": dict(sorted(by_kind.items())), "unlexed": sorted(unlexed)}
+    return {"by_kind": dict(sorted(by_kind.items())), "unlexed": unlexed}
 
 
 

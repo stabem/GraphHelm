@@ -224,74 +224,48 @@ class EffectSet(unittest.TestCase):
         self.assertEqual(ek.decide(self.repo, record, head)["effects_changed"]["summary"],
                          f"effects changed: -file_lock@{LOCAL}")
 
-    def test_comments_strings_a_mutex_lock_and_test_sources_are_not_effects_of_the_path(self):
-        spawn = 'fn t() { std::process::Command::new("x"); }\n'
+    def test_comments_strings_a_mutex_lock_and_an_inline_cfg_test_body_are_not_effects(self):
         head = commit(self.repo, {
             LOCAL: ("// a TcpStream would be wrong here; so would Command::new\n"
                     "/* unsafe { /* nested */ } */ fn f(m: &Mutex<u8>) { m.lock(); }\n"
                     'const DENY: &[&str] = &["reqwest::get(", "Command::new"];\n'
-                    "#[cfg(test)]\nmod tests {\n    fn t() { let _ = std::net::TcpStream::connect(a); }\n}\n"
-                    "#[cfg(test)]\nmod segments_tests;\n"
-                    '#[cfg(test)]\n#[path = "local_security_tests.rs"]\nmod security_tests;\n'),
-            "core/events/src/local/segments_tests.rs": spawn,
-            "core/events/src/local_security_tests.rs": spawn,
-            "core/events/tests/append_effect_contract.rs": append_fn("std::net::TcpStream::connect(a)")}, "noise")
+                    "#[cfg(test)]\nmod tests {\n    fn t() { let _ = std::net::TcpStream::connect(a); }\n}\n")}, "noise")
         self.assertEqual(ek.decide(self.repo, self.record, head)["effects_changed"]["summary"], "effects unchanged")
 
-    def test_a_file_any_non_test_declaration_loads_stays_production(self):
-        evil = {"core/process/src/evil.rs": "pub fn e() { std::net::TcpStream::connect(a); }\n"}
+    def test_an_inline_module_gated_by_anything_but_exactly_cfg_test_is_scanned(self):
+        for attrs in ("#[cfg(not(test))]", '#[cfg(any(test, feature = "x"))]', "#[cfg(test)]\n#[cfg(unix)]", ""):
+            with self.subTest(attrs=attrs):
+                head = commit(self.repo, {LOCAL: FILES[LOCAL] + f"{attrs}\nmod q {{ fn f() {{ TcpStream::connect(a); }} }}\n"},
+                              attrs or "plain")
+                self.assertEqual(sites(ek.decide(self.repo, self.record, head)), ([f"network@{LOCAL}"], []))
+
+    def test_no_file_is_excluded_whatever_references_it(self):
+        # P10, P11, P15, P21, P22 from the reviews, plus a file only `#[cfg(test)] mod` loads: every
+        # one is scanned. Reporting a test-only file's effects is the accepted over-report.
         lib = FILES["core/process/src/lib.rs"]
-        for name, decls in (("P10", "#[cfg(test)]\nmod evil;\n#[cfg(not(test))]\nmod evil;\n"),
-                            ("P11", '#[cfg(test)]\n#[path = "evil.rs"]\nmod t;\nmod evil;\n'),
-                            ("not(test) only", "#[cfg(not(test))]\nmod evil;\n"),
-                            ("feature gate", '#[cfg(test)]\n#[cfg(feature = "x")]\nmod evil;\n')):
-            with self.subTest(name):
-                head = commit(self.repo, {"core/process/src/lib.rs": lib + decls, **evil}, name)
-                self.assertEqual(sites(ek.decide(self.repo, self.record, head)),
-                                 (["network@core/process/src/evil.rs"], []))
-        head = commit(self.repo, {"core/process/src/lib.rs": lib + "#[cfg(test)]\nmod evil;\n", **evil}, "test only")
-        self.assertEqual(ek.decide(self.repo, self.record, head)["effects_changed"]["summary"], "effects unchanged")
-
-    def test_a_path_attribute_the_scan_cannot_attribute_answers_unknown(self):
-        head = commit(self.repo, {LOCAL: FILES[LOCAL] + '// #[path = "x.rs"]\n'}, "path in comment")
-        self.assertEqual(ek.decide(self.repo, self.record, head)["effects_changed"]["unknown"], [LOCAL])
-
-    def test_p15_an_include_in_production_code_keeps_a_cfg_test_module_file_production(self):
-        lib = FILES["core/process/src/lib.rs"] + '#[cfg(test)]\nmod evil;\nmod prod { include!("evil.rs"); }\n'
-        head = commit(self.repo, {"core/process/src/lib.rs": lib, "core/process/src/evil.rs":
-                                  "pub fn e() { std::net::TcpStream::connect(a); }\n"}, "P15")
-        self.assertEqual(sites(ek.decide(self.repo, self.record, head)), (["network@core/process/src/evil.rs"], []))
-
-    def test_a_file_is_excluded_only_when_every_reference_to_it_is_test_only(self):
-        # Every kind of reference that can bring a file into a build, in a test-only and in a
-        # production form. Excluded iff all references are test-only; zero references counts.
-        refs = {
-            "mod": ("#[cfg(test)]\nmod evil;\n", "mod evil;\n"),
-            "path mod": ('#[cfg(test)]\n#[path = "evil.rs"]\nmod t;\n', '#[path = "evil.rs"]\nmod t;\n'),
-            "include!": ('#[cfg(test)]\nmod t { include!("evil.rs"); }\n', 'mod p { include!("evil.rs"); }\n'),
-            "include_str!": ('#[cfg(test)]\nmod t { const S: &str = include_str!("evil.rs"); }\n',
-                             'const S: &str = include_str!("evil.rs");\n'),
-            "include_bytes!": ('#[cfg(test)]\nmod t { const B: &[u8] = include_bytes!("evil.rs"); }\n',
-                               'const B: &[u8] = include_bytes!("evil.rs");\n'),
+        net = "pub fn e() { std::net::TcpStream::connect(a); }\n"
+        cases = {
+            "P10": ("#[cfg(test)]\nmod evil;\n#[cfg(not(test))]\nmod evil;\n", "core/process/src/evil.rs"),
+            "P11": ('#[cfg(test)]\n#[path = "evil.rs"]\nmod t;\nmod evil;\n', "core/process/src/evil.rs"),
+            "P15": ('#[cfg(test)]\nmod evil;\nmod prod { include!("evil.rs"); }\n', "core/process/src/evil.rs"),
+            "P21": ('mod a { mod evil; }\n#[cfg(test)]\n#[path = "a/evil.rs"]\nmod t;\n', "core/process/src/a/evil.rs"),
+            "P22": ('#[path = "zz"]\nmod m { mod evil; }\n#[cfg(test)]\n#[path = "zz/evil.rs"]\nmod t;\n',
+                    "core/process/src/zz/evil.rs"),
+            "test-only file": ("#[cfg(test)]\nmod evil;\n", "core/process/src/evil.rs"),
         }
-        evil = {"core/process/src/evil.rs": "pub fn e() { std::net::TcpStream::connect(a); }\n"}
-        lib = FILES["core/process/src/lib.rs"]
-        cases = [((), True)]  # zero references: still production
-        for kind, (test, prod) in refs.items():
-            cases += [(((kind, test),), False), (((kind, prod),), True)]
-            for other, (otest, oprod) in refs.items():
-                cases.append((((kind, test), (other, oprod)), True))
-        for refs_used, production in cases:
-            with self.subTest(refs=[k for k, _ in refs_used], production=production):
-                text = lib + "".join(src for _, src in refs_used)
-                head = commit(self.repo, {"core/process/src/lib.rs": text, **evil}, "case")
-                expected = (["network@core/process/src/evil.rs"], []) if production else ([], [])
-                self.assertEqual(sites(ek.decide(self.repo, self.record, head)), expected)
+        for name, (decls, target) in cases.items():
+            with self.subTest(name):
+                head = commit(self.repo, {"core/process/src/lib.rs": lib + decls, target: net}, name)
+                self.assertEqual(sites(ek.decide(self.repo, self.record, head)), ([f"network@{target}"], []))
+                commit(self.repo, {"core/process/src/lib.rs": lib}, "back")
+                sh(self.repo, "rm", "-q", target)
+                sh(self.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "rm")
 
-    def test_a_tests_rs_file_nobody_declares_as_a_test_module_still_counts(self):
-        head = commit(self.repo, {"core/events/src/tests.rs": 'fn t() { std::process::Command::new("x"); }\n'}, "t")
+    def test_an_integration_test_file_reports_its_effects(self):
+        head = commit(self.repo, {"core/events/tests/append_effect_contract.rs":
+                                  append_fn("std::net::TcpStream::connect(a)")}, "test file")
         self.assertEqual(sites(ek.decide(self.repo, self.record, head)),
-                         (["process_spawn@core/events/src/tests.rs"], []))
+                         (["network@core/events/tests/append_effect_contract.rs"], []))
 
     def test_a_record_without_an_effect_set_reports_unknown_not_unchanged(self):
         head = commit(self.repo, {LOCAL: append_fn("f.sync_all()")}, "fsync")

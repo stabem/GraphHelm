@@ -100,17 +100,12 @@ crate invalidates, even one the append path never calls.
 
 "Files changed" says the run must be repeated; it does not say whether the append path can now do
 something the guarantee never considered. The record therefore also holds `effects`: for each
-effect kind, the closure's production sources that perform it (`by_kind`), inferred from the same
-blobs the key covers. Production excludes `tests/`, `benches/`, `examples/`, inline
-`#[cfg(test)] mod x { ... }` bodies, and a file only by this rule: the scan builds one list of every
-reference in the closure that can bring a file into a build (`mod x;` resolving to `x.rs` /
-`x/mod.rs`, `#[path = "..."] mod`, `include!`, `include_str!`, `include_bytes!`), each tagged
-test-only (exactly one `#[cfg(test)]` on it, or inside an inline `#[cfg(test)]` module) or
-production. A file is excluded only when it has at least one reference and every reference is
-test-only. A production reference (plain, `not(test)`, `any(..)`, a feature gate, a second cfg)
-keeps it; a file with no reference counts as production; a reference the scan cannot resolve (a
-`#[path]` or include literal it cannot pair with its site, a non-literal include, a `cfg_attr`
-path) puts the source in `unlexed`, so the answer is unknown. Each source is lexed first: comments (nested) removed; strings, byte, C
+effect kind, the closure sources that perform it (`by_kind`), inferred from the same blobs the key
+covers. Every `.rs` file in the closure is scanned, test files included; the only code dropped is
+the body of an inline module carrying exactly one `#[cfg(test)]` (and no `cfg_attr`). No file is
+excluded: deciding which files a build loads (`mod` nesting, `#[path]` on inline modules,
+`include!`) is the one step that can err toward hiding production code, and four review rounds
+found a new hole in it each time. Each source is lexed first: comments (nested) removed; strings, byte, C
 and raw strings (`r#"..."#`) and char literals (`'"'`, `'\''`, `b'x'`) emptied; lifetimes kept.
 A source the lexer cannot place (an unterminated literal or comment, a quote that is neither a char
 literal nor a lifetime) is listed in `unlexed`: `check` then answers `effects unknown` and `record`
@@ -134,6 +129,7 @@ source and `+` on the new one. A record written before this field reports `effec
 never `unchanged`.
 
 Limits: sites are per source file, not per call path; an effect reached only through an external
-crate API not named above is not attributed (an `ffi` site is still marked). The tests and their
-sabotage guard the kinds and the lexer: a detector that ignores `network` fails the per-kind test
-and P2, and a lexer that stops recognising char literals fails P2 and the literal test.
+crate API not named above is not attributed (an `ffi` site is still marked). Test files (`tests/`,
+`*_tests.rs`, files only `#[cfg(test)] mod` loads) are scanned as if production, so their effects
+appear in the record and in `+`/`-` sites: an accepted over-report, in the safe direction. The
+tests and their sabotage guard the kinds, the lexer and the inline-body rule.

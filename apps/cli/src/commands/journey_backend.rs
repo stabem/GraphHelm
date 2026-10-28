@@ -750,26 +750,58 @@ mod tests {
         );
     }
 
+    /// Child side of [`a_cli_step_sees_only_the_kept_environment`]: prints the environment it was
+    /// started with. Ignored so a normal run skips it; the test below starts this same test binary
+    /// as the step's program, so the proof needs no shell (or any other tool) on the machine's PATH.
+    #[test]
+    #[ignore = "child process of a_cli_step_sees_only_the_kept_environment"]
+    fn print_step_environment() {
+        for (key, value) in std::env::vars_os() {
+            println!("ENV:{}={}", key.to_string_lossy(), value.to_string_lossy());
+        }
+    }
+
     /// #2187 gap 1: the step does not inherit the Runtime's environment. The test process carries
     /// variables outside the kept list (Cargo sets `CARGO_*` for every test); none reaches the
-    /// child.
+    /// child. The child is a copy of this test binary, spawned by absolute path, so the result does
+    /// not depend on which programs the machine's PATH holds.
     #[test]
     fn a_cli_step_sees_only_the_kept_environment() {
         assert!(std::env::vars().any(|(key, _)| key.starts_with("CARGO")));
         let project = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(project.path().join("s")).unwrap();
-        std::fs::write(project.path().join("s/env.sh"), "env\n").unwrap();
-        let seen = command(project.path(), "sh s/env.sh").unwrap();
+        let name = if cfg!(windows) { "dump.exe" } else { "dump" };
+        let program = project.path().join(name);
+        std::fs::copy(std::env::current_exe().unwrap(), &program).unwrap();
+        let program = program.to_string_lossy().into_owned();
+        assert!(!program.contains(char::is_whitespace), "{program}");
+        let seen = command(
+            project.path(),
+            &format!(
+                "{program} --ignored --exact --nocapture {}",
+                "commands::journey_backend::tests::print_step_environment"
+            ),
+        )
+        .unwrap();
         assert_eq!(seen.exit, Some(0), "{}", seen.stderr);
-        for line in seen.body.lines() {
-            let key = line.split_once('=').map_or(line, |(key, _)| key);
+        let keys: Vec<String> = seen
+            .body
+            .lines()
+            .filter_map(|line| line.strip_prefix("ENV:"))
+            .map(|line| line.split_once('=').map_or(line, |(key, _)| key).to_owned())
+            .collect();
+        assert!(
+            !keys.is_empty(),
+            "the child printed no environment: {}",
+            seen.body
+        );
+        for key in &keys {
             let upper = key.to_ascii_uppercase();
             assert!(
                 !upper.starts_with("CARGO") && !upper.starts_with("RUST"),
                 "inherited {key}"
             );
         }
-        assert!(seen.body.lines().any(|line| line.starts_with("PATH=")));
+        assert!(keys.iter().any(|key| key.eq_ignore_ascii_case("PATH")));
     }
 
     /// #2187 gap 5: a Python step runs with `-E -s -B`, and a module planted at the project root

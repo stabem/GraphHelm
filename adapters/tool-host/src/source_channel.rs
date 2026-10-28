@@ -300,6 +300,52 @@ pub(crate) fn still_names_opened_file(_file: &std::fs::File, path: &Path) -> boo
         .unwrap_or(false)
 }
 
+/// BM25 saturation constant: how quickly repeated occurrences of one term stop adding score.
+const BM25_K1: f64 = 1.2;
+/// BM25 length normalisation: 0 ignores file length, 1 divides fully by it relative to the mean.
+const BM25_B: f64 = 0.75;
+
+/// Okapi BM25 over the files that matched at least one needle (#1705). The previous score counted
+/// distinct terms matched, so a long broad document that mentions every word once outranked the
+/// short file that is about the question. BM25 weights each term by how rare it is across the
+/// scanned files (idf), saturates repeats, and normalises by file length against the mean.
+/// `documents` and `document_bytes` cover every scanned UTF-8 file, matched or not.
+fn rank_bm25(
+    matched: &[(Vec<u32>, u64, String)],
+    documents: u64,
+    document_bytes: u64,
+) -> Vec<(f64, String)> {
+    let Some(width) = matched.first().map(|(counts, _, _)| counts.len()) else {
+        return Vec::new();
+    };
+    let total = documents.max(1) as f64;
+    let mean_length = (document_bytes as f64 / total).max(1.0);
+    let idf: Vec<f64> = (0..width)
+        .map(|term| {
+            let holding = matched
+                .iter()
+                .filter(|(counts, _, _)| counts[term] > 0)
+                .count() as f64;
+            (1.0 + (total - holding + 0.5) / (holding + 0.5)).ln()
+        })
+        .collect();
+    matched
+        .iter()
+        .map(|(counts, length, path)| {
+            let norm = BM25_K1 * (1.0 - BM25_B + BM25_B * (*length as f64) / mean_length);
+            let score = counts
+                .iter()
+                .zip(&idf)
+                .map(|(&count, weight)| {
+                    let tf = f64::from(count);
+                    weight * tf * (BM25_K1 + 1.0) / (tf + norm)
+                })
+                .sum();
+            (score, path.clone())
+        })
+        .collect()
+}
+
 impl BoundedSourceSearch for WorkspaceSourceChannel {
     fn search(
         &self,
@@ -347,9 +393,12 @@ impl BoundedSourceSearch for WorkspaceSourceChannel {
         let mut visited_entries = 0usize;
         let mut scanned_files = 0usize;
         let mut scanned_bytes = 0u64;
-        // (-distinct terms, path) so the sort is by strength first and then stable by name: a
-        // deterministic order matters because these paths can end up in a frozen artifact.
-        let mut scored: Vec<(usize, String)> = Vec::new();
+        // Per matching file: (occurrences of each needle, in `needles` order; byte length; path).
+        // The score needs corpus statistics (how many files hold a term, the mean length), so
+        // files are counted during the walk and ranked after it (#1705).
+        let mut matched: Vec<(Vec<u32>, u64, String)> = Vec::new();
+        let mut documents = 0u64;
+        let mut document_bytes = 0u64;
 
         let mut stack = vec![self.root.clone()];
         while let Some(directory) = stack.pop() {
@@ -548,18 +597,28 @@ impl BoundedSourceSearch for WorkspaceSourceChannel {
                     continue;
                 };
                 let haystack = content.to_lowercase();
-                let distinct = needles
+                documents += 1;
+                document_bytes = document_bytes.saturating_add(haystack.len() as u64);
+                let counts: Vec<u32> = needles
                     .iter()
-                    .filter(|needle| haystack.contains(needle.as_str()))
-                    .count();
-                if distinct > 0 {
-                    scored.push((distinct, relative));
+                    .map(|needle| {
+                        u32::try_from(haystack.matches(needle.as_str()).count()).unwrap_or(u32::MAX)
+                    })
+                    .collect();
+                if counts.iter().any(|&count| count > 0) {
+                    matched.push((counts, haystack.len() as u64, relative));
                 }
             }
         }
 
+        let mut scored = rank_bm25(&matched, documents, document_bytes);
         // Strongest first; ties broken by path so the answer is deterministic.
-        scored.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+        scored.sort_by(|left, right| {
+            right
+                .0
+                .total_cmp(&left.0)
+                .then_with(|| left.1.cmp(&right.1))
+        });
         // `max_results` caps a search that FINISHED. Unlike the scan bounds it is not a breached
         // ceiling — refusing here would make an ordinary successful answer look like one.
         scored.truncate(bounds.max_results as usize);

@@ -333,7 +333,10 @@ is a backend flow; it may not mix in browser acts (`flow.observer_mixed`).
 - `{kind: http, role: POST, name: /items, text: '{"name":"apple"}'}` sends the method in `role` to
   the path `name` on `base`, with the optional body `text` (sent as JSON).
 - `{kind: cli, role: exec, name: sh greet.sh}` runs the argv in `name`, split on whitespace with
-  no shell, in the project directory. Each act is bounded at 30 seconds.
+  no shell, in the project directory. Each act is bounded at 30 seconds. The argv must run a
+  script file inside the project (#2187): `python` with a script below the project root, `sh`,
+  `bash`, `dash` or `node` followed directly by a project script, `pwsh -File <script>`, or a
+  project-relative program; any other program is refused as `flow.cli_program_not_allowed`.
 
 Each screen's `expect` is checked against what the act that reached it observed: `status` (the
 HTTP status, exactly), `json` (`a.b.0=value` compares a field, `a.b` asserts it is present),

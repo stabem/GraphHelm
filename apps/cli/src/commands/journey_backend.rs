@@ -226,10 +226,16 @@ fn dechunk(mut rest: &str) -> String {
 }
 
 /// #2187: why an argv cannot be run as checked code, as `(code, message)`. Pure on the argv, so
-/// lint and the runner refuse the same commands. A command whose code is not a file the reviewed
-/// check reads (`python -m`/`-c`, `sh -c`, `node -e`, `cmd`, `powershell` without `-File`), or a
-/// Python script at the project root (the root is the script's import directory and is not
-/// checked whole), is refused.
+/// lint and the runner refuse the same commands.
+///
+/// A program allowlist, not a deny list: the argv runs only a script file inside the project, the
+/// thing the reviewed check reads. Allowed forms are `python[3][w]`/`py` with a script below the
+/// project root (the root is the script's import directory and is not checked whole), `sh`,
+/// `bash`, `dash` and `node` followed directly by a project script (no options: `-c`, `-x`,
+/// `--require` and friends would name other code), `pwsh`/`powershell -File <script>`, or a
+/// project-relative program path. Every other program (`git` with its `-c alias.x=!cmd`, `fish`,
+/// `csh`, `Rscript`, `cscript`, `env`, an absolute path, ...) is refused, because none of them
+/// is a file the check reads.
 pub(super) fn cli_refusal(argv: &str) -> Option<(&'static str, &'static str)> {
     let mut words = argv.split_whitespace();
     let program = words.next()?;
@@ -239,6 +245,13 @@ pub(super) fn cli_refusal(argv: &str) -> Option<(&'static str, &'static str)> {
         "flow.cli_inline_code",
         "a cli act must run a script file; -m, -c, -e, stdin and command-string forms name none",
     );
+    let outside = (
+        "flow.cli_script_outside",
+        "a cli act's script must be a relative path inside the project",
+    );
+    if program.contains(['/', '\\']) {
+        return script_directory_depth(program).is_none().then_some(outside);
+    }
     if is_python(&stem) {
         let mut rest = args.iter();
         let script = loop {
@@ -277,33 +290,26 @@ pub(super) fn cli_refusal(argv: &str) -> Option<(&'static str, &'static str)> {
         }
         return None;
     }
-    let first = args.first().map(|word| word.to_ascii_lowercase());
-    let refused = match stem.as_str() {
-        // Options can take values (`-o pipefail`, `--init-file x`), so `-c` is looked for in
-        // every word; a script argument spelled like `-c` is refused too (fail closed).
-        "sh" | "bash" | "dash" | "zsh" | "ksh" => args.iter().any(|word| {
-            (word.starts_with('-') || word.starts_with('+'))
-                && !word.starts_with("--")
-                && word.contains('c')
-        }),
-        // Exec-wrappers run another argv (and `env` can set PYTHONPATH back), so nothing they
-        // start is checked. A deny list, not a program allowlist: an allowlist would refuse every
-        // project tool (`git`, `cargo`, a fixture binary) the flows legitimately run.
-        "env" | "xargs" | "nice" | "nohup" | "timeout" | "stdbuf" | "setsid" | "sudo" | "doas"
-        | "su" | "runuser" | "chroot" | "busybox" | "start" | "time" | "command" | "exec"
-        | "ionice" | "taskset" | "strace" | "ltrace" | "unbuffer" | "script" | "watch"
-        | "parallel" | "find" | "flock" | "chrt" | "fakeroot" | "proot" | "runas" | "wsl" => true,
-        "perl" | "ruby" | "php" | "lua" | "tclsh" | "awk" | "gawk" | "osascript" => true,
-        "node" | "nodejs" | "deno" | "bun" => args.iter().any(|word| {
-            matches!(*word, "-e" | "-p" | "--eval" | "--print" | "-pe" | "-")
-                || word.starts_with("--eval=")
-                || word.starts_with("--print=")
-        }),
-        "cmd" => true,
-        "powershell" | "pwsh" => !matches!(first.as_deref(), Some("-file" | "-f")),
-        _ => false,
+    let script = match stem.as_str() {
+        "sh" | "bash" | "dash" | "node" | "nodejs" => args.first().copied(),
+        "powershell" | "pwsh" => match args.as_slice() {
+            [flag, script, ..] if matches!(flag.to_ascii_lowercase().as_str(), "-file" | "-f") => {
+                Some(*script)
+            }
+            _ => return Some(inline),
+        },
+        _ => {
+            return Some((
+                "flow.cli_program_not_allowed",
+                "a cli act runs a project script through python, sh, bash, dash, node or pwsh -File, or a project-relative program",
+            ));
+        }
     };
-    refused.then_some(inline)
+    match script {
+        None => Some(inline),
+        Some(word) if word.starts_with(['-', '+']) => Some(inline),
+        Some(word) => script_directory_depth(word).is_none().then_some(outside),
+    }
 }
 
 /// #2187: how many directories below the project root a script sits, read lexically (`.` dropped,
@@ -387,10 +393,10 @@ fn pinned_path(project: &Path, path: Option<std::ffi::OsString>) -> Vec<PathBuf>
 }
 
 /// #2187: a bare program name resolved to one absolute file in `dirs`; a name with a path
-/// separator is spawned as written (a project path is what the reviewed check reads).
-fn resolve_program(program: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
+/// separator is a project-relative program (what the reviewed check reads), joined to `project`.
+fn resolve_program(project: &Path, program: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
     if program.contains(['/', '\\']) {
-        return Some(PathBuf::from(program));
+        return Some(project.join(program));
     }
     let names: Vec<String> = if cfg!(windows) && !program.contains('.') {
         ["exe", "com", "cmd", "bat"]
@@ -410,8 +416,8 @@ fn resolve_program(program: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
 ///
 /// #2187: fail closed on what the reviewed check cannot see. The argv must pass [`cli_refusal`];
 /// the environment is cleared to [`KEPT_ENV`] plus a pinned PATH; a bare program resolves only
-/// through that PATH; Python runs with `-E -s -B` (no `PYTHON*` variables, no user site, no
-/// bytecode written).
+/// through that PATH; Python runs with `-E -s -S -B` (no `PYTHON*` variables, no user or system
+/// site-packages and so no `.pth` file, no bytecode written).
 pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String> {
     if let Some((code, message)) = cli_refusal(argv) {
         return Err(format!("{code}: {message}"));
@@ -419,7 +425,7 @@ pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String>
     let mut words = argv.split_whitespace();
     let program = words.next().ok_or("empty argv")?;
     let dirs = pinned_path(project, std::env::var_os("PATH"));
-    let resolved = resolve_program(program, &dirs).ok_or_else(|| {
+    let resolved = resolve_program(project, program, &dirs).ok_or_else(|| {
         "flow.cli_program_unresolved: the program is not on the pinned PATH \
          (absolute entries outside the project)"
             .to_owned()
@@ -436,7 +442,7 @@ pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String>
         spawn.env("PATH", path);
     }
     if is_python(&program_stem(program)) {
-        spawn.args(["-E", "-s", "-B"]);
+        spawn.args(["-E", "-s", "-S", "-B"]);
     }
     let mut child = spawn
         .args(words)
@@ -691,15 +697,21 @@ mod tests {
             ("sh -c id", inline),
             ("bash -ec id", inline),
             ("node -e 1", inline),
-            ("cmd /c dir", inline),
+            ("cmd /c dir", Some("flow.cli_program_not_allowed")),
             ("pwsh -Command id", inline),
             ("sh -o pipefail -c id", inline),
             ("bash --init-file x -c id", inline),
-            ("env python -c print(1)", inline),
-            ("env PYTHONPATH=x python d/run.py", inline),
-            ("xargs python", inline),
-            ("timeout 5 sh -c id", inline),
-            ("perl -e 1", inline),
+            (
+                "env python -c print(1)",
+                Some("flow.cli_program_not_allowed"),
+            ),
+            (
+                "env PYTHONPATH=x python d/run.py",
+                Some("flow.cli_program_not_allowed"),
+            ),
+            ("xargs python", Some("flow.cli_program_not_allowed")),
+            ("timeout 5 sh -c id", Some("flow.cli_program_not_allowed")),
+            ("perl -e 1", Some("flow.cli_program_not_allowed")),
             ("python run.py", Some("flow.cli_root_script")),
             ("python ./run.py", Some("flow.cli_root_script")),
             ("python sub/../json.py", Some("flow.cli_root_script")),
@@ -710,7 +722,23 @@ mod tests {
             ("python -W ignore -X utf8 tools/x.py", None),
             ("sh greet.sh", None),
             ("pwsh -File tools/x.ps1", None),
-            ("git status", None),
+            ("git status", Some("flow.cli_program_not_allowed")),
+            ("git -c alias.x=!id x", Some("flow.cli_program_not_allowed")),
+            ("fish -c id", Some("flow.cli_program_not_allowed")),
+            ("csh -c id", Some("flow.cli_program_not_allowed")),
+            ("tcsh -c id", Some("flow.cli_program_not_allowed")),
+            ("mksh -c id", Some("flow.cli_program_not_allowed")),
+            ("Rscript -e 1", Some("flow.cli_program_not_allowed")),
+            ("cscript x.vbs", Some("flow.cli_program_not_allowed")),
+            ("sh -x d/s.sh", inline),
+            ("sh", inline),
+            ("node --require ./x.js d/a.js", inline),
+            ("node d/a.js", None),
+            ("sh ../s.sh", Some("flow.cli_script_outside")),
+            ("pwsh -File ../x.ps1", Some("flow.cli_script_outside")),
+            ("/usr/bin/perl -e 1", Some("flow.cli_script_outside")),
+            ("C:/x/perl.exe", Some("flow.cli_script_outside")),
+            ("./tools/bin/probe a", None),
         ] {
             assert_eq!(cli_refusal(argv).map(|(code, _)| code), code, "{argv}");
             let flow = json!({"edges":[{"acts":[{"kind":"cli","role":"exec","name":argv}]}]});
@@ -743,7 +771,7 @@ mod tests {
         .unwrap();
         let dirs = pinned_path(project.path(), Some(path));
         assert_eq!(dirs, vec![outside.path().to_path_buf()]);
-        let refused = command(project.path(), "graphhelm-absent-program-2187").unwrap_err();
+        let refused = command(project.path(), "python3.2187 d/x.py").unwrap_err();
         assert!(
             refused.starts_with("flow.cli_program_unresolved"),
             "{refused}"
@@ -763,7 +791,7 @@ mod tests {
 
     /// #2187 gap 1: the step does not inherit the Runtime's environment. The test process carries
     /// variables outside the kept list (Cargo sets `CARGO_*` for every test); none reaches the
-    /// child. The child is a copy of this test binary, spawned by absolute path, so the result does
+    /// child. The child is a copy of this test binary, a project-relative program, so the result does
     /// not depend on which programs the machine's PATH holds.
     #[test]
     fn a_cli_step_sees_only_the_kept_environment() {
@@ -772,8 +800,7 @@ mod tests {
         let name = if cfg!(windows) { "dump.exe" } else { "dump" };
         let program = project.path().join(name);
         std::fs::copy(std::env::current_exe().unwrap(), &program).unwrap();
-        let program = program.to_string_lossy().into_owned();
-        assert!(!program.contains(char::is_whitespace), "{program}");
+        let program = format!("./{name}");
         let seen = command(
             project.path(),
             &format!(
@@ -804,7 +831,7 @@ mod tests {
         assert!(keys.iter().any(|key| key.eq_ignore_ascii_case("PATH")));
     }
 
-    /// #2187 gap 5: a Python step runs with `-E -s -B`, and a module planted at the project root
+    /// #2187 gap 5: a Python step runs with `-E -s -S -B` (no site-packages, so no `.pth`), and a module planted at the project root
     /// (outside the script's checked directory) is not importable from the script.
     #[test]
     fn a_python_step_cannot_import_from_outside_its_directory() {
@@ -814,7 +841,7 @@ mod tests {
         std::fs::write(
             project.path().join("d/run.py"),
             "import sys\n\
-             print(*(int(f) for f in (sys.flags.ignore_environment, sys.flags.no_user_site, sys.flags.dont_write_bytecode)))\n\
+             print(*(int(f) for f in (sys.flags.ignore_environment, sys.flags.no_user_site, sys.flags.no_site, sys.flags.dont_write_bytecode)))\n\
              try:\n    import planted2187\nexcept ImportError:\n    print('blocked')\n",
         )
         .unwrap();
@@ -822,7 +849,7 @@ mod tests {
         assert_eq!(seen.exit, Some(0), "{}", seen.stderr);
         assert_eq!(
             seen.body.split_whitespace().collect::<Vec<_>>(),
-            ["1", "1", "1", "blocked"]
+            ["1", "1", "1", "1", "blocked"]
         );
     }
 }

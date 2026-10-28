@@ -1,0 +1,426 @@
+[
+ {
+  "case_id": "audit-before-planning",
+  "run": 1,
+  "session_id": "ab1dcbc4-45dc-4c44-be0a-08f93058b349",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.321944
+ },
+ {
+  "case_id": "keel-green-on-parent",
+  "run": 1,
+  "session_id": "914858e1-75bc-4414-8312-ffd11b603aa9",
+  "status": "completed",
+  "invoked_skills": [
+   "keel"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2766783
+ },
+ {
+  "case_id": "keel-green-on-parent-unprompted",
+  "run": 1,
+  "session_id": "b3740712-accd-412d-918a-3a8c16d15134",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2444928
+ },
+ {
+  "case_id": "keel-observer-missing",
+  "run": 1,
+  "session_id": "bb340978-0a9b-400f-bfaf-624a32549b1c",
+  "status": "completed",
+  "invoked_skills": [
+   "keel"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.277183
+ },
+ {
+  "case_id": "keel-observer-missing-unprompted",
+  "run": 1,
+  "session_id": "942bc60f-77fd-4ad2-a28a-7bf225314c30",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2250588
+ },
+ {
+  "case_id": "keel-scope",
+  "run": 1,
+  "session_id": "0b846c51-4c53-4607-92d1-0ef8f83c97b4",
+  "status": "completed",
+  "invoked_skills": [
+   "keel"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.27852560000000004
+ },
+ {
+  "case_id": "keel-scope-unprompted",
+  "run": 1,
+  "session_id": "72a51877-28d4-4ce7-a73d-341169b733c2",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2470868
+ },
+ {
+  "case_id": "no-skill-arithmetic",
+  "run": 1,
+  "session_id": "4b89347a-cb69-4a0d-9bcc-676ac104866b",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2217288
+ },
+ {
+  "case_id": "no-skill-audit-grammar",
+  "run": 1,
+  "session_id": "677a361f-dab2-4649-8078-2663a96cad28",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2417308
+ },
+ {
+  "case_id": "test-audit-deletion",
+  "run": 1,
+  "session_id": "4db95768-8115-446a-bfce-6aa62e444c19",
+  "status": "completed",
+  "invoked_skills": [
+   "test-audit"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2655709
+ },
+ {
+  "case_id": "test-audit-deletion-unprompted",
+  "run": 1,
+  "session_id": "d8110a27-c452-4587-831f-3719e0033643",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2463168
+ },
+ {
+  "case_id": "test-audit-junk",
+  "run": 1,
+  "session_id": "73494f7e-f847-4b5f-8ff4-8e24162a0f2f",
+  "status": "completed",
+  "invoked_skills": [
+   "test-audit"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2680332
+ },
+ {
+  "case_id": "test-audit-junk-unprompted",
+  "run": 1,
+  "session_id": "ab96e663-0499-4b87-952c-fe5691289b41",
+  "status": "completed",
+  "invoked_skills": [
+   "test-audit"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2669976
+ },
+ {
+  "case_id": "audit-before-planning",
+  "run": 2,
+  "session_id": "c369800b-d763-49fe-aaad-1902a031f6c9",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2281408
+ },
+ {
+  "case_id": "keel-green-on-parent",
+  "run": 2,
+  "session_id": "1da25bfc-d754-4c10-bc09-95627e2a392a",
+  "status": "completed",
+  "invoked_skills": [
+   "keel"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2778789
+ },
+ {
+  "case_id": "keel-green-on-parent-unprompted",
+  "run": 2,
+  "session_id": "a6637d21-c874-46ac-9bc1-ab4bf8014c75",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2435388
+ },
+ {
+  "case_id": "keel-observer-missing",
+  "run": 2,
+  "session_id": "1bbf5120-17bd-4cf9-b45a-96140aef1fc2",
+  "status": "completed",
+  "invoked_skills": [
+   "keel"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2779342
+ },
+ {
+  "case_id": "keel-observer-missing-unprompted",
+  "run": 2,
+  "session_id": "f01f771c-7a32-40ab-a7ef-adc5167de32f",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.22577080000000002
+ },
+ {
+  "case_id": "keel-scope",
+  "run": 2,
+  "session_id": "778c0d4c-1c28-4a8c-b16c-e3bd83436b0f",
+  "status": "completed",
+  "invoked_skills": [
+   "keel"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2776913
+ },
+ {
+  "case_id": "keel-scope-unprompted",
+  "run": 2,
+  "session_id": "54c428af-769b-4325-9c5b-2fe4ff38ae90",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2274888
+ },
+ {
+  "case_id": "no-skill-arithmetic",
+  "run": 2,
+  "session_id": "1aec8a82-41e0-4b89-bdc6-7b3f096283ed",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2217288
+ },
+ {
+  "case_id": "no-skill-audit-grammar",
+  "run": 2,
+  "session_id": "58a96e70-ce9c-4f61-ab7a-6eb620f60ebf",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2218708
+ },
+ {
+  "case_id": "test-audit-deletion",
+  "run": 2,
+  "session_id": "e0d00d7d-20e6-4b63-9e6d-acbcbffb5cf5",
+  "status": "completed",
+  "invoked_skills": [
+   "test-audit"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2671162
+ },
+ {
+  "case_id": "test-audit-deletion-unprompted",
+  "run": 2,
+  "session_id": "61218e31-1610-479a-babe-60471555de10",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2450308
+ },
+ {
+  "case_id": "test-audit-junk",
+  "run": 2,
+  "session_id": "c31c181f-253d-4f46-ba02-5fbebee7057f",
+  "status": "completed",
+  "invoked_skills": [
+   "test-audit"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2719257
+ },
+ {
+  "case_id": "test-audit-junk-unprompted",
+  "run": 2,
+  "session_id": "fa0d2f9c-97aa-42ca-889c-c511a2b9045d",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2300248
+ },
+ {
+  "case_id": "audit-before-planning",
+  "run": 3,
+  "session_id": "37642d1a-72e9-4089-864a-0176d086cd15",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2186148
+ },
+ {
+  "case_id": "keel-green-on-parent",
+  "run": 3,
+  "session_id": "28ee56c2-9165-4516-9e82-d49330074083",
+  "status": "completed",
+  "invoked_skills": [
+   "keel"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2763606
+ },
+ {
+  "case_id": "keel-green-on-parent-unprompted",
+  "run": 3,
+  "session_id": "79880232-7986-4e02-84b2-cfe60e5b2f9c",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2443868
+ },
+ {
+  "case_id": "keel-observer-missing",
+  "run": 3,
+  "session_id": "4473bfb5-dab5-42e5-b1be-c1b5b9235cf9",
+  "status": "completed",
+  "invoked_skills": [
+   "keel"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2779526
+ },
+ {
+  "case_id": "keel-observer-missing-unprompted",
+  "run": 3,
+  "session_id": "fc0cca7a-6965-4e3f-8b05-cef74af97ea0",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.22470679999999998
+ },
+ {
+  "case_id": "keel-scope",
+  "run": 3,
+  "session_id": "512a3f1c-dd58-4f60-a893-cfdfa1ef4386",
+  "status": "completed",
+  "invoked_skills": [
+   "keel"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2789796
+ },
+ {
+  "case_id": "keel-scope-unprompted",
+  "run": 3,
+  "session_id": "86aae4a1-909c-4b57-8948-c7d46f797595",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2453868
+ },
+ {
+  "case_id": "no-skill-arithmetic",
+  "run": 3,
+  "session_id": "f644868f-558d-4d69-a664-16aae09dd601",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.2216528
+ },
+ {
+  "case_id": "no-skill-audit-grammar",
+  "run": 3,
+  "session_id": "88c82795-b392-4c1a-816d-a28a66efe720",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.1527782
+ },
+ {
+  "case_id": "test-audit-deletion",
+  "run": 3,
+  "session_id": "e9a4841c-811d-4578-b892-b4ce183c6a79",
+  "status": "completed",
+  "invoked_skills": [
+   "test-audit"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.17729099999999998
+ },
+ {
+  "case_id": "test-audit-deletion-unprompted",
+  "run": 3,
+  "session_id": "2d2ac3a7-f67a-4701-8ea9-81218d111c68",
+  "status": "completed",
+  "invoked_skills": [],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.1140212
+ },
+ {
+  "case_id": "test-audit-junk",
+  "run": 3,
+  "session_id": "857eeaf0-a46c-49bf-bedc-34b33529ec80",
+  "status": "completed",
+  "invoked_skills": [
+   "test-audit"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.17997839999999998
+ },
+ {
+  "case_id": "test-audit-junk-unprompted",
+  "run": 3,
+  "session_id": "e7fe5f76-8b74-4510-8e9e-3d79deffc342",
+  "status": "completed",
+  "invoked_skills": [
+   "test-audit"
+  ],
+  "completion": "unjudged",
+  "rubric": "selection-only",
+  "cost_usd": 0.1791169
+ }
+]

@@ -94,4 +94,33 @@ rerun, `record --rev <sha> --observed "<result line>"` writes the new key.
 
 The key says *which bytes* a run covered; it is not proof by itself. A `reuse` is only as strong as
 the recorded run, and the closure is a crate-level over-approximation: any edit inside a linked
-crate invalidates, even one the append path never calls. Narrowing to the effect set is slice (c).
+crate invalidates, even one the append path never calls.
+
+## Effect-set change beside the evidence (#1476 slice c)
+
+"Files changed" says the run must be repeated; it does not say whether the append path can now do
+something the guarantee never considered. The record therefore also holds `effects`: for each
+effect kind, the closure's production sources (not `tests/`, `benches/`, `examples/`) that perform
+it, inferred from the same blobs the key covers, with comments dropped and string literals emptied:
+
+| Kind | Matched by |
+|---|---|
+| `file_write` | `File::create`, `OpenOptions`, `fs::write/rename/remove_*/create_dir*/copy/hard_link`, `.set_len(` |
+| `fsync` | `.sync_all(`, `.sync_data(`, `FlushFileBuffers` |
+| `file_lock` | `lock_exclusive`, `lock_shared` (and `try_`), `LockFileEx`, `UnlockFileEx`, `flock` |
+| `network` | `std::net`, `TcpStream`, `TcpListener`, `UdpSocket`, `ToSocketAddrs`, `reqwest`, `hyper::`, `tokio::net`, `ureq` |
+| `process_spawn` | `Command::new`, `process::Command`, `graphhelm_process::command`, `CreateProcess` |
+| `ffi` | `unsafe`, `extern "…"`, `asm!`: code the scan cannot see inside, flagged as its own kind |
+
+`check` adds `effects_changed` to its answer, compared with the recorded set by kind:
+`effects changed: +network` (with the sources that now carry it), `-file_lock`, or
+`effects unchanged`. A pure refactor that moves an `fsync` into another file reads `invalidate`
+(files changed) with `effects unchanged`; a new spawn or socket reads `+process_spawn` /
+`+network`, the signal that a new guarantee and observer may be needed. A record written before
+this field reports `effects unknown`, never `unchanged`.
+
+Limits: kinds are per crate source, not per call path, so a sink anywhere in a linked crate counts;
+an effect reached only through an external crate API not named above is not attributed (an `ffi`
+site is still marked); the lexing is approximate. The per-kind test and its sabotage (a detector
+that ignores `network` fails `test_adding_each_effect_kind_to_a_closure_file_reports_it_as_added`)
+guard the kinds.

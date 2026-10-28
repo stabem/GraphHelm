@@ -184,14 +184,71 @@ def key_of(blobs: dict[str, str]) -> str:
 def state(repo: Path, rev: str) -> dict:
     dirs = closure(repo, rev)
     blobs, unknown = closure_blobs(repo, rev, dirs)
-    return {"closure": dirs, "blobs": blobs, "unknown": unknown, "key": key_of(blobs)}
+    return {"closure": dirs, "blobs": blobs, "unknown": unknown, "key": key_of(blobs),
+            "effects": effect_set(repo, blobs)}
+
+
+# Effect kinds the closure's production sources can perform, each a regex over one Rust source
+# with comments removed and string literals emptied. `ffi` marks code the scan cannot see inside (`unsafe`, `extern "C"`,
+# `asm!`): it is a kind of its own, so a new opaque site reports `+ffi` instead of passing unseen.
+# An in-process `Mutex::lock()` is not a file lock and is deliberately not matched.
+EFFECT_KINDS = {
+    "file_write": re.compile(r"\bFile::create\b|\bOpenOptions\b|\bfs::(?:write|rename|remove_file|"
+                             r"remove_dir(?:_all)?|create_dir(?:_all)?|copy|hard_link)\b|\.set_len\("),
+    "fsync": re.compile(r"\.sync_all\(|\.sync_data\(|\bFlushFileBuffers\b"),
+    "file_lock": re.compile(r"\b(?:try_)?lock_(?:exclusive|shared)\b|\b(?:Unlock|Lock)FileEx\b|\bflock\b"),
+    "network": re.compile(r"\bstd::net\b|\bTcpStream\b|\bTcpListener\b|\bUdpSocket\b|\bToSocketAddrs\b|"
+                          r"\breqwest\b|\bhyper::|\btokio::net\b|\bureq\b"),
+    "process_spawn": re.compile(r"\bCommand::new\b|\bprocess::Command\b|\bgraphhelm_process::command\b|"
+                                r"\bCreateProcess[AW]?\b"),
+    "ffi": re.compile(r"\bunsafe\b|\bextern\s+\"\"|\basm!"),
+}
+NOISE = re.compile(r'("(?:\\.|[^"\\])*")|/\*.*?\*/|//[^\n]*', re.S)
+NOT_PRODUCTION = ("/tests/", "/benches/", "/examples/")
+
+
+def effects_of(text: str) -> set[str]:
+    """Effect kinds one Rust source's code can perform. Comments are dropped and string literals
+    emptied first, so a pattern list such as `"reqwest::get("` held as data is not a network call.
+    The lexing is approximate (`r#"..."#` and char literals are not parsed); a mis-lex can only
+    hide code inside what it took for a string, which is why `ffi` and the tests guard the kinds."""
+    code = NOISE.sub(lambda m: '""' if m.group(1) else "", text)
+    return {kind for kind, pattern in EFFECT_KINDS.items() if pattern.search(code)}
+
+
+def effect_set(repo: Path, blobs: dict[str, str]) -> dict[str, list[str]]:
+    """`kind -> sorted production sources` over the closure's `.rs` files outside tests, benches
+    and examples; bounded by the include scan's file and byte limits."""
+    paths = sorted(p for p in blobs if p.endswith(".rs") and not any(d in f"/{p}" for d in NOT_PRODUCTION))
+    if len(paths) > MAX_SCAN_FILES:
+        raise ValueError(f"effect scan over {MAX_SCAN_FILES} files")
+    found: dict[str, list[str]] = {}
+    for path, text in zip(paths, _blob_texts(repo, [blobs[p] for p in paths])):
+        for kind in sorted(effects_of(text)):
+            found.setdefault(kind, []).append(path)
+    return dict(sorted(found.items()))
+
+
+def effects_changed(before: dict[str, list[str]] | None, now: dict[str, list[str]]) -> dict:
+    """Kinds added and removed since the record. A record with no effect set cannot say what is
+    new, so every current kind is reported `unknown`, never as unchanged."""
+    if before is None:
+        return {"added": [], "removed": [], "unknown": sorted(now),
+                "summary": "effects unknown: the record has no effect set"}
+    added, removed = sorted(now.keys() - before.keys()), sorted(before.keys() - now.keys())
+    summary = ("effects changed: " + "/".join([*(f"+{k}" for k in added), *(f"-{k}" for k in removed)])
+               if added or removed else "effects unchanged")
+    return {"added": added, "removed": removed, "sites": {k: now[k] for k in added}, "summary": summary}
 
 
 def decide(repo: Path, record: dict, rev: str) -> dict:
     """`reuse` when the closure bytes at `rev` equal the recorded ones and every include resolved;
-    otherwise `invalidate`. An include the scan cannot resolve never reads as reuse."""
+    otherwise `invalidate`. An include the scan cannot resolve never reads as reuse. Beside the
+    decision, `effects_changed` says whether the set of effect kinds moved: a `+kind` means the
+    path gained an effect the recorded guarantee never covered."""
     now = state(repo, rev)
-    base = {"key": now["key"], "evidence_commit": record["commit"]}
+    base = {"key": now["key"], "evidence_commit": record["commit"],
+            "effects_changed": effects_changed(record.get("effects"), now["effects"])}
     if now["unknown"]:
         return {"decision": "invalidate", **base, "changed": [], "unknown": now["unknown"],
                 "rerun": record["observer"]}
@@ -208,7 +265,7 @@ def make_record(repo: Path, rev: str, observed: str) -> dict:
     if now["unknown"]:
         raise ValueError(f"cannot vouch for unresolved includes: {now['unknown']}")
     return {"guarantee": GUARANTEE, "observer": OBSERVER, "observed": observed, "commit": commit,
-            "closure": now["closure"], "key": now["key"]}
+            "closure": now["closure"], "key": now["key"], "effects": now["effects"]}
 
 
 def main(argv: list[str] | None = None) -> int:

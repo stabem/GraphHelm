@@ -13,5 +13,37 @@
     "core/schema",
     "tools/test-shims"
   ],
-  "key": "sha256:c4f735090075132e22cad3d5bf532912868a8aabfaa0bc05f80013051f2cb4ba"
+  "key": "sha256:c4f735090075132e22cad3d5bf532912868a8aabfaa0bc05f80013051f2cb4ba",
+  "effects": {
+    "ffi": [
+      "core/events/src/local.rs",
+      "core/policy/src/keel_lines.rs",
+      "core/schema/src/bounded_value.rs",
+      "core/schema/src/document.rs",
+      "core/schema/src/extension.rs"
+    ],
+    "file_lock": [
+      "core/events/src/local.rs"
+    ],
+    "file_write": [
+      "core/events/src/local.rs",
+      "core/events/src/local/segments/checkpoints.rs",
+      "core/events/src/local/segments/tests.rs",
+      "core/policy/src/keel_prove.rs",
+      "core/process/src/lib.rs",
+      "core/schema/src/document.rs",
+      "core/schema/src/extension.rs",
+      "core/schema/src/extension_capability_tests.rs",
+      "core/schema/src/extension_security_tests.rs"
+    ],
+    "fsync": [
+      "core/events/src/local.rs",
+      "core/events/src/local/segments.rs"
+    ],
+    "process_spawn": [
+      "core/execution/src/journeys.rs",
+      "core/policy/src/keel_prove.rs",
+      "core/process/src/lib.rs"
+    ]
+  }
 }

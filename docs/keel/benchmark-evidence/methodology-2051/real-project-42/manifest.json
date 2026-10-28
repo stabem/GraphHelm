@@ -1,0 +1,688 @@
+{
+ "exportOf": {
+  "sha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+  "bytes": 31462
+ },
+ "schema": "real-methodology-manifest/2",
+ "studyType": "real_project_methodology",
+ "registry": {
+  "path": "<host-path>",
+  "sha256": "73787d00a0da4d4c4971f171f3a7901fa1825cd53ca30039e74718848db4ad34"
+ },
+ "registryFiles": {
+  "task-record-binding:parent": {
+   ".graphhelm/team.json": "7452c495ac063a1819dd198a827d229f8af5054cc3750744dc84f5024c3d6e47",
+   "docs/process/DELIVERY.md": "4422b35691aadc370e20aa3e68203eb3a3dad049460023d76022675bf0b7fcde",
+   "docs/process/LANES.md": "7ae5ecfab40ea5efa6657b1d37095771af43d8acd41ef408c5361030ceb7ecbb",
+   "test_public.py": "954e3f11af37f2c99bf4cfa30afd1aa8ec65ab66d29af0243fb9509d96c96812",
+   "tools/task-record/task_record.py": "927b768a727e000d33fd9ee8b375fb5012c138cd8f0b9b1014b284e6f482aa16",
+   "tools/task-record/test_task_record.py": "7d110fbb74ac93aed48e892bb3974736b785e22729c0feee19c37a85306a0a85"
+  },
+  "task-record-binding:fix": {
+   ".graphhelm/team.json": "7452c495ac063a1819dd198a827d229f8af5054cc3750744dc84f5024c3d6e47",
+   "docs/process/DELIVERY.md": "4422b35691aadc370e20aa3e68203eb3a3dad049460023d76022675bf0b7fcde",
+   "docs/process/LANES.md": "7ae5ecfab40ea5efa6657b1d37095771af43d8acd41ef408c5361030ceb7ecbb",
+   "test_public.py": "954e3f11af37f2c99bf4cfa30afd1aa8ec65ab66d29af0243fb9509d96c96812",
+   "tools/task-record/task_record.py": "e7b7ee832cdf78d74249bb3eb3ebdf588d462247a9989d87cfcba1c1f49fc895",
+   "tools/task-record/test_task_record.py": "7d110fbb74ac93aed48e892bb3974736b785e22729c0feee19c37a85306a0a85"
+  },
+  "task-record-binding:oracle": {
+   "tools/task-record/test_task_record_binding_hidden.py": "6b83a78dbb0171273f54ae4d92ad0e8bef4ec79a6a2e916d44f1727051abe944",
+   "test_hidden.py": "c4bb0407b6509930fe5ecbd587d98aa29d2bd508f0867f6a4b61ac38e432ec04"
+  },
+  "task-record-binding:external": {},
+  "studio-get-dedupe:parent": {
+   "apps/studio/dev-session.ts": "190e256c9aa93e7f338dd34aa4251acf7f7a0766970116d66c9f0aad40de62f9",
+   "apps/studio/package-lock.json": "7da69203dc4ba72b5cdf33b4c11cf63d57c20f08f4648ce07c3173a4a80986ca",
+   "apps/studio/package.json": "06de46a6ff2d5067d3d40166680ee33ee9ba95e93821363656dbb81d670d81e3",
+   "apps/studio/src/graph/requests.ts": "4bc38971a9a6c828b207a0692b31032b3ac26d9886f87e71733133bd2ddc8794",
+   "apps/studio/src/graph/review.ts": "fa46be93f419db314a526d66799aaf407f25040748556637298978ec69b2d357",
+   "apps/studio/src/lanes/board.ts": "5d2682bff6e8052ed33a45d217da974cbb01a65746ec82ec2b6cd5279aec5dcf",
+   "apps/studio/src/lanes/drafts.ts": "b0965efb0d18a5ae7ffe5d91eb831c394ba7811d9865e5d4fa6f78c38e108cdd",
+   "apps/studio/src/lanes/panels.ts": "334b0690b5f5a6712c9fe8f59ec34561f62c842e7057b16a7b5b13f073314a95",
+   "apps/studio/src/runtime/client.test.ts": "c97780aecf8fc99db031aeb19de26f039822a47bf9edc898ac140a158ab12152",
+   "apps/studio/src/runtime/client.ts": "3de97ff1850ffe8b511ae734bef0fbe52d064680e617308c1194b89c3072581c",
+   "apps/studio/src/views/ViewBoundary.tsx": "dc733acfbf51cc5d8b986ce355fcd4aa2048e03cfbe87d8772c0afad35f56683",
+   "apps/studio/tsconfig.app.json": "b8d5bbddce244694f87fe542b51186dcb1fb2ecb0bb86fb8e7ffcc643c2050ea",
+   "apps/studio/tsconfig.json": "770b4140bbb581e2dfd9ea9946ffc9c75a1d86ba7d2db5f77c83e37cbdf9d808",
+   "apps/studio/tsconfig.node.json": "656fe6a35facddae6f83c0e200123893e1d708429fdfecce5eba2fb6be5e3be2",
+   "apps/studio/vite.config.ts": "424cb17c1cf0f8caff3e53ea164d666621f9aff9e5f93aaea482536ae5f48bab",
+   "test_public.py": "e99077ed2e18de7f365eb52261aa15ce327b332f06b6043d1c759051f48724a0"
+  },
+  "studio-get-dedupe:fix": {
+   "apps/studio/dev-session.ts": "190e256c9aa93e7f338dd34aa4251acf7f7a0766970116d66c9f0aad40de62f9",
+   "apps/studio/package-lock.json": "7da69203dc4ba72b5cdf33b4c11cf63d57c20f08f4648ce07c3173a4a80986ca",
+   "apps/studio/package.json": "06de46a6ff2d5067d3d40166680ee33ee9ba95e93821363656dbb81d670d81e3",
+   "apps/studio/src/graph/requests.ts": "4bc38971a9a6c828b207a0692b31032b3ac26d9886f87e71733133bd2ddc8794",
+   "apps/studio/src/graph/review.ts": "fa46be93f419db314a526d66799aaf407f25040748556637298978ec69b2d357",
+   "apps/studio/src/lanes/board.ts": "5d2682bff6e8052ed33a45d217da974cbb01a65746ec82ec2b6cd5279aec5dcf",
+   "apps/studio/src/lanes/drafts.ts": "b0965efb0d18a5ae7ffe5d91eb831c394ba7811d9865e5d4fa6f78c38e108cdd",
+   "apps/studio/src/lanes/panels.ts": "334b0690b5f5a6712c9fe8f59ec34561f62c842e7057b16a7b5b13f073314a95",
+   "apps/studio/src/runtime/client.test.ts": "c97780aecf8fc99db031aeb19de26f039822a47bf9edc898ac140a158ab12152",
+   "apps/studio/src/runtime/client.ts": "eb3b26b61f163526107dab654df7f1e3dca8c2ff0e0e96af97b585affdc5d8bc",
+   "apps/studio/src/views/ViewBoundary.tsx": "dc733acfbf51cc5d8b986ce355fcd4aa2048e03cfbe87d8772c0afad35f56683",
+   "apps/studio/tsconfig.app.json": "b8d5bbddce244694f87fe542b51186dcb1fb2ecb0bb86fb8e7ffcc643c2050ea",
+   "apps/studio/tsconfig.json": "770b4140bbb581e2dfd9ea9946ffc9c75a1d86ba7d2db5f77c83e37cbdf9d808",
+   "apps/studio/tsconfig.node.json": "656fe6a35facddae6f83c0e200123893e1d708429fdfecce5eba2fb6be5e3be2",
+   "apps/studio/vite.config.ts": "424cb17c1cf0f8caff3e53ea164d666621f9aff9e5f93aaea482536ae5f48bab",
+   "test_public.py": "e99077ed2e18de7f365eb52261aa15ce327b332f06b6043d1c759051f48724a0"
+  },
+  "studio-get-dedupe:oracle": {
+   "apps/studio/src/runtime/client_hidden.test.ts": "e665428626a8145a9c0b67dcb0b74a92c4ae59c8ebbbe90ef483239ce08ca54a",
+   "test_hidden.py": "836a4d4d104c2962ccf812ab1986b6be211248eab8eca9accbce11908c200007"
+  },
+  "studio-get-dedupe:external": {
+   "<host-path>": "6e0f51e9d41905d97be8b04d2200660b6ca7ae59017b9efcf94a3bb52c3c29e4"
+  },
+  "native-token-accounting:parent": {
+   "test_public.py": "a3e8ef116b6e15a5d35b0d3c72f474a9803b002ebd67c5e44645958a89f50865",
+   "tools/token-bench/methodology.py": "a9d3efcf06da552d297bd841f4a01ff48e2aea708147a80e2e097e5ddbfb84ad",
+   "tools/token-bench/methodology_cases.json": "9c7f6cada6ff1ca3535f6ca70888ce01d368a102e7d5a83a70300ff7334348d1",
+   "tools/token-bench/methodology_profiles.json": "93b86632a2e586980089646afc1e71392e63f38763c3b365271991fb6e0ba909",
+   "tools/token-bench/run.py": "55a6d8912e367702d2fc31956b45cb848b0acb11f6d546d04d6ca46c369c2dca",
+   "tools/token-bench/tasks.json": "e8dd41918dc2d12001f79a6314875fd00e207ac9777da0846a1a1a0770accf2a",
+   "tools/token-bench/test_methodology.py": "dc74a515284b8d41307a59cecefda2901dfe3228ef027bd31dc9a956f7522599"
+  },
+  "native-token-accounting:fix": {
+   "test_public.py": "a3e8ef116b6e15a5d35b0d3c72f474a9803b002ebd67c5e44645958a89f50865",
+   "tools/token-bench/methodology.py": "b2a8b80ac4b9f77b06bc25ed0e9a0e39c383ca7179320a0dc4d44ea60f753798",
+   "tools/token-bench/methodology_cases.json": "9c7f6cada6ff1ca3535f6ca70888ce01d368a102e7d5a83a70300ff7334348d1",
+   "tools/token-bench/methodology_profiles.json": "93b86632a2e586980089646afc1e71392e63f38763c3b365271991fb6e0ba909",
+   "tools/token-bench/run.py": "55a6d8912e367702d2fc31956b45cb848b0acb11f6d546d04d6ca46c369c2dca",
+   "tools/token-bench/tasks.json": "e8dd41918dc2d12001f79a6314875fd00e207ac9777da0846a1a1a0770accf2a",
+   "tools/token-bench/test_methodology.py": "dc74a515284b8d41307a59cecefda2901dfe3228ef027bd31dc9a956f7522599"
+  },
+  "native-token-accounting:oracle": {
+   "tools/token-bench/test_methodology_hidden.py": "c48109b140f65c10c22d9c287613ae32243bcb961611dd284cbd2dfb1be37591",
+   "test_hidden.py": "30ceec50bb84b24dd5439237b99a0a8b1b925b5d58408475761104c1d6a1ab45"
+  },
+  "native-token-accounting:external": {}
+ },
+ "instrumentSha256": "3fa0cc0adba6f158637326c3ece99c1d41d3e42b78bff3dc2a3241cbe53a43ea",
+ "parserSha256": "5b773c09ece4f700c1452829e6f2d0b8ff1130c667d9fbdb8605c580c4b755e9",
+ "runParserSha256": "55a6d8912e367702d2fc31956b45cb848b0acb11f6d546d04d6ca46c369c2dca",
+ "identities": {
+  "codex": {
+   "path": "<host-path>",
+   "sha256": "8cb0e69e99ff2a158c54815db82d0f2e524d8f301bc30184722cfd1ae5973574",
+   "version": "codex-cli 0.157.1",
+   "subscription": true
+  },
+  "claude": {
+   "path": "<host-path>",
+   "sha256": "f9a3920634ae3b961ee92c2eb58d0051f5f8852b120983d0a4f57b6a5efeba61",
+   "version": "2.1.310 (Claude Code)",
+   "subscription": true
+  }
+ },
+ "models": {
+  "codex": "gpt-6-sol",
+  "claude": "claude-sonnet-5-5"
+ },
+ "profiles": [
+  {
+   "id": "direct",
+   "prompt": "Inspect the source, implement the request, run adequate checks and report the result."
+  },
+  {
+   "id": "tdd",
+   "prompt": "Write a failing behavioral test for the requested change and run it. Make the smallest change that passes. Refactor only if needed and run regression tests."
+  },
+  {
+   "id": "spec-kit",
+   "prompt": "Write a short specification and acceptance checks, then an implementation plan and task list. Implement the tasks and verify the acceptance checks.",
+   "source": "https://github.com/github/spec-kit/blob/67e0f7294e6e728ab60bf7b4590deb470448bc2d/README.md",
+   "revision": "67e0f7294e6e728ab60bf7b4590deb470448bc2d"
+  },
+  {
+   "id": "openspec",
+   "prompt": "Write a change proposal, explicit behavior delta, design and implementation tasks. Apply the tasks, verify the delta and record final verification.",
+   "source": "https://github.com/Fission-AI/OpenSpec/blob/6d04a1b58dedc95729d34e4f223d9d483aae210a/README.md",
+   "revision": "6d04a1b58dedc95729d34e4f223d9d483aae210a"
+  },
+  {
+   "id": "bmad",
+   "prompt": "Use a lightweight analyst, architect, developer and reviewer sequence in this single session. Record requirements, design, implementation and review. Scale artifacts to this task.",
+   "source": "https://github.com/bmad-code-org/BMAD-METHOD/blob/61e01f82644c4bb533750cfa0d6d61ab61d2cc9b/README.md",
+   "revision": "61e01f82644c4bb533750cfa0d6d61ab61d2cc9b"
+  },
+  {
+   "id": "superpowers",
+   "prompt": "Clarify the design from the complete request, write a small plan, use red-green-refactor tests, review the change and verify it before completion. Do not delegate.",
+   "source": "https://github.com/obra/superpowers/blob/2ce8aa15d05bd57213e6f746f953aafb7ded7a8b/README.md",
+   "revision": "2ce8aa15d05bd57213e6f746f953aafb7ded7a8b"
+  },
+  {
+   "id": "jpd-keel",
+   "prompt": "State the complete user promise, observable obligations, scoped paths and smallest adequate observer. Search only for a named gap. Implement only that scope, prove the user promise including failure cases, and retain failures and missing observers explicitly.",
+   "source": "GraphHelm KEEL.md and keel/KEEL_PLAN.md, keel/KEEL_EXEC.md",
+   "revision": "27519e3fb5fdf0432e26628d74f8c1ebc7a3d352"
+  }
+ ],
+ "tasks": [
+  {
+   "id": "task-record-binding",
+   "parentSha": "9f3550173acd3953a62fa6075b88511a3130a284",
+   "knownFixSha": "67a23a4f5b4ceb250d435cc271f909dfa8325e0a",
+   "parentSnapshot": "<host-path>",
+   "fixSnapshot": "<host-path>",
+   "scope": [
+    "tools/task-record/task_record.py"
+   ],
+   "productionImportClosure": [
+    "tools/task-record/task_record.py"
+   ],
+   "publicTests": [
+    "tools/task-record/test_task_record.py"
+   ],
+   "supportFiles": [
+    "docs/process/LANES.md",
+    "docs/process/DELIVERY.md",
+    "test_public.py",
+    ".graphhelm/team.json"
+   ],
+   "request": "Resolve task execution using this precedence: explicit --execution override; team.json beside the configured token file; then the nearest ancestor .graphhelm/team.json from the working directory, stopping at a Git workspace boundary. An execution ID is a string of 1 to 128 printable ASCII characters excluding whitespace, slash, backslash and colon. Missing bindings, malformed JSON and present invalid bindings must refuse with a nonzero CLI result before any send, without falling through to another project or an implicit legacy gh-team execution. A valid explicit override wins even if a project binding is broken; an invalid explicit override refuses. Preserve the public command-line interface and existing heartbeat behavior, idempotency, full-head and closing-issue behavior.",
+   "hiddenOracle": {
+    "root": "<host-path>",
+    "files": [
+     "tools/task-record/test_task_record_binding_hidden.py",
+     "test_hidden.py"
+    ],
+    "command": [
+     "<host-path>",
+     "test_hidden.py"
+    ]
+   },
+   "completion": {
+    "public": {
+     "stdoutMarker": "BENCH_COMPLETED_PUBLIC"
+    },
+    "hidden": {
+     "stdoutMarker": "BENCH_COMPLETED_HIDDEN",
+     "assertionMarker": "BENCH_ASSERTION_FAILURE"
+    }
+   },
+   "observerConstraints": {
+    "subjectPublicSelected": 11,
+    "heldHeartbeatRegressions": 5,
+    "externalHiddenSelected": 28,
+    "reason": "Original heartbeat HTTP regressions run only in external acceptance because native MXC denies loopback TCP. Public original tests remain unchanged."
+   }
+  },
+  {
+   "id": "studio-get-dedupe",
+   "parentSha": "f18302ffb802fabf2abb4059bf62d174b1b40eb0",
+   "knownFixSha": "9f3550173acd3953a62fa6075b88511a3130a284",
+   "parentSnapshot": "<host-path>",
+   "fixSnapshot": "<host-path>",
+   "scope": [
+    "apps/studio/src/runtime/client.ts"
+   ],
+   "productionImportClosure": [
+    "apps/studio/src/runtime/client.ts",
+    "apps/studio/src/graph/requests.ts",
+    "apps/studio/src/graph/review.ts",
+    "apps/studio/src/lanes/drafts.ts",
+    "apps/studio/src/lanes/board.ts",
+    "apps/studio/src/lanes/panels.ts",
+    "apps/studio/src/views/ViewBoundary.tsx"
+   ],
+   "publicTests": [
+    "apps/studio/src/runtime/client.test.ts"
+   ],
+   "supportFiles": [
+    "apps/studio/package.json",
+    "apps/studio/package-lock.json",
+    "apps/studio/vite.config.ts",
+    "apps/studio/dev-session.ts",
+    "apps/studio/tsconfig.json",
+    "apps/studio/tsconfig.app.json",
+    "apps/studio/tsconfig.node.json",
+    "test_public.py"
+   ],
+   "request": "The Studio must share a single pending request for concurrent identical Runtime GETs. Different routes remain independent; a later GET after settlement asks again; POST operations never merge. Preserve compatibility with older Runtime replies and token-refusal classification. Keep the public Runtime client interface.",
+   "hiddenOracle": {
+    "root": "<host-path>",
+    "files": [
+     "apps/studio/src/runtime/client_hidden.test.ts",
+     "test_hidden.py"
+    ],
+    "command": [
+     "<host-path>",
+     "test_hidden.py"
+    ]
+   },
+   "completion": {
+    "public": {
+     "stdoutMarker": "BENCH_COMPLETED_PUBLIC"
+    },
+    "hidden": {
+     "stdoutMarker": "BENCH_COMPLETED_HIDDEN",
+     "assertionMarker": "BENCH_ASSERTION_FAILURE"
+    }
+   },
+   "externalDependencies": [
+    {
+     "path": "<host-path>"
+    },
+    {
+     "path": "<host-path>",
+     "kind": "directory",
+     "mount": "apps/studio/node_modules"
+    }
+   ]
+  },
+  {
+   "id": "native-token-accounting",
+   "parentSha": "c949b86619e692119380bd3a868bfe4e48ac8cd9",
+   "knownFixSha": "497612e67c741a6d442b5a904a3f6356d39471e0",
+   "parentSnapshot": "<host-path>",
+   "fixSnapshot": "<host-path>",
+   "scope": [
+    "tools/token-bench/methodology.py"
+   ],
+   "productionImportClosure": [
+    "tools/token-bench/methodology.py",
+    "tools/token-bench/run.py",
+    "tools/token-bench/tasks.json",
+    "tools/token-bench/methodology_cases.json",
+    "tools/token-bench/methodology_profiles.json"
+   ],
+   "publicTests": [
+    "tools/token-bench/test_methodology.py"
+   ],
+   "supportFiles": [
+    "test_public.py"
+   ],
+   "request": "Correct usage(cli, raw) for fresh non-resumed single-shot native CLI streams. Claude assistant output counters are placeholders. Canonical counts must sum final result.modelUsage query-pipeline models; retain result.usage as mainLoopCounts and deduplicated diagnostics as transcriptCounts. Preserve coding identity observedModels separately from accountingModels; countsSource names claude.result.modelUsage. Return counts=None and explicit non-observed accountingStatus for missing/duplicate final results, malformed JSON, missing/negative/non-integer/boolean counters or pipeline counters below main-loop counters. Valid auxiliary model totals may exceed the main loop. Preserve existing input/output/cacheRead/cacheWrite shapes. Codex retains completed-turn input_tokens/cached_input_tokens/output_tokens, rejects invalid counters and cached input above input. Missing usage must never fall back to transcript totals or imply zero cost. Preserve all original qualification and immutable-receipt behavior. Invalid assistant diagnostic counters must not mask valid final native pipeline totals; expose transcriptDiagnosticError separately. Valid native accounting uses accountingStatus='observed'. Return sorted unique observedModels and accountingModels. For invalid assistant diagnostics, transcriptDiagnosticError='invalid-assistant-diagnostic' while parseErrors counts malformed JSON only.",
+   "hiddenOracle": {
+    "root": "<host-path>",
+    "files": [
+     "tools/token-bench/test_methodology_hidden.py",
+     "test_hidden.py"
+    ],
+    "command": [
+     "<host-path>",
+     "test_hidden.py"
+    ]
+   },
+   "completion": {
+    "public": {
+     "stdoutMarker": "BENCH_COMPLETED_PUBLIC"
+    },
+    "hidden": {
+     "stdoutMarker": "BENCH_COMPLETED_HIDDEN",
+     "assertionMarker": "BENCH_ASSERTION_FAILURE"
+    }
+   },
+   "observerConstraints": {
+    "subjectPublicSelected": 5,
+    "heldPublicRegressions": "test_partial_cohort_and_tampered_receipt_cannot_be_complete or test_publish_keeps_first_attempt_on_duplicate",
+    "externalHiddenSelected": 7,
+    "reason": "Codex MXC denies hard-link creation; original two immutable-publish tests remain unchanged and run in external acceptance for every candidate",
+    "scoredOutcomesBeforeAdjustment": 0
+   }
+  }
+ ],
+ "plannedAttempts": [
+  {
+   "id": "000",
+   "task": "task-record-binding",
+   "profile": "direct",
+   "cli": "codex",
+   "promptSha256": "94620dace34011ff96ffd5aff8b870eadf266eaffcf035bdd79a50e517383134"
+  },
+  {
+   "id": "001",
+   "task": "task-record-binding",
+   "profile": "direct",
+   "cli": "claude",
+   "promptSha256": "94620dace34011ff96ffd5aff8b870eadf266eaffcf035bdd79a50e517383134"
+  },
+  {
+   "id": "002",
+   "task": "task-record-binding",
+   "profile": "tdd",
+   "cli": "codex",
+   "promptSha256": "111809a230d20affc8c4116c3e9ac529cd38dc9f93a5d26159fe2c27537151ba"
+  },
+  {
+   "id": "003",
+   "task": "task-record-binding",
+   "profile": "tdd",
+   "cli": "claude",
+   "promptSha256": "111809a230d20affc8c4116c3e9ac529cd38dc9f93a5d26159fe2c27537151ba"
+  },
+  {
+   "id": "004",
+   "task": "task-record-binding",
+   "profile": "spec-kit",
+   "cli": "codex",
+   "promptSha256": "3f316ad5e0992b1e4a060c5821611cda7e2af4cfcf52e1bf55b3406275135899"
+  },
+  {
+   "id": "005",
+   "task": "task-record-binding",
+   "profile": "spec-kit",
+   "cli": "claude",
+   "promptSha256": "3f316ad5e0992b1e4a060c5821611cda7e2af4cfcf52e1bf55b3406275135899"
+  },
+  {
+   "id": "006",
+   "task": "task-record-binding",
+   "profile": "openspec",
+   "cli": "codex",
+   "promptSha256": "41c607a622840b7ea36f44c5761a9c0982cf343f159653f19355e1e3d098c68f"
+  },
+  {
+   "id": "007",
+   "task": "task-record-binding",
+   "profile": "openspec",
+   "cli": "claude",
+   "promptSha256": "41c607a622840b7ea36f44c5761a9c0982cf343f159653f19355e1e3d098c68f"
+  },
+  {
+   "id": "008",
+   "task": "task-record-binding",
+   "profile": "bmad",
+   "cli": "codex",
+   "promptSha256": "bfdc491d80844509612f37adf19c3a1021d8dbfad454432fd9e6bb8dc0bf64f1"
+  },
+  {
+   "id": "009",
+   "task": "task-record-binding",
+   "profile": "bmad",
+   "cli": "claude",
+   "promptSha256": "bfdc491d80844509612f37adf19c3a1021d8dbfad454432fd9e6bb8dc0bf64f1"
+  },
+  {
+   "id": "010",
+   "task": "task-record-binding",
+   "profile": "superpowers",
+   "cli": "codex",
+   "promptSha256": "a073e968f3036bb90fb993ad4d6b42f3cb964fc44785190b4703d495a58a7d4a"
+  },
+  {
+   "id": "011",
+   "task": "task-record-binding",
+   "profile": "superpowers",
+   "cli": "claude",
+   "promptSha256": "a073e968f3036bb90fb993ad4d6b42f3cb964fc44785190b4703d495a58a7d4a"
+  },
+  {
+   "id": "012",
+   "task": "task-record-binding",
+   "profile": "jpd-keel",
+   "cli": "codex",
+   "promptSha256": "2b62ce0b9b2e7150148a34a3bb1302b98a8b28a3860a0793c5874583504dda3f"
+  },
+  {
+   "id": "013",
+   "task": "task-record-binding",
+   "profile": "jpd-keel",
+   "cli": "claude",
+   "promptSha256": "2b62ce0b9b2e7150148a34a3bb1302b98a8b28a3860a0793c5874583504dda3f"
+  },
+  {
+   "id": "014",
+   "task": "studio-get-dedupe",
+   "profile": "tdd",
+   "cli": "claude",
+   "promptSha256": "d681778bc47f7b6884c60943e22dea0180d6a7b53574cfd56aebfdd7db71c43c"
+  },
+  {
+   "id": "015",
+   "task": "studio-get-dedupe",
+   "profile": "tdd",
+   "cli": "codex",
+   "promptSha256": "d681778bc47f7b6884c60943e22dea0180d6a7b53574cfd56aebfdd7db71c43c"
+  },
+  {
+   "id": "016",
+   "task": "studio-get-dedupe",
+   "profile": "spec-kit",
+   "cli": "claude",
+   "promptSha256": "01895bcacb44f115a4eed116deaa9919c3895fc6623e9547ec5bc84d6196b58f"
+  },
+  {
+   "id": "017",
+   "task": "studio-get-dedupe",
+   "profile": "spec-kit",
+   "cli": "codex",
+   "promptSha256": "01895bcacb44f115a4eed116deaa9919c3895fc6623e9547ec5bc84d6196b58f"
+  },
+  {
+   "id": "018",
+   "task": "studio-get-dedupe",
+   "profile": "openspec",
+   "cli": "claude",
+   "promptSha256": "c4567249fa1f1e454cbae3fe370f5d7bcf70e63d7413c71eef96bd7cd373e543"
+  },
+  {
+   "id": "019",
+   "task": "studio-get-dedupe",
+   "profile": "openspec",
+   "cli": "codex",
+   "promptSha256": "c4567249fa1f1e454cbae3fe370f5d7bcf70e63d7413c71eef96bd7cd373e543"
+  },
+  {
+   "id": "020",
+   "task": "studio-get-dedupe",
+   "profile": "bmad",
+   "cli": "claude",
+   "promptSha256": "bef9a9f3a76354bad99803cf5ec976eb72d097e2d2c532aadde0d64067567ca0"
+  },
+  {
+   "id": "021",
+   "task": "studio-get-dedupe",
+   "profile": "bmad",
+   "cli": "codex",
+   "promptSha256": "bef9a9f3a76354bad99803cf5ec976eb72d097e2d2c532aadde0d64067567ca0"
+  },
+  {
+   "id": "022",
+   "task": "studio-get-dedupe",
+   "profile": "superpowers",
+   "cli": "claude",
+   "promptSha256": "d4bb329ac7e801ba654bff78d9d2923231696bc779a98224c1eb69817369fd04"
+  },
+  {
+   "id": "023",
+   "task": "studio-get-dedupe",
+   "profile": "superpowers",
+   "cli": "codex",
+   "promptSha256": "d4bb329ac7e801ba654bff78d9d2923231696bc779a98224c1eb69817369fd04"
+  },
+  {
+   "id": "024",
+   "task": "studio-get-dedupe",
+   "profile": "jpd-keel",
+   "cli": "claude",
+   "promptSha256": "607386c332065e0f6f91d18186563dc5248ccd4f2360cacace0d070df36f067c"
+  },
+  {
+   "id": "025",
+   "task": "studio-get-dedupe",
+   "profile": "jpd-keel",
+   "cli": "codex",
+   "promptSha256": "607386c332065e0f6f91d18186563dc5248ccd4f2360cacace0d070df36f067c"
+  },
+  {
+   "id": "026",
+   "task": "studio-get-dedupe",
+   "profile": "direct",
+   "cli": "claude",
+   "promptSha256": "7ba3ff42ae79b7dd455aefbc0ee529a569158a76d62e7ac588438ab0cb0af2ee"
+  },
+  {
+   "id": "027",
+   "task": "studio-get-dedupe",
+   "profile": "direct",
+   "cli": "codex",
+   "promptSha256": "7ba3ff42ae79b7dd455aefbc0ee529a569158a76d62e7ac588438ab0cb0af2ee"
+  },
+  {
+   "id": "028",
+   "task": "native-token-accounting",
+   "profile": "spec-kit",
+   "cli": "codex",
+   "promptSha256": "3691a3656578c12f5494c7f146201294737bab2a7314ea2a99fc6b6f316113bb"
+  },
+  {
+   "id": "029",
+   "task": "native-token-accounting",
+   "profile": "spec-kit",
+   "cli": "claude",
+   "promptSha256": "3691a3656578c12f5494c7f146201294737bab2a7314ea2a99fc6b6f316113bb"
+  },
+  {
+   "id": "030",
+   "task": "native-token-accounting",
+   "profile": "openspec",
+   "cli": "codex",
+   "promptSha256": "582e4f7f252add4fe1e154481edb9fbd8c5a98405da8c540a3bf1eb5e40b1b77"
+  },
+  {
+   "id": "031",
+   "task": "native-token-accounting",
+   "profile": "openspec",
+   "cli": "claude",
+   "promptSha256": "582e4f7f252add4fe1e154481edb9fbd8c5a98405da8c540a3bf1eb5e40b1b77"
+  },
+  {
+   "id": "032",
+   "task": "native-token-accounting",
+   "profile": "bmad",
+   "cli": "codex",
+   "promptSha256": "9f88e17dd6a84aed8afbd1ec5190c4b17f4ad8c15a1e5b4559f6362a25e62398"
+  },
+  {
+   "id": "033",
+   "task": "native-token-accounting",
+   "profile": "bmad",
+   "cli": "claude",
+   "promptSha256": "9f88e17dd6a84aed8afbd1ec5190c4b17f4ad8c15a1e5b4559f6362a25e62398"
+  },
+  {
+   "id": "034",
+   "task": "native-token-accounting",
+   "profile": "superpowers",
+   "cli": "codex",
+   "promptSha256": "00dbed1bfd89d32c307952a7854110f715a2e73443024f1620fa098e9b779742"
+  },
+  {
+   "id": "035",
+   "task": "native-token-accounting",
+   "profile": "superpowers",
+   "cli": "claude",
+   "promptSha256": "00dbed1bfd89d32c307952a7854110f715a2e73443024f1620fa098e9b779742"
+  },
+  {
+   "id": "036",
+   "task": "native-token-accounting",
+   "profile": "jpd-keel",
+   "cli": "codex",
+   "promptSha256": "d6c771bcaaf5d8b8a52675841a842646fea3d153e3a02bc3160f26e35208f6ec"
+  },
+  {
+   "id": "037",
+   "task": "native-token-accounting",
+   "profile": "jpd-keel",
+   "cli": "claude",
+   "promptSha256": "d6c771bcaaf5d8b8a52675841a842646fea3d153e3a02bc3160f26e35208f6ec"
+  },
+  {
+   "id": "038",
+   "task": "native-token-accounting",
+   "profile": "direct",
+   "cli": "codex",
+   "promptSha256": "7c43d1ccca693b81bc3b3a564f97a9e77d216131cf2386a40204373cec1752af"
+  },
+  {
+   "id": "039",
+   "task": "native-token-accounting",
+   "profile": "direct",
+   "cli": "claude",
+   "promptSha256": "7c43d1ccca693b81bc3b3a564f97a9e77d216131cf2386a40204373cec1752af"
+  },
+  {
+   "id": "040",
+   "task": "native-token-accounting",
+   "profile": "tdd",
+   "cli": "codex",
+   "promptSha256": "d30fbab8d7782f9ee7c91db88692737975779c560c8f2585bec26477e666c06a"
+  },
+  {
+   "id": "041",
+   "task": "native-token-accounting",
+   "profile": "tdd",
+   "cli": "claude",
+   "promptSha256": "d30fbab8d7782f9ee7c91db88692737975779c560c8f2585bec26477e666c06a"
+  }
+ ],
+ "argv": {
+  "codex": [
+   "<host-path>",
+   "exec",
+   "--json",
+   "--ignore-user-config",
+   "--ephemeral",
+   "--skip-git-repo-check",
+   "-c",
+   "default_permissions=\":workspace\"",
+   "-c",
+   "windows.sandbox=\"elevated\"",
+   "-c",
+   "features.prefer_mxc=true",
+   "-c",
+   "web_search=\"disabled\"",
+   "-m",
+   "gpt-6-sol",
+   "-c",
+   "model_reasoning_effort=\"low\"",
+   "-c",
+   "project_doc_max_bytes=0",
+   "--disable",
+   "plugins",
+   "--enable",
+   "skip_host_skill_discovery",
+   "-"
+  ],
+  "claude": [
+   "<host-path>",
+   "-p",
+   "--output-format",
+   "stream-json",
+   "--verbose",
+   "--safe-mode",
+   "--restricted",
+   "--tools",
+   "Read,Edit,Write,Bash,Glob,Grep",
+   "--allowedTools",
+   "Bash(python test_public.py)",
+   "--permission-mode",
+   "acceptEdits",
+   "--permission-prompts",
+   "none",
+   "--no-session-persistence",
+   "--model",
+   "claude-sonnet-5-5",
+   "--effort",
+   "low"
+  ]
+ },
+ "python": {
+  "path": "<host-path>",
+  "sha256": "ceabb31054d429f57cb3825775677eeaf0db35fdabbc5ff6aef661c037154b00"
+ },
+ "environment": {
+  "PATH": "<host-path> Files/Git/bin",
+  "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+  "PYTHONPATH": "<host-path>",
+  "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"
+ },
+ "deadlineSeconds": 300,
+ "evaluatorDeadlineSeconds": 90,
+ "calibrationPassed": true,
+ "winner": null
+}

@@ -58,6 +58,13 @@ describe("the step frame shows the whole screenshot (#1966)", () => {
     expect(declared(".shell:has(.compare-frame:not(.terminal)) .compare-side-panel")).toMatchObject({ "min-height": "0", "overflow-y": "auto" });
   });
 
+  it("the terminal layout keys on the terminal frame, never on a bare .terminal such as a journey's Terminal kind badge (#1985)", () => {
+    const shell = ".shell:has(.compare-frame.terminal)";
+    expect(declared(shell)["height"]).toBe("100vh");
+    expect(declared(`${shell} .proof-main`)["overflow"]).toBe("hidden");
+    expect(stylesheet).not.toMatch(/:has\(\.terminal\)/);
+  });
+
   it("the phone box grows with the frame and gives it no scroll of its own", () => {
     const phone = declared(".phone");
     expect(phone["height"]).toBe("auto");

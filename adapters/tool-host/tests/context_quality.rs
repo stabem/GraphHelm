@@ -56,9 +56,14 @@ const SELF_PATH: &str = "adapters/tool-host/tests/context_quality.rs";
 /// fixture rather than the tree.
 const FROZEN_CORPUS_PREFIX: &str = "adapters/tool-host/tests/fixtures/context-quality/tree/";
 
-/// The live count's exclusion: the test itself and its frozen corpus.
+/// The holdout's frozen corpus (#1705), excluded from every LIVE count for the same reason.
+const HOLDOUT_CORPUS_PREFIX: &str = "adapters/tool-host/tests/fixtures/context-holdout/tree/";
+
+/// The live count's exclusion: the test itself and both frozen corpora.
 fn is_instrument(path: &str) -> bool {
-    path == SELF_PATH || path.starts_with(FROZEN_CORPUS_PREFIX)
+    path == SELF_PATH
+        || path.starts_with(FROZEN_CORPUS_PREFIX)
+        || path.starts_with(HOLDOUT_CORPUS_PREFIX)
 }
 
 /// Objective -> the file a maintainer would open. Each objective is a question a maintainer
@@ -107,6 +112,61 @@ const CASES: [(&str, &str); 10] = [
     ),
 ];
 
+/// #1705: the HOLDOUT. Ten questions written in a maintainer's plain words, each with the one
+/// file that answers it, fixed before the ranking was run on any of them and committed before the
+/// baseline was measured. Six ask about implementation, four about normative documents.
+/// This set is never tuned against: a ranking change is developed on `CASES` above and only then
+/// read here. Rewriting a question or its oracle after seeing a result is retuning; freeze a new
+/// holdout instead (fixtures/context-holdout/MANIFEST.md).
+const HOLDOUT_CASES: [(&str, &str); 10] = [
+    (
+        "where do we make sure a spawned helper program never pops up a visible window on windows",
+        "core/process/src/lib.rs",
+    ),
+    (
+        "how big can a single event or the journal file get before the store says no",
+        "core/events/src/limits.rs",
+    ),
+    (
+        "what removes layout-only fields before the graph fingerprint is computed",
+        "core/graph/src/canonical.rs",
+    ),
+    (
+        "how does the simulator stop a graph that loops forever",
+        "core/simulation/src/engine.rs",
+    ),
+    (
+        "which obligations must be satisfied before a node may move to its next state",
+        "core/policy/src/evaluator.rs",
+    ),
+    (
+        "if one check fails while applying a draft, how do we keep the current version untouched",
+        "core/governor/src/apply.rs",
+    ),
+    (
+        "who is allowed to press merge on a pull request and what must they recheck first",
+        "docs/process/DELIVERY.md",
+    ),
+    (
+        "how do several agent sessions on one machine share the build without stepping on each other",
+        "docs/process/LANES.md",
+    ),
+    (
+        "what are the values every code change follows, and which step file do I read next",
+        "KEEL.md",
+    ),
+    (
+        "which crate may depend on which, and what is the studio allowed to import",
+        "AGENTS.md",
+    ),
+];
+
+/// The holdout floor over its FROZEN corpus: the baseline measured when the holdout was frozen
+/// (the PR of #1705 carries the pre-registration and the measured value). Asserted at the
+/// measured value for the same reason as the development floor: corpus and ranking are both
+/// fixed, so any drop is a change in the ranking.
+const HOLDOUT_HITS_AT_3_FLOOR: usize = 4;
+
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -122,6 +182,14 @@ fn frozen_corpus() -> PathBuf {
     fixture_root().join("tree").canonicalize().unwrap()
 }
 
+fn holdout_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/context-holdout")
+}
+
+fn holdout_corpus() -> PathBuf {
+    holdout_root().join("tree").canonicalize().unwrap()
+}
+
 /// Whether a measurement asserts the capsule shape (frozen corpus) or only prints it (live tree).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Capsules {
@@ -129,7 +197,15 @@ enum Capsules {
     Printed,
 }
 
-/// One measured run of the ten cases over `root`. Returns (hits, eligible, shipped, saved).
+/// What one measured run returns: the hits, the tokens saved, and each case's top three in case
+/// order (what the determinism test compares).
+struct Measured {
+    hits: usize,
+    saved: u64,
+    top3: Vec<Vec<String>>,
+}
+
+/// One measured run of `cases` over `root`.
 ///
 /// `Capsules::Asserted` also asserts that every case ran with a capsule and shipped a source.
 /// That is a property of the FROZEN corpus. On the live tree it is a property of the machine
@@ -139,9 +215,10 @@ enum Capsules {
 fn measure(
     root: &Path,
     label: &str,
+    cases: &[(&str, &str)],
     excluded: fn(&str) -> bool,
     capsules: Capsules,
-) -> (usize, u64, u64, u64) {
+) -> Measured {
     let channel = WorkspaceSourceChannel::open(root).unwrap();
     let reader = WorkspaceExcerptReader::open(root).unwrap();
     let ports = ContextPorts {
@@ -155,13 +232,14 @@ fn measure(
     let mut eligible_total = 0u64;
     let mut shipped_total = 0u64;
     let mut saved_total = 0u64;
+    let mut tops = Vec::new();
     let indent = " ".repeat(7);
     println!(
         "context quality over {label} {} ({} cases)",
         root.display(),
-        CASES.len()
+        cases.len()
     );
-    for (objective, expected) in CASES {
+    for &(objective, expected) in cases {
         let terms = objective_terms(objective);
         let ranked = match (ports.search.search(&terms, &SEARCH_BOUNDS), capsules) {
             (Ok(ranked), _) => ranked,
@@ -181,6 +259,7 @@ fn measure(
             .collect();
         let hit = top3.contains(&expected);
         hits += usize::from(hit);
+        tops.push(top3.iter().map(|path| (*path).to_owned()).collect());
         let compiled = retrieve_and_compile(
             ports.search.as_ref(),
             ports.reader.as_ref(),
@@ -217,19 +296,28 @@ fn measure(
             );
         }
     }
-    let hit_rate = hits as f64 / CASES.len() as f64;
+    let hit_rate = hits as f64 / cases.len() as f64;
     println!(
-        "hit rate@3 (success@3) = {hits}/{} = {hit_rate:.2}; tokens eligible {eligible_total} shipped {shipped_total} saved {saved_total} (bytes-div-4/v1)",
-        CASES.len()
+        "hit rate@3 (success@3) over {label} = {hits}/{} = {hit_rate:.2}; tokens eligible {eligible_total} shipped {shipped_total} saved {saved_total} (bytes-div-4/v1)",
+        cases.len()
     );
-    (hits, eligible_total, shipped_total, saved_total)
+    Measured {
+        hits,
+        saved: saved_total,
+        top3: tops,
+    }
 }
 
 #[test]
 fn hit_rate_at_3_over_the_frozen_corpus_holds_the_measured_floor() {
-    let (hits, _, _, saved_total) = measure(
+    let Measured {
+        hits,
+        saved: saved_total,
+        ..
+    } = measure(
         &frozen_corpus(),
         "frozen corpus",
+        &CASES,
         |_| false,
         Capsules::Asserted,
     );
@@ -248,13 +336,51 @@ fn hit_rate_at_3_over_the_frozen_corpus_holds_the_measured_floor() {
 /// printed so a reader of the gate log can watch the number, never asserted against a floor.
 #[test]
 fn hit_rate_at_3_over_this_repository_is_printed_not_asserted() {
-    let (hits, _, _, _) = measure(
+    let hits = measure(
         &repository_root(),
         "live repository",
+        &CASES,
         is_instrument,
         Capsules::Printed,
-    );
+    )
+    .hits;
     assert!(hits <= CASES.len(), "hits are bounded by the case count");
+}
+
+/// #1705: ranking quality, separated from drift: the holdout over its own frozen corpus.
+#[test]
+fn holdout_hits_at_3_over_its_frozen_corpus_hold_the_baseline() {
+    let hits = measure(
+        &holdout_corpus(),
+        "holdout frozen corpus",
+        &HOLDOUT_CASES,
+        |_| false,
+        Capsules::Asserted,
+    )
+    .hits;
+    assert!(
+        hits >= HOLDOUT_HITS_AT_3_FLOOR,
+        "holdout hits@3 {hits}/{} fell below the frozen baseline {HOLDOUT_HITS_AT_3_FLOOR}",
+        HOLDOUT_CASES.len()
+    );
+}
+
+/// #1705: the same holdout questions over the moving tree: printed, never asserted. The gap
+/// between this number and the frozen one is corpus drift, not ranking quality.
+#[test]
+fn holdout_hits_at_3_over_this_repository_are_printed_not_asserted() {
+    let hits = measure(
+        &repository_root(),
+        "holdout live repository",
+        &HOLDOUT_CASES,
+        is_instrument,
+        Capsules::Printed,
+    )
+    .hits;
+    assert!(
+        hits <= HOLDOUT_CASES.len(),
+        "hits are bounded by the case count"
+    );
 }
 
 /// Every file under `root`, repository-relative with forward slashes, sorted — never in
@@ -294,14 +420,12 @@ fn manifest_digests(manifest: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The corpus is frozen by its manifest: the set of files AND the bytes of each must match, or
-/// the floor above is being measured over something else.
-#[test]
-fn the_frozen_corpus_matches_its_manifest() {
-    let manifest = std::fs::read_to_string(fixture_root().join("MANIFEST.md")).unwrap();
+/// A corpus is frozen by its manifest: the set of files AND the bytes of each must match, or the
+/// floor is being measured over something else; and every oracle path must be in it.
+fn assert_corpus_matches_manifest(fixture: &Path, corpus: &Path, cases: &[(&str, &str)]) {
+    let manifest = std::fs::read_to_string(fixture.join("MANIFEST.md")).unwrap();
     let pinned = manifest_digests(&manifest);
-    let corpus = frozen_corpus();
-    let present = files_under(&corpus);
+    let present = files_under(corpus);
     let pinned_paths: Vec<&String> = pinned.keys().collect();
     let present_paths: Vec<&String> = present.iter().collect();
     assert_eq!(
@@ -316,12 +440,41 @@ fn the_frozen_corpus_matches_its_manifest() {
             "{path}: bytes differ from the manifest's digest"
         );
     }
-    for (_, expected) in CASES {
+    for (_, expected) in cases {
         assert!(
-            pinned.contains_key(expected),
+            pinned.contains_key(*expected),
             "{expected}: every expected file is in the frozen corpus"
         );
     }
+}
+
+#[test]
+fn the_frozen_corpus_matches_its_manifest() {
+    assert_corpus_matches_manifest(&fixture_root(), &frozen_corpus(), &CASES);
+}
+
+#[test]
+fn the_holdout_corpus_matches_its_manifest() {
+    assert_corpus_matches_manifest(&holdout_root(), &holdout_corpus(), &HOLDOUT_CASES);
+}
+
+/// #1705: the evaluator itself is deterministic: two full holdout runs over the frozen corpus
+/// give the same top three for every case, in the same order.
+#[test]
+fn the_holdout_evaluation_is_deterministic_across_two_runs() {
+    let run = || {
+        measure(
+            &holdout_corpus(),
+            "holdout determinism",
+            &HOLDOUT_CASES,
+            |_| false,
+            Capsules::Asserted,
+        )
+        .top3
+    };
+    let first = run();
+    assert_eq!(first.len(), HOLDOUT_CASES.len());
+    assert_eq!(first, run());
 }
 
 #[test]

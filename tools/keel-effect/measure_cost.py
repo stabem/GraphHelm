@@ -125,16 +125,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=".")
     parser.add_argument("--head", default="origin/main")
     parser.add_argument("--out", required=True)
-    parser.add_argument("--observer-seconds", default="")
+    parser.add_argument("--observer-seconds", default="", help="reruns after a closure edit (events crate rebuilt)")
+    parser.add_argument("--observer-unchanged-seconds", default="", help="reruns with nothing to rebuild")
     parser.add_argument("--reached-seconds", default="")
     args = parser.parse_args(argv)
     repo = Path(args.repo)
     head = ek.git(repo, "rev-parse", f"{args.head}^{{commit}}").strip()
     observer = [float(v) for v in args.observer_seconds.split(",") if v]
+    unchanged = [float(v) for v in args.observer_unchanged_seconds.split(",") if v]
     reached = [float(v) for v in args.reached_seconds.split(",") if v]
     report = {"head": head,
               "check_time": check_times(repo, head),
-              "observer_rerun": {"command": ek.OBSERVER, "runs_s": observer, **spread(observer)},
+              "observer_rerun": {"command": ek.OBSERVER, "runs_s": observer, **spread(observer),
+                               "unchanged_target": {"runs_s": unchanged, **spread(unchanged)}},
               "reached_plan": {"runs_s": reached, **spread(reached)},
               "reuse_fraction": reuse_fraction(repo, head)}
     Path(args.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8", newline="\n")

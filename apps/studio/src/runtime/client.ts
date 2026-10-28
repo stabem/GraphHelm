@@ -40,8 +40,14 @@ export type TaskStepName = "plan" | "critic" | "implement" | "review" | "merge" 
 
 export interface BoardTask {
   key: string;
+  /** #1889: the task a record about this slice names (`task.review_assigned` among them). */
+  taskId?: string;
   issue: number | null;
   pr: number | null;
+  /** #1889: the PR head the slice is on; a review assignment names it. */
+  headSha?: string | null;
+  /** Everyone assigned or who gave a verdict, oldest first. */
+  reviewers?: string[];
   lane: string | null;
   currentReviewer: string | null;
   step: TaskStepName;
@@ -455,6 +461,13 @@ export class Runtime {
    * (proof/send-fix.ts `fixBody`). The signal id is the idempotency key; owner credential only. */
   async recordRequest(executionId: string, id: string, body: Record<string, unknown>): Promise<void> {
     await this.#request("POST", `/v1/executions/${encodeURIComponent(executionId)}/signal`, body, this.#owner(id));
+  }
+
+  /** #1889: the owner's review assignment, `task.review_assigned` on
+   * `POST /v1/executions/{id}/signal` (lanes/drafts.ts `reviewAssignedBody`), owner credential only.
+   * The draft id is the signal id and idempotency key, so a resend is reconciled. */
+  async assignReview(executionId: string, draft: Draft): Promise<void> {
+    await this.#request("POST", `/v1/executions/${encodeURIComponent(executionId)}/signal`, draft.body, this.#owner(draft.id));
   }
 
   #owner(key: string): Record<string, string> {

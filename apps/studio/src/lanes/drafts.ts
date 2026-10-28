@@ -28,6 +28,20 @@ export function messageBody(executionId: string, id: string, lane: string, text:
   };
 }
 
+/** #1889: the owner's Assign, a `task.review_assigned` record on `POST /v1/executions/{id}/signal`
+ * for the slice's task, PR and head. The Runtime folds it into the slice's current reviewer and
+ * wakes that reviewer (wake.rs); the signal id is the idempotency key. */
+export function reviewAssignedBody(executionId: string, id: string, slice: { taskId: string; pr: number; headSha: string }, reviewer: string, now: Date, owner: string): Record<string, unknown> {
+  const at = now.toISOString().replace(/\.\d{3}Z$/, "Z");
+  const document = { schema: "graphhelm-task-event-v1", taskId: slice.taskId, revision: 1, at, pr: slice.pr, headSha: slice.headSha, reviewer };
+  return {
+    signal: {
+      id, type: "task.review_assigned", source: { type: "user", id: owner }, severity: "low",
+      emittedAt: now.toISOString(), evidence: [executionId], description: JSON.stringify(document),
+    },
+  };
+}
+
 export type LaneControl = "wake" | "reassign" | "stop";
 
 /** The body of `POST /v1/executions/{id}/lanes/{lane}/{control}` (#1847). `at` is sent so a retry

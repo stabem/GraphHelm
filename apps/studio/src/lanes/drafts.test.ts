@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { controlBody, draftFor, messageBody } from "./drafts";
+import { controlBody, draftFor, messageBody, reviewAssignedBody } from "./drafts";
 
 describe("owner requests to a lane (#1837)", () => {
   it("resends a failed request with its first id and bytes, and draws a new id only for a new intent", () => {
@@ -24,5 +24,19 @@ describe("owner requests to a lane (#1837)", () => {
     expect(controlBody("wake", "why", now)).toEqual({ reason: "why", at: "2026-10-22T10:05:07Z" });
     expect(controlBody("stop", "why", now)).toEqual({ reason: "why", retired: true, at: "2026-10-22T10:05:07Z" });
     expect(controlBody("reassign", "why", now, { sliceKey: "issue:7", to: "lane-b" })).toEqual({ sliceKey: "issue:7", to: "lane-b", reason: "why", at: "2026-10-22T10:05:07Z" });
+  });
+});
+
+describe("the owner's Assign (#1889)", () => {
+  it("is a task.review_assigned record naming the slice's task, PR, head and the reviewer, from the owner", () => {
+    const head = "4be1c2a9".padEnd(40, "0");
+    const body = reviewAssignedBody("run-1", "studio-assign-x", { taskId: "issue-7", pr: 12, headSha: head }, "lane-r", new Date(Date.UTC(2026, 9, 28, 21, 24, 5, 123)), "studio-operator");
+    const signal = body.signal as Record<string, unknown>;
+    expect([signal.id, signal.type, signal.source, signal.evidence]).toEqual(["studio-assign-x", "task.review_assigned", { type: "user", id: "studio-operator" }, ["run-1"]]);
+    // core/execution/src/tasks.rs parse_task_event: schema, taskId, revision, then pr, headSha, reviewer;
+    // wake.rs wakes the lane the description's `reviewer` names.
+    expect(JSON.parse(signal.description as string)).toEqual({
+      schema: "graphhelm-task-event-v1", taskId: "issue-7", revision: 1, at: "2026-10-28T21:24:05Z", pr: 12, headSha: head, reviewer: "lane-r",
+    });
   });
 });

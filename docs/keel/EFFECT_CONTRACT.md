@@ -67,3 +67,26 @@ Measured on `main` at `21348962` plus #41's change (lane gh-claude-17, 2026-10-1
 | kill-mid-write | caught | 101 |
 
 Result: 5/5, status `pass`, 318.5 s. `core/events/src/local.rs` restored byte-identically.
+
+## Evidence keyed to the append path's closure (#1476 slice b)
+
+A green run of the lost-ack observer (`append_effect_contract`) vouches for one set of bytes: the
+files that can change what the append path does. `tools/keel-effect/evidence_key.py` computes that
+set at a git revision from the repository's own manifests: `graphhelm-events`, every workspace
+member it reaches through `path` dependencies (normal, build and `[target.*]` forms), its own
+dev-dependencies with their normal closure, and `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,
+`.cargo/config.toml`. The key is SHA-256 over the sorted `path NUL blob-id` lines of those files.
+
+The record lives beside this file in `effect-evidence/append-lost-ack.json`: guarantee, observer
+command, observed result, the commit it ran on, the closure and the key. A reviewer asks:
+
+    python tools/keel-effect/evidence_key.py check --rev <head>
+
+Exit 0 `reuse`: no closure byte moved since the recorded run, so the run still stands (a Studio,
+docs or CLI change, or a crate that depends on `graphhelm-events` without being linked by it).
+Exit 1 `invalidate`: it names the closure paths that differ and the observer to rerun; after a green
+rerun, `record --rev <sha> --observed "<result line>"` writes the new key.
+
+The key says *which bytes* a run covered; it is not proof by itself. A `reuse` is only as strong as
+the recorded run, and the closure is a crate-level over-approximation: any edit inside a linked
+crate invalidates, even one the append path never calls. Narrowing to the effect set is slice (c).

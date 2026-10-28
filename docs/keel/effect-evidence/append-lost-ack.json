@@ -1,0 +1,17 @@
+{
+  "guarantee": "idempotent under lost_ack",
+  "observer": "cargo +1.97.1 test --locked -p graphhelm-events --test append_effect_contract",
+  "observed": "test result: ok. 9 passed; 0 failed (lane sub-1476-evidence, 2026-10-28)",
+  "commit": "36a8ec661afa8826cc12109babcbfafac63e9f82",
+  "closure": [
+    "core/events",
+    "core/execution",
+    "core/graph",
+    "core/policy",
+    "core/process",
+    "core/protocols",
+    "core/schema",
+    "tools/test-shims"
+  ],
+  "key": "sha256:92e9e82884d5c89c661c06933da951b5c1b21345223d9d3e8cb150aa2d2c9716"
+}

@@ -94,4 +94,42 @@ rerun, `record --rev <sha> --observed "<result line>"` writes the new key.
 
 The key says *which bytes* a run covered; it is not proof by itself. A `reuse` is only as strong as
 the recorded run, and the closure is a crate-level over-approximation: any edit inside a linked
-crate invalidates, even one the append path never calls. Narrowing to the effect set is slice (c).
+crate invalidates, even one the append path never calls.
+
+## Effect-set change beside the evidence (#1476 slice c)
+
+"Files changed" says the run must be repeated; it does not say whether the append path can now do
+something the guarantee never considered. The record therefore also holds `effects`: for each
+effect kind, the closure sources that perform it (`by_kind`), inferred from the same blobs the key
+covers. Every `.rs` file in the closure is scanned, test files included; the only code dropped is
+the body of an inline module carrying exactly one `#[cfg(test)]` (and no `cfg_attr`). No file is
+excluded: deciding which files a build loads (`mod` nesting, `#[path]` on inline modules,
+`include!`) is the one step that can err toward hiding production code, and four review rounds
+found a new hole in it each time. Each source is lexed first: comments (nested) removed; strings, byte, C
+and raw strings (`r#"..."#`) and char literals (`'"'`, `'\''`, `b'x'`) emptied; lifetimes kept.
+A source the lexer cannot place (an unterminated literal or comment, a quote that is neither a char
+literal nor a lifetime) is listed in `unlexed`: `check` then answers `effects unknown` and `record`
+refuses.
+
+| Kind | Matched by |
+|---|---|
+| `file_write` | `File::create`, `OpenOptions`, `fs::write/rename/remove_*/create_dir*/copy/hard_link`, `.set_len(` |
+| `fsync` | `.sync_all(`, `.sync_data(`, `FlushFileBuffers` |
+| `file_lock` | `lock_exclusive`, `lock_shared` (and `try_`), `LockFileEx`, `UnlockFileEx`, `flock` |
+| `network` | `std::net`, `TcpStream`, `TcpListener`, `UdpSocket`, `ToSocketAddrs`, `reqwest`, `hyper::`, `tokio::net`, `ureq` |
+| `process_spawn` | `Command::new`, `process::Command`, `graphhelm_process::command`, `CreateProcess` |
+| `ffi` | `unsafe`, `extern "…"`, `asm!`: code the scan cannot see inside, flagged as its own kind |
+
+`check` adds `effects_changed`, compared with the record per effect site `kind@source`:
+`effects changed: +process_spawn@core/events/src/local.rs -file_lock@...`, or
+`effects unchanged`. A new spawn in the append file shows even when another closure file already
+spawns. A pure refactor inside a file (rename, reflow, a new pure function) reads `invalidate`
+(files changed) with `effects unchanged`; moving an effect to another file shows as `-` on the old
+source and `+` on the new one. A record written before this field reports `effects unknown`,
+never `unchanged`.
+
+Limits: sites are per source file, not per call path; an effect reached only through an external
+crate API not named above is not attributed (an `ffi` site is still marked). Test files (`tests/`,
+`*_tests.rs`, files only `#[cfg(test)] mod` loads) are scanned as if production, so their effects
+appear in the record and in `+`/`-` sites: an accepted over-report, in the safe direction. The
+tests and their sabotage guard the kinds, the lexer and the inline-body rule.

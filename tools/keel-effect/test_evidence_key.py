@@ -140,6 +140,140 @@ class EvidenceKey(unittest.TestCase):
         self.assertEqual(ek.main(["check", "--repo", str(self.repo)]), 1)
 
 
+# One real call per effect kind; the keys must equal the detector's, so a kind removed from the
+# detector, or one it stops matching, fails below.
+SAMPLES = {
+    "file_write": "std::fs::OpenOptions::new().append(true).open(p)",
+    "fsync": "journal.sync_data()",
+    "file_lock": "file.lock_exclusive()",
+    "network": "std::net::TcpStream::connect(addr)",
+    "process_spawn": 'graphhelm_process::command("git")',
+    "ffi": "unsafe { LockFile(h) }",
+}
+
+
+def append_fn(body):
+    return f"fn committed_events_for_idempotency() -> bool {{ let _ = {body}; true }}\n"
+
+
+LOCAL = "core/events/src/local.rs"
+
+
+def sites(result):
+    return result["effects_changed"]["added"], result["effects_changed"]["removed"]
+
+
+class EffectSet(unittest.TestCase):
+    setUp = EvidenceKey.setUp
+    tearDown = EvidenceKey.tearDown
+
+    def test_adding_each_effect_kind_to_a_closure_file_reports_it_as_added(self):
+        self.assertEqual(set(SAMPLES), set(ek.EFFECT_KINDS))
+        for kind, call in SAMPLES.items():
+            with self.subTest(kind=kind):
+                head = commit(self.repo, {LOCAL: append_fn(call)}, kind)
+                result = ek.decide(self.repo, self.record, head)
+                self.assertEqual(result["decision"], "invalidate")
+                self.assertEqual(result["effects_changed"]["summary"], f"effects changed: +{kind}@{LOCAL}")
+                commit(self.repo, {LOCAL: FILES[LOCAL]}, "back")
+
+    def test_p1_a_new_spawn_in_the_append_file_shows_although_another_closure_file_already_spawns(self):
+        base = commit(self.repo, {"core/process/src/lib.rs": FILES["core/process/src/lib.rs"]
+                                  + 'pub fn run() { std::process::Command::new("x"); }\n'}, "spawn elsewhere")
+        record = ek.make_record(self.repo, base, "ok")
+        head = commit(self.repo, {LOCAL: FILES[LOCAL] + 'fn f() { std::process::Command::new("x"); }\n'}, "P1")
+        self.assertEqual(sites(ek.decide(self.repo, record, head)), ([f"process_spawn@{LOCAL}"], []))
+
+    def test_p2_a_char_literal_quote_does_not_hide_the_code_after_it(self):
+        head = commit(self.repo, {LOCAL: FILES[LOCAL]
+                                  + "fn f() { let _q = '\"'; std::net::TcpStream::connect(a); }\n"}, "P2")
+        self.assertEqual(sites(ek.decide(self.repo, self.record, head)), ([f"network@{LOCAL}"], []))
+
+    def test_char_byte_and_raw_literals_are_data_and_lifetimes_are_code(self):
+        text = ("fn f<'a>(x: &'a str) -> char { let _ = '\\''; let _ = b'\"'; let _ = '\\\\';\n"
+                "let _ = r#\"Command::new(\"x\")\"#; let _ = br\"TcpStream\"; 'outer: loop { break 'outer; } 'x' }\n"
+                "fn g() { journal.sync_data(); }\n")
+        self.assertEqual(ek.effects_of(text), {"fsync"})
+
+    def test_a_source_the_lexer_cannot_place_answers_unknown_and_cannot_be_recorded(self):
+        for text in ('fn f() { let s = "unterminated; }\n', "fn f() { let c = '\\u{1F600 ; }\n",
+                     "fn f() { /* open\n", "fn f() { let s = r#\"open; }\n"):
+            with self.subTest(text=text):
+                head = commit(self.repo, {LOCAL: text}, "unlexable")
+                changed = ek.decide(self.repo, self.record, head)["effects_changed"]
+                self.assertEqual((changed["unknown"], changed["summary"]),
+                                 ([LOCAL], f"effects unknown: cannot lex {LOCAL}"))
+                with self.assertRaises(ValueError):
+                    ek.make_record(self.repo, head, "ok")
+
+    def test_a_pure_refactor_changes_files_but_not_the_effect_sites(self):
+        base = commit(self.repo, {LOCAL: "fn append(f: &File) { f.sync_data(); }\n"}, "fsync")
+        record = ek.make_record(self.repo, base, "ok")
+        self.assertEqual(record["effects"]["by_kind"], {"fsync": [LOCAL]})
+        head = commit(self.repo, {LOCAL: "// renamed\nfn persist(journal: &File) {\n    journal.sync_data();\n}\n",
+                                  "core/events/src/pure.rs": "pub fn double(x: u8) -> u8 { x * 2 }\n"}, "refactor")
+        result = ek.decide(self.repo, record, head)
+        self.assertEqual(result["decision"], "invalidate")
+        self.assertEqual(result["changed"], ["core/events/src/local.rs", "core/events/src/pure.rs"])
+        self.assertEqual(result["effects_changed"]["summary"], "effects unchanged")
+
+    def test_a_removed_effect_site_is_reported_as_removed(self):
+        base = commit(self.repo, {LOCAL: append_fn("file.lock_exclusive()")}, "lock")
+        record = ek.make_record(self.repo, base, "ok")
+        head = commit(self.repo, {LOCAL: FILES[LOCAL]}, "unlock")
+        self.assertEqual(ek.decide(self.repo, record, head)["effects_changed"]["summary"],
+                         f"effects changed: -file_lock@{LOCAL}")
+
+    def test_comments_strings_a_mutex_lock_and_an_inline_cfg_test_body_are_not_effects(self):
+        head = commit(self.repo, {
+            LOCAL: ("// a TcpStream would be wrong here; so would Command::new\n"
+                    "/* unsafe { /* nested */ } */ fn f(m: &Mutex<u8>) { m.lock(); }\n"
+                    'const DENY: &[&str] = &["reqwest::get(", "Command::new"];\n'
+                    "#[cfg(test)]\nmod tests {\n    fn t() { let _ = std::net::TcpStream::connect(a); }\n}\n")}, "noise")
+        self.assertEqual(ek.decide(self.repo, self.record, head)["effects_changed"]["summary"], "effects unchanged")
+
+    def test_an_inline_module_gated_by_anything_but_exactly_cfg_test_is_scanned(self):
+        for attrs in ("#[cfg(not(test))]", '#[cfg(any(test, feature = "x"))]', "#[cfg(test)]\n#[cfg(unix)]", ""):
+            with self.subTest(attrs=attrs):
+                head = commit(self.repo, {LOCAL: FILES[LOCAL] + f"{attrs}\nmod q {{ fn f() {{ TcpStream::connect(a); }} }}\n"},
+                              attrs or "plain")
+                self.assertEqual(sites(ek.decide(self.repo, self.record, head)), ([f"network@{LOCAL}"], []))
+
+    def test_no_file_is_excluded_whatever_references_it(self):
+        # P10, P11, P15, P21, P22 from the reviews, plus a file only `#[cfg(test)] mod` loads: every
+        # one is scanned. Reporting a test-only file's effects is the accepted over-report.
+        lib = FILES["core/process/src/lib.rs"]
+        net = "pub fn e() { std::net::TcpStream::connect(a); }\n"
+        cases = {
+            "P10": ("#[cfg(test)]\nmod evil;\n#[cfg(not(test))]\nmod evil;\n", "core/process/src/evil.rs"),
+            "P11": ('#[cfg(test)]\n#[path = "evil.rs"]\nmod t;\nmod evil;\n', "core/process/src/evil.rs"),
+            "P15": ('#[cfg(test)]\nmod evil;\nmod prod { include!("evil.rs"); }\n', "core/process/src/evil.rs"),
+            "P21": ('mod a { mod evil; }\n#[cfg(test)]\n#[path = "a/evil.rs"]\nmod t;\n', "core/process/src/a/evil.rs"),
+            "P22": ('#[path = "zz"]\nmod m { mod evil; }\n#[cfg(test)]\n#[path = "zz/evil.rs"]\nmod t;\n',
+                    "core/process/src/zz/evil.rs"),
+            "test-only file": ("#[cfg(test)]\nmod evil;\n", "core/process/src/evil.rs"),
+        }
+        for name, (decls, target) in cases.items():
+            with self.subTest(name):
+                head = commit(self.repo, {"core/process/src/lib.rs": lib + decls, target: net}, name)
+                self.assertEqual(sites(ek.decide(self.repo, self.record, head)), ([f"network@{target}"], []))
+                commit(self.repo, {"core/process/src/lib.rs": lib}, "back")
+                sh(self.repo, "rm", "-q", target)
+                sh(self.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "rm")
+
+    def test_an_integration_test_file_reports_its_effects(self):
+        head = commit(self.repo, {"core/events/tests/append_effect_contract.rs":
+                                  append_fn("std::net::TcpStream::connect(a)")}, "test file")
+        self.assertEqual(sites(ek.decide(self.repo, self.record, head)),
+                         (["network@core/events/tests/append_effect_contract.rs"], []))
+
+    def test_a_record_without_an_effect_set_reports_unknown_not_unchanged(self):
+        head = commit(self.repo, {LOCAL: append_fn("f.sync_all()")}, "fsync")
+        legacy = {k: v for k, v in self.record.items() if k != "effects"}
+        changed = ek.decide(self.repo, legacy, head)["effects_changed"]
+        self.assertEqual((changed["added"], changed["summary"]), ([], "effects unknown: the record has no effect set"))
+
+
 class ThisRepository(unittest.TestCase):
     def test_the_real_closure_holds_the_append_path_and_not_the_cli_or_studio(self):
         dirs = ek.closure(REPO, "HEAD")
@@ -152,7 +286,10 @@ class ThisRepository(unittest.TestCase):
         import json
         record = json.loads((REPO / ek.RECORD).read_text(encoding="utf-8"))
         self.assertEqual((record["guarantee"], record["observer"]), (ek.GUARANTEE, ek.OBSERVER))
-        self.assertEqual(ek.state(REPO, record["commit"])["key"], record["key"])
+        now = ek.state(REPO, record["commit"])
+        self.assertEqual((now["key"], now["effects"]), (record["key"], record["effects"]))
+        self.assertEqual(record["effects"]["unlexed"], [])
+        self.assertTrue({"file_write", "fsync", "file_lock"} <= record["effects"]["by_kind"].keys())
 
 
 if __name__ == "__main__":

@@ -184,14 +184,174 @@ def key_of(blobs: dict[str, str]) -> str:
 def state(repo: Path, rev: str) -> dict:
     dirs = closure(repo, rev)
     blobs, unknown = closure_blobs(repo, rev, dirs)
-    return {"closure": dirs, "blobs": blobs, "unknown": unknown, "key": key_of(blobs)}
+    return {"closure": dirs, "blobs": blobs, "unknown": unknown, "key": key_of(blobs),
+            "effects": effect_set(repo, blobs)}
+
+
+# Effect kinds the closure's production sources can perform, each a regex over one Rust source
+# lexed by `strip_noise` (comments removed, literals emptied). `ffi` marks code the scan cannot see
+# inside (`unsafe`, `extern "C"`, `asm!`): it is a kind of its own, so a new opaque site reports `+ffi` instead of passing unseen.
+# An in-process `Mutex::lock()` is not a file lock and is deliberately not matched.
+EFFECT_KINDS = {
+    "file_write": re.compile(r"\bFile::create\b|\bOpenOptions\b|\bfs::(?:write|rename|remove_file|"
+                             r"remove_dir(?:_all)?|create_dir(?:_all)?|copy|hard_link)\b|\.set_len\("),
+    "fsync": re.compile(r"\.sync_all\(|\.sync_data\(|\bFlushFileBuffers\b"),
+    "file_lock": re.compile(r"\b(?:try_)?lock_(?:exclusive|shared)\b|\b(?:Unlock|Lock)FileEx\b|\bflock\b"),
+    "network": re.compile(r"\bstd::net\b|\bTcpStream\b|\bTcpListener\b|\bUdpSocket\b|\bToSocketAddrs\b|"
+                          r"\breqwest\b|\bhyper::|\btokio::net\b|\bureq\b"),
+    "process_spawn": re.compile(r"\bCommand::new\b|\bprocess::Command\b|\bgraphhelm_process::command\b|"
+                                r"\bCreateProcess[AW]?\b"),
+    "ffi": re.compile(r"\bunsafe\b|\bextern\s+\"\"|\basm!"),
+}
+INLINE_TEST_MOD = re.compile(r"((?:#\s*\[[^\]]*\]\s*)*)(?:pub(?:\([^)]*\))?\s+)?\bmod\s+[A-Za-z_][A-Za-z0-9_]*\s*\{")
+CFG_ATTR = re.compile(r"#\s*\[\s*cfg\s*\((.*?)\)\s*\]", re.S)
+IDENT = re.compile(r"[A-Za-z0-9_]")
+
+
+class Unlexable(ValueError):
+    """The source holds a construct the lexer cannot tokenize with confidence."""
+
+
+def strip_noise(text: str) -> str:
+    """`text` with comments removed and every string, byte string, raw string and char literal
+    replaced by `""`, so data such as `"reqwest::get("` or `'"'` is never read as code. Anything the
+    lexer cannot close with certainty (an unterminated literal or comment, a quote it cannot place)
+    raises `Unlexable`: the caller answers `unknown`, never a guess."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            depth, i = 1, i + 2
+            while depth:
+                if i >= n:
+                    raise Unlexable("unterminated block comment")
+                if text.startswith("/*", i):
+                    depth, i = depth + 1, i + 2
+                elif text.startswith("*/", i):
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+            out.append(" ")
+        elif (raw := re.compile(r"(?:b|c)?r(#*)\"").match(text, i)) and not (i and IDENT.match(text[i - 1])):
+            end = text.find('"' + raw.group(1), raw.end())
+            if end < 0:
+                raise Unlexable("unterminated raw string")
+            out.append('""')
+            i = end + 1 + len(raw.group(1))
+        elif c == '"' or (c in "bc" and text.startswith('"', i + 1) and not (i and IDENT.match(text[i - 1]))):
+            i += 1 if c == '"' else 2
+            while True:
+                if i >= n:
+                    raise Unlexable("unterminated string")
+                if text[i] == "\\":
+                    i += 2
+                elif text[i] == '"':
+                    i += 1
+                    break
+                else:
+                    i += 1
+            out.append('""')
+        elif c == "'" or (c == "b" and text.startswith("'", i + 1) and not (i and IDENT.match(text[i - 1]))):
+            q = i if c == "'" else i + 1
+            if text.startswith("\\", q + 1):
+                close = text.find("'", q + 2 if text[q + 2:q + 3] != "'" else q + 3)
+                if close < 0 or close - q > 12:
+                    raise Unlexable("char escape not closed")
+                out.append('""')
+                i = close + 1
+            elif q + 2 < n and text[q + 2] == "'":
+                out.append('""')
+                i = q + 3
+            elif q + 1 < n and IDENT.match(text[q + 1]):
+                out.append(text[i:q + 2])  # a lifetime or loop label
+                i = q + 2
+            else:
+                raise Unlexable(f"quote at offset {q} is neither a char literal nor a lifetime")
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def drop_test_bodies(code: str) -> str:
+    """Lexed `code` without the bodies of inline modules carrying exactly one `#[cfg(test)]` (and no
+    `cfg_attr`). Nothing else is dropped: no file is ever excluded, because deciding which files a
+    build loads (`mod` nesting, `#[path]`, `include!`) is where a scan can err toward hiding code."""
+    at = 0
+    while (m := INLINE_TEST_MOD.search(code, at)):
+        cfgs = CFG_ATTR.findall(m.group(1))
+        if not (len(cfgs) == 1 and cfgs[0].strip() == "test" and "cfg_attr" not in m.group(1)):
+            at = m.end()
+            continue
+        depth, j = 1, m.end()
+        while depth and j < len(code):
+            depth += {"{": 1, "}": -1}.get(code[j], 0)
+            j += 1
+        if depth:
+            raise Unlexable("unbalanced test module")
+        code, at = code[:m.start()] + code[j:], m.start()
+    return code
+
+
+def effects_of(text: str) -> set[str]:
+    """Effect kinds one Rust source can perform outside inline `#[cfg(test)]` bodies; raises
+    `Unlexable`."""
+    code = drop_test_bodies(strip_noise(text))
+    return {kind for kind, pattern in EFFECT_KINDS.items() if pattern.search(code)}
+
+
+def effect_set(repo: Path, blobs: dict[str, str]) -> dict:
+    """`{"by_kind": {kind: [sources]}, "unlexed": [sources]}` over every `.rs` file in the closure,
+    test files included (an accepted over-report). Bounded by the include scan's limits."""
+    paths = sorted(p for p in blobs if p.endswith(".rs"))
+    if len(paths) > MAX_SCAN_FILES:
+        raise ValueError(f"effect scan over {MAX_SCAN_FILES} files")
+    by_kind: dict[str, list[str]] = {}
+    unlexed: list[str] = []
+    for path, text in zip(paths, _blob_texts(repo, [blobs[p] for p in paths])):
+        try:
+            kinds = effects_of(text)
+        except Unlexable:
+            unlexed.append(path)
+            continue
+        for kind in sorted(kinds):
+            by_kind.setdefault(kind, []).append(path)
+    return {"by_kind": dict(sorted(by_kind.items())), "unlexed": unlexed}
+
+
+
+def _sites(effects: dict) -> set[str]:
+    return {f"{kind}@{path}" for kind, paths in effects["by_kind"].items() for path in paths}
+
+
+def effects_changed(before: dict | None, now: dict) -> dict:
+    """Effect sites (`kind@source`) added and removed since the record, so a new spawn in the append
+    file shows even when another closure file already spawns. A record with no effect set, or a
+    source either side could not lex, answers `unknown`, never `unchanged`."""
+    if before is None or "by_kind" not in before:
+        return {"added": [], "removed": [], "unknown": ["record has no effect set"],
+                "summary": "effects unknown: the record has no effect set"}
+    unlexed = sorted(set(now["unlexed"]) | set(before.get("unlexed", [])))
+    if unlexed:
+        return {"added": [], "removed": [], "unknown": unlexed,
+                "summary": "effects unknown: cannot lex " + ", ".join(unlexed)}
+    added, removed = sorted(_sites(now) - _sites(before)), sorted(_sites(before) - _sites(now))
+    summary = ("effects changed: " + " ".join([*(f"+{s}" for s in added), *(f"-{s}" for s in removed)])
+               if added or removed else "effects unchanged")
+    return {"added": added, "removed": removed, "summary": summary}
 
 
 def decide(repo: Path, record: dict, rev: str) -> dict:
     """`reuse` when the closure bytes at `rev` equal the recorded ones and every include resolved;
-    otherwise `invalidate`. An include the scan cannot resolve never reads as reuse."""
+    otherwise `invalidate`. An include the scan cannot resolve never reads as reuse. Beside the
+    decision, `effects_changed` says whether the effect sites moved: a `+kind@source` means the
+    path gained an effect site the recorded guarantee never covered."""
     now = state(repo, rev)
-    base = {"key": now["key"], "evidence_commit": record["commit"]}
+    base = {"key": now["key"], "evidence_commit": record["commit"],
+            "effects_changed": effects_changed(record.get("effects"), now["effects"])}
     if now["unknown"]:
         return {"decision": "invalidate", **base, "changed": [], "unknown": now["unknown"],
                 "rerun": record["observer"]}
@@ -207,8 +367,10 @@ def make_record(repo: Path, rev: str, observed: str) -> dict:
     now = state(repo, commit)
     if now["unknown"]:
         raise ValueError(f"cannot vouch for unresolved includes: {now['unknown']}")
+    if now["effects"]["unlexed"]:
+        raise ValueError(f"cannot record effects of unlexable sources: {now['effects']['unlexed']}")
     return {"guarantee": GUARANTEE, "observer": OBSERVER, "observed": observed, "commit": commit,
-            "closure": now["closure"], "key": now["key"]}
+            "closure": now["closure"], "key": now["key"], "effects": now["effects"]}
 
 
 def main(argv: list[str] | None = None) -> int:

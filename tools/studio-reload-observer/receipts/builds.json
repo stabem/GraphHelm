@@ -1,0 +1,1687 @@
+{
+  "schema": "graphhelm-studio-reload-receipt/1",
+  "issue": 1703,
+  "condition": "builds",
+  "source": {
+    "sha": "5f1bdd77fb1265ae7aa572fe1e17afb642aedf5c",
+    "dirty": true
+  },
+  "machine": {
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v22.22.2",
+    "browser": "chromium 156.0.8078.4",
+    "headless": true
+  },
+  "subject": {
+    "studio": "loopback, lane-started",
+    "runtime": "loopback, lane-started",
+    "execution": "demo",
+    "boardReady": "section#panel-lanes.lanes",
+    "timeoutMs": 30000
+  },
+  "eventHead": {
+    "before": 39,
+    "after": 39,
+    "route": "/v1/executions/{id}/tasks (max sequence)"
+  },
+  "builds": {
+    "cargoMin": 2,
+    "cargoMax": 2,
+    "fourActiveThroughout": false
+  },
+  "summary": {
+    "attempts": 20,
+    "counts": {
+      "success": 20,
+      "timeout": 0,
+      "error": 0,
+      "excluded": 0
+    },
+    "validSamples": 20,
+    "p50Ms": 104,
+    "p95Ms": 110,
+    "maxMs": 117
+  },
+  "attempts": [
+    {
+      "n": 1,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 103,
+      "elapsedMs": 103,
+      "navigation": {
+        "domContentLoadedMs": 28,
+        "loadMs": 28,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 11,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 18,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 11,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 11,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 7,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_protocols"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 2,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 103,
+      "elapsedMs": 103,
+      "navigation": {
+        "domContentLoadedMs": 30,
+        "loadMs": 30,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 10,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 16,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 11,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 11,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 7,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_protocols"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 3,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 107,
+      "elapsedMs": 107,
+      "navigation": {
+        "domContentLoadedMs": 35,
+        "loadMs": 35,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 17,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 12,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 13,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 7,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 7,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_gateway"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_graph"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_protocols"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_quality"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_tool_broker"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 4,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 104,
+      "elapsedMs": 104,
+      "navigation": {
+        "domContentLoadedMs": 36,
+        "loadMs": 37,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 17,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 11,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 12,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_graph"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_policy"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema_evolution"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 5,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 103,
+      "elapsedMs": 103,
+      "navigation": {
+        "domContentLoadedMs": 36,
+        "loadMs": 36,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 10,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 18,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 13,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 13,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 5,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_policy"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema_evolution"
+        },
+        {
+          "tool": "rustc",
+          "what": "pathogens"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 6,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 104,
+      "elapsedMs": 104,
+      "navigation": {
+        "domContentLoadedMs": 31,
+        "loadMs": 31,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 16,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 12,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 12,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 7,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_policy"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema_evolution"
+        },
+        {
+          "tool": "rustc",
+          "what": "pathogens"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 7,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 104,
+      "elapsedMs": 104,
+      "navigation": {
+        "domContentLoadedMs": 45,
+        "loadMs": 46,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 16,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 12,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 12,
+          "bytes": 1295
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 7,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 3,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 7,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_policy"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        },
+        {
+          "tool": "rustc",
+          "what": "pathogens"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 8,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 110,
+      "elapsedMs": 110,
+      "navigation": {
+        "domContentLoadedMs": 34,
+        "loadMs": 34,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 15,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 10,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 11,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_policy"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        },
+        {
+          "tool": "rustc",
+          "what": "pathogens"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 9,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 102,
+      "elapsedMs": 102,
+      "navigation": {
+        "domContentLoadedMs": 43,
+        "loadMs": 44,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 18,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 11,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 13,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 5,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 10,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 103,
+      "elapsedMs": 103,
+      "navigation": {
+        "domContentLoadedMs": 35,
+        "loadMs": 35,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 15,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 12,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 12,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 5,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 11,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 117,
+      "elapsedMs": 117,
+      "navigation": {
+        "domContentLoadedMs": 31,
+        "loadMs": 31,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 7,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 15,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 10,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 10,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 10,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 7,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 12,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 105,
+      "elapsedMs": 105,
+      "navigation": {
+        "domContentLoadedMs": 33,
+        "loadMs": 33,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 14,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 12,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 12,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 143
+        },
+        {
+          "method": "GET",
+          "route": "/v1/journey-flows",
+          "status": 200,
+          "ms": 303,
+          "bytes": 114678
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 13,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 104,
+      "elapsedMs": 104,
+      "navigation": {
+        "domContentLoadedMs": 38,
+        "loadMs": 39,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 11,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 20,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 13,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 13,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 14,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 110,
+      "elapsedMs": 110,
+      "navigation": {
+        "domContentLoadedMs": 33,
+        "loadMs": 34,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 16,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 11,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 12,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 6,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 15,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 105,
+      "elapsedMs": 105,
+      "navigation": {
+        "domContentLoadedMs": 46,
+        "loadMs": 46,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 16,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 11,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 11,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 16,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 107,
+      "elapsedMs": 107,
+      "navigation": {
+        "domContentLoadedMs": 35,
+        "loadMs": 36,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 17,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 12,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 13,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 7,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 17,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 100,
+      "elapsedMs": 100,
+      "navigation": {
+        "domContentLoadedMs": 42,
+        "loadMs": 43,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 14,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 10,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 11,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 18,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 110,
+      "elapsedMs": 110,
+      "navigation": {
+        "domContentLoadedMs": 39,
+        "loadMs": 39,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 16,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 11,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 11,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 7,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 19,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 101,
+      "elapsedMs": 101,
+      "navigation": {
+        "domContentLoadedMs": 40,
+        "loadMs": 41,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 16,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 11,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 11,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    },
+    {
+      "n": 20,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 103,
+      "elapsedMs": 103,
+      "navigation": {
+        "domContentLoadedMs": 34,
+        "loadMs": 34,
+        "documentBytes": 782
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 16,
+          "bytes": 689
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 13,
+          "bytes": 121
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 13,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 9,
+          "bytes": 135
+        },
+        {
+          "method": "GET",
+          "route": "/v1/capacity",
+          "status": 200,
+          "ms": 4,
+          "bytes": 451
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/collisions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 143
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm_schema"
+        }
+      ],
+      "buildsError": null
+    }
+  ]
+}

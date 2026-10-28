@@ -1,0 +1,59 @@
+// Unit tests for the receipt arithmetic and classification of the board reload observer (#1703).
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { percentile, summarize, classify, routeOf, parseBuilds, parseArgs } from './reload.mjs';
+
+test('nearest-rank percentiles over 20 samples', () => {
+  const v = Array.from({ length: 20 }, (_, i) => (i + 1) * 100); // 100..2000, shuffled order must not matter
+  const shuffled = [...v].reverse();
+  assert.equal(percentile(shuffled, 50), 1000);
+  assert.equal(percentile(shuffled, 95), 1900);
+  assert.equal(percentile([], 50), null);
+});
+
+test('stats use success samples only and every outcome is counted', () => {
+  const attempts = [
+    { outcome: 'success', usableMs: 100 }, { outcome: 'success', usableMs: 300 },
+    { outcome: 'timeout', usableMs: null }, { outcome: 'error', usableMs: null }, { outcome: 'excluded', usableMs: null },
+  ];
+  const s = summarize(attempts);
+  assert.deepEqual(s.counts, { success: 2, timeout: 1, error: 1, excluded: 1 });
+  assert.equal(s.attempts, 5);
+  assert.equal(s.validSamples, 2);
+  assert.equal(s.maxMs, 300);
+  assert.equal(s.p95Ms, 300);
+  assert.equal(summarize([{ outcome: 'timeout', usableMs: null }]).p50Ms, null);
+});
+
+test('classification precedence: excluded, thrown, runtime >= 400, read failure, timeout', () => {
+  const base = { threw: null, ready: true, readFailure: false, badResponses: [], excludedReason: null };
+  assert.equal(classify(base).outcome, 'success');
+  assert.equal(classify({ ...base, ready: false }).outcome, 'timeout');
+  assert.equal(classify({ ...base, readFailure: true }).outcome, 'error');
+  assert.equal(classify({ ...base, badResponses: [{ status: 503, route: '/v1/executions' }] }).outcome, 'error');
+  assert.equal(classify({ ...base, threw: 'TimeoutError' }).outcome, 'error');
+  assert.equal(classify({ ...base, threw: 'x', excludedReason: 'browser crashed' }).outcome, 'excluded');
+});
+
+test('a route never carries its query (where the session nonce rides)', () => {
+  assert.equal(routeOf('http://127.0.0.1:5191/v1/executions/demo/tasks?session=secret-nonce'), '/v1/executions/demo/tasks');
+});
+
+test('build snapshot keeps crate and subcommand names, never paths', () => {
+  const win = (...parts) => parts.join(String.fromCharCode(92)); // Windows paths without escapes
+  const b = parseBuilds([
+    `rustc.exe\t${win('C:', 'Users', 'x', '.rustup', 'rustc.exe')} --crate-name graphhelm_cli --edition=2024 ${win('D:', 'gh', 'w', 'src', 'main.rs')}`,
+    `cargo.exe\t"${win('C:', 'Users', 'x', '.cargo', 'bin', 'cargo.exe')}" +1.97.1 build --locked -p graphhelm-cli`,
+    'rustc.exe\trustc -vV',
+  ]);
+  assert.deepEqual(b, [{ tool: 'cargo', what: 'build' }, { tool: 'rustc', what: 'graphhelm_cli' }]);
+  assert.ok(!JSON.stringify(b).includes('Users'));
+});
+
+test('the live Studio and Runtime ports are refused', () => {
+  const ok = ['--runtime', 'http://127.0.0.1:8811', '--session', 's', '--token', 't', '--condition', 'idle', '--playwright', '.', '--out', 'o.json'];
+  assert.throws(() => parseArgs(['--studio', 'http://127.0.0.1:5183', ...ok]), /live/);
+  assert.throws(() => parseArgs(['--studio', 'http://127.0.0.1:5191', ...ok.map((x) => x.replace('8811', '8793'))]), /live/);
+  assert.throws(() => parseArgs(['--studio', 'http://example.com:5191', ...ok]), /loopback/);
+  assert.equal(parseArgs(['--studio', 'http://127.0.0.1:5191', ...ok]).attempts, 20);
+});

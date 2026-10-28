@@ -835,6 +835,67 @@ fn a_host_cbm_cache_dir_never_reaches_the_child() {
     );
 }
 
+/// One run of the sweep in `a_cancel_inside_the_last_poll_is_not_recorded_as_a_timeout`: cancel
+/// raised `raise_at_ms` after the call is issued. `None` when the cancel beat the spawn (#1459);
+/// otherwise whether the record blamed the clock.
+fn blamed_the_clock_at(
+    root: &std::path::Path,
+    timeout: Duration,
+    raise_at_ms: u64,
+) -> Option<bool> {
+    let signal = graphhelm_tool_host::process::CancelSignal::new();
+    // 0 ms raises before the call is issued: the deterministic form of "the cancel beat the spawn".
+    let raiser = if raise_at_ms == 0 {
+        signal.cancel();
+        None
+    } else {
+        let signal = signal.clone();
+        Some(std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(raise_at_ms));
+            signal.cancel();
+        }))
+    };
+    let outcome = run_in_workspace(
+        root,
+        &fake_tool(),
+        &["sleep".to_owned()],
+        &BTreeMap::new(),
+        &[],
+        None,
+        &ProcessLimits {
+            timeout,
+            max_output_bytes: 1024,
+        },
+        Some(&signal),
+    );
+    if let Some(raiser) = raiser {
+        raiser.join().expect("the raising thread returns");
+    }
+    // #1459: under host load, creating the process can outlast the raise offset, so the cancel is
+    // raised before any child exists and the spawn is refused with `Cancelled` (the cell above
+    // pins that refusal). That run never reached the poll window the sweep asks about and no
+    // timeout was recorded for it, so it is not a clock blame; every run that did start a child
+    // must still carry a record.
+    match outcome {
+        Ok(captured) => Some(captured.timed_out),
+        Err(graphhelm_tool_host::process::HostError::Cancelled) => None,
+        Err(other) => panic!("a cancelled call failed for the wrong reason: {other}"),
+    }
+}
+
+/// #1459: a cancel that beats the spawn is skipped by the sweep, not a panic. Staged directly
+/// (raise at 0 ms, before the call) because the load that delays a spawn past the sweep's offsets cannot be
+/// produced on demand.
+#[test]
+fn a_cancel_that_beats_the_spawn_is_skipped_by_the_sweep() {
+    let workspace = tempfile::tempdir().unwrap();
+    assert_eq!(
+        blamed_the_clock_at(workspace.path(), Duration::from_millis(300), 0),
+        None,
+        "a cancel raised before the spawn is skipped, not recorded and not a panic"
+    );
+}
+
 /// #609, Codex round 3. `cancel` waits only for the children it has already counted, so any spawn
 /// that registers AFTER it returned outlives the guarantee it just gave. The gap has two shapes and
 /// they close together: between `Command::spawn` and the registration, and between the two
@@ -902,32 +963,7 @@ fn a_cancel_inside_the_last_poll_is_not_recorded_as_a_timeout() {
     // verdict from runs the caller had not yet cancelled.
     let mut blamed_the_clock = Vec::new();
     for raise_at in (240..300).step_by(5) {
-        let signal = graphhelm_tool_host::process::CancelSignal::new();
-        let raiser = {
-            let signal = signal.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(raise_at));
-                signal.cancel();
-            })
-        };
-
-        let captured = run_in_workspace(
-            &root,
-            &fake_tool(),
-            &["sleep".to_owned()],
-            &BTreeMap::new(),
-            &[],
-            None,
-            &ProcessLimits {
-                timeout,
-                max_output_bytes: 1024,
-            },
-            Some(&signal),
-        )
-        .expect("a cancelled call still returns a record for the child that stopped");
-        raiser.join().expect("the raising thread returns");
-
-        if captured.timed_out {
+        if blamed_the_clock_at(&root, timeout, raise_at) == Some(true) {
             blamed_the_clock.push(raise_at);
         }
     }

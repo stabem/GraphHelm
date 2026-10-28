@@ -335,8 +335,19 @@ is a backend flow; it may not mix in browser acts (`flow.observer_mixed`).
 - `{kind: cli, role: exec, name: sh greet.sh}` runs the argv in `name`, split on whitespace with
   no shell, in the project directory. Each act is bounded at 30 seconds. The argv must run a
   script file inside the project (#2187): `python` with a script below the project root, `sh`,
-  `bash`, `dash` or `node` followed directly by a project script, `pwsh -File <script>`, or a
-  project-relative program; any other program is refused as `flow.cli_program_not_allowed`.
+  `bash`, `dash`, `node` or `nodejs` followed directly by a project script,
+  `pwsh`/`powershell -File <script>`, or a project-relative program; any other program is
+  refused as `flow.cli_program_not_allowed`. A project-relative program named like a runner or
+  interpreter (`./bin/sh`, `tools/node.exe`, `./bin/awk`, ...) is refused as
+  `flow.cli_program_interpreter`, and one that resolves through a link outside the project is
+  refused at run time as `flow.cli_script_outside`. The step's environment is cleared to a short
+  kept list and a PATH without relative or in-project entries. Python runs with `-E -s -S -B`;
+  PowerShell with `-NoProfile -NonInteractive`; node under its permission model
+  (`--permission --allow-fs-read=<script directory>`), so a module required from outside the
+  script's directory, a child process, an addon or a write is refused. Not checked: the
+  content of a file a shell script names in an explicit `.`/`source` line (the line itself is in
+  the reviewed script), and a project-relative program that is a byte copy or hard link of an
+  interpreter under a neutral name; closing either needs a sandbox.
 
 Each screen's `expect` is checked against what the act that reached it observed: `status` (the
 HTTP status, exactly), `json` (`a.b.0=value` compares a field, `a.b` asserts it is present),

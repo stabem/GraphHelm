@@ -287,10 +287,12 @@ def _is_test_only(attrs: str) -> bool:
 
 
 def analyse(path: str, text: str) -> tuple[str, list[tuple[set[str], bool]]]:
-    """Lexed non-test code of one source, and each external module declaration in it as
-    (files it may load, test-only). Inline `#[cfg(test)] mod x { ... }` bodies are cut, and the
-    declarations inside them dropped. `#[path]` literals are read from the raw text in order; a
-    count that does not match the lexed text, or a `cfg_attr`-computed path, raises `Unlexable`."""
+    """Lexed non-test code of one source, and every reference in it that can bring a file into a
+    build (`mod x;`, `#[path] mod`, `include!`, `include_str!`, `include_bytes!`) as (files, test-only).
+    A reference is test-only when it carries exactly `#[cfg(test)]` or sits inside an inline
+    `#[cfg(test)] mod { ... }`, whose body is cut from the code. Literals are read from the raw text
+    in order; a count that does not match the lexed text, a non-literal include, or a
+    `cfg_attr`-computed path raises `Unlexable`."""
     code = strip_noise(text)
     paths = PATH_RAW.findall(text)
     if len(paths) != len(PATH_LEXED.findall(code)):
@@ -320,8 +322,17 @@ def analyse(path: str, text: str) -> tuple[str, list[tuple[set[str], bool]]]:
             base = here.parent if here.name in ("lib.rs", "main.rs", "mod.rs") else here.parent / here.stem
             files = {(base / f).as_posix() for f in (f"{name}.rs", f"{name}/mod.rs")}
         decls.append((m.start(), files, test_only))
+    # `include!`/`include_str!`/`include_bytes!` bring a file into the build as surely as `mod`.
+    # Literals are paired with the lexed sites in order; a non-literal or uncountable site raises.
+    literals = [m.group(1) for m in INCLUDE_LITERAL.finditer(text)]
+    sites = list(INCLUDE_SITE.finditer(code))
+    if len(literals) != len(sites) or len(INCLUDE_SITE.findall(text)) != len(sites):
+        raise Unlexable("include! reference not attributable")
+    for site, literal in zip(sites, literals):
+        decls.append((site.start(), {_normalise(f"{Path(path).parent.as_posix()}/{literal}")}, False))
+    # Every reference is test-only when it sits inside a `#[cfg(test)]` body, else by its own attrs.
     inside = lambda at: any(a <= at < b for a, b in cuts)
-    kept = [(files, test_only) for at, files, test_only in decls if not inside(at)]
+    kept = [(files, test_only or inside(at)) for at, files, test_only in decls]
     for a, b in reversed(cuts):
         code = code[:a] + code[b:]
     return code, kept

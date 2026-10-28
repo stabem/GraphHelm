@@ -102,11 +102,15 @@ crate invalidates, even one the append path never calls.
 something the guarantee never considered. The record therefore also holds `effects`: for each
 effect kind, the closure's production sources that perform it (`by_kind`), inferred from the same
 blobs the key covers. Production excludes `tests/`, `benches/`, `examples/`, inline
-`#[cfg(test)] mod x { ... }` bodies, and a file only when every closure declaration that loads it
-(`mod x;` resolving to `x.rs` / `x/mod.rs`, or `#[path = "..."]`) carries exactly one
-`#[cfg(test)]`. One other declaration (plain, `not(test)`, `any(..)`, a feature gate, a second
-cfg) keeps it production; a `tests.rs` nobody declares still counts. A `#[path]` the scan cannot
-pair with its declaration, or a `cfg_attr` path, puts the source in `unlexed`. Each source is lexed first: comments (nested) removed; strings, byte, C
+`#[cfg(test)] mod x { ... }` bodies, and a file only by this rule: the scan builds one list of every
+reference in the closure that can bring a file into a build (`mod x;` resolving to `x.rs` /
+`x/mod.rs`, `#[path = "..."] mod`, `include!`, `include_str!`, `include_bytes!`), each tagged
+test-only (exactly one `#[cfg(test)]` on it, or inside an inline `#[cfg(test)]` module) or
+production. A file is excluded only when it has at least one reference and every reference is
+test-only. A production reference (plain, `not(test)`, `any(..)`, a feature gate, a second cfg)
+keeps it; a file with no reference counts as production; a reference the scan cannot resolve (a
+`#[path]` or include literal it cannot pair with its site, a non-literal include, a `cfg_attr`
+path) puts the source in `unlexed`, so the answer is unknown. Each source is lexed first: comments (nested) removed; strings, byte, C
 and raw strings (`r#"..."#`) and char literals (`'"'`, `'\''`, `b'x'`) emptied; lifetimes kept.
 A source the lexer cannot place (an unterminated literal or comment, a quote that is neither a char
 literal nor a lifetime) is listed in `unlexed`: `check` then answers `effects unknown` and `record`

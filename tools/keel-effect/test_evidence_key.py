@@ -256,6 +256,38 @@ class EffectSet(unittest.TestCase):
         head = commit(self.repo, {LOCAL: FILES[LOCAL] + '// #[path = "x.rs"]\n'}, "path in comment")
         self.assertEqual(ek.decide(self.repo, self.record, head)["effects_changed"]["unknown"], [LOCAL])
 
+    def test_p15_an_include_in_production_code_keeps_a_cfg_test_module_file_production(self):
+        lib = FILES["core/process/src/lib.rs"] + '#[cfg(test)]\nmod evil;\nmod prod { include!("evil.rs"); }\n'
+        head = commit(self.repo, {"core/process/src/lib.rs": lib, "core/process/src/evil.rs":
+                                  "pub fn e() { std::net::TcpStream::connect(a); }\n"}, "P15")
+        self.assertEqual(sites(ek.decide(self.repo, self.record, head)), (["network@core/process/src/evil.rs"], []))
+
+    def test_a_file_is_excluded_only_when_every_reference_to_it_is_test_only(self):
+        # Every kind of reference that can bring a file into a build, in a test-only and in a
+        # production form. Excluded iff all references are test-only; zero references counts.
+        refs = {
+            "mod": ("#[cfg(test)]\nmod evil;\n", "mod evil;\n"),
+            "path mod": ('#[cfg(test)]\n#[path = "evil.rs"]\nmod t;\n', '#[path = "evil.rs"]\nmod t;\n'),
+            "include!": ('#[cfg(test)]\nmod t { include!("evil.rs"); }\n', 'mod p { include!("evil.rs"); }\n'),
+            "include_str!": ('#[cfg(test)]\nmod t { const S: &str = include_str!("evil.rs"); }\n',
+                             'const S: &str = include_str!("evil.rs");\n'),
+            "include_bytes!": ('#[cfg(test)]\nmod t { const B: &[u8] = include_bytes!("evil.rs"); }\n',
+                               'const B: &[u8] = include_bytes!("evil.rs");\n'),
+        }
+        evil = {"core/process/src/evil.rs": "pub fn e() { std::net::TcpStream::connect(a); }\n"}
+        lib = FILES["core/process/src/lib.rs"]
+        cases = [((), True)]  # zero references: still production
+        for kind, (test, prod) in refs.items():
+            cases += [(((kind, test),), False), (((kind, prod),), True)]
+            for other, (otest, oprod) in refs.items():
+                cases.append((((kind, test), (other, oprod)), True))
+        for refs_used, production in cases:
+            with self.subTest(refs=[k for k, _ in refs_used], production=production):
+                text = lib + "".join(src for _, src in refs_used)
+                head = commit(self.repo, {"core/process/src/lib.rs": text, **evil}, "case")
+                expected = (["network@core/process/src/evil.rs"], []) if production else ([], [])
+                self.assertEqual(sites(ek.decide(self.repo, self.record, head)), expected)
+
     def test_a_tests_rs_file_nobody_declares_as_a_test_module_still_counts(self):
         head = commit(self.repo, {"core/events/src/tests.rs": 'fn t() { std::process::Command::new("x"); }\n'}, "t")
         self.assertEqual(sites(ek.decide(self.repo, self.record, head)),

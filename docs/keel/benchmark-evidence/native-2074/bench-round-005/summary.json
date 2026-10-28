@@ -1,0 +1,795 @@
+{
+ "exportOf": {
+  "sha256": "e68f30fbe0d0b62284e73f2aafdf1da70b4e41c5f65d11cf02f8923b2f5b9268",
+  "bytes": 15586
+ },
+ "schema": "bench-round-summary/1",
+ "cells": [
+  {
+   "cell": 1,
+   "task": "task-record-binding",
+   "method": "direct",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "failed",
+   "review": "APPROVE-WITH-RISK",
+   "reviewDefects": 4,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 22,
+     "output": 7604,
+     "cacheRead": 804314,
+     "cacheWrite": 83375
+    },
+    "review": {
+     "input": 6,
+     "output": 1896,
+     "cacheRead": 91814,
+     "cacheWrite": 48373
+    }
+   },
+   "tokensTotal": 1037404,
+   "seconds": {
+    "author": 152.453,
+    "review": 22.265,
+    "evaluation": 2.39,
+    "reached": 7.0
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 2,
+   "task": "task-record-binding",
+   "method": "superpowers",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "failed",
+   "review": "APPROVE-WITH-RISK",
+   "reviewDefects": 4,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 22,
+     "output": 7875,
+     "cacheRead": 731563,
+     "cacheWrite": 67238
+    },
+    "review": {
+     "input": 4,
+     "output": 1349,
+     "cacheRead": 77466,
+     "cacheWrite": 16555
+    }
+   },
+   "tokensTotal": 902072,
+   "seconds": {
+    "author": 155.468,
+    "review": 20.39,
+    "evaluation": 3.391,
+    "reached": 16.609
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 3,
+   "task": "task-record-binding",
+   "method": "speckit",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "failed",
+   "review": "APPROVE-WITH-RISK",
+   "reviewDefects": 3,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 48,
+     "output": 11138,
+     "cacheRead": 1393471,
+     "cacheWrite": 55859
+    },
+    "review": {
+     "input": 4,
+     "output": 1172,
+     "cacheRead": 76977,
+     "cacheWrite": 15974
+    }
+   },
+   "tokensTotal": 1554643,
+   "seconds": {
+    "author": 241.875,
+    "review": 14.328,
+    "evaluation": 2.406,
+    "reached": 6.953
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 4,
+   "task": "task-record-binding",
+   "method": "openspec",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "failed",
+   "review": "BLOCK",
+   "reviewDefects": 4,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 39,
+     "output": 10222,
+     "cacheRead": 1127502,
+     "cacheWrite": 45950
+    },
+    "review": {
+     "input": 4,
+     "output": 1379,
+     "cacheRead": 76982,
+     "cacheWrite": 15901
+    }
+   },
+   "tokensTotal": 1277979,
+   "seconds": {
+    "author": 219.844,
+    "review": 16.734,
+    "evaluation": 3.406,
+    "reached": 9.172
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 5,
+   "task": "task-record-binding",
+   "method": "bmad",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": false,
+   "reached": "passed",
+   "review": "BLOCK",
+   "reviewDefects": 1,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 8,
+     "output": 578,
+     "cacheRead": 118517,
+     "cacheWrite": 15727
+    },
+    "review": {
+     "input": 6,
+     "output": 533,
+     "cacheRead": 119645,
+     "cacheWrite": 13622
+    }
+   },
+   "tokensTotal": 268636,
+   "seconds": {
+    "author": 46.469,
+    "review": 66.25,
+    "evaluation": 3.031,
+    "reached": 8.125
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 6,
+   "task": "task-record-binding",
+   "method": "graphhelm",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "failed",
+   "review": "BLOCK",
+   "reviewDefects": 3,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 28,
+     "output": 8456,
+     "cacheRead": 662538,
+     "cacheWrite": 65525
+    },
+    "review": {
+     "input": 2,
+     "output": 1112,
+     "cacheRead": 29429,
+     "cacheWrite": 15866
+    }
+   },
+   "tokensTotal": 782956,
+   "seconds": {
+    "author": 115.953,
+    "review": 13.969,
+    "evaluation": 2.719,
+    "reached": 10.125
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 7,
+   "task": "lanes-token-loopback",
+   "method": "superpowers",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "failed",
+   "review": "APPROVE",
+   "reviewDefects": 2,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 15,
+     "output": 2569,
+     "cacheRead": 241007,
+     "cacheWrite": 54642
+    },
+    "review": {
+     "input": 6,
+     "output": 695,
+     "cacheRead": 117500,
+     "cacheWrite": 16092
+    }
+   },
+   "tokensTotal": 432526,
+   "seconds": {
+    "author": 100.625,
+    "review": 33.75,
+    "evaluation": 311.422,
+    "reached": 43.5
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 8,
+   "task": "lanes-token-loopback",
+   "method": "direct",
+   "comparable": true,
+   "accepted": true,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "passed",
+   "review": "APPROVE",
+   "reviewDefects": 2,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 11,
+     "output": 2953,
+     "cacheRead": 252095,
+     "cacheWrite": 19250
+    },
+    "review": {
+     "input": 6,
+     "output": 745,
+     "cacheRead": 118073,
+     "cacheWrite": 13697
+    }
+   },
+   "tokensTotal": 406830,
+   "seconds": {
+    "author": 75.781,
+    "review": 36.187,
+    "evaluation": 7.985,
+    "reached": 93.281
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 9,
+   "task": "lanes-token-loopback",
+   "method": "graphhelm",
+   "comparable": true,
+   "accepted": true,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "passed",
+   "review": "APPROVE",
+   "reviewDefects": 2,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 23,
+     "output": 4615,
+     "cacheRead": 473957,
+     "cacheWrite": 25982
+    },
+    "review": {
+     "input": 8,
+     "output": 1286,
+     "cacheRead": 161471,
+     "cacheWrite": 16519
+    }
+   },
+   "tokensTotal": 683861,
+   "seconds": {
+    "author": 87.984,
+    "review": 47.125,
+    "evaluation": 79.235,
+    "reached": 104.859
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 10,
+   "task": "lanes-token-loopback",
+   "method": "bmad",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": false,
+   "reached": "passed",
+   "review": "BLOCK",
+   "reviewDefects": 6,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 8,
+     "output": 526,
+     "cacheRead": 117854,
+     "cacheWrite": 15409
+    },
+    "review": {
+     "input": 8,
+     "output": 1157,
+     "cacheRead": 163266,
+     "cacheWrite": 14430
+    }
+   },
+   "tokensTotal": 312658,
+   "seconds": {
+    "author": 38.453,
+    "review": 23.453,
+    "evaluation": 30.75,
+    "reached": 1.469
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 11,
+   "task": "lanes-token-loopback",
+   "method": "openspec",
+   "comparable": true,
+   "accepted": true,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "passed",
+   "review": "APPROVE",
+   "reviewDefects": 2,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 25,
+     "output": 5567,
+     "cacheRead": 570268,
+     "cacheWrite": 34184
+    },
+    "review": {
+     "input": 6,
+     "output": 870,
+     "cacheRead": 119482,
+     "cacheWrite": 14743
+    }
+   },
+   "tokensTotal": 745145,
+   "seconds": {
+    "author": 180.515,
+    "review": 49.609,
+    "evaluation": 48.672,
+    "reached": 208.937
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 12,
+   "task": "lanes-token-loopback",
+   "method": "speckit",
+   "comparable": true,
+   "accepted": true,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "passed",
+   "review": "APPROVE",
+   "reviewDefects": 2,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 25,
+     "output": 6055,
+     "cacheRead": 544959,
+     "cacheWrite": 42154
+    },
+    "review": {
+     "input": 6,
+     "output": 904,
+     "cacheRead": 119585,
+     "cacheWrite": 15799
+    }
+   },
+   "tokensTotal": 729487,
+   "seconds": {
+    "author": 134.454,
+    "review": 18.703,
+    "evaluation": 38.234,
+    "reached": 152.203
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 13,
+   "task": "keel-sync-crlf",
+   "method": "bmad",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": false,
+   "reached": "passed",
+   "review": "BLOCK",
+   "reviewDefects": 2,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 8,
+     "output": 858,
+     "cacheRead": 120645,
+     "cacheWrite": 18223
+    },
+    "review": {
+     "input": 6,
+     "output": 660,
+     "cacheRead": 119041,
+     "cacheWrite": 15772
+    }
+   },
+   "tokensTotal": 275213,
+   "seconds": {
+    "author": 38.687,
+    "review": 13.703,
+    "evaluation": 28.704,
+    "reached": 1.796
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 14,
+   "task": "keel-sync-crlf",
+   "method": "graphhelm",
+   "comparable": true,
+   "accepted": true,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "passed",
+   "review": "APPROVE",
+   "reviewDefects": 3,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 19,
+     "output": 3931,
+     "cacheRead": 371449,
+     "cacheWrite": 26273
+    },
+    "review": {
+     "input": 4,
+     "output": 773,
+     "cacheRead": 72032,
+     "cacheWrite": 15799
+    }
+   },
+   "tokensTotal": 490280,
+   "seconds": {
+    "author": 67.781,
+    "review": 10.953,
+    "evaluation": 2.578,
+    "reached": 3.047
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 15,
+   "task": "keel-sync-crlf",
+   "method": "direct",
+   "comparable": true,
+   "accepted": true,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "passed",
+   "review": "APPROVE",
+   "reviewDefects": 3,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 10,
+     "output": 2328,
+     "cacheRead": 170903,
+     "cacheWrite": 45993
+    },
+    "review": {
+     "input": 2,
+     "output": 533,
+     "cacheRead": 29429,
+     "cacheWrite": 13089
+    }
+   },
+   "tokensTotal": 262287,
+   "seconds": {
+    "author": 48.906,
+    "review": 8.796,
+    "evaluation": 2.734,
+    "reached": 2.625
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 16,
+   "task": "keel-sync-crlf",
+   "method": "superpowers",
+   "comparable": true,
+   "accepted": true,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "passed",
+   "review": "APPROVE-WITH-RISK",
+   "reviewDefects": 3,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 19,
+     "output": 5233,
+     "cacheRead": 388471,
+     "cacheWrite": 27643
+    },
+    "review": {
+     "input": 4,
+     "output": 652,
+     "cacheRead": 75138,
+     "cacheWrite": 15459
+    }
+   },
+   "tokensTotal": 512619,
+   "seconds": {
+    "author": 81.328,
+    "review": 11.625,
+    "evaluation": 5.594,
+    "reached": 2.812
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 17,
+   "task": "keel-sync-crlf",
+   "method": "speckit",
+   "comparable": true,
+   "accepted": true,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "passed",
+   "review": "APPROVE-WITH-RISK",
+   "reviewDefects": 4,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 23,
+     "output": 4368,
+     "cacheRead": 551230,
+     "cacheWrite": 40319
+    },
+    "review": {
+     "input": 2,
+     "output": 612,
+     "cacheRead": 31134,
+     "cacheWrite": 11995
+    }
+   },
+   "tokensTotal": 639683,
+   "seconds": {
+    "author": 93.531,
+    "review": 8.828,
+    "evaluation": 3.204,
+    "reached": 2.187
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 18,
+   "task": "keel-sync-crlf",
+   "method": "openspec",
+   "comparable": true,
+   "accepted": true,
+   "flowComplete": true,
+   "public": true,
+   "hidden": true,
+   "reached": "passed",
+   "review": "APPROVE",
+   "reviewDefects": 3,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 13,
+     "output": 4367,
+     "cacheRead": 230158,
+     "cacheWrite": 31238
+    },
+    "review": {
+     "input": 2,
+     "output": 562,
+     "cacheRead": 31134,
+     "cacheWrite": 12145
+    }
+   },
+   "tokensTotal": 309619,
+   "seconds": {
+    "author": 69.36,
+    "review": 9.812,
+    "evaluation": 5.844,
+    "reached": 3.172
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  }
+ ],
+ "perMethod": {
+  "bmad": {
+   "cells": 3,
+   "comparable": 3,
+   "accepted": 0,
+   "allComparable": true,
+   "tokens": 856507
+  },
+  "direct": {
+   "cells": 3,
+   "comparable": 3,
+   "accepted": 2,
+   "allComparable": true,
+   "tokens": 1706521
+  },
+  "graphhelm": {
+   "cells": 3,
+   "comparable": 3,
+   "accepted": 2,
+   "allComparable": true,
+   "tokens": 1957097
+  },
+  "openspec": {
+   "cells": 3,
+   "comparable": 3,
+   "accepted": 2,
+   "allComparable": true,
+   "tokens": 2332743
+  },
+  "speckit": {
+   "cells": 3,
+   "comparable": 3,
+   "accepted": 2,
+   "allComparable": true,
+   "tokens": 2923813
+  },
+  "superpowers": {
+   "cells": 3,
+   "comparable": 3,
+   "accepted": 1,
+   "allComparable": true,
+   "tokens": 1847217
+  }
+ },
+ "graphhelmVs": {
+  "bmad": {
+   "acceptedDelta": 2,
+   "tokenSavingPercent": -128.5
+  },
+  "direct": {
+   "acceptedDelta": 0,
+   "tokenSavingPercent": -14.7
+  },
+  "openspec": {
+   "acceptedDelta": 0,
+   "tokenSavingPercent": 16.1
+  },
+  "speckit": {
+   "acceptedDelta": 0,
+   "tokenSavingPercent": 33.1
+  },
+  "superpowers": {
+   "acceptedDelta": 1,
+   "tokenSavingPercent": -5.9
+  }
+ }
+}

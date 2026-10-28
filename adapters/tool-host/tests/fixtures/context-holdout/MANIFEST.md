@@ -16,7 +16,7 @@ Reporting is split in two so that ranking quality and corpus drift do not share 
 frozen holdout corpus below (asserted, because bytes and ranking are both fixed) and the live
 repository tree (printed, never asserted, because every merge moves it).
 
-The targets are the files the questions were written about: seven implementation files and three
+The targets are the files the questions were written about: six implementation files and four
 normative documents. The five decoys were chosen before any run, as the repository's broad
 documents that name every subsystem; none was chosen for the number it produces.
 

@@ -114,7 +114,7 @@ const CASES: [(&str, &str); 10] = [
 
 /// #1705: the HOLDOUT. Ten questions written in a maintainer's plain words, each with the one
 /// file that answers it, fixed before the ranking was run on any of them and committed before the
-/// baseline was measured. Seven ask about implementation, three about normative process documents.
+/// baseline was measured. Six ask about implementation, four about normative documents.
 /// This set is never tuned against: a ranking change is developed on `CASES` above and only then
 /// read here. Rewriting a question or its oracle after seeing a result is retuning; freeze a new
 /// holdout instead (fixtures/context-holdout/MANIFEST.md).

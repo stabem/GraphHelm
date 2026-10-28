@@ -1,0 +1,127 @@
+{
+ "exportOf": {
+  "sha256": "ef0dd46a3a117f2f8115e6032bbaa0ce0d892042e5d13fa27e1ac483073cf85d",
+  "bytes": 2897
+ },
+ "schema": "bench-round-freeze/1",
+ "frozenAt": "2026-10-27",
+ "controllerSha256": "5ab02784cfeac42723a3cd7fbea32f77f733e725f63f310f78c26fb73b5f6031",
+ "runnerSha256": "0cae240e1590573868b6d750aecdcb59c16838d4b1fbdd9becd451cc7d9e4b9d",
+ "preflightSha256": "e774034398b856cea4dc0773f90e51d7492f917b92ed8b64b5ded777d733a551",
+ "evaluatorV5": "1f4f3f41f9f6cdc43ad35c465de612a105bd5f271070c901484882963ecfeddb",
+ "evaluatorV5Tasks2": "78a268be95ed6e4b73ab6c1e06665631f4f42e370ab397b4c495c4623b0e5a01",
+ "selfcheckSha256": "68807a3c766b713ff5221e4eb797a48893563ade0722e90cab032903b7904f7c",
+ "model": "claude-sonnet-5-5",
+ "effort": "low",
+ "cli": "<host-path>",
+ "assets": {
+  "superpowers": "b4c6db55f4f2f908855e176e304b910da8a3a4e4738993b3660e4fd980053d1a",
+  "speckit": "a11ea4b1a704cffe2391d3fb3444c0ba025c5c7d14ca4d9c6f3eb2e830f02d40",
+  "openspec": "3931daff1e27a2417ced3cb398b310947f3fec611cc68c13f981f0f495e45afc",
+  "bmad": "3d0830400366a102f00338be98bb41d381f62ee9f752bd4e5c66c1ae91545af5",
+  "plugins": "1cec3000b6093b7d5a53d09577d42708a4d0c9897d5def7139e4ede110565ba9"
+ },
+ "schedule": [
+  [
+   1,
+   "task-record-binding",
+   "direct"
+  ],
+  [
+   2,
+   "task-record-binding",
+   "superpowers"
+  ],
+  [
+   3,
+   "task-record-binding",
+   "speckit"
+  ],
+  [
+   4,
+   "task-record-binding",
+   "openspec"
+  ],
+  [
+   5,
+   "task-record-binding",
+   "bmad"
+  ],
+  [
+   6,
+   "task-record-binding",
+   "graphhelm"
+  ],
+  [
+   7,
+   "lanes-token-loopback",
+   "superpowers"
+  ],
+  [
+   8,
+   "lanes-token-loopback",
+   "direct"
+  ],
+  [
+   9,
+   "lanes-token-loopback",
+   "graphhelm"
+  ],
+  [
+   10,
+   "lanes-token-loopback",
+   "bmad"
+  ],
+  [
+   11,
+   "lanes-token-loopback",
+   "openspec"
+  ],
+  [
+   12,
+   "lanes-token-loopback",
+   "speckit"
+  ],
+  [
+   13,
+   "keel-sync-crlf",
+   "bmad"
+  ],
+  [
+   14,
+   "keel-sync-crlf",
+   "graphhelm"
+  ],
+  [
+   15,
+   "keel-sync-crlf",
+   "direct"
+  ],
+  [
+   16,
+   "keel-sync-crlf",
+   "superpowers"
+  ],
+  [
+   17,
+   "keel-sync-crlf",
+   "speckit"
+  ],
+  [
+   18,
+   "keel-sync-crlf",
+   "openspec"
+  ]
+ ],
+ "round": "003",
+ "toolsSourceMain": "ae71f9d63e6c0d6406d60dd90e177937f80c1ca1",
+ "mcpConfigSha256": {
+  "empty-mcp.json": "139f0a6d5883f3caadbca38e6cbcc1d39ffcbff19c43fc17f5d6163673021b5e",
+  "graphhelm-mcp.json": "2af204a4890cfd6850658a1b684693e8063e8feaa5bd555fc259394a0df445f6"
+ },
+ "contractsPluginSource": "stabem/GraphHelm@0d9f1aec (PR #2148)",
+ "contractsTaskPlanSha256": "829a69be02c9a18173fe5f16a4872b52fa878972e0b032ccf21d421a84e6d112",
+ "tasksVersion": "v5.1",
+ "graphhelmPluginSource": "stabem/GraphHelm@fb669f26 (PR #2185, 0.1.66)",
+ "controllerNote": "lane prefix made unique per repetition (round005-NN collided with repetition 1 slots: GHCLI037); only change"
+}

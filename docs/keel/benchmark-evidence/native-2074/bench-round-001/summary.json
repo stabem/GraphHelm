@@ -1,0 +1,539 @@
+{
+ "exportOf": {
+  "sha256": "33bbbd740af48c318e0fe4dd8f5c8f138329413cbf3255445ed7bb7279ce3218",
+  "bytes": 10993
+ },
+ "schema": "bench-round-summary/1",
+ "cells": [
+  {
+   "cell": 1,
+   "task": "task-record-binding",
+   "method": "direct",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": false,
+   "reached": "failed",
+   "review": "APPROVE-WITH-RISK",
+   "reviewDefects": 2,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 15,
+     "output": 7400,
+     "cacheRead": 470774,
+     "cacheWrite": 77266
+    },
+    "review": {
+     "input": 6,
+     "output": 936,
+     "cacheRead": 120193,
+     "cacheWrite": 15622
+    }
+   },
+   "tokensTotal": 692212,
+   "seconds": {
+    "author": 148.797,
+    "review": 18.156,
+    "evaluation": 3.312,
+    "reached": 4.594
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 2,
+   "task": "task-record-binding",
+   "method": "superpowers",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "controller error: RuntimeError: git ('add', '-A'): timeout"
+   ]
+  },
+  {
+   "cell": 3,
+   "task": "task-record-binding",
+   "method": "speckit",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": false,
+   "reached": "failed",
+   "review": "APPROVE-WITH-RISK",
+   "reviewDefects": 4,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 34,
+     "output": 9143,
+     "cacheRead": 905209,
+     "cacheWrite": 52236
+    },
+    "review": {
+     "input": 6,
+     "output": 1371,
+     "cacheRead": 122440,
+     "cacheWrite": 17650
+    }
+   },
+   "tokensTotal": 1108089,
+   "seconds": {
+    "author": 123.547,
+    "review": 19.656,
+    "evaluation": 3.328,
+    "reached": 6.141
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 4,
+   "task": "task-record-binding",
+   "method": "openspec",
+   "comparable": false,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": false,
+   "reached": "incomplete",
+   "review": null,
+   "reviewDefects": 0,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 25,
+     "output": 8795,
+     "cacheRead": 807878,
+     "cacheWrite": 61017
+    },
+    "review": {
+     "input": 6,
+     "output": 1973,
+     "cacheRead": 122608,
+     "cacheWrite": 18393
+    }
+   },
+   "tokensTotal": 1020695,
+   "seconds": {
+    "author": 97.828,
+    "review": 26.047,
+    "evaluation": 2.609,
+    "reached": 1.812
+   },
+   "scopeViolations": [],
+   "invalidReasons": [
+    "reached tests unobserved on the candidate head",
+    "review verdict unobserved"
+   ]
+  },
+  {
+   "cell": 5,
+   "task": "task-record-binding",
+   "method": "bmad",
+   "comparable": true,
+   "accepted": false,
+   "flowComplete": true,
+   "public": true,
+   "hidden": false,
+   "reached": "passed",
+   "review": "BLOCK",
+   "reviewDefects": 2,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 8,
+     "output": 520,
+     "cacheRead": 117328,
+     "cacheWrite": 16219
+    },
+    "review": {
+     "input": 12,
+     "output": 1241,
+     "cacheRead": 254352,
+     "cacheWrite": 16130
+    }
+   },
+   "tokensTotal": 405810,
+   "seconds": {
+    "author": 39.5,
+    "review": 20.219,
+    "evaluation": 2.719,
+    "reached": 1.813
+   },
+   "scopeViolations": [],
+   "invalidReasons": []
+  },
+  {
+   "cell": 6,
+   "task": "task-record-binding",
+   "method": "graphhelm",
+   "comparable": false,
+   "accepted": false,
+   "flowComplete": false,
+   "public": true,
+   "hidden": false,
+   "reached": "failed",
+   "review": "APPROVE-WITH-RISK",
+   "reviewDefects": 3,
+   "retries": {
+    "author": 0,
+    "review": 0
+   },
+   "tokensByPhase": {
+    "author": {
+     "input": 19,
+     "output": 5358,
+     "cacheRead": 578356,
+     "cacheWrite": 48593
+    },
+    "review": {
+     "input": 4,
+     "output": 1059,
+     "cacheRead": 74909,
+     "cacheWrite": 15214
+    }
+   },
+   "tokensTotal": 723512,
+   "seconds": {
+    "author": 49.406,
+    "review": 15.469,
+    "evaluation": 2.485,
+    "reached": 5.015
+   },
+   "scopeViolations": [],
+   "invalidReasons": [
+    "method flow incomplete: implement",
+    "graphhelm MCP not connected"
+   ]
+  },
+  {
+   "cell": 7,
+   "task": "lanes-token-loopback",
+   "method": "superpowers",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  },
+  {
+   "cell": 8,
+   "task": "lanes-token-loopback",
+   "method": "direct",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  },
+  {
+   "cell": 9,
+   "task": "lanes-token-loopback",
+   "method": "graphhelm",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  },
+  {
+   "cell": 10,
+   "task": "lanes-token-loopback",
+   "method": "bmad",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  },
+  {
+   "cell": 11,
+   "task": "lanes-token-loopback",
+   "method": "openspec",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  },
+  {
+   "cell": 12,
+   "task": "lanes-token-loopback",
+   "method": "speckit",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  },
+  {
+   "cell": 13,
+   "task": "keel-sync-crlf",
+   "method": "bmad",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  },
+  {
+   "cell": 14,
+   "task": "keel-sync-crlf",
+   "method": "graphhelm",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  },
+  {
+   "cell": 15,
+   "task": "keel-sync-crlf",
+   "method": "direct",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  },
+  {
+   "cell": 16,
+   "task": "keel-sync-crlf",
+   "method": "superpowers",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  },
+  {
+   "cell": 17,
+   "task": "keel-sync-crlf",
+   "method": "speckit",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  },
+  {
+   "cell": 18,
+   "task": "keel-sync-crlf",
+   "method": "openspec",
+   "comparable": false,
+   "accepted": null,
+   "flowComplete": null,
+   "public": null,
+   "hidden": null,
+   "reached": null,
+   "review": null,
+   "reviewDefects": 0,
+   "retries": null,
+   "tokensByPhase": null,
+   "tokensTotal": null,
+   "seconds": null,
+   "scopeViolations": null,
+   "invalidReasons": [
+    "preflight error"
+   ]
+  }
+ ],
+ "perMethod": {
+  "bmad": {
+   "cells": 3,
+   "comparable": 1,
+   "accepted": 0,
+   "allComparable": false,
+   "tokens": null
+  },
+  "direct": {
+   "cells": 3,
+   "comparable": 1,
+   "accepted": 0,
+   "allComparable": false,
+   "tokens": null
+  },
+  "graphhelm": {
+   "cells": 3,
+   "comparable": 0,
+   "accepted": 0,
+   "allComparable": false,
+   "tokens": null
+  },
+  "openspec": {
+   "cells": 3,
+   "comparable": 0,
+   "accepted": 0,
+   "allComparable": false,
+   "tokens": null
+  },
+  "speckit": {
+   "cells": 3,
+   "comparable": 1,
+   "accepted": 0,
+   "allComparable": false,
+   "tokens": null
+  },
+  "superpowers": {
+   "cells": 3,
+   "comparable": 0,
+   "accepted": 0,
+   "allComparable": false,
+   "tokens": null
+  }
+ },
+ "graphhelmVs": {
+  "bmad": "ganho não comprovado",
+  "direct": "ganho não comprovado",
+  "openspec": "ganho não comprovado",
+  "speckit": "ganho não comprovado",
+  "superpowers": "ganho não comprovado"
+ }
+}

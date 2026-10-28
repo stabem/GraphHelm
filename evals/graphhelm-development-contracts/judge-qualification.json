@@ -7,11 +7,11 @@
       "case": "keel-observer-missing",
       "prompt": {
         "path": "evals/graphhelm-development-contracts/keel-observer-missing/prompt.md",
-        "sha256": "1c78bb47c890614c0d143422089d828d70ea458ba6a9146e20e750eeecb532e0"
+        "sha256": "7a882d334f27aa3fcf0d1846aff74ad2a73da719fc0075355a9287c678c40787"
       },
       "rubric": {
         "path": "evals/graphhelm-development-contracts/keel-observer-missing/graders/criteria.md",
-        "sha256": "708011f9ca5a427585d2d2fe812c62c05099339e62413a7a41079c33a26ec353"
+        "sha256": "2b0deca391d99b011ee5edff7cc663c06635518b541ef2b01e7ca90c34281fd8"
       },
       "examples": [
         {
@@ -44,11 +44,11 @@
       "case": "test-audit-junk",
       "prompt": {
         "path": "evals/graphhelm-development-contracts/test-audit-junk/prompt.md",
-        "sha256": "294e8b56d31db0c5061e9b886fcd0c506ee5e2d631648f76c1871bdded399b6d"
+        "sha256": "680a2358a38f403a22f587acbae965826ed5bac7eea6890047d6bfb7a7a6ad76"
       },
       "rubric": {
         "path": "evals/graphhelm-development-contracts/test-audit-junk/graders/criteria.md",
-        "sha256": "a8b8af3f94c242c028fd2e11f878f82c4d983f12e9a116f9172a3dcc2b578273"
+        "sha256": "b168c2bb0c071d3c9ec91a41ed73dc09a6335d1a98b552328a31a05a7400c651"
       },
       "examples": [
         {
@@ -78,5 +78,5 @@
       ]
     }
   ],
-  "contentSha256": "48074ac9e1f13ec6ab7f28c783773626e274786dbdff8030d29d2fd0e36e9848"
+  "contentSha256": "f99a4fb40ceda396c71558c8e9d57ce13be5d70cdd09343381bad654fc1e8db7"
 }

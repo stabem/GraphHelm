@@ -238,6 +238,24 @@ class EffectSet(unittest.TestCase):
             "core/events/tests/append_effect_contract.rs": append_fn("std::net::TcpStream::connect(a)")}, "noise")
         self.assertEqual(ek.decide(self.repo, self.record, head)["effects_changed"]["summary"], "effects unchanged")
 
+    def test_a_file_any_non_test_declaration_loads_stays_production(self):
+        evil = {"core/process/src/evil.rs": "pub fn e() { std::net::TcpStream::connect(a); }\n"}
+        lib = FILES["core/process/src/lib.rs"]
+        for name, decls in (("P10", "#[cfg(test)]\nmod evil;\n#[cfg(not(test))]\nmod evil;\n"),
+                            ("P11", '#[cfg(test)]\n#[path = "evil.rs"]\nmod t;\nmod evil;\n'),
+                            ("not(test) only", "#[cfg(not(test))]\nmod evil;\n"),
+                            ("feature gate", '#[cfg(test)]\n#[cfg(feature = "x")]\nmod evil;\n')):
+            with self.subTest(name):
+                head = commit(self.repo, {"core/process/src/lib.rs": lib + decls, **evil}, name)
+                self.assertEqual(sites(ek.decide(self.repo, self.record, head)),
+                                 (["network@core/process/src/evil.rs"], []))
+        head = commit(self.repo, {"core/process/src/lib.rs": lib + "#[cfg(test)]\nmod evil;\n", **evil}, "test only")
+        self.assertEqual(ek.decide(self.repo, self.record, head)["effects_changed"]["summary"], "effects unchanged")
+
+    def test_a_path_attribute_the_scan_cannot_attribute_answers_unknown(self):
+        head = commit(self.repo, {LOCAL: FILES[LOCAL] + '// #[path = "x.rs"]\n'}, "path in comment")
+        self.assertEqual(ek.decide(self.repo, self.record, head)["effects_changed"]["unknown"], [LOCAL])
+
     def test_a_tests_rs_file_nobody_declares_as_a_test_module_still_counts(self):
         head = commit(self.repo, {"core/events/src/tests.rs": 'fn t() { std::process::Command::new("x"); }\n'}, "t")
         self.assertEqual(sites(ek.decide(self.repo, self.record, head)),

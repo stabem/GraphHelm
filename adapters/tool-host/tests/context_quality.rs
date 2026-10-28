@@ -223,8 +223,11 @@ const HOLDOUT_V2_CASES: [(&str, &str); 10] = [
 /// The holdout v2 floor over its FROZEN corpus: 2/10, measured on main's ranker (`d8f173ef`) in
 /// the commit after the cases were pushed (pre-registration `b2dd4ef7`). Asserted at the measured
 /// value: corpus and ranking are fixed, so any drop is a change in the ranking. The low value is
-/// the point of a fresh holdout, not a defect of it.
-const HOLDOUT_V2_HITS_AT_3_FLOOR: usize = 2;
+/// the point of a fresh holdout, not a defect of it. Raised to 7/10 by the BM25 ranker, accepted
+/// under the rule pre-registered on #1705 before this set was read: +5 over main, no main hit
+/// lost, dev 10/10. The v1 holdout floor stays at 4 because BM25 lost one v1 hit (the merge
+/// question, oracle `docs/process/DELIVERY.md`), already on record.
+const HOLDOUT_V2_HITS_AT_3_FLOOR: usize = 7;
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

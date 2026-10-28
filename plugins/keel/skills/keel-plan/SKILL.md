@@ -51,7 +51,8 @@ When in doubt, take the larger row.
 
 1. **Promise.** What a user can see change, in one or two sentences. Not what the code does.
 2. **Proof.** The cheapest observer that decides it: the journey id, the CLI command against a
-   real Runtime, or the hook run. Name what it asserts, and write the
+   real Runtime, or the hook run; for a rule that must hold for every input, a property test
+   (`KEEL_EXEC.md`, Prove step 2). Name what it asserts, and write the
    failure list here first when `KEEL_EXEC.md` asks for one.
 3. **Paths.** Every file the change may touch, as a list of paths. No globs.
 4. **What already exists.** The searches you ran for code that already does part of the job, and

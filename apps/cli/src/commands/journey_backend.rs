@@ -250,7 +250,15 @@ pub(super) fn cli_refusal(argv: &str) -> Option<(&'static str, &'static str)> {
         "a cli act's script must be a relative path inside the project",
     );
     if program.contains(['/', '\\']) {
-        return script_directory_depth(program).is_none().then_some(outside);
+        if script_directory_depth(program).is_none() {
+            return Some(outside);
+        }
+        // A project-held program named like a runner or interpreter is one: run it by its
+        // name instead, so the runner rules (options, script position, flags) apply.
+        return is_interpreter(&stem).then_some((
+            "flow.cli_program_interpreter",
+            "a project-relative program may not be named like an interpreter; run the script through the runner by name",
+        ));
     }
     if is_python(&stem) {
         let mut rest = args.iter();
@@ -340,6 +348,63 @@ fn program_stem(program: &str) -> String {
     }
 }
 
+/// #2187: names of runners and interpreters that take code in their arguments. A
+/// project-relative program with one of these stems is refused (lint and runner alike).
+fn is_interpreter(stem: &str) -> bool {
+    const NAMES: &[&str] = &[
+        "sh",
+        "bash",
+        "dash",
+        "zsh",
+        "ksh",
+        "mksh",
+        "fish",
+        "csh",
+        "tcsh",
+        "ash",
+        "busybox",
+        "node",
+        "nodejs",
+        "deno",
+        "bun",
+        "perl",
+        "ruby",
+        "irb",
+        "php",
+        "lua",
+        "luajit",
+        "tclsh",
+        "wish",
+        "pwsh",
+        "powershell",
+        "cmd",
+        "rscript",
+        "r",
+        "awk",
+        "gawk",
+        "mawk",
+        "nawk",
+        "sed",
+        "env",
+        "xargs",
+        "git",
+        "osascript",
+        "cscript",
+        "wscript",
+        "mshta",
+        "java",
+        "jshell",
+        "dotnet",
+        "julia",
+        "guile",
+        "racket",
+        "expect",
+        "make",
+        "find",
+    ];
+    is_python(stem) || NAMES.contains(&stem)
+}
+
 fn is_python(stem: &str) -> bool {
     let Some(rest) = stem
         .strip_prefix("pythonw")
@@ -411,6 +476,13 @@ fn resolve_program(project: &Path, program: &str, dirs: &[PathBuf]) -> Option<Pa
         .find(|candidate| candidate.is_file())
 }
 
+/// #2187: whether `program` (already joined to the project) is a real file inside the project
+/// once links and junctions are resolved.
+fn resolves_inside(project: &Path, program: &Path) -> bool {
+    let root = std::fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+    std::fs::canonicalize(program).is_ok_and(|real| real.starts_with(&root))
+}
+
 /// Runs one `cli` act: argv split on whitespace, no shell, in the project, bounded by
 /// [`ACT_LIMIT`]. The child is killed at the limit.
 ///
@@ -430,6 +502,14 @@ pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String>
          (absolute entries outside the project)"
             .to_owned()
     })?;
+    if program.contains(['/', '\\']) && !resolves_inside(project, &resolved) {
+        // A link (or a junction on its way) that leaves the project names a program the check
+        // never read: the same code lint gives a path outside the project.
+        return Err(
+            "flow.cli_script_outside: a cli act's program resolves outside the project".into(),
+        );
+    }
+    let stem = program_stem(program);
     let mut spawn = graphhelm_process::command(&resolved);
     spawn.env_clear();
     for (key, value) in std::env::vars_os() {
@@ -441,11 +521,29 @@ pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String>
     if let Ok(path) = std::env::join_paths(&dirs) {
         spawn.env("PATH", path);
     }
-    if is_python(&program_stem(program)) {
+    let words: Vec<&str> = words.collect();
+    if is_python(&stem) {
         spawn.args(["-E", "-s", "-S", "-B"]);
     }
+    if matches!(stem.as_str(), "pwsh" | "powershell") {
+        // No profile script runs, and nothing waits on a prompt.
+        spawn.args(["-NoProfile", "-NonInteractive"]);
+    }
+    if matches!(stem.as_str(), "node" | "nodejs") {
+        // Node's permission model: the script reads only its own directory, so a module
+        // required from outside it (a parent `node_modules`, a sibling folder) fails to load;
+        // no child process, worker, addon or write is granted.
+        let script = words.first().copied().unwrap_or_default();
+        let dir = Path::new(script).parent().unwrap_or(Path::new(""));
+        let dir = std::fs::canonicalize(project.join(dir)).unwrap_or_else(|_| project.join(dir));
+        let dir = dir.join("*").display().to_string();
+        // Node does not read the verbatim `\\?\` prefix Windows canonical paths carry.
+        let dir = dir.strip_prefix(r"\\?\").unwrap_or(&dir);
+        spawn.arg("--permission");
+        spawn.arg(format!("--allow-fs-read={dir}"));
+    }
     let mut child = spawn
-        .args(words)
+        .args(&words)
         // #2008: a run must not write `__pycache__` into the reviewed tree it was vouched by.
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .current_dir(project)
@@ -739,6 +837,14 @@ mod tests {
             ("/usr/bin/perl -e 1", Some("flow.cli_script_outside")),
             ("C:/x/perl.exe", Some("flow.cli_script_outside")),
             ("./tools/bin/probe a", None),
+            ("./bin/sh -c id", Some("flow.cli_program_interpreter")),
+            ("tools/node.exe -e 1", Some("flow.cli_program_interpreter")),
+            (
+                "./bin/python3.12 x.py",
+                Some("flow.cli_program_interpreter"),
+            ),
+            ("./bin/awk BEGIN{}", Some("flow.cli_program_interpreter")),
+            ("nodejs d/a.js", None),
         ] {
             assert_eq!(cli_refusal(argv).map(|(code, _)| code), code, "{argv}");
             let flow = json!({"edges":[{"acts":[{"kind":"cli","role":"exec","name":argv}]}]});
@@ -850,6 +956,88 @@ mod tests {
         assert_eq!(
             seen.body.split_whitespace().collect::<Vec<_>>(),
             ["1", "1", "1", "1", "blocked"]
+        );
+    }
+
+    /// #2187: a project-relative program that is a link leaving the project runs code the check
+    /// never read; the runner refuses it with the code lint gives an outside path.
+    #[cfg(unix)]
+    #[test]
+    fn a_project_program_linked_outside_is_refused() {
+        let project = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("tool");
+        std::fs::write(
+            &target,
+            "#!/bin/sh
+echo OUT
+",
+        )
+        .unwrap();
+        std::fs::create_dir_all(project.path().join("bin")).unwrap();
+        std::os::unix::fs::symlink(&target, project.path().join("bin/tool")).unwrap();
+        let refused = command(project.path(), "./bin/tool").unwrap_err();
+        assert!(refused.starts_with("flow.cli_script_outside"), "{refused}");
+    }
+
+    /// #2187: PowerShell runs a project script with `-NoProfile -NonInteractive`, so no profile
+    /// script loads. Windows ships Windows PowerShell, so the proof needs nothing installed.
+    #[cfg(windows)]
+    #[test]
+    fn a_powershell_step_loads_no_profile() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join("d")).unwrap();
+        std::fs::write(
+            project.path().join("d/args.ps1"),
+            "[Environment]::GetCommandLineArgs() -join ' '
+",
+        )
+        .unwrap();
+        let seen = command(project.path(), "powershell -File d/args.ps1").unwrap();
+        assert_eq!(seen.exit, Some(0), "{}", seen.stderr);
+        let args = seen.body.to_ascii_lowercase();
+        assert!(
+            args.contains("-noprofile") && args.contains("-noninteractive"),
+            "{args}"
+        );
+    }
+
+    /// #2187: a node step reads only its script's directory: a module beside the script loads,
+    /// one in a parent folder does not. Needs `node` (with the permission model) on PATH; the
+    /// test says so and stops when the machine has none.
+    #[test]
+    fn a_node_step_cannot_require_from_outside_its_directory() {
+        let project = tempfile::tempdir().unwrap();
+        let dirs = pinned_path(project.path(), std::env::var_os("PATH"));
+        if resolve_program(project.path(), "node", &dirs).is_none() {
+            eprintln!("OBSERVER_MISSING: node is not on PATH");
+            return;
+        }
+        std::fs::create_dir_all(project.path().join("d")).unwrap();
+        std::fs::write(
+            project.path().join("planted2187.js"),
+            "module.exports='PLANTED';
+",
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("d/near.js"),
+            "module.exports='near';
+",
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("d/run.js"),
+            "console.log(require('./near.js'));
+             try { console.log(require('../planted2187.js')); } catch (e) { console.log('blocked'); }
+",
+        )
+        .unwrap();
+        let seen = command(project.path(), "node d/run.js").unwrap();
+        assert_eq!(seen.exit, Some(0), "{}", seen.stderr);
+        assert_eq!(
+            seen.body.split_whitespace().collect::<Vec<_>>(),
+            ["near", "blocked"]
         );
     }
 }

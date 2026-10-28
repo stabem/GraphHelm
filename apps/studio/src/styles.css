@@ -263,16 +263,16 @@ button { font: inherit; }
 .terminal-run { display: flex; flex-direction: column; gap: var(--s2); padding: 12px 14px; border-top: 1px solid var(--edge-strong); }
 .terminal-cmd, .terminal-out { margin: 0; font-family: var(--mono, ui-monospace, monospace); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .terminal-out { flex: 1 1 auto; min-height: 240px; overflow: auto; padding: 8px 10px; border-radius: 8px; background: #0d0d0f; }
-/* #1916: on desktop the Proof column fills the viewport and the terminal box takes what is left, scrolling inside itself. */
+/* #1916 (#1985: scoped to the terminal frame, not the Terminal kind badge): on desktop the Proof column fills the viewport and the terminal box takes what is left, scrolling inside itself. */
 @media (min-width: 761px) {
-  .shell:has(.terminal) { height: 100vh; min-height: 0; }
-  .shell:has(.terminal) .main, .shell:has(.terminal) .proof, .shell:has(.terminal) .proof-main { min-height: 0; }
-  .shell:has(.terminal) .proof-main { overflow: hidden; }
-  .shell:has(.terminal) .compare { flex: 1 1 0; min-height: 0; align-items: stretch; flex-wrap: nowrap; }
-  .shell:has(.terminal) .compare-frame.terminal, .shell:has(.terminal) .compare-side-panel { min-height: 0; }
-  .shell:has(.terminal) .compare-side-panel { overflow-y: auto; }
-  .shell:has(.terminal) .terminal-run { flex: 1 1 0; min-height: 0; }
-  .shell:has(.terminal) .terminal-out { flex: 1 1 0; min-height: 240px; }
+  .shell:has(.compare-frame.terminal) { height: 100vh; min-height: 0; }
+  .shell:has(.compare-frame.terminal) .main, .shell:has(.compare-frame.terminal) .proof, .shell:has(.compare-frame.terminal) .proof-main { min-height: 0; }
+  .shell:has(.compare-frame.terminal) .proof-main { overflow: hidden; }
+  .shell:has(.compare-frame.terminal) .compare { flex: 1 1 0; min-height: 0; align-items: stretch; flex-wrap: nowrap; }
+  .shell:has(.compare-frame.terminal) .compare-frame.terminal, .shell:has(.compare-frame.terminal) .compare-side-panel { min-height: 0; }
+  .shell:has(.compare-frame.terminal) .compare-side-panel { overflow-y: auto; }
+  .shell:has(.compare-frame.terminal) .terminal-run { flex: 1 1 0; min-height: 0; }
+  .shell:has(.compare-frame.terminal) .terminal-out { flex: 1 1 0; min-height: 240px; }
 }
 /* #1971: on desktop a frame is bounded by the box it lives in: the shell is one viewport tall, the Proof column and the compare row shrink to what the bar, header and step strip leave, and the frame is contained (whole, centred) in that box. Below 320px the column scrolls instead. */
 @media (min-width: 761px) {

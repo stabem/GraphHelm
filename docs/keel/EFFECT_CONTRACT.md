@@ -133,3 +133,79 @@ crate API not named above is not attributed (an `ffi` site is still marked). Tes
 `*_tests.rs`, files only `#[cfg(test)] mod` loads) are scanned as if production, so their effects
 appear in the record and in `+`/`-` sites: an accepted over-report, in the safe direction. The
 tests and their sabotage guard the kinds, the lexer and the inline-body rule.
+
+## Cost per PR: pre-registration (#1476 slice d)
+
+This section was pushed before any number below was measured. The issue's kill bar is a cost per PR
+of more than 2x; slice d reports what the contract adds, against what a PR already pays.
+
+1. **`check` time.** `python tools/keel-effect/evidence_key.py check --rev R`, a fresh process each
+   time. Walk first-parent history back from `origin/main` (at most 400 commits) and take the first 5
+   revisions that answer `reuse` and the first 5 that answer `invalidate` against the committed
+   record. On each revision the first run is `cold` (a revision this harness has not read yet) and
+   the next 5 are `warm`. Report median, min and max per case: cold has 5 samples, warm has 25. The
+   operating system's file cache is not dropped, so "cold" means a first read of that revision's
+   objects, not an empty machine.
+2. **Observer rerun.** `cargo +1.97.1 test --locked -p graphhelm-events --test append_effect_contract`
+   in the build slot (own root under `D:/gh`) with a warm target, 3 runs after one build run that is
+   not counted. Compared with the reached-plan time of `tools/reached-tests/run_reached.py` for the
+   same diff: a one-line change to `core/events/src/local.rs` on a local, unpushed branch from the same
+   `origin/main`, measured once (the plan runs many cargo commands; N=1 is stated as such).
+3. **Reuse fraction.** For each of the last 50 first-parent commits of `origin/main` (each a
+   squash-merged PR), the closure key at the commit against the key at its first parent, computed by
+   `evidence_key.state`. Equal is `reuse`, different is `invalidate`; a commit whose manifests cannot
+   be read is `error`, never `reuse`. Local git only.
+
+The harness is `tools/keel-effect/measure_cost.py`; it never starts cargo (the slot refuses wrappers),
+so the observer and reached-plan seconds are passed in. Raw numbers go to
+`docs/keel/effect-evidence/cost-per-pr.json`. Limits fixed in advance: one host, the machine's load
+was not controlled, and timings vary run to run; only the reuse/invalidate counts are deterministic.
+
+## Cost per PR: measured (#1476 slice d)
+
+Raw numbers: `effect-evidence/cost-per-pr.json` (harness `tools/keel-effect/measure_cost.py`, head
+`e29871aa`, record commit `be8fcba4`). One host, load not controlled (other lanes build on it), N is
+small: read the medians as orders of magnitude, not as constants.
+
+| Measurement | Result |
+|---|---|
+| `check`, answer `reuse`, cold (first read of a revision) | median 3.6 s, range 3.3 to 4.0 s, **n=4** |
+| `check`, answer `reuse`, warm (5 repeats on each) | median 3.5 s, range 3.0 to 4.5 s, n=20 |
+| `check`, answer `invalidate`, cold | median 9.3 s, range 6.4 to 10.5 s, n=5 |
+| `check`, answer `invalidate`, warm | median 7.7 s, range 5.7 to 14.5 s, n=25 |
+| Observer rerun, nothing to rebuild (warm target) | median 0.9 s, range 0.9 to 1.0 s, n=3 |
+| Observer rerun after a one-line edit in `core/events/src/local.rs` (events crate rebuilt) | median 3.5 s, range 3.4 to 3.5 s, n=3 |
+| Reached plan for that same one-line diff (`run_reached.py --stage review`, 268 steps, 15 packages) | 1330 s, n=1 |
+| Last 50 merged PRs: closure key unchanged (`reuse`) | 41 of 50 (82%) |
+| Last 50 merged PRs: closure key moved (`invalidate`) | 9 of 50 (18%), 0 unreadable |
+
+Reading it:
+
+- **Cost per PR against the 2x bar.** A PR that moves the closure pays `check` (about 8 s) plus an
+  observer rerun (about 3.5 s), about 12 s on top of a 1330 s reached plan: under 1%. A PR that does
+  not move it pays `check` alone, about 3.5 s. Weighted by the 82/18 split, the contract adds about 5 s
+  per PR on average. The kill bar (more than 2x) is not near for a PR that touches the closure.
+- **Where the bar could bite.** The reached plan of a docs-only PR was not measured. If it is a few
+  seconds, 3.5 s of `check` is not small against it. `check` is a reviewer's command and nothing runs it
+  automatically today, so this cost is paid only when someone asks.
+- **`check` is the dominant part and it is slow for what it does.** It reads about one tree listing
+  and one batched `git cat-file` over the closure, twice on `invalidate` (the revision and the record's
+  commit), and lexes every closure `.rs` source in Python for the effect set. That is the likely
+  source of the 3.5 s and of the doubling on `invalidate`; it was not profiled.
+
+Limits, in addition to the ones fixed in advance:
+
+- The walk back through the last 400 first-parent commits found only 4 revisions that answer `reuse`
+  against the record (5 were pre-registered): the record's commit is old enough that most recent
+  revisions moved the closure. Cold `reuse` is therefore n=4. This also says the record goes stale
+  fast: 9 of the last 50 PRs would have invalidated it.
+- "Cold" is a first read of a revision, not an empty file cache.
+- The reached-plan time is one run, with a worktree whose build target was only partly warm; a lane
+  with a fully warm target would see less. It includes the rebuild of every dependent crate, which
+  the observer rerun does not need.
+- The fraction counts PRs by whether the closure key moved (`reuse` = no closure byte changed between
+  the merge's parent and the merge); it does not say how many of those PRs a reviewer would have
+  asked `check` for.
+- Two additions to the pre-registration, made after seeing the first observer runs: the observer was
+  also timed with nothing to rebuild (an uncounted build run came first and was not timed), and its
+  rebuilt-crate time is the one compared with the reached plan.

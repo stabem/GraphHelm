@@ -1,0 +1,370 @@
+{
+  "head": "e29871aa0aa8fbd59a2f341c9bdb20c6de69032e",
+  "check_time": {
+    "record_commit": "be8fcba40fcff96f258ebb2868c085e1983cf5e6",
+    "revs": {
+      "reuse": [
+        "e29871aa0aa8fbd59a2f341c9bdb20c6de69032e",
+        "f253799ac421d167fff36a8a38ebf5770586df9e",
+        "892671bd2c3d01fefd6d2a1589b2ecc7e39cf098",
+        "36a8ec661afa8826cc12109babcbfafac63e9f82"
+      ],
+      "invalidate": [
+        "f551a479d6f2336ce690e601f04e9301dede0815",
+        "6d1c331d586945c8e2a19ce3a3947f655f4cf366",
+        "bcc6b24f928f195f6e207eb05af296c218691302",
+        "2a8bca85edd96e3b7b5b27ba803d77b9cf0e0d28",
+        "d8f173ef0e26d55da61d1edd39df5c98935fe6ff"
+      ]
+    },
+    "cases": {
+      "reuse": {
+        "cold": {
+          "n": 4,
+          "median_s": 3.605,
+          "min_s": 3.344,
+          "max_s": 4.04
+        },
+        "warm": {
+          "n": 20,
+          "median_s": 3.539,
+          "min_s": 3.006,
+          "max_s": 4.462
+        },
+        "runs_s_by_rev": {
+          "e29871aa0aa8fbd59a2f341c9bdb20c6de69032e": [
+            4.04,
+            3.231,
+            3.53,
+            4.099,
+            3.006,
+            3.29
+          ],
+          "f253799ac421d167fff36a8a38ebf5770586df9e": [
+            3.344,
+            3.274,
+            3.703,
+            3.792,
+            3.613,
+            3.548
+          ],
+          "892671bd2c3d01fefd6d2a1589b2ecc7e39cf098": [
+            3.414,
+            3.325,
+            3.621,
+            3.307,
+            4.24,
+            4.264
+          ],
+          "36a8ec661afa8826cc12109babcbfafac63e9f82": [
+            3.796,
+            3.343,
+            3.44,
+            3.402,
+            4.462,
+            3.604
+          ]
+        }
+      },
+      "invalidate": {
+        "cold": {
+          "n": 5,
+          "median_s": 9.269,
+          "min_s": 6.412,
+          "max_s": 10.487
+        },
+        "warm": {
+          "n": 25,
+          "median_s": 7.681,
+          "min_s": 5.673,
+          "max_s": 14.454
+        },
+        "runs_s_by_rev": {
+          "f551a479d6f2336ce690e601f04e9301dede0815": [
+            6.412,
+            6.066,
+            6.2,
+            7.357,
+            9.189,
+            8.345
+          ],
+          "6d1c331d586945c8e2a19ce3a3947f655f4cf366": [
+            9.269,
+            7.936,
+            14.454,
+            10.755,
+            9.668,
+            8.141
+          ],
+          "bcc6b24f928f195f6e207eb05af296c218691302": [
+            7.511,
+            11.576,
+            14.122,
+            9.309,
+            6.609,
+            8.013
+          ],
+          "2a8bca85edd96e3b7b5b27ba803d77b9cf0e0d28": [
+            10.487,
+            6.796,
+            7.131,
+            7.355,
+            7.681,
+            9.016
+          ],
+          "d8f173ef0e26d55da61d1edd39df5c98935fe6ff": [
+            9.895,
+            6.717,
+            6.393,
+            6.324,
+            5.673,
+            6.535
+          ]
+        }
+      }
+    }
+  },
+  "observer_rerun": {
+    "command": "cargo +1.97.1 test --locked -p graphhelm-events --test append_effect_contract",
+    "runs_s": [
+      3.43,
+      3.53,
+      3.5
+    ],
+    "n": 3,
+    "median_s": 3.5,
+    "min_s": 3.43,
+    "max_s": 3.53,
+    "unchanged_target": {
+      "runs_s": [
+        0.93,
+        1.02,
+        0.92
+      ],
+      "n": 3,
+      "median_s": 0.93,
+      "min_s": 0.92,
+      "max_s": 1.02
+    }
+  },
+  "reached_plan": {
+    "runs_s": [
+      1330.07
+    ],
+    "n": 1,
+    "median_s": 1330.07,
+    "min_s": 1330.07,
+    "max_s": 1330.07
+  },
+  "reuse_fraction": {
+    "window": 50,
+    "counts": {
+      "reuse": 41,
+      "invalidate": 9,
+      "error": 0
+    },
+    "reuse_fraction": 0.82,
+    "prs": [
+      {
+        "commit": "e29871aa0aa8fbd59a2f341c9bdb20c6de69032e",
+        "decision": "reuse"
+      },
+      {
+        "commit": "f253799ac421d167fff36a8a38ebf5770586df9e",
+        "decision": "reuse"
+      },
+      {
+        "commit": "892671bd2c3d01fefd6d2a1589b2ecc7e39cf098",
+        "decision": "reuse"
+      },
+      {
+        "commit": "36a8ec661afa8826cc12109babcbfafac63e9f82",
+        "decision": "invalidate"
+      },
+      {
+        "commit": "f551a479d6f2336ce690e601f04e9301dede0815",
+        "decision": "reuse"
+      },
+      {
+        "commit": "6d1c331d586945c8e2a19ce3a3947f655f4cf366",
+        "decision": "reuse"
+      },
+      {
+        "commit": "bcc6b24f928f195f6e207eb05af296c218691302",
+        "decision": "reuse"
+      },
+      {
+        "commit": "2a8bca85edd96e3b7b5b27ba803d77b9cf0e0d28",
+        "decision": "invalidate"
+      },
+      {
+        "commit": "d8f173ef0e26d55da61d1edd39df5c98935fe6ff",
+        "decision": "invalidate"
+      },
+      {
+        "commit": "63c19620cb6edd368088ca4c3526e9d3e8878b9f",
+        "decision": "reuse"
+      },
+      {
+        "commit": "b1914aff6f8c7f224914ec2d0a6fa22bbbdc5db2",
+        "decision": "reuse"
+      },
+      {
+        "commit": "e5d49432aa5fefaa48fa45b586e24dc87df01233",
+        "decision": "reuse"
+      },
+      {
+        "commit": "415ae61064359cf6b09b417e4ccf4626be844c93",
+        "decision": "reuse"
+      },
+      {
+        "commit": "34733b14ad1fc80953171acbb0e7713d71e89a8f",
+        "decision": "reuse"
+      },
+      {
+        "commit": "3ff7a45539dea7613a4a5d347a2e4930d553acc6",
+        "decision": "reuse"
+      },
+      {
+        "commit": "0e8a4690394165dc8885bdef4d444cb6b55e5e93",
+        "decision": "reuse"
+      },
+      {
+        "commit": "fb669f2618c5b42375dc011af2b555c94783c308",
+        "decision": "reuse"
+      },
+      {
+        "commit": "205ccd1ad01790a0176db535bca0294ac8fdf9dd",
+        "decision": "reuse"
+      },
+      {
+        "commit": "2217f9566ea0e99ee0f5f59d641f3ce1a9e3aa13",
+        "decision": "reuse"
+      },
+      {
+        "commit": "b33ad26212c23a2dd235165d0cffa4ca8db8d3d7",
+        "decision": "reuse"
+      },
+      {
+        "commit": "674bdd1ec1a898debf417df771b3c00912c4e2f4",
+        "decision": "reuse"
+      },
+      {
+        "commit": "1f46d8c9eb3b4532dd9ee1224283e6f31bdf1cbf",
+        "decision": "reuse"
+      },
+      {
+        "commit": "29982f04c74831f7b166ee49ef08400807dc2f5c",
+        "decision": "reuse"
+      },
+      {
+        "commit": "16c2246a88512dc0e3bed2fc4c00c70c9b95189a",
+        "decision": "reuse"
+      },
+      {
+        "commit": "6038331febe58130b3dea0f170afe7d5304b93d8",
+        "decision": "reuse"
+      },
+      {
+        "commit": "29c9b56fbcf50701aafa142859853b92243d8a3f",
+        "decision": "reuse"
+      },
+      {
+        "commit": "3b8047d0149600a40a8a5a9226c8803304e1c540",
+        "decision": "reuse"
+      },
+      {
+        "commit": "968d7092bcb8deabf1e86698e4cffb706b8d06e1",
+        "decision": "reuse"
+      },
+      {
+        "commit": "dc78b2ba21dccc4eee0a2a1863e15280dafba773",
+        "decision": "reuse"
+      },
+      {
+        "commit": "6e1841f5b13d0cd7fa0fa1924dd80f9498b21be5",
+        "decision": "reuse"
+      },
+      {
+        "commit": "d7c290c986126bdecd76ede16c3c68627b6ba1aa",
+        "decision": "reuse"
+      },
+      {
+        "commit": "130206ca7ebf4599ebae4ae66b1f3d02f817d3df",
+        "decision": "reuse"
+      },
+      {
+        "commit": "eb00ffd2e4c47f504abeab2beb20eeab61404139",
+        "decision": "reuse"
+      },
+      {
+        "commit": "dc36cc086cc99a61da1f96645fdbdeebe7cf431e",
+        "decision": "reuse"
+      },
+      {
+        "commit": "b55fd1d83df0d7056aed58b5818eb859e6c69bf9",
+        "decision": "reuse"
+      },
+      {
+        "commit": "2ae53be937415d5e5599bac7c5f3d5f84de1f0a1",
+        "decision": "reuse"
+      },
+      {
+        "commit": "d2411123717494e856161a1a6b4bb004dfaaec76",
+        "decision": "reuse"
+      },
+      {
+        "commit": "0d7338f3850af67e878dac067eb46f33dc5f7361",
+        "decision": "reuse"
+      },
+      {
+        "commit": "403833116762e7c985cbe9de8090ef937c495671",
+        "decision": "reuse"
+      },
+      {
+        "commit": "50743fbd58443bd409a3d7f6a91bb186597e5e7e",
+        "decision": "reuse"
+      },
+      {
+        "commit": "f28b39f1cc095e2c06928997124c3c713e195a36",
+        "decision": "invalidate"
+      },
+      {
+        "commit": "0d9f1aec8b70a42513becaf694c152f112cc9b97",
+        "decision": "invalidate"
+      },
+      {
+        "commit": "90c7228a43d64cea954f689642226ed1f652c8e6",
+        "decision": "reuse"
+      },
+      {
+        "commit": "5b6976efc307bf5a869aa1d2eb1c3e2d1d828aff",
+        "decision": "reuse"
+      },
+      {
+        "commit": "e82a5fe398a4843160342db51b1fe627d2825680",
+        "decision": "invalidate"
+      },
+      {
+        "commit": "16a222a4723ab689e59986fa61c18b99b0644aee",
+        "decision": "reuse"
+      },
+      {
+        "commit": "ae27c7f5cce83295c50129ba5eca6a49b9b22a67",
+        "decision": "invalidate"
+      },
+      {
+        "commit": "53d6dd72c0412d1a922bf955701999fd92ff7546",
+        "decision": "invalidate"
+      },
+      {
+        "commit": "72cd1cfb3426436e1e8f97de3e5f7353a0bd2cc6",
+        "decision": "invalidate"
+      },
+      {
+        "commit": "ae71f9d63e6c0d6406d60dd90e177937f80c1ca1",
+        "decision": "reuse"
+      }
+    ]
+  }
+}

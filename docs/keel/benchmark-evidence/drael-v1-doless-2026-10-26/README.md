@@ -297,7 +297,7 @@ In this directory:
 | [`runs.json`](runs.json) | All 30 runs: order, timestamps, task/arm/run, verdicts, machine reasons, surface columns, tokens, est. cost, wall time, session ids, parent/diff SHAs; the reconstructed row is flagged by note |
 | [`control-digests.json`](control-digests.json) | Executor/CLI/checker digests, per-arm surface digests, evaluator script hashes, ledger SHA-256 (pre/post BOM strip), repo HEAD at report time |
 | [`diffs/`](diffs/) | The 30 delivery diffs, named `{NN}-{task}-{arm}{run}-{verdict}.diff` |
-| [`blind-pack/`](blind-pack/) | INDEX + 14 anonymized exhibits as handed to the blind reviewer |
+| [`blind-pack/`](blind-pack/INDEX.md) | INDEX + 14 anonymized exhibits as handed to the blind reviewer ([R01](blind-pack/R01.md), [R02](blind-pack/R02.md), [R03](blind-pack/R03.md), [R04](blind-pack/R04.md), [R05](blind-pack/R05.md), [R06](blind-pack/R06.md), [R07](blind-pack/R07.md), [R08](blind-pack/R08.md), [R09](blind-pack/R09.md), [R10](blind-pack/R10.md), [R11](blind-pack/R11.md), [R12](blind-pack/R12.md), [R13](blind-pack/R13.md), [R14](blind-pack/R14.md)) |
 | [`blind-review.md`](blind-review.md) | Verbatim blind-review table, findings, post-hoc exhibit→run mapping, disagreements |
 | [`CROSS-METHOD.md`](CROSS-METHOD.md) | Cross-methodology battery vs Spec Kit (`s`) and OpenSpec (`o`), same executor/tasks/scorer (report) |
 | [`cross-method/`](cross-method/) | Cross battery data: `rows.json` (28 rows, per-stage sessions included), `stats-cross.md`, `diffs/` (28 delivery diffs) |

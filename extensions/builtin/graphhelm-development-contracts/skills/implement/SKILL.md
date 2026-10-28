@@ -31,6 +31,12 @@ adds what to do around them.
 
 ## Method
 
+**Before the first code edit, write the card.** Outside an execution, create
+`.graphhelm/keel-card.json` with the Write tool (not a shell command), with the three required
+fields: `{"promise": "<one sentence>", "scopePaths": ["<file or dir>"], "proof": "<command>"}`
+(full shape: `docs/keel/KEEL_CHECK.md`). Edit code with Edit or Write, not shell scripts: the Keel
+edit gate sees only those.
+
 1. Work in your own worktree (`graphhelm workspace claim --root <root> --lane <lane> --task <n>
    --repo <repo>` creates it and records the claim). Never edit another session's checkout.
 2. Gather context on purpose: open what the card names, then search for the exact symbol or

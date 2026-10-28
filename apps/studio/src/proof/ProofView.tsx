@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
@@ -7,6 +7,7 @@ import { CheckMarks, CompareFrame } from "./CompareFrame";
 /** #2028: the step thumbnail's shape (`.step-thumb` `aspect-ratio`), for placing its check boxes. */
 const THUMB_ASPECT = 1694 / 946;
 import { decisionOf, offersDecision, rejectNote } from "./decision";
+import { failureNotice, type FailureNotice } from "./failure";
 import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./send-fix";
 import { askedWhen } from "../lanes/asked";
 import { OWNER } from "../runtime/client";
@@ -352,6 +353,9 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
   // #1878: a mobile-only run has no web frame; its step thumbnail is the mobile one.
   const thumb = (screen: string): string | undefined => frames[screen] ?? mobileFrames[screen];
   const finished = run?.state === "ready";
+  // #1298: a failed run says where and why, above the console; its Send to fix moves into that alert.
+  const failure = busy || stale ? null : failureNotice(run, steps);
+  const fix = run !== null && offersFix(run) ? <SendToFix key={fixRequestId(flow.id, run)} runtime={runtime} flow={flow} run={run} steps={steps} executionId={executionId} /> : null;
   return (
     <div className="proof-main">
       <section aria-label="Journey run" className="journey-run">
@@ -378,7 +382,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
             <button type="button" className="b ghost" disabled aria-describedby="proof-stop-note">Stop</button>
           )}
           {busy && <span id="proof-stop-note" className="run-note">The Runtime has no route to stop a run.</span>}
-          {run !== null && offersFix(run) && <SendToFix key={fixRequestId(flow.id, run)} runtime={runtime} flow={flow} run={run} steps={steps} executionId={executionId} />}
+          {failure === null && fix}
           {status !== null && <span role="status" aria-label={status.name} className="run-status"><span className="pulse" aria-hidden="true" />{status.text}</span>}
           {said !== null && <span role="status" aria-label={said.split(" · ")[0]} className="run-verdict" title={when(run?.ranAt).full || undefined}>{said}</span>}
           {stale && <span className="run-note stale-note">Results and frames from the earlier version ({earlier.ranAt ? when(earlier.ranAt).text : earlier.run}). Run to prove the current version.</span>}
@@ -386,6 +390,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
             <button type="button" className="b ghost" aria-expanded={showLog} onClick={() => setShowLog(!showLog)}>{showLog ? "Hide log" : "Show log"}</button>
           )}
         </div>
+        {failure !== null && <FailureAlert notice={failure} fix={fix} />}
         {showLog && (
           <pre role="log" aria-label="Run console" className="run-log">{log.length > 0 ? log.join("\n") : busy ? "Waiting for the Runtime's first line…" : NO_LOG}</pre>
         )}
@@ -437,6 +442,30 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
       {selected !== null && (
         <CompareFrame runtime={runtime} flowId={flow.id} step={selected} steps={steps.length} now={frame} mobileNow={mobileFrames[selected.screen]} earlier={earlierRun(history, stale ? pastAsRun(earlier) : run, selected.screen)} staleRun={stale} />
       )}
+    </div>
+  );
+}
+
+/** #1298: the failed run's alert: the sentence, the code and step, the launcher's last lines
+ * folded open, Copy details, and Send to fix when the run offers it. */
+function FailureAlert({ notice, fix }: { notice: FailureNotice; fix: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => { void navigator.clipboard?.writeText(notice.details).then(() => setCopied(true), () => setCopied(false)); };
+  return (
+    <div role="alert" className="run-failure">
+      <strong className="run-failure-sentence">{notice.sentence}</strong>
+      {notice.code !== null && <span className="mono run-failure-code">{notice.code}</span>}
+      {notice.log !== null && (
+        <details open className="run-failure-log">
+          <summary className="mono">{notice.log.label}, last {notice.log.lines.length} lines</summary>
+          <pre className="mono">{notice.log.lines.join("\n")}</pre>
+        </details>
+      )}
+      <div className="run-failure-actions">
+        <button type="button" className="b ghost" onClick={copy}>Copy details</button>
+        {copied && <span role="status" className="sent">Copied</span>}
+        {fix}
+      </div>
     </div>
   );
 }

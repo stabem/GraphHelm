@@ -205,6 +205,12 @@ button { font: inherit; }
 @keyframes pulse { from { opacity: .3; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
 .run-verdict { color: var(--muted); }
+.run-failure { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3); border-radius: var(--card-radius); border: 1px solid #5a2a2a; background: #1a0f0f; }
+.run-failure-sentence { font-size: var(--fs-card); font-weight: 500; color: #ff9b9b; }
+.run-failure-code { font: 10px var(--mono); color: var(--muted); }
+.run-failure-log summary { cursor: pointer; font-size: var(--fs-meta); color: var(--muted); }
+.run-failure-log pre { margin: 6px 0 0; padding: 8px 10px; border-radius: 6px; background: var(--bg); font: 11px/1.6 var(--mono); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.run-failure-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
 .run-history { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); font-size: var(--fs-meta); color: var(--muted); }
 .run-log { margin: 0; padding: 10px; border-radius: 8px; background: #060607; border: 1px solid var(--edge); font: 11px/1.5 var(--mono); color: var(--muted); max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .steps-card { border: 1px solid var(--edge-strong); border-radius: 12px; background: #151517; padding: 10px; }

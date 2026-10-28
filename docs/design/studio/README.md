@@ -11,6 +11,7 @@ https://claude.ai/artifact/WjdL5A6eXFgT2BWVbcmfuL (earlier copy: https://claude.
 | `Graph.dc.html` | Work by request: owner requests, the issues and PRs opened for them, review modal with Before / Now, request status chips with the Delivered collapse |
 | `Lanes.dc.html` | Agent control: agents by state, idle time, questions waiting for a reply, needs-action queue, capacity, live feed |
 | `Proof.dc.html` | Journeys column, run bar with setup log, step frames, Before / Now compare, web and mobile; a Proof states section with live and result cards, Send to fix, the kind badge, Run these commands?, terminal tiles, the terminal panel with Structured / Raw, and the phone frame |
+| `ProofFail.dc.html` | Proof with a failed run (#1298, approved 2026-10-28): the alert under the run bar with the sentence naming the failed step and why, the error code and step, the launcher's last lines folded open, Copy details and Send to fix |
 | `Tokens.dc.html` | One scale for Graph, Lanes and Proof: type 11/12/13/15, spacing 4/8/12/16/24, card and column sizes, state colours, and the date format |
 | `States.dc.html` | States every view can be in: loading, Runtime not answering with Retry, restarting, empty, error with detail and Copy details |
 | `canvas.json` | Layout of the canvas the files come from |

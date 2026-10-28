@@ -59,11 +59,15 @@ const FROZEN_CORPUS_PREFIX: &str = "adapters/tool-host/tests/fixtures/context-qu
 /// The holdout's frozen corpus (#1705), excluded from every LIVE count for the same reason.
 const HOLDOUT_CORPUS_PREFIX: &str = "adapters/tool-host/tests/fixtures/context-holdout/tree/";
 
-/// The live count's exclusion: the test itself and both frozen corpora.
+/// The second holdout's frozen corpus (#1705), excluded from every LIVE count for the same reason.
+const HOLDOUT_V2_CORPUS_PREFIX: &str = "adapters/tool-host/tests/fixtures/context-holdout-v2/tree/";
+
+/// The live count's exclusion: the test itself and every frozen corpus.
 fn is_instrument(path: &str) -> bool {
     path == SELF_PATH
         || path.starts_with(FROZEN_CORPUS_PREFIX)
         || path.starts_with(HOLDOUT_CORPUS_PREFIX)
+        || path.starts_with(HOLDOUT_V2_CORPUS_PREFIX)
 }
 
 /// Objective -> the file a maintainer would open. Each objective is a question a maintainer
@@ -167,6 +171,59 @@ const HOLDOUT_CASES: [(&str, &str); 10] = [
 /// fixed, so any drop is a change in the ranking.
 const HOLDOUT_HITS_AT_3_FLOOR: usize = 4;
 
+/// #1705: HOLDOUT v2. Ten questions in a contributor's plain words, each with the one file that
+/// answers it. Written by reading the repository's code and documents, before the ranking code
+/// or any ranking result was read, and committed before the ranking was run on any of them.
+/// Seven ask about implementation, three about normative or process documents. Never tuned
+/// against: a rewritten question or oracle after a result is seen is retuning; freeze a new
+/// holdout instead (fixtures/context-holdout-v2/MANIFEST.md).
+const HOLDOUT_V2_CASES: [(&str, &str); 10] = [
+    (
+        "how does the scheduler work out which steps of a graph can start right now",
+        "core/execution/src/ready.rs",
+    ),
+    (
+        "why can the final message to the owner never say everything went fine when the work actually failed",
+        "core/runtime/src/owner_output.rs",
+    ),
+    (
+        "why does the checker only complain about code I just added, and how do I excuse one finding",
+        "core/policy/src/keel_lines.rs",
+    ),
+    (
+        "how do we tell which stage of delivery a stuck pull request is in and who should fix it",
+        "core/execution/src/autopilot.rs",
+    ),
+    (
+        "how deeply nested or how large can a JSON document be before it is rejected",
+        "core/schema/src/bounded_value.rs",
+    ),
+    (
+        "why can a model route not be both a paid API key and a subscription login",
+        "core/gateway/src/manifest.rs",
+    ),
+    (
+        "when a step keeps failing its checks, how do we decide to hand it to a different agent",
+        "core/runtime/src/delegation.rs",
+    ),
+    (
+        "what attacks did we think about for the journal and the stored evidence, and how is each one tested",
+        "docs/security/EVENT_EVIDENCE_STORE_THREAT_MODEL.md",
+    ),
+    (
+        "how do I back up the event data and bring it back on a new server after an upgrade",
+        "docs/operations/VPS_UPGRADE_BACKUP_RESTORE.md",
+    ),
+    (
+        "what must a reviewer who never saw the author's reasoning read and run before giving a verdict",
+        "keel/KEEL_REVIEW.md",
+    ),
+];
+
+/// The holdout v2 floor over its FROZEN corpus. Pre-registration commit: no value yet (0 asserts
+/// nothing); the measured value is recorded in the next commit, after the cases are pushed.
+const HOLDOUT_V2_HITS_AT_3_FLOOR: usize = 0;
+
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -188,6 +245,14 @@ fn holdout_root() -> PathBuf {
 
 fn holdout_corpus() -> PathBuf {
     holdout_root().join("tree").canonicalize().unwrap()
+}
+
+fn holdout_v2_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/context-holdout-v2")
+}
+
+fn holdout_v2_corpus() -> PathBuf {
+    holdout_v2_root().join("tree").canonicalize().unwrap()
 }
 
 /// Whether a measurement asserts the capsule shape (frozen corpus) or only prints it (live tree).
@@ -383,6 +448,41 @@ fn holdout_hits_at_3_over_this_repository_are_printed_not_asserted() {
     );
 }
 
+/// #1705: holdout v2 over its own frozen corpus.
+#[test]
+fn holdout_v2_hits_at_3_over_its_frozen_corpus_hold_the_baseline() {
+    let hits = measure(
+        &holdout_v2_corpus(),
+        "holdout v2 frozen corpus",
+        &HOLDOUT_V2_CASES,
+        |_| false,
+        Capsules::Asserted,
+    )
+    .hits;
+    assert!(
+        hits >= HOLDOUT_V2_HITS_AT_3_FLOOR,
+        "holdout v2 hits@3 {hits}/{} fell below the frozen baseline {HOLDOUT_V2_HITS_AT_3_FLOOR}",
+        HOLDOUT_V2_CASES.len()
+    );
+}
+
+/// #1705: holdout v2 questions over the moving tree: printed, never asserted.
+#[test]
+fn holdout_v2_hits_at_3_over_this_repository_are_printed_not_asserted() {
+    let hits = measure(
+        &repository_root(),
+        "holdout v2 live repository",
+        &HOLDOUT_V2_CASES,
+        is_instrument,
+        Capsules::Printed,
+    )
+    .hits;
+    assert!(
+        hits <= HOLDOUT_V2_CASES.len(),
+        "hits are bounded by the case count"
+    );
+}
+
 /// Every file under `root`, repository-relative with forward slashes, sorted — never in
 /// `read_dir` order.
 fn files_under(root: &Path) -> Vec<String> {
@@ -456,6 +556,11 @@ fn the_frozen_corpus_matches_its_manifest() {
 #[test]
 fn the_holdout_corpus_matches_its_manifest() {
     assert_corpus_matches_manifest(&holdout_root(), &holdout_corpus(), &HOLDOUT_CASES);
+}
+
+#[test]
+fn the_holdout_v2_corpus_matches_its_manifest() {
+    assert_corpus_matches_manifest(&holdout_v2_root(), &holdout_v2_corpus(), &HOLDOUT_V2_CASES);
 }
 
 /// #1705: the evaluator itself is deterministic: two full holdout runs over the frozen corpus

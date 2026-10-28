@@ -13,6 +13,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
             // run; its bytes are hashed, so it keeps the spawn it was copied with (#1374, #1705).
             if path.ends_with("tests/fixtures/context-quality/tree")
                 || path.ends_with("tests/fixtures/context-holdout/tree")
+                || path.ends_with("tests/fixtures/context-holdout-v2/tree")
             {
                 continue;
             }

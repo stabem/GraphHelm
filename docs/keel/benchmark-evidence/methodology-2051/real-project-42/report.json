@@ -1,0 +1,3614 @@
+{
+ "exportOf": {
+  "sha256": "cfb2f1a63dd67e6063ed96951d59a21822a86b5c022ad9977744c16de5fc46f3",
+  "bytes": 9626822
+ },
+ "schema": "real-methodology-report/2",
+ "studyType": "real_project_methodology",
+ "complete": true,
+ "attempts": [
+  {
+   "id": "000",
+   "task": "task-record-binding",
+   "profile": "direct",
+   "cli": "codex",
+   "promptSha256": "94620dace34011ff96ffd5aff8b870eadf266eaffcf035bdd79a50e517383134",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 37.90599999999904,
+   "agent": {
+    "exit": 0,
+    "seconds": 37.90599999999904,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "cb75b349635346b74ec8c0d890139fc0bb27a4ff10c9432912019ab0bfad5b2f",
+    "stdoutBytes": 177389,
+    "stderrSha256": "881256e850fade745fab555d3163e36f1351773b22a365bdbb8feebd63b50311",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 294824,
+     "cached_input_tokens": 257152,
+     "output_tokens": 1616
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.4219999999986612,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "b084986b975bb7fbf24c8ae627115cac235e05aac49137acbf37eabd38974f87",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 1.015000000001237,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "7dc1241fff63a4bcae385c99ee9ce2bd24909d5dcd5ab36b30da180861b3be24",
+     "stdoutBytes": 28030,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "b9e4a7eaca5eb7b4e8a343d283178be4e75b2257a930184495803b47ed847443"
+   }
+  },
+  {
+   "id": "001",
+   "task": "task-record-binding",
+   "profile": "direct",
+   "cli": "claude",
+   "promptSha256": "94620dace34011ff96ffd5aff8b870eadf266eaffcf035bdd79a50e517383134",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 40.59300000000076,
+   "agent": {
+    "exit": 0,
+    "seconds": 40.57799999999952,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "ed001ba4b8540298d87af0d97d7ff87a53f46d3b58a7e89981bbe2b4533c1fb1",
+    "stdoutBytes": 332267,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 10,
+     "output": 3384,
+     "cacheRead": 122507,
+     "cacheWrite": 34820
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 10,
+     "output": 619,
+     "cacheRead": 122507,
+     "cacheWrite": 34820,
+     "assistantMessages": 5,
+     "userMessages": 7,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 7,
+     "toolNames": {
+      "Bash": 4,
+      "Edit": 2,
+      "Read": 1
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 10,
+     "output": 3384,
+     "cacheRead": 122507,
+     "cacheWrite": 34820
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 10,
+      "output": 3384,
+      "cacheRead": 122507,
+      "cacheWrite": 34820
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.40600000000085856,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "8cd2269512fd4a3aeaebae45651e2eb1bb4230f190e67ee79aa03fd4cb17a78a",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 1.1089999999985594,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "682a0fe6e90d8ab8f2ef8eb563f52cc9c3d4eb10a17dfa9fe5c6bace1ad54c2f",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "e304bc7b25942b3a5e974f09d6928ad143e363367d48f4d470f5d72ea37d401c"
+   }
+  },
+  {
+   "id": "002",
+   "task": "task-record-binding",
+   "profile": "tdd",
+   "cli": "codex",
+   "promptSha256": "111809a230d20affc8c4116c3e9ac529cd38dc9f93a5d26159fe2c27537151ba",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 58.79700000000048,
+   "agent": {
+    "exit": 0,
+    "seconds": 58.79700000000048,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "7a993b750961efcfa2695f43b9fec00bf42e32ae522d14ff6c6a3b4fad3890bb",
+    "stdoutBytes": 208832,
+    "stderrSha256": "0ef6f168141eebc78eb97ea8603c778769a4e8cff1ecf2ae852ba19da64fd297",
+    "stderrBytes": 492
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 476205,
+     "cached_input_tokens": 432000,
+     "output_tokens": 2542
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.43800000000010186,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "2cbdc06af75114c8abbca7a0d7194125f320c401a96d0ca965b662dcfb6484b2",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.9840000000003783,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "beb19f7a73e045a50fe981bb88708b218d8257fc50df35b8e6febc22572fa225",
+     "stdoutBytes": 27768,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "527594e768c5f094e40b23359a43cf68e46c349278f3f3c535e5f7601cf8a304"
+   }
+  },
+  {
+   "id": "003",
+   "task": "task-record-binding",
+   "profile": "tdd",
+   "cli": "claude",
+   "promptSha256": "111809a230d20affc8c4116c3e9ac529cd38dc9f93a5d26159fe2c27537151ba",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 67.15600000000086,
+   "agent": {
+    "exit": 0,
+    "seconds": 67.15600000000086,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "e0a320a534541f9301ce24f918dc25f8b63b8d60492dbee2944129d1d562a886",
+    "stdoutBytes": 658297,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 20,
+     "output": 7330,
+     "cacheRead": 503621,
+     "cacheWrite": 60197
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 20,
+     "output": 778,
+     "cacheRead": 503621,
+     "cacheWrite": 60197,
+     "assistantMessages": 10,
+     "userMessages": 15,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 15,
+     "toolNames": {
+      "Bash": 9,
+      "Edit": 4,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 20,
+     "output": 7330,
+     "cacheRead": 503621,
+     "cacheWrite": 60197
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 20,
+      "output": 7330,
+      "cacheRead": 503621,
+      "cacheWrite": 60197
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.40600000000085856,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "1c0ec40cb6b7f3b3c1ed40d996108d16ca6408d4e31caef2d1dcb0e5def146a9",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 1.0470000000004802,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "5fa7ab84deae954e4c4bd8897afffaf250317d23636b4d07a742728f714022a9",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "a3c065fda77b50454994200a96fc2a591e6d3edd2761c5174e06196b89231f69"
+   }
+  },
+  {
+   "id": "004",
+   "task": "task-record-binding",
+   "profile": "spec-kit",
+   "cli": "codex",
+   "promptSha256": "3f316ad5e0992b1e4a060c5821611cda7e2af4cfcf52e1bf55b3406275135899",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 53.54700000000048,
+   "agent": {
+    "exit": 0,
+    "seconds": 53.54700000000048,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "79336d3eb5f60b297f5eae89e8035e0a6594d1b5a49de137eece1f424dfb8223",
+    "stdoutBytes": 180283,
+    "stderrSha256": "8eba60c58b06bcf50a87a233402f527fa04255860549f5317d92ebf9a2bbc314",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 391590,
+     "cached_input_tokens": 362368,
+     "output_tokens": 2301
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.43800000000010186,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "178593a1e9a49507519d9cbc0eddabbd5d9283a4963924585b3b8cf971061372",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 1.0469999999986612,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "0acdcd402067b2249b5534b8755a06ab5070e0c570b8631cf4b1657ce4ce6b62",
+     "stdoutBytes": 22580,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "5a30fd475691db56a85e1d240c1a724c9f8768071c311febd9ece74110b77713"
+   }
+  },
+  {
+   "id": "005",
+   "task": "task-record-binding",
+   "profile": "spec-kit",
+   "cli": "claude",
+   "promptSha256": "3f316ad5e0992b1e4a060c5821611cda7e2af4cfcf52e1bf55b3406275135899",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 54.17200000000048,
+   "agent": {
+    "exit": 0,
+    "seconds": 54.17200000000048,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "533ad56f6a4ccb2f363c69c957851dc1571f8d1dfca72bea4c97a67d5377e68f",
+    "stdoutBytes": 431966,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 16,
+     "output": 4370,
+     "cacheRead": 236578,
+     "cacheWrite": 35922
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 16,
+     "output": 719,
+     "cacheRead": 236578,
+     "cacheWrite": 35922,
+     "assistantMessages": 8,
+     "userMessages": 10,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 10,
+     "toolNames": {
+      "Bash": 6,
+      "Edit": 3,
+      "Read": 1
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 16,
+     "output": 4370,
+     "cacheRead": 236578,
+     "cacheWrite": 35922
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 16,
+      "output": 4370,
+      "cacheRead": 236578,
+      "cacheWrite": 35922
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.43800000000010186,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "4162b4aad4666a5272c2fa2c317029db49987d340deda677bda4ff6c95a135ef",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 1.0,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "514d62b4f7f227a3e2d432a57f23d52fcffdfd5e96246382a6267390102ef66a",
+     "stdoutBytes": 22875,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "9a04a795b5e0972fecafb51453e4264cb266021d379c32807938918655690993"
+   }
+  },
+  {
+   "id": "006",
+   "task": "task-record-binding",
+   "profile": "openspec",
+   "cli": "codex",
+   "promptSha256": "41c607a622840b7ea36f44c5761a9c0982cf343f159653f19355e1e3d098c68f",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 54.78100000000086,
+   "agent": {
+    "exit": 0,
+    "seconds": 54.78100000000086,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "5cfbf6b3f1a3e590cedeb1306044be7bb02f36da6e7ec6814e6f4b11dfa275e9",
+    "stdoutBytes": 202876,
+    "stderrSha256": "98d322c2e8cd75bdb7cb4a81616a1d9e844e374aded26dd49d70e9e02f623ab9",
+    "stderrBytes": 327
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 427694,
+     "cached_input_tokens": 385792,
+     "output_tokens": 2609
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.4210000000002765,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "1403e460f03c84391af64a6570576c023417c19f78a73303f4d82e5326c39701",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 1.125,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "abd4ecb812d4e6d7d692cca0827e9dcaba2af5960ae03fff81645158ceb2b6a1",
+     "stdoutBytes": 22414,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "4b858ad6dc5591ee36834d3fa02cfc42168ea6fdca08e4d39f4b315a7e5bd708"
+   }
+  },
+  {
+   "id": "007",
+   "task": "task-record-binding",
+   "profile": "openspec",
+   "cli": "claude",
+   "promptSha256": "41c607a622840b7ea36f44c5761a9c0982cf343f159653f19355e1e3d098c68f",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 65.5,
+   "agent": {
+    "exit": 0,
+    "seconds": 65.5,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "aef98c794bc3add9cd16097b42fa4dec157d33300dc86c2559b36a9455010436",
+    "stdoutBytes": 647922,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 16,
+     "output": 7429,
+     "cacheRead": 375872,
+     "cacheWrite": 59202
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 16,
+     "output": 793,
+     "cacheRead": 375872,
+     "cacheWrite": 59202,
+     "assistantMessages": 8,
+     "userMessages": 12,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 12,
+     "toolNames": {
+      "Bash": 5,
+      "Edit": 4,
+      "Glob": 1,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 16,
+     "output": 7429,
+     "cacheRead": 375872,
+     "cacheWrite": 59202
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 16,
+      "output": 7429,
+      "cacheRead": 375872,
+      "cacheWrite": 59202
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.4219999999986612,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "61f1debdb966f3598d474555546c6788daee30ccf41c16a071ca6e55004cb61a",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 1.0310000000008586,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "bffcd157ce65b6b8578c8a993c00d39bd5e64b97f19973759991215b8aa5d3a8",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "e55a628b486edaaa89eb62249ddcde7c7fab48a32143452a41744381f68bc8ad"
+   }
+  },
+  {
+   "id": "008",
+   "task": "task-record-binding",
+   "profile": "bmad",
+   "cli": "codex",
+   "promptSha256": "bfdc491d80844509612f37adf19c3a1021d8dbfad454432fd9e6bb8dc0bf64f1",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 77.48400000000038,
+   "agent": {
+    "exit": 0,
+    "seconds": 77.48400000000038,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "6369ed62a0f4b355a91e23e68517f109ed924fa070ba868f3aff4074fad1bcfb",
+    "stdoutBytes": 311011,
+    "stderrSha256": "7173d672ed47b61043ef19dcf561493b7d99d15f9ef746dd3e845d7b62ec2e02",
+    "stderrBytes": 492
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 581464,
+     "cached_input_tokens": 521216,
+     "output_tokens": 3418
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.4210000000002765,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "475e136f527c87b897fd5cbd3b5c09c87fa0ca3123aa3900b0e6482d00b5b6ec",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 1.0159999999996217,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "216ddc97c7ef748a8edef9952bf9687b1cec4db48b5bfd3b56146fecc7128b82",
+     "stdoutBytes": 22278,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "eef058c42f195b927cefa321f4c884568c49e736d16523ce522591445d741653"
+   }
+  },
+  {
+   "id": "009",
+   "task": "task-record-binding",
+   "profile": "bmad",
+   "cli": "claude",
+   "promptSha256": "bfdc491d80844509612f37adf19c3a1021d8dbfad454432fd9e6bb8dc0bf64f1",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 46.28100000000086,
+   "agent": {
+    "exit": 0,
+    "seconds": 46.28100000000086,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "6c514f0c83d6ecd97923d18922f8ebdecfeceed4a008889551f9ae44f0f34800",
+    "stdoutBytes": 525183,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 12,
+     "output": 4077,
+     "cacheRead": 251189,
+     "cacheWrite": 56420
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 12,
+     "output": 541,
+     "cacheRead": 251189,
+     "cacheWrite": 56420,
+     "assistantMessages": 6,
+     "userMessages": 8,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 8,
+     "toolNames": {
+      "Bash": 2,
+      "Edit": 3,
+      "Grep": 1,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 12,
+     "output": 4077,
+     "cacheRead": 251189,
+     "cacheWrite": 56420
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 12,
+      "output": 4077,
+      "cacheRead": 251189,
+      "cacheWrite": 56420
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.43699999999989814,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "9ebc346ccb1f9c076682c1500ab043725b939e550c2c69c140b78c8decf9c1a2",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 1.0630000000001019,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "06d1983d2c9a9b5255ce2d00c7a0110da5d927115ad855fda0cb8d1c528fff22",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "883d722cb2ca83c99665aa07781b7df5a0d7a2619423650b8b600a25cb6495f4"
+   }
+  },
+  {
+   "id": "010",
+   "task": "task-record-binding",
+   "profile": "superpowers",
+   "cli": "codex",
+   "promptSha256": "a073e968f3036bb90fb993ad4d6b42f3cb964fc44785190b4703d495a58a7d4a",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 94.10900000000038,
+   "agent": {
+    "exit": 0,
+    "seconds": 94.09300000000076,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "dd4ea5e3c9247c6dea2efcad199557efa5b285c324f14806026a368a3de31efb",
+    "stdoutBytes": 868027,
+    "stderrSha256": "fe46d7eea418c787093f0f87e0b9e7257b31b89c055092dee07072b02895b0c5",
+    "stderrBytes": 496
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 746175,
+     "cached_input_tokens": 706432,
+     "output_tokens": 4070
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.4220000000004802,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "7712cf4ad801c9b03608e47c3032ff60beb680607b769c70201fcfa2f0474012",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 1.0460000000002765,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "e418f0bb2262c0ce44aa9b26db22fb26f11be66bfd33f2312a282e03b37b949c",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "8140ee76e59e8f1b2a1b59e9d9acfe8a1f17ee7b3b81c8656bac6068b25a2562"
+   }
+  },
+  {
+   "id": "011",
+   "task": "task-record-binding",
+   "profile": "superpowers",
+   "cli": "claude",
+   "promptSha256": "a073e968f3036bb90fb993ad4d6b42f3cb964fc44785190b4703d495a58a7d4a",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 63.45300000000134,
+   "agent": {
+    "exit": 0,
+    "seconds": 63.4380000000001,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "53dd8fc014de8696e51245717ef22e1a3287e76314377c5f6b10f84b4c04b679",
+    "stdoutBytes": 705698,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 14,
+     "output": 7362,
+     "cacheRead": 315418,
+     "cacheWrite": 58637
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 14,
+     "output": 717,
+     "cacheRead": 315418,
+     "cacheWrite": 58637,
+     "assistantMessages": 7,
+     "userMessages": 12,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 12,
+     "toolNames": {
+      "Bash": 4,
+      "Edit": 5,
+      "Glob": 1,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 14,
+     "output": 7362,
+     "cacheRead": 315418,
+     "cacheWrite": 58637
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 14,
+      "output": 7362,
+      "cacheRead": 315418,
+      "cacheWrite": 58637
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.4220000000004802,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "73c672ed2f9df281fa3cb5d1b0d4fd45c8ce09d1520a805f27a84afa0f1e2249",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 1.0309999999990396,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "dcb2727a08269df89c3dc059f733d03f35826a40338f36d95a552e15983667e1",
+     "stdoutBytes": 24349,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "5dd70b6340dab5af9ee0c37ffcd124b71cb7e711e55023bde47e6c4fd05f4f88"
+   }
+  },
+  {
+   "id": "012",
+   "task": "task-record-binding",
+   "profile": "jpd-keel",
+   "cli": "codex",
+   "promptSha256": "2b62ce0b9b2e7150148a34a3bb1302b98a8b28a3860a0793c5874583504dda3f",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 70.59300000000076,
+   "agent": {
+    "exit": 0,
+    "seconds": 70.59300000000076,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "0490451537dbc390c4d05f3ea752e1cdd2616d6c269117551c046b4288b15d2c",
+    "stdoutBytes": 436604,
+    "stderrSha256": "4fabbcaff25455acdef956141f53ceb70d39b908492bdd3f8b9efc1615e143f7",
+    "stderrBytes": 496
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 555957,
+     "cached_input_tokens": 509952,
+     "output_tokens": 2713
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.43800000000010186,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "438b27be2a67efb62c613ac7bb4e2dc84c3451ebc3d8eec35bd1bc1fd116601a",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 1.0460000000002765,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "4d5c694fa1796074fe2370cec4591d43ef75848133f256f6b1eeadb5efe365fe",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "ec7190810293a651fcb14bb2f1d3ff3040942c8c7cd0eec64d06828b080d9b43"
+   }
+  },
+  {
+   "id": "013",
+   "task": "task-record-binding",
+   "profile": "jpd-keel",
+   "cli": "claude",
+   "promptSha256": "2b62ce0b9b2e7150148a34a3bb1302b98a8b28a3860a0793c5874583504dda3f",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 46.11000000000058,
+   "agent": {
+    "exit": 0,
+    "seconds": 46.11000000000058,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "cfce0083482c10cdf0c50d86c91ee24addb25f7f1d0783b372827bd385fa0b55",
+    "stdoutBytes": 329236,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 14,
+     "output": 3995,
+     "cacheRead": 193727,
+     "cacheWrite": 33401
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 14,
+     "output": 718,
+     "cacheRead": 193727,
+     "cacheWrite": 33401,
+     "assistantMessages": 7,
+     "userMessages": 10,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 10,
+     "toolNames": {
+      "Bash": 6,
+      "Edit": 2,
+      "Grep": 1,
+      "Read": 1
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 14,
+     "output": 3995,
+     "cacheRead": 193727,
+     "cacheWrite": 33401
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 14,
+      "output": 3995,
+      "cacheRead": 193727,
+      "cacheWrite": 33401
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.4059999999990396,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "13857430743f4814f99f4947a7900d5c50093175c5d20c030ac3bb7afb9eb82d",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 1.0470000000004802,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "ad1ec4dfcc9e18575cb9635c682f5a7622bd358cb5bee16cf2e4c9d9c720d75e",
+     "stdoutBytes": 315,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "tools/task-record/task_record.py": "9bb4a5a781f38e3b158c1e81d084fbd655f872bc99da9c875734342eded7560f"
+   }
+  },
+  {
+   "id": "014",
+   "task": "studio-get-dedupe",
+   "profile": "tdd",
+   "cli": "claude",
+   "promptSha256": "d681778bc47f7b6884c60943e22dea0180d6a7b53574cfd56aebfdd7db71c43c",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 31.75,
+   "agent": {
+    "exit": 0,
+    "seconds": 31.75,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "525f4fa90fc5a5dac448a25ee440b281f69427a704f34929be0974a711bccf99",
+    "stdoutBytes": 123282,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 8,
+     "output": 2200,
+     "cacheRead": 56099,
+     "cacheWrite": 16623
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 8,
+     "output": 456,
+     "cacheRead": 56099,
+     "cacheWrite": 16623,
+     "assistantMessages": 4,
+     "userMessages": 7,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 7,
+     "toolNames": {
+      "Bash": 3,
+      "Edit": 2,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 8,
+     "output": 2200,
+     "cacheRead": 56099,
+     "cacheWrite": 16623
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 8,
+      "output": 2200,
+      "cacheRead": 56099,
+      "cacheWrite": 16623
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5310000000008586,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "3c72b7942baa13a33129f619e1c2b87f90575fe2879b76a061aa38355d449ddc",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5159999999996217,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "944af8c9fc83fa05e422d662e9abb5d0864065e527ced155985753d54bc45341",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "0eabbd31a40350380a289468824d2800b221408424f720c72cebd8b9edf8a49f"
+   }
+  },
+  {
+   "id": "015",
+   "task": "studio-get-dedupe",
+   "profile": "tdd",
+   "cli": "codex",
+   "promptSha256": "d681778bc47f7b6884c60943e22dea0180d6a7b53574cfd56aebfdd7db71c43c",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 33.39000000000124,
+   "agent": {
+    "exit": 0,
+    "seconds": 33.39000000000124,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "6a6cccbb34021ca1784bed024e61bad85679308c761a9590763b76c754ec689a",
+    "stdoutBytes": 30811,
+    "stderrSha256": "f3b5f05f7a4a6f029b5a3b067f43ce9767888d4f4be2cc2bbbbb5cd73f981d83",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 158497,
+     "cached_input_tokens": 109312,
+     "output_tokens": 1374
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5159999999996217,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "5f4fe8bb69769c18f5cddb003878336ffd806a18efbbc5914efdff3bb9be42db",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5310000000008586,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "efc56895d2cb7df950baee8f5e65ab7969ab5dd4bd4b3d86a7b55da7a85d5aac",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "7f912b92a8b5c47445e1d973b096c29b6688365e24c39c86fd3155ff4a2ad5c5"
+   }
+  },
+  {
+   "id": "016",
+   "task": "studio-get-dedupe",
+   "profile": "spec-kit",
+   "cli": "claude",
+   "promptSha256": "01895bcacb44f115a4eed116deaa9919c3895fc6623e9547ec5bc84d6196b58f",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 29.23399999999856,
+   "agent": {
+    "exit": 0,
+    "seconds": 29.23399999999856,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "54909608dca411842d7796abde0811f016b30991d9a0519d1a2621f51cc9acc9",
+    "stdoutBytes": 109428,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 6,
+     "output": 2085,
+     "cacheRead": 32113,
+     "cacheWrite": 14357
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 6,
+     "output": 456,
+     "cacheRead": 32113,
+     "cacheWrite": 14357,
+     "assistantMessages": 3,
+     "userMessages": 5,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 5,
+     "toolNames": {
+      "Bash": 1,
+      "Edit": 2,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 6,
+     "output": 2085,
+     "cacheRead": 32113,
+     "cacheWrite": 14357
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 6,
+      "output": 2085,
+      "cacheRead": 32113,
+      "cacheWrite": 14357
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5159999999996217,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "bcdee59117f6df8d6f4b370235725cdf0c7deab1cfc208deb63b4abf0e31f3ba",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "f098910135b68dc8622fc5f324f541aaa5dad0dcaa3ec57e8362fd6e53edaaf5",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "d3c9ee4a37233a37c0212cbb2c0b40c08a96ab994fb6e6ecb5b1f1dd60570ec5"
+   }
+  },
+  {
+   "id": "017",
+   "task": "studio-get-dedupe",
+   "profile": "spec-kit",
+   "cli": "codex",
+   "promptSha256": "01895bcacb44f115a4eed116deaa9919c3895fc6623e9547ec5bc84d6196b58f",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 37.90600000000086,
+   "agent": {
+    "exit": 0,
+    "seconds": 37.90600000000086,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "4df3d07e14c4198daea712d970102f8f4780fc089b0813fd811f3a34c98d6036",
+    "stdoutBytes": 32128,
+    "stderrSha256": "bd15aaf7c9b2006cea025acd9ae0178c5fdfe5de7193083ac8b64bb9c21c8ceb",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 166687,
+     "cached_input_tokens": 145280,
+     "output_tokens": 1838
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "c1be84f4440bc35696bb84b168c06c2734028d1898af3a47d1d0109a266518be",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "950c002bc9f69a4228d5f56bf1f359e20e969a0e7cd30766caf1f0c63742af37",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "1948937bcd0d5747f730ab8717758d0d7fbe0f47c3e196932e485dc8a850d090"
+   }
+  },
+  {
+   "id": "018",
+   "task": "studio-get-dedupe",
+   "profile": "openspec",
+   "cli": "claude",
+   "promptSha256": "c4567249fa1f1e454cbae3fe370f5d7bcf70e63d7413c71eef96bd7cd373e543",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 36.375,
+   "agent": {
+    "exit": 0,
+    "seconds": 36.375,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "bc56d7eb57b6dec4587090b0d11ae81137778cd41d725ec216e0d05b7f3ed0b7",
+    "stdoutBytes": 122715,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 6,
+     "output": 2781,
+     "cacheRead": 33461,
+     "cacheWrite": 15930
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 6,
+     "output": 29,
+     "cacheRead": 33461,
+     "cacheWrite": 15930,
+     "assistantMessages": 3,
+     "userMessages": 6,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 6,
+     "toolNames": {
+      "Bash": 2,
+      "Edit": 2,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 6,
+     "output": 2781,
+     "cacheRead": 33461,
+     "cacheWrite": 15930
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 6,
+      "output": 2781,
+      "cacheRead": 33461,
+      "cacheWrite": 15930
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "57deff7cb54e3030df23f88289c0257c806e8144b5a2a73edaf29707365ff56c",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5159999999996217,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "275114dc266a704f6f4a3707211233289dd1f7f645fb6a156671bf8c24e796b1",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "1992b2d7b91aab5220540b39f072955e4c48796ace1c564e9de48571f634163c"
+   }
+  },
+  {
+   "id": "019",
+   "task": "studio-get-dedupe",
+   "profile": "openspec",
+   "cli": "codex",
+   "promptSha256": "c4567249fa1f1e454cbae3fe370f5d7bcf70e63d7413c71eef96bd7cd373e543",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 46.70300000000134,
+   "agent": {
+    "exit": 0,
+    "seconds": 46.70300000000134,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "f92bd72cc048effa7ea6c80714c0bddc5b4fd80d6031cb6bb3cc3314d6eaabc3",
+    "stdoutBytes": 33509,
+    "stderrSha256": "cfcc4f3724cc0e59c885856a4bdad575da9362acddb298429cf147de00c35d2f",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 227194,
+     "cached_input_tokens": 195456,
+     "output_tokens": 2109
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5460000000002765,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "0bc625107f4c16e03171313a53c7aca67a84fcc0b5c34ec52ba7015ad48d5fc8",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5159999999996217,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "404058f13438f28185f4e51cb85e9014dd0af3a96f795586edfdf6a1b18f963d",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "546c6b1652905d78c14895f311a7f665de5d9c7930d75f81c17758ecdb1aaac3"
+   }
+  },
+  {
+   "id": "020",
+   "task": "studio-get-dedupe",
+   "profile": "bmad",
+   "cli": "claude",
+   "promptSha256": "bef9a9f3a76354bad99803cf5ec976eb72d097e2d2c532aadde0d64067567ca0",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 26.98399999999856,
+   "agent": {
+    "exit": 0,
+    "seconds": 26.98399999999856,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "51830fd5de6c5c192aa1ce11486dda4f072006d6721027ecb6caeb08e4bf111a",
+    "stdoutBytes": 97786,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 6,
+     "output": 1354,
+     "cacheRead": 32135,
+     "cacheWrite": 13487
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 6,
+     "output": 492,
+     "cacheRead": 32135,
+     "cacheWrite": 13487,
+     "assistantMessages": 3,
+     "userMessages": 4,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 4,
+     "toolNames": {
+      "Bash": 1,
+      "Edit": 1,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 6,
+     "output": 1354,
+     "cacheRead": 32135,
+     "cacheWrite": 13487
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 6,
+      "output": 1354,
+      "cacheRead": 32135,
+      "cacheWrite": 13487
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5149999999994179,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "7b38762a036ebbb3b81921e61e7896ebd18b13f5aac8c8349ad204b885db61ef",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5159999999996217,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "92eb2f47886f44d52dac31bb2e3220493cf2c8479ca7e528fc895d1c0b5a257d",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "0830c1d83eca6806eb9f262431f65f448351f5dcad92d1fc36ea9757e2f02957"
+   }
+  },
+  {
+   "id": "021",
+   "task": "studio-get-dedupe",
+   "profile": "bmad",
+   "cli": "codex",
+   "promptSha256": "bef9a9f3a76354bad99803cf5ec976eb72d097e2d2c532aadde0d64067567ca0",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 39.0630000000001,
+   "agent": {
+    "exit": 0,
+    "seconds": 39.0630000000001,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "6fd90dfeea9cab3a20b4ec7cf3466f5b398aadd86ef4f44d9a6eb3e077f50517",
+    "stdoutBytes": 31057,
+    "stderrSha256": "f32eec4fadccdf924a7d0b04058d034e51b1b218c01c277e5637cf6a8fefa839",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 160252,
+     "cached_input_tokens": 130688,
+     "output_tokens": 1958
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5159999999996217,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "2f24bfd25677b0c78391f205f7f25b10b1a14570536e17f9012c269974c92f7c",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "3038ef3e49776007608a8e3ff833569faa0060b5ac60269d1666a8931a0b1b82",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "fe0175134a543575e52499dbf7ea2aba1db55251623362517b169b6d717bae26"
+   }
+  },
+  {
+   "id": "022",
+   "task": "studio-get-dedupe",
+   "profile": "superpowers",
+   "cli": "claude",
+   "promptSha256": "d4bb329ac7e801ba654bff78d9d2923231696bc779a98224c1eb69817369fd04",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 33.26500000000124,
+   "agent": {
+    "exit": 0,
+    "seconds": 33.26500000000124,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "a808ac6ca75962a5a6dec3251673476afba2ba82249e3496a0e9e243e3169eaf",
+    "stdoutBytes": 126788,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 8,
+     "output": 2436,
+     "cacheRead": 54920,
+     "cacheWrite": 16146
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 8,
+     "output": 492,
+     "cacheRead": 54920,
+     "cacheWrite": 16146,
+     "assistantMessages": 4,
+     "userMessages": 7,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 7,
+     "toolNames": {
+      "Bash": 3,
+      "Edit": 2,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 8,
+     "output": 2436,
+     "cacheRead": 54920,
+     "cacheWrite": 16146
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 8,
+      "output": 2436,
+      "cacheRead": 54920,
+      "cacheWrite": 16146
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5149999999994179,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "ed24f3e51ee688ddc88c109872efc9830690dd9049f0dda26bfaba2eae238567",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5160000000014406,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "98e963e3478337b65741861dc524d2fa5efd1d1c92beace6dc2815c1324389bb",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "5bd3cfff984596649a3d7b2df6e62f82ff889635b3ec5f166d21d1e86c27bc89"
+   }
+  },
+  {
+   "id": "023",
+   "task": "studio-get-dedupe",
+   "profile": "superpowers",
+   "cli": "codex",
+   "promptSha256": "d4bb329ac7e801ba654bff78d9d2923231696bc779a98224c1eb69817369fd04",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 50.89099999999962,
+   "agent": {
+    "exit": 0,
+    "seconds": 50.89099999999962,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "baee0ab927601907d03475aa7f34e266094c4738b5921efe2b094b402b802f32",
+    "stdoutBytes": 33912,
+    "stderrSha256": "d395984fd54df119e2ee9d46c2eeaf76e3c021233a20a4f4535248a3e949dbc8",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 257224,
+     "cached_input_tokens": 234624,
+     "output_tokens": 2244
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5160000000014406,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "112114dc590058cff471e152f5cd1182518ded7329d192040209e25a3566e4e0",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "1fb7b856ee8234015e948a422e8fdc4dd943abdcae49241cd736039f8f23054d",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "9a473a6245fac8a24599448e88c18d3109917d7a5ec8788b38cbf2a0d4afeefa"
+   }
+  },
+  {
+   "id": "024",
+   "task": "studio-get-dedupe",
+   "profile": "jpd-keel",
+   "cli": "claude",
+   "promptSha256": "607386c332065e0f6f91d18186563dc5248ccd4f2360cacace0d070df36f067c",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 28.26599999999962,
+   "agent": {
+    "exit": 0,
+    "seconds": 28.26599999999962,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "cb17798fdaba6b185eecbd09b7eba02d09f90c2906ff0b25936a62d462f3acd7",
+    "stdoutBytes": 106391,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 6,
+     "output": 1623,
+     "cacheRead": 33504,
+     "cacheWrite": 14988
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 6,
+     "output": 555,
+     "cacheRead": 33504,
+     "cacheWrite": 14988,
+     "assistantMessages": 3,
+     "userMessages": 5,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 5,
+     "toolNames": {
+      "Bash": 2,
+      "Edit": 1,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 6,
+     "output": 1623,
+     "cacheRead": 33504,
+     "cacheWrite": 14988
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 6,
+      "output": 1623,
+      "cacheRead": 33504,
+      "cacheWrite": 14988
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5319999999992433,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "c38d110805b7ee4a35bb6ae7e5321f2f77756d867dbbc08f3fa512a116b2940d",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "bc8ed4364ec691709d639ee3034d8824e096ac3f29361a17179707820070e105",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "6971bfdb2eb3075836e2c2c1185d9e2ac897ba1abee2d28f65096f9806673ca4"
+   }
+  },
+  {
+   "id": "025",
+   "task": "studio-get-dedupe",
+   "profile": "jpd-keel",
+   "cli": "codex",
+   "promptSha256": "607386c332065e0f6f91d18186563dc5248ccd4f2360cacace0d070df36f067c",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 38.82799999999952,
+   "agent": {
+    "exit": 0,
+    "seconds": 38.82799999999952,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "51a2ecf4b6801d3a934b654b5033b8f35feb77548f5b21e0455d4dee01fc389d",
+    "stdoutBytes": 30388,
+    "stderrSha256": "53456e0af67b9390f79c48ce6e7d642d03fbc19b124577511e82f3a6f35afd40",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 131986,
+     "cached_input_tokens": 112256,
+     "output_tokens": 1993
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5309999999990396,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "09f4f40764cc0e8c354c6f307bcc178fa3be1e2fb0ca4942a7272885f278d93b",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5310000000008586,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "e12b995bfa3db8d07acc1bb5f7987d47ebd963e323e927f0c92ff85c11812ceb",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "023508ee2ac5484690478ef4d7d54f98ea909a123a42d1593d1331e3f2e5b6b3"
+   }
+  },
+  {
+   "id": "026",
+   "task": "studio-get-dedupe",
+   "profile": "direct",
+   "cli": "claude",
+   "promptSha256": "7ba3ff42ae79b7dd455aefbc0ee529a569158a76d62e7ac588438ab0cb0af2ee",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 25.843000000000757,
+   "agent": {
+    "exit": 0,
+    "seconds": 25.843000000000757,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "8c958ff0491a47f2e241c28ee32116c58ce806723bc44547aa0bd8a6bf6abe40",
+    "stdoutBytes": 97574,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 6,
+     "output": 1310,
+     "cacheRead": 32073,
+     "cacheWrite": 13499
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 6,
+     "output": 413,
+     "cacheRead": 32073,
+     "cacheWrite": 13499,
+     "assistantMessages": 3,
+     "userMessages": 4,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 4,
+     "toolNames": {
+      "Bash": 1,
+      "Edit": 1,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 6,
+     "output": 1310,
+     "cacheRead": 32073,
+     "cacheWrite": 13499
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 6,
+      "output": 1310,
+      "cacheRead": 32073,
+      "cacheWrite": 13499
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5149999999994179,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "29bd7c70f349815ce4178c4629f0d268c934ff05874b4893cac7178d028b252e",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5310000000008586,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "4edfe007c323746b7498efc18ba527c41051d0b75641f84165f016579c99904f",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "eae4d4e8a707f194bbaa1020bac8a6f0ff5783b4390a40c41cd96a6dadc2468b"
+   }
+  },
+  {
+   "id": "027",
+   "task": "studio-get-dedupe",
+   "profile": "direct",
+   "cli": "codex",
+   "promptSha256": "7ba3ff42ae79b7dd455aefbc0ee529a569158a76d62e7ac588438ab0cb0af2ee",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 35.63999999999942,
+   "agent": {
+    "exit": 0,
+    "seconds": 35.63999999999942,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "413a6979792dc465850fb87df1fb64c5e93c25584d1a0cb972377b7e54a97a12",
+    "stdoutBytes": 31418,
+    "stderrSha256": "ac31277b28300abe23a37beec1f4df168c3c49d89903aae7f54a8f3222bcc152",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 159000,
+     "cached_input_tokens": 139264,
+     "output_tokens": 1527
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 0.5160000000014406,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "7f0a0e38fee89d03790e3cb261e7097c3c2ba78d931184538d7072137aed5d32",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "cd60b850e31322c52ce82af0c3ef6b45d45aa52e7597cf9120f35a9877c145d9",
+     "stdoutBytes": 199,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "apps/studio/src/runtime/client.ts": "163c465733c9d28ee49c73c920a3af0ffe3d6397c49a1f0dab2afcffb24e4fb4"
+   }
+  },
+  {
+   "id": "028",
+   "task": "native-token-accounting",
+   "profile": "spec-kit",
+   "cli": "codex",
+   "promptSha256": "3691a3656578c12f5494c7f146201294737bab2a7314ea2a99fc6b6f316113bb",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 61.14099999999962,
+   "agent": {
+    "exit": 0,
+    "seconds": 61.14099999999962,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "9ad7eb5c338f8a2efbe5d5ecd5ccddcc74ce19ea4adadcd798370d31ed1ef80a",
+    "stdoutBytes": 36695,
+    "stderrSha256": "06e41ba5d2b2be3d2dbd1b55e5b250a53f0a865438079557b75f3efec5b32383",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 165021,
+     "cached_input_tokens": 142976,
+     "output_tokens": 3419
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 2.5,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "968441de020558f3a250d20c3ab63796aa0b27d1895fb6fb19fb2a7dbcd4b583",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.5469999999986612,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "f7761af601ca1e747ab701acb07362a235dc5edf06aab7734502e9162e9479a5",
+     "stdoutBytes": 3174,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "267efd5e131685b9314c383722597b1d47e6982b189e22abf582c349f2353db1"
+   }
+  },
+  {
+   "id": "029",
+   "task": "native-token-accounting",
+   "profile": "spec-kit",
+   "cli": "claude",
+   "promptSha256": "3691a3656578c12f5494c7f146201294737bab2a7314ea2a99fc6b6f316113bb",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 66.73400000000038,
+   "agent": {
+    "exit": 0,
+    "seconds": 66.73400000000038,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "f6c4c8faea98994ee29af840162c0684fbf87dd691b638dc20a6a95b2eea8e85",
+    "stdoutBytes": 189780,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 16,
+     "output": 7514,
+     "cacheRead": 153082,
+     "cacheWrite": 22733
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 16,
+     "output": 862,
+     "cacheRead": 153082,
+     "cacheWrite": 22733,
+     "assistantMessages": 8,
+     "userMessages": 11,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 11,
+     "toolNames": {
+      "Bash": 7,
+      "Edit": 2,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 16,
+     "output": 7514,
+     "cacheRead": 153082,
+     "cacheWrite": 22733
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 16,
+      "output": 7514,
+      "cacheRead": 153082,
+      "cacheWrite": 22733
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 2.4060000000008586,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "999dafbff9290a922f34a4e633a0a8ba35f02c0e4a70088afece23f9decb048a",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.5469999999986612,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "db7f8d372124a6aaa5857e3c5e278fcdd66a9e7e97d9b01bd710c5c07d2bc5e7",
+     "stdoutBytes": 1847,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "589fdff9f33ba09ce46624a8596c225368c8da00cde797ceb8737b8f4fadcabb"
+   }
+  },
+  {
+   "id": "030",
+   "task": "native-token-accounting",
+   "profile": "openspec",
+   "cli": "codex",
+   "promptSha256": "582e4f7f252add4fe1e154481edb9fbd8c5a98405da8c540a3bf1eb5e40b1b77",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 82.84300000000076,
+   "agent": {
+    "exit": 0,
+    "seconds": 82.84300000000076,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "2c4f335be54d057ecff36eea13a063c1c77bc4e2f291749eef8bdff46b8c481e",
+    "stdoutBytes": 37860,
+    "stderrSha256": "03867b6abe2645b011e956331be116d915d220e0f4596bfab3f456fc950e2640",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 231114,
+     "cached_input_tokens": 197248,
+     "output_tokens": 4294
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 2.8909999999996217,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "aab77f68e95a0b715ca7df9b0020cd22c27a99bd19a0ca38d70e7f9bd9927925",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5460000000002765,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "c5ada75c75517d8e18b120e17c175e8e78272684b2d628a047f6e80edded6b68",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "127f11fbfad34d2792b10240dea064cc2c07949ec72f1cb899e2ea7895467694"
+   }
+  },
+  {
+   "id": "031",
+   "task": "native-token-accounting",
+   "profile": "openspec",
+   "cli": "claude",
+   "promptSha256": "582e4f7f252add4fe1e154481edb9fbd8c5a98405da8c540a3bf1eb5e40b1b77",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 67.0619999999999,
+   "agent": {
+    "exit": 0,
+    "seconds": 67.0619999999999,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "d7b5e3969a79e690f5577fc5f56fccb3b7e22efafbd2b65c1095e53963617cfc",
+    "stdoutBytes": 202131,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 14,
+     "output": 8257,
+     "cacheRead": 117576,
+     "cacheWrite": 21419
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 14,
+     "output": 817,
+     "cacheRead": 117576,
+     "cacheWrite": 21419,
+     "assistantMessages": 7,
+     "userMessages": 10,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 10,
+     "toolNames": {
+      "Bash": 4,
+      "Edit": 3,
+      "Read": 3
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 14,
+     "output": 8257,
+     "cacheRead": 117576,
+     "cacheWrite": 21419
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 14,
+      "output": 8257,
+      "cacheRead": 117576,
+      "cacheWrite": 21419
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 2.8589999999985594,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "61aad5cfdec60fbe663b1eaf301590d964e794e0924905c81b0182606516f284",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5469999999986612,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "7d66f5150e95294380c16b0f0a2ae44676c6f8d00b116d64047cdb3c95b40a65",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "ebf9ba135725438294dc08a2086cdf976579a7a668732a9e681a61685cf7e6ef"
+   }
+  },
+  {
+   "id": "032",
+   "task": "native-token-accounting",
+   "profile": "bmad",
+   "cli": "codex",
+   "promptSha256": "9f88e17dd6a84aed8afbd1ec5190c4b17f4ad8c15a1e5b4559f6362a25e62398",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 59.84400000000096,
+   "agent": {
+    "exit": 0,
+    "seconds": 59.82799999999952,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "af48846bfa0857b272fb900762981951dc18706ebde41f970b9b8f80ef248c6c",
+    "stdoutBytes": 39224,
+    "stderrSha256": "ff1f7c300a37075211a3c9c3e8b89181f40620e9687bc91216bcbbb6aee95b08",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 238941,
+     "cached_input_tokens": 205312,
+     "output_tokens": 3288
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 2.875,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "dc0171c2e4ea31d2b4254be805bfd38b8813df96653a9bebf39ae6124b3e24d9",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.5460000000002765,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "6e171953c2f587ee17729e3865c3713bcfa6da18340174a5557b3f23abe176fb",
+     "stdoutBytes": 3174,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "76a752a7785408f2ca325f9d8d5db39aeeb2545404365b825d861b6c107f4921"
+   }
+  },
+  {
+   "id": "033",
+   "task": "native-token-accounting",
+   "profile": "bmad",
+   "cli": "claude",
+   "promptSha256": "9f88e17dd6a84aed8afbd1ec5190c4b17f4ad8c15a1e5b4559f6362a25e62398",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 56.125,
+   "agent": {
+    "exit": 0,
+    "seconds": 56.125,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "f552776bad9bfce8997ae009d32fca04c4d49f01cc149e70058236fcb4340cea",
+    "stdoutBytes": 152514,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 12,
+     "output": 6518,
+     "cacheRead": 90480,
+     "cacheWrite": 18788
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 12,
+     "output": 781,
+     "cacheRead": 90480,
+     "cacheWrite": 18788,
+     "assistantMessages": 6,
+     "userMessages": 8,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 8,
+     "toolNames": {
+      "Bash": 3,
+      "Edit": 1,
+      "Grep": 2,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 12,
+     "output": 6518,
+     "cacheRead": 90480,
+     "cacheWrite": 18788
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 12,
+      "output": 6518,
+      "cacheRead": 90480,
+      "cacheWrite": 18788
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 2.8590000000003783,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "627ba21622e5476d7313a06aacdfdbfee06d7c37ec51b22bbc9127c1066129cb",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.5630000000001019,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "80e32c05bc62b494e7a105bd354ca959343c694fd70536d328b2cd02eea263e4",
+     "stdoutBytes": 1226,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "a22db22db3388fc23d1f23f276179109e51f0c47f353a8ea2194d6601611d845"
+   }
+  },
+  {
+   "id": "034",
+   "task": "native-token-accounting",
+   "profile": "superpowers",
+   "cli": "codex",
+   "promptSha256": "00dbed1bfd89d32c307952a7854110f715a2e73443024f1620fa098e9b779742",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "passed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 65.92200000000048,
+   "agent": {
+    "exit": 0,
+    "seconds": 65.92200000000048,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "44477efa38beb7127fae8eb73bd2b70dc0dfaf43febe84640b5ad1bb41409fa0",
+    "stdoutBytes": 38268,
+    "stderrSha256": "de0f736fdfdff3752bd2931a19d12f2e8493660a3484e1579542a9741f002de0",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 253921,
+     "cached_input_tokens": 231296,
+     "output_tokens": 3257
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 2.985000000000582,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "0a70b414b79b0b36b9beaf3c720b2397ef7dbabe9686c0a307a775b4b2a32229",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 0,
+     "seconds": 0.5619999999998981,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "9a00d2c20eef47976e578f02619bef6e67e894138c2245e37200672f0feba99a",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "completed"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "56d4b5d0abdf5d27d06944a39b10d949ed6313bf1528df602c7270745dc313d3"
+   }
+  },
+  {
+   "id": "035",
+   "task": "native-token-accounting",
+   "profile": "superpowers",
+   "cli": "claude",
+   "promptSha256": "00dbed1bfd89d32c307952a7854110f715a2e73443024f1620fa098e9b779742",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 64.38999999999942,
+   "agent": {
+    "exit": 0,
+    "seconds": 64.38999999999942,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "1dd2d2cb67cfd0f36330d2aa94bf10b48759cfae37e64f39d4a160ee159e74ce",
+    "stdoutBytes": 168099,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 14,
+     "output": 7269,
+     "cacheRead": 114777,
+     "cacheWrite": 19864
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 14,
+     "output": 855,
+     "cacheRead": 114777,
+     "cacheWrite": 19864,
+     "assistantMessages": 7,
+     "userMessages": 9,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 9,
+     "toolNames": {
+      "Bash": 5,
+      "Edit": 2,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 14,
+     "output": 7269,
+     "cacheRead": 114777,
+     "cacheWrite": 19864
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 14,
+      "output": 7269,
+      "cacheRead": 114777,
+      "cacheWrite": 19864
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 3.0469999999986612,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "db07b24c68506fa1e4854ae7580e1d00eace2607dce550212f03b763343326c3",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.6090000000003783,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "963f785f23e4ff2f8be5d035b14afb3ba5f98cceb7b42a1f3400041f24c21fb3",
+     "stdoutBytes": 1838,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "9007075d8513783742a84d0f7672cab62e38ba7fb0ca9d1888630cc4dc688c7d"
+   }
+  },
+  {
+   "id": "036",
+   "task": "native-token-accounting",
+   "profile": "jpd-keel",
+   "cli": "codex",
+   "promptSha256": "d6c771bcaaf5d8b8a52675841a842646fea3d153e3a02bc3160f26e35208f6ec",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 55.67199999999866,
+   "agent": {
+    "exit": 0,
+    "seconds": 55.67199999999866,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "e15bfb99d002a42d1e8c0e6ca9392382e020c78a689350f96ef292a7398a2146",
+    "stdoutBytes": 32217,
+    "stderrSha256": "24229e955ad63b0aab8e3674abdaf0aacaebecc339cb342602c1019f94080d0a",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 160307,
+     "cached_input_tokens": 139904,
+     "output_tokens": 3069
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 3.014999999999418,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "690b8bcc50d614278dbcb31dc6f7983982056b9cc0e5f28ea373f42da387075c",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.6569999999992433,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "44f6444bf898843916f0f30acf707cc9ffe70f69edf68976716e97fd5ecd69da",
+     "stdoutBytes": 3174,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "6565d0e19254ebdb64129d8ef66b8bc3caa038ffe8de054207227ca7cad43487"
+   }
+  },
+  {
+   "id": "037",
+   "task": "native-token-accounting",
+   "profile": "jpd-keel",
+   "cli": "claude",
+   "promptSha256": "d6c771bcaaf5d8b8a52675841a842646fea3d153e3a02bc3160f26e35208f6ec",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 71.67200000000048,
+   "agent": {
+    "exit": 0,
+    "seconds": 71.67200000000048,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "a4e2ecdb9b40c01a002fa1826964c09a443e7699bc78dcc911212654420f81f8",
+    "stdoutBytes": 220949,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 16,
+     "output": 8457,
+     "cacheRead": 134676,
+     "cacheWrite": 22207
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 16,
+     "output": 826,
+     "cacheRead": 134676,
+     "cacheWrite": 22207,
+     "assistantMessages": 8,
+     "userMessages": 12,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 12,
+     "toolNames": {
+      "Bash": 6,
+      "Edit": 3,
+      "Grep": 1,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 16,
+     "output": 8457,
+     "cacheRead": 134676,
+     "cacheWrite": 22207
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 16,
+      "output": 8457,
+      "cacheRead": 134676,
+      "cacheWrite": 22207
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 3.04700000000048,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "6d80d7b746faedb0b25302e222469097423c841935f1c6fe0a20b83c16b195c9",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.625,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "4c6b7c1777a9939d1374719b700f0f29a2a79ae9102535e89e48b83e1c54c2c2",
+     "stdoutBytes": 1847,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "f44ce2bb9a2c408f2e63ffd4a4f93e8f48ecdb1664c6e2ef03540d918d1e70a3"
+   }
+  },
+  {
+   "id": "038",
+   "task": "native-token-accounting",
+   "profile": "direct",
+   "cli": "codex",
+   "promptSha256": "7c43d1ccca693b81bc3b3a564f97a9e77d216131cf2386a40204373cec1752af",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 50.46899999999914,
+   "agent": {
+    "exit": 0,
+    "seconds": 50.46899999999914,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "89951489067bf70ca1c82c59db36c276304dc8c5a220498a937d106b299baae5",
+    "stdoutBytes": 42014,
+    "stderrSha256": "63b91838b4b18f98f7402a35b3c107ab445c474cd1fa1fce34ce8eda2ce39bec",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 186450,
+     "cached_input_tokens": 166400,
+     "output_tokens": 2109
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 3.0,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "a0989a1ed5c0de5049de50e09c84b505bf26f1fb36f9ba9eedc0f7c2e1371353",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.6089999999985594,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "83c05698599dc86335fd98a475fd06f8de2a4a95ffffef93fde84bf1cc904027",
+     "stdoutBytes": 3174,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "ba69f8da04de41814d365b674a87ac8fe1bcbd531d8bd104984bfc9c01f573d2"
+   }
+  },
+  {
+   "id": "039",
+   "task": "native-token-accounting",
+   "profile": "direct",
+   "cli": "claude",
+   "promptSha256": "7c43d1ccca693b81bc3b3a564f97a9e77d216131cf2386a40204373cec1752af",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 58.89099999999962,
+   "agent": {
+    "exit": 0,
+    "seconds": 58.89099999999962,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "5f6f68d532ced2934467c35e393b11208ad326e61ac8f914859bba85cdbbe7d6",
+    "stdoutBytes": 154429,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 14,
+     "output": 6629,
+     "cacheRead": 98518,
+     "cacheWrite": 17702
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 14,
+     "output": 835,
+     "cacheRead": 98518,
+     "cacheWrite": 17702,
+     "assistantMessages": 7,
+     "userMessages": 8,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 8,
+     "toolNames": {
+      "Bash": 4,
+      "Edit": 1,
+      "Grep": 2,
+      "Read": 1
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 14,
+     "output": 6629,
+     "cacheRead": 98518,
+     "cacheWrite": 17702
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 14,
+      "output": 6629,
+      "cacheRead": 98518,
+      "cacheWrite": 17702
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 2.875,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "ce5567d598298d977ba967992a533234476e57f4a073d1e42f2ad1d9c646319c",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.5779999999995198,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "e9e51eeedc65ad20ce080d9e678fc5f0351644936c839a93508f97eae9204a43",
+     "stdoutBytes": 1838,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "9032e895004feaa68cf9f8b027ebc6bbd91b61a1479fc986ce268fd10e5df14e"
+   }
+  },
+  {
+   "id": "040",
+   "task": "native-token-accounting",
+   "profile": "tdd",
+   "cli": "codex",
+   "promptSha256": "d30fbab8d7782f9ee7c91db88692737975779c560c8f2585bec26477e666c06a",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 67.36000000000058,
+   "agent": {
+    "exit": 0,
+    "seconds": 67.36000000000058,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "a2f342ae16cf5d665a0537f3f7d7a7d3e003508adc8c499bf2dade0adfc7a8c6",
+    "stdoutBytes": 35896,
+    "stderrSha256": "43eb1bb21fb543caa991d81406ba124aacce82f8020a4f9be1a4e063ef5b0e20",
+    "stderrBytes": 158
+   },
+   "usage": {
+    "counts": {
+     "input_tokens": 278701,
+     "cached_input_tokens": 256384,
+     "output_tokens": 3245
+    },
+    "observedModels": [],
+    "parseErrors": 0,
+    "countsSource": "codex.turn.completed",
+    "accountingStatus": "observed"
+   },
+   "modelStatus": "unobserved",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 3.0939999999991414,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "08a223d682bd8be963ef55056fcf5ea1b6988ce33457c02a9edb8cd80ce77c3f",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.625,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "5a695558e36735156bbe1ed2c9348d593e0fa6082273deacbac0a9ff48dc6c94",
+     "stdoutBytes": 1847,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "59880940c771df5bf4a20784771f94d8ef78399173b8b21ee4883e154f4828ad"
+   }
+  },
+  {
+   "id": "041",
+   "task": "native-token-accounting",
+   "profile": "tdd",
+   "cli": "claude",
+   "promptSha256": "d30fbab8d7782f9ee7c91db88692737975779c560c8f2585bec26477e666c06a",
+   "manifestSha256": "d4552b78299301ca653ebc84c5a7224ea7a2091e3262a51cae5c26883d4515bc",
+   "status": "failed",
+   "measurementStatus": "observed",
+   "billedUsd": null,
+   "elapsedSeconds": 54.1869999999999,
+   "agent": {
+    "exit": 0,
+    "seconds": 54.1869999999999,
+    "timeout": false,
+    "cleanupConfirmed": true,
+    "truncated": false,
+    "stdoutSha256": "5f27cd3df8eb2bde801dea226cb5e7b095757adecb2d25439cf0451e43c41cb0",
+    "stdoutBytes": 177011,
+    "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderrBytes": 0
+   },
+   "usage": {
+    "counts": {
+     "input": 16,
+     "output": 6094,
+     "cacheRead": 134241,
+     "cacheWrite": 20400
+    },
+    "observedModels": [
+     "claude-sonnet-5-5"
+    ],
+    "parseErrors": 0,
+    "countsSource": "claude.result.modelUsage",
+    "accountingStatus": "observed",
+    "transcriptCounts": {
+     "input": 16,
+     "output": 83,
+     "cacheRead": 134241,
+     "cacheWrite": 20400,
+     "assistantMessages": 8,
+     "userMessages": 10,
+     "parseErrors": 0,
+     "models": [
+      "claude-sonnet-5-5"
+     ],
+     "toolCalls": 10,
+     "toolNames": {
+      "Bash": 6,
+      "Edit": 2,
+      "Read": 2
+     }
+    },
+    "transcriptDiagnosticError": null,
+    "mainLoopCounts": {
+     "input": 16,
+     "output": 6094,
+     "cacheRead": 134241,
+     "cacheWrite": 20400
+    },
+    "accountingModels": [
+     "claude-sonnet-5-5"
+    ],
+    "perModelCounts": {
+     "claude-sonnet-5-5": {
+      "input": 16,
+      "output": 6094,
+      "cacheRead": 134241,
+      "cacheWrite": 20400
+     }
+    }
+   },
+   "modelStatus": "matched",
+   "evaluation": {
+    "public": {
+     "exit": 0,
+     "seconds": 3.110000000000582,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "04739b63d4a21435740ee898c055c860f727992234774eb5b82ec65ee3a12a98",
+     "stdoutBytes": 313,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    },
+    "hidden": {
+     "exit": 1,
+     "seconds": 0.6559999999990396,
+     "timeout": false,
+     "cleanupConfirmed": true,
+     "truncated": false,
+     "stdoutSha256": "151d382aad8828e2561c9d8a94e73f5e27f754ce636b10a7e672042e13f420b7",
+     "stdoutBytes": 2564,
+     "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "stderrBytes": 0
+    }
+   },
+   "evaluationStatus": {
+    "public": "completed",
+    "hidden": "wrapper did not complete successfully"
+   },
+   "sourceSha256": {
+    "tools/token-bench/methodology.py": "1d3118164097fc5679e918781c98b1da802835c48958dd042aedf57615bbfbfc"
+   }
+  }
+ ],
+ "winner": null,
+ "limitations": [
+  "Neutral exploratory cohort; no statistical superiority claim",
+  "Missing usage is unknown, never free"
+ ]
+}

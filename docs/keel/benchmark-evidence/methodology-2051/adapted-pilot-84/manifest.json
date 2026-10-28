@@ -1,0 +1,571 @@
+{
+ "exportOf": {
+  "sha256": "70109f2a23397b866e1d71b20afe2af2e9385c23d2486a0424cd8654cb231447",
+  "bytes": 12114
+ },
+ "schema": "methodology-pilot/1",
+ "studyType": "protocol_profile_pilot",
+ "cases": {
+  "path": "<host-path>",
+  "sha256": "436d5ee78f5402d4278bb6e51f94a6250ecf7534a63961d757fa0e536d477d08"
+ },
+ "profiles": {
+  "path": "<host-path>",
+  "sha256": "7aa93cbfc3c47305ec776756ba9aecdcd5fd80262c4cc3edc74ccb4fc3cb6f54"
+ },
+ "instrumentSha256": "a9d3efcf06da552d297bd841f4a01ff48e2aea708147a80e2e097e5ddbfb84ad",
+ "identities": {
+  "codex": {
+   "path": "<host-path>",
+   "sha256": "8cb0e69e99ff2a158c54815db82d0f2e524d8f301bc30184722cfd1ae5973574",
+   "version": "codex-cli 0.157.1",
+   "subscription": true
+  },
+  "claude": {
+   "path": "<host-path>",
+   "sha256": "f9a3920634ae3b961ee92c2eb58d0051f5f8852b120983d0a4f57b6a5efeba61",
+   "version": "2.1.310 (Claude Code)",
+   "subscription": true
+  }
+ },
+ "models": {
+  "codex": "gpt-6-sol",
+  "claude": "claude-sonnet-5-5"
+ },
+ "effort": "low",
+ "deadlineSeconds": 180,
+ "concurrency": 1,
+ "nativeFrameworkFidelity": "UNOBSERVED",
+ "plannedAttempts": [
+  {
+   "id": "000",
+   "case": "redaction",
+   "profile": "spec-kit",
+   "cli": "codex"
+  },
+  {
+   "id": "001",
+   "case": "redaction",
+   "profile": "spec-kit",
+   "cli": "claude"
+  },
+  {
+   "id": "002",
+   "case": "redaction",
+   "profile": "openspec",
+   "cli": "codex"
+  },
+  {
+   "id": "003",
+   "case": "redaction",
+   "profile": "openspec",
+   "cli": "claude"
+  },
+  {
+   "id": "004",
+   "case": "redaction",
+   "profile": "bmad",
+   "cli": "codex"
+  },
+  {
+   "id": "005",
+   "case": "redaction",
+   "profile": "bmad",
+   "cli": "claude"
+  },
+  {
+   "id": "006",
+   "case": "redaction",
+   "profile": "superpowers",
+   "cli": "codex"
+  },
+  {
+   "id": "007",
+   "case": "redaction",
+   "profile": "superpowers",
+   "cli": "claude"
+  },
+  {
+   "id": "008",
+   "case": "redaction",
+   "profile": "jpd-keel",
+   "cli": "codex"
+  },
+  {
+   "id": "009",
+   "case": "redaction",
+   "profile": "jpd-keel",
+   "cli": "claude"
+  },
+  {
+   "id": "010",
+   "case": "redaction",
+   "profile": "direct",
+   "cli": "codex"
+  },
+  {
+   "id": "011",
+   "case": "redaction",
+   "profile": "direct",
+   "cli": "claude"
+  },
+  {
+   "id": "012",
+   "case": "redaction",
+   "profile": "tdd",
+   "cli": "codex"
+  },
+  {
+   "id": "013",
+   "case": "redaction",
+   "profile": "tdd",
+   "cli": "claude"
+  },
+  {
+   "id": "014",
+   "case": "csv",
+   "profile": "direct",
+   "cli": "codex"
+  },
+  {
+   "id": "015",
+   "case": "csv",
+   "profile": "direct",
+   "cli": "claude"
+  },
+  {
+   "id": "016",
+   "case": "csv",
+   "profile": "tdd",
+   "cli": "codex"
+  },
+  {
+   "id": "017",
+   "case": "csv",
+   "profile": "tdd",
+   "cli": "claude"
+  },
+  {
+   "id": "018",
+   "case": "csv",
+   "profile": "spec-kit",
+   "cli": "codex"
+  },
+  {
+   "id": "019",
+   "case": "csv",
+   "profile": "spec-kit",
+   "cli": "claude"
+  },
+  {
+   "id": "020",
+   "case": "csv",
+   "profile": "openspec",
+   "cli": "codex"
+  },
+  {
+   "id": "021",
+   "case": "csv",
+   "profile": "openspec",
+   "cli": "claude"
+  },
+  {
+   "id": "022",
+   "case": "csv",
+   "profile": "bmad",
+   "cli": "codex"
+  },
+  {
+   "id": "023",
+   "case": "csv",
+   "profile": "bmad",
+   "cli": "claude"
+  },
+  {
+   "id": "024",
+   "case": "csv",
+   "profile": "superpowers",
+   "cli": "codex"
+  },
+  {
+   "id": "025",
+   "case": "csv",
+   "profile": "superpowers",
+   "cli": "claude"
+  },
+  {
+   "id": "026",
+   "case": "csv",
+   "profile": "jpd-keel",
+   "cli": "codex"
+  },
+  {
+   "id": "027",
+   "case": "csv",
+   "profile": "jpd-keel",
+   "cli": "claude"
+  },
+  {
+   "id": "028",
+   "case": "ledger",
+   "profile": "superpowers",
+   "cli": "claude"
+  },
+  {
+   "id": "029",
+   "case": "ledger",
+   "profile": "superpowers",
+   "cli": "codex"
+  },
+  {
+   "id": "030",
+   "case": "ledger",
+   "profile": "jpd-keel",
+   "cli": "claude"
+  },
+  {
+   "id": "031",
+   "case": "ledger",
+   "profile": "jpd-keel",
+   "cli": "codex"
+  },
+  {
+   "id": "032",
+   "case": "ledger",
+   "profile": "direct",
+   "cli": "claude"
+  },
+  {
+   "id": "033",
+   "case": "ledger",
+   "profile": "direct",
+   "cli": "codex"
+  },
+  {
+   "id": "034",
+   "case": "ledger",
+   "profile": "tdd",
+   "cli": "claude"
+  },
+  {
+   "id": "035",
+   "case": "ledger",
+   "profile": "tdd",
+   "cli": "codex"
+  },
+  {
+   "id": "036",
+   "case": "ledger",
+   "profile": "spec-kit",
+   "cli": "claude"
+  },
+  {
+   "id": "037",
+   "case": "ledger",
+   "profile": "spec-kit",
+   "cli": "codex"
+  },
+  {
+   "id": "038",
+   "case": "ledger",
+   "profile": "openspec",
+   "cli": "claude"
+  },
+  {
+   "id": "039",
+   "case": "ledger",
+   "profile": "openspec",
+   "cli": "codex"
+  },
+  {
+   "id": "040",
+   "case": "ledger",
+   "profile": "bmad",
+   "cli": "claude"
+  },
+  {
+   "id": "041",
+   "case": "ledger",
+   "profile": "bmad",
+   "cli": "codex"
+  },
+  {
+   "id": "042",
+   "case": "atomic-json",
+   "profile": "bmad",
+   "cli": "codex"
+  },
+  {
+   "id": "043",
+   "case": "atomic-json",
+   "profile": "bmad",
+   "cli": "claude"
+  },
+  {
+   "id": "044",
+   "case": "atomic-json",
+   "profile": "superpowers",
+   "cli": "codex"
+  },
+  {
+   "id": "045",
+   "case": "atomic-json",
+   "profile": "superpowers",
+   "cli": "claude"
+  },
+  {
+   "id": "046",
+   "case": "atomic-json",
+   "profile": "jpd-keel",
+   "cli": "codex"
+  },
+  {
+   "id": "047",
+   "case": "atomic-json",
+   "profile": "jpd-keel",
+   "cli": "claude"
+  },
+  {
+   "id": "048",
+   "case": "atomic-json",
+   "profile": "direct",
+   "cli": "codex"
+  },
+  {
+   "id": "049",
+   "case": "atomic-json",
+   "profile": "direct",
+   "cli": "claude"
+  },
+  {
+   "id": "050",
+   "case": "atomic-json",
+   "profile": "tdd",
+   "cli": "codex"
+  },
+  {
+   "id": "051",
+   "case": "atomic-json",
+   "profile": "tdd",
+   "cli": "claude"
+  },
+  {
+   "id": "052",
+   "case": "atomic-json",
+   "profile": "spec-kit",
+   "cli": "codex"
+  },
+  {
+   "id": "053",
+   "case": "atomic-json",
+   "profile": "spec-kit",
+   "cli": "claude"
+  },
+  {
+   "id": "054",
+   "case": "atomic-json",
+   "profile": "openspec",
+   "cli": "codex"
+  },
+  {
+   "id": "055",
+   "case": "atomic-json",
+   "profile": "openspec",
+   "cli": "claude"
+  },
+  {
+   "id": "056",
+   "case": "authorization",
+   "profile": "openspec",
+   "cli": "claude"
+  },
+  {
+   "id": "057",
+   "case": "authorization",
+   "profile": "openspec",
+   "cli": "codex"
+  },
+  {
+   "id": "058",
+   "case": "authorization",
+   "profile": "bmad",
+   "cli": "claude"
+  },
+  {
+   "id": "059",
+   "case": "authorization",
+   "profile": "bmad",
+   "cli": "codex"
+  },
+  {
+   "id": "060",
+   "case": "authorization",
+   "profile": "superpowers",
+   "cli": "claude"
+  },
+  {
+   "id": "061",
+   "case": "authorization",
+   "profile": "superpowers",
+   "cli": "codex"
+  },
+  {
+   "id": "062",
+   "case": "authorization",
+   "profile": "jpd-keel",
+   "cli": "claude"
+  },
+  {
+   "id": "063",
+   "case": "authorization",
+   "profile": "jpd-keel",
+   "cli": "codex"
+  },
+  {
+   "id": "064",
+   "case": "authorization",
+   "profile": "direct",
+   "cli": "claude"
+  },
+  {
+   "id": "065",
+   "case": "authorization",
+   "profile": "direct",
+   "cli": "codex"
+  },
+  {
+   "id": "066",
+   "case": "authorization",
+   "profile": "tdd",
+   "cli": "claude"
+  },
+  {
+   "id": "067",
+   "case": "authorization",
+   "profile": "tdd",
+   "cli": "codex"
+  },
+  {
+   "id": "068",
+   "case": "authorization",
+   "profile": "spec-kit",
+   "cli": "claude"
+  },
+  {
+   "id": "069",
+   "case": "authorization",
+   "profile": "spec-kit",
+   "cli": "codex"
+  },
+  {
+   "id": "070",
+   "case": "pagination",
+   "profile": "tdd",
+   "cli": "claude"
+  },
+  {
+   "id": "071",
+   "case": "pagination",
+   "profile": "tdd",
+   "cli": "codex"
+  },
+  {
+   "id": "072",
+   "case": "pagination",
+   "profile": "spec-kit",
+   "cli": "claude"
+  },
+  {
+   "id": "073",
+   "case": "pagination",
+   "profile": "spec-kit",
+   "cli": "codex"
+  },
+  {
+   "id": "074",
+   "case": "pagination",
+   "profile": "openspec",
+   "cli": "claude"
+  },
+  {
+   "id": "075",
+   "case": "pagination",
+   "profile": "openspec",
+   "cli": "codex"
+  },
+  {
+   "id": "076",
+   "case": "pagination",
+   "profile": "bmad",
+   "cli": "claude"
+  },
+  {
+   "id": "077",
+   "case": "pagination",
+   "profile": "bmad",
+   "cli": "codex"
+  },
+  {
+   "id": "078",
+   "case": "pagination",
+   "profile": "superpowers",
+   "cli": "claude"
+  },
+  {
+   "id": "079",
+   "case": "pagination",
+   "profile": "superpowers",
+   "cli": "codex"
+  },
+  {
+   "id": "080",
+   "case": "pagination",
+   "profile": "jpd-keel",
+   "cli": "claude"
+  },
+  {
+   "id": "081",
+   "case": "pagination",
+   "profile": "jpd-keel",
+   "cli": "codex"
+  },
+  {
+   "id": "082",
+   "case": "pagination",
+   "profile": "direct",
+   "cli": "claude"
+  },
+  {
+   "id": "083",
+   "case": "pagination",
+   "profile": "direct",
+   "cli": "codex"
+  }
+ ],
+ "calibrationPassed": true,
+ "billedUsd": null,
+ "launcherSha256": "b72a88508f3b2d437b9cfb1ba23c378d27424016a49788dd8df28c25da72e8ca",
+ "controls": {
+  "codex": [
+   "-c",
+   "default_permissions=\":workspace\"",
+   "-c",
+   "windows.sandbox=\"elevated\"",
+   "-c",
+   "features.prefer_mxc=true"
+  ],
+  "claude": [
+   "--allowedTools",
+   "Bash(python test_public.py)"
+  ],
+  "environment": "fixed-native-python-git-system-PATH; standard PATHEXT; remove API key and endpoint aliases in children only",
+  "limitations": [
+   "Claude automatic shell permission covers python test_public.py only; extra test commands can be denied",
+   "MXC is under development in installed Codex; legacy elevated path remains broken",
+   "No OS-enforced oracle secrecy or native framework fidelity claim"
+  ]
+ },
+ "pythonSha256": "ceabb31054d429f57cb3825775677eeaf0db35fdabbc5ff6aef661c037154b00",
+ "usageParserSha256": "55a6d8912e367702d2fc31956b45cb848b0acb11f6d546d04d6ca46c369c2dca",
+ "frozenAtUtc": "2026-10-25T23:52:01Z"
+}

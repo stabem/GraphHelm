@@ -771,7 +771,7 @@ mod tests {
         .unwrap();
         let dirs = pinned_path(project.path(), Some(path));
         assert_eq!(dirs, vec![outside.path().to_path_buf()]);
-        let refused = command(project.path(), "graphhelm-absent-program-2187").unwrap_err();
+        let refused = command(project.path(), "python3.2187 d/x.py").unwrap_err();
         assert!(
             refused.starts_with("flow.cli_program_unresolved"),
             "{refused}"

@@ -45,6 +45,23 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
    formats and digests, security (paths, links, keys, permissions) and pure algorithms, where an
    end-to-end run cannot reach every case. Every new test, whenever it was written, passes the
    break-it-once sabotage (step 5) and the `test-audit` skill's four questions.
+   **Property + counterexample** is the proof kind for an obligation that reads "for every input X,
+   Y holds": canonicalization, idempotency, monotonicity, round-trips, replay. Example tests and
+   journeys check chosen inputs; a property checks the rule over generated ones.
+   - *Evidence:* the property written as a statement (for example "hashing a canonicalized graph
+     twice gives the same hash"); a generator with bounded size and a bounded case count, so the run
+     is deterministic and cheap, with the failing seeds kept in the committed regression file the
+     runner writes; and, when the generator found a failure, the shrunk counterexample that drove
+     the fix. Pin that counterexample as a plain example test or regression file entry in the same
+     change, and cite it in the pull request. A later green run never erases it, and a retry after
+     it names it as the evidence delta.
+   - *Example:* `core/graph/tests/canonical_hash.rs`, where a `proptest!` block checks that any UI
+     coordinates leave the semantic hash unchanged.
+   - *Not for:* a promise a user sees on a screen (use the journey), a single known bug (the
+     smallest regression test is enough), code with effects outside the process, or a property you
+     can only state by repeating the implementation. No SMT or formal solver is part of Keel; raise
+     one only for a concrete obligation a generator cannot reach. Without a stated property, report
+     `OBSERVER_MISSING`.
 3. **The artifact.** Every end-to-end proof ends in a receipt recorded in GraphHelm, the one the
    Studio Proof tab shows: what ran, on which commit, the result, and the command that repeats it.
 4. **The failure list.** A change in the last row of the `KEEL_PLAN.md` table writes down every way

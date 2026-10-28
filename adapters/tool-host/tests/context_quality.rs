@@ -165,7 +165,7 @@ const HOLDOUT_CASES: [(&str, &str); 10] = [
 /// (the PR of #1705 carries the pre-registration and the measured value). Asserted at the
 /// measured value for the same reason as the development floor: corpus and ranking are both
 /// fixed, so any drop is a change in the ranking.
-const HOLDOUT_HITS_AT_3_FLOOR: usize = 0;
+const HOLDOUT_HITS_AT_3_FLOOR: usize = 4;
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

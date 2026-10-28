@@ -156,6 +156,13 @@ def append_fn(body):
     return f"fn committed_events_for_idempotency() -> bool {{ let _ = {body}; true }}\n"
 
 
+LOCAL = "core/events/src/local.rs"
+
+
+def sites(result):
+    return result["effects_changed"]["added"], result["effects_changed"]["removed"]
+
+
 class EffectSet(unittest.TestCase):
     setUp = EvidenceKey.setUp
     tearDown = EvidenceKey.tearDown
@@ -164,50 +171,83 @@ class EffectSet(unittest.TestCase):
         self.assertEqual(set(SAMPLES), set(ek.EFFECT_KINDS))
         for kind, call in SAMPLES.items():
             with self.subTest(kind=kind):
-                head = commit(self.repo, {"core/events/src/local.rs": append_fn(call)}, kind)
+                head = commit(self.repo, {LOCAL: append_fn(call)}, kind)
                 result = ek.decide(self.repo, self.record, head)
                 self.assertEqual(result["decision"], "invalidate")
-                self.assertEqual(result["effects_changed"]["summary"], f"effects changed: +{kind}")
-                self.assertEqual(result["effects_changed"]["sites"], {kind: ["core/events/src/local.rs"]})
-                commit(self.repo, {"core/events/src/local.rs": FILES["core/events/src/local.rs"]}, "back")
+                self.assertEqual(result["effects_changed"]["summary"], f"effects changed: +{kind}@{LOCAL}")
+                commit(self.repo, {LOCAL: FILES[LOCAL]}, "back")
 
-    def test_a_spawn_in_a_linked_dependency_is_an_added_effect_of_the_append_path(self):
-        head = commit(self.repo, {"core/process/src/lib.rs": FILES["core/process/src/lib.rs"]
-                                  + 'pub fn run() { std::process::Command::new("x"); }\n'}, "spawn")
-        self.assertEqual(ek.decide(self.repo, self.record, head)["effects_changed"]["added"], ["process_spawn"])
-
-    def test_a_pure_refactor_changes_files_but_not_the_effect_set(self):
-        base = commit(self.repo, {"core/events/src/local.rs": "fn append(f: &File) { f.sync_data(); }\n"}, "fsync")
+    def test_p1_a_new_spawn_in_the_append_file_shows_although_another_closure_file_already_spawns(self):
+        base = commit(self.repo, {"core/process/src/lib.rs": FILES["core/process/src/lib.rs"]
+                                  + 'pub fn run() { std::process::Command::new("x"); }\n'}, "spawn elsewhere")
         record = ek.make_record(self.repo, base, "ok")
-        self.assertEqual(record["effects"], {"fsync": ["core/events/src/local.rs"]})
-        head = commit(self.repo, {"core/events/src/local.rs": "fn persist(journal: &File) {\n    flush(journal);\n}\n",
-                                  "core/events/src/flush.rs": "pub fn flush(j: &File) { j.sync_data(); }\n"},
-                      "refactor")
+        head = commit(self.repo, {LOCAL: FILES[LOCAL] + 'fn f() { std::process::Command::new("x"); }\n'}, "P1")
+        self.assertEqual(sites(ek.decide(self.repo, record, head)), ([f"process_spawn@{LOCAL}"], []))
+
+    def test_p2_a_char_literal_quote_does_not_hide_the_code_after_it(self):
+        head = commit(self.repo, {LOCAL: FILES[LOCAL]
+                                  + "fn f() { let _q = '\"'; std::net::TcpStream::connect(a); }\n"}, "P2")
+        self.assertEqual(sites(ek.decide(self.repo, self.record, head)), ([f"network@{LOCAL}"], []))
+
+    def test_char_byte_and_raw_literals_are_data_and_lifetimes_are_code(self):
+        text = ("fn f<'a>(x: &'a str) -> char { let _ = '\\''; let _ = b'\"'; let _ = '\\\\';\n"
+                "let _ = r#\"Command::new(\"x\")\"#; let _ = br\"TcpStream\"; 'outer: loop { break 'outer; } 'x' }\n"
+                "fn g() { journal.sync_data(); }\n")
+        self.assertEqual(ek.effects_of(text), {"fsync"})
+
+    def test_a_source_the_lexer_cannot_place_answers_unknown_and_cannot_be_recorded(self):
+        for text in ('fn f() { let s = "unterminated; }\n', "fn f() { let c = '\\u{1F600 ; }\n",
+                     "fn f() { /* open\n", "fn f() { let s = r#\"open; }\n"):
+            with self.subTest(text=text):
+                head = commit(self.repo, {LOCAL: text}, "unlexable")
+                changed = ek.decide(self.repo, self.record, head)["effects_changed"]
+                self.assertEqual((changed["unknown"], changed["summary"]),
+                                 ([LOCAL], f"effects unknown: cannot lex {LOCAL}"))
+                with self.assertRaises(ValueError):
+                    ek.make_record(self.repo, head, "ok")
+
+    def test_a_pure_refactor_changes_files_but_not_the_effect_sites(self):
+        base = commit(self.repo, {LOCAL: "fn append(f: &File) { f.sync_data(); }\n"}, "fsync")
+        record = ek.make_record(self.repo, base, "ok")
+        self.assertEqual(record["effects"]["by_kind"], {"fsync": [LOCAL]})
+        head = commit(self.repo, {LOCAL: "// renamed\nfn persist(journal: &File) {\n    journal.sync_data();\n}\n",
+                                  "core/events/src/pure.rs": "pub fn double(x: u8) -> u8 { x * 2 }\n"}, "refactor")
         result = ek.decide(self.repo, record, head)
         self.assertEqual(result["decision"], "invalidate")
-        self.assertEqual(result["changed"], ["core/events/src/flush.rs", "core/events/src/local.rs"])
+        self.assertEqual(result["changed"], ["core/events/src/local.rs", "core/events/src/pure.rs"])
         self.assertEqual(result["effects_changed"]["summary"], "effects unchanged")
 
-    def test_a_removed_effect_is_reported_as_removed(self):
-        base = commit(self.repo, {"core/events/src/local.rs": append_fn("file.lock_exclusive()")}, "lock")
+    def test_a_removed_effect_site_is_reported_as_removed(self):
+        base = commit(self.repo, {LOCAL: append_fn("file.lock_exclusive()")}, "lock")
         record = ek.make_record(self.repo, base, "ok")
-        head = commit(self.repo, {"core/events/src/local.rs": FILES["core/events/src/local.rs"]}, "unlock")
+        head = commit(self.repo, {LOCAL: FILES[LOCAL]}, "unlock")
         self.assertEqual(ek.decide(self.repo, record, head)["effects_changed"]["summary"],
-                         "effects changed: -file_lock")
+                         f"effects changed: -file_lock@{LOCAL}")
 
-    def test_comments_a_mutex_lock_and_test_sources_are_not_effects_of_the_path(self):
+    def test_comments_strings_a_mutex_lock_and_test_sources_are_not_effects_of_the_path(self):
+        spawn = 'fn t() { std::process::Command::new("x"); }\n'
         head = commit(self.repo, {
-            "core/events/src/local.rs": ("// a TcpStream would be wrong here; so would Command::new\n"
-                                         "/* unsafe { } */ fn f(m: &Mutex<u8>) { m.lock(); }\n"
-                                         'const DENY: &[&str] = &["reqwest::get(", "Command::new"];\n'),
+            LOCAL: ("// a TcpStream would be wrong here; so would Command::new\n"
+                    "/* unsafe { /* nested */ } */ fn f(m: &Mutex<u8>) { m.lock(); }\n"
+                    'const DENY: &[&str] = &["reqwest::get(", "Command::new"];\n'
+                    "#[cfg(test)]\nmod tests {\n    fn t() { let _ = std::net::TcpStream::connect(a); }\n}\n"
+                    "#[cfg(test)]\nmod segments_tests;\n"
+                    '#[cfg(test)]\n#[path = "local_security_tests.rs"]\nmod security_tests;\n'),
+            "core/events/src/local/segments_tests.rs": spawn,
+            "core/events/src/local_security_tests.rs": spawn,
             "core/events/tests/append_effect_contract.rs": append_fn("std::net::TcpStream::connect(a)")}, "noise")
         self.assertEqual(ek.decide(self.repo, self.record, head)["effects_changed"]["summary"], "effects unchanged")
 
+    def test_a_tests_rs_file_nobody_declares_as_a_test_module_still_counts(self):
+        head = commit(self.repo, {"core/events/src/tests.rs": 'fn t() { std::process::Command::new("x"); }\n'}, "t")
+        self.assertEqual(sites(ek.decide(self.repo, self.record, head)),
+                         (["process_spawn@core/events/src/tests.rs"], []))
+
     def test_a_record_without_an_effect_set_reports_unknown_not_unchanged(self):
-        head = commit(self.repo, {"core/events/src/local.rs": append_fn("f.sync_all()")}, "fsync")
+        head = commit(self.repo, {LOCAL: append_fn("f.sync_all()")}, "fsync")
         legacy = {k: v for k, v in self.record.items() if k != "effects"}
         changed = ek.decide(self.repo, legacy, head)["effects_changed"]
-        self.assertEqual((changed["unknown"], changed["added"]), (["fsync"], []))
+        self.assertEqual((changed["added"], changed["summary"]), ([], "effects unknown: the record has no effect set"))
 
 
 class ThisRepository(unittest.TestCase):
@@ -224,7 +264,8 @@ class ThisRepository(unittest.TestCase):
         self.assertEqual((record["guarantee"], record["observer"]), (ek.GUARANTEE, ek.OBSERVER))
         now = ek.state(REPO, record["commit"])
         self.assertEqual((now["key"], now["effects"]), (record["key"], record["effects"]))
-        self.assertTrue({"file_write", "fsync", "file_lock"} <= record["effects"].keys())
+        self.assertEqual(record["effects"]["unlexed"], [])
+        self.assertTrue({"file_write", "fsync", "file_lock"} <= record["effects"]["by_kind"].keys())
 
 
 if __name__ == "__main__":

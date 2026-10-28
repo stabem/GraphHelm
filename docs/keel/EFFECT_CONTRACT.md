@@ -100,8 +100,15 @@ crate invalidates, even one the append path never calls.
 
 "Files changed" says the run must be repeated; it does not say whether the append path can now do
 something the guarantee never considered. The record therefore also holds `effects`: for each
-effect kind, the closure's production sources (not `tests/`, `benches/`, `examples/`) that perform
-it, inferred from the same blobs the key covers, with comments dropped and string literals emptied:
+effect kind, the closure's production sources that perform it (`by_kind`), inferred from the same
+blobs the key covers. Production excludes `tests/`, `benches/`, `examples/`, inline
+`#[cfg(test)] mod x { ... }` bodies, and files a closure source loads as `#[cfg(test)] mod x;`
+(`x.rs`, `x/mod.rs`) or `#[cfg(test)] #[path = "..."] mod x;`; a `tests.rs` nobody declares as a
+test module still counts. Each source is lexed first: comments (nested) removed; strings, byte, C
+and raw strings (`r#"..."#`) and char literals (`'"'`, `'\''`, `b'x'`) emptied; lifetimes kept.
+A source the lexer cannot place (an unterminated literal or comment, a quote that is neither a char
+literal nor a lifetime) is listed in `unlexed`: `check` then answers `effects unknown` and `record`
+refuses.
 
 | Kind | Matched by |
 |---|---|
@@ -112,15 +119,15 @@ it, inferred from the same blobs the key covers, with comments dropped and strin
 | `process_spawn` | `Command::new`, `process::Command`, `graphhelm_process::command`, `CreateProcess` |
 | `ffi` | `unsafe`, `extern "…"`, `asm!`: code the scan cannot see inside, flagged as its own kind |
 
-`check` adds `effects_changed` to its answer, compared with the recorded set by kind:
-`effects changed: +network` (with the sources that now carry it), `-file_lock`, or
-`effects unchanged`. A pure refactor that moves an `fsync` into another file reads `invalidate`
-(files changed) with `effects unchanged`; a new spawn or socket reads `+process_spawn` /
-`+network`, the signal that a new guarantee and observer may be needed. A record written before
-this field reports `effects unknown`, never `unchanged`.
+`check` adds `effects_changed`, compared with the record per effect site `kind@source`:
+`effects changed: +process_spawn@core/events/src/local.rs -file_lock@...`, or
+`effects unchanged`. A new spawn in the append file shows even when another closure file already
+spawns. A pure refactor inside a file (rename, reflow, a new pure function) reads `invalidate`
+(files changed) with `effects unchanged`; moving an effect to another file shows as `-` on the old
+source and `+` on the new one. A record written before this field reports `effects unknown`,
+never `unchanged`.
 
-Limits: kinds are per crate source, not per call path, so a sink anywhere in a linked crate counts;
-an effect reached only through an external crate API not named above is not attributed (an `ffi`
-site is still marked); the lexing is approximate. The per-kind test and its sabotage (a detector
-that ignores `network` fails `test_adding_each_effect_kind_to_a_closure_file_reports_it_as_added`)
-guard the kinds.
+Limits: sites are per source file, not per call path; an effect reached only through an external
+crate API not named above is not attributed (an `ffi` site is still marked). The tests and their
+sabotage guard the kinds and the lexer: a detector that ignores `network` fails the per-kind test
+and P2, and a lexer that stops recognising char literals fails P2 and the literal test.

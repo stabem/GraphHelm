@@ -189,8 +189,8 @@ def state(repo: Path, rev: str) -> dict:
 
 
 # Effect kinds the closure's production sources can perform, each a regex over one Rust source
-# with comments removed and string literals emptied. `ffi` marks code the scan cannot see inside (`unsafe`, `extern "C"`,
-# `asm!`): it is a kind of its own, so a new opaque site reports `+ffi` instead of passing unseen.
+# lexed by `strip_noise` (comments removed, literals emptied). `ffi` marks code the scan cannot see
+# inside (`unsafe`, `extern "C"`, `asm!`): it is a kind of its own, so a new opaque site reports `+ffi` instead of passing unseen.
 # An in-process `Mutex::lock()` is not a file lock and is deliberately not matched.
 EFFECT_KINDS = {
     "file_write": re.compile(r"\bFile::create\b|\bOpenOptions\b|\bfs::(?:write|rename|remove_file|"
@@ -203,49 +203,168 @@ EFFECT_KINDS = {
                                 r"\bCreateProcess[AW]?\b"),
     "ffi": re.compile(r"\bunsafe\b|\bextern\s+\"\"|\basm!"),
 }
-NOISE = re.compile(r'("(?:\\.|[^"\\])*")|/\*.*?\*/|//[^\n]*', re.S)
 NOT_PRODUCTION = ("/tests/", "/benches/", "/examples/")
+CFG_TEST = re.compile(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:#\s*\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?"
+                      r"mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*([;{])")
+CFG_TEST_PATH = re.compile(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*#\s*\[\s*path\s*=\s*\"([^\"\\]+)\"\s*\]\s*"
+                           r"(?:pub(?:\([^)]*\))?\s+)?mod\s+[A-Za-z_][A-Za-z0-9_]*\s*;")
+IDENT = re.compile(r"[A-Za-z0-9_]")
+
+
+class Unlexable(ValueError):
+    """The source holds a construct the lexer cannot tokenize with confidence."""
+
+
+def strip_noise(text: str) -> str:
+    """`text` with comments removed and every string, byte string, raw string and char literal
+    replaced by `""`, so data such as `"reqwest::get("` or `'"'` is never read as code. Anything the
+    lexer cannot close with certainty (an unterminated literal or comment, a quote it cannot place)
+    raises `Unlexable`: the caller answers `unknown`, never a guess."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            depth, i = 1, i + 2
+            while depth:
+                if i >= n:
+                    raise Unlexable("unterminated block comment")
+                if text.startswith("/*", i):
+                    depth, i = depth + 1, i + 2
+                elif text.startswith("*/", i):
+                    depth, i = depth - 1, i + 2
+                else:
+                    i += 1
+            out.append(" ")
+        elif (raw := re.compile(r"(?:b|c)?r(#*)\"").match(text, i)) and not (i and IDENT.match(text[i - 1])):
+            end = text.find('"' + raw.group(1), raw.end())
+            if end < 0:
+                raise Unlexable("unterminated raw string")
+            out.append('""')
+            i = end + 1 + len(raw.group(1))
+        elif c == '"' or (c in "bc" and text.startswith('"', i + 1) and not (i and IDENT.match(text[i - 1]))):
+            i += 1 if c == '"' else 2
+            while True:
+                if i >= n:
+                    raise Unlexable("unterminated string")
+                if text[i] == "\\":
+                    i += 2
+                elif text[i] == '"':
+                    i += 1
+                    break
+                else:
+                    i += 1
+            out.append('""')
+        elif c == "'" or (c == "b" and text.startswith("'", i + 1) and not (i and IDENT.match(text[i - 1]))):
+            q = i if c == "'" else i + 1
+            if text.startswith("\\", q + 1):
+                close = text.find("'", q + 2 if text[q + 2:q + 3] != "'" else q + 3)
+                if close < 0 or close - q > 12:
+                    raise Unlexable("char escape not closed")
+                out.append('""')
+                i = close + 1
+            elif q + 2 < n and text[q + 2] == "'":
+                out.append('""')
+                i = q + 3
+            elif q + 1 < n and IDENT.match(text[q + 1]):
+                out.append(text[i:q + 2])  # a lifetime or loop label
+                i = q + 2
+            else:
+                raise Unlexable(f"quote at offset {q} is neither a char literal nor a lifetime")
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def drop_test_modules(code: str) -> tuple[str, list[str]]:
+    """`code` without its inline `#[cfg(test)] mod x { ... }` bodies, and the names of the
+    `#[cfg(test)] mod x;` it declares in other files. Braces are counted on lexed code."""
+    external, at = [], 0
+    while (m := CFG_TEST.search(code, at)):
+        if m.group(2) == ";":
+            external.append(m.group(1))
+            at = m.end()
+            continue
+        depth, j = 1, m.end()
+        while depth and j < len(code):
+            depth += {"{": 1, "}": -1}.get(code[j], 0)
+            j += 1
+        if depth:
+            raise Unlexable("unbalanced test module")
+        code, at = code[:m.start()] + code[j:], m.start()
+    return code, external
+
+
+def _test_module_files(path: str, names: list[str]) -> set[str]:
+    """Files a `#[cfg(test)] mod name;` in `path` may load, by Rust's module-path convention."""
+    p = Path(path)
+    base = p.parent if p.name in ("lib.rs", "main.rs", "mod.rs") else p.parent / p.stem
+    return {(base / f).as_posix() for name in names for f in (f"{name}.rs", f"{name}/mod.rs")}
 
 
 def effects_of(text: str) -> set[str]:
-    """Effect kinds one Rust source's code can perform. Comments are dropped and string literals
-    emptied first, so a pattern list such as `"reqwest::get("` held as data is not a network call.
-    The lexing is approximate (`r#"..."#` and char literals are not parsed); a mis-lex can only
-    hide code inside what it took for a string, which is why `ffi` and the tests guard the kinds."""
-    code = NOISE.sub(lambda m: '""' if m.group(1) else "", text)
+    """Effect kinds one Rust source's non-test code can perform; raises `Unlexable`."""
+    code, _ = drop_test_modules(strip_noise(text))
     return {kind for kind, pattern in EFFECT_KINDS.items() if pattern.search(code)}
 
 
-def effect_set(repo: Path, blobs: dict[str, str]) -> dict[str, list[str]]:
-    """`kind -> sorted production sources` over the closure's `.rs` files outside tests, benches
-    and examples; bounded by the include scan's file and byte limits."""
+def effect_set(repo: Path, blobs: dict[str, str]) -> dict:
+    """`{"by_kind": {kind: [sources]}, "unlexed": [sources]}` over the closure's production `.rs`
+    files: not under tests/, benches/ or examples/, and not a file some closure source declares as a
+    `#[cfg(test)] mod`. Bounded by the include scan's file and byte limits."""
     paths = sorted(p for p in blobs if p.endswith(".rs") and not any(d in f"/{p}" for d in NOT_PRODUCTION))
     if len(paths) > MAX_SCAN_FILES:
         raise ValueError(f"effect scan over {MAX_SCAN_FILES} files")
-    found: dict[str, list[str]] = {}
+    kinds: dict[str, set[str]] = {}
+    tests: set[str] = set()
+    unlexed: list[str] = []
     for path, text in zip(paths, _blob_texts(repo, [blobs[p] for p in paths])):
-        for kind in sorted(effects_of(text)):
-            found.setdefault(kind, []).append(path)
-    return dict(sorted(found.items()))
+        try:
+            code, external = drop_test_modules(strip_noise(text))
+        except Unlexable:
+            unlexed.append(path)
+            continue
+        tests |= _test_module_files(path, external)
+        # `#[cfg(test)] #[path = "x_tests.rs"] mod t;` names its file relative to this source's
+        # directory; read from the raw text, since lexing empties the literal.
+        tests |= {_normalise(f"{Path(path).parent.as_posix()}/{m.group(1)}") for m in CFG_TEST_PATH.finditer(text)}
+        kinds[path] = {k for k, pattern in EFFECT_KINDS.items() if pattern.search(code)}
+    by_kind: dict[str, list[str]] = {}
+    for path in sorted(kinds.keys() - tests):
+        for kind in sorted(kinds[path]):
+            by_kind.setdefault(kind, []).append(path)
+    return {"by_kind": dict(sorted(by_kind.items())), "unlexed": sorted(set(unlexed) - tests)}
 
 
-def effects_changed(before: dict[str, list[str]] | None, now: dict[str, list[str]]) -> dict:
-    """Kinds added and removed since the record. A record with no effect set cannot say what is
-    new, so every current kind is reported `unknown`, never as unchanged."""
-    if before is None:
-        return {"added": [], "removed": [], "unknown": sorted(now),
+def _sites(effects: dict) -> set[str]:
+    return {f"{kind}@{path}" for kind, paths in effects["by_kind"].items() for path in paths}
+
+
+def effects_changed(before: dict | None, now: dict) -> dict:
+    """Effect sites (`kind@source`) added and removed since the record, so a new spawn in the append
+    file shows even when another closure file already spawns. A record with no effect set, or a
+    source either side could not lex, answers `unknown`, never `unchanged`."""
+    if before is None or "by_kind" not in before:
+        return {"added": [], "removed": [], "unknown": ["record has no effect set"],
                 "summary": "effects unknown: the record has no effect set"}
-    added, removed = sorted(now.keys() - before.keys()), sorted(before.keys() - now.keys())
-    summary = ("effects changed: " + "/".join([*(f"+{k}" for k in added), *(f"-{k}" for k in removed)])
+    unlexed = sorted(set(now["unlexed"]) | set(before.get("unlexed", [])))
+    if unlexed:
+        return {"added": [], "removed": [], "unknown": unlexed,
+                "summary": "effects unknown: cannot lex " + ", ".join(unlexed)}
+    added, removed = sorted(_sites(now) - _sites(before)), sorted(_sites(before) - _sites(now))
+    summary = ("effects changed: " + " ".join([*(f"+{s}" for s in added), *(f"-{s}" for s in removed)])
                if added or removed else "effects unchanged")
-    return {"added": added, "removed": removed, "sites": {k: now[k] for k in added}, "summary": summary}
+    return {"added": added, "removed": removed, "summary": summary}
 
 
 def decide(repo: Path, record: dict, rev: str) -> dict:
     """`reuse` when the closure bytes at `rev` equal the recorded ones and every include resolved;
     otherwise `invalidate`. An include the scan cannot resolve never reads as reuse. Beside the
-    decision, `effects_changed` says whether the set of effect kinds moved: a `+kind` means the
-    path gained an effect the recorded guarantee never covered."""
+    decision, `effects_changed` says whether the effect sites moved: a `+kind@source` means the
+    path gained an effect site the recorded guarantee never covered."""
     now = state(repo, rev)
     base = {"key": now["key"], "evidence_commit": record["commit"],
             "effects_changed": effects_changed(record.get("effects"), now["effects"])}
@@ -264,6 +383,8 @@ def make_record(repo: Path, rev: str, observed: str) -> dict:
     now = state(repo, commit)
     if now["unknown"]:
         raise ValueError(f"cannot vouch for unresolved includes: {now['unknown']}")
+    if now["effects"]["unlexed"]:
+        raise ValueError(f"cannot record effects of unlexable sources: {now['effects']['unlexed']}")
     return {"guarantee": GUARANTEE, "observer": OBSERVER, "observed": observed, "commit": commit,
             "closure": now["closure"], "key": now["key"], "effects": now["effects"]}
 

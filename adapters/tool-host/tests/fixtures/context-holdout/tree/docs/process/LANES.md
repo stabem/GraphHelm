@@ -1,0 +1,471 @@
+# Lanes: many agent sessions on one machine
+
+A **lane** is one agent session working this repository beside others on the same machine, under
+one GitHub account. This page is the lane's standing rules. How a change gets from an issue to
+`main` is [DELIVERY.md](DELIVERY.md); this page only adds what sharing one machine requires.
+
+The paths below are this team's layout: the lane root is `D:\gh`, the owner's checkout (the one the
+Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-claude-orquestrador`.
+`<lane>` is your session name, exactly as `ListAgents` prints it (for example `gh-claude-11`).
+
+## 1. Who decides
+
+- Your session name is your address. Rename the chat to exactly `<lane>`.
+- The coordinator gives orders and go-aheads. Report to it with `SendMessage`; never wait for the
+  owner.
+- On start, send `<lane> ready` plus one line on what you read first, then wait for an order.
+- Read [`AGENTS.md`](../../AGENTS.md) and [DELIVERY.md](DELIVERY.md) before any work.
+- **Only the coordinator assigns a reviewer**, one per PR. Do not pick one and do not review a PR
+  you were not assigned; when none was named, ask the coordinator. The assigned reviewer merges
+  (pinned squash, DELIVERY.md §5).
+- A lane holds at most **one implementation task, one review in progress and one waiting slot
+  ticket** at a time. A lane with an open review assigned to it does not start a new
+  implementation plan until that review has a verdict (#1470).
+- When a review of record already exists for the head you were assigned, stop and tell the
+  coordinator instead of adding a second one.
+- The coordinator picks each subagent's model and effort by task kind, never above the owner's roster; the rule is item 4 of the `graphhelm-team` skill.
+
+## 2. Where a lane writes
+
+- Everything of yours lives under `D:\gh\<lane>\`: worktrees, scripts, logs, temp files.
+- Never write or edit a file in the owner's checkout (`F:\github\GraphHelm`), `.claude/launch.json`
+  included, and never in the root of `F:\`. Read from it, and run its tools, freely.
+- Start a dev server from your own folder and open it with `preview_start {url}`, not by adding an
+  entry to the owner's `.claude/launch.json`.
+- No bare `git stash`: the stash is shared by every worktree of the repository, so another lane can
+  pop yours. Commit to your branch instead.
+- One new worktree per task, cut from `origin/main`. Use `workspace claim` so the Runtime
+  can manage its lifetime, then `workspace release` when the task is done:
+
+      graphhelm workspace claim --root D:/gh --lane <lane> --task <issue> --repo F:/github/GraphHelm --base origin/main --branch issue-<N>-<slug>
+      graphhelm workspace release --root D:/gh --lane <lane> --task <issue>
+
+  The worktree is `<root>/<lane>/<task>/wt`. Hand-created worktrees (`git worktree add`)
+  are outside the claim ledger and are never reclaimed as workspaces; their recorded slot
+  targets can still qualify for the target-only rules below.
+- `graphhelm serve --workspace-root <root>` runs the existing `workspace sweep --apply`
+  automatically every 1800 seconds. `--workspace-sweep-seconds 0` disables it; nonzero
+  values must be 60..=86400. It sleeps before each attempt and after completion; this period
+  does not bound the duration of Git or filesystem operations. No cleanup rules change.
+  CLI sweeps, HTTP sweeps, periodic sweeps and held-slot reclaim share
+  `<root>/.graphhelm-workspaces/sweep.lock`; contention refuses a sweep without waiting.
+  A held slot skips target reclaim when that lock is unavailable, counts those targets as held,
+  and continues with the existing cap and free-space checks before running the build.
+  The lock covers the eligibility checks and delete loop, never the timer sleep or a build.
+  A failed tick is logged and retried next period, without stopping the Runtime.
+  `GET /v1/workspaces` adds `lastSweep` (`null` before the first tick), with Unix-seconds
+  `at`, `removed`, `kept`, target results and `ok`/`diagnostics`. Each tick logs this same
+  outcome on one stderr line; it is in memory and resets when the Runtime restarts.
+
+- A worktree's `node_modules` (for example `apps\studio
+ode_modules`) can be a junction into the
+  owner's copy. `Remove-Item -Recurse`, `rm -rf` **and `git worktree remove --force`** all follow a
+  junction and delete the owner's files through it. Remove a worktree or directory with the one
+  command that never follows a link (#1663):
+
+      graphhelm workspace remove D:/gh/<lane>/wt-<issue>
+
+  For a linked git worktree it stops the processes inside, unlinks every link without following
+  it, saves uncommitted work to `D:/_merge-leftovers/<directory name>/`, unregisters the worktree
+  and deletes the folder; any other directory has its links unlinked and is deleted. It refuses a
+  repository's main checkout and a locked worktree, and exits 3 when it could not finish.
+- After a merge the merger removes the PR's worktrees with `graphhelm workspace sweep --apply --merged-branch <branch> --repo <repo> --pr <N> --head <sha> [--target <dir>]... [--keep-worktree <dir>]` (DELIVERY.md §5): it stops the processes inside the PR's worktrees, unlinks links without following them, saves uncommitted work to `D:/_merge-leftovers/<N>/`, and removes every worktree and review checkout of the PR (any lane's), the named per-PR targets and the local branch. For the one kept worktree (`--keep-worktree`), see [KEEL_MERGE.md](../../keel/KEEL_MERGE.md) step 5.
+- Removal by name is DELIVERY.md §6; never touch another lane's ticket either. The one sweep
+  allowed to remove by rule and to run `git worktree prune` is
+  `graphhelm workspace sweep --all [--apply] [--repo <repo>]` (#1578). Without `--apply` it only
+  reports. It covers every registered worktree of the repository (`.claude/worktrees` among them)
+  and every build cache (a directory holding `CACHEDIR.TAG`, up to three levels down) under the
+  slot and target roots `D:/gh`, `D:/gh/b`, `D:/gh/c`, `D:/gh/sub`, `D:/ghb`, `D:/ghc`, `D:/ghopt`,
+  `C:/ghc`, `C:/gh` and `C:/w/a`..`C:/w/d` (`--sweep-root` replaces the list). It removes a
+  worktree only when no live process holds it and its PR is merged or closed (`gh pr list`, or its
+  content already in `origin/main`), or it is clean, pushed and idle for `--idle-hours` (24). It
+  saves dirty work to `D:/_merge-leftovers/<worktree>/` first, skips and reports a locked
+  worktree without unlocking it, keeps unmerged unpushed work, and never follows a link. A cache
+  is removed when idle and held by no process; logs, notes and other files under a root are not
+  touched. Exit code 3 means something could not be removed.
+- The sweep also runs hidden, every two hours, as a scheduled task the orchestrator registers
+  once (#1641). The action is `pythonw`, which has no console, and it starts the CLI with
+  `CREATE_NO_WINDOW` (`0x08000000`), so no window flashes (a `powershell.exe` action flashes one
+  even with `-WindowStyle Hidden`). The limit is two hours: the first real `--apply` run took
+  about 65 minutes (71 worktrees, 160 branches, 16 caches), longer than the 50 minutes this task
+  once had. `IgnoreNew` keeps a slow run from overlapping the next one:
+
+      $exe = "$env:USERPROFILE\.cargo\bin\graphhelm.exe"
+      $py = "import subprocess;f=open(r'D:/_merge-leftovers/sweep-all.log','ab');subprocess.run([r'$exe','--json','workspace','sweep','--all','--apply','--repo','F:/github/GraphHelm'],stdout=f,stderr=f,creationflags=0x08000000)"
+      $a = New-ScheduledTaskAction -Execute "pythonw.exe" -Argument "-c `"$py`""
+      $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Hours 2)
+      $s = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+      Register-ScheduledTask -TaskName "GraphHelm sweep all" -Action $a -Trigger $t -Settings $s
+
+- The board follows GitHub by itself (#1628): the Stop reconciler
+  (`plugins/graphhelm/hooks/tasks_reconcile.py`) also runs every 30 minutes as a hidden scheduled
+  task with `--lane graphhelm --adopt-opened`, so a merge or close is recorded even when no lane
+  stops again, and an open PR whose `Closes #N` names an open claim gets the `task.pr_opened` its
+  lane forgot (signed with that lane's own credential file; a lane without one is reported under
+  `adopted.refused`). It is a scheduled job, not a serve-side poller, so the Runtime and the Policy
+  Engine stay network-free and the same reconciler code runs on Stop and on the timer. `pythonw`
+  has no console, so `--log` appends each reply. The orchestrator registers it once, using the
+  execution from the project `team.json` or the Studio briefing (shown below as `<execution>`),
+  and mints the `graphhelm` credential first: `graphhelm tasks credential --lane graphhelm --execution <execution> --token-file F:/github/GraphHelm/.graphhelm/events.token`, which mints `.graphhelm/events.agent.graphhelm.token`. `--runtime-timeout 60` lets a run wait for a loaded Runtime (#1632); the Stop hook keeps its 2 s / 3 s defaults. One run on a loaded Runtime took 566 s (2026-10-19), so the limit is 15 minutes. The interval must never be shorter than the limit: with `IgnoreNew`, a shorter interval restarts the job as soon as the last run ends, a near-continuous load on a saturated Runtime. It is 30 minutes until the Runtime latency (#1649) lands, then 15:
+
+      $a = New-ScheduledTaskAction -Execute "pythonw.exe" -Argument 'F:/github/GraphHelm/plugins/graphhelm/hooks/tasks_reconcile.py --execution <execution> --url http://127.0.0.1:8793 --token-file F:/github/GraphHelm/.graphhelm/events.agent.graphhelm.token --repo stabem/GraphHelm --lane graphhelm --adopt-opened --runtime-timeout 60 --log D:/_merge-leftovers/board-sync.log'
+      $t = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 30)
+      $s = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
+      Register-ScheduledTask -TaskName "GraphHelm board sync" -Action $a -Trigger $t -Settings $s
+
+## 3. Builds: one slot for the whole machine
+
+- Every Cargo build, test or clippy invocation runs under the existing build slot, with a direct
+  Cargo command and an explicit package. Each test invocation names exactly one package and one
+  explicit target. Multiple module filters for that executable may follow `--`:
+
+      graphhelm workspace slot --root D:\gh --lane <lane> --jobs 6 --label <what> -- cargo +1.97.1 test --locked -p graphhelm-cli --test cli -- --test-threads=2 keel_check::
+
+- The CLI refuses shell, PowerShell and Python wrappers before creating a ticket. Keep the outer
+  script outside the slot. A direct CLI slot invocation still acquires once per submitted Cargo
+  command; the reached-test runner batches short commands by default. Unscoped package tests,
+  workspace-wide commands and target-directory overrides are refused too. Multiple package or
+  target selectors in one `cargo test` command are refused before queueing; the sole exception is
+  one `graphhelm-cli` command naming both `--bin graphhelm` and `--test cli`. That pair is admitted
+  only as two distinct explicit targets; all other different executables stay separate. Clippy may
+  still name multiple touched packages. This is enforced by
+  upgraded CLI binaries; an old installed binary retains the old behavior until upgraded.
+- Run `npm ci --prefer-offline --no-audit --no-fund`, `vitest --maxWorkers=1`, `tsc`, and standalone
+  journey previews outside the Cargo slot, serially within the lane. Cargo-based browser observers
+  remain in the slot with two test threads; this change does not add execution capacity.
+- Keep the isolated target chosen by the slot warm. Do not override its `CARGO_TARGET_DIR`, use
+  `--shared-target`, or run `cargo clean`: shared mutable artifacts can vouch for another worktree's
+  code. The outer script may set `GRAPHHELM_TEST_TIME_SCALE=3` before invoking the slot. This
+  scales child-test hang catchers, never product budgets; supported values are integers 1 through 20.
+- Every new cooperating GraphHelm build and `graphhelm update` also takes the shared OS
+  build-admission lock. Its per-user default is `<user-home>/.graphhelm/build-admission`;
+  `GRAPHHELM_BUILD_ADMISSION_DIR` may
+  override it only with an absolute path. An unavailable, invalid or relative authority refuses
+  the operation. The root-local queue, ticket and target locks remain in place. **The shared
+  authority grants a jobs budget, not a turn:** the head of a root's queue is admitted while
+  the `--jobs` of every admitted run plus its own stay within 24 (a positive integer in
+  `jobs-budget` in the authority directory overrides it; an invalid one refuses), and keeps waiting
+  otherwise. The lock is held only to read and rewrite the ledger of grants (`granted`, one
+  `<pid> <jobs> <token>` line per admitted run); a grant whose process is gone is dropped at the next
+  admission, and a request whose `--jobs` alone exceeds the budget refuses before it queues. An
+  update takes a grant like any run, the free room up to `--jobs 16` once at least 4 jobs
+  are free (or the whole budget, when smaller), and builds beside the runs already admitted; while it does not fit, its `update-pending` marker stops
+  new grants, so it is admitted next. It builds into `~/.graphhelm/target` and a staging root, and
+  replaces the running binary only after the build succeeds. Older binaries and raw Cargo invocations take no grant. The
+  lock order is root-local queue then shared authority; a waiter releases a root candidate before
+  retrying.
+- **Review and merge go first (#1470).** A slot job tagged `--stage review` or `--stage merge`
+  is admitted before every waiting `implement` job (the default), whatever the arrival order. It
+  never preempts the holder, and an owner `--priority` waiter still goes first. Reviewers and
+  mergers pass `run_reached.py --stage review` (or `merge`), which forwards it to every slot
+  command it queues (it needs a CLI built after #1470; the default `implement` sends no flag, so
+  older CLIs keep working). `workspace slot status` shows each waiter's stage.
+- **Build jobs.** One slot root may build with up to `--jobs 16`;
+  the jobs of every root building at the same time add up to at most 24. `run_reached.py --jobs N`
+  carries the choice into every slot command it queues (six when omitted). The dedicated root
+  `D:/gh/opt` runs at 16; the Codex fleet keeps its concurrent runs within the remaining 8.
+- **Where the owner set a build-directory rule, the slot picks the directory and the script does
+  not export one.** The rule is `<root>\.graphhelm-workspaces\slot-targets.json`:
+
+      {"targetRoot": "C:/gh", "cap": 3, "minFreeGb": 20}
+
+  Slot roots and targets live on the SSD NVMe `C:` drive (#1578): the slot roots are `C:/w/a`,
+  `C:/w/b`, `C:/w/c` and `C:/w/d`, and their `targetRoot` is `C:/ghc`. The older `D:` roots are
+  still swept by `workspace sweep --all` until they are empty. Changing `targetRoot`
+  does not move existing targets: each old record is kept as `target_root_changed`, so remove the
+  old root's directories of retired lanes by hand, and never one a live process still builds in.
+  With it the slot runs the command with
+  `CARGO_TARGET_DIR=<targetRoot>\<lane>\<worktree directory name>\target`, records that
+  directory, and holds each lane to `cap` of them (default 3): a run that would start one more is
+  refused before it queues, naming the ones the lane holds. A build directory whose worktree no
+  longer exists is reclaimed by that lane's next slot run and by `graphhelm workspace sweep
+  --apply`. The sweep also reclaims only the target of an existing worktree when it is clean,
+  idle and merged by content into its local `refs/remotes/origin/main`; its worktree and branch
+  remain intact. Git 2.38 or newer must report that `git merge-tree --write-tree
+  refs/remotes/origin/main HEAD` produces exactly `origin/main`'s tree, with no error or stderr.
+  The sweep never fetches. Squash merges qualify; a later main edit that conflicts keeps the
+  target. Missing refs, unreadable paths and ambiguous results keep it with a reason.
+  Only the target's own path is excluded from the clean-tree check. Every target entry must be
+  older than 30 minutes; links are refused. The sweep holds the build slot while checking and
+  reclaiming, and refuses a target named by a waiter (older tickets without a worktree protect
+  the entire lane). A held slot keeps targets as `merged_busy`.
+  Without `--apply` the same checks only list candidates; eligible entries carry `reason: merged`.
+  Other keep reasons include `merged_dirty`, `merged_recent`, `not_merged` and `merge_check_failed`.
+  `graphhelm workspace slot status` shows how many targets each lane holds and the worktree of
+  new holders and waiters. An
+  `export CARGO_TARGET_DIR=...` inside the script overrides the slot and puts the build back where
+  the rule says not to: leave it out. The worktree's directory name must be a workspace id
+  (lowercase letters, digits, `.`, `_`, `-`).
+  `minFreeGb` is an integer from 0 to 4096, defaults to 20 when absent, and 0 disables the
+  free-space floor. With the floor enabled the target root's volume must report its free space.
+  A run below the floor refuses before queueing when no other lane has target records to
+  inspect. Otherwise it queues, then, while holding the slot and still below the floor, applies
+  the target-only sweep to other lanes and rechecks free space once. It never reclaims this
+  lane's targets or the worktree it is about to build in, even if another lane recorded it.
+  When space remains below the floor it refuses and names the free GB, the floor and
+  `graphhelm workspace sweep`; no child runs. GB here means 1024 cubed bytes. Reclaim runs only
+  while holding the slot; a pre-queue refusal does not reclaim anything. Free space is a
+  sample, not a reservation, so another writer can consume space after the check. Slot status
+  adds `targetSpace: {targetRoot, freeGb, minFreeGb}` alongside the existing lane counts;
+  unreadable free space is `null`, never a claim that enough space remains. No-rule and
+  `--shared-target` runs keep their existing behavior.
+- Shells may orchestrate slot calls, but cannot themselves be the command submitted to the slot.
+- A `cargo check` run allowed outside the slot uses
+  `CARGO_TARGET_DIR=D:\gh\<lane>\target-check`.
+- Benchmarks, load generators and store seeding run inside the slot too: they load the machine like
+  a build does.
+- Urgency does not exempt cargo builds, tests or clippy from the slot.
+- Do not run CPU stress tests on the shared machine.
+- After the machine reboots, every background run is dead. Queue it again; do not wait for it.
+- **One waiting ticket per lane.** An outer runner may contain all reached checks, but the
+  default feedback batch keeps one bounded slot lease across short Cargo commands and yields at
+  its time boundary. `--no-batch-slot` restores one Cargo command per slot invocation. Never put the entire outer
+  runner inside the slot: scripts and unrestricted command lists remain refused.
+- **Use the reached-test runner for ordinary feedback:**
+
+      python tools/reached-tests/run_reached.py --repo . --base origin/main --head HEAD --root D:/gh --lane <lane> --output <outside-repo>/feedback.json
+
+  The author's run of this command is the receipt the reviewer reuses instead of a second
+  whole-plan run on the same head, and main gets its one whole run after merges; when each
+  applies is [DELIVERY.md](DELIVERY.md) §3 to §5.
+
+  Pin the agent CLI with `--graphhelm <absolute-executable>` or `GRAPHHELM_CLI`; an explicit
+  missing executable is an error, never a reason to fall back to another installation. The
+  runner records the resolved path and uses it for its selector and GraphHelm commands.
+  Updating a launcher affects future processes only; an already-running agent must pass the
+  explicit path on its next invocation. Keep the Runtime executable and launch settings separate.
+
+  Selected modules of the same Rust test executable share one invocation with multiple libtest
+  filters. This preserves the selected test set and avoids queueing once per module. The reached
+  selector also coalesces filtered `graphhelm-cli` `--bin graphhelm` and `--test cli` selections,
+  carrying the union of both filter sets. A whole-package `graphhelm-cli --test cli` plan is
+  partitioned by its registered bundle modules, with prior-module skips on later filters, plus one
+  `--skip` complement for inline/root tests;
+  an unfiltered single selection uses the same partition and requires the same metadata;
+  missing bundle metadata is unsupported. All other different executables remain separate commands.
+  A broad selection is still a broad audit; bundling is
+  not permission to execute every module or to omit required checks to meet the time target.
+
+  **Feedback batches (default; `--no-batch-slot` opts out, requires an upgraded CLI):** after moving only the
+  read-only `cargo fmt --all -- --check` before Cargo, the runner groups at most four adjacent
+  Cargo steps with the same working directory. All checks remain in the plan, with their original
+  indices and individual results. No other check is reordered or crossed. They execute serially
+  inside one existing slot, with the runner's `--jobs` (six unless the lane passes another) and two test threads; there is no extra holder.
+
+  The runner sends `GRAPHHELM_SLOT_BATCH` as a versioned JSON request (`graphhelm.slot-batch/1`):
+  `commands` includes the ordinary argv command first, `budgetSeconds` is the remaining full-run
+  budget, `deadlineUnixMs` preserves the original deadline across CLI startup/requeue,
+  and `leaseSeconds` is 30 (accepted range greater than zero through 60). The CLI validates
+  every command with ordinary admission before creating a ticket, and clears this environment
+  variable from every child. Targets, reclaim protection, root ownership and queue order do not
+  change. A command failure stops the batch. At a command boundary, the CLI starts nothing more
+  after the lease threshold or the whole-run deadline, including queue time, and releases the slot.
+  An individual command may exceed the threshold; this does not kill a child or promise a hard
+  maximum occupancy. Unfinished steps queue again only while the original run still has time.
+
+  The versioned `graphhelm.slot-batch-result/1` result identifies the completed ordered prefix,
+  remaining indices, per-command exit status and duration, and the stop reason. Queue and total
+  held time are counted once per lease. Missing, malformed or legacy CLI output leaves unconfirmed
+  checks pending and the run incomplete; an exit code alone cannot prove a batch completed.
+  With `--no-batch-slot`, existing single-command behavior is unchanged.
+
+  It plans the committed diff and queues Cargo tests or clippy commands (in bounded batches by default), with the
+  runner's `--jobs` build jobs (six unless the lane passes another) and two test threads. Fmt, Python, Node, Studio checks and standalone journey tools
+  run outside the Cargo slot, serially. Existing root target rules remain authoritative. The
+  runner does not install dependencies, clean targets, bypass the queue or add holders.
+  Reached browser observers run by default when `GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT` names an
+  installed local toolchain with `@playwright/test` (#2033). Without it they do not start browsers:
+  the report lists them as skipped with `OBSERVER_MISSING`, shows them UNOBSERVED and stays
+  `incomplete`, never `passed`. `--include-browser` errors when the toolchain is missing. Their Cargo test
+  commands retain the slot and thread limits; standalone preview commands stay outside it.
+
+  The default 900-second budget (`--budget-seconds`; 180 until #1459, which ended most first runs after one step) starts before planning and includes waiting. The report lists
+  completed and pending checks and available slot wait/hold times. A late, failed or incomplete
+  run is not a pass. A running command retains the slot until it exits; exceeding the budget never
+  kills only a parent and releases the lock over surviving children. No further check starts
+  after the budget is exhausted. Unmapped paths and whole-package plans require explicit handling;
+  a whole-package exception needs its reason in the card and the runner argument. Do not pass
+  `--allow-whole-package` by default (#1608): an `apps/cli/src/commands` change reaches only its
+  modules (DELIVERY.md §3), and the scheduled main whole run (#1540) is the whole-package backstop.
+
+  The existing `GraphHelm main whole run` task starts the absolute runner path in the primary
+  checkout, never in a lane or review worktree. `main_whole_run.py` fetches main and recreates its
+  disposable test worktree when absent; that worktree is not the scheduled entry point. Repair
+  only the existing task action with the command below, preserving its triggers and settings.
+  Pass all intended runner overrides explicitly; `--execution` remains optional and otherwise
+  comes from the project's `.graphhelm/team.json`. The command also works from a linked worktree,
+  resolving its primary checkout through Git. Inspect with `-WhatIf` first.
+
+      ./tools/reached-tests/register_main_whole_run.ps1 -Repo F:/github/GraphHelm -RunnerArguments @('--root', 'D:/gh/c', '--token-file', 'F:/github/GraphHelm/.graphhelm/events.token')
+
+  Keep the same isolated worktree target warm across edits. Cold preparation and explicit broad
+  audits may exceed 900 seconds and must be reported as such. Long experiments run as separate
+  commands in an agreed quiet window, not as one script ahead of ordinary changes. With twenty
+  concurrent requests, one local slot cannot guarantee every result within 900 seconds; report
+  the actual miss rather than hiding the queue or increasing CPU pressure.
+
+- Which checks to run, for authors and reviewers alike, is the shared test budget in DELIVERY.md §3;
+  docs-only work does not use the slot.
+- **Never end a turn idle because a build waits.** Write the next code, write the PR body, or read
+  the PR you were assigned to review.
+
+`workspace list --sizes` (HTTP `GET /v1/workspaces?sizes=1`) adds regular-file bytes for recorded workspaces and targets plus lane totals; links are skipped, unreadable items and their lane totals are null, and hard links count once per directory entry.
+
+## 4. Task records
+
+The owner watches the Studio Team tab, which is drawn from these records (DELIVERY.md, "Task
+records"). From a lane worktree the token path must be absolute:
+
+    T="python F:/github/GraphHelm/tools/task-record/task_record.py --repo stabem/GraphHelm --token-file F:/github/GraphHelm/.graphhelm/events.agent.token --lane <lane>"
+
+| When | Command |
+|---|---|
+| Start a task | `$T --issue N claimed --branch B --journeys <contractId>` (`--assigned-by <who>` when the order came from someone; the claim states a 1800 s lease, `--lease-seconds` to change it; `--agent-kind claude --agent-model opus` names what the lane is, for the owner's Lanes card, #1851) |
+| Right after the claim, before code | `$T --issue N planned --summary "<the plan in one line>"` (paths from git, or `--paths <scope...>`; the valid ones, at most 64, ride on the record as `paths` for the Team tab's file collisions) |
+| Give up a pre-PR claim (yours; the Stop reconciler releases lapsed ones as `graphhelm`) | `$T --issue N released --claim-sequence <seq> --release-reason "<why>"` |
+| Say the claim is alive (the Stop hook does this for you on every turn end; one per 300 s, the Runtime decides) | `$T --issue N heartbeat` |
+| Open a PR, and again after **every** push (this also records `review_assigned`) | `$T --issue N pr_opened --pr P --head SHA --reviewer <reviewer> --journeys <contractId>` |
+| Change the reviewer without a push | `$T --issue N review_assigned --pr P --head SHA --reviewer <other>` |
+| As reviewer, after posting the verdict | `$T --issue N review_verdict --pr P --head SHA --verdict APPROVE\|APPROVE-WITH-RISK\|BLOCK --comment-url URL` |
+| As current reviewer, deliberately wait or resume on the current binding | `$T --issue N review_activity --repo owner/repo --pr PR --head FULL_SHA --review-context-sequence CURRENT_CONTEXT --revision NEXT_REVISION --activity waiting --reason "observed wait" --dry-run`; submit via MCP `signal` with your own credential and confirm tasks. For actual resumption use the next revision and `--activity resumed` without reason. Exact historical retries do not refresh time or restore old text; an older Runtime refusal has no fallback write. |
+| As merger, only after your own `gh pr merge` exits 0 | `$T --issue N merged --pr P --merge-sha SHA --closes <issues the squash closed>` |
+| A PR closed without a merge (the Stop reconciler records this; by hand only to repair) | `$T --issue N closed --pr P --reason superseded\|abandoned --by <PR>` |
+| Grade a design round when the plan says `critic: design` | `$T --issue N critic_verdict --round R --score 0-10 --design-ref <path> --reason "<why>"` |
+| As coordinator, to refresh the Lanes Backlog (#1469): the open `current-wave` issues no open PR closes, read with `gh` | `$T queued` (no `--issue`) |
+| As owner, to retire or restore lanes (signs with the owner token; `--token-file <events.token>`) | `$T lane_retired --lanes a,b --retired true\|false --reason "<why>"` (no `--issue`) |
+| As orchestrator, to record an owner request in the owner's words (#1792) | `$T request_recorded --request-id <id> --ask "<the ask>" [--title "<short>"]` (no `--issue`) |
+| As orchestrator, to link an issue opened for that request | `$T --issue N request_linked --request-id <id>` |
+| After `graphhelm journey preview <id> --project <worktree>` at your PR head, to show its frames as Now (#1839) | `$T --issue N journey_frames --pr P --head <sha> --journey <id> --preview-project <worktree>` |
+
+`--closes` is recorded exactly as given: name every issue the squash closed, and pass none for a
+`Refs` PR. Every lane merges under one GitHub account, so `mergedBy` cannot tell whose merge it
+was; the exit code of the `gh pr merge` you ran is the evidence.
+
+**One issue lock.** The single lock for an issue is the Runtime `task.claimed` record on the configured team execution.
+- An orchestrator reads `GET /v1/executions/<execution>/tasks?issue=<N>`, plus the issue's last
+  comments and open PRs, before assigning.
+- A lane records `claimed` before its first edit, then confirms it landed with the same GET.
+- A claim that timed out is not a claim until that GET shows it. No confirmation means no edit.
+- A refused claim (held by another lane) means stop. Take an issue over only through an
+  `assignedBy` handover.
+- `D:/gh/coordinator/codex/issue_locks.json` is read-only legacy. Do not write to it.
+
+Record only as yourself. `task_record.py` sends the lane's own credential
+(`<events>.agent.<lane>.token`, minted once per lane with `graphhelm tasks credential`) when it
+exists and the shared agent token otherwise; a Runtime started with `serve --require-lane-credential`
+refuses a `task.*` record under the shared token or under another lane's credential
+(`GHCLI038_ACTOR_MISMATCH`). The rules, the lease and the per-step fields are in DELIVERY.md
+"Task records"; this table is the command per step.
+
+## 5. Naming and messages
+
+### Codex process end
+
+The reference implementation-author launcher requires an explicit existing own-lane pre-PR
+claim before it starts Codex. Reviewers use the existing `review_assigned` flow for their own
+identity, current PR and exact head; they never claim the author's issue or use this launcher.
+Trusted setup must provision the lane credential first; the launcher does not mint one, claim an
+issue or grant authority. An implementation child that needs registration starts with bootstrap instructions only,
+claims as itself, and returns a matching `task_admit` receipt before receiving the task payload.
+The coordinator never claims as the child. Presence or a note saying working does not satisfy this
+barrier. Direct host APIs outside this workflow are not intercepted.
+
+`tools/codex-launcher/run-codex.cmd` delegates argument handling to `run_codex.py`:
+
+```text
+run-codex.cmd <actual-lane> <unique-run-tag> <prompt-file> --execution <execution> --issue <N> --branch <branch> --repo stabem/GraphHelm --claim-sequence <sequence> --url http://127.0.0.1:8793 --token-file F:/github/GraphHelm/.graphhelm/events.agent.token --result-file <lane-result-file>
+```
+
+Python, GraphHelm and Codex must already be installed. `--graphhelm` and `--codex` may pin existing
+executables; defaults resolve PATH. GraphHelm must be a native executable on Windows. A discovered
+Codex batch shim is allowed only with arguments free of shell metacharacters; the launcher refuses
+unsafe values rather than trying to escape them. Use a safe path or a native executable instead.
+`--timeout-seconds` bounds the Codex process (default 3600); the admission and end-record requests
+have 45-second deadlines. The timeout does not prove every descendant process has ended.
+
+The launcher runs `graphhelm --json tasks admit` with the six exact binding fields and checks its
+receipt before `codex exec`. Admission failure, unreadable response or a mismatched receipt starts
+no worker. The receipt is a current-claim observation, not a host reservation or a guarantee that
+the lease will remain live. Keep the ordinary heartbeat loop.
+
+After Codex returns, the launcher records `graphhelm tasks run-ended` under that actual lane,
+execution and run tag. Recording is best effort and preserves the Codex exit code; a timeout is
+reported as 124. The `SessionEnd` hook remains installed. The run tag is unique per run and stable
+on recording retry; a Runtime outage cannot turn failed work into success.
+After the end lands, the command releases, as the lane, every pre-PR claim the lane still holds
+(reason `run ended (exit N) without a PR`) and reports them under `claims`: a one-shot run
+that ended without a PR will not open one, so its issue is free at once, not after the lease.
+
+### Autonomous lane wake loop
+
+Studio's **Ask for status** appends an `operator_note` addressed with `to: <lane>` on the
+team execution. SendMessage is not its delivery mechanism. Every active lane must maintain
+this loop; the coordinator does not nudge it:
+
+When deploying a Runtime version that adds addressed-note routing fields, upgrade and verify
+all active event-store readers first: PATH-installed or versioned `graphhelm` CLIs, direct-store
+status/inbox tools, and sidecars that read the event log. HTTP-only hooks are not direct-store
+readers; update them with the host plugins after the Runtime writer is switched. Do not switch
+the writer until readers can replay events containing `to` and `replyTo`. Old readers cannot
+roll back after such an event is appended. Never delete or rewrite events; restore compatible
+readers instead. Track source release, Runtime writer activation, host activation, and observed
+autonomous wake as separate statuses.
+
+1. Bind the host/plugin to the **team execution**. On Desktop, put `executionId`, `runtimeUrl`,
+   and the agent token file path in the repository's ignored `.graphhelm/team.json`; SessionStart
+   saves the valid Desktop `session_title` by `session_id`, and Stop resolves the lane from that
+   saved session identity. Explicit `GRAPHHELM_*` environment variables still take precedence.
+   Codex sessions without a title use `GRAPHHELM_EXECUTION_ID`, `GRAPHHELM_RUNTIME_URL`,
+   `GRAPHHELM_TOKEN_FILE`, and `GRAPHHELM_ACTOR=<lane>`. Keep the actor distinct from the MCP
+   session identity.
+2. Read `events` through its head, opening sealed `operator_note` evidence with `evidence`.
+   Match the envelope's `to` exactly to your lane. Read notes from owners and agents;
+   do not filter only owner events. Act on each pending addressed note within your authority.
+   Reply as yourself with an `operator_note` whose `replyTo` is the original signal id.
+   A reply can report a blocker; it must not claim unperformed work. A note remains pending
+   until that lane replies. An unrelated task record or another lane's reply does not clear it.
+3. Arm `wake_arm` on that execution with `cursor` at the last sequence actually read,
+   a lane/session-specific opaque `rendezvousId`, and a finite `maturesInSeconds` (for example
+   60). Retain the returned `sessionId`; the lease belongs to that MCP session, not the lane name.
+4. Keep the co-located sidecar running as a **background task whose completion wakes the host**:
+
+       graphhelm wake-wait --events <team-events-directory> --execution <team-execution> --session-id <sessionId-from-wake_arm>
+
+   Do not occupy the Cargo slot. On Windows, a separate process started with `Start-Process`
+   must use `-WindowStyle Hidden`; a detached process alone is insufficient because its exit
+   does not resume an agent turn. Use the host's background-task completion notification.
+   A remote host without access to the store uses `wake_wait` in the same MCP session that
+   armed the lease, with equivalent completion notification.
+5. Exit **0** means ring: read from your last read cursor, act on addressed notes, reply, and
+   re-arm. Exit **3** means timeout: do the same fallback read, then re-arm and restart the
+   waiter. Never assume timeout means no note arrived. Other exits are a binding/wait failure:
+   diagnose it and restore the loop; do not silently retire the waiter. Always arm from the
+   last read cursor, not a newly fetched head, so a note arriving between read and arm rings.
+6. What rings (#1772): a note addressed to your lane, an unaddressed note, any non-task append,
+   and a `task.review_assigned` naming you as reviewer (so a reviewer parked here is woken by
+   `pr_opened`, which records it). Other lanes' task records (claims, plans, heartbeats, verdicts)
+   do not ring, so a reviewer can park instead of polling.
+
+The plugin's `lane_stop_hook.py` runs on Stop in both host manifests. It reads the team log
+and sealed evidence, blocks with **"read the notes addressed to you"** while addressed notes
+remain unanswered, and never acknowledges them itself. Repeated Stop does not bypass it.
+An unbound session is unaffected; a bound lane with an unreadable log or missing actor blocks
+with a binding/read diagnostic. Each check scans at most 4096 events and has an eight-second
+child-process timeout; the host allows ten seconds. A larger or slow log remains unverified,
+not silently clear. No message text or credentials are printed by the hook.
+
+This hook prevents a pending ask from being abandoned at turn end. It cannot launch a dead
+host. After reboot, restart the host and the loop. A host without background completion
+notification must report `OBSERVER_MISSING: host wake notification`; it cannot claim autonomous
+wake merely because a lease exists. Reload the installed plugin to use the new Stop hook.
+
+- Titles and the `Summary:` line follow DELIVERY.md §1; the identity line, DELIVERY.md §4.
+- A message to another session: the first line is one plain sentence that stands alone; then short
+  bullets; shas and paths in backticks.
+- **Every verdict goes to two places:** the comment on the PR, and a one-line `SendMessage` to the
+  author. A verdict the author never hears about is not delivered.
+
+## 6. Never
+
+- GitHub Actions: do not enable, run or rely on a workflow.
+- Approving a journey. Only the owner approves journeys, except the `keel-journey-qa` skill acting on the owner's explicit delegation, which approves only when all seven points pass.

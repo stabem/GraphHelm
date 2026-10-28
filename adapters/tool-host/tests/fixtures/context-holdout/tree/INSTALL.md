@@ -1,0 +1,450 @@
+# Install GraphHelm (checklist for AI agents)
+
+This page is for an AI agent that was handed this repository and asked to install GraphHelm. It
+is also fine for a person. Complete the common CLI and Runtime steps, then the checklist for
+each host the user requested: **Claude Code**, **Codex**, or both. Run each applicable step's
+**Verify** before moving on. A failed or unobserved check is not a completed check.
+
+For this agent-host installation, connect the `graphhelm` CLI, a project provisioned by
+`graphhelm init`, a running Runtime, the agent plugin, and the main `graphhelm` MCP server
+registered in the selected host. Stopping after one or two of them is a **partial install**; see
+[Common partial installs](#common-partial-installs).
+
+Placeholders used below:
+
+| Placeholder | Meaning |
+|---|---|
+| `<clone>` | this repository, cloned locally |
+| `<project>` | the directory GraphHelm will work on (the user's repository, or an empty folder); not the clone |
+| `<home>` | the user's home directory (`$HOME`, or `$env:USERPROFILE` on Windows) |
+| `<private>` | a private directory outside both `<project>` and `<home>` (and not an ancestor of either), for setup plans and backups |
+
+Ask the user for `<project>` if it is not obvious. Never print the contents of `events.token` or
+`serve.key`, and never paste them into a prompt, a file, or a command argument.
+
+## 1. Prerequisites
+
+Install what is missing. The commands are in
+[`docs/install/GETTING_STARTED.md`](docs/install/GETTING_STARTED.md#prerequisites).
+
+- Rust `1.97.1` with `rustfmt` and `clippy` (the pinned toolchain).
+- git.
+- Claude Code (`claude`) and/or Codex (`codex`), whichever agent the user runs.
+- Node 22+ and npm, only if the user wants the Studio (optional, not needed below).
+
+**Verify:**
+
+```sh
+cargo +1.97.1 --version
+git --version
+claude --version    # and/or: codex --version
+```
+
+## 2. Build and install the CLI to a stable path
+
+Install from source so the binary includes the `register-mcp` and `graphhelm-block` setup
+decisions. `cargo install` puts it in `~/.cargo/bin`, a stable path that later registrations can
+point at.
+
+```sh
+cd <clone>
+cargo +1.97.1 install --locked --path apps/cli
+```
+
+On Windows, if an agent session is running `graphhelm mcp`, the old `graphhelm.exe` is locked and
+the install fails. Rename the old binary first, then install again:
+
+```powershell
+Rename-Item "$env:USERPROFILE\.cargo\bin\graphhelm.exe" graphhelm.old.exe
+cargo +1.97.1 install --locked --path apps/cli
+```
+
+**Verify:** `graphhelm --version` prints `graphhelm <version>`, and the path it runs from is in
+`~/.cargo/bin` (`command -v graphhelm`, or `(Get-Command graphhelm).Source` on Windows).
+
+## 3. Provision the project: keys, keyring, token
+
+Choose the requested host explicitly so detection cannot configure an unrelated host:
+
+```sh
+# Claude Code only
+graphhelm init --project "<project>" --harness claude-code --pretty
+
+# Codex only
+graphhelm init --project "<project>" --harness codex --pretty
+
+# Both, only when requested
+graphhelm init --project "<project>" --harness claude-code --harness codex --pretty
+```
+
+Run only the matching command. `init` creates, under `<project>/.graphhelm/`: the event store
+(`events/`), the Runtime bearer token (`events.token`), the sealing key (`serve.key`), and the keyring holding key id `studio`
+(`keyring/`). In a Git work tree, it also adds `.graphhelm/` to the project's `.gitignore`.
+For Claude Code it creates or merges `<project>/.mcp.json`, preserving unrelated server values.
+For Codex it writes `<project>/.graphhelm/codex.config.toml`, a snippet for later review and
+registration; it does **not** edit `<home>/.codex/config.toml`.
+
+Re-running `init` preserves existing keys and refreshes the selected GraphHelm registrations.
+Review an existing `graphhelm` entry before replacing it. Without `--harness`, `init` detects
+hosts from their configuration directories; explicit selection avoids that ambiguity.
+
+**Verify:** the envelope has `"ok": true` and `"command": "init"`, and these paths exist:
+`<project>/.graphhelm/events/`, `<project>/.graphhelm/events.token`,
+`<project>/.graphhelm/serve.key`, `<project>/.graphhelm/keyring/`.
+
+## 4. Start the Runtime (port 8791)
+
+The sealing key goes in `GRAPHHELM_EVENTS_KEY`, never in a flag. Start it in a terminal that stays
+open (or in the background).
+
+```bash
+export GRAPHHELM_EVENTS_KEY="$(cat "<project>/.graphhelm/serve.key")"
+graphhelm serve --project "<project>" --events "<project>/.graphhelm/events" --bind 127.0.0.1:8791 --keyring "<project>/.graphhelm/keyring" --key-id studio
+```
+
+```powershell
+$env:GRAPHHELM_EVENTS_KEY = (Get-Content -Raw "<project>\.graphhelm\serve.key").Trim()
+graphhelm serve --project "<project>" --events "<project>\.graphhelm\events" --bind 127.0.0.1:8791 --keyring "<project>\.graphhelm\keyring" --key-id studio
+```
+
+Use the **same project directory** as in step 3. `--project` publishes its Runtime identity,
+which the `mcp --discover` registrations generated by `init` need. Passing only `--events`
+can leave HTTP health and token checks working while project-aware MCP discovery fails.
+Discovery checks both the project identity and live Runtime instance before reading the token;
+the registration itself contains no token or fixed port. Run the host and Runtime under the same
+user and, if set, the same `GRAPHHELM_RUNTIME_DIR`.
+
+The first line is `{"ok":true,"command":"serve.started",...}`. Check its diagnostics: a
+`GHCLI006_SERVE_INVALID` warning at `/keyring` means the configured key/keyring could not be
+opened; stop, correct the key variable or key id, and restart. A discovery-record warning at
+`/bind` also needs correction before the generated MCP registration can work.
+
+**Verify** from another terminal. The Bash command sends the bearer header through stdin,
+keeping the token out of curl's process arguments. Do not enable shell tracing while reading
+secrets.
+
+```bash
+curl --silent --fail http://127.0.0.1:8791/health; echo
+builtin printf 'Authorization: Bearer %s\n' "$(cat "<project>/.graphhelm/events.token")" | curl --silent --fail --header @- 'http://127.0.0.1:8791/v1/executions?limit=5'; echo
+```
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8791/health | ConvertTo-Json -Compress
+$token = (Get-Content -Raw "<project>\.graphhelm\events.token").Trim()
+Invoke-RestMethod "http://127.0.0.1:8791/v1/executions?limit=5" -Headers @{ Authorization = "Bearer $token" } | ConvertTo-Json -Compress
+```
+
+Expected: `"command":"serve.health"` with a non-null `data.projectId` and `data.instance`,
+then `"command":"execution.list"` (the token is accepted). These HTTP checks do not prove that
+the host loaded its plugin or MCP registration; step 7 checks the host connection.
+
+## 5. Install the plugin in each requested host
+
+### Claude Code
+
+```sh
+claude plugin marketplace add stabem/GraphHelm
+claude plugin install graphhelm@graphhelm
+```
+
+### Codex
+
+```sh
+codex plugin marketplace add stabem/GraphHelm
+codex plugin add graphhelm@graphhelm
+codex plugin add graphhelm-codex-hooks@graphhelm
+```
+
+The hooks companion supports Codex versions whose plugin loader skips the main plugin's hooks.
+Review the host's hook trust prompt when offered; installing a companion is not proof that hooks
+ran. Python 3 is required for the hooks. See the
+[plugin's session-hook instructions](plugins/graphhelm/README.md#session-hooks-version-0120)
+for explicit execution binding and host-specific settings when using hooks.
+
+The main plugin brings the `graphhelm-guide`, `graphhelm-setup` and `graphhelm-resume` skills.
+It does **not** install the CLI, start the Runtime, or replace the main `graphhelm` MCP
+registration. Steps 2, 4 and 6 do that. The hooks companion's task-handoff MCP is a separate
+surface; it does not replace the main Runtime tools.
+
+### Journey review in the Claude Code chat
+
+The `journey-review` plugin draws a journey run inline in the chat: step cards, the run's
+screenshots, the checks with their pass or fail marks, and Approve, Reject and Refresh buttons. It
+adds `/journey <id>`, `/journeys` and a `show_journey` tool. It is Claude Code only. `graphhelm setup`
+installs it: the dry run lists `home/.claude/settings.json=enable-journey-review` in
+`suggestedResolutions`, and that decision adds `enabledPlugins["journey-review@graphhelm"]` and the
+`graphhelm` marketplace to the user settings through the same reviewed plan, `--accept` digest and
+backup as the other decisions. Running it again finds the settings already saying so and plans
+nothing; a plugin the owner set to `false` is never turned back on. Without setup:
+
+```sh
+claude plugin marketplace add stabem/GraphHelm
+claude plugin install journey-review@graphhelm
+```
+
+**Verify** after restarting Claude Code: `claude plugin details journey-review@graphhelm` lists the
+plugin and its hooks module, and `claude plugin test` of the plugin folder passes (the reached plan
+runs it). In a project with `.graphhelm/journeys/`, `/journeys` lists the flows and `/journey <id>`
+draws one. The project is the session's working directory, `graphhelm` is found on `PATH`, and the
+Approve button runs `graphhelm journey approve` with the path of `.graphhelm/events.token`, never
+the token itself. The thumbnail helper needs Python with Pillow; without it the cards show no frames.
+
+### Keel only, in any project
+
+A project that wants only Keel's rules, with no Runtime, MCP server, task records or journeys,
+installs the standalone `keel` plugin and nothing else. Skip steps 1-4 and 6 for that project.
+
+```sh
+claude plugin marketplace add stabem/GraphHelm
+claude plugin install keel@graphhelm
+
+codex plugin add keel@graphhelm
+```
+
+**Verify** with `claude plugin details keel@graphhelm`: six skills (`keel`, `keel-plan`,
+`keel-exec`, `keel-review`, `keel-merge`, and `keel-journey-qa`, which needs GraphHelm journeys),
+no MCP server and no hooks. The skills follow the
+project's own `KEEL.md` when it has one, and run `graphhelm keel check` only when that CLI is on
+PATH.
+
+### Keel and Journey-Proven Development skills
+
+When adopting the Keel/JPD development method, install its two companion packages in each
+requested host. The main plugin and the Codex hooks companion do not contain these skills.
+
+```sh
+# Claude Code
+claude plugin install graphhelm-development-contracts@graphhelm
+claude plugin install graphhelm-jpd@graphhelm
+
+# Codex
+codex plugin add graphhelm-development-contracts@graphhelm
+codex plugin add graphhelm-jpd@graphhelm
+```
+
+**Verify** with `claude plugin details graphhelm-development-contracts@graphhelm` and
+`claude plugin details graphhelm-jpd@graphhelm`, or `codex plugin list --marketplace graphhelm
+--json`. Confirm the installed companion packages and their skill inventory. In step 7, start
+a fresh session and confirm that Keel and the JPD skill family are discoverable in that host.
+Report installed bytes, session discovery, and observed invocation separately. None proves
+that a journey passed or that a trusted observer certified a result. Existing personal plugins,
+profiles, permission rules, and unrelated hook registrations stay in place.
+
+**Codex without the plugin marketplace.** When skills reach Codex by copying them into its
+skills directory instead of through `codex plugin add`, use the CLI so the copies stay current:
+
+```sh
+graphhelm skills sync --host codex --dry-run   # report what would change
+graphhelm skills sync --host codex             # install or update
+```
+
+The home defaults to `CODEX_HOME`, then `~/.codex` (`--home <dir>` overrides). Each Keel/JPD
+package pinned in `extensions/releases/` is installed whole as `<home>/skills/<package-id>/` (its
+skills cite package files such as `../../schemas/...`), after checking that the source still
+matches its pin. Each plugin skill is installed as `<home>/skills/<name>/`. It records what it
+wrote in `<home>/skills/.graphhelm-skills.json` and reports `added`, `updated`, `unchanged`,
+`adopted`, `removed`, `modified` and `foreign`. It never writes a directory it did not install
+(`foreign`; one already holding the exact bundled bytes is `adopted`), never overwrites a hand
+edit (`modified`), and removes an entry dropped from the bundle only when it still holds the bytes
+it wrote. Run it again after updating GraphHelm. Old flat hand copies of package skills (for
+example `skills/keel`) are reported as `foreign`; remove them by hand, or Codex sees two copies.
+
+**Verify for each requested host:** its plugin list shows `graphhelm` installed and enabled
+(in Claude Code, `/plugin`), and a new session offers the guide skill:
+`/graphhelm:graphhelm-guide` in Claude Code or `$graphhelm-guide` in Codex. Report hook activation
+separately if requested; skill availability alone is not evidence of hook execution.
+
+## 6. Register the MCP in the selected host
+
+### 6a. Claude Code
+
+For a project-scoped installation, step 3 already wrote `<project>/.mcp.json`. Review its
+`mcpServers.graphhelm` entry: the command should name the installed CLI, and the arguments
+should be `mcp --discover --project <project> --actor agent-chat`. Preserve all unrelated MCP
+servers. Start Claude Code in that project and complete any host-required MCP approval.
+
+**Verify:** the project entry is present and points at the intended executable and project.
+Then go to step 7. User-scope registration and an instruction block are optional additions;
+they are not prerequisites for this project-scoped connection.
+
+#### Browser journey observer
+
+Without a browser observer, every browser journey ends `OBSERVER_MISSING`. The setup preview
+(`--dry-run`) reports `data.observers`: whether Playwright, the default observer, is ready in
+`<project>` (Node and npm on PATH, `@playwright/test` installed, a Playwright Chromium build),
+what is missing, and the exact install commands. To install it:
+
+```sh
+graphhelm setup --project "<project>" --home "<home>" --install-observer playwright --json
+```
+
+This runs `npm install --save-dev @playwright/test` and `npx playwright install chromium` in
+`<project>` (network access) and then reports readiness again. `--install-observer e2e` adds the
+optional tester.army `e2e` runner, whose agent steps need a model key. It also writes the observer
+script to `<project>/.graphhelm/observers/`. Run journeys with
+`python <project>/.graphhelm/observers/playwright_observe.py --project <project>`.
+
+**Verify:** `data.observers.browser.status` is `ready`.
+
+#### Optional: user-scope registration and instructions with `graphhelm setup`
+
+Use this only when the user wants a Claude Code user-scope registration or GraphHelm instruction
+blocks in supported files. `setup` never changes host configuration until you apply the exact
+plan digest you reviewed. Its Claude user-scope registration runs `mcp --discover --actor agent-chat`;
+the host's working directory selects the project. It does not pin the Runtime URL or token path.
+Do not create a second registration scope merely to satisfy a checklist.
+
+**Preview:**
+
+```sh
+graphhelm setup --project "<project>" --home "<home>" --dry-run --json
+```
+
+Read `data.plan.spec.decisions` and `data.suggestedResolutions`. Suggestions are candidates for
+review, not instructions to apply every change. Select only the requested targets, typically
+`home/.claude.json=register-mcp` and, if wanted, `home/.claude/CLAUDE.md=graphhelm-block`.
+An unrelated host's settings and instruction files must stay unchanged.
+
+**Resolve and write the private plan:** answer every unresolved item; use `<item>=keep` for
+anything the user did not ask to change. For example, if both Claude targets below exist and
+were requested:
+
+```sh
+graphhelm setup --project "<project>" --home "<home>" --resolve home/.claude.json=register-mcp --resolve home/.claude/CLAUDE.md=graphhelm-block --resolve "<other-unresolved-item>=keep" --out "<private>/plan.json" --json
+```
+
+Replace the example resolution lines with the actual decisions from the preview. `--out` is
+required with any `--resolve`. `graphhelm-block` needs its instruction file to exist;
+`register-mcp` needs the target JSON file to exist. Do not create unrelated host files to make a
+suggestion applicable. An unanswered unresolved item refuses the whole plan.
+
+**Verify:** `"ok": true`, and `data.acceptance.digest` is a `sha256:...` value.
+
+**Review the exact plan:** open the private plan file and inspect its decisions, complete
+replacement content, package pins, and digest. Keep that file private; the CLI preview below
+redacts replacement bytes and cannot substitute for reviewing them.
+
+```sh
+graphhelm setup --project "<project>" --home "<home>" --plan "<private>/plan.json" --json
+```
+
+**Verify:** the operations touch only requested targets, and `data.plan.digest` equals the
+digest just generated. In `~/.claude.json`, only the value of `mcpServers.graphhelm` may change
+(JSON formatting can change). In instruction files, only the marked
+`<!-- graphhelm:begin -->` / `<!-- graphhelm:end -->` block may be added or refreshed;
+unrelated text must remain intact.
+
+**Apply exactly that digest:** a backup is written under `--state-root` before any change.
+
+```sh
+graphhelm setup --project "<project>" --home "<home>" --state-root "<private>/state" --apply "<private>/plan.json" --accept 'sha256:<reviewed-digest>' --json
+```
+
+**Verify:** `"ok": true` and only the approved entries/blocks changed. To undo, use
+`graphhelm restore` with its preview and acceptance flow (see the
+[adoption rehearsal](docs/acceptance/adoption-rehearsal.md)). A successful apply proves file
+installation, not native host activation. The setup verification flow remains
+`installed_unverified` without a trusted host observer; do not fabricate an activation receipt.
+
+### 6b. Codex
+
+Use the snippet from `<project>/.graphhelm/codex.config.toml` created by `init --harness codex`.
+It contains a `[mcp_servers.graphhelm]` table whose command names the installed CLI and whose
+arguments are `mcp --discover --actor agent-chat`.
+
+Before editing `<home>/.codex/config.toml`, back up the existing file privately and review the
+intended change with the user. Merge only the `mcp_servers.graphhelm` configuration, preserving
+all unrelated settings and servers. If that table already exists, review and update it rather
+than blindly appending another table; duplicate TOML tables can invalidate the file. Review any
+existing GraphHelm sub-tables too, so stale options do not silently survive a replacement.
+`init` only generates the snippet; it does not apply or back up this home-file edit.
+
+The generated entry selects the Runtime using the MCP process's working directory. Start Codex
+in `<project>`. If the host does not launch MCP there, explicitly add `--project` and the
+absolute project path to the reviewed `args` array; that registration then targets this one
+project. Runtime discovery still requires `serve --project` for that same directory.
+
+**Verify:** the final TOML has exactly one intended GraphHelm server configuration, the command
+points at the installed binary, unrelated settings remain intact, and the host loads the
+configuration without errors. Then complete step 7 in a fresh Codex session.
+
+A Codex-only installation does **not** require `~/.claude.json`, `~/.claude/CLAUDE.md`, a Claude
+`setup --apply`, or claude.ai preferences. Instructions in a project's `AGENTS.md` can be added
+separately if requested; do not change unrelated instruction files as part of MCP registration.
+
+## 7. Restart each selected host and check the MCP tools
+
+Close the existing session and start a new one in `<project>` so the host reloads its
+registration. Complete any host-required trust or MCP approval in that host.
+
+**Verify in each requested host:** the main `graphhelm` MCP server exposes tools such as `list`,
+`status`, and `briefing` (often displayed as `mcp__graphhelm__list`,
+`mcp__graphhelm__status`, and `mcp__graphhelm__briefing`). Call its `list` tool: it must answer
+with the executions in the intended project's Runtime; an empty list is fine. A plugin skill,
+a configuration file, or an HTTP health response alone cannot prove this check.
+
+Record the actual host/version and observed result. If you cannot open a real host session,
+report host activation as **not checked / observer missing**. Local CLI or protocol tests do
+not substitute for that observation, and this checklist does not claim those sessions were tested.
+
+## 8. Optional: claude.ai preferences
+
+claude.ai is separate from the Claude Code and Codex installations above. If the user also wants
+GraphHelm + Keel guidance there, ask them to review and paste the block from the README section
+[Make Claude always use GraphHelm + Keel](README.md#make-claude-always-use-graphhelm--keel)
+(step 2) into their claude.ai instructions/preferences. This is an optional preference step;
+it neither installs the local Runtime nor registers its MCP server in a local host.
+
+**Verify only if requested:** the user confirms the preference change. Otherwise mark it
+not applicable. A pending claude.ai preference does not block completion of the requested
+Claude Code or Codex installation.
+
+## Completion checklists
+
+### Common CLI and Runtime provisioning
+
+- [ ] `graphhelm --version` works, from `~/.cargo/bin`
+- [ ] `<project>/.graphhelm/` has `events/`, `events.token`, `serve.key`, `keyring/`
+- [ ] The Runtime was started with `--project` naming the provisioned project and has no
+      unresolved keyring or discovery warning
+- [ ] `/health` reports a project identity and instance, and the token is accepted on
+      `/v1/executions`
+
+### Claude Code, only if requested
+
+- [ ] The `graphhelm` plugin is enabled and its guide skill is available
+- [ ] The selected project- or user-scope `mcpServers.graphhelm` registration is correct
+- [ ] A fresh Claude Code session exposes the main GraphHelm tools and `list` answers
+- [ ] If user-scope setup/instruction changes were requested, their exact reviewed plan was
+      applied and unrelated configuration was preserved
+
+### Codex, only if requested
+
+- [ ] The `graphhelm` plugin is enabled and its guide skill is available; the hooks companion
+      is installed when needed by that Codex version
+- [ ] The reviewed `[mcp_servers.graphhelm]` configuration is present exactly once, with the
+      intended project selection and unrelated settings preserved
+- [ ] A fresh Codex session exposes the main GraphHelm tools and `list` answers
+
+Report each applicable item as passed, failed, or not checked, and optional/unselected items as
+not applicable. Do not call the requested host's install complete while a required item is
+failed or not checked. Track optional hook activation, instruction changes, and claude.ai
+preferences separately; do not infer any of them from successful MCP connectivity.
+
+## Common partial installs
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Skills like `graphhelm-guide` work, but no main GraphHelm MCP tools | Plugin installed, main MCP not registered or approved in that host | Complete the selected host's step 6, then step 7 |
+| Main GraphHelm MCP tools exist but calls fail to discover a Runtime | Runtime missing `--project`, wrong MCP working directory, unavailable discovery record, or multiple live Runtimes for the same project | Run step 4 with the same `<project>` as step 6; check `/health`, startup warnings, and the host's project selection |
+| Instructions say to use GraphHelm, but the agent has no GraphHelm tools | Instructions do not register the MCP | Complete the selected host's registration in step 6, then restart (step 7) |
+| `cargo install` fails on Windows with "Access is denied" | `graphhelm.exe` is locked by a running `graphhelm mcp` | Rename the old binary, then install again (step 2) |
+| `setup --apply` refused with `/adoption/plan_stale` (often for `~/.claude.json`) | The file changed after `--out` | Regenerate the optional setup plan, review it again, and apply its new exact digest |
+| `setup --resolve` refused | An unresolved item was left unanswered, or `--out` is missing | Answer every unresolved item (`=keep` when unsure) and pass `--out` |
+| `serve.started` carries a `/keyring` warning | `GRAPHHELM_EVENTS_KEY` unset or wrong in that terminal | Set it from `serve.key` in the same terminal and restart `serve` |
+| `serve` refused at `/bind` | Port 8791 already in use, often by an earlier `serve` | Reuse only the intended project's Runtime after checking identity and token; otherwise review which process to stop or choose another loopback port |
+| Codex rejects `config.toml` after registration | The snippet was appended over an existing GraphHelm table | Restore the private backup, then review and merge one `[mcp_servers.graphhelm]` configuration |
+
+More detail: [`docs/install/GETTING_STARTED.md`](docs/install/GETTING_STARTED.md) (the full
+path, including the Studio) and [`docs/acceptance/adoption-rehearsal.md`](docs/acceptance/adoption-rehearsal.md)
+(setup, backup and restore).

@@ -9,9 +9,11 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy();
         if path.is_dir() {
-            // A frozen copy of source read as data by the context-quality test, never compiled or
-            // run; its bytes are hashed, so it keeps the spawn it was copied with (#1374).
-            if path.ends_with("tests/fixtures/context-quality/tree") {
+            // A frozen copy of source read as data by the context-quality tests, never compiled or
+            // run; its bytes are hashed, so it keeps the spawn it was copied with (#1374, #1705).
+            if path.ends_with("tests/fixtures/context-quality/tree")
+                || path.ends_with("tests/fixtures/context-holdout/tree")
+            {
                 continue;
             }
             if !matches!(

@@ -1,0 +1,1950 @@
+//! The append half of the async driver (Task 6; the loop arrives in Task 8). Mirrors 04f's
+//! `record_outcome` — reread, `apply_transition`, `NewEvent` — with two additions: the
+//! outcome's free-form material seals BEFORE anything appends (a sealing failure appends
+//! nothing — the signal command's 04f fail-closed rule generalized to node work, §6.2), and a
+//! tool outcome served from the read cache appends its `ReuseDecision` beside the outcome in
+//! the same atomic batch — the producer the 05c amendment promised.
+
+use graphhelm_events::{
+    EventRepositoryError, EvidenceError, EvidenceSealer, LocalEventRepository, PreparedAppend,
+    ReplayError, SealedEvidence,
+};
+use graphhelm_execution::{TransitionRequest, apply_transition};
+use graphhelm_protocols::{
+    DiagnosticComponent, DiagnosticDomainPath, EventEnvelope, EventKind, EvidenceId, IdGenerator,
+    NewEvent, NodeOutcomeRecorded, NodeState, OpaqueId, PersistedActor, PersistedDiagnostic,
+    RepositoryScope, ReuseDecision, ReusePlane, Sensitivity, Severity,
+};
+
+use crate::context_accounting::{
+    ACCOUNTING_RECEIPT_MEDIA_TYPE, AccountingReceiptError, ExecutionAccountingReceipt,
+};
+use crate::evidence::seal_work;
+use crate::executor::WorkOutcome;
+
+/// Why the append half refused. Every variant is a refusal to record, never a partial record.
+#[derive(Debug, thiserror::Error)]
+pub enum DriverError {
+    #[error("the outcome's evidence could not be sealed; nothing was appended")]
+    Sealing(#[from] EvidenceError),
+    #[error("the event repository refused the operation")]
+    Repository(#[from] EventRepositoryError),
+    #[error("the stream's history does not replay")]
+    Replay(#[from] ReplayError),
+    #[error("the node's current state does not allow this outcome")]
+    Transition,
+    #[error("an identifier is not wire-safe")]
+    Identity,
+    #[error("the execution accounting receipt could not be built; nothing was appended")]
+    Accounting(#[from] AccountingReceiptError),
+}
+
+/// What one recorded outcome left behind: the transition's result and the sealed items the
+/// append carried (the local store exposes availability, not a sealed read — callers that
+/// need to open what was just sealed hold it here).
+pub struct RecordedOutcome {
+    pub next_state: NodeState,
+    pub sealed: Vec<SealedEvidence>,
+}
+
+/// Records one node outcome with its evidence in one atomic append.
+///
+/// Order is the invariant: reread the projection, decide the transition, seal every sealable
+/// — and only then append. The appended `node_outcome_recorded` names exactly the sealed
+/// references; when the outcome carries a reuse summary, a `ReuseDecision` event rides the
+/// same `PreparedAppend`, so the ledger can never record a decision whose outcome vanished
+/// (or the reverse).
+///
+/// # Errors
+/// [`DriverError`] — on any error, the store is untouched.
+#[allow(clippy::too_many_arguments)] // the 04f record_outcome surface plus the sealing seam
+pub async fn record_outcome_with_evidence(
+    store: &LocalEventRepository,
+    sealer: &dyn EvidenceSealer,
+    ids: &dyn IdGenerator,
+    scope: &RepositoryScope,
+    stream: &OpaqueId,
+    execution_id: &OpaqueId,
+    actor: &PersistedActor,
+    node: &str,
+    work: &WorkOutcome,
+) -> Result<RecordedOutcome, DriverError> {
+    // A caller outside a drive holds no fold, so this one starts from sequence 0: the same
+    // events, the same checks and the same projection a full `replay` gave it before #1226.
+    record_outcome_cached(
+        store,
+        sealer,
+        ids,
+        scope,
+        stream,
+        execution_id,
+        actor,
+        node,
+        work,
+        &ProjectionCache::default(),
+    )
+    .await
+}
+
+/// #1226: the projection one drive keeps, so each reread and each outcome write folds only the
+/// events appended since the last read, instead of cloning and replaying the whole stream (the
+/// O(head) cost per reread that made a drive O(head²)).
+///
+/// What it must never change is a DECISION. [`ProjectionCache::at_head`] returns the projection
+/// `replay` would return for the stream at the head it read: the same events, the same integrity
+/// checks (`ProjectionGeneration::apply_page` runs schema, envelope, scope, project-level,
+/// sequence, previous-hash, event-hash and idempotency checks, with ONE fold shared with
+/// `replay`), the same `stream_id`, the same `MAX_READ_ALL` refusal. Every call still reads the
+/// store's latest head under the shared lock, so an append by another writer (a pause, a
+/// proposal, an owner signal) is seen at exactly the reread that saw it before, which is what
+/// the pause and plan-gate ordering in `drive_inner` depends on.
+///
+/// FAILS CLOSED. The fold is kept only while it ends at the store's head (next sequence AND last
+/// hash, read under the same lock as the tail): a store replaced under the same path by a
+/// shorter or different history fails that check even when its tail is empty, and a longer one
+/// fails `apply_page`'s chain check. Either way the fold is thrown away and rebuilt once from
+/// sequence 0; a second refusal is the error a full replay would have returned.
+#[derive(Clone, Default)]
+pub(crate) struct ProjectionCache(Arc<std::sync::Mutex<Option<CachedFold>>>);
+
+struct CachedFold {
+    generation: graphhelm_events::ProjectionGeneration,
+    /// Every persisted `execution_started` envelope the fold has passed, for
+    /// [`execution_start_event`]: the exact envelope binds the accounting receipt.
+    started: Vec<EventEnvelope>,
+}
+
+impl CachedFold {
+    fn new(scope: &RepositoryScope, stream: &str) -> Result<Self, DriverError> {
+        Ok(Self {
+            generation: graphhelm_events::ProjectionGeneration::new(
+                scope.clone(),
+                stream.to_owned(),
+                "runtime-driver".to_owned(),
+                1,
+                1,
+            )?,
+            started: Vec::new(),
+        })
+    }
+
+    /// Folds the store's events after this fold's head; refuses unless the fold then ends at
+    /// exactly the store's head.
+    fn advance(
+        &mut self,
+        store: &LocalEventRepository,
+        scope: &RepositoryScope,
+        stream: &str,
+    ) -> Result<(), DriverError> {
+        let after = self.generation.watermark().last_sequence();
+        let (events, head) = store.read_stream_after(scope, stream, after)?;
+        let total = after
+            .checked_add(events.len() as u64)
+            .ok_or(EventRepositoryError::LimitExceeded)?;
+        if total > graphhelm_events::MAX_READ_ALL as u64 {
+            // `read_replay_stream`'s own refusal, so a stream too long to replay is refused
+            // with the same error it always was.
+            return Err(EventRepositoryError::LimitExceeded.into());
+        }
+        for page in events.chunks(graphhelm_events::MAX_READ_PAGE) {
+            self.generation.apply_page(page)?;
+        }
+        let watermark = self.generation.watermark();
+        let ends_at_head = match &head {
+            Some(head) => {
+                head.next_sequence == watermark.last_sequence() + 1
+                    && Some(&head.last_event_hash) == watermark.last_event_hash()
+            }
+            None => watermark.last_sequence() == 0,
+        };
+        if !ends_at_head {
+            return Err(ReplayError::Corrupt.into());
+        }
+        self.started.extend(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind, EventKind::ExecutionStarted(_)))
+                .cloned(),
+        );
+        Ok(())
+    }
+}
+
+impl ProjectionCache {
+    /// The projection at the store's current head, and the `execution_started` envelopes seen.
+    fn at_head(
+        &self,
+        store: &LocalEventRepository,
+        scope: &RepositoryScope,
+        stream: &str,
+    ) -> Result<(ExecutionProjection, Vec<EventEnvelope>), DriverError> {
+        let mut guard = self.0.lock().map_err(|_| EventRepositoryError::StorageAt {
+            site: "driver-projection-cache:mutex-poisoned",
+            os: None,
+        })?;
+        let kept = match guard.as_mut() {
+            Some(fold) => fold.advance(store, scope, stream).is_ok(),
+            None => false,
+        };
+        if !kept {
+            // A fold that refused part-way is half-applied: never reuse it.
+            *guard = None;
+            let mut fresh = CachedFold::new(scope, stream)?;
+            fresh.advance(store, scope, stream)?;
+            *guard = Some(fresh);
+        }
+        let Some(fold) = guard.as_ref() else {
+            return Err(ReplayError::Corrupt.into());
+        };
+        let mut projection = fold.generation.projection().clone();
+        // `replay` names the stream once it has folded an event; `apply_page` leaves that to
+        // its caller.
+        if projection.stream_id.is_none() && fold.generation.watermark().last_sequence() > 0 {
+            projection.stream_id = Some(stream.to_owned());
+        }
+        Ok((projection, fold.started.clone()))
+    }
+}
+
+/// [`record_outcome_with_evidence`] against a drive's kept fold (#1226).
+#[allow(clippy::too_many_arguments)]
+async fn record_outcome_cached(
+    store: &LocalEventRepository,
+    sealer: &dyn EvidenceSealer,
+    ids: &dyn IdGenerator,
+    scope: &RepositoryScope,
+    stream: &OpaqueId,
+    execution_id: &OpaqueId,
+    actor: &PersistedActor,
+    node: &str,
+    work: &WorkOutcome,
+    cache: &ProjectionCache,
+) -> Result<RecordedOutcome, DriverError> {
+    let (projection, started) = cache.at_head(store, scope, stream.as_str())?;
+    let execution_start = execution_start_event(&started, execution_id)?;
+    let current = projection
+        .node_states
+        .get(node)
+        .copied()
+        .unwrap_or(NodeState::Draft);
+    let attempts = projection.node_attempts.get(node).copied().unwrap_or(0);
+    let next_state = apply_transition(&TransitionRequest {
+        current,
+        outcome: work.outcome,
+        attempts,
+        identical_outcomes: projection.identical_outcomes_for(node, work.outcome),
+    })
+    .map_err(|_| DriverError::Transition)?;
+    let node_id = OpaqueId::parse(node).map_err(|_| DriverError::Identity)?;
+
+    // Evidence before append: a sealing failure returns here, store untouched. An attempt result also
+    // carries the immutable accounting artifact built from the executor's real summary. Lifecycle
+    // hops do not: they did not execute a port, and sharing their attempt-scoped evidence identity
+    // with the eventual work result would create a false duplicate.
+    let receipt = if is_accounted_attempt(work) {
+        let receipt =
+            ExecutionAccountingReceipt::from_work_summary(execution_start, &work.summary)?;
+        Some(crate::executor::Sealable {
+            local_ref_suffix: "accounting-receipt",
+            media_type: ACCOUNTING_RECEIPT_MEDIA_TYPE,
+            bytes: receipt.stable_bytes()?,
+        })
+    } else {
+        None
+    };
+    let mut sealed_work =
+        seal_work(sealer, scope, execution_id, node, attempts, &work.sealables).await?;
+    if let Some(receipt) = receipt {
+        let mut sealed_receipt =
+            seal_work(sealer, scope, execution_id, node, attempts, &[receipt]).await?;
+        sealed_work.evidence.append(&mut sealed_receipt.evidence);
+        sealed_work
+            .references
+            .append(&mut sealed_receipt.references);
+    }
+
+    let mut events = vec![NewEvent::new(
+        mint_key(ids, "node-outcome")?,
+        actor.clone(),
+        Sensitivity::Internal,
+        EventKind::NodeOutcomeRecorded(NodeOutcomeRecorded {
+            execution_id: execution_id.clone(),
+            node_id: node_id.clone(),
+            outcome: work.outcome,
+            next_state,
+            executor: work
+                .executor_kind
+                .map(|kind| graphhelm_protocols::AttemptExecutor {
+                    kind,
+                    route_id: work.model_route_id.clone(),
+                }),
+            crash_site: work.crash_site,
+            reason: work.reason,
+        }),
+        sealed_work.references.clone(),
+        vec![],
+    )];
+
+    // The 05c amendment's producer obligation: a reuse-consulting outcome appends its ledger
+    // entry in the same batch. The decision points at the sealed record when the summary does
+    // not already carry a reference of its own.
+    if let Some(summary) = &work.reuse {
+        let record_reference = sealed_work
+            .references
+            .iter()
+            .find(|reference| reference.evidence_id().as_str().ends_with("-record"))
+            .map(|reference| reference.evidence_id().clone());
+        let evidence_ref: Option<EvidenceId> = summary.evidence_ref.clone().or(record_reference);
+        events.push(NewEvent::new(
+            mint_key(ids, "reuse-decision")?,
+            actor.clone(),
+            Sensitivity::Internal,
+            EventKind::ReuseDecision(ReuseDecision {
+                execution_id: execution_id.clone(),
+                node_id: Some(node_id),
+                plane: ReusePlane::ToolBroker,
+                decision: summary.decision,
+                forced_reason: summary.forced_reason,
+                freshness_class: summary.freshness_class,
+                key_components: summary.key_components.clone(),
+                key_digest: summary.key_digest.clone(),
+                evidence_ref,
+                provenance_erased: summary.provenance_erased,
+            }),
+            vec![],
+            vec![],
+        ));
+    }
+
+    // The M06 Task 4 writer obligation: a gate outcome appends its verdict in the SAME
+    // batch — the graph can never route on a verdict the ledger does not carry, and the
+    // ledger can never carry a verdict whose outcome vanished.
+    if let Some(verdict) = &work.gate_verdict {
+        let gate_id = OpaqueId::parse(&verdict.gate_id).map_err(|_| DriverError::Identity)?;
+        let verdict_node = OpaqueId::parse(node).map_err(|_| DriverError::Identity)?;
+        events.push(NewEvent::new(
+            mint_key(ids, "gate-verdict")?,
+            actor.clone(),
+            Sensitivity::Internal,
+            EventKind::GateVerdict(graphhelm_protocols::GateVerdict {
+                execution_id: execution_id.clone(),
+                node_id: verdict_node,
+                gate_id,
+                passed: verdict.passed,
+                findings: verdict.findings.clone(),
+            }),
+            vec![],
+            vec![],
+        ));
+    }
+
+    let next_sequence = store.next_sequence(scope, stream.as_str())?;
+    let request = PreparedAppend::new(
+        scope.clone(),
+        stream.clone(),
+        next_sequence,
+        events,
+        sealed_work.evidence.clone(),
+        vec![],
+    )?;
+    store.append_atomic(&request)?;
+    Ok(RecordedOutcome {
+        next_state,
+        sealed: sealed_work.evidence,
+    })
+}
+
+/// Whether this outcome carries any observation made by an executor.
+///
+/// The fixture bridge's deliberate shape is empty sealables plus an entirely absent summary,
+/// reuse decision, and gate verdict. It represents no provider or tool attempt, so manufacturing
+/// an "unavailable provider" receipt would invent work and would require a fixture-only server to
+/// provision Evidence keys for bytes that describe nothing observed. Real port outcomes always
+/// carry either sealable material or an observed summary value; lifecycle hops are excluded by
+/// outcome even if a future caller accidentally attaches one.
+fn is_accounted_attempt(work: &WorkOutcome) -> bool {
+    !matches!(
+        work.outcome,
+        graphhelm_protocols::NodeOutcome::Started
+            | graphhelm_protocols::NodeOutcome::Approved
+            | graphhelm_protocols::NodeOutcome::Waived
+            | graphhelm_protocols::NodeOutcome::Skipped
+            | graphhelm_protocols::NodeOutcome::Invalidated
+            | graphhelm_protocols::NodeOutcome::Paused
+            | graphhelm_protocols::NodeOutcome::Interrupted
+    ) && (!work.sealables.is_empty()
+        || work.summary.input_tokens.is_some()
+        || work.summary.output_tokens.is_some()
+        || work.summary.exit_code.is_some()
+        || work.summary.provider_usage.is_some()
+        || work.reuse.is_some()
+        || work.gate_verdict.is_some())
+}
+
+/// Return the exact persisted `execution_started` envelope, not an ID copied from the caller.
+/// Its journal ID, hash, scope and full actor become the closed execution binding. No generic
+/// artifact snapshots are synthesized because an event is not a repository index.
+fn execution_start_event<'a>(
+    history: &'a [EventEnvelope],
+    execution_id: &OpaqueId,
+) -> Result<&'a EventEnvelope, DriverError> {
+    history
+        .iter()
+        .find(|envelope| {
+            matches!(
+                &envelope.kind,
+                EventKind::ExecutionStarted(started) if &started.execution_id == execution_id
+            )
+        })
+        .ok_or(DriverError::Identity)
+}
+
+fn mint_key(ids: &dyn IdGenerator, prefix: &'static str) -> Result<OpaqueId, DriverError> {
+    OpaqueId::parse(ids.next_id(prefix)).map_err(|_| DriverError::Identity)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Task 8: the loop — concurrent WORK, serialized WRITES.
+// ---------------------------------------------------------------------------------------------
+
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+use graphhelm_events::ExecutionProjection;
+use graphhelm_execution::{dispatch_candidates, dispatch_plan};
+use graphhelm_protocols::{
+    EventKind as WireEventKind, ExecutionCompleted, ExecutionPaused, GraphSpec,
+    GraphValidationFailed, NodeOutcome, SimulationStatus,
+};
+
+use crate::executor::{AsyncNodeExecutor, NodeWork, WorkSummary};
+
+/// Opens a fresh store handle per touch. The local store's `open` takes a blocking
+/// OS-exclusive lock for the handle's whole lifetime, so the driver opens, uses, and drops
+/// inside `spawn_blocking` — the lock never parks an async worker thread, and the OS lock
+/// stays the cross-process authority (CLI concurrency is unaffected).
+pub type StoreOpen =
+    Arc<dyn Fn() -> Result<LocalEventRepository, EventRepositoryError> + Send + Sync>;
+
+/// One serialized write through `spawn_blocking`: open, record, drop. The sealing future is
+/// CPU-only, so `Handle::block_on` inside the blocking thread is legal and cheap.
+#[allow(clippy::too_many_arguments)]
+async fn write_outcome(
+    store_open: &StoreOpen,
+    cache: &ProjectionCache,
+    sealer: &Arc<dyn EvidenceSealer>,
+    ids: &Arc<dyn IdGenerator>,
+    scope: &RepositoryScope,
+    stream: &OpaqueId,
+    execution_id: &OpaqueId,
+    actor: &PersistedActor,
+    node: String,
+    work: WorkOutcome,
+) -> Result<NodeState, DriverError> {
+    let store_open = store_open.clone();
+    let cache = cache.clone();
+    let sealer = sealer.clone();
+    let ids = ids.clone();
+    let scope = scope.clone();
+    let stream = stream.clone();
+    let execution_id = execution_id.clone();
+    let actor = actor.clone();
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        let store = store_open()?;
+        let recorded = handle.block_on(record_outcome_cached(
+            &store,
+            sealer.as_ref(),
+            ids.as_ref(),
+            &scope,
+            &stream,
+            &execution_id,
+            &actor,
+            &node,
+            &work,
+            &cache,
+        ))?;
+        Ok(recorded.next_state)
+    })
+    .await
+    .expect("the writer task is never cancelled")
+}
+
+/// A hop or interruption: an outcome with nothing to seal.
+fn bare(outcome: NodeOutcome) -> WorkOutcome {
+    WorkOutcome {
+        outcome,
+        sealables: Vec::new(),
+        summary: WorkSummary {
+            input_tokens: None,
+            output_tokens: None,
+            exit_code: None,
+            provider_usage: None,
+        },
+        reuse: None,
+        gate_verdict: None,
+        // Lifecycle hops (`Approved`, `Started`) have nothing to explain, and `Interrupted`
+        // IS its own cause — the triage rule reads that outcome directly
+        // (`last_outcome == Interrupted`), so a restated reason here would be noise, which
+        // is the other half of what M07 F3 is about.
+        crash_site: None,
+        reason: None,
+        executor_kind: None,
+        model_route_id: None,
+    }
+}
+
+/// One serialized plain append (completion, pause) through `spawn_blocking`.
+///
+/// `idempotency_key`, when supplied, is used verbatim instead of minting a fresh one (#681: the
+/// immediate-stop caller's own derived key, so a retried request can be recognised as a retry by
+/// `serve`'s idempotency layer). `None` keeps the original behavior -- `mint_key(ids, prefix)` --
+/// for the other caller of this function, which has no caller-supplied key to attribute to.
+#[allow(clippy::too_many_arguments)] // one caller-supplied key, added to an already-wide append surface (#681)
+async fn append_plain(
+    store_open: &StoreOpen,
+    ids: &Arc<dyn IdGenerator>,
+    scope: &RepositoryScope,
+    stream: &OpaqueId,
+    actor: &PersistedActor,
+    prefix: &'static str,
+    idempotency_key: Option<OpaqueId>,
+    kind: WireEventKind,
+) -> Result<(), DriverError> {
+    let store_open = store_open.clone();
+    let ids = ids.clone();
+    let scope = scope.clone();
+    let stream = stream.clone();
+    let actor = actor.clone();
+    tokio::task::spawn_blocking(move || {
+        let store = store_open()?;
+        let next_sequence = store.next_sequence(&scope, stream.as_str())?;
+        let key = match idempotency_key {
+            Some(key) => key,
+            None => mint_key(ids.as_ref(), prefix)?,
+        };
+        let request = PreparedAppend::new(
+            scope.clone(),
+            stream.clone(),
+            next_sequence,
+            vec![NewEvent::new(
+                key,
+                actor,
+                Sensitivity::Internal,
+                kind,
+                vec![],
+                vec![],
+            )],
+            vec![],
+            vec![],
+        )?;
+        store.append_atomic(&request)?;
+        Ok(())
+    })
+    .await
+    .expect("the writer task is never cancelled")
+}
+
+const RETRY_CAUSE_CONFLICT_CODE: &str = "GHG015_RETRY_CAUSE_CONFLICT";
+const RETRY_POLICY_TYPED_CODE: &str = "GHS003_TYPED";
+/// #1065: a declared `context.budgetBytes` that is not an integer in `1..=MAX_BUDGET_BYTES`.
+const CONTEXT_BUDGET_INVALID_CODE: &str = "GHG016_CONTEXT_BUDGET_INVALID";
+/// #1184 review (pass B): the code and the condition are SHARED with the synchronous CLI driver
+/// (`graphhelm_execution::CUSTOMS_DECLARATION_INVALID_CODE`), because this repository has two
+/// dispatch drivers and the park was added to one of them. Re-exported under the local name so
+/// the two call sites below read unchanged.
+use graphhelm_execution::CUSTOMS_DECLARATION_INVALID_CODE;
+
+/// Record ADR-030's invalid-policy refusal and terminal execution settlement in one batch.
+/// No node lifecycle event may precede this pair: contradictory policy is rejected before work.
+async fn append_preflight_refusal(
+    store_open: &StoreOpen,
+    ids: &Arc<dyn IdGenerator>,
+    scope: &RepositoryScope,
+    stream: &OpaqueId,
+    execution_id: &OpaqueId,
+    actor: &PersistedActor,
+    diagnostics: Vec<PersistedDiagnostic>,
+) -> Result<(), DriverError> {
+    let store_open = store_open.clone();
+    let ids = ids.clone();
+    let scope = scope.clone();
+    let stream = stream.clone();
+    let execution_id = execution_id.clone();
+    let actor = actor.clone();
+    tokio::task::spawn_blocking(move || {
+        let store = store_open()?;
+        let next_sequence = store.next_sequence(&scope, stream.as_str())?;
+        let events = vec![
+            NewEvent::new(
+                mint_key(ids.as_ref(), "preflight-refused")?,
+                actor.clone(),
+                Sensitivity::Internal,
+                WireEventKind::GraphValidationFailed(GraphValidationFailed { diagnostics }),
+                vec![],
+                vec![],
+            ),
+            NewEvent::new(
+                mint_key(ids.as_ref(), "execution-completed")?,
+                actor,
+                Sensitivity::Internal,
+                WireEventKind::ExecutionCompleted(ExecutionCompleted {
+                    execution_id,
+                    status: SimulationStatus::Failed,
+                }),
+                vec![],
+                vec![],
+            ),
+        ];
+        let request = PreparedAppend::new(
+            scope.clone(),
+            stream.clone(),
+            next_sequence,
+            events,
+            vec![],
+            vec![],
+        )?;
+        store.append_atomic(&request)?;
+        Ok(())
+    })
+    .await
+    .expect("the writer task is never cancelled")
+}
+
+/// One serialized projection reread through `spawn_blocking`: the store's latest head, folded
+/// onto the drive's kept projection (#1226), so it costs the events appended since the last
+/// reread rather than the whole stream.
+async fn reread_async(
+    store_open: &StoreOpen,
+    cache: &ProjectionCache,
+    scope: &RepositoryScope,
+    stream: &OpaqueId,
+) -> Result<ExecutionProjection, DriverError> {
+    let store_open = store_open.clone();
+    let cache = cache.clone();
+    let scope = scope.clone();
+    let stream = stream.clone();
+    tokio::task::spawn_blocking(move || {
+        let store = store_open()?;
+        Ok(cache.at_head(&store, &scope, stream.as_str())?.0)
+    })
+    .await
+    .expect("the writer task is never cancelled")
+}
+
+/// Builds the work unit from the node's contract, or refuses — the driver does not dispatch
+/// what the executor would refuse, and it never invents a prompt or a call.
+fn build_work(
+    spec: &GraphSpec,
+    execution_id: &OpaqueId,
+    node: &str,
+    attempt: u32,
+    gate_context: &GateContext<'_>,
+    // #1065: the capsule compiled for this node BEFORE this call, off the reactor (the search
+    // and reads are blocking filesystem work). `None` for every kind that runs without one.
+    context: Option<crate::context::CompiledContext>,
+) -> Result<NodeWork, crate::executor::ExecutorRefusal> {
+    let graph_node = spec
+        .nodes
+        .get(node)
+        .ok_or(crate::executor::ExecutorRefusal::Unsupported)?;
+    let kind = crate::classify::work_kind(&graph_node.node_type)?;
+    let mut context_summary = None;
+    let (prompt, tool_call, gate_check, judge) = match kind {
+        crate::classify::NodeWorkKind::Cognitive => {
+            // The blind-judge specialization (M06 Task 5): an Evaluator whose contract
+            // carries a `judge` block assembles from the judge's OWN diet — story and
+            // surface, nothing else. A malformed judge block (unknown fields INCLUDED —
+            // deny_unknown_fields is the blindness rule at this boundary) is
+            // unassemblable, never silently degraded to a plain prompt. Every other
+            // cognitive node assembles byte-identically to 05d.
+            if graph_node.node_type == graphhelm_protocols::NodeType::Evaluator
+                && let Some(block) = graph_node.properties.get("judge")
+            {
+                let judge: crate::judge::JudgeWork = serde_json::from_value(block.clone())
+                    .map_err(|_| crate::executor::ExecutorRefusal::Unassemblable)?;
+                (crate::judge::assemble(&judge), None, None, Some(judge))
+            } else {
+                // #1065: the capsule is the prompt's third field and enters its digest, so the
+                // sealed record names exactly what the model was shown. No ports, no capsule:
+                // the field is empty and the summary absent, which is today's behaviour said
+                // out loud rather than assumed.
+                let (text, summary) = match context {
+                    Some(compiled) => (compiled.text, Some(compiled.summary)),
+                    None => (String::new(), None),
+                };
+                context_summary = summary;
+                (
+                    crate::prompt::assemble_with_context(graph_node, &text)?,
+                    None,
+                    None,
+                    None,
+                )
+            }
+        }
+        crate::classify::NodeWorkKind::Tool => {
+            // The decided call comes from the node's own contract; the executor must not
+            // invent one, and neither may the driver.
+            let call = graph_node
+                .properties
+                .get("tool")
+                .and_then(|tool| tool.get("call"))
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .ok_or(crate::executor::ExecutorRefusal::Unassemblable)?;
+            (crate::prompt::tool_placeholder(), Some(call), None, None)
+        }
+        crate::classify::NodeWorkKind::GateCheck => {
+            let check: crate::executor::GateCheckWork = graph_node
+                .properties
+                .get("gate")
+                .and_then(|gate| gate.get("check"))
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .ok_or(crate::executor::ExecutorRefusal::Unassemblable)?;
+            // Certified or not at all: the fold's receipt for THIS gate must match the
+            // CURRENT digest of THIS gate's own suite. No registry configured, or no entry
+            // for the gate the node named, means no way to verify — refuse, never gate on
+            // unverifiable immunity. A stale receipt refuses identically.
+            let current = gate_context
+                .gates
+                .and_then(|gates| gates.suite_digest(&check.gate_id))
+                .ok_or(crate::executor::ExecutorRefusal::Uncertified)?;
+            let current = current.as_str();
+            let certified = gate_context
+                .certifications
+                .get(&check.gate_id)
+                .is_some_and(|receipt| receipt == current);
+            if !certified {
+                return Err(crate::executor::ExecutorRefusal::Uncertified);
+            }
+            (crate::prompt::tool_placeholder(), None, Some(check), None)
+        }
+    };
+    let tool_failure_semantics = if kind == crate::classify::NodeWorkKind::Tool {
+        tool_failure_semantics(graph_node)?
+    } else {
+        crate::executor::ToolFailureSemantics::default()
+    };
+    let max_output_tokens = if kind == crate::classify::NodeWorkKind::Cognitive {
+        graph_node
+            .properties
+            .get("model")
+            .and_then(|model| model.get("maxOutputTokens"))
+            .map(|cap| {
+                serde_json::from_value::<std::num::NonZeroU32>(cap.clone())
+                    .map_err(|_| crate::executor::ExecutorRefusal::Unassemblable)
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    Ok(NodeWork {
+        max_output_tokens,
+        execution_id: execution_id.to_string(),
+        node_id: node.to_owned(),
+        attempt,
+        prompt,
+        kind,
+        tool_failure_semantics,
+        tool_call,
+        gate_check,
+        judge,
+        context: context_summary,
+        delegation_tier: None,
+        subagent: None,
+    })
+}
+
+/// Whether a node runs with a context capsule (#1065): plain cognitive work only. Tool and gate
+/// work have no prompt, and the blind judge assembles from its own diet by design.
+fn wants_context(node: &graphhelm_protocols::GraphNode) -> bool {
+    matches!(
+        crate::classify::work_kind(&node.node_type),
+        Ok(crate::classify::NodeWorkKind::Cognitive)
+    ) && !(node.node_type == graphhelm_protocols::NodeType::Evaluator
+        && node.properties.contains_key("judge"))
+}
+
+/// Compile one node's capsule off the reactor: the search walks the workspace and the reads
+/// touch disk, so the work runs in `spawn_blocking` exactly like every store touch above. The
+/// summary is NOT recorded here: the ledger says what a node RAN with, and between this compile
+/// and the dispatch stand the assembly refusal and the pause re-read — the record is written
+/// after the `Started` hop, by the loop, for nodes that were actually dispatched.
+async fn compile_context_async(
+    ports: &crate::context::ContextPorts,
+    execution_id: &OpaqueId,
+    node: &str,
+    attempt: u32,
+    graph_node: &graphhelm_protocols::GraphNode,
+) -> Result<crate::context::CompiledContext, crate::executor::ExecutorRefusal> {
+    let owned_ports = ports.clone();
+    let execution_id = execution_id.to_string();
+    let node_id = node.to_owned();
+    let graph_node = graph_node.clone();
+    // #1086 (Codex P1 on #1092): the caller races this future against immediate cancellation and
+    // DROPS it when cancellation wins, which abandons the join handle but not the blocking scan.
+    // The guard sets the scan's token when this future is dropped (and, harmlessly, when it
+    // completes), so the abandoned scan stops at its next check and lets go of the execution
+    // tree instead of holding it while the cancelled drive releases the workspace.
+    let cancel = crate::ports::ScanCancel::new();
+    let _cancel_on_drop = CancelOnDrop(cancel.clone());
+    let compiled = tokio::task::spawn_blocking(move || {
+        crate::context::compile_for_node_cancellable(
+            &owned_ports,
+            &execution_id,
+            &node_id,
+            attempt,
+            &graph_node,
+            &cancel,
+        )
+    })
+    .await
+    .expect("the context compile task is never cancelled")?;
+    Ok(compiled)
+}
+
+/// Sets a scan's cancellation token when the future holding it is dropped.
+struct CancelOnDrop(crate::ports::ScanCancel);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
+const TOOL_EXITED_NON_ZERO_CAUSE: &str = "tool_exited_non_zero";
+
+fn tool_failure_semantics(
+    node: &graphhelm_protocols::GraphNode,
+) -> Result<crate::executor::ToolFailureSemantics, crate::executor::ExecutorRefusal> {
+    let Some(retry) = node.properties.get("retry") else {
+        return Ok(Default::default());
+    };
+    let retry = retry
+        .as_object()
+        .ok_or(crate::executor::ExecutorRefusal::Unassemblable)?;
+    let retry_on = retry_causes(retry, "retryOn")?;
+    let do_not_retry_on = retry_causes(retry, "doNotRetryOn")?;
+    let retry_declared = retry_on
+        .iter()
+        .any(|cause| cause == TOOL_EXITED_NON_ZERO_CAUSE);
+    let terminal_declared = do_not_retry_on
+        .iter()
+        .any(|cause| cause == TOOL_EXITED_NON_ZERO_CAUSE);
+    match (retry_declared, terminal_declared) {
+        (true, true) => Err(crate::executor::ExecutorRefusal::Unassemblable),
+        (true, false) => Ok(crate::executor::ToolFailureSemantics::RetryEligible),
+        (false, _) => Ok(crate::executor::ToolFailureSemantics::VerdictBearing),
+    }
+}
+
+fn retry_causes(
+    retry: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Vec<String>, crate::executor::ExecutorRefusal> {
+    retry
+        .get(key)
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|_| crate::executor::ExecutorRefusal::Unassemblable)
+        .map(Option::unwrap_or_default)
+}
+
+fn retry_policy_conflict_diagnostics(
+    spec: &GraphSpec,
+) -> Result<Vec<PersistedDiagnostic>, DriverError> {
+    let mut diagnostics = Vec::new();
+    for (node_id, node) in &spec.nodes {
+        let Some(retry) = node.properties.get("retry") else {
+            continue;
+        };
+        let (retry_on, do_not_retry_on, malformed) = if let Some(retry) = retry.as_object() {
+            let (retry_on, retry_on_malformed) = preflight_retry_causes(retry.get("retryOn"));
+            let (do_not_retry_on, do_not_retry_on_malformed) =
+                preflight_retry_causes(retry.get("doNotRetryOn"));
+            (
+                retry_on,
+                do_not_retry_on,
+                retry_on_malformed || do_not_retry_on_malformed,
+            )
+        } else {
+            (BTreeSet::new(), BTreeSet::new(), true)
+        };
+        let node_pointer = node_id.replace('~', "~0").replace('/', "~1");
+        let path = DiagnosticDomainPath::parse(format!("/spec/nodes/{node_pointer}/retry"))
+            .map_err(|_| DriverError::Identity)?;
+        if retry_on.iter().any(|cause| do_not_retry_on.contains(cause)) {
+            diagnostics.push(retry_policy_diagnostic(
+                RETRY_CAUSE_CONFLICT_CODE,
+                path.clone(),
+                DiagnosticComponent::Graph,
+            )?);
+        }
+        if malformed {
+            diagnostics.push(retry_policy_diagnostic(
+                RETRY_POLICY_TYPED_CODE,
+                path,
+                DiagnosticComponent::Schema,
+            )?);
+        }
+    }
+    Ok(diagnostics)
+}
+
+/// #1065: every node that RECEIVES context and DECLARES `context.budgetBytes` is asked whether
+/// the declaration can be read, before any node effect. A declared ceiling that cannot be read is
+/// a typo, not permission to apply the default — and not permission to skip the node either:
+/// skipped in the loop, the node stayed `Ready`, nothing was journaled, and the execution sat
+/// `running` with no diagnostic to say why. Refused here, the execution fails closed with the
+/// node named.
+///
+/// **Only nodes that receive context (#1086 item 13).** The declaration is read by the compile,
+/// and the compile runs for plain cognitive nodes (`wants_context`) on a drive that HAS context
+/// ports. A fixture drive, a tools-only server or a tool node never reads it, and before #1065
+/// such a graph ran; refusing it now for a field nothing reads would break a graph that has not
+/// changed. The same graph on a drive with ports is refused, before any effect, as before.
+fn context_budget_diagnostics(
+    spec: &GraphSpec,
+    ports_present: bool,
+) -> Result<Vec<PersistedDiagnostic>, DriverError> {
+    let mut diagnostics = Vec::new();
+    if !ports_present {
+        return Ok(diagnostics);
+    }
+    for (node_id, node) in &spec.nodes {
+        let declared = node
+            .properties
+            .get("context")
+            .and_then(|context| context.get("budgetBytes"));
+        if declared.is_none()
+            || !wants_context(node)
+            || crate::context::declared_budget(node).is_ok()
+        {
+            continue;
+        }
+        let node_pointer = node_id.replace('~', "~0").replace('/', "~1");
+        // `/spec/nodes/<id>/context`: the registered node-field pointer (the domain-path
+        // grammar names node fields one segment deep, exactly as the retry preflight's
+        // `/retry` does), so the diagnostic points at the block that carries the typo.
+        let path = DiagnosticDomainPath::parse(format!("/spec/nodes/{node_pointer}/context"))
+            .map_err(|_| DriverError::Identity)?;
+        diagnostics.push(retry_policy_diagnostic(
+            CONTEXT_BUDGET_INVALID_CODE,
+            path,
+            DiagnosticComponent::Graph,
+        )?);
+    }
+    Ok(diagnostics)
+}
+
+/// #1184: every `completion.customs` block in the graph must be readable.
+///
+/// The CONDITION and the CODE come from `graphhelm_execution` so the synchronous CLI driver
+/// refuses exactly the same graphs under exactly the same name; only the diagnostic's own type
+/// and path grammar are this driver's.
+///
+/// UNCONDITIONAL, unlike `context_budget_diagnostics` above, and the asymmetry is deliberate.
+/// That one is gated on `ports_present` because the field it validates is read only by the
+/// context compile, so refusing a graph on a drive that never reads it would break a graph that
+/// had not changed. Customs has no such consumer condition: EVERY drive of every node reaches
+/// the park decision, so a block that cannot be read is load-bearing on every path.
+fn customs_declaration_diagnostics(
+    spec: &GraphSpec,
+) -> Result<Vec<PersistedDiagnostic>, DriverError> {
+    let mut diagnostics = Vec::new();
+    for node_id in graphhelm_execution::unreadable_customs_nodes(spec) {
+        let node_pointer = node_id.replace('~', "~0").replace('/', "~1");
+        // `/spec/nodes/<id>/completion`: one segment deep, the same node-field pointer grammar
+        // the two preflights above use, pointing at the block that carries the typo.
+        let path = DiagnosticDomainPath::parse(format!("/spec/nodes/{node_pointer}/completion"))
+            .map_err(|_| DriverError::Identity)?;
+        diagnostics.push(retry_policy_diagnostic(
+            CUSTOMS_DECLARATION_INVALID_CODE,
+            path,
+            DiagnosticComponent::Graph,
+        )?);
+    }
+    Ok(diagnostics)
+}
+
+/// ADR-040 (#290 review): every `delegation` block in the graph must be readable. Refused here,
+/// with a journaled diagnostic, rather than by quietly leaving the node undispatched while the
+/// execution stays `running`. Unconditional for the reason customs is: every dispatch of the node
+/// reads it. The condition and code are shared with the synchronous CLI driver.
+fn delegation_declaration_diagnostics(
+    spec: &GraphSpec,
+) -> Result<Vec<PersistedDiagnostic>, DriverError> {
+    let mut diagnostics = Vec::new();
+    for node_id in crate::delegation::malformed_delegation_nodes(spec) {
+        let node_pointer = node_id.replace('~', "~0").replace('/', "~1");
+        let path = DiagnosticDomainPath::parse(format!("/spec/nodes/{node_pointer}/delegation"))
+            .map_err(|_| DriverError::Identity)?;
+        diagnostics.push(retry_policy_diagnostic(
+            crate::delegation::DELEGATION_DECLARATION_INVALID_CODE,
+            path,
+            DiagnosticComponent::Graph,
+        )?);
+    }
+    Ok(diagnostics)
+}
+
+fn preflight_retry_causes(value: Option<&serde_json::Value>) -> (BTreeSet<&str>, bool) {
+    let Some(value) = value else {
+        return (BTreeSet::new(), false);
+    };
+    let Some(values) = value.as_array() else {
+        return (BTreeSet::new(), true);
+    };
+    let mut causes = BTreeSet::new();
+    let mut malformed = false;
+    for value in values {
+        if let Some(cause) = value.as_str() {
+            causes.insert(cause);
+        } else {
+            malformed = true;
+        }
+    }
+    (causes, malformed)
+}
+
+fn retry_policy_diagnostic(
+    code: &str,
+    path: DiagnosticDomainPath,
+    component: DiagnosticComponent,
+) -> Result<PersistedDiagnostic, DriverError> {
+    PersistedDiagnostic::new(
+        code.to_owned(),
+        Severity::Error,
+        path,
+        component,
+        None,
+        None,
+    )
+    .map_err(|_| DriverError::Identity)
+}
+
+/// What the certified-or-not-at-all precondition reads: the fold's receipts and the gate
+/// registry THIS build carries (owned by the binary that runs gates — `core` never depends
+/// on `tools`, so the suites and their digests arrive as configuration).
+///
+/// The registry is asked PER GATE (#668). It used to be one digest — geometry's — compared
+/// against every gate's receipt, so `gate-retry-lineage` and `gate-journey-contract` could
+/// be certified by `quality certify` and were still refused as uncertified at dispatch.
+struct GateContext<'a> {
+    certifications: &'a std::collections::BTreeMap<String, String>,
+    gates: Option<&'a dyn crate::ports::GateRegistryPort>,
+}
+
+/// Who asked for an immediate stop, and under what idempotency key — carried ON the cancel
+/// channel itself rather than read from `actor` above, so the `execution-paused` this loop
+/// appends on cancel attributes to the REQUESTING caller and carries THEIR idempotency key, not
+/// the drive's own identity (#681: before this, the append always used `actor`, so the ledger
+/// recorded the drive's own actor — usually `system-runtime` — for a stop a named caller asked
+/// for, and a retried immediate-pause request could never be recognised as a retry because no
+/// committed event ever carried its key).
+#[derive(Clone)]
+pub struct ImmediateCancelRequest {
+    pub actor: PersistedActor,
+    pub idempotency_key: OpaqueId,
+}
+
+/// Drives a started execution to quiescence — the 04f loop, async: concurrent executor
+/// futures up to `max_parallel_model_calls`, every write serialized through this task (the
+/// single writer that keeps `next_sequence` race-free), `tokio::select!` between completions
+/// and the cancellation watch.
+///
+/// On cancel (§12 immediate stop, composed from existing pieces): the ports' cancel hooks run
+/// first (a subprocess-backed port kills its children; an HTTP-backed port's bound is the
+/// transport timeout), in-flight futures are aborted, each aborted node records `Interrupted`
+/// (`(Running, Interrupted) -> Blocked`, the 04e arm — never a silent retry), and
+/// `execution_paused` closes the story; recovery is what resume does.
+///
+/// # Errors
+/// [`DriverError`] on any store, replay, sealing, or identity refusal.
+#[allow(clippy::too_many_arguments)] // the 04f driver surface plus the async seams
+pub async fn drive_to_quiescence_async(
+    store_open: StoreOpen,
+    sealer: Arc<dyn EvidenceSealer>,
+    ids: Arc<dyn IdGenerator>,
+    scope: RepositoryScope,
+    stream: OpaqueId,
+    execution_id: OpaqueId,
+    spec: GraphSpec,
+    executor: Arc<dyn AsyncNodeExecutor>,
+    actor: PersistedActor,
+    release: BTreeSet<String>,
+    release_actor: PersistedActor,
+    cancel: tokio::sync::watch::Receiver<Option<ImmediateCancelRequest>>,
+    gates: Option<Arc<dyn crate::ports::GateRegistryPort>>,
+    context: Option<crate::context::ContextPorts>,
+) -> Result<ExecutionProjection, DriverError> {
+    drive_to_quiescence_async_with_receipts(
+        store_open,
+        sealer,
+        ids,
+        scope,
+        stream,
+        execution_id,
+        spec,
+        executor,
+        actor,
+        release,
+        release_actor,
+        cancel,
+        gates,
+        context,
+        None,
+    )
+    .await
+}
+
+/// [`drive_to_quiescence_async`] with an Evidence opener for the ADR-042 bound: at dispatch of a
+/// delegated node the sealed accounting receipts of each earlier subagent are opened and their
+/// provider counts read back. With `receipts: None` nothing can be read back, so every candidate
+/// that passes the reuse key is recorded `bound_unavailable`.
+///
+/// Every held subagent session is dropped when this returns, whatever it returns (ADR-042
+/// point 2: a session lives for one drive).
+///
+/// # Errors
+/// As [`drive_to_quiescence_async`].
+#[allow(clippy::too_many_arguments)] // the 04f driver surface plus the async seams
+pub async fn drive_to_quiescence_async_with_receipts(
+    store_open: StoreOpen,
+    sealer: Arc<dyn EvidenceSealer>,
+    ids: Arc<dyn IdGenerator>,
+    scope: RepositoryScope,
+    stream: OpaqueId,
+    execution_id: OpaqueId,
+    spec: GraphSpec,
+    executor: Arc<dyn AsyncNodeExecutor>,
+    actor: PersistedActor,
+    release: BTreeSet<String>,
+    release_actor: PersistedActor,
+    cancel: tokio::sync::watch::Receiver<Option<ImmediateCancelRequest>>,
+    gates: Option<Arc<dyn crate::ports::GateRegistryPort>>,
+    context: Option<crate::context::ContextPorts>,
+    receipts: Option<Arc<dyn graphhelm_events::EvidenceOpener>>,
+) -> Result<ExecutionProjection, DriverError> {
+    let result = drive_inner(
+        store_open,
+        sealer,
+        ids,
+        scope,
+        stream,
+        execution_id,
+        spec,
+        executor.clone(),
+        actor,
+        release,
+        release_actor,
+        cancel,
+        gates,
+        context,
+        receipts,
+    )
+    .await;
+    if let Some(sessions) = executor.sessions() {
+        sessions.drop_all();
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)] // the 04f driver surface plus the async seams
+async fn drive_inner(
+    store_open: StoreOpen,
+    sealer: Arc<dyn EvidenceSealer>,
+    ids: Arc<dyn IdGenerator>,
+    scope: RepositoryScope,
+    stream: OpaqueId,
+    execution_id: OpaqueId,
+    spec: GraphSpec,
+    executor: Arc<dyn AsyncNodeExecutor>,
+    actor: PersistedActor,
+    // #123: the nodes a `resume` held, released here at the first pass where their edges allow.
+    // `release_actor` is the OWNER's, deliberately separate from `actor` — releasing work the
+    // owner paused is the owner's act, while every ordinary hop below stays machinery.
+    release: BTreeSet<String>,
+    release_actor: PersistedActor,
+    mut cancel: tokio::sync::watch::Receiver<Option<ImmediateCancelRequest>>,
+    // #668: the gate registry this binary carries — per-gate suite digests for the
+    // certified-or-not-at-all precondition below, and the evaluators the executor dispatches
+    // to. `None` refuses every gate node, which is what a binary that registers no gate at
+    // all should do.
+    gates: Option<Arc<dyn crate::ports::GateRegistryPort>>,
+    // #1065: the bounded search and reader over the project root, plus the ledger the caller
+    // reads back. `None` is the pre-#1065 drive: no capsule, every context receipt field
+    // `unavailable`, the prompt's context field empty.
+    context: Option<crate::context::ContextPorts>,
+    receipts: Option<Arc<dyn graphhelm_events::EvidenceOpener>>,
+) -> Result<ExecutionProjection, DriverError> {
+    // #1226: ONE kept fold for this drive. Every reread and every outcome write below folds onto
+    // it, reading only what was appended since; it never outlives the drive.
+    let cache = ProjectionCache::default();
+    // Preflight, before any node effect: a retry policy that contradicts itself, and (#1065) a
+    // declared `context.budgetBytes` that cannot be read. Both are graph typos, both refuse the
+    // EXECUTION with a journaled diagnostic and a terminal settlement — never a node that is
+    // silently skipped while the execution stays `running`.
+    let mut preflight_diagnostics = retry_policy_conflict_diagnostics(&spec)?;
+    preflight_diagnostics.extend(context_budget_diagnostics(&spec, context.is_some())?);
+    preflight_diagnostics.extend(customs_declaration_diagnostics(&spec)?);
+    preflight_diagnostics.extend(delegation_declaration_diagnostics(&spec)?);
+    if !preflight_diagnostics.is_empty() {
+        let projection = reread_async(&store_open, &cache, &scope, &stream).await?;
+        let already_terminal = matches!(
+            projection.simulation_status,
+            Some(
+                SimulationStatus::Completed
+                    | SimulationStatus::Failed
+                    | SimulationStatus::Cancelled
+            )
+        );
+        if !already_terminal {
+            append_preflight_refusal(
+                &store_open,
+                &ids,
+                &scope,
+                &stream,
+                &execution_id,
+                &actor,
+                preflight_diagnostics,
+            )
+            .await?;
+        }
+        return reread_async(&store_open, &cache, &scope, &stream).await;
+    }
+
+    let mut in_flight: tokio::task::JoinSet<(String, Option<WorkOutcome>)> =
+        tokio::task::JoinSet::new();
+    let mut in_flight_nodes: BTreeSet<String> = BTreeSet::new();
+    let mut refused: BTreeSet<String> = BTreeSet::new();
+    let max_parallel = graphhelm_execution::parallel_limit(&spec.budgets);
+
+    // The `Option<ImmediateCancelRequest>` is CAPTURED at the point cancellation is detected, not
+    // re-read later at the append site (Codex P1, PR #695 review). Two immediate-pause requests
+    // racing the same execution could otherwise let a SECOND `send` overwrite the channel's
+    // payload between "cancellation observed" and "payload fetched to attribute the append" --
+    // the loop would still correctly detect a request happened, but attribute it to whichever
+    // request happened to be sitting in the channel at the LATER read, not the one that actually
+    // triggered this stop.
+    let cancelled_request: Option<ImmediateCancelRequest> = 'passes: loop {
+        if let Some(request) = cancel.borrow().clone() {
+            break Some(request);
+        }
+
+        // Approve every untouched node — the legal Draft -> Ready route, as 04f does.
+        let projection = reread_async(&store_open, &cache, &scope, &stream).await?;
+        let pending_proposal = projection.proposed_drafts.iter().any(|draft_id| {
+            !projection
+                .applied_drafts
+                .iter()
+                .any(|applied| applied == draft_id)
+                && !projection
+                    .rejected_drafts
+                    .iter()
+                    .any(|rejected| rejected == draft_id)
+        });
+        if pending_proposal {
+            if projection.simulation_status != Some(SimulationStatus::Paused) {
+                append_plain(
+                    &store_open,
+                    &ids,
+                    &scope,
+                    &stream,
+                    &actor,
+                    "proposal-paused",
+                    None,
+                    WireEventKind::ExecutionPaused(ExecutionPaused {
+                        execution_id: execution_id.clone(),
+                    }),
+                )
+                .await?;
+            }
+            break None;
+        }
+        for node in spec.nodes.keys() {
+            let state = projection
+                .node_states
+                .get(node)
+                .copied()
+                .unwrap_or(NodeState::Draft);
+            if state == NodeState::Draft {
+                write_outcome(
+                    &store_open,
+                    &cache,
+                    &sealer,
+                    &ids,
+                    &scope,
+                    &stream,
+                    &execution_id,
+                    &actor,
+                    node.clone(),
+                    bare(NodeOutcome::Approved),
+                )
+                .await?;
+            }
+        }
+
+        let projection = reread_async(&store_open, &cache, &scope, &stream).await?;
+
+        // #123's RELEASE. Three conditions, and the third is load-bearing rather than defensive:
+        // re-reading the aggregate every pass is what lets this section see a pause the operator
+        // already recorded AT THIS REREAD, so release does not re-start a node paused before it.
+        // NARROWED, NOT ELIMINATED: a pause landing after this reread and before the release
+        // append below is the same check-then-act residual #562 documents at the dispatch gate
+        // (`apps/cli/src/commands/execution/driver.rs:185-197`) -- not closed here either, and for
+        // the same reason: closing it is a behaviour change beyond what this comment describes.
+        // (This comment used to claim an ordinary pause does not stop an in-flight drive at
+        // all, on the strength of the cancel channel above being signalled only for
+        // `mode: immediate` — true of that channel, but no longer true of the drive: #124's own
+        // PAIR of gates below in this function stops DISPATCH for an ordinary pause too — the
+        // PLAN gate (`execution_paused` checked before `dispatch_plan` is built) and the
+        // DISPATCH-POINT gate (the same check re-read per node, just before each dispatch). Their
+        // own comment explains why removing either as "covered by the other" is how this becomes
+        // a hang. Landed in 2ea6c6a7. This section's own reasoning about RELEASE never depended on
+        // that claim, so only the claim moves.)
+        // A node paused MID-drive is safe by construction: it is not in `release`, which was fixed
+        // when the resume handed it over.
+        let mut released_any = false;
+        for node in &release {
+            let held =
+                projection.node_states.get(node.as_str()).copied() == Some(NodeState::Paused);
+            let execution_paused = projection.simulation_status == Some(SimulationStatus::Paused);
+            if held
+                && !execution_paused
+                && graphhelm_execution::edges_satisfied(&spec, &projection.node_states, node)
+            {
+                write_outcome(
+                    &store_open,
+                    &cache,
+                    &sealer,
+                    &ids,
+                    &scope,
+                    &stream,
+                    &execution_id,
+                    &release_actor,
+                    node.clone(),
+                    bare(NodeOutcome::Started),
+                )
+                .await?;
+                released_any = true;
+            }
+        }
+        // Re-read ONLY when a release actually appended. Unconditional here cost a full O(head)
+        // read and replay on EVERY pass of EVERY execution when this was written; since #1226 a
+        // reread folds only the tail, so the cost argument is smaller, but the behaviour argument
+        // stands unchanged: an unconditional reread would silently widen behaviour, the loop
+        // starting to observe concurrent external appends mid-pass, where before it computed
+        // candidates from the projection it already held. That was not asked for.
+        let projection = if released_any {
+            reread_async(&store_open, &cache, &scope, &stream).await?
+        } else {
+            projection
+        };
+
+        // The union (ready + retry-pending) lives in `dispatch_candidates` rather than here, so
+        // the edge rule reaches BOTH halves from one implementation. It used to be built inline,
+        // with the retry-pending half a bare `state == Queued` filter — which is how a node whose
+        // dependencies were unmet could reach dispatch (#80).
+        let candidates: BTreeSet<String> = dispatch_candidates(&spec, &projection.node_states)
+            .map_err(|_| DriverError::Transition)?
+            .into_iter()
+            .filter(|node| !in_flight_nodes.contains(node) && !refused.contains(node))
+            .collect();
+        // #124: AN ORDINARY PAUSE STOPS DISPATCH. The pause route appends `execution_paused` and
+        // signals nothing -- the cancel channel is written only for `mode: immediate`
+        // (`serve/routes.rs`). So without this the stream records the pause at sequence T and node
+        // outcomes at T+1: an operator reads `paused` while the machine keeps going, which is the
+        // log-that-lies class at the exact moment of intervention.
+        //
+        // An EMPTY PLAN rather than a new exit, and the choice is the whole design. Anything
+        // already in flight keeps running and is still joined below; when the last one lands, the
+        // pass after it finds an empty plan and an empty `in_flight` and leaves through the
+        // quiescence exit that was always there. Nothing is aborted, nothing is recorded
+        // `Interrupted`, and `execution_paused` is not appended a second time -- all three belong
+        // to immediate-stop, and #124 declined to collapse the two verbs.
+        //
+        // So the distinction survives with its meaning intact: immediate INTERRUPTS work,
+        // ordinary DECLINES TO START MORE.
+        // Read AFTER the rebind above, never before it. `projection` is replaced when a release
+        // appended, so a value taken earlier in this pass describes a store that has since moved --
+        // and the whole point of this check is to see an append that arrived late.
+        let execution_paused = projection.simulation_status == Some(SimulationStatus::Paused);
+        let plan = if execution_paused {
+            Vec::new()
+        } else {
+            dispatch_plan(
+                &candidates,
+                &projection.node_attempts,
+                in_flight_nodes.len(),
+                max_parallel,
+            )
+            .map_err(|_| DriverError::Transition)?
+        };
+
+        if plan.is_empty() && in_flight.is_empty() {
+            break None;
+        }
+
+        for node in &plan {
+            let attempt = projection.node_attempts.get(node).copied().unwrap_or(0);
+            let gate_context = GateContext {
+                certifications: &projection.gate_certifications,
+                gates: gates.as_deref(),
+            };
+            // #1065: bounded retrieval BEFORE assembly, and before the dispatch hop below is
+            // written. A capsule compiled for a node that is then refused (unassemblable) or
+            // held back (a pause landed since the plan was read) is discarded with the node: the
+            // ledger records only what was DISPATCHED, after the `Started` hop below, so the
+            // drive reply never says a node "ran with" a capsule it never saw.
+            // RACED against immediate cancellation, exactly as the executor futures are below
+            // (Codex P1 on #1078): the search and the reads are blocking filesystem work whose
+            // only bound is the channel's declared ceilings, and an unconditional await here let
+            // the rest of the plan compile and dispatch after a stop was requested. The blocking
+            // task itself runs to its bound and is then dropped unread; nothing after it is
+            // dispatched. An unreadable declared budget was refused by the preflight above, so
+            // the refusal arm here is a belt over that brace, never a silent default.
+            let compiled = match (&context, spec.nodes.get(node)) {
+                (Some(ports), Some(graph_node)) if wants_context(graph_node) => {
+                    let compile =
+                        compile_context_async(ports, &execution_id, node, attempt, graph_node);
+                    tokio::pin!(compile);
+                    let compiled = tokio::select! {
+                        compiled = &mut compile => compiled,
+                        changed = cancel.changed() => {
+                            if changed.is_ok()
+                                && let Some(request) = cancel.borrow().clone()
+                            {
+                                break 'passes Some(request);
+                            }
+                            compile.await
+                        }
+                    };
+                    match compiled {
+                        Ok(compiled) => Some(compiled),
+                        Err(_) => {
+                            refused.insert(node.clone());
+                            continue;
+                        }
+                    }
+                }
+                _ => None,
+            };
+            let work =
+                match build_work(&spec, &execution_id, node, attempt, &gate_context, compiled) {
+                    Ok(work) => work,
+                    Err(_) => {
+                        // A refusal is a refusal: the node is simply never dispatched. It stays
+                        // whatever state it is in; the driver moves on.
+                        refused.insert(node.clone());
+                        continue;
+                    }
+                };
+            // Dispatch hops flow through the same writer BEFORE the executor future starts,
+            // so sequencing matches 04f exactly.
+            // ASKED AT THE POINT OF DISPATCH, from the projection this point actually holds.
+            // The plan was computed from a read taken earlier in the pass; a pause appended since
+            // then is invisible to it, and this per-node reread is the only place that can see it.
+            // Node state alone cannot stand in: an ordinary pause moves NO node state (it sets
+            // `simulation_status` and nothing else), so a planned node is still `Ready` here and
+            // sails through the gate below with the pause already in the log. Blindness by
+            // construction, not by race.
+            //
+            // THIS BREAK NEEDS THE PLAN GATE ABOVE TO TERMINATE, and the two are not redundant.
+            // Measured by removing each alone: with the plan gate gone this loop SPINS FOREVER --
+            // the plan stays non-empty, every node breaks out before dispatch, `in_flight` stays
+            // empty, and the `plan.is_empty() && in_flight.is_empty()` exit is never reached.
+            // One stops a dispatch mid-plan; the other ends the pass. Removing either as
+            // "covered by the other" is how this becomes a hang.
+            let at_dispatch = reread_async(&store_open, &cache, &scope, &stream).await?;
+            if at_dispatch.simulation_status == Some(SimulationStatus::Paused) {
+                break;
+            }
+            // ADR-040: the delegation choice is computed from the projection AT DISPATCH, so its
+            // red-check count includes every failing gate verdict already in the journal. A
+            // malformed declaration was refused by the preflight above with a journaled
+            // `GHG018_DELEGATION_DECLARATION_INVALID`; this arm is the backstop that still never
+            // dispatches without the record the declaration asked for.
+            let delegation = match spec.nodes.get(node).map(|graph_node| {
+                crate::delegation::delegation_event(node, graph_node, &at_dispatch)
+            }) {
+                Some(Ok(chosen)) => chosen,
+                Some(Err(_)) | None => {
+                    refused.insert(node.clone());
+                    continue;
+                }
+            };
+            // ADR-041/042: which subagent takes the node, decided from the same dispatch-point
+            // projection. The bound is read back NOW (ADR-042 points 6-7): the serving route's
+            // declared window from the executor's session store, the candidate's last
+            // provider-reported counts from its sealed accounting receipts, and whether the
+            // executor still holds its session. Anything unmeasured refuses reuse; nothing is
+            // estimated. A stream with no recorded graph version never dispatches a delegated node.
+            let subagent = match &delegation {
+                Some(chosen) => {
+                    let mut bound = crate::session::measured_bound(
+                        &store_open,
+                        receipts.as_ref(),
+                        &scope,
+                        &stream,
+                        &at_dispatch,
+                        executor.sessions(),
+                    )
+                    .await?;
+                    let fresh = mint_key(ids.as_ref(), "subagent")?;
+                    let mut decided = crate::delegation::subagent_event(
+                        chosen,
+                        &at_dispatch,
+                        &bound,
+                        fresh.clone(),
+                    );
+                    // The history is snapshotted here, before anything is appended. A session
+                    // dropped between the bound read and this snapshot is decided again as not
+                    // held, so the journal never says `reused` for a call sent without history.
+                    let mut history = Vec::new();
+                    if let Ok(record) = &decided
+                        && record.basis == graphhelm_protocols::SubagentBasis::Reused
+                    {
+                        let id = record.subagent_id.as_str().to_owned();
+                        match executor
+                            .sessions()
+                            .and_then(|sessions| sessions.history(&id))
+                        {
+                            Some(turns) => history = turns,
+                            None => {
+                                bound.held.remove(&id);
+                                decided = crate::delegation::subagent_event(
+                                    chosen,
+                                    &at_dispatch,
+                                    &bound,
+                                    fresh,
+                                );
+                            }
+                        }
+                    }
+                    match decided {
+                        Ok(record) => Some((record, history)),
+                        Err(_) => {
+                            refused.insert(node.clone());
+                            continue;
+                        }
+                    }
+                }
+                None => None,
+            };
+            let current = at_dispatch
+                .node_states
+                .get(node)
+                .copied()
+                .unwrap_or(NodeState::Draft);
+            if current == NodeState::Ready {
+                write_outcome(
+                    &store_open,
+                    &cache,
+                    &sealer,
+                    &ids,
+                    &scope,
+                    &stream,
+                    &execution_id,
+                    &actor,
+                    node.clone(),
+                    bare(NodeOutcome::Started),
+                )
+                .await?;
+            }
+            write_outcome(
+                &store_open,
+                &cache,
+                &sealer,
+                &ids,
+                &scope,
+                &stream,
+                &execution_id,
+                &actor,
+                node.clone(),
+                bare(NodeOutcome::Started),
+            )
+            .await?;
+            // ADR-040: one `delegation_chosen` per dispatch of a node that declares delegation,
+            // appended after the `Started` hop and before the executor future starts. A node
+            // without the field appends nothing here.
+            let delegation_tier = delegation.as_ref().map(|chosen| chosen.tier);
+            if let Some(chosen) = delegation {
+                append_plain(
+                    &store_open,
+                    &ids,
+                    &scope,
+                    &stream,
+                    &actor,
+                    "delegation-chosen",
+                    None,
+                    WireEventKind::DelegationChosen(chosen),
+                )
+                .await?;
+            }
+            // ADR-041: right after `delegation_chosen`, every delegated node names its subagent.
+            let subagent_work =
+                subagent
+                    .as_ref()
+                    .map(|(record, history)| crate::executor::SubagentWork {
+                        subagent_id: record.subagent_id.as_str().to_owned(),
+                        history: history.clone(),
+                    });
+            if let Some((record, _)) = subagent {
+                append_plain(
+                    &store_open,
+                    &ids,
+                    &scope,
+                    &stream,
+                    &actor,
+                    "subagent-reused",
+                    None,
+                    WireEventKind::SubagentReused(record),
+                )
+                .await?;
+            }
+            // #1065: the ledger line is written HERE, past every gate that could still hold the
+            // node back — the summary is what this node runs with, now that it is running.
+            if let (Some(ports), Some(summary)) = (&context, work.context.as_ref()) {
+                ports.ledger.record(node, summary.clone());
+            }
+
+            // ADR-041: the tier the policy chose travels with the work, so the executor serves it
+            // only on a route that declares it. `None` for a node without delegation.
+            let mut work = work;
+            work.delegation_tier = delegation_tier;
+            work.subagent = subagent_work;
+            let executor = executor.clone();
+            let node_name = node.clone();
+            in_flight_nodes.insert(node.clone());
+            in_flight.spawn(async move {
+                let outcome = executor.execute(&work).await.ok();
+                (node_name, outcome)
+            });
+        }
+
+        if in_flight.is_empty() {
+            continue;
+        }
+        tokio::select! {
+            joined = in_flight.join_next() => {
+                if let Some(Ok((node, outcome))) = joined {
+                    in_flight_nodes.remove(&node);
+                    match outcome {
+                        Some(work) => {
+                            // #1184: THE PARK. A node whose declaration names proof kinds does
+                            // not complete on its own say-so — the outcome becomes `NeedsInput`,
+                            // which `apply_transition` turns into `WaitingInput`, which
+                            // `attention` reports as `needs_you`. Everything else on the outcome
+                            // is carried through UNCHANGED, and that is not incidental: the
+                            // sealables and the token summary are the record of work that really
+                            // happened, and they are the material a claimant cites as the proof
+                            // this park is waiting for. Dropping them here would make the gate
+                            // ask for evidence it had just discarded.
+                            //
+                            // ONLY a success is converted. A failure, a retryable failure or an
+                            // interruption must keep its own outcome: parking a node that failed
+                            // would ask a person to attest to work that did not happen, and
+                            // would take the node out of the retry path that owns it.
+                            let work = if work.outcome == NodeOutcome::Succeeded
+                                && graphhelm_execution::completion_is_gated_in(&spec, &node)
+                            {
+                                WorkOutcome {
+                                    outcome: NodeOutcome::NeedsInput,
+                                    ..work
+                                }
+                            } else {
+                                work
+                            };
+                            // ADR-042 point 2: a node that parks drops every held session.
+                            if matches!(
+                                work.outcome,
+                                NodeOutcome::NeedsInput | NodeOutcome::NeedsCapacity
+                            ) && let Some(sessions) = executor.sessions()
+                            {
+                                sessions.drop_all();
+                            }
+                            write_outcome(
+                                &store_open,
+                                &cache, &sealer, &ids, &scope, &stream,
+                                &execution_id, &actor, node, work,
+                            )
+                            .await?;
+                        }
+                        None => {
+                            // A runtime refusal after a legal dispatch: never dispatch it
+                            // again — the executor refused to attempt, so there is no
+                            // outcome to invent.
+                            refused.insert(node);
+                        }
+                    }
+                }
+            }
+            changed = cancel.changed() => {
+                if changed.is_ok()
+                    && let Some(request) = cancel.borrow().clone()
+                {
+                    break Some(request);
+                }
+            }
+        }
+    };
+
+    if let Some(request) = cancelled_request {
+        // §12 immediate stop: hooks first (blocking work dies for real), then abort the
+        // futures, then record the truth — Interrupted, never a silent retry.
+        executor.cancel_all();
+        in_flight.abort_all();
+        while in_flight.join_next().await.is_some() {}
+        for node in std::mem::take(&mut in_flight_nodes) {
+            write_outcome(
+                &store_open,
+                &cache,
+                &sealer,
+                &ids,
+                &scope,
+                &stream,
+                &execution_id,
+                &actor,
+                node,
+                bare(NodeOutcome::Interrupted),
+            )
+            .await?;
+        }
+        // `request` is the SAME value that triggered this branch above -- captured once, at
+        // detection, never re-read (#681: attribute and key both come from the caller who asked
+        // to pause, not from the drive's own `actor`; the earlier re-read was Codex's P1 finding
+        // on this PR -- a second racing request could overwrite the channel between detection
+        // and a later fetch).
+        //
+        // #695, Codex P1: a GRACEFUL pause can commit `execution-paused` while THIS drive is
+        // still draining the very node this immediate request is about to interrupt -- graceful
+        // holds only `Ready`/`Queued` nodes and appends its own `ExecutionPaused` immediately
+        // (`apps/cli/src/commands/execution/pause.rs`), never waiting for what's in flight. The
+        // projection's own fold for `ExecutionPaused` accepts the `None`/`Running` -> `Paused`
+        // transition exactly once (`core/events/src/projection.rs`); a second one while already
+        // `Paused` is `ReplayError::Corrupt`, and every future replay of this stream -- including
+        // this very append's own `reread_async` below -- would fail from that point on. Re-read
+        // fresh, right before the append, rather than trust the projection this function loaded
+        // earlier: that read predates the abort/join work above, which is exactly where a
+        // concurrent graceful append has room to land. If it already landed, this request's own
+        // escalation is fully expressed by the `Interrupted` outcomes already written above --
+        // interrupting the node now, instead of letting it drain, is the whole difference
+        // immediate mode promises over graceful, and neither half of that needs a second
+        // aggregate event to be true. Skipping the append here, not skipping the abort above, is
+        // what keeps the promise without touching the guard that makes a duplicate corrupt.
+        let already_paused = reread_async(&store_open, &cache, &scope, &stream)
+            .await?
+            .simulation_status
+            == Some(SimulationStatus::Paused);
+        if !already_paused {
+            append_plain(
+                &store_open,
+                &ids,
+                &scope,
+                &stream,
+                &request.actor,
+                "execution-paused",
+                Some(request.idempotency_key),
+                WireEventKind::ExecutionPaused(ExecutionPaused {
+                    execution_id: execution_id.clone(),
+                }),
+            )
+            .await?;
+        }
+        return reread_async(&store_open, &cache, &scope, &stream).await;
+    }
+
+    // Quiescence: complete when every node is terminal, exactly as 04f's
+    // complete_if_quiesced decides it.
+    let projection = reread_async(&store_open, &cache, &scope, &stream).await?;
+    let pending_proposal = projection.proposed_drafts.iter().any(|draft_id| {
+        !projection
+            .applied_drafts
+            .iter()
+            .any(|applied| applied == draft_id)
+            && !projection
+                .rejected_drafts
+                .iter()
+                .any(|rejected| rejected == draft_id)
+    });
+    if pending_proposal {
+        return Ok(projection);
+    }
+    let already_terminal = matches!(
+        projection.simulation_status,
+        Some(SimulationStatus::Completed | SimulationStatus::Failed | SimulationStatus::Cancelled)
+    );
+    let all_terminal = spec.nodes.keys().all(|node| {
+        matches!(
+            projection.node_states.get(node),
+            Some(
+                NodeState::Succeeded
+                    | NodeState::Failed
+                    | NodeState::Waived
+                    | NodeState::Skipped
+                    | NodeState::Cancelled
+            )
+        )
+    });
+    if all_terminal && !already_terminal {
+        let all_success = spec.nodes.keys().all(|node| {
+            matches!(
+                projection.node_states.get(node),
+                Some(NodeState::Succeeded | NodeState::Waived | NodeState::Skipped)
+            )
+        });
+        append_plain(
+            &store_open,
+            &ids,
+            &scope,
+            &stream,
+            &actor,
+            "execution-completed",
+            None,
+            WireEventKind::ExecutionCompleted(ExecutionCompleted {
+                execution_id: execution_id.clone(),
+                status: if all_success {
+                    SimulationStatus::Completed
+                } else {
+                    SimulationStatus::Failed
+                },
+            }),
+        )
+        .await?;
+    }
+    reread_async(&store_open, &cache, &scope, &stream).await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use chrono::TimeZone as _;
+    use graphhelm_events::replay;
+    use graphhelm_protocols::{
+        ActorId, Clock, ExecutionId, ExecutionMode, ExecutionPaused, ExecutionStarted,
+        PersistedActorType, ProjectId, WireHash, WorkspaceId,
+    };
+
+    use super::*;
+
+    struct FixedClock;
+    impl Clock for FixedClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc
+                .with_ymd_and_hms(2026, 10, 14, 12, 0, 0)
+                .unwrap()
+        }
+    }
+
+    #[derive(Default)]
+    struct Ids(AtomicU64);
+    impl IdGenerator for Ids {
+        fn next_id(&self, prefix: &'static str) -> String {
+            format!("{prefix}-{}", self.0.fetch_add(1, Ordering::SeqCst) + 1)
+        }
+    }
+
+    const STREAM: &str = "stream-cache-test";
+
+    fn scope() -> RepositoryScope {
+        RepositoryScope::new(
+            WorkspaceId::parse("workspace-cache").unwrap(),
+            ProjectId::parse("project-cache").unwrap(),
+            Some(ExecutionId::parse("execution-cache").unwrap()),
+        )
+    }
+
+    fn event(key: &str, kind: EventKind) -> NewEvent {
+        NewEvent::new(
+            OpaqueId::parse(key).unwrap(),
+            PersistedActor::new(
+                PersistedActorType::System,
+                ActorId::parse("system-cache").unwrap(),
+            ),
+            Sensitivity::Internal,
+            kind,
+            vec![],
+            vec![],
+        )
+    }
+
+    /// A store holding `execution_started` and, when `paused`, `execution_paused` after it.
+    fn store(directory: &std::path::Path, tag: &str, paused: bool) -> LocalEventRepository {
+        let repository =
+            LocalEventRepository::open(directory, Arc::new(FixedClock), Arc::new(Ids::default()))
+                .unwrap();
+        let execution_id = OpaqueId::parse("execution-cache").unwrap();
+        let mut events = vec![event(
+            &format!("{tag}-started"),
+            EventKind::ExecutionStarted(ExecutionStarted {
+                execution_id: execution_id.clone(),
+                graph_version: 1,
+                graph_hash: WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+                mode: ExecutionMode::Autopilot,
+            }),
+        )];
+        if paused {
+            events.push(event(
+                &format!("{tag}-paused"),
+                EventKind::ExecutionPaused(ExecutionPaused { execution_id }),
+            ));
+        }
+        let request = PreparedAppend::new(
+            scope(),
+            OpaqueId::parse(STREAM).unwrap(),
+            1,
+            events,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        repository.append_atomic(&request).unwrap();
+        repository
+    }
+
+    fn replayed(store: &LocalEventRepository) -> ExecutionProjection {
+        replay(
+            &scope(),
+            STREAM,
+            &store.read_replay_stream(&scope(), STREAM).unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// #1226: a kept fold that no longer matches the store it is asked about (replaced under the
+    /// same path by a shorter history, or by a different one the fold's tail read would extend)
+    /// is thrown away; the driver acts on the replayed projection, never the stale one.
+    #[test]
+    fn a_kept_fold_that_no_longer_matches_the_store_is_rebuilt() {
+        let longer_dir = tempfile::tempdir().unwrap();
+        let shorter_dir = tempfile::tempdir().unwrap();
+        let longer = store(longer_dir.path(), "first", true);
+        let shorter = store(shorter_dir.path(), "second", false);
+
+        let cache = ProjectionCache::default();
+        let (stale, _) = cache.at_head(&longer, &scope(), STREAM).unwrap();
+        assert_eq!(stale, replayed(&longer), "the first fold equals replay");
+        assert_ne!(
+            stale,
+            replayed(&shorter),
+            "HARNESS-BROKE: the two histories project alike, so a stale fold would pass unseen"
+        );
+
+        // Shorter replacement: the tail after the fold's head is empty; only the head check sees it.
+        let (projection, started) = cache.at_head(&shorter, &scope(), STREAM).unwrap();
+        assert_eq!(projection, replayed(&shorter));
+        assert_eq!(
+            started.len(),
+            1,
+            "the rebuilt fold carries only the new store's start"
+        );
+
+        // A different, longer history: the tail's first event does not chain onto the fold.
+        let (projection, _) = cache.at_head(&longer, &scope(), STREAM).unwrap();
+        assert_eq!(projection, replayed(&longer));
+    }
+}

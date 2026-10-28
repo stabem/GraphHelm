@@ -1,0 +1,67 @@
+# KEEL_REVIEW
+
+Step 3: one reviewer per pull request. Read [`KEEL.md`](../KEEL.md) first.
+
+## Blind
+
+You did not write the change, and your brief carries only the PR number, the identity line to
+sign with, where the rules live, the build directory and questions that apply to every review
+(correctness, security, fail-closed behaviour, test quality). If you helped write it, or your
+brief carries the author's reasoning, a finding to look for, a summary of the change or an
+expected verdict, you are not blind: say so and do not review.
+
+## Do
+
+1. **Read the earlier comments** and answer any open block on this head.
+2. **Reuse the author's receipt, rerun what proves.** The author leaves the `run_reached.py` JSON
+   report as a file path in the PR body with its summary line; it names the head (`headBefore`)
+   and the base main sha (`baseSha`). Reuse it when its head equals the PR head and nothing in it
+   is failed or pending. Then run the end-to-end proof of the promise, any cell you doubt, and fmt
+   and clippy on the touched crates. Rerun the whole reached plan on main plus the head only when
+   the receipt is missing, stale, red or pending, or when the diff touches persistence,
+   permissions, security, compatibility or the plan selector itself. Name what you reused and what
+   you reran, each command and its result, and the size of each population (for example, how many
+   test files ran).
+   **Await the checkout before any proof.** A checkout, fetch or reset that returns a live or
+   background session is not finished: wait for it to exit, then read `git rev-parse HEAD` and an
+   empty `git status --short`, and pass that full sha to the runner as `--head`. A run started
+   while the head is still moving ends `incomplete` ("HEAD changed while running") and is not
+   evidence; rerun it with a new `--output` (#2030).
+3. **List only the values in `KEEL.md` that do not hold** on the diff, plus every value the
+   card's risk row names, whether it holds or not. A value marked `to build` is checked by reading.
+4. **Check every exception** the change adds: is the reason true, and does it expire? Refuse one
+   that excuses a value instead of a constraint.
+5. **Measure any promised gain live**, before and after, under the same condition, enough runs to
+   see the noise. A single count is not a measurement.
+6. **Try to break the promise** a user would see, not only the tests.
+7. **Remove your own review checkout** when you are done with `graphhelm workspace remove <dir>`
+   (#1663). It unlinks every junction without following it before anything is deleted. Never
+   `rm -rf`, `Remove-Item -Recurse` or `git worktree remove --force` a tree that may hold a
+   junction: they follow `apps/studio/node_modules` into the owner checkout and delete it.
+
+## What the screen says (`keel.semantic`)
+
+For every screen the diff touches, and every screen that shows a value the diff changes, answer
+each line from what you read on the rendered screen, not from what the code intends. Write a line
+you could not observe as unobserved, with what is missing.
+
+1. **Declared unit is the used unit.** A field labelled "unit price", "total" or "per m²" is
+   stored and summed the way its label says; the visible label and the accessible name say the
+   same thing.
+2. **Same value, same text.** The same amount shows the same string, cents included, on every
+   screen, bar label, receipt and message. One formatter, not one per page.
+3. **Visibility follows state.** Name each state the subject can be in and what each screen shows
+   for it: a finished item leaves "upcoming" lists; a record the user entered stays visible in every
+   later state.
+4. **Honest label.** No adjective the data does not carry (with two prices, the dearer one is not
+   "top of the range"); a capped bar still says the real percentage.
+5. **Exact copy at the boundaries.** Relative dates and plurals are read at 0, 1, 2, 6, 7 and 14,
+   under a fixed clock.
+6. **The rule before the failure.** A limit, minimum or required field is said before submit, and
+   the failure names the rule, never a generic "could not save".
+
+## Verdict
+
+`APPROVE`, `APPROVE-WITH-RISK` (name each risk and what is still unobserved) or `BLOCK` (name the
+rule id or the broken promise, and what would clear it). Start with the identity line. The verdict
+is the comment text.

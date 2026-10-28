@@ -103,6 +103,7 @@ docs/acceptance/demos/** -text
 adapters/tool-host/tests/fixtures/context-quality/** text eol=lf
 # #1705: the frozen context-ranking holdout corpus, pinned the same way.
 adapters/tool-host/tests/fixtures/context-holdout/** text eol=lf
+adapters/tool-host/tests/fixtures/context-holdout-v2/** text eol=lf
 # #1138: a UTF-16 gate transcript fixture; its BOM and NULs are the point of the file.
 apps/cli/tests/fixtures/classify-red/flake-utf16.log.txt binary
 # #1722: the CLI embeds these observer files byte for byte (include_bytes!) and requires the

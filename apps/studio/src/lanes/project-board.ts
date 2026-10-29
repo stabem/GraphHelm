@@ -1,4 +1,5 @@
 import type { BoardLaneLiveness, BoardTask, OwnerNote, RunSummary, TasksBoard } from "../runtime/client";
+import type { OwnerRequest } from "../graph/requests";
 
 /** #2228: one execution's board, as the Runtime served it. */
 export interface RunBoard {
@@ -177,4 +178,53 @@ export function withPresence(board: ProjectBoard, index: PresenceIndex): Project
     recordedAt[lane] = Object.fromEntries(runs);
   }
   return { ...board, liveness: { lanes }, origins, recordedAt, declared: declared.map(([lane]) => lane) };
+}
+
+/** #2230: one execution's owner requests, as `GET /v1/executions/{id}/requests` served them. */
+export interface RunRequests {
+  executionId: string;
+  requests: readonly OwnerRequest[];
+}
+
+/** #2230: an owner request read across the project's executions, with the executions it was read in. */
+export type ProjectRequest = OwnerRequest & { runs: string[] };
+
+const STATUS_RANK: Record<OwnerRequest["status"], number> = { open: 0, in_progress: 1, delivered: 2 };
+
+/** #2230: the requests of every execution of one project as one list, oldest first. The Runtime keys
+ * a request by its id and only admits a link in the execution that recorded the request, so the same
+ * id read in two executions is one ask: it is listed once, its issues are the union (each issue
+ * once, its slices once per PR and step), it is dated by its earliest record and `runs` names every
+ * execution it was read in. Nothing is invented: a request no execution served is not listed. */
+export function combineRequests(parts: readonly RunRequests[]): ProjectRequest[] {
+  const byId = new Map<string, ProjectRequest>();
+  for (const { executionId, requests } of parts) {
+    for (const request of requests) {
+      const prior = byId.get(request.requestId);
+      if (prior === undefined) {
+        byId.set(request.requestId, { ...request, issues: request.issues.map((row) => ({ ...row, slices: [...row.slices] })), runs: [executionId] });
+        continue;
+      }
+      if (!prior.runs.includes(executionId)) prior.runs.push(executionId);
+      if (at(request.recordedAt) < at(prior.recordedAt)) { prior.recordedAt = request.recordedAt; prior.ask = request.ask; prior.title = request.title; }
+      for (const row of request.issues) {
+        const same = prior.issues.find((issue) => issue.issue === row.issue);
+        if (same === undefined) { prior.issues.push({ ...row, slices: [...row.slices] }); continue; }
+        for (const slice of row.slices) {
+          if (!same.slices.some((own) => own.pr === slice.pr && own.step === slice.step && own.merged === slice.merged)) same.slices.push(slice);
+        }
+      }
+      // Status follows the furthest execution only when every issue is known there; otherwise the
+      // union is in progress once any execution moved it.
+      if (STATUS_RANK[request.status] > STATUS_RANK[prior.status]) prior.status = request.status === "delivered" && prior.issues.length > request.issues.length ? "in_progress" : request.status;
+      prior.dispatchedTo ??= request.dispatchedTo;
+      if (request.dispatchLapsed) prior.dispatchLapsed = [...new Set([...(prior.dispatchLapsed ?? []), ...request.dispatchLapsed])];
+    }
+  }
+  return [...byId.values()].sort((a, b) => at(a.recordedAt) - at(b.recordedAt) || a.sequence - b.sequence || a.requestId.localeCompare(b.requestId));
+}
+
+/** #2230: the execution a slice of a combined board belongs to, else the one execution read. */
+export function taskRun(task: BoardTask & { executionId?: string }, runs: readonly string[]): string | null {
+  return task.executionId ?? runs[0] ?? null;
 }

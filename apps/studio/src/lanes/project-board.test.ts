@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { BoardLaneLiveness, BoardTask, RunSummary, TasksBoard } from "../runtime/client";
 import { agents } from "./board";
-import { combineBoards, emptyPresence, foldPresence, homeRun, lanesRuns, presence, withPresence, type RunEvent } from "./project-board";
+import { combineBoards, combineRequests, taskRun, emptyPresence, foldPresence, homeRun, lanesRuns, presence, withPresence, type RunEvent } from "./project-board";
 import { teamRun } from "../sidebar/project-summary";
+import { graphRequests } from "../graph/layout";
+import type { OwnerRequest } from "../graph/requests";
+import { agentsFor } from "./asked";
 
 const task = (key: string, lane: string, extra: Partial<BoardTask> = {}): BoardTask => ({
   key, issue: 7, pr: null, lane, currentReviewer: null, step: "implement", blockedBy: null, title: "Work", prTitle: null, journeys: [], lastSequence: 1, ...extra,
@@ -92,5 +95,51 @@ describe("project lanes (#2228)", () => {
     const merged = withPresence(combineBoards([tasksSide, quiet]), index);
     expect(merged.origins.leslie).toEqual(["run-new", "run-old"]);
     expect(homeRun(merged, "leslie")).toBe("run-new");
+  });
+});
+
+describe("project graph (#2230)", () => {
+  const ask = (requestId: string, issues: number[], recordedAt = "2026-10-28T10:00:00Z"): OwnerRequest => ({
+    requestId, ask: `ask ${requestId}`, title: null, recordedBy: "owner", sequence: 1, recordedAt, status: issues.length === 0 ? "open" : "in_progress",
+    issues: issues.map((issue) => ({ issue, slices: [] })),
+  });
+  const devBoard = board(NOW, [task("k9", "openbot-jo", { issue: 979, pr: 980, step: "review" })], [live("openbot-jo", "2026-10-29T11:00:00Z")]);
+  const parts = [
+    { executionId: "graphhelm-owner", board: board(NOW, [], []), requests: [] as OwnerRequest[] },
+    { executionId: "zuvemo-desenvolvimento-ops", board: devBoard, requests: [ask("r1", [979])] },
+    { executionId: "zuvemo-sustentacao-ops", board: board(NOW, [task("k9", "openbot-david", { issue: 981 })], [live("openbot-david", NOW)]), requests: [ask("r2", [981], "2026-10-28T11:00:00Z")] },
+  ];
+
+  it("the old single team-run pick yields an empty graph; every run of the project yields its requests and slices", () => {
+    const runs = parts.map((part) => run(part.executionId, "running", NOW));
+    const only = parts.find((part) => part.executionId === teamRun(runs, "graphhelm-owner")!.executionId)!;
+    expect(graphRequests(only.requests, only.board, [], null)).toHaveLength(0);
+    const ids = lanesRuns(runs, null);
+    const read = parts.filter((part) => ids.includes(part.executionId));
+    const rows = graphRequests(combineRequests(read), combineBoards(read), [], null);
+    expect(rows.map((row) => row.request.requestId)).toEqual(["r1", "r2"]);
+    expect(rows.map((row) => row.items.map((item) => [item.issue, item.lane]))).toEqual([[[979, "openbot-jo"]], [[981, "openbot-david"]]]);
+    expect(combineRequests(read).map((row) => row.runs)).toEqual([["zuvemo-desenvolvimento-ops"], ["zuvemo-sustentacao-ops"]]);
+  });
+
+  it("?run= reads one execution only, and the same slice key in two runs never double counts", () => {
+    expect(lanesRuns(parts.map((part) => run(part.executionId, "running", NOW)), "zuvemo-sustentacao-ops")).toEqual(["zuvemo-sustentacao-ops"]);
+    const merged = combineBoards(parts);
+    expect(merged.tasks.map((slice) => slice.key)).toEqual(["zuvemo-desenvolvimento-ops/k9", "zuvemo-sustentacao-ops/k9"]);
+    expect(merged.tasks.map((slice) => taskRun(slice, merged.runs))).toEqual(["zuvemo-desenvolvimento-ops", "zuvemo-sustentacao-ops"]);
+  });
+
+  it("one request id read in two runs is one ask with the union of its issues, so its agents join", () => {
+    const twice = [
+      { executionId: "graphhelm-owner", requests: [ask("r1", [], "2026-10-28T09:00:00Z")] },
+      { executionId: "zuvemo-desenvolvimento-ops", requests: [ask("r1", [979])] },
+    ];
+    const combined = combineRequests(twice);
+    expect(combined).toHaveLength(1);
+    expect(combined[0]!.issues.map((row) => row.issue)).toEqual([979]);
+    expect(combined[0]!.recordedAt).toBe("2026-10-28T09:00:00Z");
+    expect(combined[0]!.runs).toEqual(["graphhelm-owner", "zuvemo-desenvolvimento-ops"]);
+    const all = agents(combineBoards([{ executionId: "zuvemo-desenvolvimento-ops", board: devBoard }]));
+    expect(agentsFor(combined[0]!, all, devBoard.tasks).map((agent) => agent.lane)).toEqual(["openbot-jo"]);
   });
 });

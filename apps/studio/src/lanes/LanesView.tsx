@@ -11,7 +11,7 @@ import { RequestProgress } from "../graph/RequestProgress";
 import { agentsFor, arrangeAsked, askedCards, requestColors, requestTitles, unlinkedIssue } from "./asked";
 import type { OwnerRequest } from "../graph/requests";
 import { BoardColumn } from "./BoardColumn";
-import { combineBoards, emptyPresence, foldPresence, homeRun, presence, withPresence, type PresenceIndex, type ProjectBoard } from "./project-board";
+import { combineBoards, combineRequests, emptyPresence, foldPresence, homeRun, presence, withPresence, type PresenceIndex, type ProjectBoard } from "./project-board";
 import { agents, blocks, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
 /** How often the board is read again: one tasks read, plus one activity read per lane whose last
@@ -80,7 +80,8 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
     const ids = JSON.parse(key) as string[];
     if (ids.length === 0) return;
     // An older Runtime without the requests route leaves the column empty, never the board.
-    Promise.allSettled(ids.map((id) => runtime.requests(id))).then((rows) => setRequests(rows.flatMap((row) => (row.status === "fulfilled" ? row.value : []))));
+    // #2230: the same request read in two executions is one ask, never two cards.
+    Promise.allSettled(ids.map((id) => runtime.requests(id))).then((rows) => setRequests(combineRequests(rows.flatMap((row, at) => (row.status === "fulfilled" ? [{ executionId: ids[at]!, requests: row.value }] : [])))));
     try {
       let next: TasksBoard | ProjectBoard;
       if (ids.length === 1) next = await runtime.board(ids[0]);

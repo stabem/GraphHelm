@@ -124,6 +124,9 @@ pub fn requests(records: &[TaskEventRecord], tasks: &[TaskState]) -> Vec<Request
                         dispatch_attempts: 0,
                     });
             }
+            // #2232: a link to a request another run recorded never attaches to this run's request
+            // of the same id; `linked_elsewhere` serves it for the reader to join on that run.
+            TaskEventKind::RequestLinked if record.request_execution_id.is_some() => {}
             TaskEventKind::RequestLinked => {
                 if let Some(issue) = record.issue {
                     let issues = links.entry(request_id).or_default();
@@ -142,24 +145,79 @@ pub fn requests(records: &[TaskEventRecord], tasks: &[TaskState]) -> Vec<Request
                 .get(request_id)
                 .into_iter()
                 .flatten()
-                .map(|&issue| RequestIssue {
-                    issue,
-                    slices: tasks
-                        .iter()
-                        .filter(|task| task.issue == Some(issue) && task.pr.is_some())
-                        .map(|task| RequestSlice {
-                            pr: task.pr,
-                            step: task.step.as_str(),
-                            merged: task.step == TaskStep::Merged,
-                        })
-                        .collect(),
-                })
+                .map(|&issue| request_issue(issue, tasks))
                 .collect();
             view.status = status(&view.issues);
             view
         })
         .collect();
     out.sort_by_key(|view| view.sequence);
+    out
+}
+
+/// One linked issue with the PR slices this run's task fold holds for it.
+fn request_issue(issue: u64, tasks: &[TaskState]) -> RequestIssue {
+    RequestIssue {
+        issue,
+        slices: tasks
+            .iter()
+            .filter(|task| task.issue == Some(issue) && task.pr.is_some())
+            .map(|task| RequestSlice {
+                pr: task.pr,
+                step: task.step.as_str(),
+                merged: task.step == TaskStep::Merged,
+            })
+            .collect(),
+    }
+}
+
+/// #2232: the issues this run linked to a request another run of the same project recorded,
+/// addressed by (`execution_id`, `request_id`), with this run's slices for each issue. The ask
+/// lives in its own run; a reader that reads both runs joins these issues onto it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElsewhereLink {
+    pub execution_id: String,
+    pub request_id: String,
+    pub issues: Vec<RequestIssue>,
+}
+
+/// #2232: every cross-run link of this run, grouped by (run, request) in first-link order, each
+/// issue once. The Runtime admitted each one only after reading the named run's record.
+#[must_use]
+pub fn linked_elsewhere(records: &[TaskEventRecord], tasks: &[TaskState]) -> Vec<ElsewhereLink> {
+    let mut ordered: Vec<&TaskEventRecord> = records
+        .iter()
+        .filter(|record| record.kind == TaskEventKind::RequestLinked)
+        .collect();
+    ordered.sort_by_key(|record| record.sequence);
+    let mut out: Vec<ElsewhereLink> = Vec::new();
+    for record in ordered {
+        let (Some(execution_id), Some(request_id), Some(issue)) = (
+            record.request_execution_id.as_deref(),
+            record.request_id.as_deref(),
+            record.issue,
+        ) else {
+            continue;
+        };
+        let at = match out
+            .iter()
+            .position(|link| link.execution_id == execution_id && link.request_id == request_id)
+        {
+            Some(at) => at,
+            None => {
+                out.push(ElsewhereLink {
+                    execution_id: execution_id.to_owned(),
+                    request_id: request_id.to_owned(),
+                    issues: Vec::new(),
+                });
+                out.len() - 1
+            }
+        };
+        if !out[at].issues.iter().any(|row| row.issue == issue) {
+            out[at].issues.push(request_issue(issue, tasks));
+        }
+    }
     out
 }
 
@@ -338,6 +396,57 @@ mod tests {
             &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": format!("request-{id}"),
                 "revision": 1, "at": "2026-10-22T00:00:00Z", "requestId": id, "issue": issue, "linkedBy": "orchestrator"}),
         )
+    }
+
+    fn linked_from(sequence: u64, run: &str, id: &str, issue: u64) -> TaskEventRecord {
+        record(
+            "task.request_linked",
+            "lane-b",
+            sequence,
+            &serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": format!("request-{id}"),
+                "revision": 1, "at": "2026-10-22T00:00:00Z", "requestId": id, "requestExecutionId": run,
+                "issue": issue, "linkedBy": "lane-b"}),
+        )
+    }
+
+    /// #2232: a link naming another run's request never attaches to this run's request of the
+    /// same id; it is served once per (run, request), each issue once, with this run's slices.
+    #[test]
+    fn a_cross_run_link_is_served_apart_and_never_joins_a_local_request() {
+        let records = [
+            recorded(1, "r1", "Local ask"),
+            linked_from(2, "run-a", "r1", 2232),
+            linked_from(3, "run-a", "r1", 2232),
+            linked_from(4, "run-a", "r1", 2233),
+            linked(5, "r1", 7),
+        ];
+        let views = requests(&records, &[]);
+        assert_eq!(
+            views[0]
+                .issues
+                .iter()
+                .map(|row| row.issue)
+                .collect::<Vec<_>>(),
+            [7]
+        );
+        let elsewhere = linked_elsewhere(&records, &[]);
+        assert_eq!(elsewhere.len(), 1);
+        assert_eq!(
+            (
+                elsewhere[0].execution_id.as_str(),
+                elsewhere[0].request_id.as_str()
+            ),
+            ("run-a", "r1")
+        );
+        assert_eq!(
+            elsewhere[0]
+                .issues
+                .iter()
+                .map(|row| row.issue)
+                .collect::<Vec<_>>(),
+            [2232, 2233]
+        );
+        assert!(linked_elsewhere(&[recorded(1, "r1", "x"), linked(2, "r1", 7)], &[]).is_empty());
     }
 
     /// The status rule is the contract the Graph reads: no issue is open, one unmerged issue is in

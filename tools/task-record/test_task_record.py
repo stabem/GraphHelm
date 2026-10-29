@@ -186,6 +186,14 @@ class TaskRecordTest(unittest.TestCase):
         claim = json.loads(FakeRuntime.seen[0][1]["signal"]["description"])
         self.assertNotIn("requestId", claim)
 
+    def test_a_claim_links_a_request_another_run_recorded(self):
+        # #2232: --request-execution names the run that recorded the ask; the link carries it.
+        code, out = self.run_step("--lane", "lane-a", "claimed", "--issue", "2232", "--branch", "b", "--title", "t",
+                                  "--request-id", "cross", "--request-execution", "product-run")
+        self.assertEqual(code, 0, out)
+        linked = json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])
+        self.assertEqual((linked["requestId"], linked["requestExecutionId"]), ("cross", "product-run"))
+
     def test_a_lane_credential_that_cannot_read_history_still_records_its_heartbeat(self):
         # #1556 RED on main: the live Runtime answers 401 to a lane credential's history read, so
         # the recorder exited "heartbeat history is unavailable" and every waiting lane read Silent.

@@ -54,7 +54,7 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof }: P
         setRequests(nextRequests);
       } else {
         // #2230: every execution of the project, read as one: slices keep their execution in their key.
-        const parts = await Promise.all(ids.map(async (id) => ({ executionId: id, board: await runtime.board(id), requests: await runtime.requests(id) })));
+        const parts = await Promise.all(ids.map(async (id) => ({ executionId: id, board: await runtime.board(id), ...(await runtime.requestsRead(id)) })));
         setBoard(combineBoards(parts));
         setRequests(combineRequests(parts));
       }

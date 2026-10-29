@@ -1,5 +1,5 @@
 import type { BoardLaneLiveness, BoardTask, OwnerNote, RunSummary, TasksBoard } from "../runtime/client";
-import type { OwnerRequest } from "../graph/requests";
+import type { ElsewhereLink, OwnerRequest } from "../graph/requests";
 
 /** #2228: one execution's board, as the Runtime served it. */
 export interface RunBoard {
@@ -184,6 +184,8 @@ export function withPresence(board: ProjectBoard, index: PresenceIndex): Project
 export interface RunRequests {
   executionId: string;
   requests: readonly OwnerRequest[];
+  /** #2232: issues this execution linked to asks other executions of the project recorded. */
+  linkedElsewhere?: readonly ElsewhereLink[];
 }
 
 /** #2230: an owner request read across the project's executions. `key` is `<execution>/<requestId>`
@@ -212,19 +214,32 @@ export function combineRequests(parts: readonly RunRequests[]): ProjectRequest[]
         continue;
       }
       prior.runs.push(executionId);
-      for (const row of request.issues) {
-        const same = prior.issues.find((issue) => issue.issue === row.issue);
-        if (same === undefined) { prior.issues.push({ ...row, slices: [...row.slices] }); continue; }
-        for (const slice of row.slices) {
-          if (!same.slices.some((own) => own.pr === slice.pr && own.step === slice.step && own.merged === slice.merged)) same.slices.push(slice);
-        }
-      }
-      prior.status = joinedStatus(prior.issues);
+      joinIssues(prior, request.issues);
       prior.dispatchedTo ??= request.dispatchedTo;
       if (request.dispatchLapsed) prior.dispatchLapsed = [...new Set([...(prior.dispatchLapsed ?? []), ...request.dispatchLapsed])];
     }
   }
+  // #2232: an issue one execution linked to an ask another execution recorded joins that ask, found
+  // by (execution, requestId); an ask whose execution was not read is left out, nothing invented.
+  for (const { linkedElsewhere = [] } of parts) {
+    for (const link of linkedElsewhere) {
+      const target = out.find((row) => row.requestId === link.requestId && row.runs.includes(link.executionId));
+      if (target !== undefined) joinIssues(target, link.issues);
+    }
+  }
   return out.sort((a, b) => at(a.recordedAt) - at(b.recordedAt) || a.sequence - b.sequence || a.key.localeCompare(b.key));
+}
+
+/** The union of `issues` into `into`: each issue once, each slice once; the status follows. */
+function joinIssues(into: ProjectRequest, issues: OwnerRequest["issues"]): void {
+  for (const row of issues) {
+    const same = into.issues.find((issue) => issue.issue === row.issue);
+    if (same === undefined) { into.issues.push({ ...row, slices: [...row.slices] }); continue; }
+    for (const slice of row.slices) {
+      if (!same.slices.some((own) => own.pr === slice.pr && own.step === slice.step && own.merged === slice.merged)) same.slices.push(slice);
+    }
+  }
+  into.status = joinedStatus(into.issues);
 }
 
 /** The Runtime's rule (core/execution/src/requests.rs `status`) over the joined issues: no issue is

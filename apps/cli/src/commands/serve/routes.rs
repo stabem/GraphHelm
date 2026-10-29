@@ -2115,7 +2115,9 @@ pub(super) async fn lane_activity(
 
 /// `GET /v1/executions/{id}/requests` (#1792, Studio v2 R1): every owner request recorded on the
 /// run (`task.request_recorded`), the issues linked to it (`task.request_linked`), each issue's PR
-/// slices and steps from the task fold, and one status (`open`, `in_progress`, `delivered`). The
+/// slices and steps from the task fold, and one status (`open`, `in_progress`, `delivered`).
+/// #2232: `linkedElsewhere` lists the issues this run linked to a request another run of the same
+/// project recorded, by (`executionId`, `requestId`), for the reader of both runs to join. The
 /// same cached read and access as `/tasks`; the fold is pure, so the Studio never folds raw events.
 pub(super) async fn requests(
     State(state): State<ServeState>,
@@ -2142,10 +2144,14 @@ pub(super) async fn requests(
             .map(|view| {
                 // #1981: with each request's hand-off, judged now.
                 let requests = execution::tasks::owner_requests(&view);
+                // #2232: issues this run linked to requests other runs of the project recorded.
+                let elsewhere =
+                    graphhelm_execution::requests::linked_elsewhere(&view.records, &view.tasks);
                 serde_json::json!({
                     "executionId": view.execution_id,
                     "headSequence": view.head_sequence,
                     "requests": requests,
+                    "linkedElsewhere": elsewhere,
                 })
             })
         })

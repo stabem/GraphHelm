@@ -1,6 +1,6 @@
 /** The public Runtime routes the shell reads, through the same-origin proxy: `/v1` for the first
  * project, `/p/<id>/v1` for a project that joined this Studio's port (#1800). */
-import type { OwnerRequest } from "../graph/requests";
+import type { ElsewhereLink, OwnerRequest } from "../graph/requests";
 import { isFrameUrl } from "../graph/review";
 import type { Draft, LaneControl } from "../lanes/drafts";
 import type { RunEvent } from "../lanes/project-board";
@@ -433,8 +433,14 @@ export class Runtime {
   /** #1801: the owner's requests with their issues, PR slices and status (#1792 R1,
    * `GET /v1/executions/{id}/requests`). */
   async requests(executionId: string): Promise<OwnerRequest[]> {
-    const view = await this.#request<{ requests?: OwnerRequest[] }>("GET", `/v1/executions/${encodeURIComponent(executionId)}/requests`);
-    return Array.isArray(view.requests) ? view.requests : [];
+    return (await this.requestsRead(executionId)).requests;
+  }
+
+  /** #2232: the same read with `linkedElsewhere`, the issues this run linked to asks other runs
+   * of the project recorded; an older Runtime serves none. */
+  async requestsRead(executionId: string): Promise<{ requests: OwnerRequest[]; linkedElsewhere: ElsewhereLink[] }> {
+    const view = await this.#request<{ requests?: OwnerRequest[]; linkedElsewhere?: ElsewhereLink[] }>("GET", `/v1/executions/${encodeURIComponent(executionId)}/requests`);
+    return { requests: Array.isArray(view.requests) ? view.requests : [], linkedElsewhere: Array.isArray(view.linkedElsewhere) ? view.linkedElsewhere : [] };
   }
 
   /** #2228: a page of a run's raw event tail past `after` (`GET /v1/executions/{id}/events`). */

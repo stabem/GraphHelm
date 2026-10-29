@@ -4785,7 +4785,7 @@ Options:
           [default: 5183]
 
       --no-browser
-          Print nothing but open the browser; without it the link is printed only when opening fails
+          Launch no browser and return the one-time login link as `data.url`, for a caller that opens it in its own browser; without it the link is returned only when the browser fails to open
 
       --journey <JOURNEY>
           Land on this journey's Proof view (its contract id), for an owner approval

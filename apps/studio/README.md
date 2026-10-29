@@ -28,7 +28,9 @@ graphhelm studio open
 
 `studio start` installs and starts the Studio from a managed clone (the launchers are in
 [`tools/`](tools/)); `studio open` registers the project with it and opens a logged-in page.
-`studio open --journey <id>` opens Proof on that journey.
+`studio open --journey <id>` opens Proof on that journey. `studio open --no-browser` launches no
+browser and returns the one-time login link as `data.url`, so an agent driving its own browser can
+log in; the link works once and is never logged.
 
 For development inside this repository:
 

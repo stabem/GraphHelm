@@ -720,7 +720,8 @@ pub struct StudioOpenArgs {
     /// The Studio port on 127.0.0.1.
     #[arg(long, default_value_t = 5183)]
     pub port: u16,
-    /// Print nothing but open the browser; without it the link is printed only when opening fails.
+    /// Launch no browser and return the one-time login link as `data.url`, for a caller that opens
+    /// it in its own browser; without it the link is returned only when the browser fails to open.
     #[arg(long = "no-browser")]
     pub no_browser: bool,
     /// Land on this journey's Proof view (its contract id), for an owner approval.

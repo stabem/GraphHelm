@@ -62,8 +62,10 @@ def stop_tree(process):
 class StudioStartsTest(unittest.TestCase):
     def test_the_launchers_studio_dev_server_answers(self):
         studio = pathlib.Path(os.environ.get("GRAPHHELM_STUDIO_SMOKE_DIR") or ROOT / "apps/studio")
-        self.assertTrue((studio / "node_modules").is_dir(),
-                        f"{studio} has no node_modules: run `npm --prefix apps/studio ci` (the launcher needs it)")
+        if not (studio / "node_modules").is_dir():
+            reason = f"precondition: {studio} has no node_modules; run `npm --prefix apps/studio ci`"
+            print(f"UNOBSERVED: {reason}", flush=True)
+            self.skipTest(reason)
         npm = shutil.which("npm")
         self.assertIsNotNone(npm, "npm is not on PATH (the launcher needs it)")
         port = free_port()

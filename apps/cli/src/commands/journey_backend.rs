@@ -483,6 +483,102 @@ fn resolves_inside(project: &Path, program: &Path) -> bool {
     std::fs::canonicalize(program).is_ok_and(|real| real.starts_with(&root))
 }
 
+/// #2187: the first bytes of a native executable (PE, ELF, Mach-O and its fat form). A
+/// project-relative program that starts with one is a binary the review cannot read, such as a
+/// byte copy or hard link of an interpreter under a neutral name.
+fn is_native_binary(program: &Path) -> bool {
+    let mut head = [0u8; 4];
+    let read = std::fs::File::open(program)
+        .and_then(|mut file| file.read(&mut head))
+        .unwrap_or(0);
+    let head = &head[..read];
+    head.starts_with(b"MZ")
+        || head == b"\x7fELF"
+        || matches!(
+            head,
+            [0xfe, 0xed, 0xfa, 0xce | 0xcf]
+                | [0xce | 0xcf, 0xfa, 0xed, 0xfe]
+                | [0xca, 0xfe, 0xba, 0xbe]
+                | [0xbe, 0xba, 0xfe, 0xca]
+        )
+}
+
+/// #2187: the most shell files one step's `.`/`source` lines are followed through.
+const SOURCED_FILES_LIMIT: usize = 64;
+
+/// #2187: the first `.`/`source` target in a shell script (followed through the files it names)
+/// that the reviewed check does not cover, or `None`. The check vouches for the script's own
+/// directory, and the shell resolves a relative target against the working directory (the project
+/// root) or PATH, so a target is accepted only as a literal relative path with a `/`, no `..`,
+/// no expansion characters, inside the script's directory. An unreadable file, a target the
+/// lexer cannot read as a literal, or more than [`SOURCED_FILES_LIMIT`] files answer `Some`.
+fn unchecked_sourced_file(project: &Path, script: &str) -> Option<String> {
+    let parts = |path: &str| -> Option<Vec<String>> {
+        let mut out = Vec::new();
+        for part in path.split(['/', '\\']) {
+            match part {
+                "" | "." => {}
+                ".." => return None,
+                part => out.push(part.to_owned()),
+            }
+        }
+        Some(out)
+    };
+    let script_parts = parts(script)?;
+    let dir = &script_parts[..script_parts.len().saturating_sub(1)];
+    let mut queue = vec![script_parts.join("/")];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(file) = queue.pop() {
+        if !seen.insert(file.clone()) {
+            continue;
+        }
+        if seen.len() > SOURCED_FILES_LIMIT {
+            return Some(file);
+        }
+        let Ok(text) = std::fs::read_to_string(project.join(&file)) else {
+            return Some(file);
+        };
+        for target in sourced_targets(&text) {
+            let inside = !target.starts_with(['/', '\\'])
+                && target.contains('/')
+                && !target.contains(['$', '`', '"', '\'', '*', '?', '[', '~', '{', '\\'])
+                && !dir.is_empty()
+                && parts(&target).is_some_and(|p| p.len() > dir.len() && p.starts_with(dir));
+            if !inside {
+                return Some(target);
+            }
+            queue.push(parts(&target).unwrap_or_default().join("/"));
+        }
+    }
+    None
+}
+
+/// #2187: the word after each `.`/`source` command in shell text (an empty word when the line
+/// ends there). Lexical: comments are dropped, commands split on `;`, `&`, `|`, parentheses and
+/// braces, and the `builtin`/`command` prefixes and leading keywords are skipped.
+fn sourced_targets(text: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    for line in text.lines() {
+        let line = match line.find(" #") {
+            Some(at) => &line[..at],
+            None if line.trim_start().starts_with('#') => "",
+            None => line,
+        };
+        for segment in line.split([';', '&', '|', '(', ')', '{', '}']) {
+            let mut words = segment.split_whitespace().skip_while(|word| {
+                matches!(
+                    *word,
+                    "builtin" | "command" | "then" | "do" | "else" | "!" | "if" | "while" | "until"
+                )
+            });
+            if let Some(".") | Some("source") = words.next() {
+                targets.push(words.next().unwrap_or_default().to_owned());
+            }
+        }
+    }
+    targets
+}
+
 /// Runs one `cli` act: argv split on whitespace, no shell, in the project, bounded by
 /// [`ACT_LIMIT`]. The child is killed at the limit.
 ///
@@ -509,7 +605,23 @@ pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String>
             "flow.cli_script_outside: a cli act's program resolves outside the project".into(),
         );
     }
+    if program.contains(['/', '\\']) && is_native_binary(&resolved) {
+        return Err(
+            "flow.cli_program_binary: a project-relative program is a native executable \
+             the review cannot read; run a project script through a runner"
+                .into(),
+        );
+    }
     let stem = program_stem(program);
+    if matches!(stem.as_str(), "sh" | "bash" | "dash") {
+        let script = words.clone().next().unwrap_or_default();
+        if let Some(target) = unchecked_sourced_file(project, script) {
+            return Err(format!(
+                "flow.cli_script_sources: a shell script sources `{target}`, which is not a \
+                 literal path inside the script's directory"
+            ));
+        }
+    }
     let mut spawn = graphhelm_process::command(&resolved);
     spawn.env_clear();
     for (key, value) in std::env::vars_os() {
@@ -884,37 +996,23 @@ mod tests {
         );
     }
 
-    /// Child side of [`a_cli_step_sees_only_the_kept_environment`]: prints the environment it was
-    /// started with. Ignored so a normal run skips it; the test below starts this same test binary
-    /// as the step's program, so the proof needs no shell (or any other tool) on the machine's PATH.
-    #[test]
-    #[ignore = "child process of a_cli_step_sees_only_the_kept_environment"]
-    fn print_step_environment() {
-        for (key, value) in std::env::vars_os() {
-            println!("ENV:{}={}", key.to_string_lossy(), value.to_string_lossy());
-        }
-    }
-
     /// #2187 gap 1: the step does not inherit the Runtime's environment. The test process carries
     /// variables outside the kept list (Cargo sets `CARGO_*` for every test); none reaches the
-    /// child. The child is a copy of this test binary, a project-relative program, so the result does
-    /// not depend on which programs the machine's PATH holds.
+    /// child, a project Python script that prints the environment it was started with.
     #[test]
     fn a_cli_step_sees_only_the_kept_environment() {
         assert!(std::env::vars().any(|(key, _)| key.starts_with("CARGO")));
         let project = tempfile::tempdir().unwrap();
-        let name = if cfg!(windows) { "dump.exe" } else { "dump" };
-        let program = project.path().join(name);
-        std::fs::copy(std::env::current_exe().unwrap(), &program).unwrap();
-        let program = format!("./{name}");
-        let seen = command(
-            project.path(),
-            &format!(
-                "{program} --ignored --exact --nocapture {}",
-                "commands::journey_backend::tests::print_step_environment"
-            ),
+        std::fs::create_dir_all(project.path().join("d")).unwrap();
+        std::fs::write(
+            project.path().join("d/env.py"),
+            "import os
+for key in os.environ:
+    print('ENV:' + key + '=')
+",
         )
         .unwrap();
+        let seen = command(project.path(), "python d/env.py").unwrap();
         assert_eq!(seen.exit, Some(0), "{}", seen.stderr);
         let keys: Vec<String> = seen
             .body
@@ -1039,5 +1137,77 @@ echo OUT
             seen.body.split_whitespace().collect::<Vec<_>>(),
             ["near", "blocked"]
         );
+    }
+
+    /// #2187: a project-relative program that is a native executable (a byte copy or hard link
+    /// of an interpreter under a neutral name) is refused before it runs, on every platform.
+    #[test]
+    fn a_project_program_that_is_a_native_binary_is_refused() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join("bin")).unwrap();
+        for (name, head) in [
+            ("tool.exe", &b"MZ\x90\x00"[..]),
+            ("tool", &b"\x7fELF\x02\x01"[..]),
+            ("mach", &b"\xcf\xfa\xed\xfe"[..]),
+        ] {
+            std::fs::write(project.path().join("bin").join(name), head).unwrap();
+            let refused = command(project.path(), &format!("./bin/{name}")).unwrap_err();
+            assert!(
+                refused.starts_with("flow.cli_program_binary"),
+                "{name}: {refused}"
+            );
+        }
+    }
+
+    /// #2187: a shell script's `.`/`source` targets are followed; only a literal path inside the
+    /// script's own (reviewed) directory passes, and the files it sources are followed in turn.
+    #[test]
+    fn a_shell_script_may_source_only_files_in_its_directory() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join("d/lib")).unwrap();
+        std::fs::write(project.path().join("d/lib/ok.sh"), "echo ok\n").unwrap();
+        std::fs::write(project.path().join("d/lib/deep.sh"), ". ./planted.sh\n").unwrap();
+        let cases = [
+            ("# . ../x.sh\n. ./d/lib/ok.sh\necho hi\n", None),
+            ("source d/lib/ok.sh; echo done\n", None),
+            (". ./planted.sh\n", Some("./planted.sh")),
+            ("if true; then source ../x.sh; fi\n", Some("../x.sh")),
+            ("builtin . /etc/profile\n", Some("/etc/profile")),
+            (". lib.sh\n", Some("lib.sh")),
+            (". \"$(dirname \"$0\")/lib/ok.sh\"\n", Some("\"$")),
+            ("true && . ./d/lib/deep.sh\n", Some("./planted.sh")),
+            (".\n", Some("")),
+        ];
+        for (text, expected) in cases {
+            std::fs::write(project.path().join("d/run.sh"), text).unwrap();
+            assert_eq!(
+                unchecked_sourced_file(project.path(), "d/run.sh").as_deref(),
+                expected,
+                "{text}"
+            );
+        }
+        // A project-root script is reviewed alone, so it may source nothing.
+        std::fs::write(project.path().join("root.sh"), ". ./d/lib/ok.sh\n").unwrap();
+        assert_eq!(
+            unchecked_sourced_file(project.path(), "root.sh").as_deref(),
+            Some("./d/lib/ok.sh")
+        );
+    }
+
+    /// #2187: the runner refuses a shell step whose script sources an unchecked file. Needs `sh`
+    /// on the pinned PATH; the test says so and stops when the machine has none.
+    #[test]
+    fn a_shell_step_that_sources_outside_its_directory_is_refused() {
+        let project = tempfile::tempdir().unwrap();
+        let dirs = pinned_path(project.path(), std::env::var_os("PATH"));
+        if resolve_program(project.path(), "sh", &dirs).is_none() {
+            eprintln!("OBSERVER_MISSING: sh is not on PATH");
+            return;
+        }
+        std::fs::create_dir_all(project.path().join("d")).unwrap();
+        std::fs::write(project.path().join("planted.sh"), "echo PLANTED\n").unwrap();
+        std::fs::write(project.path().join("d/run.sh"), ". ./planted.sh\n").unwrap();
+        let refused = command(project.path(), "sh d/run.sh").unwrap_err();
+        assert!(refused.starts_with("flow.cli_script_sources"), "{refused}");
     }
 }

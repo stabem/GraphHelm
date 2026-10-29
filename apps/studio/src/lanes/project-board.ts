@@ -13,6 +13,8 @@ export interface RunBoard {
 export interface ProjectBoard extends TasksBoard {
   runs: string[];
   origins: Record<string, string[]>;
+  /** Lanes that declared presence (`agent_presence_declared`) in one of the runs. */
+  declared?: string[];
 }
 
 /** #2228: what a lane's records say about it now. Only record times count, never an execution's
@@ -93,4 +95,77 @@ export function combineBoards(parts: readonly RunBoard[]): ProjectBoard {
 /** The execution a lane's panel reads and writes: the one with its newest record. */
 export function homeRun(board: ProjectBoard, lane: string): string | null {
   return board.origins[lane]?.[0] ?? board.runs[0] ?? null;
+}
+
+/** #2228: one envelope of `GET /v1/executions/{id}/events`, only the fields the presence fold reads. */
+export interface RunEvent {
+  sequence: number;
+  occurredAt?: string;
+  actor?: { id?: string };
+  scope?: { projectId?: string; executionId?: string };
+  kind?: { type?: string; data?: { actorId?: string } };
+}
+
+/** #2228: who declared presence in the project's runs and when each one last recorded anything. */
+export interface PresenceIndex {
+  projectId: string | null;
+  /** Per run, the last sequence folded, so the next read asks only for what is newer. */
+  cursor: Record<string, number>;
+  lanes: Record<string, { declared: boolean; lastAt: string | null; runs: Record<string, string | null> }>;
+}
+
+export const emptyPresence = (): PresenceIndex => ({ projectId: null, cursor: {}, lanes: {} });
+
+/** Fold a page of one run's events. A lane joins the index only through `agent_presence_declared`;
+ * its other records (signals among them) move its last-record time but never declare it, so an
+ * orchestrator that only sends signals stays off the board. An envelope of another run or another
+ * project is ignored, never mixed in. */
+export function foldPresence(index: PresenceIndex, executionId: string, events: readonly RunEvent[]): PresenceIndex {
+  const next: PresenceIndex = { projectId: index.projectId, cursor: { ...index.cursor }, lanes: { ...index.lanes } };
+  for (const event of events) {
+    next.cursor[executionId] = Math.max(next.cursor[executionId] ?? 0, event.sequence);
+    if (event.scope?.executionId !== undefined && event.scope.executionId !== executionId) continue;
+    const project = event.scope?.projectId ?? null;
+    if (project !== null) {
+      if (next.projectId === null) next.projectId = project;
+      else if (project !== next.projectId) continue;
+    }
+    const declares = event.kind?.type === "agent_presence_declared";
+    const lane = declares ? (event.kind?.data?.actorId ?? event.actor?.id) : event.actor?.id;
+    if (!lane) continue;
+    const prior = next.lanes[lane];
+    if (prior === undefined && !declares) {
+      // Kept undeclared: a later declaration in the same project brings the earlier records with it.
+      next.lanes[lane] = { declared: false, lastAt: event.occurredAt ?? null, runs: { [executionId]: event.occurredAt ?? null } };
+      continue;
+    }
+    const when = event.occurredAt ?? null;
+    const later = (a: string | null, b: string | null) => (at(b) > at(a) ? b : a);
+    next.lanes[lane] = {
+      declared: (prior?.declared ?? false) || declares,
+      lastAt: later(prior?.lastAt ?? null, when),
+      runs: { ...(prior?.runs ?? {}), [executionId]: later(prior?.runs[executionId] ?? null, when) },
+    };
+  }
+  return next;
+}
+
+/** Add the lanes that declared presence to a project board: a declared lane the task view does not
+ * carry gets a liveness row from its newest record (it owes nothing and is judged neither silent
+ * nor free), its runs join its origins, and `declared` keeps it on the board (board.ts
+ * `finishedLanes`). */
+export function withPresence(board: ProjectBoard, index: PresenceIndex): ProjectBoard {
+  const declared = Object.entries(index.lanes).filter(([, row]) => row.declared);
+  if (declared.length === 0) return board;
+  const lanes = [...board.liveness.lanes];
+  const origins = { ...board.origins };
+  for (const [lane, row] of declared) {
+    const known = lanes.findIndex((live) => live.lane === lane);
+    if (known === -1) lanes.push({ lane, ...(row.lastAt === null ? {} : { lastRecordAt: row.lastAt }), owes: false, silent: false, free: false });
+    else if (at(row.lastAt) > at(lanes[known].lastRecordAt)) lanes[known] = { ...lanes[known], lastRecordAt: row.lastAt ?? undefined, silent: false };
+    const runs = new Map<string, number>((origins[lane] ?? []).map((id, rank) => [id, -rank]));
+    for (const [id, when] of Object.entries(row.runs)) runs.set(id, Math.max(runs.get(id) ?? -Infinity, at(when)));
+    origins[lane] = [...runs].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => id);
+  }
+  return { ...board, liveness: { lanes }, origins, declared: declared.map(([lane]) => lane) };
 }

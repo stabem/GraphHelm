@@ -95,6 +95,7 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 <span style="flex: 1"></span>
 <span class="mono" style="font-size: 11px; color: {{a.idleC}}">{{a.idle}}</span>
 </div>
+<!-- #2228: an agent that only declared presence (no slice) is a Backlog card with "no task" and this same line, e.g. "stale · in zuvemo-produto-experiencia-ops"; a lane that never declared presence and holds nothing stays off the board. -->
 <!-- #2228: presence from record times only (working / idle / stale / unknown) and the run(s) the agent recorded in, newest first. -->
 <span class="mono" style="font-size: 11px; color: #8a8a96">working · in zuvemo-produto-experiencia-ops</span>
 <span><span class="mono" style="color: #a2a2ad">#{{a.issue}}</span> {{a.task}}</span>

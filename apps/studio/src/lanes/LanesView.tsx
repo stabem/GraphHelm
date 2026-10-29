@@ -11,7 +11,7 @@ import { RequestProgress } from "../graph/RequestProgress";
 import { agentsFor, arrangeAsked, askedCards, requestColors, requestTitles, unlinkedIssue } from "./asked";
 import type { OwnerRequest } from "../graph/requests";
 import { BoardColumn } from "./BoardColumn";
-import { combineBoards, homeRun, presence, type ProjectBoard } from "./project-board";
+import { combineBoards, emptyPresence, foldPresence, homeRun, presence, withPresence, type PresenceIndex, type ProjectBoard } from "./project-board";
 import { agents, blocks, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
 /** How often the board is read again: one tasks read, plus one activity read per lane whose last
@@ -64,6 +64,8 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   const [request, setRequest] = useState<string | null>(null);
   const [actions, setActions] = useState<Record<string, { at: string | null; rows: LaneAction[] }>>({});
   const seen = useRef<Record<string, string | null>>({});
+  // #2228: who declared presence in the project's runs, read incrementally from each run's events.
+  const presenceIndex = useRef<PresenceIndex>(emptyPresence());
   const replyBox = useRef<HTMLTextAreaElement>(null);
   // #1837: the request each lane has in flight or that last failed, kept across panel switches so
   // a resend reuses its id and bytes.
@@ -80,7 +82,13 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
     // An older Runtime without the requests route leaves the column empty, never the board.
     Promise.allSettled(ids.map((id) => runtime.requests(id))).then((rows) => setRequests(rows.flatMap((row) => (row.status === "fulfilled" ? row.value : []))));
     try {
-      const next = ids.length === 1 ? await runtime.board(ids[0]) : combineBoards(await Promise.all(ids.map(async (id) => ({ executionId: id, board: await runtime.board(id) }))));
+      let next: TasksBoard | ProjectBoard;
+      if (ids.length === 1) next = await runtime.board(ids[0]);
+      else {
+        const combined = combineBoards(await Promise.all(ids.map(async (id) => ({ executionId: id, board: await runtime.board(id) }))));
+        presenceIndex.current = await readPresence(runtime, ids, presenceIndex.current);
+        next = withPresence(combined, presenceIndex.current);
+      }
       setBoard(next);
       setError(null);
       // Each lane's log is read again only when its last record moved.
@@ -231,6 +239,24 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
       )}
     </section>
   );
+}
+
+/** Pages each run's events past what was already folded; bounded per read so a long history is
+ * caught up over several polls. A run whose events cannot be read keeps its last fold. */
+const EVENTS_PAGE = 1000;
+const PAGES_PER_READ = 10;
+async function readPresence(runtime: Runtime, ids: readonly string[], prior: PresenceIndex): Promise<PresenceIndex> {
+  let index = prior;
+  for (const id of ids) {
+    for (let page = 0; page < PAGES_PER_READ; page += 1) {
+      const after = index.cursor[id] ?? 0;
+      let read: { events: Parameters<typeof foldPresence>[2]; head: number };
+      try { read = await runtime.events(id, after, EVENTS_PAGE); } catch { break; }
+      index = foldPresence(index, id, read.events);
+      if (read.events.length === 0 || (index.cursor[id] ?? 0) >= read.head) break;
+    }
+  }
+  return index;
 }
 
 function Card({ agent, origins, selected, serves, stripe, unlinked, last, onPick }: { agent: Agent; origins: string[] | null; selected: boolean; serves: string | null; stripe: string | null; unlinked: boolean; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {

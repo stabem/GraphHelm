@@ -3,6 +3,7 @@
 import type { OwnerRequest } from "../graph/requests";
 import { isFrameUrl } from "../graph/review";
 import type { Draft, LaneControl } from "../lanes/drafts";
+import type { RunEvent } from "../lanes/project-board";
 
 export interface RunSummary {
   executionId: string;
@@ -434,6 +435,12 @@ export class Runtime {
   async requests(executionId: string): Promise<OwnerRequest[]> {
     const view = await this.#request<{ requests?: OwnerRequest[] }>("GET", `/v1/executions/${encodeURIComponent(executionId)}/requests`);
     return Array.isArray(view.requests) ? view.requests : [];
+  }
+
+  /** #2228: a page of a run's raw event tail past `after` (`GET /v1/executions/{id}/events`). */
+  async events(executionId: string, after: number, limit: number): Promise<{ events: RunEvent[]; head: number }> {
+    const page = await this.#request<{ events?: RunEvent[]; head?: number }>("GET", `/v1/executions/${encodeURIComponent(executionId)}/events?after=${after}&limit=${limit}`);
+    return { events: Array.isArray(page.events) ? page.events : [], head: typeof page.head === "number" ? page.head : 0 };
   }
 
   /** #1793: a lane's last `limit` actions, newest first (owner credentials). */

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { BoardLaneLiveness, BoardTask, RunSummary, TasksBoard } from "../runtime/client";
 import { agents } from "./board";
-import { combineBoards, homeRun, lanesRuns, presence } from "./project-board";
+import { combineBoards, emptyPresence, foldPresence, homeRun, lanesRuns, presence, withPresence, type RunEvent } from "./project-board";
 import { teamRun } from "../sidebar/project-summary";
 
 const task = (key: string, lane: string, extra: Partial<BoardTask> = {}): BoardTask => ({
@@ -56,5 +56,32 @@ describe("project lanes (#2228)", () => {
     expect(presence(cards.leslie.idleMinutes, cards.leslie.task !== null)).toBe("working");
     expect(presence(null, true)).toBe("unknown");
     expect(presence(45, true)).toBe("idle");
+  });
+
+  it("shows a lane that only declared presence and signalled in a non-team run; a signal-only orchestrator and other projects stay out", () => {
+    const ev = (sequence: number, type: string, actor: string, occurredAt: string, projectId = "zuvemo", executionId = "zuvemo-produto-experiencia-ops"): RunEvent =>
+      ({ sequence, occurredAt, actor: { id: actor }, scope: { projectId, executionId }, kind: { type, data: type === "agent_presence_declared" ? { actorId: actor } : {} } });
+    let index = foldPresence(emptyPresence(), "graphhelm-owner", [ev(1, "signal_recorded", "orchestrator", "2026-10-29T11:00:00Z", "zuvemo", "graphhelm-owner")]);
+    index = foldPresence(index, "zuvemo-produto-experiencia-ops", [
+      ev(1, "agent_presence_declared", "leslie", "2026-10-29T11:40:00Z"),
+      ev(2, "signal_recorded", "leslie", "2026-10-29T11:55:00Z"),
+      ev(3, "signal_recorded", "orchestrator", "2026-10-29T11:56:00Z"),
+      ev(4, "agent_presence_declared", "intruder", "2026-10-29T11:57:00Z", "another-project"),
+    ]);
+    const empty = { executionId: "zuvemo-produto-experiencia-ops", board: board(NOW, [], []) };
+    const merged = withPresence(combineBoards([owner, empty]), index);
+    const cards = agents(merged);
+    // Main's Lanes (the marked team run, the #1986 rule) shows nobody for this project.
+    expect(agents(owner.board)).toEqual([]);
+    expect(agents(combineBoards([owner, empty]))).toEqual([]);
+    expect(cards.map((card) => card.lane)).toEqual(["leslie"]);
+    expect(cards[0].lastRecordAt).toBe("2026-10-29T11:55:00Z");
+    expect(presence(cards[0].idleMinutes, cards[0].task !== null)).toBe("idle");
+    expect(merged.origins.leslie).toEqual(["zuvemo-produto-experiencia-ops"]);
+    expect(index.cursor).toEqual({ "graphhelm-owner": 1, "zuvemo-produto-experiencia-ops": 4 });
+    // A presence older than a day is history: stale, still shown, never "working".
+    const old = foldPresence(emptyPresence(), "r", [ev(1, "agent_presence_declared", "leslie", "2026-10-20T10:00:00Z", "zuvemo", "r")]);
+    const oldCard = agents(withPresence(combineBoards([{ executionId: "r", board: board(NOW, [], []) }, owner]), old))[0];
+    expect(presence(oldCard.idleMinutes, oldCard.task !== null)).toBe("stale");
   });
 });

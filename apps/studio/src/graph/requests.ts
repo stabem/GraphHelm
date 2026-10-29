@@ -19,6 +19,14 @@ export interface OwnerRequest {
   dispatchLapsed?: string[];
 }
 
+/** #2232: issues one run linked to an ask another run of the project recorded, addressed by
+ * (`executionId`, `requestId`), as `GET /v1/executions/{id}/requests` serves them. */
+export interface ElsewhereLink {
+  executionId: string;
+  requestId: string;
+  issues: OwnerRequest["issues"];
+}
+
 /** The Kanban columns of the design, left to right. "Merged" is not done: a card is Proven only
  * when every journey its slice names passed its last run. */
 export const KANBAN = ["ready", "implementing", "review", "merged", "proven"] as const;

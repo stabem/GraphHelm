@@ -372,6 +372,8 @@ def parse(argv):
                    " request_recorded: an optional short title for the request")
     p.add_argument("--request-id", help="request_recorded/request_linked (#1792): the request's id, e.g. one-header."
                    " claimed (#1921): also records request_linked for the claimed issue")
+    p.add_argument("--request-execution", help="request_linked (#2232): the run of this project that recorded"
+                   " the request, when it is not this --execution; default: this run")
     p.add_argument("--ask", help="request_recorded: the owner's ask in their own words (at most 2000 characters)")
     p.add_argument("--summary", help="claimed/pr_opened: one sentence; default: the body's 'Summary:' line, read with gh."
                    " planned: the plan in one line (at most 300 characters), required")
@@ -581,6 +583,8 @@ def document(args, now):
     elif args.kind == "request_linked":
         need(args, "request-id")
         doc.update(requestId=args.request_id, issue=args.issue, linkedBy=args.lane)
+        if getattr(args, "request_execution", None):
+            doc["requestExecutionId"] = args.request_execution
     elif args.kind == "lane_retired":
         need(args, "lanes", "retired", "reason")
         lanes = [name.strip() for name in args.lanes.split(",")]

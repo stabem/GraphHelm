@@ -579,13 +579,18 @@ pub(crate) fn validate_task_event(
                 && is_actor("recordedBy"),
             &["requestId", "ask", "title", "recordedBy"],
         ),
+        // #2232: `requestExecutionId` names another run of this project that recorded the request.
         "task.request_linked" => (
             document["requestId"]
                 .as_str()
                 .is_some_and(|id| OpaqueId::parse(id).is_ok())
+                && document.get("requestExecutionId").is_none_or(|run| {
+                    run.as_str()
+                        .is_some_and(|run| OpaqueId::parse(run).is_ok() && run.len() <= 128)
+                })
                 && count("issue")
                 && is_actor("linkedBy"),
-            &["requestId", "issue", "linkedBy"],
+            &["requestId", "requestExecutionId", "issue", "linkedBy"],
         ),
         // #1839: one PNG per screen rides on the signal; signal.rs pairs them with `screens`.
         "task.journey_frames" => (
@@ -936,6 +941,9 @@ fn validate_request_known(
 ) -> Result<(), Failure> {
     let pointer = "/signal/description/requestId";
     let request_id = document["requestId"].as_str().unwrap_or_default();
+    if let Some(run) = document["requestExecutionId"].as_str() {
+        return validate_request_known_elsewhere(run, request_id, history, evidence);
+    }
     let view = task_view(history, evidence, "request link", pointer)?;
     if view.records.iter().any(|record| {
         record.kind == graphhelm_execution::tasks::TaskEventKind::RequestRecorded
@@ -949,6 +957,71 @@ fn validate_request_known(
         ),
         pointer,
     ))
+}
+
+/// #2232: a link to a request another run recorded names a run of this project (the store this
+/// Runtime serves, at this run's project scope) other than its own, whose own sealed task records
+/// hold a `task.request_recorded` for that id. The named run is only read; the link is appended to
+/// this run's journal, so both stay append-only and each run's projection is its own events.
+fn validate_request_known_elsewhere(
+    run: &str,
+    request_id: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+) -> Result<(), Failure> {
+    let pointer = "/signal/description/requestExecutionId";
+    let Some((store, scope, keyring)) = evidence else {
+        return Err(super::signal_invalid(
+            "request link admission requires the sealed task records",
+            pointer,
+        ));
+    };
+    if history
+        .first()
+        .is_some_and(|event| event.stream_id.as_str() == run)
+    {
+        return Err(super::signal_invalid(
+            "requestExecutionId names this run; omit it to link a request this run recorded",
+            pointer,
+        ));
+    }
+    let unknown = || {
+        super::signal_invalid(
+            &format!("run {run} of this project recorded no request {request_id}"),
+            pointer,
+        )
+    };
+    let (other_scope, _) = super::stream_of(run).map_err(|_| unknown())?;
+    if other_scope.project_id() != scope.project_id() {
+        return Err(unknown());
+    }
+    let other = store
+        .read_replay_stream(&other_scope, run)
+        .map_err(|_| unknown())?;
+    if other.is_empty()
+        || other
+            .iter()
+            .any(|event| event.scope.project_id() != scope.project_id())
+    {
+        return Err(unknown());
+    }
+    let view = task_view(
+        &other,
+        Some((store, &other_scope, keyring)),
+        "request link",
+        pointer,
+    )?;
+    if view.records.iter().any(|record| {
+        record.kind == graphhelm_execution::tasks::TaskEventKind::RequestRecorded
+            && record.request_id.as_deref() == Some(request_id)
+    }) {
+        return Ok(());
+    }
+    Err(unknown())
 }
 
 /// #1792 review: a request is superseded only by its first recorder with a higher revision; a

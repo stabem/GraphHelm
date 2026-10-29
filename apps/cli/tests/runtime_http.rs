@@ -6242,6 +6242,163 @@ fn a_recorded_request_lists_its_linked_issues_their_prs_and_its_status() {
     );
 }
 
+/// #2232: a lane in one run links its issue to an owner request another run of the same project
+/// recorded, addressed by (run, requestId). Observer: the real `serve` binary over HTTP with a
+/// keyring the test makes, two runs in one store and a third run in a second store (another
+/// project's Runtime). Contracts: the cross-run link is admitted and served by the lane's run as
+/// `linkedElsewhere`, never joined onto that run's own request of the same id; links to an unknown
+/// run, an unrecorded request in a known run, another project's run, or the lane's own run by name
+/// are refused at `/signal/description/requestExecutionId`; a same-run link is unchanged.
+#[test]
+fn a_lane_links_its_issue_to_a_request_another_run_of_the_project_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let other_dir = tempfile::tempdir().unwrap();
+    let elsewhere = other_dir.path().join("events");
+    let extra = throwaway_keyring(dir.path());
+    let other_extra = throwaway_keyring(other_dir.path());
+    let (product, development, foreign) = ("product-run", "development-run", "foreign-run");
+    for (root, runs) in [
+        (&events, &[product, development][..]),
+        (&elsewhere, &[foreign][..]),
+    ] {
+        let store = graphhelm_events::LocalEventRepository::open(
+            root,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        for run in runs {
+            seed_stream(&store, run, 1, 3);
+        }
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let (_foreign_server, foreign_base, foreign_token) = serve_with(&elsewhere, &other_extra);
+    let lead = "orchestrator";
+    let lane = "lane-b";
+    let ask = serde_json::json!({"ask": "Ship the cross-run link"});
+    for (base, token, run) in [
+        (&base, &token, product),
+        (&foreign_base, &foreign_token, foreign),
+    ] {
+        let (status, reply, _) = task_record(
+            base,
+            token,
+            run,
+            lead,
+            "task.request_recorded",
+            "rec-cross",
+            &request_document(lead, "task.request_recorded", "cross-run", ask.clone()),
+        );
+        assert_eq!(status, 200, "{run}: {reply}");
+    }
+    let link = |id: &str, request: &str, run: Option<&str>, issue: u64| {
+        let mut extra = serde_json::json!({"issue": issue});
+        if let Some(run) = run {
+            extra["requestExecutionId"] = serde_json::json!(run);
+        }
+        task_record(
+            &base,
+            &token,
+            development,
+            lane,
+            "task.request_linked",
+            id,
+            &request_document(lane, "task.request_linked", request, extra),
+        )
+    };
+
+    for (id, request, run, why) in [
+        (
+            "link-unknown-run",
+            "cross-run",
+            "no-such-run",
+            "an unknown run",
+        ),
+        (
+            "link-unknown-request",
+            "ghost",
+            product,
+            "an unrecorded request",
+        ),
+        (
+            "link-foreign",
+            "cross-run",
+            foreign,
+            "another project's run",
+        ),
+        (
+            "link-self",
+            "cross-run",
+            development,
+            "the lane's own run by name",
+        ),
+    ] {
+        let (status, reply, _) = link(id, request, Some(run), 2232);
+        assert_ne!(status, 200, "a link to {why} is refused: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["path"], "/signal/description/requestExecutionId",
+            "{why}: {reply}"
+        );
+    }
+
+    let (status, reply, _) = link("link-cross", "cross-run", Some(product), 2232);
+    assert_eq!(status, 200, "{reply}");
+    let (status, reply, _) = link("link-cross-again", "cross-run", Some(product), 2232);
+    assert_eq!(status, 200, "{reply}");
+    let served = get_json(
+        &format!("{base}/v1/executions/{development}/requests"),
+        Some(&token),
+    );
+    assert_eq!(
+        served["data"]["linkedElsewhere"],
+        serde_json::json!([{"executionId": product, "requestId": "cross-run",
+            "issues": [{"issue": 2232, "slices": []}]}]),
+        "{served}"
+    );
+    assert_eq!(
+        served["data"]["requests"],
+        serde_json::json!([]),
+        "{served}"
+    );
+
+    // The same id recorded in the lane's own run stays its own request: a same-run link joins it,
+    // the cross-run link does not.
+    let (status, reply, _) = task_record(
+        &base,
+        &token,
+        development,
+        lead,
+        "task.request_recorded",
+        "rec-local",
+        &request_document(lead, "task.request_recorded", "cross-run", ask),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let (status, reply, _) = link("link-local", "cross-run", None, 7);
+    assert_eq!(status, 200, "{reply}");
+    let served = get_json(
+        &format!("{base}/v1/executions/{development}/requests"),
+        Some(&token),
+    );
+    assert_eq!(
+        served["data"]["requests"][0]["issues"],
+        serde_json::json!([{"issue": 7, "slices": []}]),
+        "{served}"
+    );
+    let product_view = get_json(
+        &format!("{base}/v1/executions/{product}/requests"),
+        Some(&token),
+    );
+    assert_eq!(
+        product_view["data"]["requests"][0]["issues"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        product_view["data"]["linkedElsewhere"],
+        serde_json::json!([])
+    );
+}
+
 /// #1919: the Studio's Proof "Send to fix" records the owner's request on the existing signal
 /// route, as the owner (`X-GraphHelm-Actor-Type: owner`, `studio-operator`), with the body
 /// apps/studio/src/proof/send-fix.ts `fixBody` sends. Observer: the real `serve` binary over HTTP.

@@ -81,7 +81,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
     if (ids.length === 0) return;
     // An older Runtime without the requests route leaves the column empty, never the board.
     // #2230: the same request read in two executions is one ask, never two cards.
-    Promise.allSettled(ids.map((id) => runtime.requests(id))).then((rows) => setRequests(combineRequests(rows.flatMap((row, at) => (row.status === "fulfilled" ? [{ executionId: ids[at]!, requests: row.value }] : [])))));
+    Promise.allSettled(ids.map((id) => runtime.requestsRead(id))).then((rows) => setRequests(combineRequests(rows.flatMap((row, at) => (row.status === "fulfilled" ? [{ executionId: ids[at]!, ...row.value }] : [])))));
     try {
       let next: TasksBoard | ProjectBoard;
       if (ids.length === 1) next = await runtime.board(ids[0]);

@@ -122,6 +122,24 @@ describe("project graph (#2230)", () => {
     expect(combineRequests(read).map((row) => row.runs)).toEqual([["zuvemo-desenvolvimento-ops"], ["zuvemo-sustentacao-ops"]]);
   });
 
+  it("#2232: a lane in one run linked to an ask another run recorded is that ask's agent, and the link joins only that run's ask", () => {
+    const product = { executionId: "zuvemo-produto-ops", board: board(NOW, [], []), requests: [ask("r1", [])] };
+    const dev = {
+      executionId: "zuvemo-desenvolvimento-ops", board: devBoard, requests: [ask("r1", [], "2026-10-28T12:00:00Z")],
+      linkedElsewhere: [{ executionId: "zuvemo-produto-ops", requestId: "r1", issues: [{ issue: 979, slices: [{ pr: 980, step: "review", merged: false }] }] }],
+    };
+    const read = [product, dev];
+    const joined = combineRequests(read);
+    expect(joined.map((row) => [row.key, row.issues.map((issue) => issue.issue), row.status])).toEqual([
+      ["zuvemo-produto-ops/r1", [979], "in_progress"],
+      ["zuvemo-desenvolvimento-ops/r1", [], "open"],
+    ]);
+    const rows = graphRequests(joined, combineBoards(read), [], null);
+    expect(rows[0].items.map((item) => [item.issue, item.lane])).toEqual([[979, "openbot-jo"]]);
+    // The ask's run not read (`?run=` on the lane's run): the link is left out, nothing invented.
+    expect(combineRequests([dev]).map((row) => row.issues.length)).toEqual([0]);
+  });
+
   it("?run= reads one execution only, and the same slice key in two runs never double counts", () => {
     expect(lanesRuns(parts.map((part) => run(part.executionId, "running", NOW)), "zuvemo-sustentacao-ops")).toEqual(["zuvemo-sustentacao-ops"]);
     const merged = combineBoards(parts);

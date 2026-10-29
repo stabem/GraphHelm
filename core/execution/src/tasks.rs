@@ -297,6 +297,10 @@ pub struct TaskEventRecord {
     /// #1792: the request a `task.request_recorded` or `task.request_linked` names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// #2232: the run that recorded the request a `task.request_linked` names, when it is another
+    /// run of the same project; absent means this record's own run (every link before #2232).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_execution_id: Option<String>,
     /// #1792: the owner's ask, from `task.request_recorded`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask: Option<String>,
@@ -486,6 +490,7 @@ impl TaskEventRecord {
             agent_model: None,
             paths: None,
             request_id: None,
+            request_execution_id: None,
             ask: None,
             journey_frames: None,
         }
@@ -874,13 +879,23 @@ pub fn parse_task_event(
             if !document.keys().all(|key| {
                 matches!(
                     key.as_str(),
-                    "schema" | "taskId" | "revision" | "at" | "requestId" | "issue" | "linkedBy"
+                    "schema"
+                        | "taskId"
+                        | "revision"
+                        | "at"
+                        | "requestId"
+                        | "requestExecutionId"
+                        | "issue"
+                        | "linkedBy"
                 )
             }) || !is_actor("linkedBy")
             {
                 return None;
             }
             record.request_id = Some(task_identity(field("requestId"))?);
+            if document.contains_key("requestExecutionId") {
+                record.request_execution_id = Some(task_identity(field("requestExecutionId"))?);
+            }
             record.issue = Some(count(field("issue"))?);
         }
         TaskEventKind::JourneyFrames => {

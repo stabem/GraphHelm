@@ -359,7 +359,7 @@
     },
     {
       "title": "task.request_linked",
-      "description": "#1792: an issue opened for a recorded request. Idempotent per (requestId, issue); a link to a request that was never recorded is refused. linkedBy is the actor that records it.",
+      "description": "#1792: an issue opened for a recorded request. Idempotent per (requestId, issue); a link to a request that was never recorded is refused. linkedBy is the actor that records it. #2232: requestExecutionId names another run of the same project that recorded the request; absent means this run. A link to an unknown run, another project's run, this run by name, or a request that run never recorded is refused.",
       "type": "object",
       "required": ["schema", "taskId", "revision", "at", "requestId", "issue", "linkedBy"],
       "additionalProperties": false,
@@ -369,6 +369,7 @@
         "revision": {"$ref": "#/$defs/positive"},
         "at": {"$ref": "#/$defs/at"},
         "requestId": {"$ref": "#/$defs/taskId"},
+        "requestExecutionId": {"$ref": "#/$defs/taskId"},
         "issue": {"$ref": "#/$defs/positive"},
         "linkedBy": {"$ref": "#/$defs/actor"}
       }

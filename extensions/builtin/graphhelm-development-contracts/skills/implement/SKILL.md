@@ -48,6 +48,11 @@ edit gate sees only those.
    `journey`, do not add unit tests for what the journey observes; `journey-prove` (#381) proves it.
 5. Run the tests the change reaches, plus the repository's lints for touched code. List each
    command and its result in the PR body (passed, failed, skipped, unobserved, separately).
+   Before stopping with a diff, review that diff and fix major findings. Write
+   `.graphhelm/self-review.json` after the current card with
+   `{"checked": [{"input": "<edge or caller>", "result": "<observation>", "fixed": false}], "testsRun": ["<command and result>"]}`.
+   Check boundaries, compatibility, refusals and that new tests drive the real code path;
+   the Stop hook's self-review requirement still applies.
    The existing test files of every module you changed are reached tests: run them, not only
    your new ones.
 6. Before you stop, review your own diff as the blind reviewer will, and fix every major you find:

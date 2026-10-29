@@ -42,6 +42,59 @@ KEEL_CONTEXT = ("Keel is guidance and measurement, not a pass/fail ritual. Start
                 "Never start a memory server/watcher in hooks or retain a provider process.")
 
 
+def _step_rules(payload: dict) -> str:
+    """Deliver installed step sections on startup only, when local card policy is present."""
+    source = payload.get("source") or payload.get("session_start_source") or "startup"
+    cwd = payload.get("cwd")
+    if source != "startup" or not isinstance(cwd, str) or not Path(cwd).is_absolute():
+        return ""
+    policy_path = Path("extensions/builtin/graphhelm-development-contracts/policies/keel.yaml")
+    for root in itertools.islice((Path(cwd), *Path(cwd).parents), 32):
+        policy = root / policy_path
+        if policy.is_file() and not policy.is_symlink():
+            try:
+                with policy.open("rb") as stream:
+                    data = stream.read(MAX_STATE + 1)
+                if len(data) > MAX_STATE or not re.search(r"(?m)^card:[ \t]*(?:#.*)?$", data.decode("utf-8-sig").replace("\r\n", "\n")):
+                    return ""
+            except (OSError, UnicodeError):
+                return ""
+            break
+        if (root / ".git").exists():
+            return ""
+    else:
+        return ""
+    plugins = Path(__file__).resolve().parents[2]
+    contracts = plugins / "graphhelm-development-contracts"
+    if not contracts.exists():
+        contracts = plugins.parent / "extensions/builtin/graphhelm-development-contracts"
+    sections = []
+    try:
+        for name in ("task-plan", "implement"):
+            path = contracts / "skills" / name / "SKILL.md"
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("installed skill is not a regular file")
+            with path.open("rb") as stream:
+                data = stream.read(MAX_STATE + 1)
+            if len(data) > MAX_STATE:
+                raise ValueError("installed skill too large")
+            text = data.decode("utf-8-sig").replace("\r\n", "\n")
+            method = text.split("## Method\n", 1)
+            if len(method) != 2:
+                raise ValueError("installed skill has no Method section")
+            # Keep the optional design critic too: compact delivery cannot waive a plan step.
+            precedence = next((line for line in text.splitlines() if line.startswith("**Load the project's")), "")
+            body = precedence + "\n\n" + method[1].split("\n## Completion", 1)[0].strip()
+            sections.append(f"### {name}\n{body}")
+        context = "\nKeel step rules (loaded from installed skills; follow these steps):\n" + "\n\n".join(sections)
+        if len(context) > 10000:
+            raise ValueError("installed step rules exceed context budget")
+        return context
+    except (OSError, ValueError, UnicodeError) as error:
+        print(f"graphhelm-session-hook: step rules unobserved ({type(error).__name__}); load task-plan and implement skills", file=sys.stderr)
+        return ""
+
+
 def hook_input() -> dict:
     decoder = codecs.getincrementaldecoder("utf-8-sig")()
     parser = json.JSONDecoder()
@@ -716,16 +769,18 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
     if payload.get("hook_event_name") != "SessionStart":
         raise ValueError("wrong hook event")
     session = _session(payload)
+    rules = _step_rules(payload)
+    guidance = KEEL_CONTEXT + rules
     bound = binding(payload)
     if bound is None:
-        if os.environ.get("GRAPHHELM_KEEL_CONTEXT") != "1":
+        if os.environ.get("GRAPHHELM_KEEL_CONTEXT") != "1" and not rules:
             if output_format == "portable":
                 print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": ""}, separators=(",", ":")))
             return
         if output_format == "portable":
-            print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": KEEL_CONTEXT}, separators=(",", ":")))
+            print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": guidance}, separators=(",", ":")))
         else:
-            print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT}}))
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": guidance}}))
         return
     execution, token_file, url, origin, node_id = bound
     path = state_path(execution, session, host, origin)
@@ -763,6 +818,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
     context = KEEL_CONTEXT + "\n" + _context(digest, freshness, execution, session, node_id)
     if len(context) > MAX_CONTEXT:
         raise ValueError("hook context too large")
+    context += rules
     if output_format == "portable":
         print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": session, "activation": "unobserved", "context": context}, separators=(",", ":")))
     else:
@@ -958,6 +1014,7 @@ def main() -> int:
     args = parser.parse_args()
     host = args.host
     output_format = args.format or ("native" if host in {"claude", "codex"} else "portable")
+    payload = {}
     try:
         if args.phase == "wait":
             if not args.session_id or args.events is None or args.heartbeat is None:
@@ -984,10 +1041,11 @@ def main() -> int:
             print(json.dumps({"phase": "inspect", "configuration": "invalid", "activation": "unobserved"}))
             return 1
         if args.phase == "start":
+            guidance = KEEL_CONTEXT + _step_rules(payload) + "\nGraphHelm briefing UNOBSERVED."
             if output_format == "portable":
-                print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": None, "activation": "unobserved", "context": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}, separators=(",", ":")))
+                print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": None, "activation": "unobserved", "context": guidance}, separators=(",", ":")))
             else:
-                print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}}))
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": guidance}}))
         elif output_format == "portable":
             print(json.dumps({"format": "graphhelm-portable-v1", "phase": args.phase, "host": host, "activation": "unobserved"}, separators=(",", ":")))
     return 0

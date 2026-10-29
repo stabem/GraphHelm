@@ -140,6 +140,16 @@ describe("dev server add-folder (#1833)", () => {
     expect(logged.join(" ")).not.toContain("second");
   });
 
+  it("logs the first project in once with the ticket `studio open --no-browser` returns, then refuses it (#2236)", async () => {
+    const first = join(root, "first");
+    ticketFor(first, "open-ticket");
+    const session = await call("/__studio/session?nonce=open-ticket", "GET", {});
+    expect(session.status).toBe(200);
+    expect(session.body.token).toBe("first-token");
+    expect(await call("/__studio/session?nonce=open-ticket", "GET", {})).toEqual({ status: 404, body: { ok: false } });
+    expect(logged.join(" ")).not.toContain("open-ticket");
+  });
+
   it("answers the folder only inside a session reply", async () => {
     const session = await call("/__studio/session?nonce=n", "GET", {});
     expect(typeof session.body.folder).toBe("string");

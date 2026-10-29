@@ -84,4 +84,13 @@ describe("project lanes (#2228)", () => {
     const oldCard = agents(withPresence(combineBoards([{ executionId: "r", board: board(NOW, [], []) }, owner]), old))[0];
     expect(presence(oldCard.idleMinutes, oldCard.task !== null)).toBe("stale");
   });
+
+  it("orders a lane's runs by record time across the task view and the events, so its home run is its newest", () => {
+    const tasksSide = { executionId: "run-old", board: board(NOW, [task("k", "leslie")], [live("leslie", "2026-10-20T10:00:00Z")]) };
+    const quiet = { executionId: "run-new", board: board(NOW, [], []) };
+    const index = foldPresence(emptyPresence(), "run-new", [{ sequence: 1, occurredAt: "2026-10-29T11:00:00Z", actor: { id: "leslie" }, scope: { projectId: "p", executionId: "run-new" }, kind: { type: "agent_presence_declared", data: { actorId: "leslie" } } }]);
+    const merged = withPresence(combineBoards([tasksSide, quiet]), index);
+    expect(merged.origins.leslie).toEqual(["run-new", "run-old"]);
+    expect(homeRun(merged, "leslie")).toBe("run-new");
+  });
 });

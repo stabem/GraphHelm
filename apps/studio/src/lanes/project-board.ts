@@ -15,6 +15,8 @@ export interface ProjectBoard extends TasksBoard {
   origins: Record<string, string[]>;
   /** Lanes that declared presence (`agent_presence_declared`) in one of the runs. */
   declared?: string[];
+  /** Per lane, per run, the time of its newest record there (epoch ms; -Infinity when none). */
+  recordedAt: Record<string, Record<string, number>>;
 }
 
 /** #2228: what a lane's records say about it now. Only record times count, never an execution's
@@ -79,7 +81,8 @@ export function combineBoards(parts: readonly RunBoard[]): ProjectBoard {
     }
   }
   const origins: Record<string, string[]> = {};
-  for (const [lane, runs] of seen) origins[lane] = [...runs].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => id);
+  const recordedAt: Record<string, Record<string, number>> = {};
+  for (const [lane, runs] of seen) { origins[lane] = newestFirst(runs); recordedAt[lane] = Object.fromEntries(runs); }
   return {
     now,
     tasks,
@@ -89,8 +92,11 @@ export function combineBoards(parts: readonly RunBoard[]): ProjectBoard {
     ownerNotes,
     runs: parts.map((part) => part.executionId),
     origins,
+    recordedAt,
   };
 }
+
+const newestFirst = (runs: Map<string, number>) => [...runs].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => id);
 
 /** The execution a lane's panel reads and writes: the one with its newest record. */
 export function homeRun(board: ProjectBoard, lane: string): string | null {
@@ -159,13 +165,16 @@ export function withPresence(board: ProjectBoard, index: PresenceIndex): Project
   if (declared.length === 0) return board;
   const lanes = [...board.liveness.lanes];
   const origins = { ...board.origins };
+  const recordedAt = { ...board.recordedAt };
   for (const [lane, row] of declared) {
     const known = lanes.findIndex((live) => live.lane === lane);
     if (known === -1) lanes.push({ lane, ...(row.lastAt === null ? {} : { lastRecordAt: row.lastAt }), owes: false, silent: false, free: false });
     else if (at(row.lastAt) > at(lanes[known].lastRecordAt)) lanes[known] = { ...lanes[known], lastRecordAt: row.lastAt ?? undefined, silent: false };
-    const runs = new Map<string, number>((origins[lane] ?? []).map((id, rank) => [id, -rank]));
+    // One unit: record time per run, from the task view and the events alike.
+    const runs = new Map<string, number>(Object.entries(recordedAt[lane] ?? {}));
     for (const [id, when] of Object.entries(row.runs)) runs.set(id, Math.max(runs.get(id) ?? -Infinity, at(when)));
-    origins[lane] = [...runs].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([id]) => id);
+    origins[lane] = newestFirst(runs);
+    recordedAt[lane] = Object.fromEntries(runs);
   }
-  return { ...board, liveness: { lanes }, origins, declared: declared.map(([lane]) => lane) };
+  return { ...board, liveness: { lanes }, origins, recordedAt, declared: declared.map(([lane]) => lane) };
 }

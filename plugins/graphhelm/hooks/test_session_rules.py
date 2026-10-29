@@ -54,6 +54,8 @@ class SessionRules(unittest.TestCase):
         self.assertIn("Keel step rules", context)
         self.assertIn(".graphhelm/self-review.json", context)
         self.assertIn("write the test first", context)
+        self.assertIn("## Design critic", context)
+        self.assertIn("their rules bind and win", context)
         self.assertLessEqual(len(context), 11000)
         for name in ("task-plan", "implement"):
             source = (self.skills / name / "SKILL.md").read_text(encoding="utf-8")
@@ -80,6 +82,18 @@ class SessionRules(unittest.TestCase):
         self.assertIn("Keel step rules", context)
         self.assertIn("UNOBSERVED", context)
         self.assertIn("unobserved", errors)
+
+    def test_repository_layout_reads_canonical_skills(self):
+        self.plugin = SCRIPT.parent.parent
+        self.assertIn(".graphhelm/self-review.json", self.run_hook()[0])
+
+    def test_bom_policy_and_nested_cwd_keep_source_rules(self):
+        self.policy.write_bytes(b'\xef\xbb\xbfcard:\r\n  maxScopePaths: 12\r\n')
+        self.project = self.project / "nested"
+        self.project.mkdir()
+        self.assertIn("Keel step rules", self.run_hook()[0])
+        (self.project / ".git").mkdir()
+        self.assertNotIn("Keel step rules", self.run_hook()[0])
 
     def test_missing_or_oversized_skill_is_reported_without_partial_rules(self):
         path = self.skills / "implement/SKILL.md"

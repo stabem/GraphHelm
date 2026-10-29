@@ -81,6 +81,40 @@ class KeelPreToolHook(unittest.TestCase):
         result = self.run_hook("app.py", old_string="a", new_string="b")
         self.assertEqual(result["permissionDecision"], "deny")
 
+    def write_card(self, **card):
+        (self.repo / ".graphhelm").mkdir(exist_ok=True)
+        (self.repo / ".graphhelm" / "keel-card.json").write_text(json.dumps(card))
+        (self.repo / ".gitignore").write_text("/.graphhelm/\n")
+
+    def test_source_edit_in_scope_before_any_test_is_denied(self):
+        self.write_card(promise="p", scopePaths=["src/"], proof="python -m unittest")
+        result = self.run_hook("src/app.py", content="x = 1\n")
+        self.assertEqual(result["permissionDecision"], "deny")
+        self.assertIn("test first", result["permissionDecisionReason"])
+
+    def test_writing_the_test_in_scope_passes(self):
+        self.write_card(promise="p", scopePaths=["src/"], proof="python -m unittest")
+        self.assertIsNone(self.run_hook("src/test_app.py", content="x = 1\n"))
+
+    def test_source_edit_after_test_in_scope_changed_passes(self):
+        self.write_card(promise="p", scopePaths=["src/app.py", "src/test_app.py"], proof="p")
+        (self.repo / "src").mkdir()
+        (self.repo / "src" / "test_app.py").write_text("def test(): assert False\n")
+        self.assertIsNone(self.run_hook("src/app.py", content="x = 1\n"))
+
+    def test_a_test_outside_scope_does_not_unlock_the_edit(self):
+        self.write_card(promise="p", scopePaths=["src/"], proof="p")
+        (self.repo / "tests").mkdir()
+        (self.repo / "tests" / "test_other.py").write_text("x\n")
+        self.assertEqual(self.run_hook("src/app.py", content="x\n")["permissionDecision"], "deny")
+
+    def test_waiver_needs_a_reason(self):
+        self.write_card(promise="p", scopePaths=["src/"], proof="p", testFirst=False)
+        self.assertEqual(self.run_hook("src/app.py", content="x\n")["permissionDecision"], "deny")
+        self.write_card(promise="p", scopePaths=["src/"], proof="p", testFirst=False,
+                        testFirstReason="config only")
+        self.assertIsNone(self.run_hook("src/app.py", content="x\n"))
+
     def test_file_outside_repository_passes(self):
         with tempfile.TemporaryDirectory() as other:
             payload = {"cwd": str(self.repo), "tool_input": {"file_path": other + "/x.py",

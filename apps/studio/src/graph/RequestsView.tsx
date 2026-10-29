@@ -7,6 +7,8 @@ import { idleText, stepAged } from "../lanes/board";
 import { RequestProgress } from "./RequestProgress";
 import { Loading, ReadFailure } from "../states/ViewState";
 import { cards, KANBAN, KANBAN_NAME, requestColor, type OwnerRequest } from "./requests";
+import { requestKey } from "../lanes/asked";
+import { combineBoards, combineRequests, taskRun, type ProjectRequest } from "../lanes/project-board";
 import { arrangeGraph, COLUMN_COLOR, counts, detail, blocks, graphRequests, journeyCards, journeyMeta } from "./layout";
 
 /** The board and the requests are read again this often. */
@@ -18,7 +20,8 @@ type Mode = "graph" | "kanban";
 
 interface Props {
   runtime: Runtime;
-  executionId: string;
+  /** #2230: the executions read: one (`?run=`, a filtered view) or every execution of the project. */
+  executionIds: string[];
   journeys: JourneyFlow[] | null;
   /** Opens Proof on a journey ("Open the journey in Proof"). */
   onOpenProof?: (journey: string) => void;
@@ -30,11 +33,12 @@ interface Props {
  * from what was asked to the issues, their pull requests and the result, and the panel of the
  * selected issue. "Merged" is not done: a card reads Proven only when its journeys passed.
  */
-export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Props) {
+export function RequestsView({ runtime, executionIds, journeys, onOpenProof }: Props) {
+  const key = JSON.stringify(executionIds);
   const [mode, setMode] = useState<Mode>("graph");
   const [journey, setJourney] = useState<string | null>(null);
   const [board, setBoard] = useState<TasksBoard | null>(null);
-  const [requests, setRequests] = useState<OwnerRequest[] | null>(null);
+  const [requests, setRequests] = useState<(OwnerRequest & { runs?: string[] })[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState<BoardTask | null>(null);
   const [deliveredOpen, setDeliveredOpen] = useState<boolean | null>(null);
@@ -43,14 +47,22 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
 
   const read = useCallback(async () => {
     try {
-      const [nextBoard, nextRequests] = await Promise.all([runtime.board(executionId), runtime.requests(executionId)]);
-      setBoard(nextBoard);
-      setRequests(nextRequests);
+      const ids = JSON.parse(key) as string[];
+      if (ids.length === 1) {
+        const [nextBoard, nextRequests] = await Promise.all([runtime.board(ids[0]), runtime.requests(ids[0])]);
+        setBoard(nextBoard);
+        setRequests(nextRequests);
+      } else {
+        // #2230: every execution of the project, read as one: slices keep their execution in their key.
+        const parts = await Promise.all(ids.map(async (id) => ({ executionId: id, board: await runtime.board(id), requests: await runtime.requests(id) })));
+        setBoard(combineBoards(parts));
+        setRequests(combineRequests(parts));
+      }
       setError(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The requests could not be read.");
     }
-  }, [runtime, executionId]);
+  }, [runtime, key]);
 
   useEffect(() => {
     void read();
@@ -58,8 +70,9 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
     return () => clearInterval(timer);
   }, [read]);
 
-  if (error !== null && board === null) return <ReadFailure what="run's requests" route={`/v1/executions/${executionId}/requests`} message={error} onRetry={() => void read()} />;
-  if (board === null || requests === null) return <Loading text="Reading the run's requests…" />;
+  const many = executionIds.length > 1;
+  if (error !== null && board === null) return <ReadFailure what={many ? "project's requests" : "run's requests"} route={`/v1/executions/${executionIds.join(",")}/requests`} message={error} onRetry={() => void read()} />;
+  if (board === null || requests === null) return <Loading text={many ? "Reading the project's requests…" : "Reading the run's requests…"} />;
 
   const flows = journeys ?? [];
   const withWork = journeyCards(board, flows);
@@ -112,11 +125,12 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
           </div>
           {error !== null && <span role="status" className="muted small">Last read failed: {error}</span>}
         </div>
+        {many && <p className="lanes-scope">{executionIds.length} runs of this project · only what the Runtime received is shown; work recorded nowhere here is not on the graph.</p>}
 
         {mode === "graph" ? (
           <section aria-label="Request graph" className="gv-canvas">
             {graph.length === 0 ? (
-              <p>{requests.length === 0 ? "No owner request is recorded on this run yet." : "No request has work in this journey."}</p>
+              <p>{requests.length === 0 ? many ? `No owner request is recorded in the ${executionIds.length} runs of this project yet.` : "No owner request is recorded on this run yet." : "No request has work in this journey."}</p>
             ) : (
               <>
                 <div className="mono gv-cols" aria-hidden="true">
@@ -124,7 +138,7 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
                 </div>
                 <ul aria-label="Owner requests" className="gv-requests">
                   {graph.map((row) => (
-                    <li key={row.request.requestId} data-chip={row.chip.key} aria-label={row.request.title ?? row.request.ask} className="gv-request" style={{ "--h": `${row.height}px` } as CSSProperties}>
+                    <li key={requestKey(row.request)} data-chip={row.chip.key} aria-label={row.request.title ?? row.request.ask} className="gv-request" style={{ "--h": `${row.height}px` } as CSSProperties}>
                       <svg aria-hidden="true" className="gv-links" viewBox={`0 0 1040 ${row.height}`} preserveAspectRatio="none" height={row.height}>
                         {row.links.map((link, index) => <path key={index} vectorEffect="non-scaling-stroke" d={link.d} fill="none" stroke={link.color} strokeWidth="1.5" strokeDasharray={link.dashed ? "4 4" : undefined} />)}
                       </svg>
@@ -132,6 +146,7 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
                         <span className="mono gv-ask-when">YOU ASKED · {row.when}</span>
                         <span className="gv-ask-text">{row.request.title ?? row.request.ask}</span>
                         <RequestProgress progress={row.progress} />
+                        {many && (row.request as ProjectRequest).runs !== undefined && <span className="mono gv-meta">run {(row.request as ProjectRequest).runs.join(", ")}</span>}
                         {row.items.length === 0 && <span className="mono gv-meta">no issue opened yet</span>}
                       </div>
                       {row.items.map((item) => (
@@ -190,7 +205,7 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
                         <span className="mono small">{task.issue === null ? task.key : `#${task.issue}`}{task.pr === null ? "" : ` · PR #${task.pr}`}</span>
                         <span>{task.prTitle ?? task.title ?? ""}</span>
                         <span className="gv-bar" aria-hidden="true">{blocks(task, at).map((block) => <span key={block.step} className={`gv-sq small${block.color === LIVE && (at === "implementing" || at === "review") ? " curstep" : ""}`} style={{ background: block.color }} />)}</span>
-                        <span className="muted small">{task.lane ?? "no lane"} · {task.step}{stepMinutes === null ? "" : " "}{stepMinutes !== null && <span role="group" aria-label="Time in step" className={`mono step-age${stepAged(stepMinutes) ? " aged" : ""}`}>{idleText(stepMinutes)}</span>}</span>
+                        <span className="muted small">{task.lane ?? "no lane"} · {task.step}{many ? ` · run ${taskRun(task, executionIds)}` : ""}{stepMinutes === null ? "" : " "}{stepMinutes !== null && <span role="group" aria-label="Time in step" className={`mono step-age${stepAged(stepMinutes) ? " aged" : ""}`}>{idleText(stepMinutes)}</span>}</span>
                         {reviewable(at, task.pr) && (
                           <button type="button" className="b ghost small" onClick={() => setReviewing(task)}>Open review</button>
                         )}
@@ -227,7 +242,7 @@ export function RequestsView({ runtime, executionId, journeys, onOpenProof }: Pr
           </>
         )}
       </aside>
-      {reviewing !== null && <ReviewModal runtime={runtime} executionId={executionId} task={reviewing} onClose={() => setReviewing(null)} />}
+      {reviewing !== null && <ReviewModal runtime={runtime} executionId={taskRun(reviewing, executionIds) ?? executionIds[0]!} task={reviewing} onClose={() => setReviewing(null)} />}
     </div>
   );
 }

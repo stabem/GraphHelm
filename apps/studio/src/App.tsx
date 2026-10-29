@@ -166,6 +166,9 @@ function Shell({ session, projects, closed, route, go, pickJourney, onRefused }:
   // opens the run team.json marks, else the most recently active one, and the URL stays clean.
   const runId = route.run ?? (runs === null ? null : teamRun(runs, session.teamRun)?.executionId ?? null);
   const run = runs?.find((row) => row.executionId === runId) ?? null;
+  // #2228/#2230: Lanes and Graph read every execution of the project unless ?run= filters to one.
+  const projectRuns = lanesRuns(runs, route.run ?? null);
+  const shownRun = route.view !== "proof" && route.run === null && projectRuns.length > 1 ? `all ${projectRuns.length} runs` : runId;
 
   return (
     <div className="shell">
@@ -189,7 +192,7 @@ function Shell({ session, projects, closed, route, go, pickJourney, onRefused }:
       <div className="main">
         <Topbar
           project={project}
-          run={runId}
+          run={shownRun}
           view={route.view}
           updated={live ? updated : null}
           onView={(view: View) => go({ ...route, view })}
@@ -198,7 +201,7 @@ function Shell({ session, projects, closed, route, go, pickJourney, onRefused }:
         <ViewBoundary key={`${route.view}:${runId ?? ""}`} name={route.view}>
         {runs === null && route.run === null ? <section className="view" aria-label="Reading">{firstRead(runs, runsError) === "failed" ? <ReadFailure what="project's team runs" route="/v1/executions" message={runsError ?? ""} onRetry={() => void readRuns()} /> : <Loading text="Reading the project's team run…" />}</section> : <>
         {route.view === "graph" && (
-          <GraphView run={run} runId={runId} onStart={startRun} requests={runId === null ? undefined : <RequestsView runtime={runtime} executionId={runId} journeys={journeys} onOpenProof={(journey) => go({ project: route.project, run: route.run, view: "proof", journey })} />}>
+          <GraphView run={run} runId={runId} allRuns={shownRun === runId ? null : projectRuns.length} onStart={startRun} requests={projectRuns.length === 0 ? undefined : <RequestsView runtime={runtime} executionIds={projectRuns} journeys={journeys} onOpenProof={(journey) => go({ project: route.project, run: route.run, view: "proof", journey })} />}>
             {composing && runId === null && (
               <StartRun
                 runtime={runtime}
@@ -212,7 +215,7 @@ function Shell({ session, projects, closed, route, go, pickJourney, onRefused }:
             )}
           </GraphView>
         )}
-        {route.view === "lanes" && <LanesView runtime={runtime} runs={lanesRuns(runs, route.run ?? null)} choices={runs?.map((row) => row.executionId) ?? []} filter={route.run ?? null} onFilter={(id) => go({ ...route, run: id })} journeys={journeys} onStart={startRun} />}
+        {route.view === "lanes" && <LanesView runtime={runtime} runs={projectRuns} choices={runs?.map((row) => row.executionId) ?? []} filter={route.run ?? null} onFilter={(id) => go({ ...route, run: id })} journeys={journeys} onStart={startRun} />}
         {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={runId} onRan={readJourneys} initial={route.journey ?? null} onPicked={pickJourney} />}
         </>}
         </ViewBoundary>

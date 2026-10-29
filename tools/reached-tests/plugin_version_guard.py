@@ -169,13 +169,15 @@ def _group_check(repo, base, head, paths, roots, manifests, release):
             return True, f"PASS: new plugin release {after_versions[0]} in {manifests[0]}"
         return False, str(exc)
     before_versions = [item[0] for item in before]
+    if not release:
+        # A split base is not this PR's fault, and a PR that repairs it must pass: compare with its highest.
+        highest = max(before, key=lambda item: _version_precedence(item[1]))
+        if _version_precedence(after[0][1]) < _version_precedence(highest[1]):
+            return False, f"release version in {manifests[0]} went below {highest[0]}"
+        return True, f"PASS: shipped plugin content changed; release manifests agree on {after_versions[0]}"
     if len(set(before_versions)) != 1:
         path = manifests[next(i for i, version in enumerate(before_versions) if version != before_versions[0])]
         return False, f"mismatched base release manifests: {path} has {before_versions[manifests.index(path)]}"
-    if not release:
-        if _version_precedence(after[0][1]) < _version_precedence(before[0][1]):
-            return False, f"release version in {manifests[0]} went below {before_versions[0]}"
-        return True, f"PASS: shipped plugin content changed; release manifests agree on {after_versions[0]}"
     if _version_precedence(after[0][1]) <= _version_precedence(before[0][1]):
         return False, f"bump the plugin version in {manifests[0]} (shipped plugin content changed since the release)"
     return True, f"PASS: shipped plugin content changed; release version {after_versions[0]} exceeds {before_versions[0]}"

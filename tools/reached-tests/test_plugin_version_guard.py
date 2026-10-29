@@ -71,6 +71,14 @@ class PluginVersionGuard(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn(guard.MANIFESTS[-1], message)
 
+    def test_a_plugin_pr_may_repair_a_split_base(self):
+        self.write(guard.MANIFESTS[-1], json.dumps({"version": "0.1.29"}))
+        self.base = self.commit("split base, as a hand bump left it")
+        self.write("plugins/graphhelm/skills/guide/SKILL.md", "# Changed guide\n")
+        self.write_manifests("0.1.29")
+        passed, message = self.pr_check(self.commit("repair the split"))
+        self.assertTrue(passed, message)
+
     def test_two_plugin_prs_from_one_main_merge_and_the_release_bumps_once(self):
         """#2253: no per-PR bump, so parallel plugin PRs do not conflict on the manifests."""
         self.git("branch", "-M", "main")

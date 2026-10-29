@@ -285,6 +285,45 @@ fn window(lines: &[&str], index: usize) -> String {
         .map_or_else(String::new, |slice| slice.join("\n"))
 }
 
+/// Most lines a call is followed across before it is judged unclosed.
+const CALL_SPAN_LINES: usize = 40;
+
+/// The text of the call that opens with `opener` on line `index`, up to its balanced closing
+/// paren, so options written over many lines are all read. A call left open is read to
+/// `CALL_SPAN_LINES` lines. Parens inside string literals are not special-cased: the span is
+/// only a bound on what is read, and a miscount ends it at the span, never earlier than the text.
+fn call_text(lines: &[&str], index: usize, opener: &str) -> String {
+    let mut text = String::new();
+    let mut depth = 0usize;
+    let mut started = false;
+    let end = (index + CALL_SPAN_LINES).min(lines.len());
+    for (offset, line) in lines.get(index..end).unwrap_or_default().iter().enumerate() {
+        let from = if offset == 0 {
+            line.find(opener).unwrap_or(0) + opener.len() - 1
+        } else {
+            0
+        };
+        let rest = &line[from..];
+        for (at, ch) in rest.char_indices() {
+            match ch {
+                '(' => {
+                    depth += 1;
+                    started = true;
+                }
+                ')' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            if started && depth == 0 {
+                text.push_str(&rest[..at + 1]);
+                return text;
+            }
+        }
+        text.push_str(rest);
+        text.push('\n');
+    }
+    text
+}
+
 /// The rules an added production line breaks, each with the fix it should name.
 fn rules(
     language: Language,
@@ -349,7 +388,7 @@ fn rules(
             if empty_catch(code) {
                 found.push((NO_SWALLOW, "handle the error or rethrow it with its reason"));
             }
-            if has_word(code, "fetch(") && !context.contains("signal") {
+            if has_word(code, "fetch(") && !call_text(lines, index, "fetch(").contains("signal") {
                 found.push((DEADLINE, "pass an AbortSignal with a timeout to fetch"));
             }
         }

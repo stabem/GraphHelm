@@ -14,7 +14,7 @@ Runtime serves) is `F:\github\GraphHelm`, and the coordinator session is `gh-cla
 - The coordinator gives orders and go-aheads. Report to it with `SendMessage`; never wait for the
   owner.
 - On start, send `<lane> ready` plus one line on what you read first, then wait for an order.
-- Read [`AGENTS.md`](../../AGENTS.md) and [DELIVERY.md](DELIVERY.md) before any work.
+- Read [`AGENTS.md`](../../AGENTS.md) and its [reading map](../../AGENTS.md#reading-map-by-step) before any work.
 - **Only the coordinator assigns a reviewer**, one per PR. Do not pick one and do not review a PR
   you were not assigned; when none was named, ask the coordinator. The assigned reviewer merges
   (pinned squash, DELIVERY.md §5).

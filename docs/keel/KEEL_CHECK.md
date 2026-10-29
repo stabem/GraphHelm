@@ -133,11 +133,10 @@ The snapshot shape is strict JSON with exactly one top-level `comments` array; e
 ```
 
 The requested head must be a 40-character hexadecimal SHA. The reviewer must equal the session
-identity exactly. A comment matches only when it has exactly one `Session:` identity line equal to
-`Session: <reviewer> · Head: <first-eight-sha-characters>` and a body line starts with one of
-`APPROVE`, `APPROVE-WITH-RISK`, or `BLOCK` (optionally wrapped in `**`) followed by a word
-boundary, `:`, or `|`. This uses the repository's comment identity format,
-whose head component is the first eight SHA characters. Malformed identity lines do not match.
+identity exactly. A comment matches only when it has exactly one identity line signed by `<reviewer>`, with the head
+as its first eight SHA characters (the format is in [DELIVERY.md](../process/DELIVERY.md) §4), and
+a body line starts with one of `APPROVE`, `APPROVE-WITH-RISK`, or `BLOCK` (optionally wrapped in
+`**`) followed by a word boundary, `:`, or `|`. Malformed identity lines do not match.
 Matching BLOCK comment ids are listed in `data.matchingBlockIds`; the reader does not claim a BLOCK
 was answered.
 

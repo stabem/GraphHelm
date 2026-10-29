@@ -45,7 +45,23 @@ def duplicates(texts: dict[str, str]) -> dict[str, list[str]]:
     return {sentence: names for sentence, names in seen.items() if len(names) > 1}
 
 
+# Rules too short for the sentence check above, each pinned to the one file that owns it. The agent
+# skill copies under plugins/ and extensions/ mirror these files and are checked by their own twin
+# test, so they are not scanned here.
+RULE_OWNERS = {
+    "match-head-commit": ["keel/KEEL_MERGE.md"],
+    "· Head: <": ["docs/process/DELIVERY.md"],
+}
+RULE_FILES = FILES + ("docs/keel/KEEL_CHECK.md",)
+
+
 class NoDuplicateRules(unittest.TestCase):
+    def test_each_named_rule_is_stated_in_its_owner_file_only(self):
+        texts = {name: (ROOT / name).read_text(encoding="utf-8") for name in RULE_FILES}
+        for marker, owners in RULE_OWNERS.items():
+            holders = sorted(name for name, text in texts.items() if marker in text)
+            self.assertEqual(holders, sorted(owners), f"rule marker {marker!r} is stated in {holders}")
+
     def test_a_sentence_in_two_files_is_reported(self):
         rule = "Never write a closing keyword next to an issue you do not intend to close."
         found = duplicates({"a.md": f"# A\n\n- {rule}\n", "b.md": f"Intro line here.\n\n{rule} More.\n", "c.md": "Unrelated."})

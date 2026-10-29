@@ -48,7 +48,17 @@ edit gate sees only those.
    `journey`, do not add unit tests for what the journey observes; `journey-prove` (#381) proves it.
 5. Run the tests the change reaches, plus the repository's lints for touched code. List each
    command and its result in the PR body (passed, failed, skipped, unobserved, separately).
-6. Open the PR: summary, `Closes #N` (only issues you mean to close), the card, tests run, and
+   The existing test files of every module you changed are reached tests: run them, not only
+   your new ones.
+6. Before you stop, review your own diff as the blind reviewer will, and fix every major you find:
+   - compatibility: each existing caller, default and existing test of what you changed still
+     works; a removed default or a new required input is a break unless the request asks for it;
+   - boundaries: for every value your validation admits, try the edge ones (empty, maximum
+     length, path-special values, a file with a BOM, a link or directory where a file is
+     expected) and check the result still meets the request;
+   - refusals: a refused input changes nothing and sends nothing;
+   - tests: each new test drives the real code path, not a value the test built itself.
+7. Open the PR: summary, `Closes #N` (only issues you mean to close), the card, tests run, and
    the identity line `Session: <name> · Head: <sha8>` on every comment and commit body.
 
 ## Completion

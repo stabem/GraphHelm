@@ -410,6 +410,14 @@ button { font: inherit; }
 .agent-name { display: flex; align-items: flex-start; gap: var(--s2); min-width: 0; }
 .agent-name .agent-dot { margin-top: 4px; }
 .agent-kind { font-size: var(--fs-meta); color: var(--muted); }
+/* #2228: the project view: which runs a card recorded in, its presence from record times, the run filter. */
+.agent-card .origin { font-size: var(--fs-meta); color: var(--muted); overflow-wrap: anywhere; }
+.agent-card .presence { font-size: var(--fs-meta); color: var(--muted); }
+.agent-card .presence.working { color: var(--live); }
+.agent-card .presence.stale, .agent-card .presence.unknown { color: var(--faint); }
+.run-filter { display: inline-flex; gap: var(--s2); align-items: center; font-size: var(--fs-meta); color: var(--muted); }
+.run-filter select { max-width: 100%; }
+.lanes-scope { margin: 4px 0 8px; font-size: var(--fs-meta); color: var(--muted); }
 /* #1934: agent names wrap; no ellipsis. */
 .agent-name strong { font-size: var(--fs-card); font-weight: 500; line-height: 1.35; min-width: 0; overflow-wrap: anywhere; }
 .agent-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--live); }

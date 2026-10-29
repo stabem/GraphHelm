@@ -3,7 +3,7 @@
   "kind": "Extension",
   "metadata": {
     "id": "graphhelm-development-contracts",
-    "version": "0.1.25",
+    "version": "0.1.26",
     "publisher": "GraphHelm",
     "source": {
       "repository": "https://github.com/stabem/GraphHelm"
@@ -611,7 +611,7 @@
           "id": "host/claude",
           "kind": "host-adapter",
           "path": ".claude-plugin/plugin.json",
-      "sha256": "sha256:f53a0245d827b0073fec7f9ea9699a321b967222eee75af8421d4b525c045379",
+      "sha256": "sha256:952c0bfdf16e608e076c28fa0827e0d89afb32b57687fe446d6e7c627a88f182",
           "effects": [
             "host.discover"
           ],
@@ -627,7 +627,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-      "sha256": "sha256:6191696f87185995023d4023d5a7c2f5a93dcfca1c839dd86e3988c031f1e748",
+      "sha256": "sha256:209327edba8141003b62ccebc1a5e1445a152df8e3122e18a21092ae31b3c649",
           "effects": [
             "host.discover"
           ],

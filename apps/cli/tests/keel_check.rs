@@ -2196,6 +2196,67 @@ fn each_line_rule_blocks_its_break_and_passes_its_fix_in_each_language() {
     }
 }
 
+/// Contract (#2222): a `fetch(` whose options object spans many lines passes when `signal:` sits
+/// anywhere inside that call, and still blocks when the signal belongs to a different call below.
+/// Regression: a rule that reads a fixed number of lines flags the first and misses the second.
+/// Cost: three short `graphhelm keel check` runs on scratch repositories; offline.
+#[test]
+fn deadline_reads_the_whole_multiline_fetch_call() {
+    let guarded = concat!(
+        "const response = await fetch(config.url, {
+",
+        "  method: 'POST',
+",
+        "  headers: { a: 'b' },
+",
+        "  body: JSON.stringify(body),
+",
+        "  signal: AbortSignal.timeout(DEADLINE_MS),
+",
+        "});
+",
+    );
+    let repo = change(
+        "src/app.ts",
+        "// base
+",
+        &format!(
+            "// base
+{guarded}"
+        ),
+    );
+    let (code, reply) = run(repo.path(), None);
+    assert_eq!(line_rules(&reply), Vec::<String>::new(), "{reply}");
+    assert_eq!(code, 0, "{reply}");
+
+    let unguarded = concat!(
+        "const response = await fetch(config.url, {
+",
+        "  method: 'POST',
+",
+        "  headers: { a: 'b' },
+",
+        "  body: JSON.stringify(body),
+",
+        "});
+",
+        "const other = { signal: controller.signal };
+",
+    );
+    let repo = change(
+        "src/app.ts",
+        "// base
+",
+        &format!(
+            "// base
+{unguarded}"
+        ),
+    );
+    let (code, reply) = run(repo.path(), None);
+    assert_eq!(code, 2, "{reply}");
+    assert_eq!(line_rules(&reply), ["keel.rel.deadline"], "{reply}");
+}
+
 /// Contract (#1404): an excuse is honoured only in its exact form and is printed; an expired one,
 /// test code and a line that already existed never change the verdict. Regression: an excuse that
 /// silences any rule, a check that hides what it excused, or a rule that judges test or old code.

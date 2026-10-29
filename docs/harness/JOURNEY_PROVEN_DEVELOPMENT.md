@@ -344,10 +344,16 @@ is a backend flow; it may not mix in browser acts (`flow.observer_mixed`).
   kept list and a PATH without relative or in-project entries. Python runs with `-E -s -S -B`;
   PowerShell with `-NoProfile -NonInteractive`; node under its permission model
   (`--permission --allow-fs-read=<script directory>`), so a module required from outside the
-  script's directory, a child process, an addon or a write is refused. Not checked: the
-  content of a file a shell script names in an explicit `.`/`source` line (the line itself is in
-  the reviewed script), and a project-relative program that is a byte copy or hard link of an
-  interpreter under a neutral name; closing either needs a sandbox.
+  script's directory, a child process, an addon or a write is refused. A project-relative
+  program that is a native executable (PE, ELF or Mach-O, such as a byte copy or hard link of an
+  interpreter under a neutral name) is refused at run time as `flow.cli_program_binary`. A shell
+  script's `.`/`source` lines are followed, and the files they name in turn: each target must be
+  a literal relative path with a `/`, no `..` and no expansion, inside the script's own directory
+  (which the review checks whole); any other target, and any source from a project-root script,
+  is refused at run time as `flow.cli_script_sources`. Residual risk, not checked without a
+  sandbox: code a step reaches by other means than these, such as a shell script that `eval`s a
+  string or runs another program on files outside its directory, and a non-binary project
+  program whose `#!` line names an interpreter.
 
 Each screen's `expect` is checked against what the act that reached it observed: `status` (the
 HTTP status, exactly), `json` (`a.b.0=value` compares a field, `a.b` asserts it is present),

@@ -1,8 +1,9 @@
 """Stop gate (run in-process by `stop_hook.py`): before a Keel-carded change ends, the author reviews its own diff once.
 
-When the project has a Keel card and an uncommitted code diff, and no self-review record exists,
-the first Stop is blocked with the review checklist. The author answers by writing
-.graphhelm/self-review.json; the next Stop passes. A Stop that is already a hook continuation
+When the project has a Keel card and an uncommitted code diff, and no self-review record written
+after that card exists, the first Stop is blocked with the review checklist. The author answers by
+writing .graphhelm/self-review.json; the next Stop passes. A record older than the card (left by an
+earlier task in a reused checkout) counts as missing. A Stop that is already a hook continuation
 always passes, so the hook can never loop.
 """
 from pathlib import Path
@@ -20,7 +21,7 @@ REASON = (
     '3. Refusals: a refused input changes nothing and sends nothing; a test proves it.\n'
     '4. Tests: each new test drives the real code path, not a value the test built.\n'
     'Then write .graphhelm/self-review.json with {"checked": [{"input": ..., "result": ..., "fixed": true|false}], '
-    '"testsRun": [...]} and stop.')
+    '"testsRun": [...]} and stop. A record older than the current Keel card does not count.')
 
 
 def diff_present(root):
@@ -35,9 +36,11 @@ def diff_present(root):
 def decide(event, root):
     if event.get('stop_hook_active'):
         return None
-    if not (root / '.graphhelm/keel-card.json').is_file():
+    card = root / '.graphhelm/keel-card.json'
+    if not card.is_file():
         return None
-    if (root / '.graphhelm/self-review.json').is_file():
+    record = root / '.graphhelm/self-review.json'
+    if record.is_file() and record.stat().st_mtime_ns > card.stat().st_mtime_ns:
         return None
     if not diff_present(root):
         return None

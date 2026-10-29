@@ -55,6 +55,23 @@ class ReviewStopHook(unittest.TestCase):
         (self.repo / ".graphhelm/self-review.json").write_text('{"checked": []}', encoding="utf-8")
         self.assertIsNone(self.stop({}))
 
+    def test_record_older_than_the_card_blocks_like_a_missing_one(self):
+        # A reused checkout keeps the last task's record; a new card must not pass on it (#2239).
+        card = self.repo / ".graphhelm/keel-card.json"
+        record = self.repo / ".graphhelm/self-review.json"
+        record.write_text('{"checked": []}', encoding="utf-8")
+        os.utime(record, (1_000_000_000, 1_000_000_000))
+        os.utime(card, (1_000_000_100, 1_000_000_100))
+        (self.repo / "app.py").write_text("x = 2\n", encoding="utf-8")
+        self.assertIn("self-review.json", self.stop({}))
+        self.assertIsNone(self.stop({"stop_hook_active": True}))
+        # A record written in the same instant as the card is not after it.
+        os.utime(record, (1_000_000_100, 1_000_000_100))
+        self.assertIn("self-review.json", self.stop({}))
+        # The review written after the card passes.
+        os.utime(record, (1_000_000_200, 1_000_000_200))
+        self.assertIsNone(self.stop({}))
+
     def test_no_code_diff_or_no_card_passes(self):
         self.assertIsNone(self.stop({}))  # card only: .graphhelm changes are not a code diff
         (self.repo / "app.py").write_text("x = 2\n", encoding="utf-8")

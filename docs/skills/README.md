@@ -11,10 +11,10 @@ policy, certify evidence, or publish a graph. The Runtime's typed contracts and 
 controls retain those jobs.
 
 After changing a skill or any other file of a builtin package, run
-`python tools/reached-tests/plugin_version_guard.py --base origin/main --write`. It bumps the
-package version one patch above `origin/main` in `extension.json` and both `plugin.json` files,
-rewrites the contribution digests, and regenerates the package's canonical goldens under
-`core/protocols/tests/fixtures/canonical-goldens/`. A second run writes nothing. The source
+`python tools/reached-tests/plugin_version_guard.py --base origin/main --write`. It rewrites the
+contribution digests and regenerates the package's canonical goldens under
+`core/protocols/tests/fixtures/canonical-goldens/`; it leaves versions alone, because the version
+moves once, at release ([`docs/process/RELEASE.md`](../process/RELEASE.md)). A second run writes nothing. The source
 release file `extensions/releases/adoption-0.1.1.json` names no versions or digests, so it never
 changes for a skill edit.
 

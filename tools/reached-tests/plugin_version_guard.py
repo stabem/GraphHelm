@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Require a coherent plugin version increase when shipped plugin content changes.
+"""Keep plugin release manifests coherent; require the version increase only at release.
+
+A plugin PR (#2253) changes shipped content without touching versions: the check asks only that
+each changed group's manifests agree and do not go below `--base`. With `--release`, `--base` is
+the last release tag and every group whose shipped content changed since it must carry one
+agreeing, higher version. The release procedure is docs/process/RELEASE.md.
 
 `--write` regenerates the chain a skill change drags in (#1459 item 14), from the working tree:
-the version of each changed release group one patch above `--base` (unless it is already above
-it), every builtin extension's contribution digests in `extension.json`, and each package's
+with `--release` only, the version of each changed release group one patch above `--base` (unless
+it is already above it); always, every builtin extension's contribution digests in `extension.json`, and each package's
 canonical goldens under `core/protocols/tests/fixtures/canonical-goldens/` (#1459 item 16; the
 Rust cell `canonical_golden` stays the authority over those bytes). The source release file
 `extensions/releases/adoption-*.json` pins no version or digest, so it needs no rewrite. A
@@ -144,7 +149,7 @@ def _version_precedence(version):
     ), (-1,))
 
 
-def _group_check(repo, base, head, paths, roots, manifests):
+def _group_check(repo, base, head, paths, roots, manifests, release):
     shipped = [path for path in paths if path.startswith(roots) and not _is_docs_or_tests(path)]
     if not shipped:
         return True, None
@@ -167,8 +172,12 @@ def _group_check(repo, base, head, paths, roots, manifests):
     if len(set(before_versions)) != 1:
         path = manifests[next(i for i, version in enumerate(before_versions) if version != before_versions[0])]
         return False, f"mismatched base release manifests: {path} has {before_versions[manifests.index(path)]}"
+    if not release:
+        if _version_precedence(after[0][1]) < _version_precedence(before[0][1]):
+            return False, f"release version in {manifests[0]} went below {before_versions[0]}"
+        return True, f"PASS: shipped plugin content changed; release manifests agree on {after_versions[0]}"
     if _version_precedence(after[0][1]) <= _version_precedence(before[0][1]):
-        return False, f"bump the plugin version in {manifests[0]} (shipped plugin content changed)"
+        return False, f"bump the plugin version in {manifests[0]} (shipped plugin content changed since the release)"
     return True, f"PASS: shipped plugin content changed; release version {after_versions[0]} exceeds {before_versions[0]}"
 
 
@@ -177,14 +186,14 @@ def _absent(repo, commit, path):
                           creationflags=NO_WINDOW).returncode != 0
 
 
-def check(repo, base_ref, head_ref):
+def check(repo, base_ref, head_ref, release=False):
     """Return (passed, message), reading only committed blobs at the supplied refs."""
     repo = Path(repo).resolve()
     base, head = _commit(repo, base_ref), _commit(repo, head_ref)
     paths = _changed_paths(repo, base, head)
     messages = []
     for roots, manifests in (*GROUPS, *_extension_groups(repo, head)):
-        passed, message = _group_check(repo, base, head, paths, roots, manifests)
+        passed, message = _group_check(repo, base, head, paths, roots, manifests, release)
         if not passed:
             return False, message
         if message is not None:
@@ -253,13 +262,13 @@ def _worktree_changes(repo, base):
     return [path for path in changed + untracked if path]
 
 
-def write(repo, base_ref):
+def write(repo, base_ref, release=False):
     """Regenerate versions, contribution digests and goldens; return the files written."""
     repo = Path(repo).resolve()
     base = _commit(repo, base_ref)
     changed = _worktree_changes(repo, base)
     written = []
-    for roots, manifests in (*GROUPS, *_extension_groups(repo, "HEAD")):
+    for roots, manifests in (*GROUPS, *_extension_groups(repo, "HEAD")) if release else ():
         if not any(path.startswith(roots) and not _is_docs_or_tests(path) for path in changed):
             continue
         if all(_absent(repo, base, path) for path in manifests):
@@ -288,11 +297,13 @@ def main(argv=None):
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", help="the ref to check (required without --write)")
     parser.add_argument("--write", action="store_true",
-                        help="regenerate versions, extension digests and canonical goldens in the working tree")
+                        help="regenerate extension digests and canonical goldens (and versions with --release)")
+    parser.add_argument("--release", action="store_true",
+                        help="release step: --base is the last release tag and changed groups need a higher version")
     args = parser.parse_args(argv)
     if args.write:
         try:
-            written = write(args.repo, args.base)
+            written = write(args.repo, args.base, args.release)
         except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
             print(f"plugin version guard --write failed: {exc}")
             return 1
@@ -301,7 +312,7 @@ def main(argv=None):
     if args.head is None:
         parser.error("--head is required without --write")
     try:
-        passed, message = check(args.repo, args.base, args.head)
+        passed, message = check(args.repo, args.base, args.head, args.release)
     except (OSError, subprocess.CalledProcessError) as exc:
         message = f"plugin version guard could not read committed Git refs: {exc}"
         passed = False

@@ -33,7 +33,7 @@ does not mean task work has started. The orchestrator never takes a lane's ident
    agents at once than the roster says.
    Within the roster, pick the cheapest model and effort that can do each subagent's task, and never
    go above it:
-   - Mechanical (rebase plus `plugin_version_guard.py --write`, post-merge cleanup, rerunning a named
+   - Mechanical (rebase plus `plugin_version_guard.py --write` for digests and goldens, post-merge cleanup, rerunning a named
      test set, a status check): smallest model, low effort.
    - Bounded implementation, or a blind review that reuses the author's receipt: mid model, low or
      medium effort.

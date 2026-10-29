@@ -611,7 +611,7 @@
           "id": "host/claude",
           "kind": "host-adapter",
           "path": ".claude-plugin/plugin.json",
-      "sha256": "sha256:ddc3d5723997634da808a3caa26db46f50982efbd1b66fede0b4f55f4776a8f2",
+      "sha256": "sha256:f53a0245d827b0073fec7f9ea9699a321b967222eee75af8421d4b525c045379",
           "effects": [
             "host.discover"
           ],
@@ -627,7 +627,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-      "sha256": "sha256:481382c7f773990e7d0e2ba080fadbed2a0316ef0bf16f52c463cf670da5d640",
+      "sha256": "sha256:6191696f87185995023d4023d5a7c2f5a93dcfca1c839dd86e3988c031f1e748",
           "effects": [
             "host.discover"
           ],
@@ -953,7 +953,7 @@
           "id": "skill/implement",
           "kind": "skill",
           "path": "skills/implement/SKILL.md",
-          "sha256": "sha256:0dc56ef9bd0e9db2af004d2a415213c40864561eb367748838bb1655077ded34",
+          "sha256": "sha256:c8b5651779b298ec7d8541c4e5c06c7d454cf2a59f92bebf684211bee03fc269",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},

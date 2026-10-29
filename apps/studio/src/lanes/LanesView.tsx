@@ -260,13 +260,14 @@ async function readPresence(runtime: Runtime, ids: readonly string[], prior: Pre
   return index;
 }
 
-function Card({ agent, origins, selected, serves, stripe, unlinked, last, onPick }: { agent: Agent; origins: string[] | null; selected: boolean; serves: string | null; stripe: string | null; unlinked: boolean; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
+export function Card({ agent, origins, selected, serves, stripe, unlinked, last, onPick }: { agent: Agent; origins: string[] | null; selected: boolean; serves: string | null; stripe: string | null; unlinked: boolean; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
   const task = agent.task;
   const tone = idleTone(agent.idleMinutes);
   const asking = agent.questions[0];
   const aged = stepAged(agent.stepMinutes);
   return (
-    <li style={stripe === null ? undefined : ({ "--rq": stripe } as CSSProperties)} className={`agent-card${stripe === null ? "" : " rq"}${selected ? " selected" : ""}${asking ? " asking" : ""}${aged ? " aged" : ""}`}>
+    // #2233: the whole card picks its lane for the panel, not only the name button above.
+    <li onClick={() => onPick(agent.lane)} style={stripe === null ? undefined : ({ "--rq": stripe } as CSSProperties)} className={`agent-card${stripe === null ? "" : " rq"}${selected ? " selected" : ""}${asking ? " asking" : ""}${aged ? " aged" : ""}`}>
       <button type="button" className="b agent-name" aria-pressed={selected} onClick={() => onPick(agent.lane)}>
         <span className={`agent-dot ${asking ? "asks" : tone === "late" ? "quiet" : "on"}`} />
         <strong>{agent.lane}</strong>

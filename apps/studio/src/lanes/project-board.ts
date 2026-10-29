@@ -186,27 +186,32 @@ export interface RunRequests {
   requests: readonly OwnerRequest[];
 }
 
-/** #2230: an owner request read across the project's executions, with the executions it was read in. */
-export type ProjectRequest = OwnerRequest & { runs: string[] };
+/** #2230: an owner request read across the project's executions. `key` is `<execution>/<requestId>`
+ * of the first execution that served it (a request id is unique only inside one execution); `runs`
+ * names every execution it was read in. */
+export type ProjectRequest = OwnerRequest & { key: string; runs: string[] };
 
-const STATUS_RANK: Record<OwnerRequest["status"], number> = { open: 0, in_progress: 1, delivered: 2 };
 
-/** #2230: the requests of every execution of one project as one list, oldest first. The Runtime keys
- * a request by its id and only admits a link in the execution that recorded the request, so the same
- * id read in two executions is one ask: it is listed once, its issues are the union (each issue
- * once, its slices once per PR and step), it is dated by its earliest record and `runs` names every
- * execution it was read in. Nothing is invented: a request no execution served is not listed. */
+/** Two records are one ask only when everything that names it agrees: id, words, recorder, time. */
+const sameAsk = (a: OwnerRequest, b: OwnerRequest) =>
+  a.requestId === b.requestId && a.ask === b.ask && a.recordedBy === b.recordedBy && (a.recordedAt ?? null) === (b.recordedAt ?? null) && a.recordedAt !== undefined;
+
+/** #2230: the requests of every execution of one project as one list, oldest first, keyed by
+ * (execution, requestId) like the slices of `combineBoards`. A request id is chosen by its recorder
+ * and checked only inside one execution, so two executions may reuse an id for different asks: they
+ * stay two requests. Records from two executions are joined only when they are provably the same
+ * ask (same id, ask text, recorder and record time); the joined ask has the union of its issues
+ * (each issue once, each slice once) and `runs` lists both executions. Nothing is invented. */
 export function combineRequests(parts: readonly RunRequests[]): ProjectRequest[] {
-  const byId = new Map<string, ProjectRequest>();
+  const out: ProjectRequest[] = [];
   for (const { executionId, requests } of parts) {
     for (const request of requests) {
-      const prior = byId.get(request.requestId);
+      const prior = out.find((row) => !row.runs.includes(executionId) && sameAsk(row, request));
       if (prior === undefined) {
-        byId.set(request.requestId, { ...request, issues: request.issues.map((row) => ({ ...row, slices: [...row.slices] })), runs: [executionId] });
+        out.push({ ...request, issues: request.issues.map((row) => ({ ...row, slices: [...row.slices] })), key: `${executionId}/${request.requestId}`, runs: [executionId] });
         continue;
       }
-      if (!prior.runs.includes(executionId)) prior.runs.push(executionId);
-      if (at(request.recordedAt) < at(prior.recordedAt)) { prior.recordedAt = request.recordedAt; prior.ask = request.ask; prior.title = request.title; }
+      prior.runs.push(executionId);
       for (const row of request.issues) {
         const same = prior.issues.find((issue) => issue.issue === row.issue);
         if (same === undefined) { prior.issues.push({ ...row, slices: [...row.slices] }); continue; }
@@ -214,14 +219,19 @@ export function combineRequests(parts: readonly RunRequests[]): ProjectRequest[]
           if (!same.slices.some((own) => own.pr === slice.pr && own.step === slice.step && own.merged === slice.merged)) same.slices.push(slice);
         }
       }
-      // Status follows the furthest execution only when every issue is known there; otherwise the
-      // union is in progress once any execution moved it.
-      if (STATUS_RANK[request.status] > STATUS_RANK[prior.status]) prior.status = request.status === "delivered" && prior.issues.length > request.issues.length ? "in_progress" : request.status;
+      prior.status = joinedStatus(prior.issues);
       prior.dispatchedTo ??= request.dispatchedTo;
       if (request.dispatchLapsed) prior.dispatchLapsed = [...new Set([...(prior.dispatchLapsed ?? []), ...request.dispatchLapsed])];
     }
   }
-  return [...byId.values()].sort((a, b) => at(a.recordedAt) - at(b.recordedAt) || a.sequence - b.sequence || a.requestId.localeCompare(b.requestId));
+  return out.sort((a, b) => at(a.recordedAt) - at(b.recordedAt) || a.sequence - b.sequence || a.key.localeCompare(b.key));
+}
+
+/** The Runtime's rule (core/execution/src/requests.rs `status`) over the joined issues: no issue is
+ * open, every issue with a merged slice is delivered, anything else is in progress. */
+export function joinedStatus(issues: OwnerRequest["issues"]): OwnerRequest["status"] {
+  if (issues.length === 0) return "open";
+  return issues.every((row) => row.slices.some((slice) => slice.merged)) ? "delivered" : "in_progress";
 }
 
 /** #2230: the execution a slice of a combined board belongs to, else the one execution read. */

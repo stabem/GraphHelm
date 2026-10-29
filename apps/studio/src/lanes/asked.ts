@@ -10,6 +10,8 @@ export type AskedTone = "asks" | "quiet" | "merge" | "on";
 /** One owner request as the WHAT I ASKED column draws it. */
 interface AskedCard {
   requestId: string;
+  /** #2230: the card's identity; `<execution>/<requestId>` when read across executions. */
+  key: string;
   /** "21 Oct 18:30" from the Runtime's `recordedAt`; `null` when the Runtime served none. */
   when: string | null;
   title: string;
@@ -83,6 +85,7 @@ export function askedCards(requests: readonly OwnerRequest[], all: readonly Agen
     const asks = working.some((agent) => agent.questions.length > 0);
     return {
       requestId: request.requestId,
+      key: requestKey(request),
       when: askedWhen(request.recordedAt, now),
       title: request.title ?? request.ask,
       agents: working.map((agent) => ({ lane: agent.lane, tone: tone(agent) })),
@@ -99,4 +102,9 @@ export function askedCards(requests: readonly OwnerRequest[], all: readonly Agen
 /** The column's order: working first, not started next, delivered apart (collapsed by the view). */
 export function arrangeAsked(cards: readonly AskedCard[], now: number): Arranged<AskedCard> {
   return arrangeRequests(cards, (card) => ({ key: card.chip.key, at: card.at }), now);
+}
+
+/** #2230: a request's identity in a list: its execution-scoped key when read across executions. */
+export function requestKey(request: OwnerRequest & { key?: string }): string {
+  return request.key ?? request.requestId;
 }

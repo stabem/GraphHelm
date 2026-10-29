@@ -7,6 +7,7 @@ import { idleText, stepAged } from "../lanes/board";
 import { RequestProgress } from "./RequestProgress";
 import { Loading, ReadFailure } from "../states/ViewState";
 import { cards, KANBAN, KANBAN_NAME, requestColor, type OwnerRequest } from "./requests";
+import { requestKey } from "../lanes/asked";
 import { combineBoards, combineRequests, taskRun, type ProjectRequest } from "../lanes/project-board";
 import { arrangeGraph, COLUMN_COLOR, counts, detail, blocks, graphRequests, journeyCards, journeyMeta } from "./layout";
 
@@ -137,7 +138,7 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof }: P
                 </div>
                 <ul aria-label="Owner requests" className="gv-requests">
                   {graph.map((row) => (
-                    <li key={row.request.requestId} data-chip={row.chip.key} aria-label={row.request.title ?? row.request.ask} className="gv-request" style={{ "--h": `${row.height}px` } as CSSProperties}>
+                    <li key={requestKey(row.request)} data-chip={row.chip.key} aria-label={row.request.title ?? row.request.ask} className="gv-request" style={{ "--h": `${row.height}px` } as CSSProperties}>
                       <svg aria-hidden="true" className="gv-links" viewBox={`0 0 1040 ${row.height}`} preserveAspectRatio="none" height={row.height}>
                         {row.links.map((link, index) => <path key={index} vectorEffect="non-scaling-stroke" d={link.d} fill="none" stroke={link.color} strokeWidth="1.5" strokeDasharray={link.dashed ? "4 4" : undefined} />)}
                       </svg>

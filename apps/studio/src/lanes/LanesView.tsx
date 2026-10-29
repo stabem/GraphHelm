@@ -8,7 +8,7 @@ import { Empty, Loading, ReadFailure } from "../states/ViewState";
 import { readCollapsed, writeCollapsed } from "./panel-rail";
 import { LanesPanels } from "./LanesPanels";
 import { RequestProgress } from "../graph/RequestProgress";
-import { agentsFor, arrangeAsked, askedCards, requestColors, requestTitles, unlinkedIssue } from "./asked";
+import { agentsFor, arrangeAsked, askedCards, requestKey, requestColors, requestTitles, unlinkedIssue } from "./asked";
 import type { OwnerRequest } from "../graph/requests";
 import { BoardColumn } from "./BoardColumn";
 import { combineBoards, combineRequests, emptyPresence, foldPresence, homeRun, presence, withPresence, type PresenceIndex, type ProjectBoard } from "./project-board";
@@ -128,7 +128,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   const asking = all.filter((agent) => agent.questions.length > 0);
   const idle = all.filter((agent) => agent.idleMinutes === null || agent.idleMinutes >= 30);
   const working = all.filter((agent) => agent.task !== null && agent.questions.length === 0 && agent.idleMinutes !== null && agent.idleMinutes < 30);
-  const pickedRequest = requests?.find((row) => row.requestId === request) ?? null;
+  const pickedRequest = requests?.find((row) => requestKey(row) === request) ?? null;
   const forRequest = pickedRequest === null ? null : new Set(agentsFor(pickedRequest, all, board.tasks).map((agent) => agent.lane));
   const shown = (filter === "reply" ? asking : filter === "idle" ? idle : all).filter((agent) => forRequest === null || forRequest.has(agent.lane));
   const asked = askedCards(requests ?? [], all, board.tasks, journeys ?? [], new Set(board.stalls.map((stall) => stall.key)), new Date(Date.parse(board.now) || Date.now()));
@@ -175,8 +175,8 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
               {requests !== null && asked.length === 0 && <span className="none">No request recorded yet.</span>}
               <ul aria-label="Owner requests">
                 {shownAsked.map((card) => (
-                  <li key={card.requestId}>
-                    <button type="button" style={{ "--rq": card.color } as CSSProperties} className="b asked-card rq" aria-pressed={card.requestId === request} onClick={() => setRequest((prior) => (prior === card.requestId ? null : card.requestId))}>
+                  <li key={card.key}>
+                    <button type="button" style={{ "--rq": card.color } as CSSProperties} className="b asked-card rq" aria-pressed={card.key === request} onClick={() => setRequest((prior) => (prior === card.key ? null : card.key))}>
                       {card.when !== null && <span className="mono asked-when">{card.when}</span>}
                       <span className="asked-title">{card.title}</span>
                       <RequestProgress progress={card.progress} />

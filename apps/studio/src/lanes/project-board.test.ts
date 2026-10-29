@@ -129,17 +129,37 @@ describe("project graph (#2230)", () => {
     expect(merged.tasks.map((slice) => taskRun(slice, merged.runs))).toEqual(["zuvemo-desenvolvimento-ops", "zuvemo-sustentacao-ops"]);
   });
 
-  it("one request id read in two runs is one ask with the union of its issues, so its agents join", () => {
+  it("the same ask mirrored in two runs is one card with the union of its issues, so its agents join", () => {
     const twice = [
-      { executionId: "graphhelm-owner", requests: [ask("r1", [], "2026-10-28T09:00:00Z")] },
+      { executionId: "graphhelm-owner", requests: [ask("r1", [])] },
       { executionId: "zuvemo-desenvolvimento-ops", requests: [ask("r1", [979])] },
     ];
     const combined = combineRequests(twice);
     expect(combined).toHaveLength(1);
     expect(combined[0]!.issues.map((row) => row.issue)).toEqual([979]);
-    expect(combined[0]!.recordedAt).toBe("2026-10-28T09:00:00Z");
+    expect(combined[0]!.key).toBe("graphhelm-owner/r1");
     expect(combined[0]!.runs).toEqual(["graphhelm-owner", "zuvemo-desenvolvimento-ops"]);
     const all = agents(combineBoards([{ executionId: "zuvemo-desenvolvimento-ops", board: devBoard }]));
     expect(agentsFor(combined[0]!, all, devBoard.tasks).map((agent) => agent.lane)).toEqual(["openbot-jo"]);
+  });
+
+  it("two different asks sharing an id in two runs stay two cards, each with its own words and issues", () => {
+    const other = { ...ask("r1", [981], "2026-10-28T11:00:00Z"), ask: "another ask" };
+    const combined = combineRequests([
+      { executionId: "zuvemo-desenvolvimento-ops", requests: [ask("r1", [979])] },
+      { executionId: "zuvemo-sustentacao-ops", requests: [other] },
+    ]);
+    expect(combined.map((row) => [row.key, row.ask, row.issues.map((issue) => issue.issue)])).toEqual([
+      ["zuvemo-desenvolvimento-ops/r1", "ask r1", [979]],
+      ["zuvemo-sustentacao-ops/r1", "another ask", [981]],
+    ]);
+  });
+
+  it("a joined ask is delivered only when every joined issue has a merged slice", () => {
+    const merged = { ...ask("r1", []), status: "delivered" as const, issues: [{ issue: 979, slices: [{ pr: 980, step: "merged", merged: true }] }] };
+    const open = { ...ask("r1", []), issues: [{ issue: 981, slices: [{ pr: 982, step: "review", merged: false }] }] };
+    expect(combineRequests([{ executionId: "a", requests: [merged] }, { executionId: "b", requests: [open] }])[0]!.status).toBe("in_progress");
+    const done = { ...open, issues: [{ issue: 981, slices: [{ pr: 982, step: "merged", merged: true }] }] };
+    expect(combineRequests([{ executionId: "a", requests: [merged] }, { executionId: "b", requests: [done] }])[0]!.status).toBe("delivered");
   });
 });

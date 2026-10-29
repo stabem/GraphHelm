@@ -51,9 +51,12 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 <button class="b" onClick="{{fReply}}" style="padding: 8px 12px; border-radius: 10px; border: 1px solid {{replyEdge}}; background: #241010; color: #ff9b9b">2 wait for a reply</button>
 <button class="b" onClick="{{fIdle}}" style="padding: 8px 12px; border-radius: 10px; border: 1px solid {{idleEdge}}; background: #24170e; color: #ff8a3d">2 idle over 30 min</button>
 <span style="padding: 8px 12px; border-radius: 10px; background: #10201a; color: #3ddc97">4 working</span>
+<!-- #2228 (design awaiting owner approval): every run of the project is read by default; the select narrows to one run (a ?run= link opens it pre-selected). -->
+<label style="display: inline-flex; gap: 8px; align-items: center; font-size: 11px; color: #8a8a96">Runs <select aria-label="Run" style="background: #151517; color: #f5f5f6; border: 1px solid #2a2a30; border-radius: 8px; padding: 6px 8px"><option>All 4 runs</option><option>zuvemo-produto-experiencia-ops</option><option>zuvemo-desenvolvimento-ops</option><option>zuvemo-sustentacao-ops</option><option>graphhelm-owner</option></select></label>
 <span style="flex: 1"></span>
 <span class="mono" style="font-size: 11px; color: #8a8a96">updated 21:24:10 · live</span>
 </div>
+<p style="margin: 0; font-size: 11px; color: #8a8a96">4 runs of this project · only what the Runtime received is shown; an agent that records nowhere here is not on the board.</p>
 
 <!-- #1991 follow-up: columns with cards share the width; an empty column folds to a 44px strip (dot, count, name written down the strip), so a 1440px board never squeezes card text. -->
 <!-- QA fix 1: .kb-board stacks on a phone (see helmet rules) -->
@@ -92,6 +95,9 @@ a{color:#ff8a3d}a:hover{color:#ffb27f}
 <span style="flex: 1"></span>
 <span class="mono" style="font-size: 11px; color: {{a.idleC}}">{{a.idle}}</span>
 </div>
+<!-- #2228: an agent that only declared presence (no slice) is a Backlog card with "no task" and this same line, e.g. "stale · in zuvemo-produto-experiencia-ops"; a lane that never declared presence and holds nothing stays off the board. -->
+<!-- #2228: presence from record times only (working / idle / stale / unknown) and the run(s) the agent recorded in, newest first. -->
+<span class="mono" style="font-size: 11px; color: #8a8a96">working · in zuvemo-produto-experiencia-ops</span>
 <span><span class="mono" style="color: #a2a2ad">#{{a.issue}}</span> {{a.task}}</span>
 <span style="font-size: 11px; color: #ff8a3d; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2">for: {{a.reqShort}}</span>
 <div style="display: flex; gap: 4px; align-items: center"><sc-for list="{{a.blocks}}" as="q"><span class="{{q.k}}" style="width: 9px; height: 9px; border-radius: 2px; background: {{q.c}}"></span></sc-for></div>

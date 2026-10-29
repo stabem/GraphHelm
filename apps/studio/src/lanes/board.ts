@@ -45,6 +45,7 @@ export const awaitsReview = (task: BoardTask) =>
  * new claim opens a slice and the lane is no longer finished. */
 export function finishedLanes(board: TasksBoard, includeRequestOnly = true): Set<string> {
   const finished = new Set<string>();
+  const declared = new Set("declared" in board && Array.isArray(board.declared) ? (board.declared as string[]) : []);
   const owners = new Set(board.tasks.map((task) => task.lane).filter((lane): lane is string => !!lane));
   for (const lane of owners) {
     const newest = board.tasks.filter((task) => task.lane === lane).sort((a, b) => b.lastSequence - a.lastSequence)[0];
@@ -56,6 +57,8 @@ export function finishedLanes(board: TasksBoard, includeRequestOnly = true): Set
   // board. It is keyed on what the lane holds, not on missing kind/model (#1986).
   for (const row of includeRequestOnly ? board.liveness.lanes : []) {
     const touched = board.tasks.some((task) => task.lane === row.lane || task.currentReviewer === row.lane || task.reassignedTo === row.lane);
+    // #2228: a lane that declared presence is an agent of the project even with nothing open.
+    if (declared.has(row.lane)) continue;
     if (!touched && !row.owes && !board.waiting.some((ask) => ask.lane === row.lane)) finished.add(row.lane);
   }
   return finished;

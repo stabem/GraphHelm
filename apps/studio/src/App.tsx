@@ -12,6 +12,7 @@ import { StartRun } from "./start-run/StartRun";
 import { Topbar } from "./topbar/Topbar";
 import { ProofView } from "./proof/ProofView";
 import { LanesView } from "./lanes/LanesView";
+import { lanesRuns } from "./lanes/project-board";
 import { GraphView } from "./views/Views";
 import { RequestsView } from "./graph/RequestsView";
 import { ViewBoundary } from "./views/ViewBoundary";
@@ -211,7 +212,7 @@ function Shell({ session, projects, closed, route, go, pickJourney, onRefused }:
             )}
           </GraphView>
         )}
-        {route.view === "lanes" && <LanesView runtime={runtime} executionId={runId} journeys={journeys} onStart={startRun} />}
+        {route.view === "lanes" && <LanesView runtime={runtime} runs={lanesRuns(runs, route.run ?? null)} choices={runs?.map((row) => row.executionId) ?? []} filter={route.run ?? null} onFilter={(id) => go({ ...route, run: id })} journeys={journeys} onStart={startRun} />}
         {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={runId} onRan={readJourneys} initial={route.journey ?? null} onPicked={pickJourney} />}
         </>}
         </ViewBoundary>

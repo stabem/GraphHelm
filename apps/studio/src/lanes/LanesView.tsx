@@ -11,6 +11,7 @@ import { RequestProgress } from "../graph/RequestProgress";
 import { agentsFor, arrangeAsked, askedCards, requestColors, requestTitles, unlinkedIssue } from "./asked";
 import type { OwnerRequest } from "../graph/requests";
 import { BoardColumn } from "./BoardColumn";
+import { combineBoards, emptyPresence, foldPresence, homeRun, presence, withPresence, type PresenceIndex, type ProjectBoard } from "./project-board";
 import { agents, blocks, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
 /** How often the board is read again: one tasks read, plus one activity read per lane whose last
@@ -32,7 +33,12 @@ const askedTo = (waitsOn: string) => (waitsOn === OWNER_ADDRESS ? "you" : waitsO
 
 interface Props {
   runtime: Runtime;
-  executionId: string | null;
+  /** #2228: the executions read: every one of the project, or the one `?run=` names. */
+  runs: string[];
+  /** The project's executions the filter offers, and the one picked (`null`: all of them). */
+  choices: string[];
+  filter: string | null;
+  onFilter: (executionId: string | null) => void;
   journeys: JourneyFlow[] | null;
   /** Opens the team-run composer; null when a run is already open or the Studio cannot start one. */
   onStart?: (() => void) | null;
@@ -40,11 +46,14 @@ interface Props {
 
 /** The Lanes region (docs/design/studio/Lanes.dc.html): the filters, one card per agent in its
  * column, and the selected agent's panel with its questions, the reply box and its last actions. */
-export function LanesView({ runtime, executionId, journeys, onStart = null }: Props) {
+export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter, journeys, onStart = null }: Props) {
+  const key = JSON.stringify(runs);
+  // One execution reads as before; several read as one board whose cards name their executions.
+  const executionId = runs.length === 1 ? runs[0] : null;
   // #1934: the agent panel folds to a 40px rail; the choice is kept per viewer.
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const toggle = () => setCollapsed((prior) => { writeCollapsed(!prior); return !prior; });
-  const [board, setBoard] = useState<TasksBoard | null>(null);
+  const [board, setBoard] = useState<TasksBoard | ProjectBoard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -55,6 +64,8 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
   const [request, setRequest] = useState<string | null>(null);
   const [actions, setActions] = useState<Record<string, { at: string | null; rows: LaneAction[] }>>({});
   const seen = useRef<Record<string, string | null>>({});
+  // #2228: who declared presence in the project's runs, read incrementally from each run's events.
+  const presenceIndex = useRef<PresenceIndex>(emptyPresence());
   const replyBox = useRef<HTMLTextAreaElement>(null);
   // #1837: the request each lane has in flight or that last failed, kept across panel switches so
   // a resend reuses its id and bytes.
@@ -66,18 +77,27 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
   const [done, setDone] = useState<{ lane: string; word: string; at: string }[]>([]);
 
   const read = useCallback(async () => {
-    if (executionId === null) return;
+    const ids = JSON.parse(key) as string[];
+    if (ids.length === 0) return;
     // An older Runtime without the requests route leaves the column empty, never the board.
-    runtime.requests(executionId).then(setRequests, () => setRequests((prior) => prior ?? []));
+    Promise.allSettled(ids.map((id) => runtime.requests(id))).then((rows) => setRequests(rows.flatMap((row) => (row.status === "fulfilled" ? row.value : []))));
     try {
-      const next = await runtime.board(executionId);
+      let next: TasksBoard | ProjectBoard;
+      if (ids.length === 1) next = await runtime.board(ids[0]);
+      else {
+        const combined = combineBoards(await Promise.all(ids.map(async (id) => ({ executionId: id, board: await runtime.board(id) }))));
+        presenceIndex.current = await readPresence(runtime, ids, presenceIndex.current);
+        next = withPresence(combined, presenceIndex.current);
+      }
       setBoard(next);
       setError(null);
       // Each lane's log is read again only when its last record moved.
       for (const agent of agents(next)) {
         if (agent.lane in seen.current && seen.current[agent.lane] === agent.lastRecordAt) continue;
         seen.current[agent.lane] = agent.lastRecordAt;
-        runtime.laneActivity(executionId, agent.lane, LAST_ACTIONS).then(
+        const home = ids.length > 1 ? homeRun(next as ProjectBoard, agent.lane) : ids[0];
+        if (home === null) continue;
+        runtime.laneActivity(home, agent.lane, LAST_ACTIONS).then(
           (rows) => setActions((prior) => ({ ...prior, [agent.lane]: { at: agent.lastRecordAt, rows } })),
           () => { delete seen.current[agent.lane]; },
         );
@@ -85,7 +105,7 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "The board could not be read.");
     }
-  }, [runtime, executionId]);
+  }, [runtime, key]);
 
   // The first card shown stays selected while the board moves under it (a reply takes it out of
   // "wait for a reply" but the panel stays on it).
@@ -100,8 +120,8 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
     return () => clearInterval(timer);
   }, [read]);
 
-  if (executionId === null) return <section id="panel-lanes" aria-label="Lanes" className="view"><Empty title="No work yet" hint="Lanes appear here once a team picks up a task." onStart={onStart} /></section>;
-  if (board === null) return <section id="panel-lanes" aria-label="Lanes" className="view">{error === null ? <Loading text="Reading the lanes…" /> : <ReadFailure what="lanes list" route={`/v1/executions/${executionId}/tasks`} message={error} onRetry={() => void read()} />}</section>;
+  if (runs.length === 0) return <section id="panel-lanes" aria-label="Lanes" className="view"><Empty title="No work yet" hint="Lanes appear here once a team picks up a task." onStart={onStart} /></section>;
+  if (board === null) return <section id="panel-lanes" aria-label="Lanes" className="view">{error === null ? <Loading text="Reading the lanes…" /> : <ReadFailure what="lanes list" route={`/v1/executions/${runs.join(",")}/tasks`} message={error} onRetry={() => void read()} />}</section>;
 
   const all = agents(board);
   const asking = all.filter((agent) => agent.questions.length > 0);
@@ -135,8 +155,18 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
           <button type="button" className="b filter reply" aria-pressed={filter === "reply"} onClick={() => setFilter("reply")}>{asking.length} wait for a reply</button>
           <button type="button" className="b filter idle" aria-pressed={filter === "idle"} onClick={() => setFilter("idle")}>{idle.length} idle over 30 min</button>
           <span className="filter working">{working.length} working</span>
+          {choices.length > 1 && (
+            <label className="run-filter">
+              <span>Runs</span>
+              <select aria-label="Run" value={runFilter ?? ""} onChange={(event) => onFilter(event.target.value === "" ? null : event.target.value)}>
+                <option value="">All {choices.length} runs</option>
+                {[...new Set([...choices, ...(runFilter === null ? [] : [runFilter])])].map((id) => <option key={id} value={id}>{id}</option>)}
+              </select>
+            </label>
+          )}
           {error !== null && <span className="error">{error}</span>}
         </div>
+        {"origins" in board && <p className="lanes-scope">{board.runs.length} runs of this project · only what the Runtime received is shown; an agent that records nowhere here is not on the board.</p>}
         <ul className="board with-asked" aria-label="Agent board">
           <li className="board-column asked">
             <section aria-label="What I asked">
@@ -171,7 +201,7 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
             return (
               <BoardColumn key={name} name={name} label={COLUMN_NAME[name]} count={cards.length}>
                 <ul aria-label={COLUMN_NAME[name]}>
-                  {cards.map((agent) => <Card key={agent.lane} agent={agent} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} stripe={stripes.get(agent.lane) ?? null} unlinked={!serves.has(agent.lane) && unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
+                  {cards.map((agent) => <Card key={agent.lane} agent={agent} origins={"origins" in board ? board.origins[agent.lane] ?? [] : null} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} stripe={stripes.get(agent.lane) ?? null} unlinked={!serves.has(agent.lane) && unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
                 </ul>
               </BoardColumn>
             );
@@ -183,7 +213,7 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
             </li>
           )}
         </ul>
-        <LanesPanels runtime={runtime} executionId={executionId} board={board} requests={requests ?? []} actions={actions} onAnswer={(lane) => pick(lane, true)} onSent={read} />
+        {executionId === null ? <p className="lanes-scope">Pick one run to see and act on its needs.</p> : <LanesPanels runtime={runtime} executionId={executionId} board={board} requests={requests ?? []} actions={actions} onAnswer={(lane) => pick(lane, true)} onSent={read} />}
       </div>
       {panelAgent !== null && collapsed && (
         <aside aria-label="Agent" className="agent-rail">
@@ -196,7 +226,7 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
           onCollapse={toggle}
           key={panelAgent.lane}
           runtime={runtime}
-          executionId={executionId}
+          executionId={executionId ?? ("origins" in board ? homeRun(board, panelAgent.lane) : null) ?? runs[0]}
           agent={panelAgent}
           actions={actions[panelAgent.lane]?.rows ?? null}
           journeys={journeys}
@@ -211,7 +241,25 @@ export function LanesView({ runtime, executionId, journeys, onStart = null }: Pr
   );
 }
 
-function Card({ agent, selected, serves, stripe, unlinked, last, onPick }: { agent: Agent; selected: boolean; serves: string | null; stripe: string | null; unlinked: boolean; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
+/** Pages each run's events past what was already folded; bounded per read so a long history is
+ * caught up over several polls. A run whose events cannot be read keeps its last fold. */
+const EVENTS_PAGE = 1000;
+const PAGES_PER_READ = 10;
+async function readPresence(runtime: Runtime, ids: readonly string[], prior: PresenceIndex): Promise<PresenceIndex> {
+  let index = prior;
+  for (const id of ids) {
+    for (let page = 0; page < PAGES_PER_READ; page += 1) {
+      const after = index.cursor[id] ?? 0;
+      let read: { events: Parameters<typeof foldPresence>[2]; head: number };
+      try { read = await runtime.events(id, after, EVENTS_PAGE); } catch { break; }
+      index = foldPresence(index, id, read.events);
+      if (read.events.length === 0 || (index.cursor[id] ?? 0) >= read.head) break;
+    }
+  }
+  return index;
+}
+
+function Card({ agent, origins, selected, serves, stripe, unlinked, last, onPick }: { agent: Agent; origins: string[] | null; selected: boolean; serves: string | null; stripe: string | null; unlinked: boolean; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
   const task = agent.task;
   const tone = idleTone(agent.idleMinutes);
   const asking = agent.questions[0];
@@ -226,6 +274,8 @@ function Card({ agent, selected, serves, stripe, unlinked, last, onPick }: { age
         <span role="group" aria-label="Agent kind" className="mono agent-kind">{[agent.kind, agent.model].filter((part) => part !== null).join(" · ")}</span>
       )}
       <span role="group" aria-label="Idle time" className={`mono idle ${tone}`}>{idleText(agent.idleMinutes)}</span>
+      {origins !== null && <span role="group" aria-label="Presence" className={`mono presence ${presence(agent.idleMinutes, task !== null)}`}>{presence(agent.idleMinutes, task !== null)}</span>}
+      {origins !== null && origins.length > 0 && <span role="group" aria-label="Recorded in" className="mono origin">in {origins.join(", ")}</span>}
       {task !== null && agent.stepMinutes !== null && (
         <span role="group" aria-label="Time in step" className={`mono step-age${aged ? " aged" : ""}`}>{task.step} {idleText(agent.stepMinutes)}</span>
       )}

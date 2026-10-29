@@ -27,6 +27,8 @@ only after a release, or after a reinstall from a checkout.
 3. Move the entries of `docs/releases/UNRELEASED.md` into `docs/releases/<version>.md`; leave
    `UNRELEASED.md` with its headings only.
 4. Bump the workspace version in `Cargo.toml` (`[workspace.package] version`) to `<version>`.
+   Patch by default; minor when a public contract changes (a new CLI command or flag, an
+   event/schema/API change, or a removed surface). Same version for Cargo and the tag.
 5. Bump each plugin and builtin extension group whose shipped content changed since the tag:
    `python tools/reached-tests/plugin_version_guard.py --base <last tag> --write --release`.
 6. Prove it: `python tools/reached-tests/plugin_version_guard.py --base <last tag> --head HEAD --release`

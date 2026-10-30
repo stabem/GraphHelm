@@ -84,6 +84,16 @@ CLI_COMMAND_WORDS = {
     "wake_wait": (("wake-wait",),),
     "workspace_merged": (("--merged-branch",),),
 }
+# INSTALL.md, its script and the commands the walk runs (`init`, `serve`, `graph validate`, plus the
+# files every command shares) are observed by walking the page in a throwaway project.
+INSTALL_OBSERVER = ".graphhelm/fixtures/install-first-use/test_run.py"
+INSTALL_REACHERS = ("INSTALL.md", "install/", "examples/graphs/software-feature.yaml",
+                    ".graphhelm/fixtures/install-first-use/", ".graphhelm/journeys/install-first-use.",
+                    "apps/cli/src/main.rs", "apps/cli/src/args.rs", "apps/cli/src/output.rs",
+                    "apps/cli/src/human.rs", "apps/cli/src/error_codes.rs", "apps/cli/src/commands/mod.rs",
+                    "apps/cli/src/commands/init.rs", "apps/cli/src/commands/validate.rs",
+                    "apps/cli/src/commands/hex_key.rs", "apps/cli/src/commands/runtime_record.rs",
+                    "apps/cli/src/commands/serve/")
 LAUNCHER_TESTS = f"cargo {TOOLCHAIN} test --locked -p graphhelm-cli --bin graphhelm {TEST_THREADS} commands::studio::tests::the_launcher_"
 JOURNEY_REVIEW_CHECK = "python tools/reached-tests/claude_plugin_check.py plugins/journey-review"
 # #1808: the Studio (Studio v2, #1790) has no related-test map; any change runs its whole suite.
@@ -736,6 +746,12 @@ def reach(changed, packages, embedded, repo=None):
             elif root is not None:
                 other.append({"path": proportional_test,
                               "reason": "proportional-rows fixture observer is missing"})
+        if path.startswith(INSTALL_REACHERS):
+            if root is not None and (root / INSTALL_OBSERVER).is_file():
+                tools.add(f"python {INSTALL_OBSERVER}")
+                hit = True
+            elif root is not None:
+                other.append({"path": INSTALL_OBSERVER, "reason": "install-first-use observer is missing"})
         # Fixture behavior is observed by previews of the changed flows. #1521: the one part a
         # plan can observe offline is that the Studio the launcher starts does start.
         if path.startswith("tools/studio-journey-fixture/"):
@@ -1246,6 +1262,7 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
                 ".graphhelm/fixtures/keel-task-handoff/test_scenario.py": {()},
                 ".graphhelm/fixtures/keel-proportional-rows/test_run.py": {()},
                 ".graphhelm/fixtures/keel-watchdog-routing/scenario.py": {()},
+                INSTALL_OBSERVER: {()},
                 "tools/reached-tests/claude_plugin_check.py": {("plugins/journey-review",)},
             }
             if script not in allowed or tuple(args) not in allowed[script]:

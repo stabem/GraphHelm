@@ -95,7 +95,12 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
   tests that read it at run time plus `graphhelm extension validate`;
 - Studio files reach `npx vitest related` for those files plus `tsc`, and a `tools/<tool>/` change
   reaches that tool's own tests;
-- docs reach nothing.
+- `INSTALL.md`, `install/`, the commands its walk runs (`init`, `serve`, `graph validate`, and the files
+  every command shares) and the walk's own fixture reach
+  `python .graphhelm/fixtures/install-first-use/test_run.py`, which follows INSTALL.md in a throwaway
+  project on a private port with the `graphhelm` that `GRAPHHELM_CLI` or PATH names (pass `--graphhelm`
+  a build of the head to observe the head's CLI);
+- other docs reach nothing.
 
 **One test budget for authors and reviewers:**
 

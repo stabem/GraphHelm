@@ -114,6 +114,47 @@ class DiffHygiene(unittest.TestCase):
         code, out = self.run_check()
         self.assertEqual((code, out.split(" |")[0]), (2, "diff-hygiene: unobserved"))
 
+    def test_a_rename_counts_as_its_old_and_new_name(self):
+        git(self.repo, "mv", "src/a.txt", "src/z.txt")
+        commit(self.repo, "rename a")
+        git(self.repo, "checkout", "-q", "main")
+        write(self.repo, "src/a.txt", b"one\ntwo\nfrom main\n")
+        commit(self.repo, "main edits a")
+        git(self.repo, "push", "-q", "origin", "main")
+        git(self.repo, "checkout", "-q", "topic")
+        code, out = self.run_check()
+        self.assertEqual(code, 1, out)
+        self.assertIn("stale base: src/a.txt", out)
+        self.assertIn("scope: src/z.txt outside", out)
+        self.assertNotIn("=>", out)
+
+    def test_a_bare_base_is_fetched_from_origin_or_unobserved(self):
+        write(self.repo, "src/a.txt", b"one\ntwo\nmine\n")
+        commit(self.repo, "topic change")
+        other = Path(self.tmp.name) / "other"
+        git(Path(self.tmp.name), "clone", "-q", str(self.origin), str(other))
+        for key, value in (("user.name", "t"), ("user.email", "t@t")):
+            git(other, "config", key, value)
+        write(other, "src/a.txt", b"one\ntwo\nfrom main\n")
+        commit(other, "main edits a elsewhere")
+        git(other, "push", "-q", "origin", "main")
+        code, out = self.run_check("--base", "main")
+        self.assertEqual(code, 1, out)
+        self.assertIn("stale base: src/a.txt", out)
+        git(self.repo, "remote", "set-url", "origin", str(self.origin) + ".gone")
+        code, out = self.run_check("--base", "main")
+        self.assertEqual((code, out.split(" |")[0]), (2, "diff-hygiene: unobserved"))
+
+    def test_the_card_scope_is_read_like_keel_check(self):
+        write(self.repo, "src/b.txt", b"b changed\n")
+        commit(self.repo, "touch b")
+        self.card.write_text("- **Scope:** `src/b.txt`\n- Promise: x\n", encoding="utf-8")
+        self.assertEqual(self.run_check()[0], 0)
+        self.card.write_text("Scope paths:\n- `src/a.txt`\n\nProof: x\n", encoding="utf-8")
+        code, out = self.run_check()
+        self.assertEqual(code, 1, out)
+        self.assertIn("scope: src/b.txt outside", out)
+
 
 if __name__ == "__main__":
     unittest.main()

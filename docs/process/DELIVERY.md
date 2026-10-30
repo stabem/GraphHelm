@@ -189,6 +189,8 @@ deployed, replay the journey against the deployed site after the deploy, not onl
 With no observer that can reach it, follow `OBSERVER_MISSING` in [`keel/KEEL_EXEC.md`](../../keel/KEEL_EXEC.md). Only a product
 decision (approve a design, choose an option) goes to the user. The plugin's Stop hook
 `plugins/graphhelm/hooks/handoff_stop_hook.py` refuses such a reply once.
+Before asking for review, quote the diff-hygiene status line in the PR body; the rule is in
+[`keel/KEEL_EXEC.md`](../../keel/KEEL_EXEC.md) (Hand off).
 
 ## 4. One review, by another session or a blind subagent
 

@@ -1,0 +1,12 @@
+# Paths a branch may change outside its Keel card's paths (diff_hygiene.py scope check).
+# Lockfiles:
+Cargo.lock
+**/package-lock.json
+package-lock.json
+**/pnpm-lock.yaml
+# Plugin version manifests, until #2253 lands:
+*/plugin.json
+**/.claude-plugin/plugin.json
+**/.codex-plugin/plugin.json
+extensions/builtin/*/extension.json
+core/protocols/tests/fixtures/canonical-goldens/*.json

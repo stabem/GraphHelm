@@ -47,7 +47,59 @@ class PluginVersionGuard(unittest.TestCase):
         return self.git("rev-parse", "HEAD")
 
     def check(self, head):
+        """Release mode: self.base plays the last release tag."""
+        return guard.check(self.repo, self.base, head, release=True)
+
+    def pr_check(self, head):
         return guard.check(self.repo, self.base, head)
+
+    def test_a_plugin_pr_changes_shipped_content_without_a_bump(self):
+        self.write("plugins/graphhelm/skills/guide/SKILL.md", "# Changed guide\n")
+        passed, message = self.pr_check(self.commit("ship content, no bump"))
+        self.assertTrue(passed, message)
+        self.assertIn("release manifests agree on 0.1.28", message)
+
+    def test_a_plugin_pr_cannot_lower_the_version_or_split_the_manifests(self):
+        self.write("plugins/graphhelm/skills/guide/SKILL.md", "# Changed guide\n")
+        self.write_manifests("0.1.27")
+        passed, message = self.pr_check(self.commit("lower the version"))
+        self.assertFalse(passed)
+        self.assertIn("went below 0.1.28", message)
+        self.write_manifests("0.1.28")
+        self.write(guard.MANIFESTS[-1], json.dumps({"version": "0.1.29"}))
+        passed, message = self.pr_check(self.commit("split the manifests"))
+        self.assertFalse(passed)
+        self.assertIn(guard.MANIFESTS[-1], message)
+
+    def test_a_plugin_pr_may_repair_a_split_base(self):
+        self.write(guard.MANIFESTS[-1], json.dumps({"version": "0.1.29"}))
+        self.base = self.commit("split base, as a hand bump left it")
+        self.write("plugins/graphhelm/skills/guide/SKILL.md", "# Changed guide\n")
+        self.write_manifests("0.1.29")
+        passed, message = self.pr_check(self.commit("repair the split"))
+        self.assertTrue(passed, message)
+
+    def test_two_plugin_prs_from_one_main_merge_and_the_release_bumps_once(self):
+        """#2253: no per-PR bump, so parallel plugin PRs do not conflict on the manifests."""
+        self.git("branch", "-M", "main")
+        for branch, path in (("pr-a", "plugins/graphhelm/skills/guide/SKILL.md"),
+                             ("pr-b", "plugins/graphhelm/hooks/session_hook.py")):
+            self.git("checkout", "-q", "-b", branch, "main")
+            self.write(path, f"# {branch}\n")
+            head = self.commit(branch)
+            passed, message = self.pr_check(head)
+            self.assertTrue(passed, message)
+        self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-edit", "pr-a")
+        merged = subprocess.run(["git", "merge", "-q", "--no-edit", "pr-b"], cwd=self.repo, capture_output=True,
+                                text=True, creationflags=NO_WINDOW)
+        self.assertEqual(merged.returncode, 0, merged.stdout + merged.stderr)
+        passed, message = self.check("HEAD")
+        self.assertFalse(passed, "a release with changed content and no bump fails")
+        self.assertIn("bump the plugin version", message)
+        self.write_manifests("0.1.29")
+        passed, message = self.check(self.commit("release 0.1.29"))
+        self.assertTrue(passed, message)
 
     def test_unchanged_version_fails_with_bump_instruction_and_manifest(self):
         self.write("plugins/graphhelm/skills/guide/SKILL.md", "# Changed guide\n")
@@ -272,6 +324,8 @@ class SkillChain(unittest.TestCase):
         self.git("add", "-A")
         self.git("commit", "-qm", "base")
 
+    release = False
+
     def git(self, *args):
         return subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True,
                               text=True, encoding="utf-8", creationflags=NO_WINDOW).stdout.strip()
@@ -280,8 +334,8 @@ class SkillChain(unittest.TestCase):
         self.git("checkout", "-q", "-b", branch, "main")
         path = self.repo / skill
         path.write_bytes(path.read_bytes() + f"\nEdited on {branch}.\n".encode("utf-8"))
-        first = guard.write(self.repo, "main")
-        second = guard.write(self.repo, "main")
+        first = guard.write(self.repo, "main", release=self.release)
+        second = guard.write(self.repo, "main", release=self.release)
         self.git("add", "-A")
         self.git("commit", "-qm", branch)
         return first, second
@@ -292,6 +346,7 @@ class SkillChain(unittest.TestCase):
     def test_the_command_writes_the_whole_chain_once_and_nothing_the_second_time(self):
         package = "extensions/builtin/graphhelm-jpd/"
         before = self.version(package + "extension.json")
+        self.release = True
         first, second = self.edit_skill("pr-a", JPD_SKILL)
         self.assertEqual(second, [])
         self.assertEqual(sorted(first), sorted([
@@ -300,14 +355,22 @@ class SkillChain(unittest.TestCase):
         major, minor, patch = (int(part) for part in before.split("."))
         for manifest in ("extension.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json"):
             self.assertEqual(self.version(package + manifest), f"{major}.{minor}.{patch + 1}")
-        passed, message = guard.check(self.repo, "main", "pr-a")
+        passed, message = guard.check(self.repo, "main", "pr-a", release=True)
         self.assertTrue(passed, message)
+
+    def test_a_pr_write_regenerates_digests_and_goldens_but_not_versions(self):
+        package = "extensions/builtin/graphhelm-jpd/"
+        before = self.version(package + "extension.json")
+        first, second = self.edit_skill("pr-a", JPD_SKILL)
+        self.assertEqual(second, [])
+        self.assertEqual(sorted(first), sorted([package + "extension.json", guard.GOLDENS + "graphhelm-jpd.json"]))
+        self.assertEqual(self.version(package + "extension.json"), before)
 
     def test_a_skill_change_without_the_chain_fails_the_check_naming_the_extension(self):
         self.git("checkout", "-q", "-b", "bare", "main")
         (self.repo / JPD_SKILL).write_bytes((self.repo / JPD_SKILL).read_bytes() + b"\nbare\n")
         self.git("commit", "-qam", "bare")
-        passed, message = guard.check(self.repo, "main", "bare")
+        passed, message = guard.check(self.repo, "main", "bare", release=True)
         self.assertFalse(passed)
         self.assertIn("extensions/builtin/graphhelm-jpd/extension.json", message)
 

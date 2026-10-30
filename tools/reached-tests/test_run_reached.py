@@ -38,6 +38,35 @@ class RunnerContracts(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
+    def test_plan_json_stdout_is_short_and_the_file_keeps_the_full_plan(self):
+        """A real runner process must not dump a large selector result to the agent."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            selector = repo / "tools/reached-tests/reached_tests.py"
+            selector.parent.mkdir(parents=True)
+            plan = {"steps": [{"argv": ["python", "-c", "pass"], "cwd": ".", "slot": False}
+                              for _ in range(103)], "evidence": "x" * 430000}
+            selector.write_text("import json\nprint(json.dumps(" + repr(plan) + "))\n", encoding="utf-8")
+            for argv in (["init", "-q"], ["add", "."],
+                         ["-c", "user.name=T", "-c", "user.email=t@example.test", "commit", "-qm", "fixture"]):
+                subprocess.run(["git", *argv], cwd=repo, check=True, capture_output=True,
+                               creationflags=NO_WINDOW, timeout=30)
+            output = root / "report.json"
+            child = subprocess.run(
+                [sys.executable, str(Path(rr.__file__).resolve()), "--repo", str(repo), "--base", "HEAD",
+                 "--plan", "--json", "--output", str(output)],
+                capture_output=True, text=True, creationflags=NO_WINDOW, timeout=30)
+            self.assertEqual(child.returncode, 0, child.stderr)
+            self.assertLess(len(child.stdout.encode("utf-8")), 2048)
+            summary = json.loads(child.stdout)
+            self.assertEqual(summary["status"], "planned")
+            self.assertIn("planned 103", summary["summary"])
+            self.assertEqual(summary["report"], str(output.resolve()))
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["plan"], plan)
+            self.assertEqual(report["schema"], "graphhelm-reached-run/1")
+
     def test_external_runner_uses_target_repository_selector(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

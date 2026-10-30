@@ -131,7 +131,9 @@ failure, a stale or unreadable report, reruns; `--no-resume` reruns everything. 
 preflight checks free disk (10 GB with Cargo steps on the slot root and `CARGO_TARGET_DIR`, 1 GB on the checkout and report; `--min-free-gb` sets all), a relative
 `CARGO_TARGET_DIR`, configured tool paths that do not exist, and the git identity; a problem stops
 the run as `blocked` (`--skip-preflight` records it and goes on). Stdout is a short summary
-(passed/reused, failed with log path, pending, report path); `--json` prints the full report.
+(passed/reused, failed with log path, pending, report path); `--json` wraps this short summary in
+JSON (`status`, `summary`, `report`). Read the full report from the `--output` file, including
+for `--plan --json`; it is never copied to stdout.
 The report's `measure` block records reused steps and the seconds they saved. Reached browser observers (a
 `tools/<tool>/**` change selects its `*.browser.test.mjs`, plus the Cargo `--ignored` browser cells)
 run by default when `GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT` names a directory with `@playwright/test`

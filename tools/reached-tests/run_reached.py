@@ -1099,6 +1099,8 @@ def _summary(report: dict[str, Any], output: Path) -> str:
     lines = [f"reached-tests: {report.get('status')} | passed {len(passed)} (reused {len(reused)})"
              f" | failed {len(failed)} | unobserved {len(unobserved)} | pending {len(report.get('pending', []))}"
              f" | {report.get('elapsedSeconds')}s"]
+    if report.get("status") == "planned":
+        lines[0] += f" | planned {len(report.get('plan', {}).get('steps', []))}"
     for problem in report.get("preflight", {}).get("problems", []):
         lines.append(f"  BLOCKED {problem}")
     for entry in failed:
@@ -1551,7 +1553,8 @@ def run(args: argparse.Namespace) -> int:
                             else round(max(0.0, report["elapsedSeconds"] - slot_wait), 3))
     output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if getattr(args, "json", False):
-        print(json.dumps(report, indent=2))
+        print(json.dumps({"status": report["status"], "summary": _summary(report, output),
+                          "report": str(output)}))
     else:
         print(_summary(report, output))
     return 0 if report["status"] in ("passed", "planned") else 1
@@ -1610,7 +1613,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="free space required before any step runs (default 10 with Cargo steps, else 1)")
     ap.add_argument("--skip-preflight", action="store_true",
                     help="run even when preflight finds a problem; the problems stay in the report")
-    ap.add_argument("--json", action="store_true", help="print the full report instead of the short summary")
+    ap.add_argument("--json", action="store_true", help="print the short summary as JSON; the full report is in --output")
     ap.add_argument("--keep-going", action="store_true",
                     help="run every step after a failed one and report every red in one pass (status stays failed)")
     args = ap.parse_args(argv)

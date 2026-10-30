@@ -133,3 +133,19 @@ and nothing else; a session working as a lane beside others on one machine also 
 - Issue first; one review by a session or blind subagent that did not write the change; that reviewer merges.
 - Preserve user work: never discard unrelated changes or use destructive Git commands without explicit authorization. Keep commits small, buildable and conventional.
 - Every PR includes summary and rationale, the tests run and their result, security notes, dependency notes, and a rollback plan.
+
+## Reading map by step
+
+Read the sections your step names, not whole files.
+
+| Step | Read |
+|---|---|
+| Issue, labels, titles | `docs/process/DELIVERY.md` §1 |
+| Keel card | `keel/KEEL_PLAN.md`; DELIVERY §2 |
+| Write and prove | `keel/KEEL_EXEC.md`; DELIVERY §3 |
+| Build, tests, slot | DELIVERY §3; `docs/process/LANES.md` §3 |
+| Task records | `docs/process/LANES.md` §4 |
+| Review | `keel/KEEL_REVIEW.md`; DELIVERY §4 |
+| Merge and cleanup | `keel/KEEL_MERGE.md`; DELIVERY §5 |
+| Identity line | `docs/process/DELIVERY.md` §4 |
+| Lane rules and wake loop | `docs/process/LANES.md` §1 and §5 |

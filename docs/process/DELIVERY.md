@@ -38,7 +38,8 @@ How much card a change needs, and what goes in it, is [keel/KEEL_PLAN.md](../../
 Follow the four Keel moves: start from the promise, start from the card and search on purpose, add
 only the surface the promise needs, prove with the smallest adequate observer. Before opening the
 PR, the author runs the tests the change can reach and lists them, with their result, in the PR
-body.
+body. The reached plan (`run_reached.py`, below) includes the fast Python `tools/` steps; run it
+before asking for review and put its summary line in the PR body.
 
 **Retire the path you replace** (the rule is `keel/KEEL_EXEC.md`; how to check it here:). When a change removes, replaces or redirects
 a production caller, check the displaced declarations and their exclusive helpers/types, styles,
@@ -121,7 +122,8 @@ Execute the plan with `python tools/reached-tests/run_reached.py` (the command, 
 admission and 900-second budget are LANES.md §3). The author runs it once on main + head and
 leaves the receipt, the JSON report, as a file path in the PR body together with its summary line;
 the receipt names the head sha (`headBefore`) and the base main sha (`baseSha`). A budget miss is
-never green.
+never green. Raw receipts are never committed: the JSON report and captures go to a PR comment or to the
+untracked `.graphhelm/` area, and the repo keeps only a summary table with a link to them.
 
 **Resume, summary and preflight.** Rerun the same command with the same `--output` after
 any stop: a step is reused only when the previous run passed it, ended with HEAD unchanged and a
@@ -272,16 +274,15 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
 
 The reviewer who approved merges (a blind subagent included). There is no separate gate run and no separate presser: the Keel checks the reviewer runs (`KEEL.md`) are what block, and a blocking finding is a `BLOCK`.
 
-The steps (pin the head, merge, check after, delete the branch; main's one whole run after merges) and the
-definition of delivered are [`keel/KEEL_MERGE.md`](../../keel/KEEL_MERGE.md). Two changes that each
-pass alone can break together (`mcp_discovery` × #1412), which is why main gets that run. Two additions here:
+The steps are in [`keel/KEEL_MERGE.md`](../../keel/KEEL_MERGE.md): pin the head, merge, check after,
+and clean up the PR's worktrees and branch (its step 5). It also says why main gets one whole run
+after merges, and it defines delivered. Two checks run from here:
 
 1. Closing check: `ci/closing-keywords.ps1 -Number <N> -Repository stabem/GraphHelm -Closes <issues>`.
-   It reads the body and the commit messages; their union must equal the intent (the
-   keyword rule is `keel/KEEL_MERGE.md`).
+   It reads the body and the commit messages; their union must equal the intent (the keyword rule
+   is `keel/KEEL_MERGE.md`).
 2. Read what landed: `git log -1 --format=%B origin/main` and `gh issue view` for every closed
    issue. Corrections go in a follow-up comment on the same PR.
-5. Clean up the PR: run `graphhelm workspace sweep --apply --merged-branch <branch> --repo <repo> --pr <N> --head <sha> [--target <dir>]... [--keep-worktree <dir>]`; it stops the processes inside the PR's worktrees, unlinks links without following them, saves uncommitted work to `D:/_merge-leftovers/<N>/`, and removes every worktree and review checkout of the PR (any lane's), the named per-PR targets and the local branch. The `--keep-worktree` exception is in [KEEL_MERGE.md](../../keel/KEEL_MERGE.md) step 5. Any other single worktree or directory, a reviewer's own checkout included, is deleted with `graphhelm workspace remove <dir>` (#1663), never with `rm -rf`, `Remove-Item -Recurse` or `git worktree remove --force`, which follow junctions.
 
 Delivered is defined once, in [`keel/KEEL_MERGE.md`](../../keel/KEEL_MERGE.md). A release (version, tag, record) is a later step with its own owner: [`RELEASE.md`](RELEASE.md). Plugin pull requests do not bump versions.
 

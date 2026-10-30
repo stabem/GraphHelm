@@ -118,7 +118,7 @@ branch head and quotes its status line in the PR body:
    Rule 3 catches that only when the undone path is outside the card; inside the card it passes.
    Rebase; never rebuild a branch with `reset --soft`.
 3. Scope: a changed path is outside the card's `paths` plus a short committed allow-list file
-   (`tools/diff-hygiene/allow-paths.txt`: lockfiles; plugin version manifests until #2253 lands).
+   (`tools/diff-hygiene/allow-paths.txt`: lockfiles).
    A summary-only card (docs/config/one-line) has no paths, so check 3 does not apply.
 
 When origin/main cannot be fetched or the card cannot be read, the check reports `unobserved` with

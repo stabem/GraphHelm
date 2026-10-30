@@ -953,7 +953,7 @@
           "id": "skill/implement",
           "kind": "skill",
           "path": "skills/implement/SKILL.md",
-          "sha256": "sha256:c8b5651779b298ec7d8541c4e5c06c7d454cf2a59f92bebf684211bee03fc269",
+          "sha256": "sha256:e2d19af763cf5a610bf86c5f52fdcafd20ac1a207c2086b545a2e852cc21a2c7",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},

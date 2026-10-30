@@ -131,9 +131,9 @@ class HookProcessCount(unittest.TestCase):
         self.assertEqual(warm.interpreters(), [])
         git_calls = [call[3:] for call in warm.calls if Path(call[0]).name.startswith("git")]
         # untracked list, numstat, binary diff for the fingerprint; no rev-parse, no merge-base;
-        # then one status for the self-review gate (#2237), since a card exists and no record does
-        self.assertEqual([call[0] for call in git_calls], ["ls-files", "diff", "diff", "status"], warm.calls)
-        self.assertEqual(len(warm.calls), 4, "the verdict is cached, so the CLI is not started again")
+        # the self-review gate is opt-in and off here, so it adds no status call
+        self.assertEqual([call[0] for call in git_calls], ["ls-files", "diff", "diff"], warm.calls)
+        self.assertEqual(len(warm.calls), 3, "the verdict is cached, so the CLI is not started again")
 
     def test_the_edit_check_reads_the_merge_base_from_the_cache(self):
         (self.repo / ".graphhelm" / "keel-card.json").unlink()

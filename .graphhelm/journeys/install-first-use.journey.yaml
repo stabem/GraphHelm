@@ -1,0 +1,33 @@
+schema: graphhelm.journey-flow/1
+id: install-first-use
+title: Install GraphHelm from INSTALL.md and run the first commands
+purpose: "A new user follows INSTALL.md in an empty project and the CLI answers, the project is provisioned, the Runtime answers on its own port and graph validate passes."
+status: draft
+approved: null
+base: http://127.0.0.1:1
+actors: [new-user]
+secrets: []
+risks: []
+screens:
+  - id: empty-project
+    title: A new user has the CLI and an empty project
+    url: /
+    state: stable
+    expect: [{role: exit, name: "0", because: "the run has started and no command has run yet, which is all a start screen of commands can show"}, {role: stdout, name: init=ok, absent: true, because: "nothing has been installed yet, so no step has reported ok"}]
+    scope: unknown
+  - id: first-use
+    title: The documented install path reaches the first useful commands
+    url: /first-use
+    state: success
+    expect: [{role: exit, name: "0", because: run.py exits 0 only when every step answered what INSTALL.md says it answers}, {role: stdout, name: version=ok, because: "`graphhelm --version` prints `graphhelm <version>`, INSTALL.md step 2"}, {role: stdout, name: init=ok, because: "init ends with ok:true and leaves events/, events.token, serve.key and keyring/ under .graphhelm/, INSTALL.md step 3"}, {role: stdout, name: runtime=ok, because: "serve starts with no keyring or bind warning, /health names a project and an instance, and the init token is accepted on /v1/executions, INSTALL.md step 4"}, {role: stdout, name: validate=ok, because: "graph validate accepts examples/graphs/software-feature.yaml, the first command a new user runs"}]
+    scope: unknown
+edges:
+  - id: install-and-run
+    from: empty-project
+    to: first-use
+    why: "A user who follows INSTALL.md to the Runtime and runs graph validate sees every step answer; a page or a command that drifted fails here, at the step that broke."
+    acts:
+      - {kind: cli, role: exec, name: python .graphhelm/fixtures/install-first-use/run.py}
+paths:
+  main: [install-and-run]
+drift: []

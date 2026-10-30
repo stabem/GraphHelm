@@ -73,6 +73,37 @@ class Reach(unittest.TestCase):
             self.assertNotIn(expected, missing_tools)
             self.assertIn({"path": observer, "reason": "proportional-rows fixture observer is missing"}, missing)
 
+    def test_install_page_and_the_commands_it_walks_select_the_install_observer_once(self):
+        """A change to INSTALL.md, its script, the first-use commands or the files every command
+        shares must run the install walk once, and a missing walk is reported, not skipped.
+
+        Cost: temporary files and direct plan construction; milliseconds, no Cargo, network or Runtime.
+        """
+        observer = ".graphhelm/fixtures/install-first-use/test_run.py"
+        expected = f"python {observer}"
+        walked = ("INSTALL.md", "install/install.sh", "examples/graphs/software-feature.yaml",
+                  ".graphhelm/fixtures/install-first-use/run.py", "apps/cli/src/main.rs",
+                  "apps/cli/src/commands/init.rs", "apps/cli/src/commands/validate.rs",
+                  "apps/cli/src/commands/serve/routes.rs")
+        with tempfile.TemporaryDirectory() as repo:
+            Path(repo, observer).parent.mkdir(parents=True)
+            Path(repo, observer).write_text("import unittest\n", encoding="utf-8")
+            for changed in walked:
+                with self.subTest(changed=changed):
+                    *_, tools, _, other = reach(changed, repo=repo)
+                    self.assertEqual(tools.count(expected), 1)
+                    self.assertEqual([item for item in other if item["path"] == observer], [])
+            *_, unrelated, _, _ = reach("apps/cli/src/commands/keel.rs", repo=repo)
+            self.assertNotIn(expected, unrelated)
+            *_, combined, _, _ = reach(*walked, repo=repo)
+            self.assertEqual(rt.steps(set(), set(), [], combined, repo=Path(repo)).count(
+                {"argv": ["python", observer], "cwd": ".", "slot": False}), 1)
+
+            Path(repo, observer).unlink()
+            *_, missing_tools, _, missing = reach("INSTALL.md", repo=repo)
+            self.assertNotIn(expected, missing_tools)
+            self.assertIn({"path": observer, "reason": "install-first-use observer is missing"}, missing)
+
     def test_studio_and_fixture_changes_start_the_launchers_studio_once(self):
         """#1521: a Studio that cannot start (a broken native binding) broke every journey preview
         and no reached plan saw it, because nothing in a plan starts Vite.

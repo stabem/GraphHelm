@@ -89,7 +89,7 @@ CLI_COMMAND_WORDS = {
 INSTALL_OBSERVER = ".graphhelm/fixtures/install-first-use/test_run.py"
 INSTALL_REACHERS = ("INSTALL.md", "install/", "examples/graphs/software-feature.yaml",
                     ".graphhelm/fixtures/install-first-use/", ".graphhelm/journeys/install-first-use.",
-                    "apps/cli/src/main.rs", "apps/cli/src/args.rs", "apps/cli/src/output.rs",
+                    "apps/cli/build.rs", "apps/cli/src/main.rs", "apps/cli/src/args.rs", "apps/cli/src/output.rs",
                     "apps/cli/src/human.rs", "apps/cli/src/error_codes.rs", "apps/cli/src/commands/mod.rs",
                     "apps/cli/src/commands/init.rs", "apps/cli/src/commands/validate.rs",
                     "apps/cli/src/commands/hex_key.rs", "apps/cli/src/commands/runtime_record.rs",

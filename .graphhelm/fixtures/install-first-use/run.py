@@ -3,6 +3,8 @@
 
 The commands come from INSTALL.md itself (`init`, `serve`), so a flag the page still shows but the
 CLI no longer accepts turns this run red. Prints `version=ok init=ok runtime=ok validate=ok` on success.
+It first checks that the CLI reports the commit of this checkout's head; otherwise it exits 75 with
+`UNOBSERVED: cli not built from head: <why>` and walks nothing.
 """
 
 from __future__ import annotations
@@ -24,11 +26,16 @@ import urllib.request
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 STEP_SECONDS = 60
 SERVE_SECONDS = 30
+EXIT_UNOBSERVED = 75
 REPO = Path(__file__).resolve().parents[3]
 
 
 class StepFailed(Exception):
     """A documented step did not do what INSTALL.md says it does."""
+
+
+class Unobserved(Exception):
+    """The CLI cannot be shown to be a build of the head, so the head was not observed."""
 
 
 class ObserverMissing(Exception):
@@ -40,6 +47,36 @@ def graphhelm() -> str:
     if not binary:
         raise ObserverMissing("GRAPHHELM_CLI or graphhelm on PATH is required")
     return binary
+
+
+def head_commit() -> str | None:
+    try:
+        done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True,
+                              timeout=STEP_SECONDS, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def provenance_gap() -> str | None:
+    """Why the CLI cannot be taken for a build of the head, or None when it reports the head's commit."""
+    path = graphhelm()
+    done = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=STEP_SECONDS,
+                          stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+    lines = done.stdout.splitlines()
+    if done.returncode or not lines or not lines[0].startswith("graphhelm "):
+        return f"`{path} --version` did not print `graphhelm <version>`: {done.stdout[:100]!r}"
+    reported = next((line.removeprefix("commit ").strip() for line in lines[1:] if line.startswith("commit ")), None)
+    if reported is None:
+        return f"{path} reports no build commit (it predates the line, or is an install of an older build)"
+    if reported == "unknown":
+        return f"{path} was built outside a git checkout (commit unknown)"
+    head = head_commit()
+    if head is None:
+        return "the head commit cannot be read from this checkout"
+    if reported != head:
+        return f"{path} was built from {reported[:8]}, the head is {head[:8]}"
+    return None
 
 
 def documented(page: str, verb: str, must_have: str, must_lack: str = "") -> list[str]:
@@ -158,10 +195,9 @@ def walk(page: str, graph: Path) -> list[str]:
         port = free_port()
         env = {**os.environ, "GRAPHHELM_RUNTIME_DIR": str(Path(scratch) / "runtime")}
         env.pop("GRAPHHELM_EVENTS_KEY", None)
-        version = subprocess.run([graphhelm(), "--version"], capture_output=True, timeout=STEP_SECONDS,
-                                 stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
-        if version.returncode or not version.stdout.startswith(b"graphhelm "):
-            raise StepFailed(f"version: wanted `graphhelm <version>`, got {version.stdout[:100]!r}")
+        gap = provenance_gap()
+        if gap:
+            raise Unobserved(gap)
         done.append("version=ok")
         envelope(fill(init_argv, project, port), project, env, "init", "init")
         missing = [p for p in ("events", "events.token", "serve.key", "keyring")
@@ -183,6 +219,9 @@ def main() -> int:
     args = parser.parse_args()
     try:
         steps = walk(args.install_md.read_text(encoding="utf-8"), args.graph)
+    except Unobserved as error:
+        print(f"UNOBSERVED: cli not built from head: {error}", file=sys.stderr)
+        return EXIT_UNOBSERVED
     except ObserverMissing as error:
         print(f"OBSERVER_MISSING: {error}", file=sys.stderr)
         return 70

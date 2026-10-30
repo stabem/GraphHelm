@@ -82,7 +82,7 @@ class Reach(unittest.TestCase):
         observer = ".graphhelm/fixtures/install-first-use/test_run.py"
         expected = f"python {observer}"
         walked = ("INSTALL.md", "install/install.sh", "examples/graphs/software-feature.yaml",
-                  ".graphhelm/fixtures/install-first-use/run.py", "apps/cli/src/main.rs",
+                  ".graphhelm/fixtures/install-first-use/run.py", "apps/cli/build.rs", "apps/cli/src/main.rs",
                   "apps/cli/src/commands/init.rs", "apps/cli/src/commands/validate.rs",
                   "apps/cli/src/commands/serve/routes.rs")
         with tempfile.TemporaryDirectory() as repo:

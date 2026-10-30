@@ -28,6 +28,7 @@ pub struct OptionalRecordArgs {
 #[command(
     name = "graphhelm",
     version,
+    long_version = concat!(env!("CARGO_PKG_VERSION"), "\ncommit ", env!("GRAPHHELM_BUILD_COMMIT")),
     about = "GraphHelm Foundation Graph Kernel"
 )]
 pub struct Cli {

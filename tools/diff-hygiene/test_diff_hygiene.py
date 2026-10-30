@@ -4,10 +4,13 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 SPEC = importlib.util.spec_from_file_location("diff_hygiene", Path(__file__).with_name("diff_hygiene.py"))
 dh = importlib.util.module_from_spec(SPEC)
@@ -18,7 +21,7 @@ CARD = "## Keel card\n- **Paths:** `src/{a.txt,c.txt}`, `docs`\n- Promise: x\n"
 
 def git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True,
-                          text=True).stdout
+                          text=True, creationflags=NO_WINDOW).stdout
 
 
 def write(repo: Path, rel: str, data: bytes) -> None:

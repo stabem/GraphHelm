@@ -14,11 +14,14 @@ Exit code: 0 passed, 1 failed, 2 unobserved.
 from __future__ import annotations
 
 import argparse
+import os
 import fnmatch
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 ALLOW_FILE = Path(__file__).with_name("allow-paths.txt")
 GIT_TIMEOUT = 120
@@ -32,7 +35,8 @@ class Unobserved(Exception):
 def git(repo: str, *args: str) -> str:
     try:
         done = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT)
+                              encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT,
+                              creationflags=NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise Unobserved(f"git {args[0]}: {error}") from error
     if done.returncode != 0:

@@ -126,6 +126,10 @@ branch head and quotes its status line in the PR body:
    (`git diff --name-only $(git merge-base origin/main HEAD) origin/main` ∩ the branch's paths).
    Fix: rebase and rerun. A merge-base behind origin/main with no overlapping path passes. An
    overlap means rebase and rerun, even when it is not a revert.
+   Limit: rule 2 compares against commits after the merge-base, so it does not see a branch that
+   undoes the merge-base commit itself (for example a `git reset --soft` onto an older commit).
+   Rule 3 catches that only when the undone path is outside the card; inside the card it passes.
+   Rebase; never rebuild a branch with `reset --soft`.
 3. Scope: a changed path is outside the card's `paths` plus a short committed allow-list file
    (`tools/diff-hygiene/allow-paths.txt`: lockfiles; plugin version manifests until #2253 lands).
    A summary-only card (docs/config/one-line) has no paths, so check 3 does not apply.

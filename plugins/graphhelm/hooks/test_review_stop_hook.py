@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -34,18 +35,39 @@ class ReviewStopHook(unittest.TestCase):
         git(self.repo, "commit", "-q", "-m", "base")
         (self.repo / ".graphhelm").mkdir()
         (self.repo / ".graphhelm/keel-card.json").write_text("{}", encoding="utf-8")
+        # The gate is opt-in; every case below except the default ones runs with it turned on.
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GRAPHHELM_")}
+        patch = mock.patch.dict(os.environ, {**clean, "GRAPHHELM_SELF_REVIEW": "1"}, clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def stop(self, event):
         return review_stop_hook.evaluate({"cwd": str(self.repo), **event})
 
-    def test_the_registered_stop_process_carries_the_gate(self):
+    def run_stop_process(self):
         # The host runs stop_hook.py, and on Windows PowerShell pipes the event with a BOM.
-        (self.repo / "app.py").write_text("x = 2\n", encoding="utf-8")
         data = b"\xef\xbb\xbf" + json.dumps({"cwd": str(self.repo)}).encode("utf-8")
-        out = subprocess.run([sys.executable, str(STOP)], input=data, capture_output=True, check=True,
-                             timeout=60, creationflags=NO_WINDOW).stdout
+        return subprocess.run([sys.executable, str(STOP)], input=data, capture_output=True, check=True,
+                              timeout=60, env=dict(os.environ), creationflags=NO_WINDOW).stdout
+
+    def test_the_registered_stop_process_carries_the_gate(self):
+        (self.repo / "app.py").write_text("x = 2\n", encoding="utf-8")
+        out = self.run_stop_process()
         self.assertEqual(json.loads(out)["decision"], "block")
         self.assertIn("self-review.json", json.loads(out)["reason"])
+
+    def test_the_gate_is_off_unless_the_project_turns_it_on(self):
+        # A carded diff with no record is exactly the case that blocks when the gate is on.
+        (self.repo / "app.py").write_text("x = 2\n", encoding="utf-8")
+        for value in (None, "", "0", "true", "yes"):
+            with self.subTest(value=value):
+                env = {k: v for k, v in os.environ.items() if k != "GRAPHHELM_SELF_REVIEW"}
+                if value is not None:
+                    env["GRAPHHELM_SELF_REVIEW"] = value
+                with mock.patch.dict(os.environ, env, clear=True):
+                    self.assertIsNone(self.stop({}))
+                    self.assertEqual(self.run_stop_process().strip(), b"")
+                    self.assertFalse((self.repo / ".graphhelm/self-review.json").exists())
 
     def test_carded_diff_without_record_blocks_once_then_passes(self):
         (self.repo / "app.py").write_text("x = 2\n", encoding="utf-8")

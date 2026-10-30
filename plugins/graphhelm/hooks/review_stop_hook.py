@@ -1,11 +1,16 @@
 """Stop gate (run in-process by `stop_hook.py`): before a Keel-carded change ends, the author reviews its own diff once.
 
-When the project has a Keel card and an uncommitted code diff, and no self-review record written
+The gate is opt-in: it runs only when GRAPHHELM_SELF_REVIEW=1. Measured against the same flow
+without it, it bought no accepted change and no better review score and cost about 10k
+price-weighted tokens per change, so it stays off until a project chooses it.
+
+When it is on, the project has a Keel card and an uncommitted code diff, and no self-review record written
 after that card exists, the first Stop is blocked with the review checklist. The author answers by
 writing .graphhelm/self-review.json; the next Stop passes. A record older than the card (left by an
 earlier task in a reused checkout) counts as missing. A Stop that is already a hook continuation
 always passes, so the hook can never loop.
 """
+import os
 from pathlib import Path
 import subprocess
 
@@ -34,6 +39,8 @@ def diff_present(root):
 
 
 def decide(event, root):
+    if os.environ.get('GRAPHHELM_SELF_REVIEW') != '1':
+        return None
     if event.get('stop_hook_active'):
         return None
     card = root / '.graphhelm/keel-card.json'

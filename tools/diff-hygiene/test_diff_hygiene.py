@@ -128,6 +128,18 @@ class DiffHygiene(unittest.TestCase):
         self.assertIn("scope: src/z.txt outside", out)
         self.assertNotIn("=>", out)
 
+    def test_a_rename_on_main_overlaps_a_branch_edit_of_the_old_path(self):
+        write(self.repo, "src/a.txt", b"one\ntwo\nmine\n")
+        commit(self.repo, "branch edits a")
+        git(self.repo, "checkout", "-q", "main")
+        git(self.repo, "mv", "src/a.txt", "src/y.txt")
+        commit(self.repo, "main renames a")
+        git(self.repo, "push", "-q", "origin", "main")
+        git(self.repo, "checkout", "-q", "topic")
+        code, out = self.run_check()
+        self.assertEqual(code, 1, out)
+        self.assertIn("stale base: src/a.txt", out)
+
     def test_a_bare_base_is_fetched_from_origin_or_unobserved(self):
         write(self.repo, "src/a.txt", b"one\ntwo\nmine\n")
         commit(self.repo, "topic change")

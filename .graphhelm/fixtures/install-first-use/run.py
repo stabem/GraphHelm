@@ -66,8 +66,12 @@ def provenance_gap() -> str | None:
     lines = done.stdout.splitlines()
     if done.returncode or not lines or not lines[0].startswith("graphhelm "):
         return f"`{path} --version` did not print `graphhelm <version>`: {done.stdout[:100]!r}"
-    reported = next((line.removeprefix("commit ").strip() for line in lines[1:] if line.startswith("commit ")), None)
-    if reported is None:
+    reported = ""
+    for line in lines[1:]:
+        if line.startswith("commit "):
+            reported = line.removeprefix("commit ").strip()
+            break
+    if not reported:
         return f"{path} reports no build commit (it predates the line, or is an install of an older build)"
     if reported == "unknown":
         return f"{path} was built outside a git checkout (commit unknown)"

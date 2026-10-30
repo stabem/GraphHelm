@@ -117,6 +117,27 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
 
 ## Hand off
 
+**Diff hygiene (#2251).** Before asking for review, the author runs the diff-hygiene check on the
+branch head and quotes its status line in the PR body:
+`python tools/diff-hygiene/diff_hygiene.py --card <file holding the PR body>`. It compares
+`git diff origin/main...HEAD` with the Keel card and fails when:
+1. Line endings: `git diff --numstat` differs from `git diff --numstat --ignore-cr-at-eol` for any file.
+2. Stale base: a path the branch changes was also changed on origin/main after the merge-base
+   (`git diff --name-only $(git merge-base origin/main HEAD) origin/main` ∩ the branch's paths).
+   Fix: rebase and rerun. A merge-base behind origin/main with no overlapping path passes. An
+   overlap means rebase and rerun, even when it is not a revert.
+   Limit: rule 2 compares against commits after the merge-base, so it does not see a branch that
+   undoes the merge-base commit itself (for example a `git reset --soft` onto an older commit).
+   Rule 3 catches that only when the undone path is outside the card; inside the card it passes.
+   Rebase; never rebuild a branch with `reset --soft`.
+3. Scope: a changed path is outside the card's `paths` plus a short committed allow-list file
+   (`tools/diff-hygiene/allow-paths.txt`: lockfiles).
+   A summary-only card (docs/config/one-line) has no paths, so check 3 does not apply.
+
+When origin/main cannot be fetched or the card cannot be read, the check reports `unobserved` with
+the reason, never `passed`. It is not a merge gate: the reviewer reads the status line and may BLOCK
+when it is missing or red.
+
 Open the pull request with the card, the receipts, the broken-on-purpose result, the reached-plan
 steps, every exception you wrote with its reason, and what context the card was missing.
 

@@ -1,0 +1,6 @@
+# Paths a branch may change outside its Keel card's paths (diff_hygiene.py scope check).
+# Lockfiles:
+Cargo.lock
+package-lock.json
+**/package-lock.json
+**/pnpm-lock.yaml

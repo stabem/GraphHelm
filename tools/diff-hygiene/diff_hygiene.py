@@ -6,8 +6,8 @@
 Compares `git diff <base>...<head>` with the Keel card and prints one status line:
   1. line endings: `--numstat` differs from `--numstat --ignore-cr-at-eol` for a file;
   2. stale base: a branch path also changed on <base> after the merge-base;
-  3. scope: a branch path outside the card's `Paths:` line plus `allow-paths.txt`
-     (a card without a `Paths:` line is summary-only and skips this check).
+  3. scope: a branch path outside the card's `Scope:` (or `Paths:`) line plus `allow-paths.txt`
+     (a card without a `Scope:`/`Paths:` line is summary-only and skips this check).
 When <base> cannot be fetched or the card cannot be read, the status is `unobserved`, never `passed`.
 Exit code: 0 passed, 1 failed, 2 unobserved.
 """
@@ -25,7 +25,7 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 ALLOW_FILE = Path(__file__).with_name("allow-paths.txt")
 GIT_TIMEOUT = 120
-PATHS_LINE = re.compile(r"^\s*(?:[-*]\s*)?(?:\*\*)?Paths(?:\*\*)?\s*:(?:\*\*)?\s*(.*)$", re.IGNORECASE | re.MULTILINE)
+SCOPE_LABELS = ("scope", "scope paths", "paths")  # the labels `keel check` reads (card_from_markdown)
 
 
 class Unobserved(Exception):
@@ -45,12 +45,26 @@ def git(repo: str, *args: str) -> str:
 
 
 def card_paths(text: str) -> list[str] | None:
-    """The card's paths, or None for a summary-only card (no `Paths:` line)."""
-    match = PATHS_LINE.search(text)
-    if not match:
+    """The card's scope paths, read as `keel check` reads a markdown card: a `Scope:`, `Scope paths:`
+    or `Paths:` line (list item or bold) with backticked or comma-separated items, or followed by
+    backticked list lines. None for a summary-only card (no such line)."""
+    items: list[str] | None = None
+    listing = False
+    for raw in text.splitlines():
+        line = raw.strip().lstrip("-*+ ").replace("**", "")
+        label, colon, rest = line.partition(":")
+        if not colon:
+            if listing and len(line) > 2 and line.startswith("`") and line.endswith("`"):
+                items.append(line[1:-1])
+            continue
+        listing = False
+        if items is None and label.strip().lower() in SCOPE_LABELS:
+            rest = rest.strip()
+            quoted = re.findall(r"`([^`]+)`", rest)
+            items = quoted or [part.strip() for part in rest.split(",") if part.strip()]
+            listing = not rest
+    if items is None:
         return None
-    quoted = re.findall(r"`([^`]+)`", match.group(1))
-    items = quoted or [part.strip() for part in match.group(1).split(",")]
     return [path.strip().rstrip("/") for item in items for path in expand_braces(item) if path.strip()]
 
 
@@ -69,7 +83,7 @@ def in_scope(path: str, patterns: list[str]) -> bool:
 
 def numstat(repo: str, rng: str, *extra: str) -> dict[str, str]:
     rows = {}
-    for line in git(repo, "diff", "--numstat", *extra, rng).splitlines():
+    for line in git(repo, "diff", "--numstat", "--no-renames", *extra, rng).splitlines():
         added, removed, path = line.split("\t", 2)
         rows[path] = f"{added}\t{removed}"
     return rows
@@ -84,7 +98,7 @@ def check(repo: str, base: str, head: str, card_text: str, allow: list[str]) -> 
         problems.append(f"line endings: {', '.join(crlf)}")
     changed = set(plain)
     merge_base = git(repo, "merge-base", base, head).strip()
-    moved = set(git(repo, "diff", "--name-only", merge_base, base).splitlines())
+    moved = set(git(repo, "diff", "--name-only", "--no-renames", merge_base, base).splitlines())
     overlap = sorted(changed & moved)
     if overlap:
         problems.append(f"stale base: {', '.join(overlap)} also changed on {base}; rebase and rerun")
@@ -109,7 +123,9 @@ def main(argv: list[str] | None = None) -> int:
             card_text = Path(args.card).read_text(encoding="utf-8-sig")
         except OSError as error:
             raise Unobserved(f"card unreadable: {error}") from error
-        if not args.no_fetch and "/" in args.base:
+        if not args.no_fetch:
+            if "/" not in args.base:  # a bare `main` means origin's main, never the stale local ref
+                args.base = f"origin/{args.base}"
             remote, branch = args.base.split("/", 1)
             git(args.repo, "fetch", "--quiet", remote, branch)
         allow = [line.strip() for line in ALLOW_FILE.read_text(encoding="utf-8").splitlines()

@@ -6,6 +6,8 @@ edit is denied until `.graphhelm/keel-card.json` exists. Writing the card itself
 Once the card exists, an edit to a non-test file under the card's scopePaths is denied until the
 branch has a new or changed test file under those paths (test first). A card with
 `"testFirst": false` and a non-empty `testFirstReason` waives that check.
+After any denial on a branch, a small source edit no longer passes without a card (#2247): the
+denial is kept per worktree in the git dir, so the rest of a batch is decided from disk too.
 Any failure of the hook itself lets the edit through; the Stop gate still stands behind it.
 """
 
@@ -65,6 +67,24 @@ def test_first(repo: Path, relative: str) -> str | None:
             f"\"testFirstReason\" in {CARD.as_posix()}.")
 
 
+def _denial_marker(repo: Path) -> Path:
+    """Per-worktree file in the git dir, never in the tree: it holds the branch a denial was on."""
+    return Path(_git(repo, "rev-parse", "--absolute-git-dir").strip()) / "keel-pretool-denied"
+
+
+def _branch(repo: Path) -> str:
+    return _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+
+
+def _denied_on_branch(repo: Path) -> bool:
+    """#2247: once this branch had an edit denied, the small-edit allowance is closed for its source
+    files, so the other edits of the same batch (or a later turn) cannot slip in under it."""
+    try:
+        return _denial_marker(repo).read_text(encoding="utf-8").strip() == _branch(repo)
+    except OSError:
+        return False
+
+
 def _edit_lines(tool_input: dict) -> int:
     if "content" in tool_input:
         return len(str(tool_input["content"]).splitlines())
@@ -85,7 +105,8 @@ def decide(repo: Path, target: Path, tool_input: dict) -> str | None:
     base = _merge_base(repo)
     if base is None:
         return None
-    if code_lines_changed(repo, base) + _edit_lines(tool_input) <= TRIVIAL_LINES:
+    small = code_lines_changed(repo, base) + _edit_lines(tool_input) <= TRIVIAL_LINES
+    if small and (is_test(relative) or not _denied_on_branch(repo)):
         return None
     return (f"Keel: this edit takes the branch past the summary-only row and there is no card at "
             f"{CARD.as_posix()}. Write the card first (promise, scopePaths, proof; shape in "
@@ -106,6 +127,13 @@ def main() -> int:
     except (subprocess.SubprocessError, OSError, ValueError, AttributeError):
         return 0
     if reason:
+        try:  # before the decision is printed, so the next edit of the batch already sees it
+            marker = _denial_marker(repo)
+            tmp = marker.with_suffix(".tmp")
+            tmp.write_text(_branch(repo), encoding="utf-8")
+            os.replace(tmp, marker)
+        except (subprocess.SubprocessError, OSError, ValueError):
+            pass
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                                  "permissionDecision": "deny",
                                                  "permissionDecisionReason": reason}}))

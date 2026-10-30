@@ -81,6 +81,32 @@ class KeelPreToolHook(unittest.TestCase):
         result = self.run_hook("app.py", old_string="a", new_string="b")
         self.assertEqual(result["permissionDecision"], "deny")
 
+    def test_after_a_denied_edit_a_small_sibling_edit_is_denied_too(self):
+        # #2247: benchmark 009 task-record r1, one batch with no card: a large edit was denied and two
+        # small edits to the same source file in the same batch went through, before any test.
+        self.assertEqual(self.run_hook("src/app.py", content="x = 1\n" * 20)["permissionDecision"], "deny")
+        sibling = self.run_hook("src/app.py", old_string="a", new_string="b")
+        self.assertIsNotNone(sibling, "a small source edit passed after its batch was denied")
+        self.assertEqual(sibling["permissionDecision"], "deny")
+        # A test file in the same batch is still judged by its own size.
+        self.assertIsNone(self.run_hook("src/test_app.py", old_string="a", new_string="b"))
+
+    def test_batch_source_test_source_and_a_later_turn_need_the_test_on_disk(self):
+        self.assertEqual(self.run_hook("src/app.py", content="x = 1\n" * 20)["permissionDecision"], "deny")
+        self.assertEqual(self.run_hook("src/app.py", old_string="a", new_string="b")["permissionDecision"],
+                         "deny")  # a later turn, still no card and no test
+        self.write_card(promise="p", scopePaths=["src/"], proof="python -m unittest")
+        self.assertEqual(self.run_hook("src/app.py", old_string="a", new_string="b")["permissionDecision"],
+                         "deny")  # card, no test yet: test first
+        (self.repo / "src").mkdir()
+        (self.repo / "src" / "test_app.py").write_text("def test(): assert False\n")
+        self.assertIsNone(self.run_hook("src/app.py", old_string="a", new_string="b"))
+
+    def test_a_denial_on_another_branch_does_not_block_a_small_fix(self):
+        self.assertEqual(self.run_hook("app.py", content="x = 1\n" * 20)["permissionDecision"], "deny")
+        git(self.repo, "checkout", "-qb", "other", "main")
+        self.assertIsNone(self.run_hook("app.py", old_string="a", new_string="b"))
+
     def write_card(self, **card):
         (self.repo / ".graphhelm").mkdir(exist_ok=True)
         (self.repo / ".graphhelm" / "keel-card.json").write_text(json.dumps(card))

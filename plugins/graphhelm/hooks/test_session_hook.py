@@ -860,6 +860,11 @@ class SessionHookTests(unittest.TestCase):
             release.start()
             process.stdin.close()
             process.stdin = None
+            # #2241: the 3 s hold is the test's own, not the hook's. Start the hook's budget at the
+            # release, as every other hook test does; under a cold cargo build the state write
+            # (fsync) alone took over 4 s and the hold had already spent half of deadline(6).
+            release.join(timeout=deadline(3) + 3.0)
+            self.assertTrue(RuntimeHandler.get_release.is_set())
             stdout, stderr = process.communicate(timeout=deadline(6))
         finally:
             release.cancel()

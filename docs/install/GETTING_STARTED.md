@@ -108,10 +108,12 @@ cargo +1.97.1 install --locked --path apps/cli
 graphhelm --version
 ```
 
-Expected last line:
+Expected output has two lines: `graphhelm <version>`, the release number, then `commit <sha>`, the commit the
+binary was built from. Compare the first line with the release you installed:
 
 ```
-graphhelm 0.1.1
+graphhelm <version>
+commit <sha>
 ```
 
 `cargo install` puts `graphhelm` on your PATH (`~/.cargo/bin`). If you would rather not install,

@@ -64,6 +64,9 @@ def _watchdog_answer() -> str:
         report = '{"format":"graphhelm-portable-v1","phase":' + _watchdog_quote(_watched_phase) + ',"host":' + _watchdog_quote(host)
         if _watched_phase == "start":
             report += ',"sessionId":null,"context":' + context
+        elif _watched_phase == "end":
+            # #2340: a portable end always says its delivery, as the normal end report does.
+            report += ',"delivery":"unobserved"'
         return report + ',"activation":"unobserved"}\n'
     return ""
 
@@ -1198,7 +1201,11 @@ def main() -> int:
             else:
                 print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}}))
         elif output_format == "portable":
-            print(json.dumps({"format": "graphhelm-portable-v1", "phase": args.phase, "host": host, "activation": "unobserved"}, separators=(",", ":")))
+            report = {"format": "graphhelm-portable-v1", "phase": args.phase, "host": host, "activation": "unobserved"}
+            if args.phase == "end":
+                # #2340: a portable end always says its delivery, as the normal end report does.
+                report["delivery"] = "unobserved"
+            print(json.dumps(report, separators=(",", ":")))
     return 0
 
 

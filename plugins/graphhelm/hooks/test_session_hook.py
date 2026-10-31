@@ -765,11 +765,14 @@ class SessionHookTests(unittest.TestCase):
         """#2340: under disk pressure (the #2270 load) a hook may hit STATE_WRITE_BUDGET. That is its
         promised answer, not a failure: it says so, answers unobserved and exits. The test then
         checks that shape and stops, since the rest of its story was legitimately not recorded."""
-        if "still pending" not in result.stderr:
-            return False
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"{phase} unobserved (_StateTimeout)", result.stderr)
-        return True
+        if "still pending" in result.stderr:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"{phase} unobserved (_StateTimeout)", result.stderr)
+            return True
+        if f"{phase} unobserved (no answer" in result.stderr:  # the watchdog answered
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return True
+        return False
 
     def test_long_valid_identities_use_bounded_actor_label(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
@@ -1050,6 +1053,16 @@ class SessionHookTests(unittest.TestCase):
         # Records nothing for that session: the hook stops at the cut write, before its POST.
         self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
 
+    def test_portable_end_says_its_delivery_on_every_path(self):
+        # #2340, Shino's probe on 3c4a9a66: a portable end cut by a timeout printed no "delivery"
+        # key (KeyError for a reader of the report). Every path says it: here a hung state write.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.hang_state_writes()
+        result = self.run_hook("end", host="third-party-agent")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual((report["phase"], report["delivery"], report["activation"]), ("end", "unobserved", "unobserved"))
+
     def test_codex_end_leaves_within_codex_3_s_cap_while_its_state_write_hangs(self):
         # Codex clamps SessionEnd to 3 s (codex-cli 0.157.1, RECEIPT-shino.md). With the state write
         # hung, a Codex end answers and exits within 3 s of its spawn on a quiet machine.
@@ -1313,6 +1326,7 @@ class SessionHookTests(unittest.TestCase):
             input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
             text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
         self.assertEqual(json.loads(portable.stdout)["activation"], "unobserved")
+        self.assertEqual(json.loads(portable.stdout)["delivery"], "unobserved")
         self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
         # Codex clamps SessionEnd to 3 s: a Codex end gives up 1 s after its first line.
         started = time.monotonic()

@@ -2,6 +2,124 @@
 
 from __future__ import annotations
 
+# The first instruction takes the hook's first timestamp, before any other import. With
+# GRAPHHELM_HOOK_FIRST_LINE set (a probe only), it is appended there as "<pid> <epoch seconds>", so
+# the time from spawn to this line can be told apart from the hook's own time.
+import time as _first_line_clock
+_FIRST_LINE_AT = _first_line_clock.time()
+import os as _first_line_os
+import sys as _first_line_sys
+import threading as _first_line_threading
+
+# Under disk pressure, file I/O outside the bounded state steps (imports, stdin, team files, the
+# waiter) can still stall. One watchdog bounds all of it: HOOK_WATCHDOG seconds after this line, a
+# start or end that has not answered yet answers UNOBSERVED, says so, and leaves at once.
+_watched_phase = _first_line_sys.argv[1] if len(_first_line_sys.argv) > 1 else ""
+_watched_host = _first_line_sys.argv[_first_line_sys.argv.index("--host") + 1] if "--host" in _first_line_sys.argv[:-1] else ""
+# Codex clamps every SessionEnd hook to 3 s whatever it declares, so a Codex end answers 1 s after
+# its first line; spawn and teardown take the rest of the 3 s.
+HOOK_WATCHDOG = 1.0 if (_watched_host, _watched_phase) == ("codex", "end") else 6.0
+_answer_started = False
+
+
+class _AnswerGuard:
+    """stdout that remembers whether the hook began its answer, so the watchdog never adds a second."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def write(self, text):
+        global _answer_started
+        _answer_started = True
+        return self._inner.write(text)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _watchdog_quote(text: str) -> str:
+    """A JSON string with no import: the watchdog must not wait on an import lock the stalled main
+    thread may hold."""
+    out = ['"']
+    for char in text:
+        if char in '"\\':
+            out.append("\\" + char)
+        elif ord(char) < 0x20 or ord(char) > 0x7E:
+            out.append("\\u%04x" % ord(char) if ord(char) <= 0xFFFF else char)
+        else:
+            out.append(char)
+    out.append('"')
+    return "".join(out)
+
+
+def _watchdog_answer() -> str:
+    argv = _first_line_sys.argv
+    host = argv[argv.index("--host") + 1] if "--host" in argv[:-1] else ""
+    output_format = argv[argv.index("--format") + 1] if "--format" in argv[:-1] else ("native" if host in {"claude", "codex"} else "portable")
+    context = _watchdog_quote(globals().get("KEEL_CONTEXT", "") + "\nGraphHelm briefing UNOBSERVED.")
+    if _watched_phase == "start" and output_format != "portable":
+        return '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":' + context + "}}\n"
+    if output_format == "portable":
+        report = '{"format":"graphhelm-portable-v1","phase":' + _watchdog_quote(_watched_phase) + ',"host":' + _watchdog_quote(host)
+        if _watched_phase == "start":
+            report += ',"sessionId":null,"context":' + context
+        elif _watched_phase == "end":
+            # A portable end always says its delivery, as the normal end report does.
+            report += ',"delivery":"unobserved"'
+        return report + ',"activation":"unobserved"}\n'
+    return ""
+
+
+def _probe_mark(event: str) -> None:
+    """Probe only (GRAPHHELM_HOOK_FIRST_LINE set): one stderr line "graphhelm-probe-exit <pid>
+    <watchdog|normal> <epoch>" right before `os._exit`, so a probe can split time inside the hook
+    from teardown after it. It goes to the stderr pipe, never to a file: a file write on a starved
+    disk can hold the watchdog before its os._exit. The time is taken before the write."""
+    if not _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE"):
+        return
+    at = _first_line_clock.time()
+    try:
+        _first_line_sys.stderr.write(f"graphhelm-probe-exit {_first_line_os.getpid()} {event} {at:.3f}\n")
+        _first_line_sys.stderr.flush()
+    except (OSError, ValueError):
+        # keel-allow: keel.rel.no_swallow stderr itself failed, so there is nowhere left to report this probe-only mark, and the exit must not wait until #2344
+        return
+
+
+def _watchdog() -> None:
+    _first_line_clock.sleep(HOOK_WATCHDOG)
+    try:
+        if not _answer_started:
+            _first_line_sys.stdout._inner.write(_watchdog_answer())
+        _first_line_sys.stderr.write(f"graphhelm-hook: {_watched_phase} unobserved (no answer {HOOK_WATCHDOG:g} s after the first line)\n")
+        _first_line_sys.stdout.flush()
+        _first_line_sys.stderr.flush()
+    finally:
+        _probe_mark("watchdog")
+        # A timeout path exits 0: its UNOBSERVED answer is the visible warning and still reaches the
+        # context. Only the faulthandler backstop exits 1.
+        _first_line_os._exit(0)
+
+
+if __name__ == "__main__" and _watched_phase in {"start", "end"}:
+    _first_line_sys.stdout = _AnswerGuard(_first_line_sys.stdout)
+    _first_line_threading.Thread(target=_watchdog, name="graphhelm-hook-watchdog", daemon=True).start()
+    # If the Python watchdog cannot run (its thread blocked, or a call holding the GIL), this C timer,
+    # which needs no Python lock, ends the process a short while after the watchdog's moment: it
+    # writes every thread's stack to stderr (where it hung) and exits with status 1.
+    import faulthandler as _first_line_faulthandler
+    _first_line_faulthandler.dump_traceback_later(HOOK_WATCHDOG + 1.5, exit=True)
+
+if _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE"):
+    try:
+        _marker = _first_line_os.open(_first_line_os.environ["GRAPHHELM_HOOK_FIRST_LINE"],
+                                      _first_line_os.O_WRONLY | _first_line_os.O_CREAT | _first_line_os.O_APPEND, 0o600)
+        _first_line_os.write(_marker, f"{_first_line_os.getpid()} {_FIRST_LINE_AT:.3f}\n".encode())
+        _first_line_os.close(_marker)
+    except OSError as _marker_error:
+        # Probe only: the run goes on, and the probe reads this line instead of the marker.
+        _first_line_sys.stderr.write(f"graphhelm-probe: first-line marker not written ({type(_marker_error).__name__})\n")
+
 import argparse
 import codecs
 from datetime import datetime, timezone
@@ -15,6 +133,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -555,6 +674,83 @@ def _write_state(path: Path, value: dict, durable: bool = True) -> None:
             pass
 
 
+# Under disk pressure the state write itself (mkstemp, write, replace), not only its fsync, can
+# outlast the host's hook budget. Each piece of hook file I/O (lock, read, write, token) gets this
+# long; past it the hook answers UNOBSERVED, records nothing more for that session
+# and exits at once (`_StateTimeout`, `_answered_without_state`); an abandoned write may not land.
+STATE_WRITE_BUDGET = 2.0
+_answered_without_state = False
+
+
+class _StateTimeout(BaseException):
+    """A piece of hook file I/O did not answer within STATE_WRITE_BUDGET. Raised past every
+    `except Exception` and OSError handler on purpose: the hook stops there, answers UNOBSERVED in
+    `main`, records nothing more for the session and exits at once. Going on into more file I/O
+    (the token, a second write) would only stall again on the same disk."""
+
+
+def _bounded(what: str, call):
+    """Runs one piece of hook file I/O for at most STATE_WRITE_BUDGET and returns its result. When
+    the file system has not answered by then, raises `_StateTimeout`. An error raised in time is
+    raised here."""
+    global _answered_without_state
+    outcome: list = []
+
+    def run() -> None:
+        try:
+            outcome.append((True, call()))
+        except BaseException as error:  # handed to the caller below when it finishes in time
+            outcome.append((False, error))
+
+    worker = threading.Thread(target=run, name=f"graphhelm-state-{what}", daemon=True)
+    worker.start()
+    worker.join(STATE_WRITE_BUDGET)
+    if not outcome:
+        _answered_without_state = True
+        print(f"graphhelm-session-hook: state {what} still pending; answering without it", file=sys.stderr)
+        raise _StateTimeout(what)
+    ok, value = outcome[0]
+    if not ok:
+        raise value
+    return value
+
+
+def _write_state_bounded(path: Path, value: dict, durable: bool = True) -> None:
+    """`_write_state` that never holds the answer past STATE_WRITE_BUDGET. A write that is still
+    pending is abandoned, never torn: the replace stays atomic. A lost write costs a retried,
+    idempotent signal (the Runtime's 409 for an already committed key counts as delivered), or a
+    later compact briefing that reads UNOBSERVED because its cache is missing."""
+    snapshot = json.loads(json.dumps(value))
+    _bounded("write", lambda: _write_state(path, snapshot, durable))
+
+
+def _read_state_or_empty(path: Path, execution: str, session: str, host: str, origin: str) -> dict | None:
+    """The state as `_read_state` validates it, or None (empty) when the file is unreadable:
+    empty or half-written after a crash or a power loss (the end write is not fsync'd), not JSON, or
+    not this format. One stderr warning says so; the hook carries on as for a missing file. A
+    parseable state that fails validation (another identity, a forged receipt, an injected
+    briefing) still fails closed. A read that does not answer in time raises `_StateTimeout`."""
+    try:
+        return _bounded("read", lambda: _read_state(path, execution, session, host, origin))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, _UnreadableState) as error:
+        print(f"graphhelm-session-hook: hook state unreadable ({type(error).__name__}); treated as empty", file=sys.stderr)
+        return None
+
+
+def _token_bounded(path: str) -> str:
+    """The token read in start and end is file I/O too, bounded like the state."""
+    return _bounded("token", lambda: token_from_file(path))
+
+
+def _claim_lock_bounded(path: Path):
+    """`_claim_lock`, bounded like every other piece of hook file I/O."""
+    return _bounded("lock", lambda: _claim_lock(path))
+
+
+class _UnreadableState(ValueError):
+    """A state file that is not a whole hook state: too large, not an object, or another version."""
+
+
 def _read_state(path: Path, execution: str, session: str, host: str, origin: str) -> dict | None:
     try:
         with path.open("rb") as source:
@@ -562,10 +758,10 @@ def _read_state(path: Path, execution: str, session: str, host: str, origin: str
     except FileNotFoundError:
         return None
     if len(raw) > MAX_STATE:
-        raise ValueError("hook state too large")
+        raise _UnreadableState("hook state too large")
     value = json.loads(raw)
     if not isinstance(value, dict) or value.get("version") != 2:
-        raise ValueError("invalid hook state version")
+        raise _UnreadableState("invalid hook state version")
     if any(value.get(key) != expected for key, expected in (("executionId", execution), ("sessionId", session), ("host", host), ("origin", origin))):
         raise ValueError("hook state identity mismatch")
     if "briefing" in value:
@@ -595,7 +791,19 @@ def _claim_lock(path: Path):
 def _release_lock(lock) -> None:
     # OS locks are released even when the host kills a timed-out hook. Keep the
     # inode: unlinking it could let a second process lock a different file.
-    lock.close()
+    # The unlock and close can stall on a starved disk too. After a timeout the hook leaves at once
+    # and the OS releases the lock with the process; otherwise the release is bounded like any
+    # other piece of hook file I/O.
+    global _answered_without_state
+    if lock is None or _answered_without_state:
+        return
+    worker = threading.Thread(target=lock.close, name="graphhelm-state-unlock", daemon=True)
+    worker.start()
+    worker.join(STATE_WRITE_BUDGET)
+    if worker.is_alive():
+        # The answer and the state are already done: this is the normal path (exit 0), and start
+        # and end leave with os._exit anyway, so the stuck release cannot hold the process.
+        print("graphhelm-session-hook: state unlock still pending; leaving without it", file=sys.stderr)
 
 
 def _briefing_digest(data: dict) -> dict:
@@ -700,7 +908,7 @@ def _record_started(bound: tuple, host: str, session: str, lane: str, state: dic
     try:
         try:
             reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal",
-                            token_from_file(token_file), "POST", {"signal": signal},
+                            _token_bounded(token_file), "POST", {"signal": signal},
                             {"X-GraphHelm-Actor": lane, "X-GraphHelm-Actor-Type": "agent",
                              "X-GraphHelm-Actor-Session": session, "Idempotency-Key": key}, timeout=2.0)
         except urllib.error.HTTPError as error:
@@ -711,7 +919,7 @@ def _record_started(bound: tuple, host: str, session: str, lane: str, state: dic
         if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != key:
             raise ValueError("signal acknowledgment did not match")
         state["started"] = True
-        _write_state(path, state)
+        _write_state_bounded(path, state)
     except (OSError, ValueError, KeyError) as error:
         print(f"graphhelm-session-hook: start signal unobserved ({type(error).__name__})", file=sys.stderr)
 
@@ -733,7 +941,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
         return
     execution, token_file, url, origin, node_id = bound
     path = state_path(execution, session, host, origin)
-    state = _read_state(path, execution, session, host, origin)
+    state = _read_state_or_empty(path, execution, session, host, origin)
     source = payload.get("source") or payload.get("session_start_source") or "startup"
     digest = state.get("briefing") if source in {"compact", "clear"} and state else None
     if source == "compact" and not isinstance(digest, dict):
@@ -741,7 +949,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
     freshness = "CACHED" if isinstance(digest, dict) else "FRESH"
     if not isinstance(digest, dict):
         try:
-            reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/briefing", token_from_file(token_file), "GET", timeout=BRIEFING_TIMEOUT)
+            reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/briefing", _token_bounded(token_file), "GET", timeout=BRIEFING_TIMEOUT)
             data = reply.get("data")
             if not isinstance(data, dict):
                 raise ValueError("invalid briefing")
@@ -757,7 +965,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
         digest = _briefing_digest(data)
         state = state or {"version": 2, "executionId": execution, "sessionId": session, "host": host, "origin": origin}
         state["briefing"] = digest
-        _write_state(path, state)
+        _write_state_bounded(path, state)
     # #1184: the started record is appended before the waiter arms its wake lease, so the append
     # cannot consume the lease the waiter is about to park on.
     lane = _lane(payload)
@@ -781,7 +989,7 @@ def start(payload: dict, host: str, output_format: str = "native") -> None:
         _start_impl(payload, host, output_format)
         return
     execution, _, _, origin, _ = bound
-    lock = _claim_lock(state_path(execution, _session(payload), host, origin))
+    lock = _claim_lock_bounded(state_path(execution, _session(payload), host, origin))
     try:
         _start_impl(payload, host, output_format)
     finally:
@@ -842,9 +1050,7 @@ def _end_impl(payload: dict, host: str, bound: tuple | None = None, lane: str | 
     execution, token_file, url, origin, node_id = bound
     session = _session(payload)
     path = state_path(execution, session, host, origin)
-    state = _read_state(path, execution, session, host, origin)
-    if state is None and path.exists():
-        raise ValueError("invalid hook state")
+    state = _read_state_or_empty(path, execution, session, host, origin)
     state = state or {"version": 2, "executionId": execution, "sessionId": session, "host": host, "origin": origin}
     delivery = state.get("delivery")
     if delivery is None:
@@ -854,19 +1060,26 @@ def _end_impl(payload: dict, host: str, bound: tuple | None = None, lane: str | 
         if lane is not None:
             delivery["lane"] = lane
         state["delivery"] = delivery
-        _write_state(path, state, durable=False)
+        _write_state_bounded(path, state, durable=False)
     if delivery.get("delivered") is True:
         return
     signal = delivery.get("signal")
     signal_id = delivery.get("signalId")
     if not isinstance(signal, dict) or not isinstance(signal_id, str):
         raise ValueError("invalid delivery state")
-    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=5.0)
+    try:
+        reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", _token_bounded(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=5.0)
+    except urllib.error.HTTPError as error:
+        # The key is the same on every retry; a 409 means an earlier end committed it and its state
+        # write did not land (abandoned past STATE_WRITE_BUDGET), as `_record_started` reads it.
+        if error.code != 409:
+            raise ValueError(f"the Runtime refused the end signal (HTTP {error.code})") from error
+        reply = {"data": {"executionId": execution, "signalId": signal_id}}
     data = reply.get("data")
     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
         raise ValueError("signal acknowledgment did not match")
     delivery["delivered"] = True
-    _write_state(path, state, durable=False)
+    _write_state_bounded(path, state, durable=False)
 
 
 def end(payload: dict, host: str, output_format: str = "native") -> bool:
@@ -884,7 +1097,7 @@ def end(payload: dict, host: str, output_format: str = "native") -> bool:
         return False
     execution, _, _, origin, _ = bound
     session = _session(payload)
-    lock = _claim_lock(state_path(execution, session, host, origin))
+    lock = _claim_lock_bounded(state_path(execution, session, host, origin))
     try:
         _end_impl(payload, host, bound, lane)
     finally:
@@ -982,7 +1195,9 @@ def main() -> int:
                 delivered = end(payload, host, output_format)
                 if output_format == "portable":
                     print(json.dumps({"format": "graphhelm-portable-v1", "phase": "end", "host": host, "sessionId": _session(payload), "delivery": "acknowledged" if delivered else "unobserved", "activation": "unobserved"}, separators=(",", ":")))
-    except (OSError, ValueError, KeyError, RecursionError) as error:
+    except (OSError, ValueError, KeyError, RecursionError, _StateTimeout) as error:
+        # `_StateTimeout` lands here too: the hook answers UNOBSERVED now, records nothing more for
+        # the session, and `__main__` exits at once.
         print(f"graphhelm-hook: {args.phase} unobserved ({type(error).__name__})", file=sys.stderr)
         if args.phase == "inspect":
             print(json.dumps({"phase": "inspect", "configuration": "invalid", "activation": "unobserved"}))
@@ -993,9 +1208,22 @@ def main() -> int:
             else:
                 print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}}))
         elif output_format == "portable":
-            print(json.dumps({"format": "graphhelm-portable-v1", "phase": args.phase, "host": host, "activation": "unobserved"}, separators=(",", ":")))
+            report = {"format": "graphhelm-portable-v1", "phase": args.phase, "host": host, "activation": "unobserved"}
+            if args.phase == "end":
+                # A portable end always says its delivery, as the normal end report does.
+                report["delivery"] = "unobserved"
+            print(json.dumps(report, separators=(",", ":")))
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    code = main()
+    if _answered_without_state or _watched_phase in {"start", "end"}:
+        # The answer is out. Start and end never go through interpreter shutdown: it can wait on a
+        # stuck file system, and once it starts the watchdog thread can no longer run. Flush what
+        # was said and leave now.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        _probe_mark("normal")
+        os._exit(code)
+    raise SystemExit(code)

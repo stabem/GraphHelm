@@ -3659,6 +3659,27 @@ fn a_parallel_claim_on_its_own_branch_gets_its_own_slice() {
         keys.iter().all(|key| key.starts_with("issue-2298#claim-")) && keys[0] != keys[1],
         "each slice has its own claim key: {keys:?}"
     );
+
+    // #2338: beta's parallel slice does not take alpha's task away. Alpha's own re-claim, without
+    // `parallel`, is admitted (DELIVERY: "a lane's own re-claim … admitted"); before, it was
+    // refused as "held by lane lane-beta". A third lane is still refused, naming the first holder.
+    let (status, reply) = post(
+        "par-a2",
+        "lane-alpha",
+        &claim("lane-alpha", "issue-2298-a", false),
+    );
+    assert_eq!(status, 200, "alpha re-claims its own task: {reply}");
+    let refused = post(
+        "par-c2",
+        "lane-gamma",
+        &claim("lane-gamma", "issue-2298-c", false),
+    );
+    let message = refused.1["diagnostics"][0]["message"].to_string();
+    held("gamma without parallel", refused);
+    assert!(
+        message.contains("held by lane lane-alpha"),
+        "the refusal names the first holder, not the latest slice: {message}"
+    );
 }
 
 /// #1220 (gh-claude-opt-2 on PR #1221): two lanes claiming one free task at the same instant

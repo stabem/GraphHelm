@@ -9,9 +9,9 @@ are bash. The clean-host transcripts this page was checked against are
 [`docs/acceptance/install-rehearsal-2026-09-13.md`](../acceptance/install-rehearsal-2026-09-13.md)
 and, Studio included, [`docs/acceptance/clean-machine-2026-09-14.md`](../acceptance/clean-machine-2026-09-14.md).
 
-**What needs credentials and what does not.** A public clone needs no GitHub account. Nothing after the clone needs an
-account, an API key, a model provider, a database, or the network (the Studio's `npm ci` fetches
-packages once). Every execution below runs on fixtures. A run that calls a real model needs a
+**What needs credentials and what does not.** A public clone needs no GitHub account. Building the binary and
+installing the Studio's packages fetch Rust crates and npm packages from the network, once. Nothing else on
+this page needs an account, an API key, a model provider, a database, or the network. Every execution below runs on fixtures. A run that calls a real model needs a
 gateway manifest and a credential; the one command that wires both is at the end of section 2,
 and [`docs/product/PROVIDER_LESS_MODE.md`](../product/PROVIDER_LESS_MODE.md) says what works
 without a provider and what changes when you add one.
@@ -29,6 +29,21 @@ user-authored ActivationReceipt into proof. Follow the separate
 [disposable adoption rehearsal](../acceptance/adoption-rehearsal.md) for supported scope, exact
 commands, retained recovery guards, and the missing-observer limit. Those rehearsal commands are
 a recipe, not part of the historical executed transcripts cited above.
+
+## Words used on this page
+
+- **Runtime**: the local `graphhelm serve` process. It keeps the event store and answers the API.
+- **Execution**: one run of a graph, started with `graphhelm execution start`.
+- **Harness**: the agent host you chat with, such as Claude Code or Codex.
+- **MCP** (Model Context Protocol): the protocol a harness uses to call tools. `graphhelm mcp` is GraphHelm's server for it.
+- **Loopback**: `127.0.0.1`, this machine only. Nothing GraphHelm serves listens beyond it.
+- **Bearer token**: the secret in `events.token`. It goes in an `Authorization: Bearer` header; never print it.
+- **Keyring** and **sealing key**: `serve.key` seals stored messages. The keyring holds that key under the id `studio`.
+- **Gateway** and **route**: a gateway connects to a model provider. A route is one named entry for it in `manifest.json`.
+- **Manifest**: `<project>/.graphhelm/manifest.json`, where the routes are kept.
+- **Journey**: a user-visible flow written as screens and checks, in `.graphhelm/journeys/`.
+- **Observer**: the tool that runs a journey and records what it saw. Without one, a journey reads `OBSERVER_MISSING`.
+- **Attention**: the field that says whether a run needs you. Its four values are explained in [QUICKSTART.md](../../QUICKSTART.md).
 
 ## Prerequisites
 

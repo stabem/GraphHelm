@@ -644,11 +644,14 @@ class SessionHookTests(unittest.TestCase):
         # before its bounded HTTP acknowledgement, even when the script is unchanged.
         # #2340: 30 s, because the host waits for the process to EXIT (Shino's host proof), and
         # under disk pressure teardown after os._exit took up to ~10 s on top of the 6 s watchdog.
-        # Every copy declares the same session budget, so Claude and Codex cannot drift apart.
-        for config in (companion / "hooks" / "codex-hooks.json", SCRIPT.parent / "codex-hooks.json",
-                       SCRIPT.parent / "hooks.json"):
+        # Every copy declares the session budget its host enforces, so the copies cannot drift
+        # apart: 30 s on Claude; on Codex 30 s for start and 3 s for end, the cap Codex applies to
+        # SessionEnd whatever is declared (codex-cli 0.157.1, RECEIPT-shino.md).
+        for config, end_budget in ((companion / "hooks" / "codex-hooks.json", 3),
+                                   (SCRIPT.parent / "codex-hooks.json", 3),
+                                   (SCRIPT.parent / "hooks.json", 30)):
             declared = json.loads(config.read_text())
-            for phase, budget in (("SessionStart", 30), ("SessionEnd", 30)):
+            for phase, budget in (("SessionStart", 30), ("SessionEnd", end_budget)):
                 self.assertEqual(
                     [handler["timeout"] for matcher in declared["hooks"][phase]
                      for handler in matcher["hooks"] if "session_hook.py" in handler["command"]],
@@ -1041,6 +1044,21 @@ class SessionHookTests(unittest.TestCase):
         # Records nothing for that session: the hook stops at the cut write, before its POST.
         self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
 
+    def test_codex_end_leaves_within_codex_3_s_cap_while_its_state_write_hangs(self):
+        # Codex clamps SessionEnd to 3 s (codex-cli 0.157.1, RECEIPT-shino.md). With the state write
+        # hung, a Codex end answers and exits within 3 s of its spawn on a quiet machine.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.hang_state_writes()
+        started = time.monotonic()
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "end", "--host", "codex"],
+            input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
+            text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("unobserved", result.stderr)
+        self.assertLess(elapsed, 3.0, f"codex end left {elapsed:.2f} s after spawn")
+
     def test_start_answers_while_its_state_write_hangs(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         self.hang_state_writes()
@@ -1290,14 +1308,14 @@ class SessionHookTests(unittest.TestCase):
             text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
         self.assertEqual(json.loads(portable.stdout)["activation"], "unobserved")
         self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
-        # Codex clamps SessionEnd to 3 s: a Codex end gives up 2 s after its first line.
+        # Codex clamps SessionEnd to 3 s: a Codex end gives up 1.5 s after its first line.
         started = time.monotonic()
         codex = subprocess.run(
             [sys.executable, str(SCRIPT), "end", "--host", "codex"],
             input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
             text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
         elapsed = time.monotonic() - started
-        self.assertIn("end unobserved (no answer 2 s after the first line)", codex.stderr)
+        self.assertIn("end unobserved (no answer 1.5 s after the first line)", codex.stderr)
         self.assertLess(elapsed, 3.0, f"codex end left {elapsed:.2f} s after spawn")
 
     def test_start_and_end_leave_without_a_slow_interpreter_shutdown(self):

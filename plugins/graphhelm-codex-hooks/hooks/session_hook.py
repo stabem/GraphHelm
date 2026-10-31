@@ -688,8 +688,19 @@ def _claim_lock(path: Path):
 def _release_lock(lock) -> None:
     # OS locks are released even when the host kills a timed-out hook. Keep the
     # inode: unlinking it could let a second process lock a different file.
-    if lock is not None:  # #2334: None when the lock did not answer in time
-        lock.close()
+    # #2340, Shino's probe on c98b7dd8: the unlock and close stalled for 25 s on the way out. After
+    # a timeout the hook leaves at once and the OS releases the lock with the process; otherwise
+    # the release is bounded like any other piece of hook file I/O, and a stuck one only makes the
+    # process leave at once too.
+    global _answered_without_state
+    if lock is None or _answered_without_state:
+        return
+    worker = threading.Thread(target=lock.close, name="graphhelm-state-unlock", daemon=True)
+    worker.start()
+    worker.join(STATE_WRITE_BUDGET)
+    if worker.is_alive():
+        _answered_without_state = True
+        print("graphhelm-session-hook: state unlock still pending; leaving without it", file=sys.stderr)
 
 
 def _briefing_digest(data: dict) -> dict:

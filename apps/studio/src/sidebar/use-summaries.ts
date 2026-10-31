@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { Session } from "../login/session";
 import { Runtime } from "../runtime/client";
-import { activeRun, agentCount, failingJourneys, type ProjectSummary } from "./project-summary";
+import { activeRun, agentCount, journeysWithFindings, type ProjectSummary } from "./project-summary";
 
 /** How often every project's subtitle is read again: at most three reads per project. */
 const SUMMARY_MS = 15_000;
@@ -19,7 +19,7 @@ async function summaryOf(session: Session): Promise<ProjectSummary> {
     activeRun: run,
     agents,
     journeys: flows.status === "fulfilled" ? flows.value.length : null,
-    failing: flows.status === "fulfilled" ? failingJourneys(flows.value) : null,
+    withFindings: flows.status === "fulfilled" ? journeysWithFindings(flows.value) : null,
   };
 }
 

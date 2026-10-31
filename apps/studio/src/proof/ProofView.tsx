@@ -245,7 +245,29 @@ function JourneyCard({ flow, selected, disabled, onPick, onRun, run, playing }: 
       {score.total > 0 && (
         <span className="journey-bar" aria-hidden="true">{score.bar.map((cell, index) => <span key={index} className={cell} />)}</span>
       )}
+      <JourneyFindings flow={flow} />
     </li>
+  );
+}
+
+/** #2325: what `journey validate` reports on the flow, shown as findings, never as a failed run:
+ * errors first, each with its code, where in the file, and what to write there. */
+function JourneyFindings({ flow }: { flow: JourneyFlow }) {
+  const listed = [...(flow.findings ?? [])].sort((a, b) => Number(a.severity !== "error") - Number(b.severity !== "error"));
+  if (listed.length === 0) return null;
+  const errors = listed.filter((finding) => finding.severity === "error").length;
+  const label = errors > 0 ? `${errors} ${errors === 1 ? "finding" : "findings"} to fix` : `${listed.length} ${listed.length === 1 ? "warning" : "warnings"}`;
+  return (
+    <details className="journey-findings">
+      <summary className={`chip ${errors > 0 ? "fail" : "idle"}`}>{label}</summary>
+      <ul aria-label={`Findings for ${nameOf(flow)}`}>
+        {listed.map((finding, index) => (
+          <li key={index}>
+            <code>{finding.code ?? "finding"}</code>{finding.pointer ? <> at <code>{finding.pointer}</code></> : null}{finding.message ? `: ${finding.message}` : ""}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 

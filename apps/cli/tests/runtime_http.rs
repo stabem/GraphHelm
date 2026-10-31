@@ -7475,3 +7475,138 @@ fn a_failing_launcher_is_capped_and_escalated_to_the_owner() {
         "{view}"
     );
 }
+
+/// #2323: with a real executor, `/start` answers once the run is started, not after the drive.
+/// A provider that never answers makes the drive outlast its route timeout; before, the reply came
+/// only after the whole drive (35 s measured by #2299, past the CLI's 30 s REQUEST_TIMEOUT). The
+/// observation is the run's own state, not wall time: when `/start` answers the run is still
+/// `running`, and the drive then ends on its own and its end reads back through status. A retry
+/// with the same key returns the same run. Cost: one served Runtime, a loopback provider that
+/// accepts and never answers, three POSTs and a bounded status poll.
+#[test]
+fn a_real_executor_start_answers_before_its_drive_ends() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = plain_project(directory.path());
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let staging = directory.path().join("staging");
+    let key_id = "runtime-http-key";
+    let route_id = "silent_route";
+    let base_url = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                std::thread::spawn(move || {
+                    let mut request = [0_u8; 8192];
+                    let _ = stream.read(&mut request);
+                    // Accept and never answer: only the route's own timeout ends the attempt.
+                    std::thread::sleep(Duration::from_secs(600));
+                });
+            }
+        });
+        format!("http://{address}")
+    };
+    credential_set(&broker, &keyring, key_id, "cred_silent", route_id);
+    let manifest = write_json(
+        directory.path(),
+        "manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id, "provider": "anthropic", "transport": "direct_api",
+                "authentication": "api_key", "billingMode": "per_token", "baseUrl": base_url,
+                "model": "claude-sonnet-5", "credentialRef": "cred_silent",
+                "profiles": ["critical_reasoning"], "enabled": true, "timeoutSeconds": 2
+            }]
+        }),
+    );
+    let execution = "exec-2323-start-reply";
+    let graph = agent_chain_graph(directory.path(), execution);
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+            "--staging".into(),
+            staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+            "--allow-program".into(),
+            "cargo".into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    drop(
+        graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(FixedClock),
+            std::sync::Arc::new(Ids::default()),
+        )
+        .unwrap(),
+    );
+    let (_guard, base, token) = serve_with(&events, &extra);
+    let url = format!("{base}/v1/executions/{execution}/start");
+    let body = serde_json::json!({"file": graph.to_str().unwrap(), "mode": "autopilot",
+        "project": project.to_str().unwrap()});
+    let headers = [
+        ("Idempotency-Key", "issue-2323-start"),
+        ("X-GraphHelm-Actor", "agent-2323"),
+        ("X-GraphHelm-Actor-Type", "agent"),
+    ];
+    let status_url = format!("{base}/v1/executions/{execution}");
+    let status = || json_body(&raw_request(&status_url, Some(&token)).unwrap());
+
+    let reply = post_request(&url, &token, &headers, &body, scaled(Duration::from_secs(120)))
+        .expect("/start answered");
+    let at_reply = status();
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let replied = json_body(&reply);
+    assert_eq!(
+        replied["data"]["status"], "running",
+        "/start answered with the started run, not its end: {replied}"
+    );
+    assert_eq!(
+        at_reply["data"]["status"], "running",
+        "the drive was still going when /start answered: {at_reply}"
+    );
+
+    let retry = post_request(&url, &token, &headers, &body, scaled(Duration::from_secs(30)))
+        .expect("the same-key retry answered");
+    assert_eq!(retry.status, 200, "{}", retry.body);
+    assert_eq!(
+        json_body(&retry)["data"]["executionId"],
+        replied["data"]["executionId"],
+        "a same-key retry returns the same run"
+    );
+
+    let deadline = Instant::now() + scaled(Duration::from_secs(180));
+    let ended = loop {
+        let now = status();
+        if now["data"]["status"] != "running" {
+            break now;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the detached drive never ended: {now}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    assert!(
+        ended["data"]["status"].is_string(),
+        "the drive's end reads back through status: {ended}"
+    );
+}

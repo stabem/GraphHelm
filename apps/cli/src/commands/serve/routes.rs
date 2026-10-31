@@ -4041,22 +4041,26 @@ pub(super) async fn start(
                     )?;
                     if drive_state.runtime.is_some() {
                         // The decision is durable before this point. A model request can take
-                        // minutes, and the HTTP client is allowed to disappear while it waits.
-                        // Keep the drive owned by the server task so dropping the request future
-                        // cannot leave a committed execution stuck at `running` forever.
+                        // minutes, so the drive is owned by the server task and the reply does
+                        // not wait for it (#2323): `/start` answers with the started run, and the
+                        // drive's progress and end read back through status and briefing. A
+                        // dropped request cannot leave the committed run stuck at `running`.
+                        let started =
+                            execution::start::render_started(&drive_state.events, &prepared)?;
                         let background_state = drive_state.clone();
                         let background_execution_id = drive_execution_id.clone();
                         tokio::spawn(async move {
-                            drive(&background_state, &background_execution_id, prepared, setup)
+                            if drive(&background_state, &background_execution_id, prepared, setup)
                                 .await
-                        })
-                        .await
-                        .map_err(|_| {
-                            MutationError::Command(driver_failure(
-                                "the detached execution drive stopped unexpectedly",
-                            ))
-                        })
-                        .and_then(std::convert::identity)
+                                .is_err()
+                            {
+                                // Content-free: the run's own record says how it ended.
+                                eprintln!(
+                                    "serve: the detached drive of {background_execution_id} ended with an error; read its status"
+                                );
+                            }
+                        });
+                        Ok(started)
                     } else {
                         drive(&drive_state, &drive_execution_id, prepared, setup).await
                     }

@@ -328,8 +328,10 @@ published port in place of `5185`. Keep `serve` on `127.0.0.1`: the dev server p
 **Open that exact URL.** The page auto-connects only through the printed `?session=` link: the
 dev server reads the token beside `GRAPHHELM_EVENTS` and hands it to the page under that one-time
 session, so nobody pastes a token. Opening `http://127.0.0.1:5185/` without the query shows the
-connect gate instead, where you can paste the contents of `events.token` by hand. With
-`GRAPHHELM_EVENTS` unset there is no session endpoint at all, only the gate.
+connect gate instead. To log in without the printed link, run `graphhelm studio open` from your project folder:
+it opens the page already connected. `studio open` uses port 5183; for the manual dev server on 5185, add
+`--port 5185`, or it is refused with `GHCLI032_STUDIO_REFUSED`. You can also paste the contents of
+`events.token` into the gate by hand. With `GRAPHHELM_EVENTS` unset there is no session endpoint at all, only the gate.
 
 The Studio's `/v1` and `/health` requests are proxied by the dev server to `GRAPHHELM_RUNTIME_URL`,
 so they stay same-origin; the default is `http://127.0.0.1:8080`, which is why the variable must
@@ -478,6 +480,6 @@ which serves every Runtime verb. If `init` detected neither harness
 | `init` says `GHCLI027_INIT_REFUSED` at `/keyring` | the keyring exists but `serve.key` no longer opens it (the key file was replaced) | pass the `--key-id` it was created with, or move `.graphhelm/keyring` aside — evidence sealed under the lost key cannot be recovered |
 | the `serve.started` line carries a `warning` `GHCLI006_SERVE_INVALID` at `/keyring` (`the keyring could not be opened with GRAPHHELM_EVENTS_KEY (…); sealed operations (messages, real executors) will refuse until serve is restarted with the right key`) | the variable is unset in this terminal, or `--key-id` is not the id the keyring was created with; reads and pause/approve/resume still work | stop `serve`, run the first `next` command from `init` again in the same terminal, restart `serve` with the `--key-id` `init` printed |
 | `serve` refuses at start with `GHCLI006_SERVE_INVALID` at `/bind` (`the requested address could not be bound`) | something already listens on `127.0.0.1:8791` — often a previous `serve` | stop it, or re-run `init --bind 127.0.0.1:<other port>` so every registration follows the new number |
-| the Studio shows the connect gate | the page was opened without the printed `?session=` URL, or `GRAPHHELM_EVENTS` was unset | open the printed URL; or paste the contents of `events.token` |
+| the Studio shows the connect gate | the page was opened without the printed `?session=` URL, or `GRAPHHELM_EVENTS` was unset | open the printed URL; or run `graphhelm studio open` (add `--port 5185` for the manual dev server); or paste the contents of `events.token` |
 | the Studio says `Runtime replied 502` | `GRAPHHELM_RUNTIME_URL` points at the wrong port (the default is `8080`) | set it to `http://127.0.0.1:8791` and restart the dev server |
 | the message box is refused | the Runtime started without `--keyring`/`--key-id` | restart it with the command `init` printed |

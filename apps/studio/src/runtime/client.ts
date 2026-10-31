@@ -128,7 +128,8 @@ export interface JourneyFlow {
   title: string | null;
   name?: string | null;
   status: string;
-  findings?: { severity?: string }[];
+  /** `journey flows` lists each with `code`, `pointer` (`/edges/1/why`) and `message`. */
+  findings?: { severity?: string; code?: string; pointer?: string; message?: string }[];
   purpose?: string | null;
   feature?: string | null;
   screens?: JourneyScreen[];

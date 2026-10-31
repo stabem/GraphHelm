@@ -56,8 +56,7 @@ pub fn release_packages() -> Result<Vec<PinnedPackage>, AdoptionError> {
             .join("extensions/releases/adoption.json")
     };
     let release = Root::observe(bundle.parent().ok_or_else(invalid)?)?;
-    let bytes =
-        storage::read_child(&release.file, "adoption.json", 16384)?.ok_or_else(invalid)?;
+    let bytes = storage::read_child(&release.file, "adoption.json", 16384)?.ok_or_else(invalid)?;
     let value: Value = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
     if value["version"] != env!("CARGO_PKG_VERSION") {
         return Err(invalid());

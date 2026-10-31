@@ -158,7 +158,7 @@ codex plugin add graphhelm-codex-hooks@graphhelm
 The hooks companion supports Codex versions whose plugin loader skips the main plugin's hooks.
 Review the host's hook trust prompt when offered; installing a companion is not proof that hooks
 ran. Python 3 is required for the hooks. See the
-[plugin's session-hook instructions](plugins/graphhelm/README.md#session-hooks-version-0120)
+[plugin's session-hook instructions](plugins/graphhelm/README.md#session-hooks-version-0125)
 for explicit execution binding and host-specific settings when using hooks.
 
 The main plugin brings the `graphhelm-guide`, `graphhelm-setup` and `graphhelm-resume` skills.

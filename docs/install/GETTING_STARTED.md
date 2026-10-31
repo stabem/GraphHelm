@@ -208,12 +208,12 @@ Copy the two commands `init` printed under `next`, or type them. The sealing key
 
 ```powershell
 $env:GRAPHHELM_EVENTS_KEY = (Get-Content -Raw "C:\path\to\your-project\.graphhelm\serve.key").Trim()
-graphhelm serve --events "C:\path\to\your-project\.graphhelm\events" --bind 127.0.0.1:8791 --keyring "C:\path\to\your-project\.graphhelm\keyring" --key-id studio
+graphhelm serve --events "C:\path\to\your-project\.graphhelm\events" --bind 127.0.0.1:8791 --project "C:\path\to\your-project" --keyring "C:\path\to\your-project\.graphhelm\keyring" --key-id studio
 ```
 
 ```bash
 export GRAPHHELM_EVENTS_KEY="$(cat /path/to/your-project/.graphhelm/serve.key)"
-graphhelm serve --events /path/to/your-project/.graphhelm/events --bind 127.0.0.1:8791 --keyring /path/to/your-project/.graphhelm/keyring --key-id studio
+graphhelm serve --events /path/to/your-project/.graphhelm/events --bind 127.0.0.1:8791 --project /path/to/your-project --keyring /path/to/your-project/.graphhelm/keyring --key-id studio
 ```
 
 Expected first line on stdout (the process then stays in the foreground; leave this terminal
@@ -315,7 +315,7 @@ npm --prefix apps/studio run dev
 Expected, among the dev server's output:
 
 ```
-  Studio auto-connect: http://127.0.0.1:5183/?session=<nonce>
+  Studio login: http://127.0.0.1:5183/?session=<nonce>
 ```
 
 **In a container or VM**, the dev server's `127.0.0.1` bind is unreachable through a published
@@ -487,7 +487,7 @@ cat /path/to/your-project/.graphhelm/codex.config.toml >> ~/.codex/config.toml
 Get-Content "C:\path\to\your-project\.graphhelm\codex.config.toml" | Add-Content "$env:USERPROFILE\.codex\config.toml"
 ```
 
-The server `graphhelm mcp` exposes a closed list of 28 tools named after the Runtime verbs —
+The server `graphhelm mcp` exposes a closed list of tools named after the Runtime verbs (the table is `TOOLS` in `apps/cli/src/commands/mcp/tools.rs`; its size changes with the release) —
 `list`, `status`, `briefing`, `events`, `evidence`, `approve`, `pause`, `resume`, `signal`,
 `cancel`, `sweep`, … (`apps/cli/src/commands/mcp/tools.rs`); a harness shows them under the
 server name, e.g. `mcp__graphhelm__list` in Claude Code. The Studio's WebMCP page tools (the

@@ -3,41 +3,25 @@ import { useEffect, useState } from "react";
 import type { AttentionReason, Runtime } from "../runtime/client";
 import { cliRemedy, reasonText } from "./attention";
 
-/** #2324: what a run waits on, read from its status (`attentionReasons`) each time it moves.
- * Node approval has no Studio surface yet, so a blocked node names the CLI line that approves it. */
-export function RunAttention({ runtime, executionId, moved, onRead }: { runtime: Runtime; executionId: string; moved: string | null; onRead?: (waits: boolean) => void }) {
+/** #2324: what a run waits on, read from its status (`attentionReasons`) each time it moves;
+ * `null` until read or when the read failed (said by the caller as not known, never as nothing). */
+export function useRunWaits(runtime: Runtime | null, executionId: string | null, moved: string | null): AttentionReason[] | null {
   const [reasons, setReasons] = useState<AttentionReason[] | null>(null);
-  const [failed, setFailed] = useState(false);
   useEffect(() => {
+    if (runtime === null || executionId === null) { setReasons(null); return; }
     let live = true;
     runtime.runAttention(executionId).then(
-      (status) => {
-        if (!live) return;
-        const listed = status.attention === "needs_you" ? status.attentionReasons ?? [] : [];
-        setReasons(listed);
-        setFailed(false);
-        onRead?.(listed.length > 0);
-      },
-      () => { if (live) { setFailed(true); onRead?.(false); } },
+      (status) => { if (live) setReasons(status.attention === "needs_you" ? status.attentionReasons ?? [] : []); },
+      () => { if (live) setReasons(null); },
     );
     return () => { live = false; };
-  }, [runtime, executionId, moved, onRead]);
-  if (failed) return <p className="muted small">Could not read what this run waits on.</p>;
-  if (reasons === null || reasons.length === 0) return null;
-  return (
-    <section aria-label="Waits on you" className="run-attention">
-      <strong className="mono">WAITS ON YOU</strong>
-      <ul>
-        {reasons.map((reason, index) => {
-          const remedy = cliRemedy(reason, executionId);
-          return (
-            <li key={index}>
-              {reasonText(reason)}
-              {remedy !== null && <><span className="muted small"> The Studio cannot approve a node yet; approve it from the CLI:</span> <code>{remedy}</code></>}
-            </li>
-          );
-        })}
-      </ul>
-    </section>
-  );
+  }, [runtime, executionId, moved]);
+  return reasons;
+}
+
+/** One reason as the approved design says it (docs/design/studio/2325-2324/): what waits, and for
+ * a blocked node the CLI line that approves it, since node approval has no Studio surface yet. */
+export function WaitsOn({ reason, executionId }: { reason: AttentionReason; executionId: string }) {
+  const remedy = cliRemedy(reason, executionId);
+  return <>{reasonText(reason)}{remedy !== null && <> Approve it from the CLI: <code>{remedy}</code></>}</>;
 }

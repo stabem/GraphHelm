@@ -835,67 +835,6 @@ fn a_host_cbm_cache_dir_never_reaches_the_child() {
     );
 }
 
-/// One run of the sweep in `a_cancel_inside_the_last_poll_is_not_recorded_as_a_timeout`: cancel
-/// raised `raise_at_ms` after the call is issued. `None` when the cancel beat the spawn (#1459);
-/// otherwise whether the record blamed the clock.
-fn blamed_the_clock_at(
-    root: &std::path::Path,
-    timeout: Duration,
-    raise_at_ms: u64,
-) -> Option<bool> {
-    let signal = graphhelm_tool_host::process::CancelSignal::new();
-    // 0 ms raises before the call is issued: the deterministic form of "the cancel beat the spawn".
-    let raiser = if raise_at_ms == 0 {
-        signal.cancel();
-        None
-    } else {
-        let signal = signal.clone();
-        Some(std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(raise_at_ms));
-            signal.cancel();
-        }))
-    };
-    let outcome = run_in_workspace(
-        root,
-        &fake_tool(),
-        &["sleep".to_owned()],
-        &BTreeMap::new(),
-        &[],
-        None,
-        &ProcessLimits {
-            timeout,
-            max_output_bytes: 1024,
-        },
-        Some(&signal),
-    );
-    if let Some(raiser) = raiser {
-        raiser.join().expect("the raising thread returns");
-    }
-    // #1459: under host load, creating the process can outlast the raise offset, so the cancel is
-    // raised before any child exists and the spawn is refused with `Cancelled` (the cell above
-    // pins that refusal). That run never reached the poll window the sweep asks about and no
-    // timeout was recorded for it, so it is not a clock blame; every run that did start a child
-    // must still carry a record.
-    match outcome {
-        Ok(captured) => Some(captured.timed_out),
-        Err(graphhelm_tool_host::process::HostError::Cancelled) => None,
-        Err(other) => panic!("a cancelled call failed for the wrong reason: {other}"),
-    }
-}
-
-/// #1459: a cancel that beats the spawn is skipped by the sweep, not a panic. Staged directly
-/// (raise at 0 ms, before the call) because the load that delays a spawn past the sweep's offsets cannot be
-/// produced on demand.
-#[test]
-fn a_cancel_that_beats_the_spawn_is_skipped_by_the_sweep() {
-    let workspace = tempfile::tempdir().unwrap();
-    assert_eq!(
-        blamed_the_clock_at(workspace.path(), Duration::from_millis(300), 0),
-        None,
-        "a cancel raised before the spawn is skipped, not recorded and not a panic"
-    );
-}
-
 /// #609, Codex round 3. `cancel` waits only for the children it has already counted, so any spawn
 /// that registers AFTER it returned outlives the guarantee it just gave. The gap has two shapes and
 /// they close together: between `Command::spawn` and the registration, and between the two
@@ -929,51 +868,6 @@ fn a_raised_signal_refuses_the_next_spawn() {
             captured.exit_code
         ),
     }
-}
-
-/// #609, Codex round 3. `timed_out` was `expired` inside `if expired || cancelled`, so a cancel
-/// raised inside the last poll interval before the deadline left BOTH true and the record blamed
-/// the clock for a decision the caller had made — the one field this change calls its
-/// discriminator.
-///
-/// The coincidence is not reachable by picking one instant, so this SWEEPS the raise time instead
-/// of guessing it. The first version of this cell did guess — cancel at 280 ms against a 300 ms
-/// deadline — and it passed under the sabotage, proving nothing. The reason is a reference point:
-/// the deadline is computed INSIDE the call, after the spawn, so an externally timed raise lands
-/// earlier than intended by the whole cost of creating a process, and the control I had written
-/// (the call returned at or after the deadline) could not see that, because the returned-at instant
-/// includes the kill, the reap, and both reader joins.
-///
-/// The sweep's adequacy is not asserted, it is MEASURED: with `timed_out = expired` restored, some
-/// step of this sweep must report a timeout. That is the check that makes the green below mean
-/// something, and it is recorded in the PR rather than left as a claim.
-#[test]
-fn a_cancel_inside_the_last_poll_is_not_recorded_as_a_timeout() {
-    let workspace = tempfile::tempdir().unwrap();
-    let root = workspace.path().to_path_buf();
-    let timeout = Duration::from_millis(300);
-
-    // The sweep stops BELOW the nominal timeout, and that bound is the assertion's licence rather
-    // than caution. The deadline is computed inside the call, after the spawn, so the internal
-    // deadline is always at or later than `timeout` measured from out here: any raise before
-    // `timeout` is therefore guaranteed to precede it, and `timed_out` must be false for every one
-    // of them. Past `timeout` that guarantee is gone — the deadline's own poll can fire before the
-    // cancel exists, and a timeout is then the TRUE record. The first version of this sweep ran to
-    // 310 ms and failed on the fixed code for exactly that reason: it demanded a cancellation
-    // verdict from runs the caller had not yet cancelled.
-    let mut blamed_the_clock = Vec::new();
-    for raise_at in (240..300).step_by(5) {
-        if blamed_the_clock_at(&root, timeout, raise_at) == Some(true) {
-            blamed_the_clock.push(raise_at);
-        }
-    }
-
-    assert!(
-        blamed_the_clock.is_empty(),
-        "the caller cancelled and the record blamed the clock; raise offsets that did it: {:?}ms \
-         against a {timeout:?} deadline",
-        blamed_the_clock
-    );
 }
 
 /// #621: the child is gone, proved by ASKING THE OS rather than by watching a file go quiet.

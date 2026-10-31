@@ -97,8 +97,9 @@ def _watchdog() -> None:
         _first_line_sys.stderr.flush()
     finally:
         _probe_mark("watchdog")
-        # #2340 (Tsunade): a timeout path exits 1, the visible warning beside its UNOBSERVED answer.
-        _first_line_os._exit(1)
+        # #2340 (Tsunade): a timeout path exits 0; its UNOBSERVED answer is the visible warning and
+        # still reaches the context. Only the faulthandler backstop exits 1.
+        _first_line_os._exit(0)
 
 
 if __name__ == "__main__" and _watched_phase in {"start", "end"}:
@@ -1219,10 +1220,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     code = main()
-    if _answered_without_state:
-        # #2340 (Tsunade): a bounded state step timed out. The hook answered UNOBSERVED and warned;
-        # exit 1 is the visible warning she requires (Claude Code shows a hook error).
-        code = 1
     if _answered_without_state or _watched_phase in {"start", "end"}:
         # #2334/#2340: the answer is out. Start and end never go through interpreter shutdown: it
         # can wait on a stuck file system, and once it starts the watchdog thread can no longer run

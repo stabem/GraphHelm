@@ -94,6 +94,9 @@ INSTALL_REACHERS = ("INSTALL.md", "install/", "examples/graphs/software-feature.
                     "apps/cli/src/commands/init.rs", "apps/cli/src/commands/validate.rs",
                     "apps/cli/src/commands/hex_key.rs", "apps/cli/src/commands/runtime_record.rs",
                     "apps/cli/src/commands/serve/")
+# #2290: the Rust spawn-site guard scans every workspace `.rs` file, so any `.rs` change reaches it.
+RUST_NO_WINDOW_GUARD_FILE = "core/process/tests/no_console_window.rs"
+RUST_NO_WINDOW_GUARD = f"cargo {TOOLCHAIN} test --locked -p graphhelm-process --test no_console_window {TEST_THREADS}"
 LAUNCHER_TESTS = f"cargo {TOOLCHAIN} test --locked -p graphhelm-cli --bin graphhelm {TEST_THREADS} commands::studio::tests::the_launcher_"
 JOURNEY_REVIEW_CHECK = "python tools/reached-tests/claude_plugin_check.py plugins/journey-review"
 # #1808: the Studio (Studio v2, #1790) has no related-test map; any change runs its whole suite.
@@ -681,6 +684,8 @@ def reach(changed, packages, embedded, repo=None):
             if (root / observer).is_file():
                 tools.add(python_test_tool(root, observer))
                 hit = True
+        if path.endswith(".rs") and root is not None and (root / RUST_NO_WINDOW_GUARD_FILE).is_file():
+            tools.add(RUST_NO_WINDOW_GUARD)
         if path.startswith("apps/studio/tools/"):
             # #1571: the launcher scripts are run by the CLI's `the_launcher_*` tests, not by vitest.
             tools.add(LAUNCHER_TESTS)
@@ -1233,6 +1238,10 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
                 raise ValueError(f"invalid example journey project: {tool}")
             out.append({"argv": ["graphhelm", "--json", "journey", "validate", "--all", '--project', project],
                         "cwd": ".", "slot": False})
+        elif tool == RUST_NO_WINDOW_GUARD:
+            out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", "graphhelm-process",
+                                  "--test", "no_console_window", *TEST_THREADS.split()],
+                        "cwd": ".", "slot": True})
         elif tool == LAUNCHER_TESTS:
             out.append({"argv": ["cargo", TOOLCHAIN, "test", "--locked", "-p", CLI, "--bin", "graphhelm",
                                   *TEST_THREADS.split(), "commands::studio::tests::the_launcher_"],

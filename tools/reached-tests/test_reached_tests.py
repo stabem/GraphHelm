@@ -144,6 +144,27 @@ class Reach(unittest.TestCase):
         self.assertEqual(tools, [expected])
         self.assertEqual(other, [])
 
+    def test_any_changed_rust_file_selects_the_rust_no_console_window_guard(self):
+        """#2290: `core/process/tests/no_console_window.rs` scans every workspace `.rs` for spawn
+        sites, so a new test file (the #2280 miss), a source file in any crate, or a `.rs` under a
+        path that exits early must plan it; a docs-only diff must not, and it runs as one step.
+        Cost: selector fixture only; milliseconds, no Cargo."""
+        expected = ["cargo", rt.TOOLCHAIN, "test", "--locked", "-p", "graphhelm-process",
+                    "--test", "no_console_window", *rt.TEST_THREADS.split()]
+        with tempfile.TemporaryDirectory() as repo:
+            guard = Path(repo, "core/process/tests/no_console_window.rs")
+            guard.parent.mkdir(parents=True)
+            guard.write_text("", encoding="utf-8")
+            for changed in ("apps/cli/tests/new_test.rs", "core/graph/src/lib.rs",
+                            "apps/studio/tools/helper.rs"):
+                with self.subTest(changed=changed):
+                    *_, tools, _, _ = reach(changed, repo=repo)
+                    steps = rt.steps(set(), set(), [], tools, repo=Path(repo))
+                    self.assertEqual([s["argv"] for s in steps].count(expected), 1, tools)
+            *_, tools, _, _ = reach("docs/README.md", repo=repo)
+            steps = rt.steps(set(), set(), [], tools, repo=Path(repo))
+            self.assertNotIn(expected, [s["argv"] for s in steps])
+
     def test_a_python_file_under_studio_still_selects_the_python_guard(self):
         """#2274: the Studio branch of reach() ends in `continue`; a per-path rule placed after it
         never saw `apps/studio/**/*.py`. Cost: selector fixture only, milliseconds."""

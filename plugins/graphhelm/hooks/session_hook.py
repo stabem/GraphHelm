@@ -68,6 +68,22 @@ def _watchdog_answer() -> str:
     return ""
 
 
+def _probe_mark(event: str) -> None:
+    """Probe only (GRAPHHELM_HOOK_FIRST_LINE set): append "<pid> exit <epoch> <phase> <path>" to the
+    first-line file right before `os._exit`, so a probe can split time inside the hook from
+    teardown after it (#2340). The time is taken before the write."""
+    marker_path = _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE")
+    if not marker_path:
+        return
+    at = _first_line_clock.time()
+    try:
+        handle = _first_line_os.open(marker_path, _first_line_os.O_WRONLY | _first_line_os.O_CREAT | _first_line_os.O_APPEND, 0o600)
+        _first_line_os.write(handle, f"{_first_line_os.getpid()} exit {at:.3f} {_watched_phase} {event}\n".encode())
+        _first_line_os.close(handle)
+    except OSError:
+        pass
+
+
 def _watchdog() -> None:
     _first_line_clock.sleep(HOOK_WATCHDOG)
     try:
@@ -77,6 +93,7 @@ def _watchdog() -> None:
         _first_line_sys.stdout.flush()
         _first_line_sys.stderr.flush()
     finally:
+        _probe_mark("watchdog")
         _first_line_os._exit(0)
 
 
@@ -1194,5 +1211,6 @@ if __name__ == "__main__":
         # Flush what was said and leave now.
         sys.stdout.flush()
         sys.stderr.flush()
+        _probe_mark("normal")
         os._exit(code)
     raise SystemExit(code)

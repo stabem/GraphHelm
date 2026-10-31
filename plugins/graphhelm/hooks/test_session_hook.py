@@ -1022,10 +1022,16 @@ class SessionHookTests(unittest.TestCase):
         result = self.run_hook("end")
         answered = time.time()
         self.assertEqual(result.returncode, 0, result.stderr)
-        pid, at = marker.read_text().split()
+        first, last = marker.read_text().splitlines()
+        pid, at = first.split()
         self.assertTrue(pid.isdigit())
         self.assertLessEqual(spawned, float(at) + 0.01)
         self.assertLessEqual(float(at), answered)
+        # The exit mark: same pid, after the first line, before the process was seen to end.
+        exit_pid, word, exit_at, phase, path = last.split()
+        self.assertEqual((exit_pid, word, phase, path), (pid, "exit", "end", "normal"))
+        self.assertLessEqual(float(at), float(exit_at))
+        self.assertLessEqual(float(exit_at), answered)
 
     def run_hook_timed(self, phase):
         started = time.monotonic()

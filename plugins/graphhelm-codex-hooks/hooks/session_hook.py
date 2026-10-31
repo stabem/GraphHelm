@@ -2,6 +2,21 @@
 
 from __future__ import annotations
 
+# #2340: the hook's first instruction takes its first timestamp, before any other import. With
+# GRAPHHELM_HOOK_FIRST_LINE set (a probe only), it appends "<pid> <epoch seconds>" there, so the
+# time from spawn to this line is measured apart, as an environment limit, from the hook's own time.
+import time as _first_line_clock
+_FIRST_LINE_AT = _first_line_clock.time()
+import os as _first_line_os
+if _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE"):
+    try:
+        _marker = _first_line_os.open(_first_line_os.environ["GRAPHHELM_HOOK_FIRST_LINE"],
+                                      _first_line_os.O_WRONLY | _first_line_os.O_CREAT | _first_line_os.O_APPEND, 0o600)
+        _first_line_os.write(_marker, f"{_first_line_os.getpid()} {_FIRST_LINE_AT:.3f}\n".encode())
+        _first_line_os.close(_marker)
+    except OSError:
+        pass
+
 import argparse
 import codecs
 from datetime import datetime, timezone

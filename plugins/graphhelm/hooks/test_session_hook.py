@@ -986,9 +986,25 @@ class SessionHookTests(unittest.TestCase):
         ]), encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
 
-    # #2340 review condition: the answer comes within this many seconds measured from the spawn of
-    # the hook process (interpreter start included), not from its first line.
+    # #2340 (Tsunade, verbatim): "From its first line, the hook answers within 10 s under disk
+    # pressure. Time between spawn and the first line is measured and reported separately as an
+    # environment limit, not asserted." These deterministic hangs run on an idle disk, so the bound
+    # here is tighter and taken from spawn: the answer within 7 s of it.
     SPAWN_TO_ANSWER = 7.0
+
+    def test_first_line_marker_is_taken_before_the_hook_does_anything(self):
+        # #2340: the probe classifies a red run as pre-hook only when this marker is absent.
+        marker = Path(self.temp.name) / "first-line.txt"
+        self.env["GRAPHHELM_HOOK_FIRST_LINE"] = str(marker)
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        spawned = time.time()
+        result = self.run_hook("end")
+        answered = time.time()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pid, at = marker.read_text().split()
+        self.assertTrue(pid.isdigit())
+        self.assertLessEqual(spawned, float(at) + 0.01)
+        self.assertLessEqual(float(at), answered)
 
     def run_hook_timed(self, phase):
         started = time.monotonic()

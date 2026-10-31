@@ -27,8 +27,9 @@ none` and needs no journey.
 
 ```mermaid
 flowchart LR
-  I["Issue"] --> P["task-plan<br/>keel.plan"]
-  P --> M["implement<br/>keel.card, task.pr_opened"]
+  I["Issue"] -->|"bounded change"| M["implement (Plan first)<br/>keel.card, task.pr_opened"]
+  I -->|"journey scope or full card"| P["task-plan<br/>keel.plan"]
+  P --> M
   M --> J{"proof"}
   J -->|"journey / both"| V["journey-prove<br/>jpd.screen_captured,<br/>jpd.transition_walked"]
   J -->|"tests / none"| R
@@ -49,8 +50,8 @@ sets the repository's issue, evidence, review, and merge rules.
 
 | Skill | Use it when | Output or boundary |
 |---|---|---|
-| [Task plan](../../extensions/builtin/graphhelm-development-contracts/skills/task-plan/SKILL.md) | An issue is about to become code | The task's `keel.plan`: paths, promise, proof kind, reviews, skills |
-| [Implement](../../extensions/builtin/graphhelm-development-contracts/skills/implement/SKILL.md) | The plan exists and code is next | The change inside the card, cited context, reached tests run, PR opened |
+| [Task plan](../../extensions/builtin/graphhelm-development-contracts/skills/task-plan/SKILL.md) | An issue is a journey-scope or full-card change, about to become code | The task's `keel.plan`: paths, promise, proof kind, reviews, skills |
+| [Implement](../../extensions/builtin/graphhelm-development-contracts/skills/implement/SKILL.md) | A bounded change: it plans first, then writes the code | The change inside the card, cited context, reached tests run, PR opened |
 | [Keel](../../extensions/builtin/graphhelm-development-contracts/skills/keel/SKILL.md) | Any code change (implement's core) | The project's `KEEL.md` and step file, a scoped card, end-to-end proof first; measured rules block, with no penalty ladder |
 | [Test audit](../../extensions/builtin/graphhelm-development-contracts/skills/test-audit/SKILL.md) | Before adding or changing tests, when a suite is slow or noisy, or when pruning tests | An authoring gate, suite audit, or deletion record naming the covering observer; guidance without enforcement |
 | [Journey map](../../extensions/builtin/graphhelm-jpd/skills/journey-map/SKILL.md) | A project has screens but no journeys | Draft journey flows and a first capture baseline |

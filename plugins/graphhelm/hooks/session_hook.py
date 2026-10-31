@@ -563,31 +563,67 @@ STATE_WRITE_BUDGET = 2.0
 _answered_without_state = False
 
 
-def _write_state_bounded(path: Path, value: dict, durable: bool = True) -> None:
-    """`_write_state` that never holds the answer past STATE_WRITE_BUDGET. A write that is still
-    pending is abandoned, never torn: the replace stays atomic. What a lost write costs is named
-    where each caller relies on it (an end or start retry re-sends its idempotent signal, and the
-    Runtime's 409 for an already committed key counts as delivered; a lost briefing cache makes a
-    later compact briefing UNOBSERVED)."""
+_PENDING = object()
+
+
+def _bounded(what: str, call):
+    """Runs one piece of hook state I/O for at most STATE_WRITE_BUDGET. Its result, or `_PENDING`
+    when the file system has not answered: the hook then answers without it and exits at once. An
+    error raised in time is raised here."""
     global _answered_without_state
-    snapshot = json.loads(json.dumps(value))
-    failed: list[BaseException] = []
+    outcome: list = []
 
-    def write() -> None:
+    def run() -> None:
         try:
-            _write_state(path, snapshot, durable)
-        except BaseException as error:  # reported to the caller below when it finishes in time
-            failed.append(error)
+            outcome.append((True, call()))
+        except BaseException as error:  # handed to the caller below when it finishes in time
+            outcome.append((False, error))
 
-    worker = threading.Thread(target=write, name="graphhelm-state-write", daemon=True)
+    worker = threading.Thread(target=run, name=f"graphhelm-state-{what}", daemon=True)
     worker.start()
     worker.join(STATE_WRITE_BUDGET)
-    if worker.is_alive():
+    if not outcome:
         _answered_without_state = True
-        print("graphhelm-session-hook: state write still pending; answering without it", file=sys.stderr)
-        return
-    if failed:
-        raise failed[0]
+        print(f"graphhelm-session-hook: state {what} still pending; answering without it", file=sys.stderr)
+        return _PENDING
+    ok, value = outcome[0]
+    if not ok:
+        raise value
+    return value
+
+
+def _write_state_bounded(path: Path, value: dict, durable: bool = True) -> None:
+    """`_write_state` that never holds the answer past STATE_WRITE_BUDGET. A write that is still
+    pending is abandoned, never torn: the replace stays atomic. A lost write costs a retried,
+    idempotent signal (the Runtime's 409 for an already committed key counts as delivered), or a
+    later compact briefing that reads UNOBSERVED because its cache is missing."""
+    snapshot = json.loads(json.dumps(value))
+    _bounded("write", lambda: _write_state(path, snapshot, durable))
+
+
+def _read_state_or_empty(path: Path, execution: str, session: str, host: str, origin: str) -> dict | None:
+    """#2331/#2334: the state as `_read_state` validates it, or None (empty) when the file system
+    does not answer in time or the file is unreadable: empty or half-written after a crash or a
+    power loss (a non-durable write, #2328), not JSON, or not this format. One stderr warning says
+    so; the hook carries on as for a missing file. A parseable state that fails validation (another
+    identity, a forged receipt, an injected briefing) still fails closed."""
+    try:
+        state = _bounded("read", lambda: _read_state(path, execution, session, host, origin))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, _UnreadableState) as error:
+        print(f"graphhelm-session-hook: hook state unreadable ({type(error).__name__}); treated as empty", file=sys.stderr)
+        return None
+    return None if state is _PENDING else state
+
+
+def _claim_lock_bounded(path: Path):
+    """`_claim_lock`, or None when the file system does not answer in time: the hook then goes on
+    without the lock (an overlapping hook can re-send the same idempotent signal)."""
+    lock = _bounded("lock", lambda: _claim_lock(path))
+    return None if lock is _PENDING else lock
+
+
+class _UnreadableState(ValueError):
+    """A state file that is not a whole hook state: too large, not an object, or another version."""
 
 
 def _read_state(path: Path, execution: str, session: str, host: str, origin: str) -> dict | None:
@@ -597,10 +633,10 @@ def _read_state(path: Path, execution: str, session: str, host: str, origin: str
     except FileNotFoundError:
         return None
     if len(raw) > MAX_STATE:
-        raise ValueError("hook state too large")
+        raise _UnreadableState("hook state too large")
     value = json.loads(raw)
     if not isinstance(value, dict) or value.get("version") != 2:
-        raise ValueError("invalid hook state version")
+        raise _UnreadableState("invalid hook state version")
     if any(value.get(key) != expected for key, expected in (("executionId", execution), ("sessionId", session), ("host", host), ("origin", origin))):
         raise ValueError("hook state identity mismatch")
     if "briefing" in value:
@@ -630,7 +666,8 @@ def _claim_lock(path: Path):
 def _release_lock(lock) -> None:
     # OS locks are released even when the host kills a timed-out hook. Keep the
     # inode: unlinking it could let a second process lock a different file.
-    lock.close()
+    if lock is not None:  # #2334: None when the lock did not answer in time
+        lock.close()
 
 
 def _briefing_digest(data: dict) -> dict:
@@ -768,7 +805,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
         return
     execution, token_file, url, origin, node_id = bound
     path = state_path(execution, session, host, origin)
-    state = _read_state(path, execution, session, host, origin)
+    state = _read_state_or_empty(path, execution, session, host, origin)
     source = payload.get("source") or payload.get("session_start_source") or "startup"
     digest = state.get("briefing") if source in {"compact", "clear"} and state else None
     if source == "compact" and not isinstance(digest, dict):
@@ -816,7 +853,7 @@ def start(payload: dict, host: str, output_format: str = "native") -> None:
         _start_impl(payload, host, output_format)
         return
     execution, _, _, origin, _ = bound
-    lock = _claim_lock(state_path(execution, _session(payload), host, origin))
+    lock = _claim_lock_bounded(state_path(execution, _session(payload), host, origin))
     try:
         _start_impl(payload, host, output_format)
     finally:
@@ -877,9 +914,7 @@ def _end_impl(payload: dict, host: str, bound: tuple | None = None, lane: str | 
     execution, token_file, url, origin, node_id = bound
     session = _session(payload)
     path = state_path(execution, session, host, origin)
-    state = _read_state(path, execution, session, host, origin)
-    if state is None and path.exists():
-        raise ValueError("invalid hook state")
+    state = _read_state_or_empty(path, execution, session, host, origin)
     state = state or {"version": 2, "executionId": execution, "sessionId": session, "host": host, "origin": origin}
     delivery = state.get("delivery")
     if delivery is None:
@@ -926,7 +961,7 @@ def end(payload: dict, host: str, output_format: str = "native") -> bool:
         return False
     execution, _, _, origin, _ = bound
     session = _session(payload)
-    lock = _claim_lock(state_path(execution, session, host, origin))
+    lock = _claim_lock_bounded(state_path(execution, session, host, origin))
     try:
         _end_impl(payload, host, bound, lane)
     finally:

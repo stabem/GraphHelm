@@ -1155,16 +1155,52 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual((first.returncode, second.returncode), (0, 0))
         self.assertEqual(len([item for item in RuntimeHandler.requests if item[0] == "POST"]), 2)
 
-    def test_corrupt_delivery_receipt_fails_closed_without_post(self):
+    def test_truncated_state_after_a_crash_counts_as_empty_with_one_warning(self):
+        # #2331: since #2328 the end write has no fsync, so a power loss can leave the state file
+        # empty or half-written. It counted as an error until someone deleted it; now the hook warns
+        # once and carries on as for a missing file, re-sending the same idempotent signal.
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         self.run_hook("end")
-        sent_before = len([item for item in RuntimeHandler.requests if item[0] == "POST"])
-        state_files = list((Path(self.env["GRAPHHELM_HOOK_STATE_DIR"])).glob("*.json"))
-        self.assertEqual(len(state_files), 1)
-        state_files[0].write_text("{corrupt", encoding="utf-8")
-        result = self.run_hook("end")
-        self.assertIn("unobserved", result.stderr)
-        self.assertEqual(len([item for item in RuntimeHandler.requests if item[0] == "POST"]), sent_before)
+        state = next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json"))
+        whole = state.read_bytes()
+        for damaged in (b"", whole[: len(whole) // 2], b"{corrupt"):
+            with self.subTest(damaged=damaged[:20]):
+                RuntimeHandler.requests = []
+                state.write_bytes(damaged)
+                result = self.run_hook("end")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr.count("treated as empty"), 1, result.stderr)
+                self.assertNotIn("unobserved", result.stderr)
+                sent = [item for item in RuntimeHandler.requests if item[0] == "POST"]
+                self.assertEqual(len(sent), 1)
+                self.assertIs(json.loads(state.read_text())["delivery"]["delivered"], True)
+        state.write_bytes(whole[: len(whole) // 2])
+        result = self.run_hook("start")
+        self.assertIn("GraphHelm FRESH", json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(result.stderr.count("treated as empty"), 1, result.stderr)
+
+    def test_start_and_end_answer_while_the_state_read_hangs(self):
+        # #2334: the state read and the lock are file I/O too; neither may hold the answer.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.run_hook("end")
+        hang = Path(self.temp.name) / "hang-state-read"
+        hang.mkdir()
+        (hang / "sitecustomize.py").write_text("\n".join([
+            "import pathlib, threading",
+            "_open = pathlib.Path.open",
+            "def _hang(self, *args, **kwargs):",
+            "    if self.suffix in ('.json', '.lock'):",
+            "        threading.Event().wait(120)",
+            "    return _open(self, *args, **kwargs)",
+            "pathlib.Path.open = _hang",
+            "",
+        ]), encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
+        for phase in ("end", "start"):
+            with self.subTest(phase=phase):
+                result = self.run_hook(phase)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("still pending", result.stderr)
 
     def test_runtime_origin_is_part_of_delivery_receipt_scope(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"

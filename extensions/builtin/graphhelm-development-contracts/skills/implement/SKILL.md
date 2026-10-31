@@ -42,7 +42,9 @@ edit gate sees only those.
 2. Gather context on purpose: open what the card names, then search for the exact symbol or
    caller. Cite each fact you rely on by file and line; say what you did not read. Do not dump
    the tree into the context.
-3. Follow `keel`: stay inside the paths, extend before adding, keep callers working.
+3. Follow `keel`: stay inside the paths, extend before adding, keep callers working. Name in the PR
+   every early exit before the new rule (the review checks it: "Reach of each new rule" in
+   `keel/KEEL_REVIEW.md`).
 4. Tests: when the plan's proof is `tests` or `both`, write the test first, see it fail on the
    parent, then fix. Run the `test-audit` gate on every new or changed test. When the proof is
    `journey`, do not add unit tests for what the journey observes; `journey-prove` (#381) proves it.

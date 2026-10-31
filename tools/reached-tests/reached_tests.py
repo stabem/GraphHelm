@@ -675,6 +675,12 @@ def reach(changed, packages, embedded, repo=None):
                 hit = False
         else:
             hit = False
+        # #2274: a per-path rule goes before every early exit below, or the Studio paths skip it.
+        if path.endswith(".py") and root is not None:
+            observer = "tools/reached-tests/test_no_console_window.py"
+            if (root / observer).is_file():
+                tools.add(python_test_tool(root, observer))
+                hit = True
         if path.startswith("apps/studio/tools/"):
             # #1571: the launcher scripts are run by the CLI's `the_launcher_*` tests, not by vitest.
             tools.add(LAUNCHER_TESTS)
@@ -802,11 +808,6 @@ def reach(changed, packages, embedded, repo=None):
                 hit = True
             elif root is not None:
                 other.append({"path": observer, "reason": "no-window observer test is missing"})
-                hit = True
-        if path.endswith(".py") and root is not None:
-            observer = "tools/reached-tests/test_no_console_window.py"
-            if (root / observer).is_file():
-                tools.add(python_test_tool(root, observer))
                 hit = True
         # The journey-review mod is not a skill plugin: `claude plugin validate` and `claude plugin test`
         # are its observers (run through a wrapper that reports a missing CLI as UNOBSERVED).

@@ -24,6 +24,8 @@ describe("journey card findings (#2325)", () => {
     expect(html).toContain("say in the edge `why` what this step proves for the user");
     expect(html.indexOf("flow.step_why_missing")).toBeLessThan(html.indexOf("flow.unexplained"));
     expect(html).toContain("not run");
+    expect(html).toContain(">1 to fix<");
+    expect(html).toContain("chip fix");
     expect(html).not.toContain("failed");
   });
 

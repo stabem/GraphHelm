@@ -169,6 +169,8 @@ button { font: inherit; }
 .chip { align-self: flex-start; font: var(--fs-meta) var(--mono); padding: 2px 6px; border-radius: 999px; border: 1px solid var(--edge-strong); color: var(--faint); }
 .chip.pass { color: var(--live); border-color: #1f4a37; }
 .chip.fail { color: #ff6b6b; border-color: #5a2a2a; }
+/* #2325: a journey to fix is amber, never the red of a failed run (docs/design/studio/2325-2324/). */
+.chip.fix { color: #ffb35c; border-color: #5a4a2a; }
 /* #1919: a running journey's chip blinks blue, on its card and in the header; static blue when motion is reduced. */
 .chip.running { color: #5ea8ff; border-color: #24456e; animation: chip-blink 1s ease-in-out infinite alternate; }
 @keyframes chip-blink { from { opacity: .35; } to { opacity: 1; } }

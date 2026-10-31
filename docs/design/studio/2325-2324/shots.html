@@ -1,0 +1,17 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><title>shots</title>
+<style>body{width:420px}.shot{display:none}.shot:target{display:block}.shot>.tag{margin-bottom:8px}</style></head><body>
+
+<div class="shot" id="sidebar-before"><span class="tag">SIDEBAR · BEFORE</span><div class="project"><strong>synthetic</strong><span class="muted">no run</span><span class="muted">1 journey · 1 failing</span></div></div>
+<div class="shot after" id="sidebar-after"><span class="tag">SIDEBAR · AFTER</span><div class="project"><strong>synthetic</strong><span class="muted">no run</span><span class="muted">1 journey · 1 to fix</span></div></div>
+
+<div class="shot" id="proof-before"><span class="tag">PROOF CARD · BEFORE</span><div class="card"><strong>Client greets and lists items</strong><div class="row"><span class="chip">○ not run</span><span class="grow"></span><span class="mono faint">0/3</span></div><div class="bar"><span></span><span></span><span></span></div></div></div>
+<div class="shot after" id="proof-after"><span class="tag">PROOF CARD · AFTER</span><div class="card"><strong>Client greets and lists items</strong><div class="row"><span class="chip">○ not run</span><span class="grow"></span><span class="mono faint">0/3</span></div><div class="bar"><span></span><span></span><span></span></div>
+ <span><span class="chip fix">▾ 2 to fix</span></span>
+ <ul><li><code>flow.not_canonical</code>: flow bytes differ from canonical YAML</li><li><code>flow.step_why_missing</code> at <code>/edges/1/why</code>: say in the edge `why` what this step proves for the user</li></ul></div></div>
+
+<div class="shot" id="graph-before"><span class="tag">GRAPH · BEFORE</span><div class="box"><strong>Produce a deployable build.</strong><dl><dt>Run</dt><dd class="mono">demo</dd><dt>Status</dt><dd>running</dd><dt>Started</dt><dd class="mono">just now</dd></dl></div></div>
+<div class="shot after" id="graph-after"><span class="tag">GRAPH · AFTER</span><div class="box"><strong>Produce a deployable build.</strong><dl><dt>Run</dt><dd class="mono">demo</dd><dt>Status</dt><dd class="wait">waiting for you</dd><dt>Waits on</dt><dd>implementation is blocked. Approve it from the CLI: <code>graphhelm execution approve --events &lt;events&gt; --execution demo --node implementation</code></dd><dt>Started</dt><dd class="mono">just now</dd></dl></div></div>
+
+<div class="shot" id="lanes-before"><span class="tag">LANES · BEFORE</span><div class="box"><div class="row"><strong class="mono">NEEDS ACTION</strong><span class="mono faint">· oldest first</span><span class="grow"></span><span class="mono" style="color:#ff6b6b">0</span></div><span class="faint">Nothing waits on you.</span></div></div>
+<div class="shot after" id="lanes-after"><span class="tag">LANES · AFTER</span><div class="box"><div class="row"><strong class="mono">NEEDS ACTION</strong><span class="mono faint">· oldest first</span><span class="grow"></span><span class="mono" style="color:#ff6b6b">1</span></div><span><span class="wait">The run waits for you:</span> implementation is blocked. Approve it from the CLI: <code>graphhelm execution approve … --node implementation</code></span></div></div>
+</body></html>

@@ -256,10 +256,11 @@ function JourneyFindings({ flow }: { flow: JourneyFlow }) {
   const listed = [...(flow.findings ?? [])].sort((a, b) => Number(a.severity !== "error") - Number(b.severity !== "error"));
   if (listed.length === 0) return null;
   const errors = listed.filter((finding) => finding.severity === "error").length;
-  const label = errors > 0 ? `${errors} ${errors === 1 ? "finding" : "findings"} to fix` : `${listed.length} ${listed.length === 1 ? "warning" : "warnings"}`;
+  // The approved words (docs/design/studio/2325-2324/): the rail's "to fix" counts the same journeys.
+  const label = errors > 0 ? `${errors} to fix` : `${listed.length} ${listed.length === 1 ? "warning" : "warnings"}`;
   return (
     <details className="journey-findings">
-      <summary className={`chip ${errors > 0 ? "fail" : "idle"}`}>{label}</summary>
+      <summary className={`chip ${errors > 0 ? "fix" : "idle"}`}>{label}</summary>
       <ul aria-label={`Findings for ${nameOf(flow)}`}>
         {listed.map((finding, index) => (
           <li key={index}>

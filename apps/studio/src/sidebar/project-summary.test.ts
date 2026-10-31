@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { activeRun, agentCount, journeysWithFindings, subtitle, teamRun } from "./project-summary";
+import { activeRun, agentCount, journeysToFix, subtitle, teamRun } from "./project-summary";
 
 describe("project summary", () => {
   const row = (executionId: string, status: string, lastEventAt: string | null = null) => ({ executionId, status, startedAt: null, lastEventAt });
@@ -24,7 +24,7 @@ describe("project summary", () => {
   });
 
   it("counts a journey that is unreadable or carries an error finding, not a warning", () => {
-    expect(journeysWithFindings([
+    expect(journeysToFix([
       { id: "a", title: null, status: "approved", findings: [{ severity: "warning" }] },
       { id: "b", title: null, status: "draft", findings: [{ severity: "error" }] },
       { id: "c", title: null, status: "unreadable" },
@@ -32,9 +32,9 @@ describe("project summary", () => {
   });
 
   it("keeps an unread count apart from zero", () => {
-    expect(subtitle({ activeRun: null, agents: null, journeys: null, withFindings: null })).toEqual({ run: "no run", journeys: null });
-    // #2325: a finding is not a failed run; the rail says which it counts.
-    expect(subtitle({ activeRun: "gh-team", agents: 8, journeys: 24, withFindings: 1 })).toEqual({ run: "● gh-team · 8 agents", journeys: "24 journeys · 1 with findings" });
-    expect(subtitle({ activeRun: "r", agents: null, journeys: 0, withFindings: 0 })).toEqual({ run: "● r", journeys: "0 journeys" });
+    expect(subtitle({ activeRun: null, agents: null, journeys: null, toFix: null })).toEqual({ run: "no run", journeys: null });
+    // #2325: the approved word; a finding is not a failed run, and Proof's chip says the same.
+    expect(subtitle({ activeRun: "gh-team", agents: 8, journeys: 24, toFix: 1 })).toEqual({ run: "● gh-team · 8 agents", journeys: "24 journeys · 1 to fix" });
+    expect(subtitle({ activeRun: "r", agents: null, journeys: 0, toFix: 0 })).toEqual({ run: "● r", journeys: "0 journeys" });
   });
 });

@@ -769,12 +769,13 @@ class SessionHookTests(unittest.TestCase):
             # The C-level backstop ended it (#2340): status 1 and a stack dump, its documented cost.
             self.assertEqual(result.returncode, 1, result.stderr)
             return True
-        if "still pending" in result.stderr:
-            self.assertEqual(result.returncode, 0, result.stderr)
+        # #2340 (Tsunade): a timeout path answers UNOBSERVED, warns on stderr and exits 1.
+        if "still pending" in result.stderr and "unlock still pending" not in result.stderr:
+            self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn(f"{phase} unobserved (_StateTimeout)", result.stderr)
             return True
         if f"{phase} unobserved (no answer" in result.stderr:  # the watchdog answered
-            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.returncode, 1, result.stderr)
             return True
         return False
 
@@ -1102,7 +1103,7 @@ class SessionHookTests(unittest.TestCase):
         (hang / "sitecustomize.py").write_text("import hashlib, threading\nhashlib.sha256 = lambda *a, **k: threading.Event().wait(120)\n", encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
         result = self.run_hook("end")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)
         pid, _ = marker.read_text().split()
         exit_lines = [line.split() for line in result.stderr.splitlines() if line.startswith("graphhelm-probe-exit ")]
         self.assertEqual([line[1:3] for line in exit_lines], [[pid, "watchdog"]])
@@ -1131,7 +1132,7 @@ class SessionHookTests(unittest.TestCase):
         ]), encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
         result = self.run_hook_timed("end")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("graphhelm-probe-exit", result.stderr)
 
     def run_hook_timed(self, phase):
@@ -1145,9 +1146,10 @@ class SessionHookTests(unittest.TestCase):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         self.hang_state_writes()
         result = self.run_hook_timed("end")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("state write still pending", result.stderr)
         self.assertIn("end unobserved (_StateTimeout)", result.stderr)
+        self.assertEqual(list(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")), [], "no state written")
         # Records nothing for that session: the hook stops at the cut write, before its POST.
         self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
 
@@ -1157,7 +1159,7 @@ class SessionHookTests(unittest.TestCase):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         self.hang_state_writes()
         result = self.run_hook("end", host="third-party-agent")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)
         report = json.loads(result.stdout)
         self.assertEqual((report["phase"], report["delivery"], report["activation"]), ("end", "unobserved", "unobserved"))
 
@@ -1172,7 +1174,7 @@ class SessionHookTests(unittest.TestCase):
             input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
             text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
         elapsed = time.monotonic() - started
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("unobserved", result.stderr)
         self.assertLess(elapsed, 3.0, f"codex end left {elapsed:.2f} s after spawn")
 
@@ -1180,10 +1182,11 @@ class SessionHookTests(unittest.TestCase):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         self.hang_state_writes()
         result = self.run_hook_timed("start")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 1, result.stderr)
         context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("GraphHelm briefing UNOBSERVED.", context)
         self.assertIn("state write still pending", result.stderr)
+        self.assertEqual(list(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")), [], "no state written")
 
     def test_end_after_a_lost_state_write_counts_the_committed_key_as_delivered(self):
         # #2334's named risk: an end posted, but its delivered mark never landed (the state is gone).
@@ -1394,7 +1397,7 @@ class SessionHookTests(unittest.TestCase):
         for phase in ("end", "start"):
             with self.subTest(phase=phase):
                 result = self.run_hook_timed(phase)
-                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIn("still pending", result.stderr)
 
     def test_start_and_end_answer_when_anything_after_the_first_line_hangs(self):
@@ -1413,16 +1416,17 @@ class SessionHookTests(unittest.TestCase):
         ]), encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
         start = self.run_hook_timed("start")
-        self.assertEqual(start.returncode, 0, start.stderr)
+        self.assertEqual(start.returncode, 1, start.stderr)
         self.assertIn("GraphHelm briefing UNOBSERVED.", json.loads(start.stdout)["hookSpecificOutput"]["additionalContext"])
         self.assertIn("start unobserved (no answer 6 s after the first line)", start.stderr)
         end = self.run_hook_timed("end")
-        self.assertEqual((end.returncode, end.stdout), (0, ""))
+        self.assertEqual((end.returncode, end.stdout), (1, ""))
         self.assertIn("end unobserved (no answer 6 s after the first line)", end.stderr)
         portable = subprocess.run(
             [sys.executable, str(SCRIPT), "end", "--host", "third-party-agent"],
             input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
             text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
+        self.assertEqual(portable.returncode, 1, portable.stderr)
         self.assertEqual(json.loads(portable.stdout)["activation"], "unobserved")
         self.assertEqual(json.loads(portable.stdout)["delivery"], "unobserved")
         self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
@@ -1433,6 +1437,7 @@ class SessionHookTests(unittest.TestCase):
             input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
             text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
         elapsed = time.monotonic() - started
+        self.assertEqual(codex.returncode, 1, codex.stderr)
         self.assertIn("end unobserved (no answer 1 s after the first line)", codex.stderr)
         self.assertLess(elapsed, 3.0, f"codex end left {elapsed:.2f} s after spawn")
 
@@ -1501,7 +1506,7 @@ class SessionHookTests(unittest.TestCase):
         for phase in ("end", "start"):
             with self.subTest(phase=phase):
                 result = self.run_hook_timed(phase)
-                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIn("state token still pending", result.stderr)
                 self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
 

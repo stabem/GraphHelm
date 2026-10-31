@@ -644,13 +644,17 @@ class SessionHookTests(unittest.TestCase):
         # before its bounded HTTP acknowledgement, even when the script is unchanged.
         # #2340: 30 s, because the host waits for the process to EXIT (Shino's host proof), and
         # under disk pressure teardown after os._exit took up to ~10 s on top of the 6 s watchdog.
-        codex_hooks = json.loads((companion / "hooks" / "codex-hooks.json").read_text())
-        for phase, budget in (("SessionStart", 30), ("SessionEnd", 30)):
-            self.assertEqual(
-                [handler["timeout"] for matcher in codex_hooks["hooks"][phase]
-                 for handler in matcher["hooks"]],
-                [budget],
-            )
+        # Every copy declares the same session budget, so Claude and Codex cannot drift apart.
+        for config in (companion / "hooks" / "codex-hooks.json", SCRIPT.parent / "codex-hooks.json",
+                       SCRIPT.parent / "hooks.json"):
+            declared = json.loads(config.read_text())
+            for phase, budget in (("SessionStart", 30), ("SessionEnd", 30)):
+                self.assertEqual(
+                    [handler["timeout"] for matcher in declared["hooks"][phase]
+                     for handler in matcher["hooks"] if "session_hook.py" in handler["command"]],
+                    [budget],
+                    f"{config.name} {phase}",
+                )
         self.assertNotIn("extensions", main_manifest)
 
     def tearDown(self):

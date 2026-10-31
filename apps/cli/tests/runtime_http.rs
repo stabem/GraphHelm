@@ -7485,6 +7485,17 @@ fn a_failing_launcher_is_capped_and_escalated_to_the_owner() {
 /// accepts and never answers, three POSTs and a bounded status poll.
 #[test]
 fn a_real_executor_start_answers_before_its_drive_ends() {
+    start_against_a_silent_provider(true);
+}
+
+/// #2323's compatibility rule: without `Prefer: respond-async`, `/start` still answers after the
+/// drive, exactly as before. Same setup as the cell above, without the header.
+#[test]
+fn a_real_executor_start_without_the_preference_still_waits_for_its_drive() {
+    start_against_a_silent_provider(false);
+}
+
+fn start_against_a_silent_provider(prefer_async: bool) {
     let directory = tempfile::tempdir().unwrap();
     let project = plain_project(directory.path());
     let events = directory.path().join("events");
@@ -7562,11 +7573,14 @@ fn a_real_executor_start_answers_before_its_drive_ends() {
     let url = format!("{base}/v1/executions/{execution}/start");
     let body = serde_json::json!({"file": graph.to_str().unwrap(), "mode": "autopilot",
         "project": project.to_str().unwrap()});
-    let headers = [
+    let mut headers = vec![
         ("Idempotency-Key", "issue-2323-start"),
         ("X-GraphHelm-Actor", "agent-2323"),
         ("X-GraphHelm-Actor-Type", "agent"),
     ];
+    if prefer_async {
+        headers.push(("Prefer", "respond-async"));
+    }
     let status_url = format!("{base}/v1/executions/{execution}");
     let status = || json_body(&raw_request(&status_url, Some(&token)).unwrap());
 
@@ -7579,8 +7593,17 @@ fn a_real_executor_start_answers_before_its_drive_ends() {
     )
     .expect("/start answered");
     let at_reply = status();
-    assert_eq!(reply.status, 200, "{}", reply.body);
     let replied = json_body(&reply);
+    if !prefer_async {
+        // The old reply: after the drive, which left step_one blocked on the silent provider.
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        assert_eq!(
+            at_reply["data"]["nodeStates"]["step_one"], "blocked",
+            "without the preference /start still answers after its drive: {at_reply}"
+        );
+        return;
+    }
+    assert_eq!(reply.status, 202, "{}", reply.body);
     assert_eq!(
         replied["data"]["status"], "running",
         "/start answered with the started run, not its end: {replied}"
@@ -7605,7 +7628,7 @@ fn a_real_executor_start_answers_before_its_drive_ends() {
         scaled(Duration::from_secs(30)),
     )
     .expect("the same-key retry answered");
-    assert_eq!(retry.status, 200, "{}", retry.body);
+    assert!(matches!(retry.status, 200 | 202), "{}", retry.body);
     assert_eq!(
         json_body(&retry)["data"]["executionId"],
         replied["data"]["executionId"],

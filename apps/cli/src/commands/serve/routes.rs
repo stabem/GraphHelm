@@ -3882,6 +3882,14 @@ fn load_and_publish(
 /// them (D-040's premise: the server is local by construction) — the same trust seam `signal`'s
 /// `evidenceOut` and `approve`'s `node` already rely on.
 ///
+/// #2323, `Prefer: respond-async` (RFC 7240): with a real executor configured, a request carrying
+/// it is answered once the run is committed — `202 Accepted`, `Preference-Applied: respond-async`,
+/// and the started run as `data` — while the drive continues in a server task; its progress and
+/// end read back through status and briefing. Without the header, or on the fixture path, the
+/// reply comes after the drive, `200`, exactly as before. A same-key retry replays the recorded
+/// reply. The MCP `start` tool sends the header; the local CLI `execution start` never calls this
+/// route.
+///
 /// Milestone 05a follow-up Minor 1: `load_and_publish` used to run unconditionally before the
 /// idempotency pre-flight, so a recognized retry re-read, re-linted and re-published the graph
 /// file for nothing (its result was simply discarded once the pre-flight then classified the
@@ -3949,8 +3957,18 @@ pub(super) async fn start(
     // mutation runner still borrows `execution_id` for its own journalling.
     let drive_execution = execution_id.clone();
     let drive_execution_id = execution_id.clone();
+    // #2323: `Prefer: respond-async` (RFC 7240) asks for the reply once the run is committed. No
+    // header, or any other preference, keeps the reply after the drive, as before.
+    let respond_async = headers
+        .get_all(axum::http::header::HeaderName::from_static("prefer"))
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .any(|token| token.trim().eq_ignore_ascii_case("respond-async"));
+    let detached = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let detached_flag = detached.clone();
 
-    mutate(
+    let mut response = mutate(
         &state,
         &execution_id,
         START_COMMAND,
@@ -4039,12 +4057,12 @@ pub(super) async fn start(
                         // #90: `held` returned above, so this start drives.
                         false,
                     )?;
-                    if drive_state.runtime.is_some() {
-                        // The decision is durable before this point. A model request can take
-                        // minutes, so the drive is owned by the server task and the reply does
-                        // not wait for it (#2323): `/start` answers with the started run, and the
-                        // drive's progress and end read back through status and briefing. A
-                        // dropped request cannot leave the committed run stuck at `running`.
+                    if drive_state.runtime.is_some() && respond_async {
+                        // #2323, opt-in by `Prefer: respond-async`: the decision is durable before
+                        // this point, the drive is owned by a server task, and `/start` answers
+                        // with the started run (202) instead of after the drive. Its progress and
+                        // end read back through status and briefing.
+                        detached_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                         let started =
                             execution::start::render_started(&drive_state.events, &prepared)?;
                         let background_state = drive_state.clone();
@@ -4061,6 +4079,24 @@ pub(super) async fn start(
                             }
                         });
                         Ok(started)
+                    } else if drive_state.runtime.is_some() {
+                        // The decision is durable before this point. A model request can take
+                        // minutes, and the HTTP client is allowed to disappear while it waits.
+                        // Keep the drive owned by the server task so dropping the request future
+                        // cannot leave a committed execution stuck at `running` forever.
+                        let background_state = drive_state.clone();
+                        let background_execution_id = drive_execution_id.clone();
+                        tokio::spawn(async move {
+                            drive(&background_state, &background_execution_id, prepared, setup)
+                                .await
+                        })
+                        .await
+                        .map_err(|_| {
+                            MutationError::Command(driver_failure(
+                                "the detached execution drive stopped unexpectedly",
+                            ))
+                        })
+                        .and_then(std::convert::identity)
                     } else {
                         drive(&drive_state, &drive_execution_id, prepared, setup).await
                     }
@@ -4078,7 +4114,15 @@ pub(super) async fn start(
             })
         },
     )
-    .await
+    .await;
+    if detached.load(std::sync::atomic::Ordering::Relaxed) && response.status() == StatusCode::OK {
+        *response.status_mut() = StatusCode::ACCEPTED;
+        response.headers_mut().insert(
+            axum::http::header::HeaderName::from_static("preference-applied"),
+            axum::http::HeaderValue::from_static("respond-async"),
+        );
+    }
+    response
 }
 
 /// #1284: whether a signal object leaves `source` for the Runtime to fill.

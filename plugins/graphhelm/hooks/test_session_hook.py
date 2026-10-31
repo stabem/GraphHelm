@@ -986,10 +986,21 @@ class SessionHookTests(unittest.TestCase):
         ]), encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
 
+    # #2340 review condition: the answer comes within this many seconds measured from the spawn of
+    # the hook process (interpreter start included), not from its first line.
+    SPAWN_TO_ANSWER = 7.0
+
+    def run_hook_timed(self, phase):
+        started = time.monotonic()
+        result = self.run_hook(phase)
+        elapsed = time.monotonic() - started
+        self.assertLessEqual(elapsed, self.SPAWN_TO_ANSWER, f"{phase} answered {elapsed:.2f} s after spawn")
+        return result
+
     def test_end_answers_while_its_state_write_hangs(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         self.hang_state_writes()
-        result = self.run_hook("end")
+        result = self.run_hook_timed("end")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("state write still pending", result.stderr)
         self.assertEqual(len([r for r in RuntimeHandler.requests if r[0] == "POST"]), 1)
@@ -997,7 +1008,7 @@ class SessionHookTests(unittest.TestCase):
     def test_start_answers_with_its_briefing_while_its_state_write_hangs(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         self.hang_state_writes()
-        result = self.run_hook("start")
+        result = self.run_hook_timed("start")
         self.assertEqual(result.returncode, 0, result.stderr)
         context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("GraphHelm FRESH", context)

@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { When } from "../time/Stamp";
 import type { AddRefusal } from "../login/session";
+import { studioOpenCommand } from "../login/studio-open";
 import { routeSearch, type View } from "../routing/route";
 import { subtitle, type ProjectSummary } from "./project-summary";
 import { restartDetail, type Restart } from "./use-health";
@@ -14,11 +15,14 @@ export interface ProjectEntry {
   summary: ProjectSummary | null;
 }
 
-const REFUSALS: Record<AddRefusal, string> = {
-  not_a_project: "That folder is not a GraphHelm project.",
-  runtime_not_running: "That project's Runtime is not running. Run graphhelm studio open there first.",
-  refused: "The Studio refused to add that folder. The ticket may be missing or already used: run graphhelm studio open --project there for a new one.",
-};
+/** Why the Studio did not add a folder, with the `graphhelm studio open` command for this page. */
+export function refusalText(refusal: AddRefusal, port?: string | null): string {
+  switch (refusal) {
+    case "not_a_project": return "That folder is not a GraphHelm project.";
+    case "runtime_not_running": return `That project's Runtime is not running. Run ${studioOpenCommand("", port)} there first.`;
+    case "refused": return `The Studio refused to add that folder. The ticket may be missing or already used: run ${studioOpenCommand("--project", port)} there for a new one.`;
+  }
+}
 
 /** Under a project (Sidebar.dc.html): the open one shows its folder, then its team run and its
  * journeys in an indented box; another shows its folder and its run on one line. */
@@ -59,7 +63,7 @@ export function AddFolder({ onAdd, open, setOpen }: { onAdd: (path: string, tick
         void onAdd(path.trim(), ticket.trim()).then((refusal) => {
           setBusy(false);
           setTicket("");
-          setError(refusal === null ? null : REFUSALS[refusal]);
+          setError(refusal === null ? null : refusalText(refusal));
         });
       }}
     >
@@ -148,7 +152,7 @@ export function Sidebar({ projects, closed, current, view, live, onProject, onAd
           <div key={id} className="project other closed">
             <Folder stroke="#6b6b76" />
             <span>project {id.slice(0, 8)}</span>
-            <span className="closed-hint" title="Not opened yet. Open it with: graphhelm studio open">open with <code className="mono">graphhelm studio open</code></span>
+            <span className="closed-hint" title={`Not opened yet. Open it with: ${studioOpenCommand()}`}>open with <code className="mono">{studioOpenCommand()}</code></span>
           </div>
         ))}
       </div>

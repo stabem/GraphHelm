@@ -529,7 +529,10 @@ def _state_root() -> Path:
     return Path(base) / "GraphHelm" / "session-hooks" if base else Path.home() / ".local" / "state" / "graphhelm" / "session-hooks"
 
 
-def _write_state(path: Path, value: dict) -> None:
+def _write_state(path: Path, value: dict, durable: bool = True) -> None:
+    """Atomic replace; `durable` also waits for fsync. #2295: SessionEnd passes False, because a
+    host gives it 10 s and an fsync under load took longer. A lost write only re-sends the same
+    idempotent signal, or a new one after a power loss."""
     raw = json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8")
     if len(raw) > MAX_STATE:
         raise ValueError("hook state too large")
@@ -540,7 +543,8 @@ def _write_state(path: Path, value: dict) -> None:
         with os.fdopen(fd, "wb") as output:
             output.write(raw)
             output.flush()
-            os.fsync(output.fileno())
+            if durable:
+                os.fsync(output.fileno())
         if os.name != "nt":
             temporary.chmod(0o600)
         os.replace(temporary, path)
@@ -850,7 +854,7 @@ def _end_impl(payload: dict, host: str, bound: tuple | None = None, lane: str | 
         if lane is not None:
             delivery["lane"] = lane
         state["delivery"] = delivery
-        _write_state(path, state)
+        _write_state(path, state, durable=False)
     if delivery.get("delivered") is True:
         return
     signal = delivery.get("signal")
@@ -862,7 +866,7 @@ def _end_impl(payload: dict, host: str, bound: tuple | None = None, lane: str | 
     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
         raise ValueError("signal acknowledgment did not match")
     delivery["delivered"] = True
-    _write_state(path, state)
+    _write_state(path, state, durable=False)
 
 
 def end(payload: dict, host: str, output_format: str = "native") -> bool:

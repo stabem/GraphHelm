@@ -938,6 +938,29 @@ class SessionHookTests(unittest.TestCase):
         self.assertNotIn(str(self.token_file), json.dumps(signal))
         self.assertNotIn("test-token", json.dumps(signal))
 
+    def test_end_answers_without_waiting_for_fsync(self):
+        """#2295: an fsync under load outlasted the end hook's 10 s budget. The real hook process
+        runs with every os.fsync recorded; end must record none and still deliver once."""
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        spy = Path(self.temp.name) / "fsync-spy"
+        spy.mkdir()
+        calls = spy / "calls.txt"
+        (spy / "sitecustomize.py").write_text("\n".join([
+            "import os",
+            "_real = os.fsync",
+            f"def _spy(fd, _path={str(calls)!r}):",
+            "    open(_path, 'a').write('fsync')",
+            "    return _real(fd)",
+            "os.fsync = _spy",
+            "",
+        ]), encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(spy), self.env.get("PYTHONPATH")]))
+        result = self.run_hook("end")
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertFalse(calls.exists(), calls.read_text() if calls.exists() else "")
+        self.assertEqual(len([r for r in RuntimeHandler.requests if r[0] == "POST"]), 1)
+        self.assertTrue(next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")).is_file())
+
     def test_lane_bound_end_signs_as_the_lane_and_names_host_and_session(self):
         # #1184: a lane's session end was signed `{host}-session-{id}`, a name no task record or
         # Studio lane carries, so a Claude Desktop lane never read as ended. On the parent the

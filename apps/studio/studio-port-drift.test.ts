@@ -2,12 +2,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import viteConfig from "../../vite.config";
-import { STUDIO_OPEN_DEFAULT_PORT } from "./studio-open";
+import viteConfig from "./vite.config.ts";
+import { STUDIO_OPEN_DEFAULT_PORT } from "./src/login/studio-open.ts";
 
 // `graphhelm studio open` finds the Studio only on the port it looks for. The CLI's default and
 // the Studio's own servers must agree; this fails the moment either side changes alone.
-const repo = (path: string) => readFileSync(fileURLToPath(new URL(`../../../../${path}`, import.meta.url)), "utf8");
+const repo = (path: string) => readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), "utf8");
 
 describe("the Studio's port and the CLI's default agree", () => {
   it("the CLI's studio open default equals the Studio's", () => {

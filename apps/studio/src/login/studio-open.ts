@@ -4,7 +4,9 @@ export const STUDIO_OPEN_DEFAULT_PORT = 5183;
 
 /** The port this page is served on; `null` outside a browser or on the scheme's default port. */
 function pagePort(): string | null {
-  return typeof location === "undefined" || location.port === "" ? null : location.port;
+  // Through globalThis: this file is also compiled with the dev server's config, which has no DOM.
+  const port = (globalThis as { location?: { port: string } }).location?.port;
+  return port === undefined || port === "" ? null : port;
 }
 
 /** The `graphhelm studio open` command this page can hand the user. Off the CLI's default port it

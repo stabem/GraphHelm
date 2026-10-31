@@ -357,9 +357,10 @@ Expected (trimmed): `"command":"execution.start"`, `"attention":"needs_you"`, an
 `implementation` node. [`QUICKSTART.md`](../../QUICKSTART.md) explains the four `attention`
 values; this page moves on to acting on the run.
 
-Open the Studio to see the run. Today it lists the run with its status (`running`). It does not show
-`attention`, the blocked node or an approval button. Read those from the CLI, or from the MCP `status` tool, and
-act on the node from the CLI.
+Open the Studio to see the run. The Graph view shows its status, `running · needs you`, and a **WAITS ON YOU**
+block that names the blocked node: `implementation is blocked and waits for your approval`. The Lanes view shows the
+same block in its NEEDS ACTION box. The Studio cannot approve a node yet, so approve it from the CLI, as below.
+After the CLI pause and approve, the Graph shows `Status paused` and the block disappears.
 
 The verbs, executed as written against a fresh store (`E` is the events directory, `F` the fixture file; same
 flags in PowerShell with the Windows paths). Pause first: a supervised run accepts `resume` only from `paused`.

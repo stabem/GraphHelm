@@ -421,6 +421,15 @@ pub(crate) fn execute_held(
         },
         true,
     )?;
+    render_started(events, &prepared)
+}
+
+/// The run as the store holds it right after its `ExecutionStarted`: what a held start answers,
+/// and (#2323) what a real-executor `/start` answers before its drive, which then runs detached.
+pub(crate) fn render_started(
+    events: &Path,
+    prepared: &PreparedDrive,
+) -> Result<serde_json::Value, Failure> {
     let store = event_store(events).map_err(|error| repository_failure(&error))?;
     let (_, _, projection) = load_projection(&store, Some(prepared.execution_id.as_str()))?;
     Ok(render(

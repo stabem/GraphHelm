@@ -1462,7 +1462,10 @@ pub(crate) fn started_detached(execution_id: &str, envelope: &serde_json::Value)
             {"type": "text", "text": envelope.to_string()},
             {"type": "text", "text": format!(
                 "Started; the drive continues. Follow it with the \"status\" or \"briefing\" tool \
-                 for executionId \"{execution_id}\"."
+                 for executionId \"{execution_id}\". Known risk (#2357): a later drive or \
+                 workspace-release failure is reported only on the Runtime's stderr; status may \
+                 keep showing the run as started/running, and a failed release keeps the \
+                 execution's workspace until it is driven again or the operator removes it."
             )},
         ],
         "isError": envelope.get("ok") != Some(&serde_json::Value::Bool(true)),

@@ -7601,9 +7601,25 @@ fn start_against_a_silent_provider(prefer_async: bool) {
             at_reply["data"]["nodeStates"]["step_one"], "blocked",
             "without the preference /start still answers after its drive: {at_reply}"
         );
+        assert!(
+            !reply
+                .head
+                .to_ascii_lowercase()
+                .contains("preference-applied"),
+            "{}",
+            reply.head
+        );
         return;
     }
     assert_eq!(reply.status, 202, "{}", reply.body);
+    assert!(
+        reply
+            .head
+            .lines()
+            .any(|line| line.eq_ignore_ascii_case("preference-applied: respond-async")),
+        "the 202 names the preference it applied: {}",
+        reply.head
+    );
     assert_eq!(
         replied["data"]["status"], "running",
         "/start answered with the started run, not its end: {replied}"

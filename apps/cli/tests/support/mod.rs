@@ -36,6 +36,8 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct RawResponse {
     pub status: u16,
+    /// The status line and header lines, as received.
+    pub head: String,
     pub body: String,
 }
 
@@ -108,6 +110,7 @@ pub fn parse_response(text: &str) -> std::io::Result<RawResponse> {
         .ok_or_else(|| std::io::Error::other("malformed HTTP response: no status code"))?;
     Ok(RawResponse {
         status,
+        head: head.to_owned(),
         body: body.to_owned(),
     })
 }

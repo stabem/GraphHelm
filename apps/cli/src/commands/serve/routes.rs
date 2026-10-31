@@ -3888,7 +3888,12 @@ fn load_and_publish(
 /// end read back through status and briefing. Without the header, or on the fixture path, the
 /// reply comes after the drive, `200`, exactly as before. A same-key retry replays the recorded
 /// reply. The MCP `start` tool sends the header; the local CLI `execution start` never calls this
-/// route.
+/// route. KNOWN RISK (#2357, review_by 2026-11-14): after a 202, a drive or workspace-release
+/// failure is reported only on the server's stderr; status may keep showing the run as
+/// started/running. A failed release has no TTL: the execution's Tier 1 tree (a git worktree, its
+/// write capability) stays at `<staging>/ghtool-exec-<first 24 hex of SHA-256(executionId)>` until
+/// the same execution is driven again (the next provision reclaims it) or the operator runs
+/// `graphhelm workspace remove <that directory>`; otherwise it stays held indefinitely.
 ///
 /// Milestone 05a follow-up Minor 1: `load_and_publish` used to run unconditionally before the
 /// idempotency pre-flight, so a recognized retry re-read, re-linted and re-published the graph
@@ -3959,14 +3964,12 @@ pub(super) async fn start(
     let drive_execution_id = execution_id.clone();
     // #2323: `Prefer: respond-async` (RFC 7240) asks for the reply once the run is committed. No
     // header, or any other preference, keeps the reply after the drive, as before.
-    let respond_async = headers
-        .get_all(axum::http::header::HeaderName::from_static("prefer"))
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .any(|token| token.trim().eq_ignore_ascii_case("respond-async"));
-    let detached = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let detached_flag = detached.clone();
+    let respond_async = prefers_respond_async(&headers);
+    // The committed run's drive, handed out of the mutation and spawned only after `mutate` has
+    // returned: by then the start, its journal entry and its presence declaration are all
+    // recorded, so no step that can still fail runs between the commit and the drive (#2323).
+    let detached = Arc::new(std::sync::Mutex::new(None::<(PreparedDrive, DriveSetup)>));
+    let detached_slot = detached.clone();
 
     let mut response = mutate(
         &state,
@@ -4062,22 +4065,15 @@ pub(super) async fn start(
                         // this point, the drive is owned by a server task, and `/start` answers
                         // with the started run (202) instead of after the drive. Its progress and
                         // end read back through status and briefing.
-                        detached_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                        let started =
-                            execution::start::render_started(&drive_state.events, &prepared)?;
-                        let background_state = drive_state.clone();
-                        let background_execution_id = drive_execution_id.clone();
-                        tokio::spawn(async move {
-                            if drive(&background_state, &background_execution_id, prepared, setup)
-                                .await
-                                .is_err()
-                            {
-                                // Content-free: the run's own record says how it ended.
-                                eprintln!(
-                                    "serve: the detached drive of {background_execution_id} ended with an error; read its status"
-                                );
-                            }
-                        });
+                        // Infallible: a render that fails still answers the committed start.
+                        let started = started_reply(
+                            execution::start::render_started(&drive_state.events, &prepared),
+                            &drive_execution_id,
+                        );
+                        *detached_slot
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                            Some((prepared, setup));
                         Ok(started)
                     } else if drive_state.runtime.is_some() {
                         // The decision is durable before this point. A model request can take
@@ -4115,14 +4111,59 @@ pub(super) async fn start(
         },
     )
     .await;
-    if detached.load(std::sync::atomic::Ordering::Relaxed) && response.status() == StatusCode::OK {
-        *response.status_mut() = StatusCode::ACCEPTED;
-        response.headers_mut().insert(
-            axum::http::header::HeaderName::from_static("preference-applied"),
-            axum::http::HeaderValue::from_static("respond-async"),
-        );
+    let pending = detached
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    if let Some((prepared, setup)) = pending {
+        // Spawned whatever the reply says: the run is committed, so it must advance.
+        // KNOWN RISK (#2357, review_by 2026-11-14, first post-1.0 Runtime item): after a 202, a
+        // drive or workspace-release failure is reported only on this server's stderr; status may
+        // keep showing the run as started/running. A failed release has no TTL; see the doc
+        // comment above for where the tree stays and how the operator removes it.
+        let background_state = state.clone();
+        let background_execution_id = execution_id.clone();
+        tokio::spawn(async move {
+            if drive(&background_state, &background_execution_id, prepared, setup)
+                .await
+                .is_err()
+            {
+                // Content-free: the run's own record says how it ended.
+                eprintln!(
+                    "serve: the detached drive of {background_execution_id} ended with an error; read its status"
+                );
+            }
+        });
+        if response.status() == StatusCode::OK {
+            *response.status_mut() = StatusCode::ACCEPTED;
+            response.headers_mut().insert(
+                axum::http::header::HeaderName::from_static("preference-applied"),
+                axum::http::HeaderValue::from_static("respond-async"),
+            );
+        }
     }
     response
+}
+
+/// #2323: whether any `Prefer` header carries `respond-async` (RFC 7240), parameters allowed.
+fn prefers_respond_async(headers: &HeaderMap) -> bool {
+    headers
+        .get_all(axum::http::header::HeaderName::from_static("prefer"))
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .filter_map(|preference| preference.split(';').next())
+        .any(|token| token.trim().eq_ignore_ascii_case("respond-async"))
+}
+
+/// #2323: the started-run reply; a render that failed falls back to the id and `running`, because
+/// the start is already committed and its drive will run.
+fn started_reply(
+    rendered: Result<serde_json::Value, execution::Failure>,
+    execution_id: &str,
+) -> serde_json::Value {
+    rendered
+        .unwrap_or_else(|_| serde_json::json!({"executionId": execution_id, "status": "running"}))
 }
 
 /// #1284: whether a signal object leaves `source` for the Runtime to fill.
@@ -7534,6 +7575,57 @@ fn evidence_refusal(message: &str) -> Response {
         )
         .output,
     )
+}
+
+#[cfg(test)]
+mod respond_async_tests {
+    //! #2323: which `Prefer` values ask for the early reply, and the reply a failed render gives.
+    use super::{prefers_respond_async, started_reply};
+
+    fn prefer(values: &[&str]) -> axum::http::HeaderMap {
+        let mut headers = axum::http::HeaderMap::new();
+        for value in values {
+            headers.append("prefer", value.parse().unwrap());
+        }
+        headers
+    }
+
+    #[test]
+    fn respond_async_is_recognised_with_parameters_and_among_other_preferences() {
+        for values in [
+            &["respond-async"][..],
+            &["Respond-Async"],
+            &["respond-async; wait=10"],
+            &["return=minimal, respond-async;wait=5"],
+            &["return=minimal", "respond-async"],
+        ] {
+            assert!(prefers_respond_async(&prefer(values)), "{values:?}");
+        }
+        for values in [
+            &[][..],
+            &["return=minimal"],
+            &["respond-asynchronous"],
+            &["wait=10"],
+        ] {
+            assert!(!prefers_respond_async(&prefer(values)), "{values:?}");
+        }
+    }
+
+    #[test]
+    fn a_failed_render_still_answers_the_committed_start() {
+        let failed = Err(crate::commands::execution::Failure {
+            code: "GHI001_INTERNAL",
+            message: "the store could not be reopened".to_owned(),
+            pointer: "/".to_owned(),
+        });
+        assert_eq!(
+            started_reply(failed, "exec-1"),
+            serde_json::json!({"executionId": "exec-1", "status": "running"})
+        );
+        let rendered =
+            serde_json::json!({"executionId": "exec-1", "status": "running", "headSequence": 3});
+        assert_eq!(started_reply(Ok(rendered.clone()), "exec-1"), rendered);
+    }
 }
 
 #[cfg(test)]

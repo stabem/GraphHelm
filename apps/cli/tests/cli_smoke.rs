@@ -359,6 +359,38 @@ fn legacy_graph_parse_errors_help_and_version_keep_clap_behavior() {
     }
 }
 
+#[test]
+fn version_names_the_commit_this_binary_was_built_from() {
+    let output = command().arg("--version").output().unwrap();
+    let text = String::from_utf8(output.stdout).unwrap();
+    let mut lines = text.lines();
+    assert_eq!(
+        lines.next(),
+        Some(concat!("graphhelm ", env!("CARGO_PKG_VERSION")))
+    );
+    let reported = lines.next().and_then(|line| line.strip_prefix("commit "));
+    // The build records the head of this checkout; a source archive has none and says `unknown`.
+    let head = graphhelm_process::command("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(root())
+        .output()
+        .unwrap();
+    if head.status.success() {
+        assert_eq!(
+            reported,
+            Some(String::from_utf8(head.stdout).unwrap().trim())
+        );
+    } else {
+        assert_eq!(reported, Some("unknown"));
+    }
+    assert_eq!(lines.next(), None);
+    let short = command().arg("-V").output().unwrap();
+    assert_eq!(
+        String::from_utf8(short.stdout).unwrap(),
+        concat!("graphhelm ", env!("CARGO_PKG_VERSION"), "\n")
+    );
+}
+
 fn json(output: &[u8]) -> serde_json::Value {
     serde_json::from_slice(output).unwrap()
 }

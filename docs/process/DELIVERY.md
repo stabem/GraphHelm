@@ -98,8 +98,9 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 - `INSTALL.md`, `install/`, the commands its walk runs (`init`, `serve`, `graph validate`, and the files
   every command shares) and the walk's own fixture reach
   `python .graphhelm/fixtures/install-first-use/test_run.py`, which follows INSTALL.md in a throwaway
-  project on a private port with the `graphhelm` that `GRAPHHELM_CLI` or PATH names (pass `--graphhelm`
-  a build of the head to observe the head's CLI);
+  project on a private port with the `graphhelm` that `GRAPHHELM_CLI` or PATH names. That CLI must
+  report the head's commit in `graphhelm --version`; any other CLI (an older install, a build outside a
+  checkout) makes the step UNOBSERVED and the run `incomplete`, so pass `--graphhelm` a build of the head;
 - other docs reach nothing.
 
 **One test budget for authors and reviewers:**

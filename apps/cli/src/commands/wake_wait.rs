@@ -460,17 +460,33 @@ fn validate_same_lease(
     execution: Option<&str>,
     session_id: &str,
     armed_at_sequence: u64,
-) -> Result<(), Outcome> {
-    let current = read_own_lease(events, execution, session_id)?;
-    if current.armed_at_sequence != armed_at_sequence {
-        return Err(refuse(
+) -> Result<Startup, Outcome> {
+    let refusal = match read_own_lease(events, execution, session_id) {
+        Ok(current) if current.armed_at_sequence == armed_at_sequence => return Ok(Startup::Live),
+        Ok(_) => refuse(
             &format!(
                 "{session_id} no longer owns arming {armed_at_sequence}: re-arm and wait on the current lease"
             ),
             "/sessionId",
-        ));
+        ),
+        Err(outcome) => outcome,
+    };
+    // #2283: a peer that rang THIS arming after the first read consumed the lease as `rung`
+    // before its byte could reach the rendezvous. That wake was delivered: end `Rung`. Every
+    // other reason the lease is gone (stale, mis-aimed, replaced) still refuses.
+    match receipt_at_deadline(events, execution, session_id, armed_at_sequence) {
+        ReceiptAtDeadline::Read {
+            missed_ring: true, ..
+        } => Ok(Startup::Rung),
+        _ => Err(refusal),
     }
-    Ok(())
+}
+
+/// What the startup re-read found: the captured lease is still live, or this arming was already
+/// consumed by a ring aimed at it.
+pub(crate) enum Startup {
+    Live,
+    Rung,
 }
 
 pub(crate) enum WaitEnd {
@@ -486,7 +502,7 @@ pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
     let deadline = started
         .checked_add(std::time::Duration::from_secs(timeout_seconds))
         .unwrap_or(started);
-    match wait_validated(rendezvous_id, deadline, || Ok(())) {
+    match wait_validated(rendezvous_id, deadline, || Ok(Startup::Live)) {
         Ok(end) => end,
         Err(outcome) => WaitEnd::Unusable(outcome.output.diagnostics.first().map_or_else(
             || "the lease could not be validated".to_owned(),
@@ -499,7 +515,7 @@ pub(crate) fn wait(rendezvous_id: &str, timeout_seconds: u64) -> WaitEnd {
 fn wait_validated(
     rendezvous_id: &str,
     deadline: std::time::Instant,
-    validate: impl FnOnce() -> Result<(), Outcome>,
+    validate: impl FnOnce() -> Result<Startup, Outcome>,
 ) -> Result<WaitEnd, Outcome> {
     use tokio::io::AsyncReadExt;
     let name = format!(r"\\.\pipe\graphhelm-wake-{rendezvous_id}");
@@ -526,7 +542,9 @@ fn wait_validated(
                 ));
             }
         };
-        validate()?;
+        if let Startup::Rung = validate()? {
+            return Ok(WaitEnd::Rung);
+        }
         record_test_causal_mark("startup-lease-validated");
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
@@ -584,7 +602,7 @@ fn read_budget(
 fn wait_validated(
     rendezvous_id: &str,
     deadline: std::time::Instant,
-    validate: impl FnOnce() -> Result<(), Outcome>,
+    validate: impl FnOnce() -> Result<Startup, Outcome>,
 ) -> Result<WaitEnd, Outcome> {
     use std::io::Read;
     let runtime = match std::env::var("XDG_RUNTIME_DIR") {
@@ -607,10 +625,22 @@ fn wait_validated(
             ));
         }
     };
-    if let Err(outcome) = validate() {
-        drop(listener);
-        let _ = std::fs::remove_file(&path);
-        return Err(outcome);
+    match validate() {
+        Ok(Startup::Live) => {}
+        startup => {
+            drop(listener);
+            // A rendezvous already gone is the goal; any other failure is surfaced on stderr. It
+            // never replaces the startup answer: a delivered ring or a refusal is still the result.
+            if let Err(error) = std::fs::remove_file(&path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                eprintln!(
+                    "wake-wait: the rendezvous {} could not be removed: {error}",
+                    path.display()
+                );
+            }
+            return startup.map(|_| WaitEnd::Rung);
+        }
     }
     let _ = listener.set_nonblocking(false);
     listener
@@ -780,6 +810,24 @@ mod tests {
         session: &str,
         armed_at: u64,
     ) {
+        consume_test_lease_as(
+            store,
+            scope,
+            execution,
+            session,
+            armed_at,
+            WakeConsumeReason::StaleRendezvous,
+        );
+    }
+
+    fn consume_test_lease_as(
+        store: &LocalEventRepository,
+        scope: &RepositoryScope,
+        execution: &OpaqueId,
+        session: &str,
+        armed_at: u64,
+        reason: WakeConsumeReason,
+    ) {
         let next = store.next_sequence(scope, execution.as_str()).unwrap();
         append_test_event(
             store,
@@ -789,7 +837,7 @@ mod tests {
             EventKind::WakeLeaseConsumed(WakeLeaseConsumed {
                 execution_id: execution.clone(),
                 session_id: OpaqueId::parse(session).unwrap(),
-                reason: WakeConsumeReason::StaleRendezvous,
+                reason,
                 captured_arming: Some(armed_at),
             }),
         );
@@ -879,6 +927,53 @@ mod tests {
         assert_post_creation_refusal(&events, &execution, "session-wake-stale", &lease);
     }
 
+    /// #2283: a peer that rings THIS arming between the rendezvous creation and the second lease
+    /// read consumes the lease as `rung` first (the two-phase ring). The wake was delivered, so the
+    /// wait ends `Rung`, not as a "no live lease" refusal. The append runs inside the validator
+    /// closure: that closure IS the gap, so no sleep and no release-side hook are needed.
+    #[test]
+    fn a_ring_consumed_in_the_startup_gap_ends_the_wait_as_rung() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path().join("events");
+        let (execution, scope) = wake_fixture(&events, "gap-ring");
+        let store = test_store(&events);
+        let rendezvous = format!("rvz-wake-{}-gap-ring", std::process::id());
+        let session = "session-wake-gap-ring";
+        let armed_at = arm_test_lease(&store, &scope, &execution, session, &rendezvous);
+        drop(store);
+        let lease = super::read_own_lease(&events, Some(execution.as_str()), session)
+            .unwrap_or_else(|outcome| panic!("{}", outcome.output.diagnostics[0].message));
+        assert_eq!(lease.armed_at_sequence, armed_at);
+        let end = wait_validated(
+            &lease.rendezvous_id,
+            Instant::now() + Duration::from_secs(5),
+            || {
+                let store = test_store(&events);
+                consume_test_lease_as(
+                    &store,
+                    &scope,
+                    &execution,
+                    session,
+                    armed_at,
+                    WakeConsumeReason::Rung,
+                );
+                drop(store);
+                validate_same_lease(&events, Some(execution.as_str()), session, armed_at)
+            },
+        );
+        match end {
+            Ok(WaitEnd::Rung) => {}
+            Ok(WaitEnd::TimedOut) => {
+                panic!("a ring consumed in the gap must not wait out the deadline")
+            }
+            Ok(WaitEnd::Unusable(message)) => panic!("rendezvous unavailable: {message}"),
+            Err(outcome) => panic!(
+                "a ring consumed in the gap was refused: {}",
+                outcome.output.diagnostics[0].message
+            ),
+        }
+    }
+
     #[test]
     fn replacement_arming_is_not_waited_on_by_the_old_rendezvous() {
         let directory = tempfile::tempdir().unwrap();
@@ -958,7 +1053,7 @@ mod tests {
             let _ = sender.send(super::wait_validated(
                 &waiter_id,
                 Instant::now() + Duration::from_secs(1),
-                || Ok(()),
+                || Ok(super::Startup::Live),
             ));
         });
 

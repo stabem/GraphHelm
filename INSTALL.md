@@ -390,9 +390,8 @@ not substitute for that observation, and this checklist does not claim those ses
 ## 8. Optional: claude.ai preferences
 
 claude.ai is separate from the Claude Code and Codex installations above. If the user also wants
-GraphHelm + Keel guidance there, ask them to review and paste the block from the README section
-[Make Claude always use GraphHelm + Keel](README.md#make-claude-always-use-graphhelm--keel)
-(step 2) into their claude.ai instructions/preferences. This is an optional preference step;
+GraphHelm + Keel guidance there, ask them to write it into their claude.ai instructions/preferences
+themselves; this repository does not provide a ready-made block for that. This is an optional preference step;
 it neither installs the local Runtime nor registers its MCP server in a local host.
 
 **Verify only if requested:** the user confirms the preference change. Otherwise mark it

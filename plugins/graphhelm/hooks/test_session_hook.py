@@ -765,6 +765,10 @@ class SessionHookTests(unittest.TestCase):
         """#2340: under disk pressure (the #2270 load) a hook may hit STATE_WRITE_BUDGET. That is its
         promised answer, not a failure: it says so, answers unobserved and exits. The test then
         checks that shape and stops, since the rest of its story was legitimately not recorded."""
+        if "Timeout (" in result.stderr and "most recent call first" in result.stderr:
+            # The C-level backstop ended it (#2340): status 1 and a stack dump, its documented cost.
+            self.assertEqual(result.returncode, 1, result.stderr)
+            return True
         if "still pending" in result.stderr:
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn(f"{phase} unobserved (_StateTimeout)", result.stderr)
@@ -1029,10 +1033,11 @@ class SessionHookTests(unittest.TestCase):
         self.assertTrue(pid.isdigit())
         self.assertLessEqual(spawned, float(at) + 0.01)
         self.assertLessEqual(float(at), answered)
-        # The exit mark in "<first line>.exit": same pid, after the first line, before the process
-        # was seen to end.
-        exit_pid, path, exit_at = Path(str(marker) + ".exit").read_text().split()
-        self.assertEqual((exit_pid, path), (pid, "normal"))
+        # The exit mark on stderr (never a file, which a starved disk can hold): same pid, after the
+        # first line, before the process was seen to end.
+        word, exit_pid, path, exit_at = result.stderr.split()
+        self.assertEqual((word, exit_pid, path), ("graphhelm-probe-exit", pid, "normal"))
+        self.assertFalse(Path(str(marker) + ".exit").exists())
         self.assertLessEqual(float(at), float(exit_at))
         self.assertLessEqual(float(exit_at), answered)
 
@@ -1099,8 +1104,35 @@ class SessionHookTests(unittest.TestCase):
         result = self.run_hook("end")
         self.assertEqual(result.returncode, 0, result.stderr)
         pid, _ = marker.read_text().split()
-        exit_pid, path, _ = Path(str(marker) + ".exit").read_text().split()
-        self.assertEqual((exit_pid, path), (pid, "watchdog"))
+        exit_lines = [line.split() for line in result.stderr.splitlines() if line.startswith("graphhelm-probe-exit ")]
+        self.assertEqual([line[1:3] for line in exit_lines], [[pid, "watchdog"]])
+
+    def test_the_watchdog_leaves_even_when_the_disk_holds_every_file_write(self):
+        # #2340, Shino's probe on f534862c: twice the watchdog itself hung writing the probe's exit
+        # FILE on a starved disk. The exit mark now goes to stderr; with every file open hung, the
+        # watchdog path still leaves in time.
+        marker = Path(self.temp.name) / "first-line.txt"
+        self.env["GRAPHHELM_HOOK_FIRST_LINE"] = str(marker)
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        hang = Path(self.temp.name) / "hang-file-writes"
+        hang.mkdir()
+        (hang / "sitecustomize.py").write_text("\n".join([
+            "import hashlib, os, threading",
+            "_open = os.open",
+            "_started = [False]",
+            "def _hang_after_first(path, *args, **kwargs):",
+            "    if _started[0]:",
+            "        threading.Event().wait(120)",
+            "    _started[0] = True",
+            "    return _open(path, *args, **kwargs)",
+            "os.open = _hang_after_first",
+            "hashlib.sha256 = lambda *a, **k: threading.Event().wait(120)",
+            "",
+        ]), encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
+        result = self.run_hook_timed("end")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("graphhelm-probe-exit", result.stderr)
 
     def run_hook_timed(self, phase):
         started = time.monotonic()

@@ -72,19 +72,18 @@ def _watchdog_answer() -> str:
 
 
 def _probe_mark(event: str) -> None:
-    """Probe only (GRAPHHELM_HOOK_FIRST_LINE set): append "<pid> <watchdog|normal> <epoch>" to
-    `<GRAPHHELM_HOOK_FIRST_LINE>.exit` right before `os._exit`, so a probe can split time inside the
-    hook from teardown after it (#2340). The same instrument Shino's probe measured with; the time
-    is taken before the write."""
-    marker_path = _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE")
-    if not marker_path:
+    """Probe only (GRAPHHELM_HOOK_FIRST_LINE set): one stderr line "graphhelm-probe-exit <pid>
+    <watchdog|normal> <epoch>" right before `os._exit`, so a probe can split time inside the hook
+    from teardown after it (#2340). It goes to the stderr pipe, never to a file: Shino's probe on
+    f534862c caught the watchdog itself stuck writing a file marker on a starved disk, which held
+    its os._exit. The time is taken before the write."""
+    if not _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE"):
         return
     at = _first_line_clock.time()
     try:
-        handle = _first_line_os.open(marker_path + ".exit", _first_line_os.O_WRONLY | _first_line_os.O_CREAT | _first_line_os.O_APPEND, 0o600)
-        _first_line_os.write(handle, f"{_first_line_os.getpid()} {event} {at:.3f}\n".encode())
-        _first_line_os.close(handle)
-    except OSError:
+        _first_line_sys.stderr.write(f"graphhelm-probe-exit {_first_line_os.getpid()} {event} {at:.3f}\n")
+        _first_line_sys.stderr.flush()
+    except (OSError, ValueError):
         pass
 
 

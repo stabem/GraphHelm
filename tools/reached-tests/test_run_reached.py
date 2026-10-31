@@ -551,8 +551,17 @@ raise SystemExit(rr.run(args))
         # #2276: --graphhelm reached only the selector; a step that ran `graphhelm` saw PATH's CLI.
         probe = ("import os; print('CLI=' + os.environ.get('GRAPHHELM_CLI', '')); "
                  "print('PATH0=' + os.environ['PATH'].split(os.pathsep)[0])")
+        # #2281: a git hook's GIT_DIR/GIT_INDEX_FILE would aim the scratch repo's git at another
+        # repository, and a global core.hooksPath would run the user's hooks on its commit.
+        # GRAPHHELM_CLI is already blanked by setUp, so the unnamed case never inherits one.
+        clean = {key: value for key, value in os.environ.items()
+                 if key not in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE")}
+        clean["GIT_CONFIG_NOSYSTEM"] = "1"
         for named in (True, False):
-            with self.subTest(named=named), tempfile.TemporaryDirectory() as temp:
+            with self.subTest(named=named), tempfile.TemporaryDirectory() as temp, \
+                    patch.dict(os.environ, {**clean, "GIT_CONFIG_GLOBAL": os.path.join(temp, "empty.gitconfig")},
+                               clear=True):
+                Path(temp, "empty.gitconfig").write_text("", encoding="utf-8")
                 repo = Path(temp) / "repo"
                 repo.mkdir()
                 subprocess = __import__("subprocess")

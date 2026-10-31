@@ -7,9 +7,19 @@ use std::path::Path;
 use std::process::Command;
 
 fn run(dir: &Path, program: &str, args: &[&str]) -> String {
+    // #2281: a git hook (e.g. pre-push running this suite) exports GIT_DIR and GIT_INDEX_FILE,
+    // and the user's global config may set core.hooksPath. Either would aim git (here and in
+    // `build.rs`) at another repository or run the user's hooks, so the scratch repo sees none.
+    let empty_config = dir.with_extension("gitconfig");
+    std::fs::write(&empty_config, "").unwrap();
     let out = Command::new(program)
         .args(args)
         .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_WORK_TREE")
+        .env("GIT_CONFIG_GLOBAL", &empty_config)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()
         .expect("spawn");
     assert!(
@@ -90,4 +100,5 @@ fn an_incremental_build_reports_the_new_commit_when_the_branch_ref_was_packed() 
         "the rebuild names the new commit"
     );
     let _ = std::fs::remove_dir_all(&temp);
+    let _ = std::fs::remove_file(temp.with_extension("gitconfig"));
 }

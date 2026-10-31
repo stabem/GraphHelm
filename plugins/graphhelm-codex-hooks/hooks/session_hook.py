@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -555,6 +556,40 @@ def _write_state(path: Path, value: dict, durable: bool = True) -> None:
             pass
 
 
+# #2334: under disk pressure the state write itself (mkstemp, write, replace), not only its fsync,
+# took over 6 s, past the host's hook budget. Each hook write gets this long; past it the hook
+# answers without it and exits at once (`_answered_without_state`), and the write may not land.
+STATE_WRITE_BUDGET = 2.0
+_answered_without_state = False
+
+
+def _write_state_bounded(path: Path, value: dict, durable: bool = True) -> None:
+    """`_write_state` that never holds the answer past STATE_WRITE_BUDGET. A write that is still
+    pending is abandoned, never torn: the replace stays atomic. What a lost write costs is named
+    where each caller relies on it (an end or start retry re-sends its idempotent signal, and the
+    Runtime's 409 for an already committed key counts as delivered; a lost briefing cache makes a
+    later compact briefing UNOBSERVED)."""
+    global _answered_without_state
+    snapshot = json.loads(json.dumps(value))
+    failed: list[BaseException] = []
+
+    def write() -> None:
+        try:
+            _write_state(path, snapshot, durable)
+        except BaseException as error:  # reported to the caller below when it finishes in time
+            failed.append(error)
+
+    worker = threading.Thread(target=write, name="graphhelm-state-write", daemon=True)
+    worker.start()
+    worker.join(STATE_WRITE_BUDGET)
+    if worker.is_alive():
+        _answered_without_state = True
+        print("graphhelm-session-hook: state write still pending; answering without it", file=sys.stderr)
+        return
+    if failed:
+        raise failed[0]
+
+
 def _read_state(path: Path, execution: str, session: str, host: str, origin: str) -> dict | None:
     try:
         with path.open("rb") as source:
@@ -711,7 +746,7 @@ def _record_started(bound: tuple, host: str, session: str, lane: str, state: dic
         if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != key:
             raise ValueError("signal acknowledgment did not match")
         state["started"] = True
-        _write_state(path, state)
+        _write_state_bounded(path, state)
     except (OSError, ValueError, KeyError) as error:
         print(f"graphhelm-session-hook: start signal unobserved ({type(error).__name__})", file=sys.stderr)
 
@@ -757,7 +792,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
         digest = _briefing_digest(data)
         state = state or {"version": 2, "executionId": execution, "sessionId": session, "host": host, "origin": origin}
         state["briefing"] = digest
-        _write_state(path, state)
+        _write_state_bounded(path, state)
     # #1184: the started record is appended before the waiter arms its wake lease, so the append
     # cannot consume the lease the waiter is about to park on.
     lane = _lane(payload)
@@ -854,19 +889,26 @@ def _end_impl(payload: dict, host: str, bound: tuple | None = None, lane: str | 
         if lane is not None:
             delivery["lane"] = lane
         state["delivery"] = delivery
-        _write_state(path, state, durable=False)
+        _write_state_bounded(path, state, durable=False)
     if delivery.get("delivered") is True:
         return
     signal = delivery.get("signal")
     signal_id = delivery.get("signalId")
     if not isinstance(signal, dict) or not isinstance(signal_id, str):
         raise ValueError("invalid delivery state")
-    reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=5.0)
+    try:
+        reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=5.0)
+    except urllib.error.HTTPError as error:
+        # #2334: the key is the same on every retry; a 409 means an earlier end committed it and its
+        # state write did not land (abandoned past STATE_WRITE_BUDGET), as `_record_started` reads it.
+        if error.code != 409:
+            raise
+        reply = {"data": {"executionId": execution, "signalId": signal_id}}
     data = reply.get("data")
     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
         raise ValueError("signal acknowledgment did not match")
     delivery["delivered"] = True
-    _write_state(path, state, durable=False)
+    _write_state_bounded(path, state, durable=False)
 
 
 def end(payload: dict, host: str, output_format: str = "native") -> bool:
@@ -998,4 +1040,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    code = main()
+    if _answered_without_state:
+        # #2334: the answer is out; a state write still stuck in the file system must not hold the
+        # process (interpreter shutdown can wait on it). Flush what was said and leave now.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)
+    raise SystemExit(code)

@@ -69,6 +69,7 @@ class RuntimeHandler(BaseHTTPRequestHandler):
     post_started = None
     post_release = None
     events_delay = 0
+    conflict_ids = None
 
     def do_GET(self):
         self.requests.append(("GET", self.path, dict(self.headers), None))
@@ -116,6 +117,15 @@ class RuntimeHandler(BaseHTTPRequestHandler):
             self.post_release.wait(timeout=6)
         signal = json.loads(body)["signal"]
         signal_id = "wrong" if self.mismatch_ack else signal["id"]
+        if self.conflict_ids is not None and signal["id"] in self.conflict_ids:
+            # #2334: the Runtime's answer to a key it already committed (GHE003).
+            self.send_response(409)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "diagnostics": [{"code": "GHE003"}]}).encode())
+            return
+        if self.conflict_ids is not None:
+            self.conflict_ids.add(signal["id"])
         try:
             self.send_response(200 if self.reply_ok else 503)
             self.send_header("Content-Type", "application/json")
@@ -579,6 +589,7 @@ class SessionHookTests(unittest.TestCase):
         RuntimeHandler.post_started = None
         RuntimeHandler.post_release = None
         RuntimeHandler.events_delay = 0
+        RuntimeHandler.conflict_ids = None
         self.temp = tempfile.TemporaryDirectory()
         self.token_file = Path(self.temp.name) / "events.token"
         self.token_file.write_text("test-token", encoding="utf-8")
@@ -960,6 +971,55 @@ class SessionHookTests(unittest.TestCase):
         self.assertFalse(calls.exists(), calls.read_text() if calls.exists() else "")
         self.assertEqual(len([r for r in RuntimeHandler.requests if r[0] == "POST"]), 1)
         self.assertTrue(next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")).is_file())
+
+    def hang_state_writes(self):
+        """#2334: every hook state write hangs in the file system (its mkstemp never returns), as
+        it did for over 6 s under disk pressure; nothing else in the hook process is slowed."""
+        hang = Path(self.temp.name) / "hang-state-write"
+        hang.mkdir()
+        (hang / "sitecustomize.py").write_text("\n".join([
+            "import tempfile, threading",
+            "def _hang(*args, **kwargs):",
+            "    threading.Event().wait(120)",
+            "tempfile.mkstemp = _hang",
+            "",
+        ]), encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
+
+    def test_end_answers_while_its_state_write_hangs(self):
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.hang_state_writes()
+        result = self.run_hook("end")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("state write still pending", result.stderr)
+        self.assertEqual(len([r for r in RuntimeHandler.requests if r[0] == "POST"]), 1)
+
+    def test_start_answers_with_its_briefing_while_its_state_write_hangs(self):
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.hang_state_writes()
+        result = self.run_hook("start")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("GraphHelm FRESH", context)
+        self.assertIn("state write still pending", result.stderr)
+
+    def test_end_after_a_lost_state_write_counts_the_committed_key_as_delivered(self):
+        # #2334's named risk: the first end posted, but neither state write landed. The retry posts
+        # the same key with a new emittedAt; the Runtime answers 409, which is delivery, not failure.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        RuntimeHandler.conflict_ids = set()
+        hung = dict(self.env)
+        self.hang_state_writes()
+        first = self.run_hook("end")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.env = hung
+        second = self.run_hook("end")
+        self.assertEqual((second.returncode, second.stderr), (0, ""))
+        posts = [r for r in RuntimeHandler.requests if r[0] == "POST"]
+        self.assertEqual(len(posts), 2)
+        self.assertEqual(posts[0][3]["signal"]["id"], posts[1][3]["signal"]["id"])
+        state = json.loads(next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")).read_text())
+        self.assertIs(state["delivery"]["delivered"], True)
 
     def test_lane_bound_end_signs_as_the_lane_and_names_host_and_session(self):
         # #1184: a lane's session end was signed `{host}-session-{id}`, a name no task record or

@@ -1025,16 +1025,30 @@ class SessionHookTests(unittest.TestCase):
         result = self.run_hook("end")
         answered = time.time()
         self.assertEqual(result.returncode, 0, result.stderr)
-        first, last = marker.read_text().splitlines()
-        pid, at = first.split()
+        pid, at = marker.read_text().split()
         self.assertTrue(pid.isdigit())
         self.assertLessEqual(spawned, float(at) + 0.01)
         self.assertLessEqual(float(at), answered)
-        # The exit mark: same pid, after the first line, before the process was seen to end.
-        exit_pid, word, exit_at, phase, path = last.split()
-        self.assertEqual((exit_pid, word, phase, path), (pid, "exit", "end", "normal"))
+        # The exit mark in "<first line>.exit": same pid, after the first line, before the process
+        # was seen to end.
+        exit_pid, path, exit_at = Path(str(marker) + ".exit").read_text().split()
+        self.assertEqual((exit_pid, path), (pid, "normal"))
         self.assertLessEqual(float(at), float(exit_at))
         self.assertLessEqual(float(exit_at), answered)
+
+    def test_exit_marker_names_the_watchdog_path(self):
+        marker = Path(self.temp.name) / "first-line.txt"
+        self.env["GRAPHHELM_HOOK_FIRST_LINE"] = str(marker)
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        hang = Path(self.temp.name) / "hang-anything-marker"
+        hang.mkdir()
+        (hang / "sitecustomize.py").write_text("import hashlib, threading\nhashlib.sha256 = lambda *a, **k: threading.Event().wait(120)\n", encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
+        result = self.run_hook("end")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pid, _ = marker.read_text().split()
+        exit_pid, path, _ = Path(str(marker) + ".exit").read_text().split()
+        self.assertEqual((exit_pid, path), (pid, "watchdog"))
 
     def run_hook_timed(self, phase):
         started = time.monotonic()

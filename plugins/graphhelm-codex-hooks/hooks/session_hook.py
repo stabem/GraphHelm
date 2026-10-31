@@ -72,16 +72,17 @@ def _watchdog_answer() -> str:
 
 
 def _probe_mark(event: str) -> None:
-    """Probe only (GRAPHHELM_HOOK_FIRST_LINE set): append "<pid> exit <epoch> <phase> <path>" to the
-    first-line file right before `os._exit`, so a probe can split time inside the hook from
-    teardown after it (#2340). The time is taken before the write."""
+    """Probe only (GRAPHHELM_HOOK_FIRST_LINE set): append "<pid> <watchdog|normal> <epoch>" to
+    `<GRAPHHELM_HOOK_FIRST_LINE>.exit` right before `os._exit`, so a probe can split time inside the
+    hook from teardown after it (#2340). The same instrument Shino's probe measured with; the time
+    is taken before the write."""
     marker_path = _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE")
     if not marker_path:
         return
     at = _first_line_clock.time()
     try:
-        handle = _first_line_os.open(marker_path, _first_line_os.O_WRONLY | _first_line_os.O_CREAT | _first_line_os.O_APPEND, 0o600)
-        _first_line_os.write(handle, f"{_first_line_os.getpid()} exit {at:.3f} {_watched_phase} {event}\n".encode())
+        handle = _first_line_os.open(marker_path + ".exit", _first_line_os.O_WRONLY | _first_line_os.O_CREAT | _first_line_os.O_APPEND, 0o600)
+        _first_line_os.write(handle, f"{_first_line_os.getpid()} {event} {at:.3f}\n".encode())
         _first_line_os.close(handle)
     except OSError:
         pass

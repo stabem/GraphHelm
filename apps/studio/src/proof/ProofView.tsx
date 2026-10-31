@@ -222,7 +222,7 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
   );
 }
 
-function JourneyCard({ flow, selected, disabled, onPick, onRun, run, playing }: { flow: JourneyFlow; selected: boolean; disabled: boolean; onPick: (id: string) => void; onRun: (flow: JourneyFlow) => void; run: JourneyRun | null; playing: boolean }) {
+export function JourneyCard({ flow, selected, disabled, onPick, onRun, run, playing }: { flow: JourneyFlow; selected: boolean; disabled: boolean; onPick: (id: string) => void; onRun: (flow: JourneyFlow) => void; run: JourneyRun | null; playing: boolean }) {
   // #1914: the run the open panel follows beats the list's last result until the list is read again.
   const now = liveCard(flow, run) ?? (playing ? liveCard(flow, { state: "running" }) : null);
   // #1919: a playing run's chip blinks blue (static under reduced motion), as in the header.

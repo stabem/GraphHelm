@@ -1,21 +1,31 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 import type { AttentionReason, Runtime } from "../runtime/client";
 import { cliRemedy, reasonText } from "./attention";
 
-/** #2324: what a run waits on, read from its status (`attentionReasons`) each time it moves;
- * `null` until read or when the read failed (said by the caller as not known, never as nothing). */
-export function useRunWaits(runtime: Runtime | null, executionId: string | null, moved: string | null): AttentionReason[] | null {
-  const [reasons, setReasons] = useState<AttentionReason[] | null>(null);
+/** What `useRunWaits` knows: the reasons (empty when the run waits on nothing), `"reading"` before
+ * the first read lands, `"failed"` when it did not. Neither of the last two is "nothing" (#2348). */
+export type RunWaits = AttentionReason[] | "reading" | "failed";
+
+/** #2348: the reasons per execution, given instead of read. Tests render Graph and Lanes as they
+ * ship through it, so removing their wiring turns a test red; the app never provides it. */
+export const RunWaitsGiven = createContext<Readonly<Record<string, RunWaits>> | null>(null);
+
+/** #2324: what a run waits on, read from its status (`attentionReasons`) each time it moves. */
+export function useRunWaits(runtime: Runtime | null, executionId: string | null, moved: string | null): RunWaits {
+  const given = useContext(RunWaitsGiven);
+  const [reasons, setReasons] = useState<RunWaits>("reading");
   useEffect(() => {
-    if (runtime === null || executionId === null) { setReasons(null); return; }
+    if (given !== null) return;
+    if (runtime === null || executionId === null) { setReasons("reading"); return; }
     let live = true;
     runtime.runAttention(executionId).then(
       (status) => { if (live) setReasons(status.attention === "needs_you" ? status.attentionReasons ?? [] : []); },
-      () => { if (live) setReasons(null); },
+      () => { if (live) setReasons("failed"); },
     );
     return () => { live = false; };
-  }, [runtime, executionId, moved]);
+  }, [given, runtime, executionId, moved]);
+  if (given !== null) return executionId === null ? "reading" : given[executionId] ?? "reading";
   return reasons;
 }
 

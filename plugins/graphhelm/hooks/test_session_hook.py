@@ -1062,6 +1062,32 @@ class SessionHookTests(unittest.TestCase):
         self.assertIn("in state_path", result.stderr)  # it names where the hook hung
         self.assertLess(elapsed, 9.0, f"left {elapsed:.2f} s after spawn")
 
+    def test_a_hook_leaves_while_a_call_holds_the_gil(self):
+        # #2340, the likeliest cause of Shino's pid 94204 (24.8 s inside an end, watchdog never ran):
+        # a C call that keeps the GIL, so the sleeping watchdog thread cannot wake. Here the state
+        # path's hash becomes a catastrophic regex match, one C call that holds the GIL for minutes.
+        # The C-level backstop ends the process anyway and names the call.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        hang = Path(self.temp.name) / "hold-gil"
+        hang.mkdir()
+        (hang / "sitecustomize.py").write_text("\n".join([
+            "import hashlib, re",
+            "def _hold_gil(*args, **kwargs):",
+            "    re.match(r'(a+)+$', 'a' * 40 + 'b')",
+            "hashlib.sha256 = _hold_gil",
+            "",
+        ]), encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
+        started = time.monotonic()
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "end", "--host", "claude"],
+            input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
+            text=True, capture_output=True, env=self.env, timeout=20, check=False, creationflags=NO_WINDOW)
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("_hold_gil", result.stderr)
+        self.assertLess(elapsed, 10.0, f"left {elapsed:.2f} s after spawn")
+
     def test_exit_marker_names_the_watchdog_path(self):
         marker = Path(self.temp.name) / "first-line.txt"
         self.env["GRAPHHELM_HOOK_FIRST_LINE"] = str(marker)

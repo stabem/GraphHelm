@@ -16,6 +16,7 @@ https://claude.ai/artifact/WjdL5A6eXFgT2BWVbcmfuL (earlier copy: https://claude.
 | `States.dc.html` | States every view can be in: loading, Runtime not answering with Retry, restarting, empty, error with detail and Copy details |
 | `canvas.json` | Layout of the canvas the files come from |
 | `frame-sample.webp` | Sample captured frame used by the mock-ups |
+| [`2325-2324/`](2325-2324/README.md) | Static before/after mocks (approved 2026-10-31): journeys "to fix" on the rail and the Proof card, and a run "waiting for you" in Graph and Lanes |
 
 The `.dc.html` files use the artifact's Design Component format, and their images point at the
 artifact's asset store (`/_blob/...`). They open in the artifact, not as plain pages. The data on

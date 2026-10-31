@@ -323,6 +323,8 @@ def parse(argv):
                         "Default 1800 (#1223); a Runtime older than #1194 that refuses the field gets the claim again without "
                         "the DEFAULT lease, never without one you gave")
     p.add_argument("--agent-kind", help="claimed: what kind of agent this lane is, e.g. claude or codex (#1851; ^[a-z][a-z0-9-]{0,31}$)")
+    p.add_argument("--parallel", action="store_true",
+                   help="claimed: a second PR of this issue on its own --branch (#2298); another lane's open claim on a different branch no longer holds it")
     p.add_argument("--agent-model", help="claimed: the model this lane runs on, e.g. opus, sonnet or fast (#1851; ^[a-z0-9][a-z0-9._-]{0,63}$)")
     p.add_argument("--lanes", help="lane_retired: comma-separated lane names, 1 to 64")
     p.add_argument("--retired", choices=("true", "false"), help="lane_retired: true retires the lanes, false restores them")
@@ -611,6 +613,10 @@ def document(args, now):
             doc["assignedBy"] = args.assigned_by
         if args.parent:
             doc["parent"] = args.parent
+        # #2298: a second slice of this issue on its own branch. Never dropped on a resend (it is not
+        # in send_opening's words), so an old Runtime refuses the claim instead of reading it strict.
+        if args.parallel:
+            doc["parallel"] = True
         # #1851: the lane's own kind and model, under the Runtime's rule; refused before sending.
         for flag, key, pattern in (("agent_kind", "agentKind", AGENT_KIND), ("agent_model", "agentModel", AGENT_MODEL)):
             value = getattr(args, flag)

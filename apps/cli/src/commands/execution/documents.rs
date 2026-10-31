@@ -312,7 +312,11 @@ pub(crate) fn validate_task_event(
                     value
                         .as_str()
                         .is_some_and(graphhelm_execution::tasks::is_agent_model)
-                }),
+                })
+                // #2298: opt-in parallel slice; only `true` means anything.
+                && document
+                    .get("parallel")
+                    .is_none_or(|value| value == &serde_json::Value::Bool(true)),
             &[
                 "issue",
                 "lane",
@@ -327,6 +331,7 @@ pub(crate) fn validate_task_event(
                 "leaseSeconds",
                 "agentKind",
                 "agentModel",
+                "parallel",
             ],
         ),
         "task.released" if key_release => (
@@ -816,7 +821,8 @@ pub(crate) fn validate_task_event(
 /// lapsed claim). Both claim folds admit it beside the lane's own records and keep it only when
 /// its document names the lane being folded.
 /// #1220: a lane cannot claim a task another lane holds as an open pre-PR claim, unless the claim
-/// names that holder in `assignedBy` (the holder hands it over). "Holds" is the projection's: the
+/// names that holder in `assignedBy` (the holder hands it over), or (#2298) the claim says
+/// `parallel: true` and names a branch no open claim of another lane is on. "Holds" is the projection's: the
 /// fold the tasks route serves and the board draws (`graphhelm_execution::tasks`), read through the
 /// process's shared record cache, so admission never disagrees with the board about who has an
 /// issue. A run with no task records has nothing to hold; one with records needs the keyring to
@@ -840,7 +846,14 @@ fn validate_claim_holder(
     }
     let view = task_view(history, evidence, "claim", pointer)?;
     let task_id = document["taskId"].as_str().unwrap_or_default();
-    if let Some(slice) = super::tasks::holder(&view.tasks, &view.leases, task_id, lane) {
+    // #2298: a claim with `parallel: true` is a second slice on its own branch, held back only by
+    // an open claim of the same branch. Without it every open claim of another lane holds (#1220).
+    let parallel_branch = (document["parallel"] == serde_json::Value::Bool(true))
+        .then(|| document["branch"].as_str())
+        .flatten();
+    if let Some(slice) =
+        super::tasks::holder(&view.tasks, &view.leases, task_id, lane, parallel_branch)
+    {
         let holder = slice.lane.as_deref().unwrap_or_default();
         if document["assignedBy"].as_str() != Some(holder) {
             let claim = slice

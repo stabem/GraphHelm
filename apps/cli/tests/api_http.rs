@@ -3549,6 +3549,102 @@ fn a_second_lane_cannot_claim_a_task_another_lane_holds() {
     );
 }
 
+/// #2298: a second PR under one issue gets its own slice when the claim opts in with
+/// `parallel: true` and names its own branch. Same branch is still held; no flag is still strict
+/// (#1220). Red on main: `parallel` is an unknown key there, so the whole claim is refused at
+/// `/signal/description` — which is also what an old Runtime does with it (never read as
+/// parallel). Cost: one served Runtime, five POSTs, one tasks read.
+#[test]
+fn a_parallel_claim_on_its_own_branch_gets_its_own_slice() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-claim-parallel";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+    let keyring = directory.path().join("keyring");
+    create_signal_keyring(&keyring);
+    let (_guard, base, token) = serve_with_env(
+        &events,
+        &[
+            "--keyring",
+            keyring.to_str().unwrap(),
+            "--key-id",
+            "signal-key",
+        ],
+        &[("GRAPHHELM_EVENTS_KEY", SIGNAL_KEY_HEX)],
+    );
+    let post = |id: &str, actor: &str, document: &Value| {
+        let body = serde_json::json!({"signal": {"id": id, "source": {"type": "user", "id": actor},
+            "type": "task.claimed", "severity": "low", "description": document.to_string(),
+            "evidence": ["task"], "emittedAt": "2026-10-31T03:00:00Z"}});
+        post_json(
+            &format!("{base}/v1/executions/{execution}/signal"),
+            &token,
+            &[
+                ("Idempotency-Key", id),
+                ("X-GraphHelm-Actor", actor),
+                ("X-GraphHelm-Actor-Type", "agent"),
+            ],
+            &body,
+        )
+    };
+    let claim = |lane: &str, branch: &str, parallel: bool| {
+        let mut document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": "issue-2298", "revision": 1, "at": "2026-10-31T03:00:00Z", "issue": 2298,
+            "lane": lane, "branch": branch, "repo": "stabem/GraphHelm"});
+        if parallel {
+            document["parallel"] = serde_json::json!(true);
+        }
+        document
+    };
+    let held = |label: &str, (status, reply): (u16, Value)| {
+        assert_eq!(status, 400, "{label}: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["path"], "/signal/description/taskId",
+            "{label}: the holder refusal, not a shape refusal: {reply}"
+        );
+    };
+
+    let (status, reply) = post("par-a", "lane-alpha", &claim("lane-alpha", "issue-2298-a", false));
+    assert_eq!(status, 200, "alpha claims: {reply}");
+    held(
+        "beta without parallel, another branch: strict as before",
+        post("par-b0", "lane-beta", &claim("lane-beta", "issue-2298-b", false)),
+    );
+    held(
+        "beta parallel on alpha's branch",
+        post("par-b1", "lane-beta", &claim("lane-beta", "issue-2298-a", true)),
+    );
+    let (status, reply) = post("par-b2", "lane-beta", &claim("lane-beta", "issue-2298-b", true));
+    assert_eq!(status, 200, "beta parallel on its own branch: {reply}");
+    let mut wrong = claim("lane-gamma", "issue-2298-c", false);
+    wrong["parallel"] = serde_json::json!(false);
+    let (status, reply) = post("par-c", "lane-gamma", &wrong);
+    assert_eq!(
+        (status, reply["diagnostics"][0]["path"].clone()),
+        (400, serde_json::json!("/signal/description")),
+        "only `parallel: true` is a shape: {reply}"
+    );
+
+    let tasks = get_json(
+        &format!("{base}/v1/executions/{execution}/tasks"),
+        Some(&token),
+    );
+    let mut keys: Vec<&str> = tasks["data"]["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|slice| slice["taskId"] == "issue-2298")
+        .map(|slice| slice["key"].as_str().unwrap())
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(keys.len(), 2, "two slices of one issue: {tasks}");
+    assert!(
+        keys.iter().all(|key| key.starts_with("issue-2298#claim-")) && keys[0] != keys[1],
+        "each slice has its own claim key: {keys:?}"
+    );
+}
+
 /// #1220 (gh-claude-opt-2 on PR #1221): two lanes claiming one free task at the same instant
 /// cannot both land. Each claim is validated against a journal head and appended at that head's
 /// next sequence, so the second writer's append is refused instead of slipping in after the first.

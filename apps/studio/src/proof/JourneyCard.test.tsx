@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow } from "../runtime/client";
+import { journeysToFix } from "../sidebar/project-summary";
 import { JourneyCard } from "./ProofView";
 
 const card = (flow: JourneyFlow) =>
@@ -31,5 +32,19 @@ describe("journey card findings (#2325)", () => {
 
   it("shows nothing extra for a journey without findings", () => {
     expect(card({ ...flow, findings: [] })).not.toContain("journey-findings");
+  });
+
+  it("the rail's to-fix count equals the Proof cards with a to-fix chip, unreadable ones included (#2345)", () => {
+    const flows: JourneyFlow[] = [
+      flow,
+      { ...flow, id: "warned", findings: [{ severity: "warning", code: "flow.unexplained" }] },
+      { id: "broken", title: null, status: "unreadable", findings: [] },
+      { id: "broken-no-list", title: null, status: "unreadable" },
+      { ...flow, id: "clean", findings: [] },
+    ];
+    const chips = flows.filter((each) => card(each).includes("chip fix")).length;
+    expect(journeysToFix(flows)).toBe(3);
+    expect(chips).toBe(journeysToFix(flows));
+    expect(card(flows[2])).toContain(">1 to fix<");
   });
 });

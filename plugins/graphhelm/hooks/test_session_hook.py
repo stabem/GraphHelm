@@ -739,14 +739,68 @@ class SessionHookTests(unittest.TestCase):
         root = Path(self.env.get("GRAPHHELM_HOOK_STATE_DIR", Path(self.temp.name) / "state"))
         return {path.name: path.read_bytes() for path in root.glob("*.json")} if root.is_dir() else {}
 
+    # #2270: the exit contract of #2340, from the hook's first line to its exit request (the stderr
+    # mark taken right before os._exit): start within its declared 30 s, end within 10 s (the host
+    # cuts SessionEnd there whatever it declares). Spawn to first line (the interpreter start, an
+    # environment limit) and exit request to process gone (kernel teardown, the known limit) are
+    # measured and printed, never asserted. The subprocess timeout is only a guard for a hook that
+    # never exits at all.
+    EXIT_BAR = {"start": 30.0, "end": 10.0}
+    EXIT_MARK = "graphhelm-probe-exit "
+    FIRST_MARK = "graphhelm-probe-first "
+
     def run_hook(self, phase, host="claude", **payload):
         event = "SessionStart" if phase == "start" else "SessionEnd"
         self.state_before = self.state_files()  # #2340: what a timeout path must leave untouched
-        return subprocess.run(
+        env = dict(self.env)
+        env.setdefault("GRAPHHELM_HOOK_FIRST_LINE", "1")
+        spawned = time.time()
+        result = subprocess.run(
             [sys.executable, str(SCRIPT), phase, "--host", host],
             input=json.dumps({"hook_event_name": event, "session_id": "session-123", **payload}),
-            text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW
+            text=True, capture_output=True, env=env, timeout=self.EXIT_BAR[phase] + 60, check=False,
+            creationflags=NO_WINDOW
         )
+        gone = time.time()
+        self.assert_exit_contract(result, phase, spawned, gone)
+        if "GRAPHHELM_HOOK_FIRST_LINE" not in self.env:
+            # The mark is this harness's own instrument: callers see the stderr the hook would give.
+            result.stderr = "".join(line for line in result.stderr.splitlines(keepends=True)
+                                    if not line.startswith((self.EXIT_MARK, self.FIRST_MARK)))
+        return result
+
+    def assert_exit_contract(self, result, phase, spawned, gone):
+        """#2270: the hook asked to exit within its bar from its first line, by one of #2340's three
+        paths. No exit request seen at all (no mark and no backstop dump) fails."""
+        bar = self.EXIT_BAR[phase]
+        if "Timeout (" in result.stderr and "most recent call first" in result.stderr:
+            # (c) the C-level backstop: it fires at a fixed moment after the first line by
+            # construction; timed_out() checks its shape (exit 1 + dump).
+            print(f"#2270 {phase}: backstop path, spawn->gone {gone - spawned:.2f} s", file=sys.stderr)
+            return
+        marks = [line.split() for line in result.stderr.splitlines() if line.startswith(self.EXIT_MARK)]
+        if not marks:
+            # A refusal before main's os._exit (argparse's exit 2) leaves no mark. The process being
+            # gone within the bar bounds its exit request too; past the bar, with nothing to classify
+            # the time by, it fails.
+            print(f"#2270 {phase}: no exit mark (rc {result.returncode}), spawn->gone {gone - spawned:.2f} s",
+                  file=sys.stderr)
+            self.assertLessEqual(gone - spawned, bar,
+                                 f"{phase}: no exit request seen and gone {gone - spawned:.2f} s after spawn:\n"
+                                 f"{result.stderr}")
+            return
+        _, pid, path, exit_at = marks[-1]
+        exit_at = float(exit_at)
+        first = [float(line.split()[2]) for line in result.stderr.splitlines()
+                 if line.startswith(self.FIRST_MARK) and line.split()[1] == pid]
+        # Both marks are stderr lines of the same process, so an exit mark without its first-line
+        # mark cannot be classified: it fails (#2270, Tsunade).
+        self.assertTrue(first, f"{phase}: exit mark without a first-line mark: {result.stderr!r}")
+        start = first[-1]
+        print(f"#2270 {phase} {path}: spawn->first {start - spawned:.2f} s, "
+              f"first->exit {exit_at - start:.2f} s, exit->gone {gone - exit_at:.2f} s", file=sys.stderr)
+        self.assertLessEqual(exit_at - start, bar,
+                             f"{phase} asked to exit {exit_at - start:.2f} s after its first line (bar {bar} s)")
 
     def test_unbound_start_is_silent_without_explicit_keel_opt_in(self):
         result = self.run_hook("start")
@@ -1037,6 +1091,7 @@ class SessionHookTests(unittest.TestCase):
 
     def test_first_line_marker_is_taken_before_the_hook_does_anything(self):
         # #2340: the probe classifies a red run as pre-hook only when this marker is absent.
+        # #2270: both marks are stderr lines (never a file, which a starved disk can hold).
         marker = Path(self.temp.name) / "first-line.txt"
         self.env["GRAPHHELM_HOOK_FIRST_LINE"] = str(marker)
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
@@ -1044,14 +1099,16 @@ class SessionHookTests(unittest.TestCase):
         result = self.run_hook("end")
         answered = time.time()
         self.assertEqual(result.returncode, 0, result.stderr)
-        pid, at = marker.read_text().split()
+        first_line, exit_line = result.stderr.splitlines()
+        word, pid, at = first_line.split()
+        self.assertEqual(word, "graphhelm-probe-first")
         self.assertTrue(pid.isdigit())
         self.assertLessEqual(spawned, float(at) + 0.01)
         self.assertLessEqual(float(at), answered)
-        # The exit mark on stderr (never a file, which a starved disk can hold): same pid, after the
-        # first line, before the process was seen to end.
-        word, exit_pid, path, exit_at = result.stderr.split()
+        # The exit mark: same pid, after the first line, before the process was seen to end.
+        word, exit_pid, path, exit_at = exit_line.split()
         self.assertEqual((word, exit_pid, path), ("graphhelm-probe-exit", pid, "normal"))
+        self.assertFalse(marker.exists())
         self.assertFalse(Path(str(marker) + ".exit").exists())
         self.assertLessEqual(float(at), float(exit_at))
         self.assertLessEqual(float(exit_at), answered)
@@ -1122,7 +1179,7 @@ class SessionHookTests(unittest.TestCase):
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
         result = self.run_hook("end")
         self.assertEqual(result.returncode, 0, result.stderr)
-        pid, _ = marker.read_text().split()
+        pid = next(line.split()[1] for line in result.stderr.splitlines() if line.startswith("graphhelm-probe-first "))
         exit_lines = [line.split() for line in result.stderr.splitlines() if line.startswith("graphhelm-probe-exit ")]
         self.assertEqual([line[1:3] for line in exit_lines], [[pid, "watchdog"]])
 
@@ -1308,9 +1365,14 @@ class SessionHookTests(unittest.TestCase):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         RuntimeHandler.reply_ok = False
         result = self.run_hook("end", host="codex")
+        self.assertNotIn("test-token", result.stderr)
+        # #2270: a Codex end has a 1 s watchdog (Codex cuts SessionEnd at 3 s); on a busy host it
+        # can answer before the POST, which is #2340's promised timeout path (main: 5/6 red here
+        # with two cargo builds running).
+        if self.timed_out(result, "end"):
+            return
         self.assertEqual(result.returncode, 0)
         self.assertIn("unobserved", result.stderr)
-        self.assertNotIn("test-token", result.stderr)
         self.assertEqual(RuntimeHandler.requests[0][3]["signal"]["source"]["id"], "codex-session-session-123")
 
     def test_failed_delivery_is_retryable_with_the_same_signal_bytes(self):

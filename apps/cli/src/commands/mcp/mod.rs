@@ -279,14 +279,22 @@ pub fn run(args: &McpArgs) -> Outcome {
         Err(outcome) => return outcome,
     };
     let (launch, argv) = launch_path();
+    let stdout = SharedStdout(std::sync::Arc::new(
+        std::sync::Mutex::new(std::io::stdout()),
+    ));
+    let waiting = std::sync::Arc::new(std::sync::Mutex::new(None));
+    if let Some(project) = state.client.as_ref().and_then(|c| c.discovered_project()) {
+        watch_for_runtime(project.to_owned(), waiting.clone(), stdout.clone());
+    }
     let mut router = Router {
         state,
         launch,
         argv,
         routed: None,
+        waiting,
     };
     let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
+    let mut stdout = stdout;
     match rpc::run(stdin.lock(), &mut stdout, route, &mut router) {
         Ok(()) => Outcome::success(COMMAND, serde_json::json!({})),
         Err(error) => Outcome::internal(COMMAND, format!("the stdio transport failed: {error}")),
@@ -324,6 +332,85 @@ struct Router {
     /// discovery and its health probes run once per session, again only after the endpoint
     /// failed a child.
     routed: Option<(String, std::path::PathBuf)>,
+    /// #2284: set after an empty `tools/list`, holding the project's registry state then; the
+    /// watcher announces `tools/list_changed` once that state changes and clears it.
+    waiting: std::sync::Arc<std::sync::Mutex<Option<Option<u64>>>>,
+}
+
+/// #2284: stdout shared by the reply loop and the watcher; one lock per whole line.
+#[derive(Clone)]
+struct SharedStdout(std::sync::Arc<std::sync::Mutex<std::io::Stdout>>);
+
+impl std::io::Write for SharedStdout {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.write_all(bytes).map(|()| bytes.len())
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        let mut out = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        out.write_all(bytes)?;
+        out.flush()
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// #2284: the newest start of a project Runtime record that can still hand out a token; `None`
+/// when the project has none. A change means a Runtime registered (or restarted) for it.
+fn registry_state(project: &str) -> Option<u64> {
+    let dir = crate::commands::runtime_record::registry_dir()?;
+    crate::commands::runtime_record::read_project(&dir, project)
+        .ok()?
+        .into_iter()
+        .filter(|record| {
+            crate::commands::secret_file::agent_token_beside(&record.token_file).is_file()
+        })
+        .map(|record| record.started_at)
+        .max()
+}
+
+/// How often the watcher reads the project's registry while a listed-empty session waits.
+const WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// #2284: while the session has listed no tools, reads the project's registry once a second and,
+/// when a Runtime registers, writes `notifications/tools/list_changed` so the host lists again.
+fn watch_for_runtime(
+    project: String,
+    waiting: std::sync::Arc<std::sync::Mutex<Option<Option<u64>>>>,
+    mut stdout: SharedStdout,
+) {
+    std::thread::spawn(move || {
+        use std::io::Write as _;
+        loop {
+            std::thread::sleep(WATCH_INTERVAL);
+            let mut waiting = waiting
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(before) = *waiting else { continue };
+            let now = registry_state(&project);
+            if now.is_none() || now == before {
+                continue;
+            }
+            *waiting = None;
+            let line =
+                serde_json::json!({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"});
+            if stdout
+                .write_all(
+                    format!(
+                        "{line}
+"
+                    )
+                    .as_bytes(),
+                )
+                .is_err()
+            {
+                return;
+            }
+        }
+    });
 }
 
 /// The longest one tool request may take before its child is stopped: the gateway probe's own
@@ -410,7 +497,22 @@ fn route(
             router.routed = answer
                 .discovered
                 .or_else(|| routed.filter(|_| answer.exit == 0));
-            outcome_of(answer.reply)
+            let outcome = outcome_of(answer.reply);
+            if method == "tools/list" {
+                let empty = matches!(&outcome, HandlerOutcome::Result(list)
+                    if list["tools"].as_array().is_some_and(Vec::is_empty));
+                let project = router
+                    .state
+                    .client
+                    .as_ref()
+                    .and_then(|c| c.discovered_project());
+                *router
+                    .waiting
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    project.filter(|_| empty).map(registry_state);
+            }
+            outcome
         }
         Err(message) => {
             router.routed = None;

@@ -1013,3 +1013,99 @@ fn serve_started_by_a_test_registers_under_target_not_the_home() {
     assert_eq!(published.parent(), Some(configured.as_path()));
     let _ = std::fs::remove_file(&published);
 }
+
+impl Bridge {
+    /// The tool names `tools/list` advertises now.
+    fn tool_names(&mut self) -> Vec<String> {
+        let reply = self.call("tools/list", serde_json::json!({}));
+        reply["result"]["tools"]
+            .as_array()
+            .unwrap_or_else(|| panic!("tools/list has no tools array: {reply}"))
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// The next line the server writes, within `wait`; `None` when nothing came.
+    fn next_line(&mut self, wait: Duration) -> Option<serde_json::Value> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut line = String::new();
+        let (stdout, child) = (&mut self.stdout, &mut self._child);
+        let read = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let _ = sender.send(stdout.read_line(&mut line).map(|_| ()));
+            });
+            let read = receiver.recv_timeout(wait).ok();
+            if read.is_none() {
+                // Nothing came: stop the server so the blocked reader sees EOF and the scope ends.
+                let _ = child.0.kill();
+            }
+            read
+        });
+        read?.ok()?;
+        serde_json::from_str(&line).ok()
+    }
+}
+
+/// #2284: an empty project directory with its own (empty) registry.
+fn bare_project() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    let registry = dir.path().join("registry");
+    std::fs::create_dir_all(project.join(".graphhelm").join("events")).unwrap();
+    std::fs::create_dir_all(&registry).unwrap();
+    (dir, project, registry)
+}
+
+/// #2284: a project with no Runtime advertises no tools, so an author session pays for none.
+/// Cost: one MCP process, no Runtime.
+#[test]
+fn a_project_without_a_runtime_lists_no_tools() {
+    let (_dir, project, registry) = bare_project();
+    let mut bridge = Bridge::start_project(&project, &registry);
+    assert_eq!(bridge.tool_names(), Vec::<String>::new());
+}
+
+/// #2284: with the project's Runtime up, every tool is listed, as before.
+/// Cost: one temporary Runtime and one MCP process.
+#[test]
+fn a_project_with_its_runtime_lists_every_tool() {
+    let (_dir, project, registry) = bare_project();
+    let _runtime = serve_with_project(
+        &project.join(".graphhelm").join("events"),
+        free_port(),
+        &registry,
+        Some(&project),
+    );
+    let mut bridge = Bridge::start_project(&project, &registry);
+    let names = bridge.tool_names();
+    assert!(names.iter().any(|name| name == "status"), "{names:?}");
+    assert!(names.len() > 10, "{names:?}");
+}
+
+/// #2284: a Runtime that starts mid-session is announced with `tools/list_changed`, and the
+/// next `tools/list` names every tool. Cost: one temporary Runtime and one MCP process.
+#[test]
+fn a_runtime_that_appears_mid_session_announces_the_tools() {
+    let (_dir, project, registry) = bare_project();
+    let mut bridge = Bridge::start_project(&project, &registry);
+    assert_eq!(bridge.tool_names(), Vec::<String>::new());
+    let _runtime = serve_with_project(
+        &project.join(".graphhelm").join("events"),
+        free_port(),
+        &registry,
+        Some(&project),
+    );
+    let notice = bridge
+        .next_line(scaled(Duration::from_secs(20)))
+        .expect("the server announces the new tools");
+    assert_eq!(
+        notice["method"], "notifications/tools/list_changed",
+        "{notice}"
+    );
+    assert!(
+        notice.get("id").is_none(),
+        "a notification has no id: {notice}"
+    );
+    assert!(bridge.tool_names().iter().any(|name| name == "status"));
+}

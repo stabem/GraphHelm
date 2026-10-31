@@ -127,7 +127,7 @@ pub(crate) fn handle(
             // The spec's negotiation rule: answer with the version we support, whatever
             // the client asked for — the client decides whether to continue.
             "protocolVersion": SUPPORTED_PROTOCOL_VERSION,
-            "capabilities": {"tools": {}},
+            "capabilities": {"tools": {"listChanged": true}},
             "serverInfo": {"name": "graphhelm", "version": env!("CARGO_PKG_VERSION")},
         })),
         "notifications/initialized" => {
@@ -142,6 +142,15 @@ pub(crate) fn handle(
                       notifications/initialized first"
                 .to_owned(),
         },
+        // #2284: a project with no Runtime gets no tools; the router announces them when one appears.
+        "tools/list"
+            if state
+                .client
+                .as_ref()
+                .is_some_and(|client| !client.has_runtime()) =>
+        {
+            HandlerOutcome::Result(serde_json::json!({"tools": []}))
+        }
         "tools/list" => HandlerOutcome::Result(super::tools::tool_list()),
         // A tools/call without an id (notification form) is never executed: a mutation with
         // no response channel cannot participate in the retry choreography (its key would be

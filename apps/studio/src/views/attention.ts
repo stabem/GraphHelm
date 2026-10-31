@@ -1,18 +1,17 @@
 import type { AttentionReason } from "../runtime/client";
 
-/** #2324: the run's state as one line: its status, and `needs you` when the Runtime says so. An
- * attention the Runtime did not report (older Runtime) adds nothing; `unknown` is said. */
+/** #2324 (approved design, docs/design/studio/2325-2324/): a running run the Runtime says needs you
+ * reads "waiting for you" instead of "running". Any other verdict, or none from an older Runtime,
+ * leaves the status as the Runtime sent it. */
 export function runState(status: string, attention: string | undefined): string {
-  if (attention === "needs_you") return `${status} · needs you`;
-  if (attention === "unknown") return `${status} · whether it needs you is unknown`;
-  return status;
+  return status === "running" && attention === "needs_you" ? "waiting for you" : status;
 }
 
 /** #2324: one reason in words, naming the node, draft or session it is about. */
 export function reasonText(reason: AttentionReason): string {
   const node = reason.node ?? "a node";
   switch (reason.kind) {
-    case "blocked_node": return `${node} is blocked and waits for your approval.`;
+    case "blocked_node": return `${node} is blocked.`;
     case "untriaged_interruption": return `${node} was interrupted and waits for you to decide what happens next.`;
     case "failed_node": return `${node} failed.`;
     case "waiting_input_node": return `${node} waits for your answer.`;

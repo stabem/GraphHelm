@@ -296,37 +296,38 @@ Expected lines: `[up] Runtime already answering at http://127.0.0.1:8791 and thi
 opens it - reusing it` (or `[up] starting: graphhelm serve ...` then `[up] Runtime up`), and
 `[up] Studio starting at http://127.0.0.1:5183 - the page opens already connected`.
 
-By hand, on any platform:
+Manual dev server, on any platform. It listens on port 5185 (the launchers above use 5183, so the two
+paths do not clash):
 
 ```powershell
 $env:GRAPHHELM_EVENTS = "C:\path\to\your-project\.graphhelm\events"
 $env:GRAPHHELM_RUNTIME_URL = "http://127.0.0.1:8791"
 npm --prefix apps/studio ci
-npm --prefix apps/studio run dev -- --port 5183
+npm --prefix apps/studio run dev
 ```
 
 ```bash
 export GRAPHHELM_EVENTS=/path/to/your-project/.graphhelm/events
 export GRAPHHELM_RUNTIME_URL=http://127.0.0.1:8791
 npm --prefix apps/studio ci
-npm --prefix apps/studio run dev -- --port 5183
+npm --prefix apps/studio run dev
 ```
 
 Expected, among the dev server's output:
 
 ```
-  Studio login: http://127.0.0.1:5183/?session=<nonce>
+  Studio login: http://127.0.0.1:5185/?session=<nonce>
 ```
 
 **In a container or VM**, the dev server's `127.0.0.1` bind is unreachable through a published
-port (measured: the connection is reset). Start it with `npm --prefix apps/studio run dev -- --host --port 5183`
-inside the container instead, publish port `5183`, and open the printed URL with the host's
-published port in place of `5183`. Keep `serve` on `127.0.0.1`: the dev server proxies `/v1` and
+port (measured: the connection is reset). Start it with `npm --prefix apps/studio run dev -- --host`
+inside the container instead, publish port `5185`, and open the printed URL with the host's
+published port in place of `5185`. Keep `serve` on `127.0.0.1`: the dev server proxies `/v1` and
 `/health` to it from inside the container, so the Runtime never needs a wider bind.
 
 **Open that exact URL.** The page auto-connects only through the printed `?session=` link: the
 dev server reads the token beside `GRAPHHELM_EVENTS` and hands it to the page under that one-time
-session, so nobody pastes a token. Opening `http://127.0.0.1:5183/` without the query shows the
+session, so nobody pastes a token. Opening `http://127.0.0.1:5185/` without the query shows the
 connect gate instead, where you can paste the contents of `events.token` by hand. With
 `GRAPHHELM_EVENTS` unset there is no session endpoint at all, only the gate.
 

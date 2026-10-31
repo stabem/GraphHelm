@@ -30,7 +30,7 @@ export function GraphView({ run, runId, children, requests, onStart = null, allR
           <dl className="facts">
             <dt>Run</dt><dd className="mono">{run.executionId}</dd>
             <dt>Status</dt><dd className={run.attention === "needs_you" ? "run-waits" : undefined}>{runState(run.status, run.attention)}</dd>
-            {waits !== null && waits.length > 0 && (
+            {Array.isArray(waits) && waits.length > 0 && (
               <><dt>Waits on</dt><dd>{waits.map((reason, index) => <div key={index}><WaitsOn reason={reason} executionId={run.executionId} /></div>)}</dd></>
             )}
             <dt>Started</dt><dd className="mono">{run.startedAt ? <When at={run.startedAt} /> : "not recorded"}</dd>

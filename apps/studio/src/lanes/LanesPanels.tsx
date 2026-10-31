@@ -50,7 +50,9 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
   const [sending, setSending] = useState<string | null>(null);
   const [last, setLast] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
-  const runWaits = useRunWaits(runtime, executionId, board.now) ?? [];
+  // #2348: "reading" and "failed" are not "nothing": Lanes says so instead of "Nothing waits on you."
+  const runWaitsKnown = useRunWaits(runtime, executionId, board.now);
+  const runWaits = Array.isArray(runWaitsKnown) ? runWaitsKnown : [];
   // #1837: a failed request is resent with the same id and bytes.
   const drafts = useRef(new Map<string, Draft>());
   // #1889: Assigns the Runtime recorded, shown as "Assigned to X" for a minute.
@@ -167,7 +169,10 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
         {/* #2324 (approved design): the run's own attention (a blocked node) is not a lane need; it is
             said here and counted, so "Nothing waits on you" is never shown over a run that waits. */}
         {runWaits.map((reason, index) => <span key={index} className="small"><span className="run-waits">The run waits for you:</span> <WaitsOn reason={reason} executionId={executionId} /></span>)}
-        {shown.length === 0 ? (runWaits.length > 0 ? null : <span className="muted small">Nothing waits on you.</span>) : (
+        {runWaitsKnown === "failed" && <span className="error small">The run's status could not be read.</span>}
+        {shown.length === 0 ? (runWaits.length > 0 || runWaitsKnown === "failed" ? null
+          : runWaitsKnown === "reading" ? <span className="muted small">Reading…</span>
+          : <span className="muted small">Nothing waits on you.</span>) : (
           <ul aria-label="Needs action items" className="needs">
             {shown.map(({ need, recorded: done }, index) => {
               const noLane = (need.verb === "Assign" || need.verb === "Reassign" || need.verb === "Hand off") && need.to === null;

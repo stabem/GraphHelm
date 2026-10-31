@@ -657,7 +657,7 @@ pub(crate) fn slot_target(
     // in the other order and only tries the slot. Without the lock, skip reclaim;
     // the build may still proceed if the held targets and free space allow it.
     let sweep_lock = if record { sweep_lock(root).ok() } else { None };
-    let name = worktree
+    let leaf = worktree
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| valid_id(name))
@@ -667,6 +667,25 @@ pub(crate) fn slot_target(
         other == worktree
             || (other.canonicalize().ok().is_some()
                 && other.canonicalize().ok() == worktree.canonicalize().ok())
+    };
+    // #2317: every claim's worktree is `<lane>/<task>/wt`, so the leaf alone collides across a
+    // lane's claims; the task directory keys it. A worktree already recorded under its bare leaf
+    // keeps that directory, so the upgrade rebuilds nothing.
+    let keyed = worktree
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|task| task.to_str())
+        .map(|task| format!("{task}-{leaf}"))
+        .filter(|name| valid_id(name));
+    let name = match keyed {
+        Some(keyed)
+            if !target_records(root, lane)
+                .iter()
+                .any(|(other, path)| other == &leaf && same(path)) =>
+        {
+            keyed
+        }
+        _ => leaf,
     };
     let mut held = Vec::new();
     let mut reclaimed = Vec::new();
@@ -821,6 +840,46 @@ fn slot_target_reclaims_gone_worktrees_before_refusing_the_held_slot_floor() {
     assert!(!target_record_file(&root, "lane-a", "wt-gone").exists());
     assert!(live_target.is_dir());
     assert!(target_record_file(&root, "lane-a", "wt-live").is_file());
+}
+
+#[cfg(test)]
+#[test]
+fn two_claimed_worktrees_of_one_lane_build_in_their_own_directories() {
+    // #2317: every claim's worktree is `<root>/<lane>/<task>/wt`, and the build directory was named
+    // after the leaf `wt` alone, so a lane's second live claim was refused ("already builds as wt").
+    // Also pins the upgrade: a record a live worktree already holds under the bare `wt` keeps its
+    // directory, so no lane rebuilds from scratch. Cost: local temp files only.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let fast = dir.path().join("fast");
+    let first = dir.path().join("lane-a").join("2315").join("wt");
+    let second = dir.path().join("lane-a").join("2316").join("wt");
+    for path in [root.join(LEDGER), fast.clone(), first.clone(), second.clone()] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    std::fs::write(
+        root.join(LEDGER).join(SLOT_TARGETS),
+        json!({"targetRoot": fast, "minFreeGb": 0}).to_string(),
+    )
+    .unwrap();
+    let rule = target_rule(&root).unwrap().unwrap();
+    // The upgrade case: `first` was recorded under the bare leaf before this change.
+    let legacy = target_dir(&rule, "lane-a", "wt");
+    std::fs::create_dir_all(&legacy).unwrap();
+    write_record(
+        &target_record_file(&root, "lane-a", "wt"),
+        &json!({"schema": TARGET_SCHEMA, "lane": "lane-a", "name": "wt",
+            "worktree": first.to_string_lossy(), "target": legacy.to_string_lossy(),
+            "firstUsedAt": 1, "lastUsedAt": 1}),
+    )
+    .unwrap();
+    let (first_target, _) = slot_target(&root, &rule, "lane-a", &first, true).unwrap();
+    assert_eq!(first_target, legacy, "a live worktree keeps the directory it already built in");
+    let (second_target, _) = slot_target(&root, &rule, "lane-a", &second, true)
+        .unwrap_or_else(|refusal| panic!("the lane's second claim was refused: {refusal}"));
+    assert_ne!(second_target, first_target, "two worktrees never share a build directory");
+    let (again, _) = slot_target(&root, &rule, "lane-a", &second, true).unwrap();
+    assert_eq!(again, second_target, "the same worktree keeps its directory");
 }
 
 /// Every lane's recorded build directories for `workspace sweep` and `workspace slot status`.

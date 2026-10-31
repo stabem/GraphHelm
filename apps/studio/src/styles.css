@@ -96,6 +96,8 @@ button { font: inherit; }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--s2) 16px; margin: 0; }
 .facts dt { color: var(--faint); font: var(--fs-meta) var(--mono); text-transform: uppercase; align-self: center; }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
+/* #2324 (docs/design/studio/2325-2324/): a run that waits for you, amber like a journey to fix. */
+.run-waits { color: #ffb35c; }
 .error { color: var(--accent); }
 
 .start { display: flex; flex-direction: column; gap: 8px; max-width: 560px; padding: 14px; border-radius: 10px; border: 1px solid var(--edge-strong); background: var(--card); }

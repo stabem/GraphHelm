@@ -61,6 +61,8 @@ mod architect_cli;
 mod attention_inputs_one_feed;
 #[path = "attention_tag_domain.rs"]
 mod attention_tag_domain;
+#[path = "build_commit_packed_ref.rs"]
+mod build_commit_packed_ref;
 #[path = "cli_smoke.rs"]
 mod cli_smoke;
 #[path = "context_citation_fixtures.rs"]

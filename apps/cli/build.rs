@@ -52,6 +52,11 @@ fn build_commit(start: &Path) -> Option<(String, Vec<PathBuf>)> {
             watched.push(loose);
             return as_commit(text.trim()).map(|commit| (commit, watched));
         }
+        // A packed ref is rewritten as a loose file on the next commit: watch the nearest existing
+        // directory that file will appear in, so its creation reruns this script (#2277).
+        if let Some(dir) = loose.ancestors().skip(1).find(|path| path.is_dir()) {
+            watched.push(dir.to_path_buf());
+        }
     }
     let packed = common_dir.join("packed-refs");
     let text = fs::read_to_string(&packed).ok()?;

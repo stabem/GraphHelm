@@ -17,6 +17,7 @@ import { useJourneyRun } from "./use-journey-run";
 import { Empty, Loading, ReadFailure } from "../states/ViewState";
 import { When } from "../time/Stamp";
 import { when } from "../time/when";
+import { journeyToFix } from "../sidebar/project-summary";
 
 interface ProofViewProps {
   runtime: Runtime;
@@ -254,13 +255,15 @@ export function JourneyCard({ flow, selected, disabled, onPick, onRun, run, play
  * errors first, each with its code, where in the file, and what to write there. */
 function JourneyFindings({ flow }: { flow: JourneyFlow }) {
   const listed = [...(flow.findings ?? [])].sort((a, b) => Number(a.severity !== "error") - Number(b.severity !== "error"));
-  if (listed.length === 0) return null;
+  const toFix = journeyToFix(flow);
+  if (listed.length === 0 && !toFix) return null;
   const errors = listed.filter((finding) => finding.severity === "error").length;
-  // The approved words (docs/design/studio/2325-2324/): the rail's "to fix" counts the same journeys.
-  const label = errors > 0 ? `${errors} to fix` : `${listed.length} ${listed.length === 1 ? "warning" : "warnings"}`;
+  // The approved words (docs/design/studio/2325-2324/). The rail's "to fix" counts the same journeys
+  // through journeyToFix; an unreadable journey with no listed finding is one thing to fix.
+  const label = toFix ? `${Math.max(errors, 1)} to fix` : `${listed.length} ${listed.length === 1 ? "warning" : "warnings"}`;
   return (
     <details className="journey-findings">
-      <summary className={`chip ${errors > 0 ? "fix" : "idle"}`}>{label}</summary>
+      <summary className={`chip ${toFix ? "fix" : "idle"}`}>{label}</summary>
       <ul aria-label={`Findings for ${nameOf(flow)}`}>
         {listed.map((finding, index) => (
           <li key={index}>

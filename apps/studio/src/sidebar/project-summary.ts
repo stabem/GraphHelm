@@ -40,7 +40,13 @@ export function agentCount(lanes: LaneLiveness[]): number {
 /** #2325: journeys to fix: the Runtime cannot read them or reports an error finding on them. Not a
  * failed run (Proof counts those from `lastRun`); Proof's card chip says "N to fix" for the same ones. */
 export function journeysToFix(flows: JourneyFlow[]): number {
-  return flows.filter((flow) => flow.status === "unreadable" || (flow.findings ?? []).some((finding) => finding.severity === "error")).length;
+  return flows.filter(journeyToFix).length;
+}
+
+/** One journey to fix. The rail counts these and Proof gives each a "to fix" chip, both through
+ * this one predicate, so the two never disagree (an unreadable journey with no findings included). */
+export function journeyToFix(flow: JourneyFlow): boolean {
+  return flow.status === "unreadable" || (flow.findings ?? []).some((finding) => finding.severity === "error");
 }
 
 /** The subtitle lines: `● <run> · N agents` (or `no run`) and `N journeys · M to fix`. */

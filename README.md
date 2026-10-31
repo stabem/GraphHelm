@@ -159,7 +159,7 @@ A successful `execution status` can exit `0` while reporting `needs_you`, so aut
 
 ## Status and limitations
 
-**Available:** CLI, Runtime, MCP server, Claude Code and Codex plugins, the Studio (Graph, Lanes, Proof), browser journeys with the Playwright observer, backend (`http`/`cli`) journeys, owner approval, validation and sabotage tests, Keel checks. A [v0.1.1 CLI preview](https://github.com/stabem/GraphHelm/releases/tag/v0.1.1) has Windows x86-64 and Ubuntu x86-64 binaries; otherwise build from source. `graphhelm update` reinstalls from `origin/main`.
+**Available:** CLI, Runtime, MCP server, Claude Code and Codex plugins, the Studio (Graph, Lanes, Proof), browser journeys with the Playwright observer, backend (`http`/`cli`) journeys, owner approval, validation and sabotage tests, Keel checks. The [1.0.0 release](https://github.com/stabem/GraphHelm/releases/tag/v1.0.0) has Windows x86-64 and Ubuntu 24.04 x86-64 CLI binaries; otherwise build from source. `graphhelm update` reinstalls from `origin/main`.
 
 **Experimental:** journey explore, drift and heal ([journeys guide §10](docs/guides/journeys.md#10-explore-drift-and-heal-phase-3)); the optional agent-driven `e2e` observer (needs a model key); scoped agent review of draft journeys (an agent can record a blind review, but the journey stays a draft; approval is owner-only).
 

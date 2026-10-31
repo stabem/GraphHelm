@@ -855,7 +855,12 @@ fn two_claimed_worktrees_of_one_lane_build_in_their_own_directories() {
     let fast = dir.path().join("fast");
     let first = dir.path().join("lane-a").join("2315").join("wt");
     let second = dir.path().join("lane-a").join("2316").join("wt");
-    for path in [root.join(LEDGER), fast.clone(), first.clone(), second.clone()] {
+    for path in [
+        root.join(LEDGER),
+        fast.clone(),
+        first.clone(),
+        second.clone(),
+    ] {
         std::fs::create_dir_all(path).unwrap();
     }
     std::fs::write(
@@ -875,12 +880,21 @@ fn two_claimed_worktrees_of_one_lane_build_in_their_own_directories() {
     )
     .unwrap();
     let (first_target, _) = slot_target(&root, &rule, "lane-a", &first, true).unwrap();
-    assert_eq!(first_target, legacy, "a live worktree keeps the directory it already built in");
+    assert_eq!(
+        first_target, legacy,
+        "a live worktree keeps the directory it already built in"
+    );
     let (second_target, _) = slot_target(&root, &rule, "lane-a", &second, true)
         .unwrap_or_else(|refusal| panic!("the lane's second claim was refused: {refusal}"));
-    assert_ne!(second_target, first_target, "two worktrees never share a build directory");
+    assert_ne!(
+        second_target, first_target,
+        "two worktrees never share a build directory"
+    );
     let (again, _) = slot_target(&root, &rule, "lane-a", &second, true).unwrap();
-    assert_eq!(again, second_target, "the same worktree keeps its directory");
+    assert_eq!(
+        again, second_target,
+        "the same worktree keeps its directory"
+    );
 }
 
 /// Every lane's recorded build directories for `workspace sweep` and `workspace slot status`.

@@ -1075,7 +1075,11 @@ class SessionHookTests(unittest.TestCase):
         ]), encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
         started = time.monotonic()
-        result = self.run_hook("end")
+        # Its own timeout: run_hook's deadline(6) races the backstop's 7.5 s moment.
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "end", "--host", "claude"],
+            input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
+            text=True, capture_output=True, env=self.env, timeout=20, check=False, creationflags=NO_WINDOW)
         elapsed = time.monotonic() - started
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("Timeout (0:00:07.500000)!", result.stderr)

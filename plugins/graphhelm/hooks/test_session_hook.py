@@ -735,8 +735,13 @@ class SessionHookTests(unittest.TestCase):
             with self.subTest(suffix=suffix), patch.object(module.sys, "stdin", invalid_suffix), self.assertRaises(ValueError):
                 module.hook_input()
 
+    def state_files(self):
+        root = Path(self.env.get("GRAPHHELM_HOOK_STATE_DIR", Path(self.temp.name) / "state"))
+        return {path.name: path.read_bytes() for path in root.glob("*.json")} if root.is_dir() else {}
+
     def run_hook(self, phase, host="claude", **payload):
         event = "SessionStart" if phase == "start" else "SessionEnd"
+        self.state_before = self.state_files()  # #2340: what a timeout path must leave untouched
         return subprocess.run(
             [sys.executable, str(SCRIPT), phase, "--host", host],
             input=json.dumps({"hook_event_name": event, "session_id": "session-123", **payload}),
@@ -762,22 +767,25 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(report["host"], "claude")
 
     def timed_out(self, result, phase):
-        """#2340: under disk pressure (the #2270 load) a hook may hit STATE_WRITE_BUDGET. That is its
-        promised answer, not a failure: it says so, answers unobserved and exits. The test then
-        checks that shape and stops, since the rest of its story was legitimately not recorded."""
-        if "Timeout (" in result.stderr and "most recent call first" in result.stderr:
-            # The C-level backstop ended it (#2340): status 1 and a stack dump, its documented cost.
-            self.assertEqual(result.returncode, 1, result.stderr)
-            return True
-        # #2340 (Tsunade): a timeout path answers UNOBSERVED, warns on stderr and exits 1.
-        if "still pending" in result.stderr and "unlock still pending" not in result.stderr:
-            self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertIn(f"{phase} unobserved (_StateTimeout)", result.stderr)
-            return True
-        if f"{phase} unobserved (no answer" in result.stderr:  # the watchdog answered
-            self.assertEqual(result.returncode, 1, result.stderr)
-            return True
-        return False
+        """#2340 (Tsunade): every exit has one exact contract; anything else fails.
+        (a) normal: exit 0 + answer + state recorded (the caller's own asserts; returns False);
+        (b) timeout (a bounded step or the watchdog): exit 1 + the UNOBSERVED warning on stderr +
+            no state written by this run;
+        (c) backstop: exit 1 + a faulthandler dump on stderr + no state written by this run.
+        Under disk pressure (the #2270 load) (b) and (c) are promised outcomes, so the test checks
+        that shape and stops. Exit 1 with neither a warning nor a dump returns False, and the
+        caller's normal-path asserts then fail it."""
+        dumped = "Timeout (" in result.stderr and "most recent call first" in result.stderr
+        warned = (("still pending" in result.stderr and "unlock still pending" not in result.stderr)
+                  or f"{phase} unobserved (no answer" in result.stderr)
+        if not (dumped or warned):
+            return False
+        self.assertEqual(result.returncode, 1, result.stderr)
+        if warned and not dumped:
+            self.assertTrue(f"{phase} unobserved (_StateTimeout)" in result.stderr
+                            or f"{phase} unobserved (no answer" in result.stderr, result.stderr)
+        self.assertEqual(self.state_files(), self.state_before, "a timeout path writes no state")
+        return True
 
     def test_long_valid_identities_use_bounded_actor_label(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"

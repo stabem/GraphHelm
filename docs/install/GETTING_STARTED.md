@@ -208,12 +208,12 @@ Copy the two commands `init` printed under `next`, or type them. The sealing key
 
 ```powershell
 $env:GRAPHHELM_EVENTS_KEY = (Get-Content -Raw "C:\path\to\your-project\.graphhelm\serve.key").Trim()
-graphhelm serve --events "C:\path\to\your-project\.graphhelm\events" --bind 127.0.0.1:8791 --keyring "C:\path\to\your-project\.graphhelm\keyring" --key-id studio
+graphhelm serve --events "C:\path\to\your-project\.graphhelm\events" --bind 127.0.0.1:8791 --project "C:\path\to\your-project" --keyring "C:\path\to\your-project\.graphhelm\keyring" --key-id studio
 ```
 
 ```bash
 export GRAPHHELM_EVENTS_KEY="$(cat /path/to/your-project/.graphhelm/serve.key)"
-graphhelm serve --events /path/to/your-project/.graphhelm/events --bind 127.0.0.1:8791 --keyring /path/to/your-project/.graphhelm/keyring --key-id studio
+graphhelm serve --events /path/to/your-project/.graphhelm/events --bind 127.0.0.1:8791 --project /path/to/your-project --keyring /path/to/your-project/.graphhelm/keyring --key-id studio
 ```
 
 Expected first line on stdout (the process then stays in the foreground; leave this terminal
@@ -315,7 +315,7 @@ npm --prefix apps/studio run dev
 Expected, among the dev server's output:
 
 ```
-  Studio auto-connect: http://127.0.0.1:5183/?session=<nonce>
+  Studio login: http://127.0.0.1:5183/?session=<nonce>
 ```
 
 **In a container or VM**, the dev server's `127.0.0.1` bind is unreachable through a published
@@ -467,8 +467,11 @@ Expected: one row, `demo`, with its attention verdict — the same answer the St
 **One registration for every project (Claude Code, user scope).** `graphhelm setup --resolve
 home/.claude.json=register-mcp` writes `graphhelm mcp --discover --actor agent-chat` into
 `~/.claude.json`. The MCP process uses its active project directory (or `--project <path>` when
-the host does not launch it there) to find that project's Runtime. `serve --project <path>` writes
-an owner-only record under `~/.graphhelm/runtime/projects/<project-id>/` (or
+the host does not launch it there) to find that project's Runtime. Start that Runtime with the `serve`
+command from section 3, which passes `--project`: without it no record is written and discovery finds nothing.
+Until that Runtime is running, `graphhelm mcp --discover` lists no tools. An empty list is expected, not broken: the
+tools appear once the Runtime from section 3 is running, and the server then tells the host to list them again.
+`serve --project <path>` writes an owner-only record under `~/.graphhelm/runtime/projects/<project-id>/` (or
 `GRAPHHELM_RUNTIME_DIR`) with the actual loopback URL, token-file path, and random instance id.
 Before reading the token file, MCP checks that `/health` reports both the same project identity
 and the same live instance. Multiple projects can therefore use different ports at once. An
@@ -487,7 +490,7 @@ cat /path/to/your-project/.graphhelm/codex.config.toml >> ~/.codex/config.toml
 Get-Content "C:\path\to\your-project\.graphhelm\codex.config.toml" | Add-Content "$env:USERPROFILE\.codex\config.toml"
 ```
 
-The server `graphhelm mcp` exposes a closed list of 28 tools named after the Runtime verbs —
+The server `graphhelm mcp` exposes a closed list of tools named after the Runtime verbs (the table is `TOOLS` in `apps/cli/src/commands/mcp/tools.rs`; its size changes with the release) —
 `list`, `status`, `briefing`, `events`, `evidence`, `approve`, `pause`, `resume`, `signal`,
 `cancel`, `sweep`, … (`apps/cli/src/commands/mcp/tools.rs`); a harness shows them under the
 server name, e.g. `mcp__graphhelm__list` in Claude Code. The Studio's WebMCP page tools (the

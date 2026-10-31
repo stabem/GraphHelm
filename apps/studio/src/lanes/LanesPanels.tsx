@@ -7,6 +7,7 @@ import { When } from "../time/Stamp";
 import { RECORDED_MS, approver, capacityRows, feed, needTag, needsAction, shownNeeds, type Need, type Recorded } from "./panels";
 import { idleText } from "./board";
 import type { OwnerRequest } from "../graph/requests";
+import { RunAttention } from "../views/RunAttention";
 
 /** Collisions are re-read with the board's pace slowed down; capacity is a machine sample. */
 const COLLISIONS_MS = 15_000;
@@ -49,6 +50,7 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
   const [sending, setSending] = useState<string | null>(null);
   const [last, setLast] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [runWaits, setRunWaits] = useState(false);
   // #1837: a failed request is resent with the same id and bytes.
   const drafts = useRef(new Map<string, Draft>());
   // #1889: Assigns the Runtime recorded, shown as "Assigned to X" for a minute.
@@ -162,7 +164,10 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
         <div className="box-head"><strong className="mono">NEEDS ACTION</strong><span className="mono faint">· oldest first</span><span className="mono count late">{shown.length}</span></div>
         {last !== null && <span role="status" aria-label="Last action" className="sent small">{last}</span>}
         {failure !== null && <span role="alert" className="error small">{failure}</span>}
-        {shown.length === 0 ? <span className="muted small">Nothing waits on you.</span> : (
+        {/* #2324: the run's own attention (a blocked node) is not a lane need; it is said here too,
+            so "Nothing waits on you" is never shown over a run that does. */}
+        <RunAttention runtime={runtime} executionId={executionId} moved={board.now} onRead={setRunWaits} />
+        {shown.length === 0 ? (runWaits ? null : <span className="muted small">Nothing waits on you.</span>) : (
           <ul aria-label="Needs action items" className="needs">
             {shown.map(({ need, recorded: done }, index) => {
               const noLane = (need.verb === "Assign" || need.verb === "Reassign" || need.verb === "Hand off") && need.to === null;

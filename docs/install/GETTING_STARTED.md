@@ -294,9 +294,12 @@ powershell -File apps/studio/tools/studio-up.ps1 -Events "C:\path\to\your-projec
 
 Expected lines: `[up] Runtime already answering at http://127.0.0.1:8791 and this project's token
 opens it - reusing it` (or `[up] starting: graphhelm serve ...` then `[up] Runtime up`), and
-`[up] Studio starting at http://127.0.0.1:5183 - the page opens already connected`.
+`[up] Studio starting at http://127.0.0.1:5183 - the page opens already connected`. The launcher prints no login
+link. It listens on `127.0.0.1` only, so from a container its port cannot be published; use the manual path below
+there.
 
-By hand, on any platform:
+Manual dev server, on any platform. It listens on port 5185 (the launchers above use 5183, so the two
+paths do not clash):
 
 ```powershell
 $env:GRAPHHELM_EVENTS = "C:\path\to\your-project\.graphhelm\events"
@@ -315,20 +318,23 @@ npm --prefix apps/studio run dev
 Expected, among the dev server's output:
 
 ```
-  Studio auto-connect: http://127.0.0.1:5183/?session=<nonce>
+  Studio login: http://127.0.0.1:5185/?session=<nonce>
 ```
 
 **In a container or VM**, the dev server's `127.0.0.1` bind is unreachable through a published
 port (measured: the connection is reset). Start it with `npm --prefix apps/studio run dev -- --host`
-inside the container instead, publish port `5183`, and open the printed URL with the host's
-published port in place of `5183`. Keep `serve` on `127.0.0.1`: the dev server proxies `/v1` and
+inside the container instead, publish port `5185`, and open the printed URL with the host's
+published port in place of `5185`. Keep `serve` on `127.0.0.1`: the dev server proxies `/v1` and
 `/health` to it from inside the container, so the Runtime never needs a wider bind.
 
 **Open that exact URL.** The page auto-connects only through the printed `?session=` link: the
 dev server reads the token beside `GRAPHHELM_EVENTS` and hands it to the page under that one-time
-session, so nobody pastes a token. Opening `http://127.0.0.1:5183/` without the query shows the
-connect gate instead, where you can paste the contents of `events.token` by hand. With
-`GRAPHHELM_EVENTS` unset there is no session endpoint at all, only the gate.
+session, so nobody pastes a token. Opening `http://127.0.0.1:5185/` without the query shows the
+connect gate instead. The gate has no field for the token. It says to run `graphhelm studio open` in the project
+folder, which opens the page already connected. `studio open` uses port 5183; for the manual dev server on 5185, add
+`--port 5185`, or it is refused with `GHCLI032_STUDIO_REFUSED`. With `--no-browser` it prints the login link as
+`data.url` instead, for a browser you open yourself. With `GRAPHHELM_EVENTS` unset there is no session endpoint at all,
+only the gate.
 
 The Studio's `/v1` and `/health` requests are proxied by the dev server to `GRAPHHELM_RUNTIME_URL`,
 so they stay same-origin; the default is `http://127.0.0.1:8080`, which is why the variable must
@@ -357,69 +363,27 @@ Expected (trimmed): `"command":"execution.start"`, `"attention":"needs_you"`, an
 `implementation` node. [`QUICKSTART.md`](../../QUICKSTART.md) explains the four `attention`
 values; this page moves on to acting on the run.
 
-Now in the Studio — the operator journey from
-[`docs/ux/STUDIO_MVP.md`](../ux/STUDIO_MVP.md) §1, in order:
+Open the Studio to see the run in the Graph tab. It shows the run's objective and its status. A fixture run has no
+owner request, so the Graph lists no work for it. This version of the Studio does not show the run's blocked node or
+an approval control, so read the state with the CLI, as below. The Studio cannot approve a node.
 
-1. The page is connected (section 4): the rail's header reads `GraphHelm` with a green `LIVE`
-   mark (`STALE` when background reads keep failing, `OFFLINE` when disconnected). The rail does
-   not print the Runtime address — the dev server proxies to `GRAPHHELM_RUNTIME_URL` — or an actor;
-   every verb you press is attributed to the actor `studio-operator`, and the event lines and cards
-   say so after you act.
-2. Under the project folder (`this runtime`) the rail lists `demo`. A run whose briefing carries
-   an objective is named by it, with the execution id (`demo`) on the line beneath; the next line
-   is the time of its last event and `· demonstration` (a fixture run). The attention verdict is
-   the coloured square at the row's right edge; hover it (or use a screen reader) for the words,
-   `needs you`.
-3. Click it. The top strip names the run (the objective; the id on hover) and a pill with the
-   status and the verdict, `RUNNING · NEEDS YOU`. The blocking node is named in the conversation
-   column's first block, `implementation is blocked`, beside an **approve implementation** button,
-   and in the `Work overview` its card reads `blocked` / `retryable failure`.
-4. Under that block the run panel reads `This run needs you`, the demonstration sentence and the
-   `Objective`, then the lifecycle counts folded into chips — `ready 1`, `blocked 1`,
-   `nothing in the other 14 states` (the sixteen states, the zeros stated together) — and the
-   run's thread, where each event line carries who it is attributed to and when. The raw event
-   log with sequences is `graphhelm execution status`/`GET /v1/executions/demo/events`; the page
-   groups lifecycle events into strips you can open.
-5. Press **Verify connections** (or switch the view to **Free canvas**), type the graph path into
-   the `Graph file on the Runtime host…` box (the absolute path of
-   `examples/graphs/manual-override-deploy.yaml` in your clone — it is resolved on the Runtime
-   host) and press **connect**: the run's shape is drawn, verified against the hash the run
-   recorded, or refused with the reason. On a demonstration run a second box beside it,
-   `Fixture file for resume (optional)…`, takes a fixture path on the Runtime host for step 7.
-6. Click a node to narrow the thread to it.
-7. Press **pause · finish in-flight**, then **approve implementation**, then **resume** (the dock
-   walks you to the graph file box from step 5 if it is empty) — in that order. A supervised run
-   accepts `resume` only from `paused`; approving first and resuming would be refused with
-   `resume refused: not_paused` and leave the run reading `wedged_quiescence` (measured, see the
-   CLI block below).
-8. Each verb reports what changed — `Paused`, `Approved`, `Resumed`: head before, head after, the
-   re-read status and the events appended, attributed to you. While paused, the verdict reads
-   `can_sleep` (nothing is waiting: the node is `ready`, the run is held). On resume the node
-   **runs again**, and on a fixture run the fixture stands in for the model, so what happens next
-   depends on whether the resume names one:
-   - **With a fixture** — the CLI's `--fixtures`, or a path in the Studio's
-     `Fixture file for resume (optional)…` box — the fixture decides: with
-     `implementation: failure` the node fails again and the run is back at `needs_you` /
-     `blocked_node: implementation`, the loop a real failing node would produce; with
-     `implementation: success` the node succeeds and the run parks at the next human step,
-     `needs_you` / `waiting_input_node: deploy`.
-   - **Without a fixture** — the Studio's resume with that box left empty — the node has no
-     outcome to take and parks at `needs_you` / `waiting_input_node: implementation`; the dock
-     says `Nothing is blocked. A waiting node wants an answer in the thread, not an approval.`
-     Resume again with a fixture file named to drive it on.
-
-   Either way, `needs_you` is the honest answer: this graph is built to need a person.
-9. Reload the page: the Runtime is untouched and the token is forgotten (it lived in the session
-   only).
-
-The same verbs from the terminal, executed as written against a fresh store (`E` is the events
-directory, `F` the fixture file; same flags in PowerShell with the Windows paths):
+The verbs, executed as written against a fresh store (`E` is the events directory, `F` the fixture file; same
+flags in PowerShell with the Windows paths). Pause first: a supervised run accepts `resume` only from `paused`.
 
 ```bash
 graphhelm execution pause   --events $E --execution demo
 graphhelm execution approve --events $E --execution demo --node implementation
 graphhelm execution resume  --events $E --execution demo --file examples/graphs/manual-override-deploy.yaml --fixtures $F
 graphhelm execution status  --events $E --execution demo
+```
+
+Approving before pausing is refused with `resume refused: not_paused` (`GHCLI005_EXECUTION_STATE`), and the run
+then reads `wedged_quiescence`. Measured on a fresh store with the CLI built from `5e6b0442`:
+
+```
+execution.approve  ok     status=running  deploy=ready implementation=ready
+execution.resume   FAILED GHCLI005_EXECUTION_STATE: resume refused: not_paused
+execution.status   ok     status=running  attention=needs_you  [{"kind":"wedged_quiescence"}]
 ```
 
 Measured output, trimmed to the fields that matter:
@@ -435,14 +399,6 @@ With `{"nodeOutcomes":{"implementation":"success"}}` written to `$F` before the 
 
 ```
 execution.resume   ok  status=running  attention=needs_you  [{"kind":"waiting_input_node","node":"deploy"}]  deploy=waiting_input implementation=succeeded
-```
-
-And the order this page used to give — approve, then resume, without a pause — measured:
-
-```
-execution.approve  ok     status=running  deploy=ready implementation=ready
-execution.resume   FAILED GHCLI005_EXECUTION_STATE: resume refused: not_paused
-execution.status   ok     status=running  attention=needs_you  [{"kind":"wedged_quiescence"}]
 ```
 
 The Studio and the CLI write to the same append-only store; the Runtime serves it; nothing is
@@ -526,6 +482,6 @@ which serves every Runtime verb. If `init` detected neither harness
 | `init` says `GHCLI027_INIT_REFUSED` at `/keyring` | the keyring exists but `serve.key` no longer opens it (the key file was replaced) | pass the `--key-id` it was created with, or move `.graphhelm/keyring` aside — evidence sealed under the lost key cannot be recovered |
 | the `serve.started` line carries a `warning` `GHCLI006_SERVE_INVALID` at `/keyring` (`the keyring could not be opened with GRAPHHELM_EVENTS_KEY (…); sealed operations (messages, real executors) will refuse until serve is restarted with the right key`) | the variable is unset in this terminal, or `--key-id` is not the id the keyring was created with; reads and pause/approve/resume still work | stop `serve`, run the first `next` command from `init` again in the same terminal, restart `serve` with the `--key-id` `init` printed |
 | `serve` refuses at start with `GHCLI006_SERVE_INVALID` at `/bind` (`the requested address could not be bound`) | something already listens on `127.0.0.1:8791` — often a previous `serve` | stop it, or re-run `init --bind 127.0.0.1:<other port>` so every registration follows the new number |
-| the Studio shows the connect gate | the page was opened without the printed `?session=` URL, or `GRAPHHELM_EVENTS` was unset | open the printed URL; or paste the contents of `events.token` |
+| the Studio shows the connect gate | the page was opened without the printed `?session=` URL, or `GRAPHHELM_EVENTS` was unset | open the printed URL; or run `graphhelm studio open` in the project folder (add `--port 5185` for the manual dev server) |
 | the Studio says `Runtime replied 502` | `GRAPHHELM_RUNTIME_URL` points at the wrong port (the default is `8080`) | set it to `http://127.0.0.1:8791` and restart the dev server |
 | the message box is refused | the Runtime started without `--keyring`/`--key-id` | restart it with the command `init` printed |

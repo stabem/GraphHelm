@@ -5563,7 +5563,35 @@ fn a_fresh_runtime_opens_each_sealed_task_record_once_and_still_refuses_a_tamper
         tampered_blob = added[0].clone();
     }
     {
-        let (_server, base, token) = serve_with(&events, &extra);
+        // #2279: count the opens instead of timing them. Under load the fixed cost of a request
+        // (~0.4 s) was no longer small next to 400 opens, so `warm * 4 < cold` failed with the
+        // cache working. `GRAPHHELM_SERVE_TIMING=1` makes serve report, per signal request, how
+        // many sealed envelopes it really opened (`envelope.open`, counted only on a cache miss).
+        let mut timed = ServeExtra {
+            args: extra.args.clone(),
+            env: extra.env.clone(),
+        };
+        timed
+            .env
+            .push(("GRAPHHELM_SERVE_TIMING".to_owned(), "1".to_owned()));
+        let (mut server, base, token) = serve_with(&events, &timed);
+        let signal_opens = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
+        let stderr = server.child.stderr.take().unwrap();
+        let seen = std::sync::Arc::clone(&signal_opens);
+        // Drained on a thread so the pipe can never fill and stall the server.
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                let Ok(event) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
+                if event["event"] == "serve.timing" && event["route"] == "executions.signal" {
+                    let opens = event["phases"]["envelope.open"]["count"]
+                        .as_u64()
+                        .unwrap_or(0);
+                    seen.lock().unwrap().push(opens);
+                }
+            }
+        });
         // Warm the journal and the fold, never the envelopes, so the heartbeats measure them.
         list_rows(&base, &token);
         let (status, reply, cold) = task_record(
@@ -5587,10 +5615,26 @@ fn a_fresh_runtime_opens_each_sealed_task_record_once_and_still_refuses_a_tamper
         );
         assert_eq!(status, 200, "{reply}");
         eprintln!("sealed heartbeats: cold {cold:?}, warm {warm:?}");
-        assert!(
-            warm * 4 < cold,
-            "a second heartbeat must not reopen the lane's sealed records: cold {cold:?}, warm \
-             {warm:?}"
+        // Each request's timing line is written before its reply, so both are on the pipe; the
+        // bound only waits for the drain thread to read them, it decides nothing.
+        let waited = std::time::Instant::now();
+        let opens = loop {
+            let opens = signal_opens.lock().unwrap().clone();
+            if opens.len() >= 2 || waited.elapsed() > scaled(Duration::from_secs(30)) {
+                break opens;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(opens.len(), 2, "one timing line per heartbeat: {opens:?}");
+        assert_eq!(
+            opens[0], 400,
+            "the first heartbeat opens the lane's 400 sealed claims: {opens:?}"
+        );
+        // The second heartbeat reopens none of them; it opens only the one record it has not
+        // seen yet, the first heartbeat's own.
+        assert_eq!(
+            opens[1], 1,
+            "a second heartbeat must not reopen the lane's sealed records: {opens:?}"
         );
         let tasks = get_json(&format!("{base}/v1/executions/{run}/tasks"), Some(&token));
         assert_eq!(tasks["data"]["rejected"], 0, "every record opens: {tasks}");

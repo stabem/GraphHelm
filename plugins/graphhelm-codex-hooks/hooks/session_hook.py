@@ -2,23 +2,22 @@
 
 from __future__ import annotations
 
-# #2340: the hook's first instruction takes its first timestamp, before any other import. With
-# GRAPHHELM_HOOK_FIRST_LINE set (a probe only), it appends "<pid> <epoch seconds>" there, so the
-# time from spawn to this line is measured apart, as an environment limit, from the hook's own time.
+# The first instruction takes the hook's first timestamp, before any other import. With
+# GRAPHHELM_HOOK_FIRST_LINE set (a probe only), it is appended there as "<pid> <epoch seconds>", so
+# the time from spawn to this line can be told apart from the hook's own time.
 import time as _first_line_clock
 _FIRST_LINE_AT = _first_line_clock.time()
 import os as _first_line_os
 import sys as _first_line_sys
 import threading as _first_line_threading
 
-# #2340, Shino's probe on 1951e5c4: with every state step bounded, start and end still ran 9-18 s
-# after their first line under disk pressure (imports, stdin, team files, the waiter: file I/O the
-# per-step bounds do not cover). One watchdog bounds all of it: HOOK_WATCHDOG seconds after this
-# line, a start or end that has not answered yet answers UNOBSERVED, says so, and leaves at once.
+# Under disk pressure, file I/O outside the bounded state steps (imports, stdin, team files, the
+# waiter) can still stall. One watchdog bounds all of it: HOOK_WATCHDOG seconds after this line, a
+# start or end that has not answered yet answers UNOBSERVED, says so, and leaves at once.
 _watched_phase = _first_line_sys.argv[1] if len(_first_line_sys.argv) > 1 else ""
 _watched_host = _first_line_sys.argv[_first_line_sys.argv.index("--host") + 1] if "--host" in _first_line_sys.argv[:-1] else ""
-# Codex clamps every SessionEnd hook to 3 s whatever it declares (Shino, codex-cli 0.157.1:
-# "clamping SessionEnd hook timeout to 3s"), so a Codex end answers within 1.0 s of its first line (spawn and teardown take the rest of the 3 s).
+# Codex clamps every SessionEnd hook to 3 s whatever it declares, so a Codex end answers 1 s after
+# its first line; spawn and teardown take the rest of the 3 s.
 HOOK_WATCHDOG = 1.0 if (_watched_host, _watched_phase) == ("codex", "end") else 6.0
 _answer_started = False
 
@@ -40,7 +39,7 @@ class _AnswerGuard:
 
 def _watchdog_quote(text: str) -> str:
     """A JSON string with no import: the watchdog must not wait on an import lock the stalled main
-    thread may hold (Shino's probe on eeb00d95)."""
+    thread may hold."""
     out = ['"']
     for char in text:
         if char in '"\\':
@@ -65,7 +64,7 @@ def _watchdog_answer() -> str:
         if _watched_phase == "start":
             report += ',"sessionId":null,"context":' + context
         elif _watched_phase == "end":
-            # #2340: a portable end always says its delivery, as the normal end report does.
+            # A portable end always says its delivery, as the normal end report does.
             report += ',"delivery":"unobserved"'
         return report + ',"activation":"unobserved"}\n'
     return ""
@@ -74,9 +73,8 @@ def _watchdog_answer() -> str:
 def _probe_mark(event: str) -> None:
     """Probe only (GRAPHHELM_HOOK_FIRST_LINE set): one stderr line "graphhelm-probe-exit <pid>
     <watchdog|normal> <epoch>" right before `os._exit`, so a probe can split time inside the hook
-    from teardown after it (#2340). It goes to the stderr pipe, never to a file: Shino's probe on
-    f534862c caught the watchdog itself stuck writing a file marker on a starved disk, which held
-    its os._exit. The time is taken before the write."""
+    from teardown after it. It goes to the stderr pipe, never to a file: a file write on a starved
+    disk can hold the watchdog before its os._exit. The time is taken before the write."""
     if not _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE"):
         return
     at = _first_line_clock.time()
@@ -84,7 +82,8 @@ def _probe_mark(event: str) -> None:
         _first_line_sys.stderr.write(f"graphhelm-probe-exit {_first_line_os.getpid()} {event} {at:.3f}\n")
         _first_line_sys.stderr.flush()
     except (OSError, ValueError):
-        pass
+        # keel-allow: keel.rel.no_swallow stderr itself failed, so there is nowhere left to report this probe-only mark, and the exit must not wait until #2344
+        return
 
 
 def _watchdog() -> None:
@@ -97,17 +96,16 @@ def _watchdog() -> None:
         _first_line_sys.stderr.flush()
     finally:
         _probe_mark("watchdog")
-        # #2340 (Tsunade): a timeout path exits 0; its UNOBSERVED answer is the visible warning and
-        # still reaches the context. Only the faulthandler backstop exits 1.
+        # A timeout path exits 0: its UNOBSERVED answer is the visible warning and still reaches the
+        # context. Only the faulthandler backstop exits 1.
         _first_line_os._exit(0)
 
 
 if __name__ == "__main__" and _watched_phase in {"start", "end"}:
     _first_line_sys.stdout = _AnswerGuard(_first_line_sys.stdout)
     _first_line_threading.Thread(target=_watchdog, name="graphhelm-hook-watchdog", daemon=True).start()
-    # #2340, Shino's probe on 740d9778 (pid 94204): the Python watchdog thread did not run for 24.8 s
-    # inside an end, so something held it off. faulthandler's timer is C code that needs no
-    # Python lock: a short while after the watchdog's moment, if the process is still here, it
+    # If the Python watchdog cannot run (its thread blocked, or a call holding the GIL), this C timer,
+    # which needs no Python lock, ends the process a short while after the watchdog's moment: it
     # writes every thread's stack to stderr (where it hung) and exits with status 1.
     import faulthandler as _first_line_faulthandler
     _first_line_faulthandler.dump_traceback_later(HOOK_WATCHDOG + 1.5, exit=True)
@@ -118,8 +116,9 @@ if _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE"):
                                       _first_line_os.O_WRONLY | _first_line_os.O_CREAT | _first_line_os.O_APPEND, 0o600)
         _first_line_os.write(_marker, f"{_first_line_os.getpid()} {_FIRST_LINE_AT:.3f}\n".encode())
         _first_line_os.close(_marker)
-    except OSError:
-        pass
+    except OSError as _marker_error:
+        # Probe only: the run goes on, and the probe reads this line instead of the marker.
+        _first_line_sys.stderr.write(f"graphhelm-probe: first-line marker not written ({type(_marker_error).__name__})\n")
 
 import argparse
 import codecs
@@ -675,19 +674,19 @@ def _write_state(path: Path, value: dict, durable: bool = True) -> None:
             pass
 
 
-# #2334: under disk pressure the state write itself (mkstemp, write, replace), not only its fsync,
-# took over 6 s, past the host's hook budget. Each piece of hook file I/O (lock, read, write,
-# token) gets this long; past it the hook answers UNOBSERVED, records nothing more for that session
+# Under disk pressure the state write itself (mkstemp, write, replace), not only its fsync, can
+# outlast the host's hook budget. Each piece of hook file I/O (lock, read, write, token) gets this
+# long; past it the hook answers UNOBSERVED, records nothing more for that session
 # and exits at once (`_StateTimeout`, `_answered_without_state`); an abandoned write may not land.
 STATE_WRITE_BUDGET = 2.0
 _answered_without_state = False
 
 
 class _StateTimeout(BaseException):
-    """#2334: a piece of hook file I/O did not answer within STATE_WRITE_BUDGET. Raised past every
+    """A piece of hook file I/O did not answer within STATE_WRITE_BUDGET. Raised past every
     `except Exception` and OSError handler on purpose: the hook stops there, answers UNOBSERVED in
     `main`, records nothing more for the session and exits at once. Going on into more file I/O
-    (the token, a second write) is what stalled again under load (Shino's probe on d4a70fde)."""
+    (the token, a second write) would only stall again on the same disk."""
 
 
 def _bounded(what: str, call):
@@ -726,8 +725,8 @@ def _write_state_bounded(path: Path, value: dict, durable: bool = True) -> None:
 
 
 def _read_state_or_empty(path: Path, execution: str, session: str, host: str, origin: str) -> dict | None:
-    """#2331: the state as `_read_state` validates it, or None (empty) when the file is unreadable:
-    empty or half-written after a crash or a power loss (a non-durable write, #2328), not JSON, or
+    """The state as `_read_state` validates it, or None (empty) when the file is unreadable:
+    empty or half-written after a crash or a power loss (the end write is not fsync'd), not JSON, or
     not this format. One stderr warning says so; the hook carries on as for a missing file. A
     parseable state that fails validation (another identity, a forged receipt, an injected
     briefing) still fails closed. A read that does not answer in time raises `_StateTimeout`."""
@@ -739,12 +738,12 @@ def _read_state_or_empty(path: Path, execution: str, session: str, host: str, or
 
 
 def _token_bounded(path: str) -> str:
-    """#2334: the token read in start and end is file I/O too (it stalled after a cut write)."""
+    """The token read in start and end is file I/O too, bounded like the state."""
     return _bounded("token", lambda: token_from_file(path))
 
 
 def _claim_lock_bounded(path: Path):
-    """`_claim_lock`, bounded like every other piece of hook file I/O (#2334)."""
+    """`_claim_lock`, bounded like every other piece of hook file I/O."""
     return _bounded("lock", lambda: _claim_lock(path))
 
 
@@ -792,10 +791,9 @@ def _claim_lock(path: Path):
 def _release_lock(lock) -> None:
     # OS locks are released even when the host kills a timed-out hook. Keep the
     # inode: unlinking it could let a second process lock a different file.
-    # #2340, Shino's probe on c98b7dd8: the unlock and close stalled for 25 s on the way out. After
-    # a timeout the hook leaves at once and the OS releases the lock with the process; otherwise
-    # the release is bounded like any other piece of hook file I/O, and a stuck one only makes the
-    # process leave at once too.
+    # The unlock and close can stall on a starved disk too. After a timeout the hook leaves at once
+    # and the OS releases the lock with the process; otherwise the release is bounded like any
+    # other piece of hook file I/O.
     global _answered_without_state
     if lock is None or _answered_without_state:
         return
@@ -1072,10 +1070,10 @@ def _end_impl(payload: dict, host: str, bound: tuple | None = None, lane: str | 
     try:
         reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", _token_bounded(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=5.0)
     except urllib.error.HTTPError as error:
-        # #2334: the key is the same on every retry; a 409 means an earlier end committed it and its
-        # state write did not land (abandoned past STATE_WRITE_BUDGET), as `_record_started` reads it.
+        # The key is the same on every retry; a 409 means an earlier end committed it and its state
+        # write did not land (abandoned past STATE_WRITE_BUDGET), as `_record_started` reads it.
         if error.code != 409:
-            raise
+            raise ValueError(f"the Runtime refused the end signal (HTTP {error.code})") from error
         reply = {"data": {"executionId": execution, "signalId": signal_id}}
     data = reply.get("data")
     if not isinstance(data, dict) or data.get("executionId") != execution or data.get("signalId") != signal_id:
@@ -1198,8 +1196,8 @@ def main() -> int:
                 if output_format == "portable":
                     print(json.dumps({"format": "graphhelm-portable-v1", "phase": "end", "host": host, "sessionId": _session(payload), "delivery": "acknowledged" if delivered else "unobserved", "activation": "unobserved"}, separators=(",", ":")))
     except (OSError, ValueError, KeyError, RecursionError, _StateTimeout) as error:
-        # #2334: `_StateTimeout` lands here too: the hook answers UNOBSERVED now, records nothing
-        # more for the session, and `__main__` exits at once.
+        # `_StateTimeout` lands here too: the hook answers UNOBSERVED now, records nothing more for
+        # the session, and `__main__` exits at once.
         print(f"graphhelm-hook: {args.phase} unobserved ({type(error).__name__})", file=sys.stderr)
         if args.phase == "inspect":
             print(json.dumps({"phase": "inspect", "configuration": "invalid", "activation": "unobserved"}))
@@ -1212,7 +1210,7 @@ def main() -> int:
         elif output_format == "portable":
             report = {"format": "graphhelm-portable-v1", "phase": args.phase, "host": host, "activation": "unobserved"}
             if args.phase == "end":
-                # #2340: a portable end always says its delivery, as the normal end report does.
+                # A portable end always says its delivery, as the normal end report does.
                 report["delivery"] = "unobserved"
             print(json.dumps(report, separators=(",", ":")))
     return 0
@@ -1221,10 +1219,9 @@ def main() -> int:
 if __name__ == "__main__":
     code = main()
     if _answered_without_state or _watched_phase in {"start", "end"}:
-        # #2334/#2340: the answer is out. Start and end never go through interpreter shutdown: it
-        # can wait on a stuck file system, and once it starts the watchdog thread can no longer run
-        # (Shino's probe on eeb00d95: the answer written at 2.3 s, the process alive until 9.8 s).
-        # Flush what was said and leave now.
+        # The answer is out. Start and end never go through interpreter shutdown: it can wait on a
+        # stuck file system, and once it starts the watchdog thread can no longer run. Flush what
+        # was said and leave now.
         sys.stdout.flush()
         sys.stderr.flush()
         _probe_mark("normal")

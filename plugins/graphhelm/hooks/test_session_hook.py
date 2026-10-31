@@ -1250,6 +1250,35 @@ class SessionHookTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("still pending", result.stderr)
 
+    def test_start_and_end_answer_when_anything_after_the_first_line_hangs(self):
+        # #2340, Shino's probe on 1951e5c4: 9-18 s after the first line with every state step
+        # bounded, so the stall was elsewhere. Here the state path itself (a hash) never returns;
+        # the watchdog answers UNOBSERVED HOOK_WATCHDOG s after the first line and the process leaves.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        hang = Path(self.temp.name) / "hang-anything"
+        hang.mkdir()
+        (hang / "sitecustomize.py").write_text("\n".join([
+            "import hashlib, threading",
+            "def _hang(*args, **kwargs):",
+            "    threading.Event().wait(120)",
+            "hashlib.sha256 = _hang",
+            "",
+        ]), encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
+        start = self.run_hook_timed("start")
+        self.assertEqual(start.returncode, 0, start.stderr)
+        self.assertIn("GraphHelm briefing UNOBSERVED.", json.loads(start.stdout)["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("start unobserved (no answer 6 s after the first line)", start.stderr)
+        end = self.run_hook_timed("end")
+        self.assertEqual((end.returncode, end.stdout), (0, ""))
+        self.assertIn("end unobserved (no answer 6 s after the first line)", end.stderr)
+        portable = subprocess.run(
+            [sys.executable, str(SCRIPT), "end", "--host", "third-party-agent"],
+            input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
+            text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
+        self.assertEqual(json.loads(portable.stdout)["activation"], "unobserved")
+        self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
+
     def test_end_leaves_while_its_lock_release_hangs(self):
         # #2340, Shino's probe on c98b7dd8: the unlock and close of the state lock stalled 25 s on
         # the way out. It is bounded too; the end still delivers and the process leaves in time.

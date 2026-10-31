@@ -8,6 +8,64 @@ from __future__ import annotations
 import time as _first_line_clock
 _FIRST_LINE_AT = _first_line_clock.time()
 import os as _first_line_os
+import sys as _first_line_sys
+import threading as _first_line_threading
+
+# #2340, Shino's probe on 1951e5c4: with every state step bounded, start and end still ran 9-18 s
+# after their first line under disk pressure (imports, stdin, team files, the waiter: file I/O the
+# per-step bounds do not cover). One watchdog bounds all of it: HOOK_WATCHDOG seconds after this
+# line, a start or end that has not answered yet answers UNOBSERVED, says so, and leaves at once.
+HOOK_WATCHDOG = 6.0
+_watched_phase = _first_line_sys.argv[1] if len(_first_line_sys.argv) > 1 else ""
+_answer_started = False
+
+
+class _AnswerGuard:
+    """stdout that remembers whether the hook began its answer, so the watchdog never adds a second."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def write(self, text):
+        global _answer_started
+        _answer_started = True
+        return self._inner.write(text)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _watchdog_answer() -> str:
+    argv = _first_line_sys.argv
+    host = argv[argv.index("--host") + 1] if "--host" in argv[:-1] else ""
+    output_format = argv[argv.index("--format") + 1] if "--format" in argv[:-1] else ("native" if host in {"claude", "codex"} else "portable")
+    keel = globals().get("KEEL_CONTEXT", "")
+    if _watched_phase == "start" and output_format != "portable":
+        return '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":' + __import__("json").dumps(keel + "\nGraphHelm briefing UNOBSERVED.") + "}}\n"
+    if output_format == "portable":
+        report = {"format": "graphhelm-portable-v1", "phase": _watched_phase, "host": host, "activation": "unobserved"}
+        if _watched_phase == "start":
+            report.update({"sessionId": None, "context": keel + "\nGraphHelm briefing UNOBSERVED."})
+        return __import__("json").dumps(report, separators=(",", ":")) + "\n"
+    return ""
+
+
+def _watchdog() -> None:
+    _first_line_clock.sleep(HOOK_WATCHDOG)
+    try:
+        if not _answer_started:
+            _first_line_sys.stdout._inner.write(_watchdog_answer())
+        _first_line_sys.stderr.write(f"graphhelm-hook: {_watched_phase} unobserved (no answer {HOOK_WATCHDOG:.0f} s after the first line)\n")
+        _first_line_sys.stdout.flush()
+        _first_line_sys.stderr.flush()
+    finally:
+        _first_line_os._exit(0)
+
+
+if __name__ == "__main__" and _watched_phase in {"start", "end"}:
+    _first_line_sys.stdout = _AnswerGuard(_first_line_sys.stdout)
+    _first_line_threading.Thread(target=_watchdog, name="graphhelm-hook-watchdog", daemon=True).start()
+
 if _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE"):
     try:
         _marker = _first_line_os.open(_first_line_os.environ["GRAPHHELM_HOOK_FIRST_LINE"],

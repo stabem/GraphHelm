@@ -642,14 +642,14 @@ class SessionHookTests(unittest.TestCase):
         )
         # Preserve the full host budgets: a smaller declaration can kill the command
         # before its bounded HTTP acknowledgement, even when the script is unchanged.
-        # #2340: 30 s, because the host waits for the process to EXIT (Shino's host proof), and
-        # under disk pressure teardown after os._exit took up to ~10 s on top of the 6 s watchdog.
-        # Every copy declares the session budget its host enforces, so the copies cannot drift
-        # apart: 30 s on Claude; on Codex 30 s for start and 3 s for end, the cap Codex applies to
-        # SessionEnd whatever is declared (codex-cli 0.157.1, RECEIPT-shino.md).
+        # #2340: the host waits for the process to EXIT (Shino's host proofs, RECEIPT-shino.md).
+        # Every copy declares the budget its host honours, so the copies cannot drift apart:
+        # SessionStart 30 s everywhere (Claude Code honours it); SessionEnd 10 s on Claude Code
+        # (it ends the hook at ~10 s whatever is declared) and 3 s on Codex (codex-cli 0.157.1
+        # clamps SessionEnd to 3 s).
         for config, end_budget in ((companion / "hooks" / "codex-hooks.json", 3),
                                    (SCRIPT.parent / "codex-hooks.json", 3),
-                                   (SCRIPT.parent / "hooks.json", 30)):
+                                   (SCRIPT.parent / "hooks.json", 10)):
             declared = json.loads(config.read_text())
             for phase, budget in (("SessionStart", 30), ("SessionEnd", end_budget)):
                 self.assertEqual(

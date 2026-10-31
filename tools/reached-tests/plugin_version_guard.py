@@ -11,7 +11,7 @@ with `--release` only, the version of each changed release group one patch above
 it is already above it); always, every builtin extension's contribution digests in `extension.json`, and each package's
 canonical goldens under `core/protocols/tests/fixtures/canonical-goldens/` (#1459 item 16; the
 Rust cell `canonical_golden` stays the authority over those bytes). The source release file
-`extensions/releases/adoption-*.json` pins no version or digest, so it needs no rewrite. A
+`extensions/releases/adoption.json` pins no version or digest, so it needs no rewrite. A
 second run changes nothing."""
 import argparse
 import hashlib

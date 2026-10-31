@@ -15,7 +15,7 @@ After changing a skill or any other file of a builtin package, run
 contribution digests and regenerates the package's canonical goldens under
 `core/protocols/tests/fixtures/canonical-goldens/`; it leaves versions alone, because the version
 moves once, at release ([`docs/process/RELEASE.md`](../process/RELEASE.md)). A second run writes nothing. The source
-release file `extensions/releases/adoption-0.1.1.json` names no versions or digests, so it never
+release file `extensions/releases/adoption.json` names no versions or digests, so it never
 changes for a skill edit.
 
 ## How they fit together

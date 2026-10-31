@@ -668,11 +668,12 @@ pub(crate) fn slot_target(
             || (other.canonicalize().ok().is_some()
                 && other.canonicalize().ok() == worktree.canonicalize().ok())
     };
-    // #2317: every claim's worktree is `<lane>/<task>/wt`, so the leaf alone collides across a
-    // lane's claims; the task directory keys it. A worktree already recorded under its bare leaf
+    // #2317: every claim's worktree is `<lane>/<task>/wt`, so that leaf alone collides across a
+    // lane's claims; the task directory keys it. Any other leaf names its own directory as before. A worktree already recorded under its bare leaf
     // keeps that directory, so the upgrade rebuilds nothing.
-    let keyed = worktree
-        .parent()
+    let keyed = (leaf == "wt")
+        .then(|| worktree.parent())
+        .flatten()
         .and_then(Path::file_name)
         .and_then(|task| task.to_str())
         .map(|task| format!("{task}-{leaf}"))

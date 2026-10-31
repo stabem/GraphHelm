@@ -48,10 +48,13 @@ edit gate sees only those.
 4. Tests: when the plan's proof is `tests` or `both`, write the test first, see it fail on the
    parent, then fix. Run the `test-audit` gate on every new or changed test. When the proof is
    `journey`, do not add unit tests for what the journey observes; `journey-prove` (#381) proves it.
+   Run each new test by the runner's command from the repository root (`python -m unittest <path>`),
+   copying the folder's `sys.path.insert` when it imports a sibling (`keel/KEEL_EXEC.md`, Prove 6).
 5. Run the tests the change reaches, plus the repository's lints for touched code. List each
    command and its result in the PR body (passed, failed, skipped, unobserved, separately).
    The existing test files of every module you changed are reached tests: run them, not only
-   your new ones.
+   your new ones. Every changed `.py` also runs
+   `python -m unittest tools/reached-tests/test_no_console_window.py` (a spawn passes `NO_WINDOW`).
 6. Open the PR: summary, `Closes #N` (only issues you mean to close), the card, tests run, and
    the identity line `Session: <name> · Head: <sha8>` on every comment and commit body.
 

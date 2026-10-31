@@ -877,7 +877,7 @@
           "id": "skill/keel",
           "kind": "skill",
           "path": "skills/keel/SKILL.md",
-          "sha256": "sha256:a61bf8eb2fd1431208a904f9a4b97118635eaecf5fd1f8e10c02711bf909a937",
+          "sha256": "sha256:82f7851fbbe046ee0489b216c946233fc89c75b892db08e87f4d9a04039a334c",
           "effects": [
             "artifact.propose",
             "runtime.connect",
@@ -953,7 +953,7 @@
           "id": "skill/implement",
           "kind": "skill",
           "path": "skills/implement/SKILL.md",
-          "sha256": "sha256:8bf79be51ddb35961fac16952d38a01036d1abcf03e3e1f4bc7c6e26a716dc13",
+          "sha256": "sha256:de597bbc2dca58dc4b3d067022869d6023297aa7f93926e059d965cb6c2bbfa1",
           "effects": ["artifact.propose", "runtime.connect", "runtime.read"],
           "permissions": ["network.loopback", "package.read", "runtime.read"],
           "requires": {"capabilities": [], "observers": []},

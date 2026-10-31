@@ -70,7 +70,13 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
    promise depends on, and show that a proof turns red. Restore it and say what you broke.
 6. **Run the whole reached plan.** `tools/reached-tests/run_reached.py` on main plus the change,
    every step, never a hand-picked subset. Cite each step and its result in the pull request, and
-   leave the JSON report as the receipt the reviewer reuses (`KEEL_REVIEW.md` step 2).
+   leave the JSON report as the receipt the reviewer reuses (`KEEL_REVIEW.md` step 2). Two steps of
+   that plan are the ones authors miss, so run them even when you check by hand: every changed `.py`
+   reaches `python -m unittest tools/reached-tests/test_no_console_window.py` (a spawn passes
+   `creationflags=NO_WINDOW`, AGENTS.md "No console windows"), and every new test runs by the
+   runner's own command from the repository root, `python -m unittest <path>`, not `discover -s` or
+   pytest; a test that imports from its own folder copies the `sys.path.insert` the folder's other
+   tests use.
 7. **Assert what the user reads** (`keel.proof.reads_screen`, `keel.test.intent`). A journey
    over a screen checks the rendered text the promise is about: the amount with its cents, the
    exact date phrase under a fixed clock, the plural, the label, and the effect on the other

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 # The first instruction takes the hook's first timestamp, before any other import. With
-# GRAPHHELM_HOOK_FIRST_LINE set (a probe only), it is appended there as "<pid> <epoch seconds>", so
-# the time from spawn to this line can be told apart from the hook's own time.
+# GRAPHHELM_HOOK_FIRST_LINE set (a probe only), it goes to stderr as "graphhelm-probe-first <pid>
+# <epoch seconds>", so the time from spawn to this line can be told apart from the hook's own time.
+# #2270: stderr, never a file: a file write on a starved disk stalled and lost this mark.
 import time as _first_line_clock
 _FIRST_LINE_AT = _first_line_clock.time()
 import os as _first_line_os
@@ -112,13 +113,11 @@ if __name__ == "__main__" and _watched_phase in {"start", "end"}:
 
 if _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE"):
     try:
-        _marker = _first_line_os.open(_first_line_os.environ["GRAPHHELM_HOOK_FIRST_LINE"],
-                                      _first_line_os.O_WRONLY | _first_line_os.O_CREAT | _first_line_os.O_APPEND, 0o600)
-        _first_line_os.write(_marker, f"{_first_line_os.getpid()} {_FIRST_LINE_AT:.3f}\n".encode())
-        _first_line_os.close(_marker)
-    except OSError as _marker_error:
-        # Probe only: the run goes on, and the probe reads this line instead of the marker.
-        _first_line_sys.stderr.write(f"graphhelm-probe: first-line marker not written ({type(_marker_error).__name__})\n")
+        _first_line_sys.stderr.write(f"graphhelm-probe-first {_first_line_os.getpid()} {_FIRST_LINE_AT:.3f}" + chr(10))
+        _first_line_sys.stderr.flush()
+    except (OSError, ValueError):
+        # keel-allow: keel.rel.no_swallow stderr itself failed, so there is nowhere left to report this probe-only mark, and the hook must not wait until #2344
+        pass
 
 import argparse
 import codecs

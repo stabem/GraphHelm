@@ -35,18 +35,33 @@ class _AnswerGuard:
         return getattr(self._inner, name)
 
 
+def _watchdog_quote(text: str) -> str:
+    """A JSON string with no import: the watchdog must not wait on an import lock the stalled main
+    thread may hold (Shino's probe on eeb00d95)."""
+    out = ['"']
+    for char in text:
+        if char in '"\\':
+            out.append("\\" + char)
+        elif ord(char) < 0x20 or ord(char) > 0x7E:
+            out.append("\\u%04x" % ord(char) if ord(char) <= 0xFFFF else char)
+        else:
+            out.append(char)
+    out.append('"')
+    return "".join(out)
+
+
 def _watchdog_answer() -> str:
     argv = _first_line_sys.argv
     host = argv[argv.index("--host") + 1] if "--host" in argv[:-1] else ""
     output_format = argv[argv.index("--format") + 1] if "--format" in argv[:-1] else ("native" if host in {"claude", "codex"} else "portable")
-    keel = globals().get("KEEL_CONTEXT", "")
+    context = _watchdog_quote(globals().get("KEEL_CONTEXT", "") + "\nGraphHelm briefing UNOBSERVED.")
     if _watched_phase == "start" and output_format != "portable":
-        return '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":' + __import__("json").dumps(keel + "\nGraphHelm briefing UNOBSERVED.") + "}}\n"
+        return '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":' + context + "}}\n"
     if output_format == "portable":
-        report = {"format": "graphhelm-portable-v1", "phase": _watched_phase, "host": host, "activation": "unobserved"}
+        report = '{"format":"graphhelm-portable-v1","phase":' + _watchdog_quote(_watched_phase) + ',"host":' + _watchdog_quote(host)
         if _watched_phase == "start":
-            report.update({"sessionId": None, "context": keel + "\nGraphHelm briefing UNOBSERVED."})
-        return __import__("json").dumps(report, separators=(",", ":")) + "\n"
+            report += ',"sessionId":null,"context":' + context
+        return report + ',"activation":"unobserved"}\n'
     return ""
 
 
@@ -1169,9 +1184,11 @@ def main() -> int:
 
 if __name__ == "__main__":
     code = main()
-    if _answered_without_state:
-        # #2334: the answer is out; a state write still stuck in the file system must not hold the
-        # process (interpreter shutdown can wait on it). Flush what was said and leave now.
+    if _answered_without_state or _watched_phase in {"start", "end"}:
+        # #2334/#2340: the answer is out. Start and end never go through interpreter shutdown: it
+        # can wait on a stuck file system, and once it starts the watchdog thread can no longer run
+        # (Shino's probe on eeb00d95: the answer written at 2.3 s, the process alive until 9.8 s).
+        # Flush what was said and leave now.
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(code)

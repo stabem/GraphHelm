@@ -1279,6 +1279,25 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(json.loads(portable.stdout)["activation"], "unobserved")
         self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
 
+    def test_start_and_end_leave_without_a_slow_interpreter_shutdown(self):
+        # #2340, Shino's probe on eeb00d95: the answer was written at 2.3 s and the process stayed
+        # until 9.8 s; once shutdown starts, the watchdog thread cannot run. Here shutdown hangs (an
+        # atexit handler waits 120 s); start and end still close their pipes within the bound.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        hang = Path(self.temp.name) / "hang-shutdown"
+        hang.mkdir()
+        (hang / "sitecustomize.py").write_text("\n".join([
+            "import atexit, threading",
+            "atexit.register(lambda: threading.Event().wait(120))",
+            "",
+        ]), encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
+        start = self.run_hook_timed("start")
+        self.assertIn("GraphHelm FRESH", json.loads(start.stdout)["hookSpecificOutput"]["additionalContext"])
+        end = self.run_hook_timed("end")
+        self.assertEqual((end.returncode, end.stderr), (0, ""))
+        self.assertEqual(len([r for r in RuntimeHandler.requests if r[0] == "POST"]), 1)
+
     def test_end_leaves_while_its_lock_release_hangs(self):
         # #2340, Shino's probe on c98b7dd8: the unlock and close of the state lock stalled 25 s on
         # the way out. It is bounded too; the end still delivers and the process leaves in time.

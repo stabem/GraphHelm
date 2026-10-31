@@ -1003,27 +1003,29 @@ class SessionHookTests(unittest.TestCase):
         result = self.run_hook_timed("end")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("state write still pending", result.stderr)
-        self.assertEqual(len([r for r in RuntimeHandler.requests if r[0] == "POST"]), 1)
+        self.assertIn("end unobserved (_StateTimeout)", result.stderr)
+        # Records nothing for that session: the hook stops at the cut write, before its POST.
+        self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
 
-    def test_start_answers_with_its_briefing_while_its_state_write_hangs(self):
+    def test_start_answers_while_its_state_write_hangs(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         self.hang_state_writes()
         result = self.run_hook_timed("start")
         self.assertEqual(result.returncode, 0, result.stderr)
         context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("GraphHelm FRESH", context)
+        self.assertIn("GraphHelm briefing UNOBSERVED.", context)
         self.assertIn("state write still pending", result.stderr)
 
     def test_end_after_a_lost_state_write_counts_the_committed_key_as_delivered(self):
-        # #2334's named risk: the first end posted, but neither state write landed. The retry posts
-        # the same key with a new emittedAt; the Runtime answers 409, which is delivery, not failure.
+        # #2334's named risk: an end posted, but its delivered mark never landed (the state is gone).
+        # The retry posts the same key with a new emittedAt; the Runtime answers 409, which is
+        # delivery, not failure.
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         RuntimeHandler.conflict_ids = set()
-        hung = dict(self.env)
-        self.hang_state_writes()
         first = self.run_hook("end")
         self.assertEqual(first.returncode, 0, first.stderr)
-        self.env = hung
+        for state in Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json"):
+            state.unlink()
         second = self.run_hook("end")
         self.assertEqual((second.returncode, second.stderr), (0, ""))
         posts = [r for r in RuntimeHandler.requests if r[0] == "POST"]
@@ -1209,9 +1211,34 @@ class SessionHookTests(unittest.TestCase):
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
         for phase in ("end", "start"):
             with self.subTest(phase=phase):
-                result = self.run_hook(phase)
+                result = self.run_hook_timed(phase)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("still pending", result.stderr)
+
+    def test_start_and_end_answer_while_the_token_read_hangs(self):
+        # #2334, Shino's probe on d4a70fde: after a cut state write the hook went on to read the
+        # token file and stalled there. The token read is bounded like the state I/O.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        hang = Path(self.temp.name) / "hang-token-read"
+        hang.mkdir()
+        (hang / "sitecustomize.py").write_text("\n".join([
+            "import builtins, threading",
+            "_open = builtins.open",
+            f"_token = {str(self.token_file)!r}",
+            "def _hang(file, *args, **kwargs):",
+            "    if str(file) == _token:",
+            "        threading.Event().wait(120)",
+            "    return _open(file, *args, **kwargs)",
+            "builtins.open = _hang",
+            "",
+        ]), encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
+        for phase in ("end", "start"):
+            with self.subTest(phase=phase):
+                result = self.run_hook_timed(phase)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("state token still pending", result.stderr)
+                self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
 
     def test_runtime_origin_is_part_of_delivery_receipt_scope(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"

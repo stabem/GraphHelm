@@ -557,19 +557,24 @@ def _write_state(path: Path, value: dict, durable: bool = True) -> None:
 
 
 # #2334: under disk pressure the state write itself (mkstemp, write, replace), not only its fsync,
-# took over 6 s, past the host's hook budget. Each hook write gets this long; past it the hook
-# answers without it and exits at once (`_answered_without_state`), and the write may not land.
+# took over 6 s, past the host's hook budget. Each piece of hook file I/O (lock, read, write,
+# token) gets this long; past it the hook answers UNOBSERVED, records nothing more for that session
+# and exits at once (`_StateTimeout`, `_answered_without_state`); an abandoned write may not land.
 STATE_WRITE_BUDGET = 2.0
 _answered_without_state = False
 
 
-_PENDING = object()
+class _StateTimeout(BaseException):
+    """#2334: a piece of hook file I/O did not answer within STATE_WRITE_BUDGET. Raised past every
+    `except Exception` and OSError handler on purpose: the hook stops there, answers UNOBSERVED in
+    `main`, records nothing more for the session and exits at once. Going on into more file I/O
+    (the token, a second write) is what stalled again under load (Shino's probe on d4a70fde)."""
 
 
 def _bounded(what: str, call):
-    """Runs one piece of hook state I/O for at most STATE_WRITE_BUDGET. Its result, or `_PENDING`
-    when the file system has not answered: the hook then answers without it and exits at once. An
-    error raised in time is raised here."""
+    """Runs one piece of hook file I/O for at most STATE_WRITE_BUDGET and returns its result. When
+    the file system has not answered by then, raises `_StateTimeout`. An error raised in time is
+    raised here."""
     global _answered_without_state
     outcome: list = []
 
@@ -585,7 +590,7 @@ def _bounded(what: str, call):
     if not outcome:
         _answered_without_state = True
         print(f"graphhelm-session-hook: state {what} still pending; answering without it", file=sys.stderr)
-        return _PENDING
+        raise _StateTimeout(what)
     ok, value = outcome[0]
     if not ok:
         raise value
@@ -602,24 +607,26 @@ def _write_state_bounded(path: Path, value: dict, durable: bool = True) -> None:
 
 
 def _read_state_or_empty(path: Path, execution: str, session: str, host: str, origin: str) -> dict | None:
-    """#2331/#2334: the state as `_read_state` validates it, or None (empty) when the file system
-    does not answer in time or the file is unreadable: empty or half-written after a crash or a
-    power loss (a non-durable write, #2328), not JSON, or not this format. One stderr warning says
-    so; the hook carries on as for a missing file. A parseable state that fails validation (another
-    identity, a forged receipt, an injected briefing) still fails closed."""
+    """#2331: the state as `_read_state` validates it, or None (empty) when the file is unreadable:
+    empty or half-written after a crash or a power loss (a non-durable write, #2328), not JSON, or
+    not this format. One stderr warning says so; the hook carries on as for a missing file. A
+    parseable state that fails validation (another identity, a forged receipt, an injected
+    briefing) still fails closed. A read that does not answer in time raises `_StateTimeout`."""
     try:
-        state = _bounded("read", lambda: _read_state(path, execution, session, host, origin))
+        return _bounded("read", lambda: _read_state(path, execution, session, host, origin))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, _UnreadableState) as error:
         print(f"graphhelm-session-hook: hook state unreadable ({type(error).__name__}); treated as empty", file=sys.stderr)
         return None
-    return None if state is _PENDING else state
+
+
+def _token_bounded(path: str) -> str:
+    """#2334: the token read in start and end is file I/O too (it stalled after a cut write)."""
+    return _bounded("token", lambda: token_from_file(path))
 
 
 def _claim_lock_bounded(path: Path):
-    """`_claim_lock`, or None when the file system does not answer in time: the hook then goes on
-    without the lock (an overlapping hook can re-send the same idempotent signal)."""
-    lock = _bounded("lock", lambda: _claim_lock(path))
-    return None if lock is _PENDING else lock
+    """`_claim_lock`, bounded like every other piece of hook file I/O (#2334)."""
+    return _bounded("lock", lambda: _claim_lock(path))
 
 
 class _UnreadableState(ValueError):
@@ -772,7 +779,7 @@ def _record_started(bound: tuple, host: str, session: str, lane: str, state: dic
     try:
         try:
             reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal",
-                            token_from_file(token_file), "POST", {"signal": signal},
+                            _token_bounded(token_file), "POST", {"signal": signal},
                             {"X-GraphHelm-Actor": lane, "X-GraphHelm-Actor-Type": "agent",
                              "X-GraphHelm-Actor-Session": session, "Idempotency-Key": key}, timeout=2.0)
         except urllib.error.HTTPError as error:
@@ -813,7 +820,7 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
     freshness = "CACHED" if isinstance(digest, dict) else "FRESH"
     if not isinstance(digest, dict):
         try:
-            reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/briefing", token_from_file(token_file), "GET", timeout=BRIEFING_TIMEOUT)
+            reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/briefing", _token_bounded(token_file), "GET", timeout=BRIEFING_TIMEOUT)
             data = reply.get("data")
             if not isinstance(data, dict):
                 raise ValueError("invalid briefing")
@@ -932,7 +939,7 @@ def _end_impl(payload: dict, host: str, bound: tuple | None = None, lane: str | 
     if not isinstance(signal, dict) or not isinstance(signal_id, str):
         raise ValueError("invalid delivery state")
     try:
-        reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", token_from_file(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=5.0)
+        reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal", _token_bounded(token_file), "POST", {"signal": signal}, {"X-GraphHelm-Actor": signal["source"]["id"], "X-GraphHelm-Actor-Type": "agent", "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id}, timeout=5.0)
     except urllib.error.HTTPError as error:
         # #2334: the key is the same on every retry; a 409 means an earlier end committed it and its
         # state write did not land (abandoned past STATE_WRITE_BUDGET), as `_record_started` reads it.
@@ -1059,7 +1066,9 @@ def main() -> int:
                 delivered = end(payload, host, output_format)
                 if output_format == "portable":
                     print(json.dumps({"format": "graphhelm-portable-v1", "phase": "end", "host": host, "sessionId": _session(payload), "delivery": "acknowledged" if delivered else "unobserved", "activation": "unobserved"}, separators=(",", ":")))
-    except (OSError, ValueError, KeyError, RecursionError) as error:
+    except (OSError, ValueError, KeyError, RecursionError, _StateTimeout) as error:
+        # #2334: `_StateTimeout` lands here too: the hook answers UNOBSERVED now, records nothing
+        # more for the session, and `__main__` exits at once.
         print(f"graphhelm-hook: {args.phase} unobserved ({type(error).__name__})", file=sys.stderr)
         if args.phase == "inspect":
             print(json.dumps({"phase": "inspect", "configuration": "invalid", "activation": "unobserved"}))

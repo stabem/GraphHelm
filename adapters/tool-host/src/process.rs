@@ -1647,11 +1647,10 @@ pub fn run_in_workspace(
                     // invents a fault nobody committed, while crediting the cancel names an act
                     // that certainly happened. Ordering them would take a second clock, so the
                     // record takes the side that cannot fabricate.
-                    timed_out = expired && !cancelled;
                     // And the cause is CARRIED, not merely withheld (Codex, #609). Clearing
                     // `timed_out` takes the false cause out of the record; without this the
                     // disposition then falls through to the exit code, which a killed child has.
-                    was_cancelled = cancelled;
+                    (timed_out, was_cancelled) = stop_cause(expired, cancelled);
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -1742,8 +1741,23 @@ fn elision_marker(elided: u64) -> Vec<u8> {
     .into_bytes()
 }
 
+/// Why a poll that saw the deadline, a cancel, or both stopped the child: `(timed_out, cancelled)`.
+/// Cancellation wins when both are seen at the same poll (#609); see the comment at its caller.
+fn stop_cause(expired: bool, cancelled: bool) -> (bool, bool) {
+    (expired && !cancelled, cancelled)
+}
+
 #[cfg(test)]
 mod tests {
+    /// #2297: the case the old offset sweep tried to hit with clock timing, now stated directly:
+    /// a cancel and the deadline seen at the same poll record a cancellation and no timeout.
+    #[test]
+    fn a_cancel_seen_with_the_deadline_is_recorded_as_a_cancel_not_a_timeout() {
+        assert_eq!(super::stop_cause(true, true), (false, true));
+        assert_eq!(super::stop_cause(true, false), (true, false));
+        assert_eq!(super::stop_cause(false, true), (false, true));
+    }
+
     use super::{
         CancelSignal, CapturedProcess, DrainedReaders, HostError, LIVE_READER_THREADS,
         MINIMUM_DRAIN, ReaderHandle, drain_deadline, drain_readers, reject_lost_capture,

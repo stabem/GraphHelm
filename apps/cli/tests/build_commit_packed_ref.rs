@@ -4,7 +4,6 @@
 //! Cost: two small Cargo builds in a temp dir; no network.
 
 use std::path::Path;
-use std::process::Command;
 
 fn run(dir: &Path, program: &str, args: &[&str]) -> String {
     // #2281: a git hook (e.g. pre-push running this suite) exports GIT_DIR and GIT_INDEX_FILE,
@@ -12,7 +11,7 @@ fn run(dir: &Path, program: &str, args: &[&str]) -> String {
     // `build.rs`) at another repository or run the user's hooks, so the scratch repo sees none.
     let empty_config = dir.with_extension("gitconfig");
     std::fs::write(&empty_config, "").unwrap();
-    let out = Command::new(program)
+    let out = graphhelm_process::command(program)
         .args(args)
         .current_dir(dir)
         .env_remove("GIT_DIR")

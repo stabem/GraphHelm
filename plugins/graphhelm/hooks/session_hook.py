@@ -104,6 +104,12 @@ def _watchdog() -> None:
 if __name__ == "__main__" and _watched_phase in {"start", "end"}:
     _first_line_sys.stdout = _AnswerGuard(_first_line_sys.stdout)
     _first_line_threading.Thread(target=_watchdog, name="graphhelm-hook-watchdog", daemon=True).start()
+    # #2340, Shino's probe on 740d9778 (pid 94204): the Python watchdog thread did not run for 24.8 s
+    # inside an end, so something held it off. faulthandler's timer is C code that needs no
+    # Python lock: a short while after the watchdog's moment, if the process is still here, it
+    # writes every thread's stack to stderr (where it hung) and exits with status 1.
+    import faulthandler as _first_line_faulthandler
+    _first_line_faulthandler.dump_traceback_later(HOOK_WATCHDOG + 1.5, exit=True)
 
 if _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE"):
     try:

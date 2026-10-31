@@ -1036,6 +1036,32 @@ class SessionHookTests(unittest.TestCase):
         self.assertLessEqual(float(at), float(exit_at))
         self.assertLessEqual(float(exit_at), answered)
 
+    def test_a_hook_leaves_even_when_its_python_watchdog_cannot_run(self):
+        # #2340, Shino's probe on 740d9778: the watchdog thread did not run for 24.8 s. Here it
+        # never starts (its thread is swallowed) and the hook hangs after its first line; the C
+        # level backstop still ends the process 1.5 s after the watchdog's moment and says where.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        hang = Path(self.temp.name) / "no-watchdog"
+        hang.mkdir()
+        (hang / "sitecustomize.py").write_text("\n".join([
+            "import hashlib, threading",
+            "_start = threading.Thread.start",
+            "def _start_unless_watchdog(self):",
+            "    if self.name != 'graphhelm-hook-watchdog':",
+            "        return _start(self)",
+            "threading.Thread.start = _start_unless_watchdog",
+            "hashlib.sha256 = lambda *a, **k: threading.Event().wait(120)",
+            "",
+        ]), encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
+        started = time.monotonic()
+        result = self.run_hook("end")
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("Timeout (0:00:07.500000)!", result.stderr)
+        self.assertIn("in state_path", result.stderr)  # it names where the hook hung
+        self.assertLess(elapsed, 9.0, f"left {elapsed:.2f} s after spawn")
+
     def test_exit_marker_names_the_watchdog_path(self):
         marker = Path(self.temp.name) / "first-line.txt"
         self.env["GRAPHHELM_HOOK_FIRST_LINE"] = str(marker)

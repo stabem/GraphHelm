@@ -467,8 +467,9 @@ Expected: one row, `demo`, with its attention verdict — the same answer the St
 **One registration for every project (Claude Code, user scope).** `graphhelm setup --resolve
 home/.claude.json=register-mcp` writes `graphhelm mcp --discover --actor agent-chat` into
 `~/.claude.json`. The MCP process uses its active project directory (or `--project <path>` when
-the host does not launch it there) to find that project's Runtime. `serve --project <path>` writes
-an owner-only record under `~/.graphhelm/runtime/projects/<project-id>/` (or
+the host does not launch it there) to find that project's Runtime. Start that Runtime with the `serve`
+command from section 3, which passes `--project`: without it no record is written and discovery finds nothing.
+`serve --project <path>` writes an owner-only record under `~/.graphhelm/runtime/projects/<project-id>/` (or
 `GRAPHHELM_RUNTIME_DIR`) with the actual loopback URL, token-file path, and random instance id.
 Before reading the token file, MCP checks that `/health` reports both the same project identity
 and the same live instance. Multiple projects can therefore use different ports at once. An

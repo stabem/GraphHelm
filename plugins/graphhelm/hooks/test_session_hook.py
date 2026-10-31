@@ -1172,6 +1172,21 @@ class SessionHookTests(unittest.TestCase):
         self.assertNotIn("INJECTED", result.stdout)
         self.assertEqual(len(RuntimeHandler.requests), 1)
 
+    def test_end_does_not_wait_on_a_stalled_fsync(self):
+        # #2295: under disk pressure the state file's fsync alone outlasted the 10 s hook budget.
+        # Here every fsync stalls for 60 s; `end` must still deliver and finish far inside it.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        stalled = "import os, runpy, sys, time; os.fsync = lambda fd: time.sleep(60); sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')"
+        result = subprocess.run(
+            [sys.executable, "-c", stalled, str(SCRIPT), "end", "--host", "claude"],
+            input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
+            text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW
+        )
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(len([item for item in RuntimeHandler.requests if item[0] == "POST"]), 1)
+        state = json.loads(next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")).read_text())
+        self.assertIs(state["delivery"]["delivered"], True)
+
     def test_killed_end_hook_releases_lock_and_retries_same_signal(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         RuntimeHandler.post_started = threading.Event()

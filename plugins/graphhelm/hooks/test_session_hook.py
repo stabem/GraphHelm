@@ -1172,11 +1172,13 @@ class SessionHookTests(unittest.TestCase):
     def test_end_accepts_slow_matching_ack_without_extra_posts(self):
         # The previous 2.5-second socket timeout lost a durable acknowledgement.
         # Release a real HTTP response after that boundary; assert delivery, not timing.
+        # #2340: on Claude. Codex clamps SessionEnd to 3 s, so a 3 s ack can never land there; a
+        # Codex end gives up 2 s after its first line (watchdog test).
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         RuntimeHandler.post_started = threading.Event()
         RuntimeHandler.post_release = threading.Event()
         process = subprocess.Popen(
-            [sys.executable, str(SCRIPT), "end", "--host", "codex"],
+            [sys.executable, str(SCRIPT), "end", "--host", "claude"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, env=self.env, creationflags=NO_WINDOW
         )
@@ -1197,7 +1199,7 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual((process.returncode, stdout, stderr), (0, "", ""))
         state = next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json"))
         self.assertTrue(json.loads(state.read_text())["delivery"]["delivered"])
-        self.assertEqual(self.run_hook("end", host="codex").stderr, "")
+        self.assertEqual(self.run_hook("end", host="claude").stderr, "")
         self.assertEqual(len([item for item in RuntimeHandler.requests if item[0] == "POST"]), 1)
 
     def test_mismatched_ack_is_unobserved_and_remains_retryable(self):
@@ -1288,6 +1290,15 @@ class SessionHookTests(unittest.TestCase):
             text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
         self.assertEqual(json.loads(portable.stdout)["activation"], "unobserved")
         self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
+        # Codex clamps SessionEnd to 3 s: a Codex end gives up 2 s after its first line.
+        started = time.monotonic()
+        codex = subprocess.run(
+            [sys.executable, str(SCRIPT), "end", "--host", "codex"],
+            input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
+            text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
+        elapsed = time.monotonic() - started
+        self.assertIn("end unobserved (no answer 2 s after the first line)", codex.stderr)
+        self.assertLess(elapsed, 3.0, f"codex end left {elapsed:.2f} s after spawn")
 
     def test_start_and_end_leave_without_a_slow_interpreter_shutdown(self):
         # #2340, Shino's probe on eeb00d95: the answer was written at 2.3 s and the process stayed

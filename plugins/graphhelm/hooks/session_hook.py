@@ -15,8 +15,11 @@ import threading as _first_line_threading
 # after their first line under disk pressure (imports, stdin, team files, the waiter: file I/O the
 # per-step bounds do not cover). One watchdog bounds all of it: HOOK_WATCHDOG seconds after this
 # line, a start or end that has not answered yet answers UNOBSERVED, says so, and leaves at once.
-HOOK_WATCHDOG = 6.0
 _watched_phase = _first_line_sys.argv[1] if len(_first_line_sys.argv) > 1 else ""
+_watched_host = _first_line_sys.argv[_first_line_sys.argv.index("--host") + 1] if "--host" in _first_line_sys.argv[:-1] else ""
+# Codex clamps every SessionEnd hook to 3 s whatever it declares (Shino, codex-cli 0.157.1:
+# "clamping SessionEnd hook timeout to 3s"), so a Codex end answers within 2 s of its first line.
+HOOK_WATCHDOG = 2.0 if (_watched_host, _watched_phase) == ("codex", "end") else 6.0
 _answer_started = False
 
 
@@ -70,7 +73,7 @@ def _watchdog() -> None:
     try:
         if not _answer_started:
             _first_line_sys.stdout._inner.write(_watchdog_answer())
-        _first_line_sys.stderr.write(f"graphhelm-hook: {_watched_phase} unobserved (no answer {HOOK_WATCHDOG:.0f} s after the first line)\n")
+        _first_line_sys.stderr.write(f"graphhelm-hook: {_watched_phase} unobserved (no answer {HOOK_WATCHDOG:g} s after the first line)\n")
         _first_line_sys.stdout.flush()
         _first_line_sys.stderr.flush()
     finally:

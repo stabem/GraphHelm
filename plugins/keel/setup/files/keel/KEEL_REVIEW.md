@@ -29,6 +29,7 @@ expected verdict, you are not blind: say so and do not review.
    evidence; rerun it with a new `--output` (#2030).
 3. **List only the values in `KEEL.md` that do not hold** on the diff, plus every value the
    card's risk row names, whether it holds or not. A value marked `to build` is checked by reading.
+   A rule inside a loop goes before every early exit; name the inputs an exit above it skips.
 4. **Check every exception** the change adds: is the reason true, and does it expire? Refuse one
    that excuses a value instead of a constraint.
 5. **Measure any promised gain live**, before and after, under the same condition, enough runs to

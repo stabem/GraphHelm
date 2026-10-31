@@ -144,6 +144,21 @@ class Reach(unittest.TestCase):
         self.assertEqual(tools, [expected])
         self.assertEqual(other, [])
 
+    def test_a_python_file_under_studio_still_selects_the_python_guard(self):
+        """#2274: the Studio branch of reach() ends in `continue`; a per-path rule placed after it
+        never saw `apps/studio/**/*.py`. Cost: selector fixture only, milliseconds."""
+        observer = "tools/reached-tests/test_no_console_window.py"
+        expected = "python -m unittest tools/reached-tests/test_no_console_window.py"
+        with tempfile.TemporaryDirectory() as repo:
+            Path(repo, observer).parent.mkdir(parents=True)
+            Path(repo, observer).write_text("import unittest\n", encoding="utf-8")
+            for changed in ("apps/studio/x.py", "apps/studio/tools/launch.py"):
+                with self.subTest(changed=changed):
+                    _, _, studio, tools, _, _ = reach(changed, repo=repo)
+                    self.assertIn(expected, tools)
+                    if changed == "apps/studio/x.py":
+                        self.assertEqual(studio, [changed])
+
     def test_no_window_observer_paths_select_one_fixed_powershell_step(self):
         observer = "tools/no-window/test_observe.ps1"
         expected = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",

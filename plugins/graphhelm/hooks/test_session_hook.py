@@ -642,8 +642,10 @@ class SessionHookTests(unittest.TestCase):
         )
         # Preserve the full host budgets: a smaller declaration can kill the command
         # before its bounded HTTP acknowledgement, even when the script is unchanged.
+        # #2340: 30 s, because the host waits for the process to EXIT (Shino's host proof), and
+        # under disk pressure teardown after os._exit took up to ~10 s on top of the 6 s watchdog.
         codex_hooks = json.loads((companion / "hooks" / "codex-hooks.json").read_text())
-        for phase, budget in (("SessionStart", 10), ("SessionEnd", 10)):
+        for phase, budget in (("SessionStart", 30), ("SessionEnd", 30)):
             self.assertEqual(
                 [handler["timeout"] for matcher in codex_hooks["hooks"][phase]
                  for handler in matcher["hooks"]],
@@ -998,10 +1000,10 @@ class SessionHookTests(unittest.TestCase):
         ]), encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
 
-    # #2340 (Tsunade, verbatim): "From its first line, the hook answers within 10 s under disk
-    # pressure. Time between spawn and the first line is measured and reported separately as an
-    # environment limit, not asserted." These deterministic hangs run on an idle disk, so the bound
-    # here is tighter and taken from spawn: the answer within 7 s of it.
+    # #2340 bar (Tsunade, after Shino's host proof): "the hook's process exits within its declared
+    # timeout from its first line" (30 s in hooks.json); spawn to first line is reported apart as
+    # an environment limit. These deterministic hangs run on an idle disk, so the bound here is far
+    # tighter and taken from spawn: the process done within 7 s of it.
     SPAWN_TO_ANSWER = 7.0
 
     def test_first_line_marker_is_taken_before_the_hook_does_anything(self):

@@ -469,6 +469,8 @@ home/.claude.json=register-mcp` writes `graphhelm mcp --discover --actor agent-c
 `~/.claude.json`. The MCP process uses its active project directory (or `--project <path>` when
 the host does not launch it there) to find that project's Runtime. Start that Runtime with the `serve`
 command from section 3, which passes `--project`: without it no record is written and discovery finds nothing.
+Until that Runtime is running, `graphhelm mcp --discover` lists no tools. An empty list is expected, not broken: the
+tools appear once the Runtime from section 3 is running, and the server then tells the host to list them again.
 `serve --project <path>` writes an owner-only record under `~/.graphhelm/runtime/projects/<project-id>/` (or
 `GRAPHHELM_RUNTIME_DIR`) with the actual loopback URL, token-file path, and random instance id.
 Before reading the token file, MCP checks that `/health` reports both the same project identity

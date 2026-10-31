@@ -43,6 +43,8 @@ import { basename, dirname, isAbsolute, join, resolve, toNamespacedPath } from "
 
 import type { Plugin } from "vite";
 
+import { STUDIO_OPEN_DEFAULT_PORT } from "./src/login/studio-open.ts";
+
 const SESSION_PATH = "/__studio/session";
 
 function tokenPath(env: Record<string, string>): string | null {
@@ -262,7 +264,7 @@ export function devSession(env: Record<string, string>): Plugin {
       server.httpServer?.once("listening", () => {
         if (provided) return;
         const address = server.httpServer?.address();
-        const port = typeof address === "object" && address !== null ? address.port : 5185;
+        const port = typeof address === "object" && address !== null ? address.port : STUDIO_OPEN_DEFAULT_PORT;
         server.config.logger.info(`  Studio login: http://127.0.0.1:${port}/?session=${nonce}`);
       });
       // Held in memory only: a restarted Studio serves its first project until each other project

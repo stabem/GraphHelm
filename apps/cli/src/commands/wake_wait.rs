@@ -629,7 +629,16 @@ fn wait_validated(
         Ok(Startup::Live) => {}
         startup => {
             drop(listener);
-            let _ = std::fs::remove_file(&path);
+            // A rendezvous already gone is the goal; any other failure is surfaced on stderr. It
+            // never replaces the startup answer: a delivered ring or a refusal is still the result.
+            if let Err(error) = std::fs::remove_file(&path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                eprintln!(
+                    "wake-wait: the rendezvous {} could not be removed: {error}",
+                    path.display()
+                );
+            }
             return startup.map(|_| WaitEnd::Rung);
         }
     }
@@ -1044,7 +1053,7 @@ mod tests {
             let _ = sender.send(super::wait_validated(
                 &waiter_id,
                 Instant::now() + Duration::from_secs(1),
-                || Ok(()),
+                || Ok(super::Startup::Live),
             ));
         });
 

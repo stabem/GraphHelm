@@ -7520,7 +7520,7 @@ fn a_real_executor_start_answers_before_its_drive_ends() {
                 "id": route_id, "provider": "anthropic", "transport": "direct_api",
                 "authentication": "api_key", "billingMode": "per_token", "baseUrl": base_url,
                 "model": "claude-sonnet-5", "credentialRef": "cred_silent",
-                "profiles": ["critical_reasoning"], "enabled": true, "timeoutSeconds": 2
+                "profiles": ["critical_reasoning"], "enabled": true, "timeoutSeconds": 15
             }]
         }),
     );
@@ -7570,8 +7570,14 @@ fn a_real_executor_start_answers_before_its_drive_ends() {
     let status_url = format!("{base}/v1/executions/{execution}");
     let status = || json_body(&raw_request(&status_url, Some(&token)).unwrap());
 
-    let reply = post_request(&url, &token, &headers, &body, scaled(Duration::from_secs(120)))
-        .expect("/start answered");
+    let reply = post_request(
+        &url,
+        &token,
+        &headers,
+        &body,
+        scaled(Duration::from_secs(120)),
+    )
+    .expect("/start answered");
     let at_reply = status();
     assert_eq!(reply.status, 200, "{}", reply.body);
     let replied = json_body(&reply);
@@ -7579,13 +7585,26 @@ fn a_real_executor_start_answers_before_its_drive_ends() {
         replied["data"]["status"], "running",
         "/start answered with the started run, not its end: {replied}"
     );
+    // The silent provider holds step_one for its 15 s route timeout. A reply that waited for the
+    // drive would find step_one already blocked; one that did not finds it not yet blocked, and
+    // this status GET answering at all is the other request served while the drive runs.
+    assert_ne!(
+        at_reply["data"]["nodeStates"]["step_one"], "blocked",
+        "/start answered only after the drive ended: {at_reply}"
+    );
     assert_eq!(
         at_reply["data"]["status"], "running",
         "the drive was still going when /start answered: {at_reply}"
     );
 
-    let retry = post_request(&url, &token, &headers, &body, scaled(Duration::from_secs(30)))
-        .expect("the same-key retry answered");
+    let retry = post_request(
+        &url,
+        &token,
+        &headers,
+        &body,
+        scaled(Duration::from_secs(30)),
+    )
+    .expect("the same-key retry answered");
     assert_eq!(retry.status, 200, "{}", retry.body);
     assert_eq!(
         json_body(&retry)["data"]["executionId"],
@@ -7596,7 +7615,9 @@ fn a_real_executor_start_answers_before_its_drive_ends() {
     let deadline = Instant::now() + scaled(Duration::from_secs(180));
     let ended = loop {
         let now = status();
-        if now["data"]["status"] != "running" {
+        // The drive has ended when step_one is blocked on the silent provider; the run itself
+        // stays `running`, waiting for its owner.
+        if now["data"]["nodeStates"]["step_one"] == "blocked" {
             break now;
         }
         assert!(
@@ -7605,8 +7626,16 @@ fn a_real_executor_start_answers_before_its_drive_ends() {
         );
         std::thread::sleep(Duration::from_millis(200));
     };
-    assert!(
-        ended["data"]["status"].is_string(),
+    assert_eq!(
+        ended["data"]["status"], "running",
         "the drive's end reads back through status: {ended}"
+    );
+    // The drive really ran after the reply: step_one left `ready` (the loop above waited for
+    // `blocked`), and the run did not stop with nothing dispatched.
+    assert!(
+        !ended["data"]["attentionReasons"]
+            .as_array()
+            .is_some_and(|reasons| reasons.iter().any(|r| r["kind"] == "wedged_quiescence")),
+        "the detached drive stopped with nothing dispatched: {ended}"
     );
 }

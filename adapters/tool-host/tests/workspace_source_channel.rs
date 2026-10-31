@@ -11,7 +11,9 @@
 
 use std::path::Path;
 
-use graphhelm_runtime::ports::{BoundedSourceSearch, SourceSearchBounds, SourceSearchError};
+use graphhelm_runtime::ports::{
+    BoundedSourceSearch, SourceIndexBounds, SourceSearchBounds, SourceSearchError,
+};
 use graphhelm_tool_host::source_channel::WorkspaceSourceChannel;
 
 fn bounds(
@@ -26,6 +28,17 @@ fn bounds(
         max_results,
         max_terms: 64,
         max_term_bytes: 64 * 256,
+    }
+}
+
+/// #2319: the channel reads files when it BUILDS its index, so the read ceilings these cells pin
+/// now apply to that build ([`SourceIndexBounds`]): the same scenarios, the same refusal, never a
+/// truncated or partial index. A search afterwards reads only what changed.
+fn build_ceiling(max_files_indexed: usize, max_bytes_indexed: u64) -> SourceIndexBounds {
+    SourceIndexBounds {
+        max_entries_visited: 100_000,
+        max_files_indexed,
+        max_bytes_indexed,
     }
 }
 
@@ -235,10 +248,12 @@ fn an_uppercased_excluded_prefix_is_still_excluded() {
 #[test]
 fn exceeding_the_file_bound_refuses_rather_than_truncating() {
     let dir = workspace();
-    let channel = WorkspaceSourceChannel::open(dir.path()).unwrap();
+    let channel = WorkspaceSourceChannel::open(dir.path())
+        .unwrap()
+        .with_index_bounds(build_ceiling(2, 64 * 1024 * 1024));
 
     let refused = channel
-        .search(&["verdict".to_owned()], &bounds(2, 64 * 1024 * 1024, 10))
+        .search(&["verdict".to_owned()], &generous())
         .expect_err("a workspace beyond the file bound was searched anyway");
 
     assert_eq!(refused, SourceSearchError::BoundExceeded);
@@ -249,10 +264,12 @@ fn exceeding_the_file_bound_refuses_rather_than_truncating() {
 #[test]
 fn exceeding_the_byte_bound_refuses_rather_than_truncating() {
     let dir = workspace();
-    let channel = WorkspaceSourceChannel::open(dir.path()).unwrap();
+    let channel = WorkspaceSourceChannel::open(dir.path())
+        .unwrap()
+        .with_index_bounds(build_ceiling(10_000, 16));
 
     let refused = channel
-        .search(&["verdict".to_owned()], &bounds(10_000, 16, 10))
+        .search(&["verdict".to_owned()], &generous())
         .expect_err("a workspace beyond the byte bound was searched anyway");
 
     assert_eq!(refused, SourceSearchError::BoundExceeded);
@@ -433,10 +450,12 @@ fn exceeding_the_traversal_bound_refuses_even_when_nothing_is_read() {
 #[test]
 fn the_byte_ceiling_is_measured_against_the_bytes_that_arrived() {
     let dir = workspace();
-    let channel = WorkspaceSourceChannel::open(dir.path()).unwrap();
+    let channel = WorkspaceSourceChannel::open(dir.path())
+        .unwrap()
+        .with_index_bounds(build_ceiling(10_000, 8));
 
     let refused = channel
-        .search(&["verdict".to_owned()], &bounds(10_000, 8, 10))
+        .search(&["verdict".to_owned()], &generous())
         .expect_err("a search past the byte ceiling completed");
 
     assert_eq!(refused, SourceSearchError::BoundExceeded);
@@ -568,10 +587,12 @@ fn a_file_exactly_at_the_byte_ceiling_refuses_without_a_sentinel_read() {
 
     // Budget == file size: filled exactly -> refuse.
     let dir = make(body);
-    let channel = WorkspaceSourceChannel::open(dir.path()).unwrap();
+    let channel = WorkspaceSourceChannel::open(dir.path())
+        .unwrap()
+        .with_index_bounds(build_ceiling(10_000, n));
     assert_eq!(
         channel
-            .search(&["verdict".to_owned()], &bounds(10_000, n, 10))
+            .search(&["verdict".to_owned()], &generous())
             .unwrap_err(),
         SourceSearchError::BoundExceeded,
         "a file filling the byte budget exactly must refuse, not read a sentinel over it"
@@ -579,9 +600,11 @@ fn a_file_exactly_at_the_byte_ceiling_refuses_without_a_sentinel_read() {
 
     // Budget == file size + 1: fits with room -> served.
     let dir = make(body);
-    let channel = WorkspaceSourceChannel::open(dir.path()).unwrap();
+    let channel = WorkspaceSourceChannel::open(dir.path())
+        .unwrap()
+        .with_index_bounds(build_ceiling(10_000, n + 1));
     let hits = channel
-        .search(&["verdict".to_owned()], &bounds(10_000, n + 1, 10))
+        .search(&["verdict".to_owned()], &generous())
         .expect("a file one byte under the budget is served");
     assert_eq!(hits, vec!["only.rs".to_owned()]);
 }

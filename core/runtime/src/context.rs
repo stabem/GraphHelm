@@ -188,6 +188,15 @@ pub const SEARCH_BOUNDS: SourceSearchBounds = SourceSearchBounds {
     max_term_bytes: 1024,
 };
 
+/// What the workspace channel may spend BUILDING its source index once (#2319), declared beside
+/// [`SEARCH_BOUNDS`]. Sized for a workspace well past ten times this repository's sources (20,640
+/// files, 354 MB measured by #2304); past it the build refuses and keeps nothing.
+pub const INDEX_BUILD_BOUNDS: crate::ports::SourceIndexBounds = crate::ports::SourceIndexBounds {
+    max_entries_visited: 500_000,
+    max_files_indexed: 200_000,
+    max_bytes_indexed: 2 * 1024 * 1024 * 1024,
+};
+
 /// Derive query terms from a node objective — `objective-terms/v1`.
 ///
 /// Lowercase; split on every non-alphanumeric character; drop terms shorter than

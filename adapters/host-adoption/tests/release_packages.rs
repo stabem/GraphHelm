@@ -6,7 +6,7 @@
 #[test]
 fn the_source_release_file_pins_no_digest_and_the_loader_derives_the_current_one() {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../extensions/releases/adoption-0.1.1.json");
+        .join("../../extensions/releases/adoption.json");
     let release: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
     assert!(
@@ -44,7 +44,7 @@ fn the_source_release_file_pins_no_digest_and_the_loader_derives_the_current_one
 #[test]
 fn two_package_edits_do_not_collide_in_the_release_file() {
     let release = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../extensions/releases/adoption-0.1.1.json");
+        .join("../../extensions/releases/adoption.json");
     let text = std::fs::read_to_string(&release).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let git = |args: &[&str]| {
@@ -108,6 +108,6 @@ fn two_package_edits_do_not_collide_in_the_release_file() {
     let (merged, stderr) = git(&["merge", "-q", "--no-edit", "pr-b"]);
     assert!(
         merged,
-        "two package edits collided in extensions/releases/adoption-0.1.1.json: {stderr}"
+        "two package edits collided in extensions/releases/adoption.json: {stderr}"
     );
 }

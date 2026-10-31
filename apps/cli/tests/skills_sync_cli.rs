@@ -70,7 +70,7 @@ fn names(report: &Value, key: &str) -> Vec<String> {
 fn bundled() -> Vec<String> {
     let root = repo();
     let release: Value = serde_json::from_str(
-        &std::fs::read_to_string(root.join("extensions/releases/adoption-0.1.1.json")).unwrap(),
+        &std::fs::read_to_string(root.join("extensions/releases/adoption.json")).unwrap(),
     )
     .unwrap();
     let mut names: Vec<String> = release["packages"]

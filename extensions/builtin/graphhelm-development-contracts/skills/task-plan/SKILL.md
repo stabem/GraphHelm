@@ -1,6 +1,6 @@
 ---
 name: task-plan
-description: "First step of a task after its issue: decide the paths, promise, proof kind (journey, tests, both, none), review count and skills for the change, and record them as one keel.plan record. Use before writing any code for an issue; when the plan is recorded, invoke the implement skill next."
+description: "First step of a task after its issue: decide the paths, promise, proof kind (journey, tests, both, none), review count and skills for the change, and record them as one keel.plan record. Use before code when the change touches a journey screen, a new public surface or a persistence/permissions/compatibility/security/external-effects row, or needs a design critic; a bounded code change plans inside the implement skill. When the plan is recorded, invoke the implement skill next."
 ---
 
 # Task plan

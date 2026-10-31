@@ -1,14 +1,30 @@
 ---
 name: implement
-description: "Write the change a task-plan decided, under Keel: stay inside the card's paths, gather only the context the promise needs and cite it, add only what the promise needs, and keep a failing-first test only for invariants. Use after task-plan, before journey-prove."
+description: "Plan and write a bounded change under Keel in one step: decide the paths, promise and proof kind, write the card, stay inside the card's paths, gather only the context the promise needs and cite it, add only what the promise needs, and keep a failing-first test only for invariants. Use for a bounded code change; a change that touches a journey screen or needs a design critic invokes task-plan first."
 ---
 
 # Implement
 
-Step 2 of the per-task graph. The binding rules are the `keel` skill's; load it first. This skill
-adds what to do around them.
+The per-task graph is issue, plan, implement, prove, review, merge. For a bounded code change this
+skill carries the plan and the implementation together. The binding rules are the `keel` skill's;
+load it first. This skill adds what to do around them.
 
 **Load the project's `KEEL.md` and `keel/KEEL_EXEC.md` first, when the project has them; their rules bind and win over this skill where they differ.**
+
+## Plan first (one turn, no code)
+
+1. Read the issue. Write the **promise** as one user-visible sentence, and the **paths** the change
+   needs (files or directories, no globs). Start from the promise and search on purpose; do not
+   list the tree.
+2. Pick the card row (`keel/KEEL_PLAN.md`): docs/config/one-line/test-only, bounded code change, new
+   public surface, or persistence/permissions/compatibility/security/external effects. A full-card row
+   (new public surface or the last row) stops here and invokes `task-plan`, which runs the design critic.
+3. Pick the proof: a path inside some journey step's `screen.scopePaths` → `journey` (stop here and
+   invoke `task-plan`, which names the journeys and the critic); an invariant the user cannot see
+   (schema, digest, concurrency, security) → `tests`; both kinds of promise → `both`; docs only →
+   `none`. Reviews: 1 for every class today. `keel` is always in `skills` for code.
+4. Put the promise, paths and proof command in the PR body as the Keel card. Outside an execution,
+   a hand-written card is a card, not a persisted record.
 
 ## Emits and reads
 

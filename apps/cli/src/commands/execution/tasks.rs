@@ -1028,14 +1028,21 @@ pub(crate) fn opened_envelope(
 /// #1220: the slice that holds `task_id` against `lane`: a pre-PR claim of another lane, not
 /// merged, not released, and whose lease (#1193) has not lapsed, so a dead lane's claim stops
 /// holding the issue the moment it is overdue, before the Stop reconciler releases it.
+/// `parallel_branch` is the new claim's branch when it opted in with `parallel: true` (#2298).
 pub(crate) fn holder<'a>(
     tasks: &'a [TaskState],
     leases: &[ClaimLease],
     task_id: &str,
     lane: &str,
+    parallel_branch: Option<&str>,
 ) -> Option<&'a TaskState> {
     tasks.iter().find(|slice| {
         slice.task_id == task_id
+            // #2298: a parallel claim is held back only by an open claim on its own branch; a
+            // slice whose branch is unknown still holds, so nothing old is read as parallel.
+            && parallel_branch.is_none_or(|branch| {
+                slice.branch.as_deref().is_none_or(|held| held == branch)
+            })
             && slice.pr.is_none()
             && slice.released_by.is_none()
             && slice.step != graphhelm_execution::tasks::TaskStep::Merged
@@ -1882,11 +1889,11 @@ mod lease_tests {
         let tasks = graphhelm_execution::tasks::fold_task_events(&[claim]);
         let live = claim_leases(&tasks, &at("2026-10-14T03:10:00Z"));
         assert!(
-            holder(&tasks, &live, "issue-7", "lane-beta").is_some(),
+            holder(&tasks, &live, "issue-7", "lane-beta", None).is_some(),
             "a live claim holds"
         );
         assert!(
-            holder(&tasks, &live, "issue-7", "lane-alpha").is_none(),
+            holder(&tasks, &live, "issue-7", "lane-alpha", None).is_none(),
             "never against itself"
         );
         let lapsed = claim_leases(&tasks, &at("2026-10-14T03:30:01Z"));
@@ -1895,7 +1902,7 @@ mod lease_tests {
             "1800 s default lapsed: {lapsed:?}"
         );
         assert!(
-            holder(&tasks, &lapsed, "issue-7", "lane-beta").is_none(),
+            holder(&tasks, &lapsed, "issue-7", "lane-beta", None).is_none(),
             "an overdue claim does not hold"
         );
     }

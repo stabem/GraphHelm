@@ -348,6 +348,11 @@ was; the exit code of the `gh pr merge` you ran is the evidence.
 - A claim that timed out is not a claim until that GET shows it. No confirmation means no edit.
 - A refused claim (held by another lane) means stop. Take an issue over only through an
   `assignedBy` handover.
+- A second PR under the same issue, on its own branch, is not a takeover: claim it with
+  `--parallel` (`parallel: true`, #2298). It is admitted when no other lane's open claim is on
+  that branch, and the board shows it as its own slice (`issue-N#claim-<n>`) beside the first.
+  Use it only for a distinct PR the issue needs, never to work beside a holder on the same change;
+  without `--parallel` the claim stays strict.
 - `D:/gh/coordinator/codex/issue_locks.json` is read-only legacy. Do not write to it.
 
 Record only as yourself. `task_record.py` sends the lane's own credential

@@ -1054,6 +1054,13 @@ class TitleAndSummary(unittest.TestCase):
         document, _ = self.doc("claimed", "--issue", "514", "--branch", "b")
         self.assertNotIn("parent", document)
 
+    def test_a_claim_is_parallel_only_when_asked(self):
+        # #2298: `--parallel` asks for a second slice of the issue; absent keeps the strict claim.
+        document, _ = self.doc("claimed", "--issue", "2298", "--branch", "b", "--parallel")
+        self.assertIs(document["parallel"], True)
+        document, _ = self.doc("claimed", "--issue", "2298", "--branch", "b")
+        self.assertNotIn("parallel", document)
+
     def test_no_github_and_other_kinds_add_nothing(self):
         document, _ = self.doc("claimed", "--issue", "1", "--branch", "b", "--no-github")
         self.assertNotIn("title", document)

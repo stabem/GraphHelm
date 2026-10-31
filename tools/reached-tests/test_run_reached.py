@@ -547,6 +547,41 @@ raise SystemExit(rr.run(args))
                     patch.object(rr.shutil, "which", return_value=str(Path(temp) / "wrong")):
                 self.assertEqual(rr._resolve_graphhelm(args), explicit.resolve())
 
+    def test_a_named_graphhelm_reaches_every_step_environment(self):
+        # #2276: --graphhelm reached only the selector; a step that ran `graphhelm` saw PATH's CLI.
+        probe = ("import os; print('CLI=' + os.environ.get('GRAPHHELM_CLI', '')); "
+                 "print('PATH0=' + os.environ['PATH'].split(os.pathsep)[0])")
+        for named in (True, False):
+            with self.subTest(named=named), tempfile.TemporaryDirectory() as temp:
+                repo = Path(temp) / "repo"
+                repo.mkdir()
+                subprocess = __import__("subprocess")
+                subprocess.run(["git", "init", "-q"], cwd=repo, check=True, creationflags=NO_WINDOW)
+                (repo / "x").write_text("x", encoding="utf-8")
+                subprocess.run(["git", "add", "x"], cwd=repo, check=True, creationflags=NO_WINDOW)
+                subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"],
+                               cwd=repo, check=True, creationflags=NO_WINDOW)
+                head_build = Path(temp) / "head-build" / "graphhelm.exe"
+                head_build.parent.mkdir()
+                head_build.write_text("fixture", encoding="utf-8")
+                output = Path(temp) / "report.json"
+                plan = {"steps": [{"argv": [sys.executable, "-c", probe], "cwd": ".", "slot": False}]}
+                args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD", "head": "HEAD",
+                                          "root": "D:/gh", "lane": "test", "budget_seconds": 180,
+                                          "allow_whole_package": None, "plan": False, "min_free_gb": 0.0,
+                                          "graphhelm": str(head_build) if named else None})()
+                with patch.object(rr, "_selector", return_value=plan):
+                    self.assertEqual(rr.run(args), 0, output.read_text(encoding="utf-8"))
+                report = json.loads(output.read_text(encoding="utf-8"))
+                log = Path(report["completed"][0]["log"]).read_text(encoding="utf-8")
+                if named:
+                    self.assertIn(f"CLI={head_build.resolve()}", log)
+                    self.assertIn(f"PATH0={head_build.resolve().parent}", log)
+                    self.assertEqual(report["stepGraphhelm"], str(head_build.resolve()))
+                else:  # fail-closed stays: no named CLI, nothing is exported to the steps
+                    self.assertIn("CLI=\n", log.replace("\r\n", "\n"))
+                    self.assertNotIn("stepGraphhelm", report)
+
     def test_missing_explicit_graphhelm_fails_before_selector_or_child(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)

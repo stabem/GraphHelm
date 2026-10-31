@@ -1209,6 +1209,12 @@ def run(args: argparse.Namespace) -> int:
                 report["pending"].remove(index)
             child_env = os.environ.copy()
             child_env.update({"CARGO_BUILD_JOBS": jobs, "RUST_TEST_THREADS": "2"})
+            if configured_graphhelm and selected_graphhelm is not None:
+                # #2276: the CLI the author named reaches every step, as it reaches the selector.
+                # Only a named CLI: a PATH lookup is never exported, so fail-closed observers stay so.
+                child_env["GRAPHHELM_CLI"] = str(selected_graphhelm)
+                child_env["PATH"] = str(selected_graphhelm.parent) + os.pathsep + child_env.get("PATH", "")
+                report["stepGraphhelm"] = str(selected_graphhelm)
             identity_steps = [{**step, "identitySkipped": index in skip_browser} for index, step in enumerate(steps)]
             report["fingerprint"] = _fingerprint(repo, identity_steps, selected_graphhelm, child_env)
             # #1892: the thread count is chosen after the fingerprint, so a pass proven at one thread

@@ -11,6 +11,17 @@ export interface RunSummary {
   objective?: string | null;
   startedAt: string | null;
   lastEventAt: string | null;
+  /** #2324: the Runtime's attention verdict (`needs_you`, `unknown`, `can_sleep`,
+   * `calmed_by_amendment`); absent from an older Runtime, read as not known. */
+  attention?: string;
+}
+
+/** #2324: why a run needs its owner, as `GET /v1/executions/{id}` lists it (`attentionReasons`). */
+export interface AttentionReason {
+  kind: string;
+  node?: string;
+  draft_id?: string;
+  session?: string;
 }
 
 /** `GET /v1/executions/{id}/tasks` (#1149, #1234): only the Runtime's lane liveness verdicts are read. */
@@ -321,6 +332,11 @@ export class Runtime {
   async runs(): Promise<RunSummary[]> {
     const page = await this.#request<{ executions: RunSummary[] }>("GET", "/v1/executions?limit=50");
     return page.executions;
+  }
+
+  /** #2324: one run's attention and its reasons, from the same status read the CLI prints. */
+  async runAttention(executionId: string): Promise<{ attention?: string; attentionReasons?: AttentionReason[] }> {
+    return this.#request("GET", `/v1/executions/${encodeURIComponent(executionId)}`);
   }
 
   async journeys(): Promise<JourneyFlow[]> {

@@ -201,7 +201,7 @@ function Shell({ session, projects, closed, route, go, pickJourney, onRefused }:
         <ViewBoundary key={`${route.view}:${runId ?? ""}`} name={route.view}>
         {runs === null && route.run === null ? <section className="view" aria-label="Reading">{firstRead(runs, runsError) === "failed" ? <ReadFailure what="project's team runs" route="/v1/executions" message={runsError ?? ""} onRetry={() => void readRuns()} /> : <Loading text="Reading the project's team run…" />}</section> : <>
         {route.view === "graph" && (
-          <GraphView run={run} runId={runId} allRuns={shownRun === runId ? null : projectRuns.length} onStart={startRun} requests={projectRuns.length === 0 ? undefined : <RequestsView runtime={runtime} executionIds={projectRuns} journeys={journeys} onOpenProof={(journey) => go({ project: route.project, run: route.run, view: "proof", journey })} />}>
+          <GraphView run={run} runId={runId} runtime={runtime}allRuns={shownRun === runId ? null : projectRuns.length} onStart={startRun} requests={projectRuns.length === 0 ? undefined : <RequestsView runtime={runtime} executionIds={projectRuns} journeys={journeys} onOpenProof={(journey) => go({ project: route.project, run: route.run, view: "proof", journey })} />}>
             {composing && runId === null && (
               <StartRun
                 runtime={runtime}

@@ -627,7 +627,7 @@
           "id": "host/codex",
           "kind": "host-adapter",
           "path": ".codex-plugin/plugin.json",
-      "sha256": "sha256:6191696f87185995023d4023d5a7c2f5a93dcfca1c839dd86e3988c031f1e748",
+      "sha256": "sha256:b2d6df80a184ba6a55d2f70b73df707078a5a68cd5757f2b7a1fbffabd0defcd",
           "effects": [
             "host.discover"
           ],
@@ -902,7 +902,7 @@
           "id": "skill/keel-reference",
           "kind": "skill",
           "path": "skills/keel/REFERENCE.md",
-          "sha256": "sha256:a1ad951f68ab85f42b652b75dc6b0d77a56984154ea40fd0dd2ab6e876986100",
+          "sha256": "sha256:313d732268b99ff58e1c76f1527fe63f8d7377570d38fe504bc5377bfc1a743c",
           "effects": [
             "artifact.propose",
             "runtime.connect",

@@ -10,7 +10,7 @@ The inventory is declared in [extension.json](extension.json). Entry skills have
 
 | skill | what it produces | what it may never do |
 |---|---|---|
-| [`task-plan`](skills/task-plan/SKILL.md) | the task's `keel.plan`: paths, promise, proof kind, review count, skills | write code |
+| [`task-plan`](skills/task-plan/SKILL.md) | the task's `keel.plan` for a journey-scope or full-card change: paths, promise, proof kind, review count, skills. A bounded change starts at `implement` (Plan first). | write code |
 | [`implement`](skills/implement/SKILL.md) | the change inside the card, with cited context and the reached tests run | add surface the promise does not need |
 | [`blind-review`](skills/blind-review/SKILL.md) | one blind verdict on a pinned head, with commands and results | review a change it helped write |
 | [`merge`](skills/merge/SKILL.md) | a pinned squash merge, read back, and a released workspace | merge a head the approval did not name |

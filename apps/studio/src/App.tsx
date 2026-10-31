@@ -17,6 +17,18 @@ import { GraphView } from "./views/Views";
 import { RequestsView } from "./graph/RequestsView";
 import { ViewBoundary } from "./views/ViewBoundary";
 import { bounded, firstRead, Loading, ReadFailure } from "./states/ViewState";
+import { studioOpenCommand } from "./login/studio-open";
+
+/** The page with no login ticket. The command it hands the user names this page's port when that is
+ * not the CLI's default, so it opens this Studio instead of being refused. */
+export function LoginGate({ port }: { port?: string | null }) {
+  return (
+    <main className="gate">
+      <h1>Open the Studio from your project</h1>
+      <p>This page has no login ticket, or its ticket was already used. Run <code className="mono">{studioOpenCommand("", port)}</code> in the project folder to open a logged-in Studio.</p>
+    </main>
+  );
+}
 
 /** How often the run list is read again: one page of at most 50 rows per poll. */
 const POLL_MS = 5_000;
@@ -87,14 +99,7 @@ export function App() {
   const summaries = useSummaries(sessions);
 
   if (auth.state === "pending") return <main className="gate"><p>Logging in…</p></main>;
-  if (auth.state === "refused") {
-    return (
-      <main className="gate">
-        <h1>Open the Studio from your project</h1>
-        <p>This page has no login ticket, or its ticket was already used. Run <code className="mono">graphhelm studio open</code> in the project folder to open a logged-in Studio.</p>
-      </main>
-    );
-  }
+  if (auth.state === "refused") return <LoginGate />;
   const session = auth.sessions.find((known) => known.key === route.project) ?? auth.sessions[0]!;
   const projects: ProjectEntry[] = auth.sessions.map((known) => ({
     key: known.key, name: known.project ?? "this project", folder: known.folder, summary: summaries[known.key] ?? null,

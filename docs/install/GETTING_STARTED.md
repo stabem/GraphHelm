@@ -10,8 +10,8 @@ are bash. The clean-host transcripts this page was checked against are
 and, Studio included, [`docs/acceptance/clean-machine-2026-09-14.md`](../acceptance/clean-machine-2026-09-14.md).
 
 **What needs credentials and what does not.** A public clone needs no GitHub account. Several steps use the network:
-the package managers (apt, winget, rustup), the clone, the build's Rust crates, the Studio's npm packages, and
-`graphhelm update`. None of them needs an account, an API key, a model provider or a database. Every execution below runs on fixtures. A run that calls a real model needs a
+the package managers (apt, winget, rustup), the Node download (`curl` from nodejs.org), the clone, the build's Rust
+crates, the Studio's npm packages, and `graphhelm update`. None of them needs an account, an API key, a model provider or a database. Every execution below runs on fixtures. A run that calls a real model needs a
 gateway manifest and a credential; the one command that wires both is at the end of section 2,
 and [`docs/product/PROVIDER_LESS_MODE.md`](../product/PROVIDER_LESS_MODE.md) says what works
 without a provider and what changes when you add one.
@@ -36,9 +36,10 @@ a recipe, not part of the historical executed transcripts cited above.
 - **Execution**: one run of a graph, started with `graphhelm execution start`.
 - **Harness**: the agent host you chat with, such as Claude Code or Codex.
 - **MCP** (Model Context Protocol): the protocol a harness uses to call tools. `graphhelm mcp` is GraphHelm's server for it.
-- **Loopback**: `127.0.0.1`, this machine only. The Runtime binds it. The Studio's dev server binds it too, unless you start it with `-- --host` in a container (section 4).
+- **Loopback**: `127.0.0.1`, this machine only. The Runtime binds it. The Studio's dev server binds it too, unless you start it with `-- --host` in a container or VM (section 4).
 - **Bearer token**: the secret in `events.token`. It goes in an `Authorization: Bearer` header; never print it.
-- **Sealing key** and **keyring**: the sealing key is in `serve.key`. `serve` opens the keyring with it, and the keyring holds the sealing key under the id `studio`.
+- **Sealing key**: the key in `serve.key`. Everything `serve` seals depends on it: if you lose `serve.key`, nothing sealed can be opened again, so keep a copy.
+- **Keyring**: `keyring.v1.json` names the key id (`studio`) and carries an authentication tag. It holds no key; `serve` needs `serve.key` to open it.
 - **Gateway** and **route**: a gateway connects to a model provider. A route is one named entry for it in `manifest.json`.
 - **Manifest**: `<project>/.graphhelm/manifest.json`, where the routes are kept.
 - **Journey**: a user-visible flow written as screens and checks, in `.graphhelm/journeys/`.

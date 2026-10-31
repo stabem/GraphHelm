@@ -18,8 +18,8 @@ import threading as _first_line_threading
 _watched_phase = _first_line_sys.argv[1] if len(_first_line_sys.argv) > 1 else ""
 _watched_host = _first_line_sys.argv[_first_line_sys.argv.index("--host") + 1] if "--host" in _first_line_sys.argv[:-1] else ""
 # Codex clamps every SessionEnd hook to 3 s whatever it declares (Shino, codex-cli 0.157.1:
-# "clamping SessionEnd hook timeout to 3s"), so a Codex end answers within 1.5 s of its first line (spawn and teardown take the rest of the 3 s).
-HOOK_WATCHDOG = 1.5 if (_watched_host, _watched_phase) == ("codex", "end") else 6.0
+# "clamping SessionEnd hook timeout to 3s"), so a Codex end answers within 1.0 s of its first line (spawn and teardown take the rest of the 3 s).
+HOOK_WATCHDOG = 1.0 if (_watched_host, _watched_phase) == ("codex", "end") else 6.0
 _answer_started = False
 
 

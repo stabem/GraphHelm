@@ -1308,14 +1308,14 @@ class SessionHookTests(unittest.TestCase):
             text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
         self.assertEqual(json.loads(portable.stdout)["activation"], "unobserved")
         self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])
-        # Codex clamps SessionEnd to 3 s: a Codex end gives up 1.5 s after its first line.
+        # Codex clamps SessionEnd to 3 s: a Codex end gives up 1 s after its first line.
         started = time.monotonic()
         codex = subprocess.run(
             [sys.executable, str(SCRIPT), "end", "--host", "codex"],
             input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
             text=True, capture_output=True, env=self.env, timeout=deadline(6), check=False, creationflags=NO_WINDOW)
         elapsed = time.monotonic() - started
-        self.assertIn("end unobserved (no answer 1.5 s after the first line)", codex.stderr)
+        self.assertIn("end unobserved (no answer 1 s after the first line)", codex.stderr)
         self.assertLess(elapsed, 3.0, f"codex end left {elapsed:.2f} s after spawn")
 
     def test_start_and_end_leave_without_a_slow_interpreter_shutdown(self):

@@ -3605,17 +3605,33 @@ fn a_parallel_claim_on_its_own_branch_gets_its_own_slice() {
         );
     };
 
-    let (status, reply) = post("par-a", "lane-alpha", &claim("lane-alpha", "issue-2298-a", false));
+    let (status, reply) = post(
+        "par-a",
+        "lane-alpha",
+        &claim("lane-alpha", "issue-2298-a", false),
+    );
     assert_eq!(status, 200, "alpha claims: {reply}");
     held(
         "beta without parallel, another branch: strict as before",
-        post("par-b0", "lane-beta", &claim("lane-beta", "issue-2298-b", false)),
+        post(
+            "par-b0",
+            "lane-beta",
+            &claim("lane-beta", "issue-2298-b", false),
+        ),
     );
     held(
         "beta parallel on alpha's branch",
-        post("par-b1", "lane-beta", &claim("lane-beta", "issue-2298-a", true)),
+        post(
+            "par-b1",
+            "lane-beta",
+            &claim("lane-beta", "issue-2298-a", true),
+        ),
     );
-    let (status, reply) = post("par-b2", "lane-beta", &claim("lane-beta", "issue-2298-b", true));
+    let (status, reply) = post(
+        "par-b2",
+        "lane-beta",
+        &claim("lane-beta", "issue-2298-b", true),
+    );
     assert_eq!(status, 200, "beta parallel on its own branch: {reply}");
     let mut wrong = claim("lane-gamma", "issue-2298-c", false);
     wrong["parallel"] = serde_json::json!(false);

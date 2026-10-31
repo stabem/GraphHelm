@@ -365,6 +365,21 @@ impl ApiClient {
         }
     }
 
+    /// #2284: the project this client discovers its Runtime for, when it discovers by project.
+    pub(crate) fn discovered_project(&self) -> Option<&str> {
+        match &self.token {
+            TokenSource::DiscoverProject { project_id, .. } => Some(project_id),
+            _ => None,
+        }
+    }
+
+    /// #2284: whether this client has a Runtime to send tools to. A client given its endpoint
+    /// (`--url`, a routed child) always has one; a project-discovering client has one only when
+    /// discovery finds the project's live Runtime.
+    pub(crate) fn has_runtime(&self) -> bool {
+        self.discovered_project().is_none() || self.current_endpoint().is_ok()
+    }
+
     fn is_discovering(&self) -> bool {
         matches!(
             &self.token,

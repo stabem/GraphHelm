@@ -42,6 +42,7 @@ These documents contain approved requirements and planned surfaces as well as im
 - [Benchmark protocol](keel/BENCHMARK_PROTOCOL.md) and [measured one-task pilot](keel/benchmark-evidence/task-1279-v11/README.md). Read each report's limits before comparing costs or quality. See also: [native workflow rounds (#2074)](keel/benchmark-evidence/native-2074/README.md), [Methodology profile cohorts (#2051)](keel/benchmark-evidence/methodology-2051/README.md), [skill selection re-measure (#184)](keel/benchmark-evidence/skill-selection-184/README.md).
 - [Official provider and license references](reference/PROVIDER_AND_LICENSE_REFERENCES.md).
 - [Clean-host rehearsal dated 2026-09-13](acceptance/install-rehearsal-2026-09-13.md) and [Ubuntu VPS rehearsal](../install/VPS_REHEARSAL.md) are point-in-time records. They do not validate today's head. The [final clean-machine run dated 2026-11-01](acceptance/clean-machine-2026-11-01.md) checks the page at `d377d29f`.
+- [New-project run dated 2026-11-01](acceptance/item5-new-project-2026-11-01.md) is the item 5 receipt for a project made from scratch: `init`, Runtime, Studio, a blocked run and the briefing, with the CLI built from release head `b1a9f299`.
 
 ## Subsystem specifications, RFCs and releases
 

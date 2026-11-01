@@ -357,7 +357,9 @@ class LaneStopTests(unittest.TestCase):
                         elapsed = self.reminder_seconds
                         self.assertTrue(any(d.get("decision") == "block" for d in decisions), decisions)
                         if mode == "busy":
-                            self.assertLess(elapsed, 2.0, f"300-note reminder took {elapsed:.3f}s")
+                            # Bounded work, not wall time (#2362): one head read plus at most
+                            # 4096/512 tail pages; the seconds are reported, never asserted.
+                            self.assertLessEqual(len(calls), 12, calls)
                             self.assertFalse(any("/evidence/" in call for call in calls), calls)
                             print(f"300 notes: {manifest.name}: {elapsed:.3f}s, {len(calls)} event GETs", flush=True)
                         self.assertEqual(self.stop(manifest, active=True), [])

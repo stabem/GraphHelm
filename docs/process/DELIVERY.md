@@ -205,6 +205,7 @@ Before asking for review, quote the diff-hygiene status line in the PR body; the
 - One review from a reviewer that did not write the change: another session, or a **blind
   subagent**, spawned for the review only. What its brief may carry, and who is not blind, is
   [`keel/KEEL_REVIEW.md`](../../keel/KEEL_REVIEW.md).
+- Load probes, and whether a reviewer may create load, follow [LANES.md](LANES.md) §3.
 - The review's first line names the reviewer and the head sha it read:
   `Session: <ListAgents name [ref]> · Head: <sha8>`, with `(blind subagent)` after the session
   name when a subagent reviews.

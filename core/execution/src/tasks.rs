@@ -1465,6 +1465,28 @@ pub fn is_unclaimed_critic(task: &TaskState) -> bool {
     task.critic.is_some() && task.issue.is_none() && task.pr.is_none() && task.branch.is_none()
 }
 
+/// #2384: the reviewer an open slice already has on this PR head, when it is not `reviewer`.
+/// A second `task.review_assigned` on the same head is still admitted (a handover stays possible);
+/// the Runtime only warns, naming the first. A new head or the same reviewer returns `None`.
+#[must_use]
+pub fn other_reviewer_on_head<'a>(
+    tasks: &'a [TaskState],
+    pr: u64,
+    head_sha: &str,
+    reviewer: &str,
+) -> Option<&'a str> {
+    tasks
+        .iter()
+        .filter(|task| task.pr == Some(pr) && task.step != TaskStep::Merged)
+        .filter(|task| {
+            task.head_sha
+                .as_deref()
+                .is_some_and(|head| same_head(head, head_sha))
+        })
+        .find_map(|task| task.current_reviewer.as_deref())
+        .filter(|current| *current != reviewer)
+}
+
 #[derive(Clone, Debug)]
 struct BlockerAt {
     reviewer: String,

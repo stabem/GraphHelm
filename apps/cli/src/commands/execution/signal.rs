@@ -725,6 +725,12 @@ fn record_once(
         )
     })?;
     validate_task_attachments(&envelope, attachments)?;
+    // #2384: a second reviewer on the same head is admitted, but the reply names the first.
+    let warnings = second_reviewer_warning(
+        &envelope,
+        task_history.as_deref().unwrap_or_default(),
+        sealing.map(|keyring| (store, &scope, keyring)),
+    );
     if envelope["type"] == "task.review_activity"
         && let Some((reply, original_decision_sequence)) = admit_review_activity(
             store,
@@ -1109,7 +1115,55 @@ fn record_once(
     if !attachment_reply.is_empty() {
         reply["attachments"] = serde_json::Value::Array(attachment_reply);
     }
+    if !warnings.is_empty() {
+        reply["warnings"] = serde_json::json!(warnings);
+    }
     Ok(ReviewActivityHttpOutcome::Appended { reply })
+}
+
+/// #2384: for a `task.review_assigned`, one warning when the slice already has a different
+/// current reviewer on the same PR head. Advisory only: without the sealed task view, or on any
+/// read failure, it says nothing and the admission is unchanged.
+fn second_reviewer_warning(
+    envelope: &serde_json::Value,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &SignalKeyring,
+    )>,
+) -> Vec<String> {
+    if envelope["type"] != "task.review_assigned" || evidence.is_none() {
+        return Vec::new();
+    }
+    let Some(document) = envelope["description"]
+        .as_str()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+    else {
+        return Vec::new();
+    };
+    let (Some(pr), Some(head), Some(reviewer)) = (
+        document["pr"].as_u64(),
+        document["headSha"].as_str(),
+        document["reviewer"].as_str(),
+    ) else {
+        return Vec::new();
+    };
+    let Ok(view) = super::documents::task_view(
+        history,
+        evidence,
+        "review assignment",
+        "/signal/description/reviewer",
+    ) else {
+        return Vec::new();
+    };
+    graphhelm_execution::tasks::other_reviewer_on_head(&view.tasks, pr, head, reviewer)
+        .map(|current| {
+            vec![format!(
+                "PR #{pr} head {head} already has reviewer {current}; {reviewer} is now assigned too"
+            )]
+        })
+        .unwrap_or_default()
 }
 
 /// Shape and current actor access were checked first. Historical acknowledgement is not a new admission.

@@ -662,11 +662,6 @@ pub struct AgentPresence {
     pub declared: AgentPresenceDeclared,
 }
 
-/// A consumption that burned an arming other than the one it captured.
-///
-/// Both armings are kept rather than a bare flag: "something was wrong here" is not actionable,
-/// and the PAIR is the diagnosis. Recovering it from raw events is exactly the derivation the
-/// single predicate must not perform.
 /// #2357: what the fold keeps of a `drive_failed` record.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -676,6 +671,11 @@ pub struct DriveFailureRecord {
     pub cause: String,
 }
 
+/// A consumption that burned an arming other than the one it captured.
+///
+/// Both armings are kept rather than a bare flag: "something was wrong here" is not actionable,
+/// and the PAIR is the diagnosis. Recovering it from raw events is exactly the derivation the
+/// single predicate must not perform.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WakeMisBurn {

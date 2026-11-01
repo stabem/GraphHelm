@@ -690,6 +690,20 @@ pub fn attention(projection: &ExecutionProjection, inputs: &AttentionInputs) -> 
         }
     }
 
+    // #2357: a recorded drive failure DOES answer "why is nothing advancing?" (the drive that
+    // would have advanced it ended), so it is pushed before the wedge decision.
+    if let Some(failure) = &projection.drive_failure {
+        reasons.push(AttentionReason::DriveFailed {
+            site: match failure.site {
+                graphhelm_protocols::DriveFailureSite::Drive => "drive",
+                graphhelm_protocols::DriveFailureSite::WorkspaceRelease => "workspace_release",
+            }
+            .to_owned(),
+            cause: failure.cause.clone(),
+            at_sequence: failure.at_sequence,
+        });
+    }
+
     // CAPTURED HERE, BEFORE ANYTHING ELSE IS PUSHED, and the wedge below is decided against THIS
     // rather than against `reasons` as a whole (#119, second pass by ISSUES 3).
     //
@@ -706,19 +720,6 @@ pub fn attention(projection: &ExecutionProjection, inputs: &AttentionInputs) -> 
     // one write site, `projection.rs:1926`, and no `remove`, `clear`, `retain` or `drain` anywhere
     // in the workspace -- so the first mis-burn a store ever recorded would have switched off its
     // wedge detector for the life of that store.
-    // #2357: a recorded drive failure DOES answer "why is nothing advancing?" (the drive that
-    // would have advanced it ended), so it is pushed before the wedge decision.
-    if let Some(failure) = &projection.drive_failure {
-        reasons.push(AttentionReason::DriveFailed {
-            site: match failure.site {
-                graphhelm_protocols::DriveFailureSite::Drive => "drive",
-                graphhelm_protocols::DriveFailureSite::WorkspaceRelease => "workspace_release",
-            }
-            .to_owned(),
-            cause: failure.cause.clone(),
-            at_sequence: failure.at_sequence,
-        });
-    }
     let nothing_explains_non_advancement = reasons.is_empty();
 
     // #119: the fold records a consumption that burned an arming other than the one it captured,

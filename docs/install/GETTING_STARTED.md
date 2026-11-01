@@ -4,10 +4,12 @@ This is the one continuous path. Follow it top to bottom and you end with a Runt
 a project provisioned by `graphhelm init`, a first execution running against it, the Studio
 showing that run, and — if you want one — a chat harness that can operate it through MCP.
 
-Every command here was executed as written. Windows commands are PowerShell; Linux/macOS commands
-are bash. The clean-host transcripts this page was checked against are
+Windows commands are PowerShell; Linux/macOS commands are bash. The Linux commands were executed as
+written on a clean Ubuntu 24.04 machine, Studio included: the last run is
+[`docs/acceptance/clean-machine-2026-11-01.md`](../acceptance/clean-machine-2026-11-01.md). The Windows
+commands are the same steps in PowerShell and were not part of that run. Earlier clean-host transcripts are
 [`docs/acceptance/install-rehearsal-2026-09-13.md`](../acceptance/install-rehearsal-2026-09-13.md)
-and, Studio included, [`docs/acceptance/clean-machine-2026-09-14.md`](../acceptance/clean-machine-2026-09-14.md).
+and [`docs/acceptance/clean-machine-2026-09-14.md`](../acceptance/clean-machine-2026-09-14.md).
 
 **What needs credentials and what does not.** A public clone needs no GitHub account. Several steps use the network:
 the package managers (apt, winget, rustup), the Node download (`curl` from nodejs.org), the clone, the build's Rust
@@ -18,7 +20,7 @@ without a provider and what changes when you add one.
 
 **One port.** `graphhelm init` defaults to `127.0.0.1:8791`, and every command on this page uses
 that number. `install/install.sh` (the VPS systemd path) binds `127.0.0.1:8080` instead; if you
-follow that path, substitute the port. The Runtime is bound to loopback. The Studio's dev server is too, except in a container, where section 4 tells you to start it with `-- --host`.
+follow that path, substitute the port. The Runtime is bound to loopback. The Studio's dev server is too, except in a container or VM, where section 4 tells you to start it with `-- --host`.
 
 **Existing host configuration.** `graphhelm setup --project <project> --home <disposable-profile>`
 previews supported files without changing them. An exact reviewed plan and `--accept` digest are
@@ -39,7 +41,7 @@ a recipe, not part of the historical executed transcripts cited above.
 - **Loopback**: `127.0.0.1`, this machine only. The Runtime binds it. The Studio's dev server binds it too, unless you start it with `-- --host` in a container or VM (section 4).
 - **Bearer token**: the secret in `events.token`. It goes in an `Authorization: Bearer` header; never print it.
 - **Sealing key**: the key in `serve.key`. Everything `serve` seals depends on it: if you lose `serve.key`, nothing sealed can be opened again, so keep a copy.
-- **Keyring**: `keyring.v1.json` names the key id (`studio`) and carries an authentication tag. It holds no key; `serve` needs `serve.key` to open it.
+- **Keyring**: `keyring.v1.json` names the key id (`studio` by default; `--key-id` changes it) and carries an authentication tag. It holds no key; `serve` needs `serve.key` to open it.
 - **Gateway** and **route**: a gateway connects to a model provider. A route is one named entry for it in `manifest.json`.
 - **Manifest**: `<project>/.graphhelm/manifest.json`, where the routes are kept.
 - **Journey**: a user-visible flow written as screens and checks, in `.graphhelm/journeys/`.
@@ -52,6 +54,7 @@ a recipe, not part of the historical executed transcripts cited above.
 |---|---|---|
 | Rust `1.97.1` (pinned) with `rustfmt` and `clippy` | building the binary | `cargo +1.97.1 --version` |
 | git | the clone, and `init`'s `.gitignore` step | `git --version` |
+| curl (Linux/macOS) | the health and `401` checks in section 3; a bare Ubuntu image does not have it (`sudo apt-get install --yes curl`) | `curl --version` |
 | Node 22+ and npm | **only** the Studio (sections 4 and 5) | `node --version` |
 | PowerShell (Windows) or bash (Linux/macOS) | running the commands | — |
 
@@ -276,7 +279,7 @@ Node 22+ and npm are needed from here on, and only from here on. Run these from 
 clone** (the Studio lives in `apps/studio`), not from your project.
 
 Shortest path, from your project folder: `graphhelm studio start`. It finds the GraphHelm clone
-(`--source`, else `GRAPHHELM_SOURCE`, else the clone the binary was built from), fast-forwards it
+(`--source`, else `GRAPHHELM_SOURCE`, else GraphHelm's own install clone, `~/.graphhelm/source`, described below), fast-forwards it
 to `origin/main` when it is on a clean `main` (otherwise it warns how many commits it is behind and
 leaves it alone; `--no-update` skips the check), reruns `npm ci` when the Studio's lock file moved,
 and then runs the launcher below (`studio-up.ps1` on Windows, `studio-up.sh` on Linux and macOS) with this
@@ -425,7 +428,7 @@ duplicated.
 
 ## 6. Connect a chat harness
 
-`init` wrote the registration; the harness only has to read it. The active project selects its
+`init` wrote the registration; the harness only has to read it. Session hooks are not in the release archive and `init` does not write them: they come from the GraphHelm plugin, and they need Python 3. See [`INSTALL.md`](../../INSTALL.md#5-install-the-plugin-in-each-requested-host). The active project selects its
 Runtime by identity. The token stays in its private file; neither the port nor the token path is
 copied into the MCP registration. Every mutation the chat makes is attributed to `agent-chat`.
 
@@ -443,7 +446,7 @@ Expected: one row, `demo`, with its attention verdict — the same answer the St
 home/.claude.json=register-mcp` writes `graphhelm mcp --discover --actor agent-chat` into
 `~/.claude.json`. The MCP process uses its active project directory (or `--project <path>` when
 the host does not launch it there) to find that project's Runtime. Start that Runtime with the `serve`
-command from section 3, which passes `--project`: without it no record is written and discovery finds nothing.
+command from section 3, which passes `--project`: without it only a port record is written, and discovery, which reads the project record, finds nothing.
 Until that Runtime is running, `graphhelm mcp --discover` lists no tools. An empty list is expected, not broken: the
 tools appear once the Runtime from section 3 is running, and the server then tells the host to list them again.
 `serve --project <path>` writes an owner-only record under `~/.graphhelm/runtime/projects/<project-id>/` (or

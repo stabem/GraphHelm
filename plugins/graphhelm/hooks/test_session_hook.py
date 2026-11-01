@@ -1699,6 +1699,7 @@ class SessionHookTests(unittest.TestCase):
         for phase in ("end", "start"):
             with self.subTest(phase=phase):
                 result = self.run_hook_timed(phase)
+                self.kill_helpers((Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]),))  # its lock is held by the hung helper
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("still pending", result.stderr)
 

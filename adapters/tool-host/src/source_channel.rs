@@ -720,7 +720,9 @@ struct IndexedFile {
     /// Unix `ctime` in nanoseconds (0 elsewhere). Changed by every write and not settable by
     /// tools, so an edit that keeps the length and restores the mtime is still seen on Unix.
     /// Windows std exposes no change time: there such an edit stays unseen until the file
-    /// changes again or the index is rebuilt (a declared residual, #2319).
+    /// changes again or the index is rebuilt (a declared residual, #2319). #2372 item 4 keeps it
+    /// declared: the `digest` cannot close it, because checking it means reading every file on
+    /// every search, the full scan this index exists to avoid. Returned bytes are still read live.
     #[serde(default)]
     changed: u128,
     doc_len: Option<u64>,
@@ -1043,6 +1045,13 @@ impl WorkspaceSourceChannel {
     /// a stale or foreign cache can only cost a rebuild, never add a path.
     /// #2372: the read is bounded by `max_cache_bytes`; a larger file is not read at all and is
     /// rebuilt like a corrupt one.
+    ///
+    /// Trust (#2372 item 1, a declared limit): the cache is trusted for RANKING only. A checksum
+    /// stored beside it would be rewritten by the same writer of `.graphhelm/` it is meant to
+    /// stop, so it would add cost without adding trust. What a writer cannot do: add a path (the
+    /// refresh drops what the walk does not see) or change returned bytes (candidates are read
+    /// from the workspace, not from the cache). Accidental damage that breaks the JSON, the schema,
+    /// the root or the size cap is rebuilt.
     fn load_persisted(&self) -> Option<BTreeMap<String, IndexedFile>> {
         use std::io::Read as _;
         let cap = max_cache_bytes(&self.index_bounds);

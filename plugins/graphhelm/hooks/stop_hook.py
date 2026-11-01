@@ -3,7 +3,7 @@
 The Keel gate (`keel_stop_hook`), the lane's reconcile and note reminder (`lane_stop_hook`) and
 the verification handoff gate (`handoff_stop_hook`) used to be three Stop entries: three Python
 interpreters per turn, and the lane hook started a fourth to scan notes. Here they run in one
-process, in the same order (then the self-review gate, `review_stop_hook`), on the one payload read from stdin. Each keeps its own rules: a
+process, in the same order (then the self-review gate, `review_stop_hook`, and the console-window guard gate, `console_guard_stop_hook`), on the one payload read from stdin. Each keeps its own rules: a
 gate that fails lets the turn end, `stop_hook_active` is honoured by each, and the Keel refusal
 is recorded only after the decision is printed. When more than one gate blocks, the host gets one
 block whose reason carries each gate's reason, in order.
@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import sys
 
+import console_guard_stop_hook
 import handoff_stop_hook
 import keel_stop_hook
 import lane_stop_hook
@@ -38,7 +39,8 @@ def main() -> int:
     if payload is not None:
         for gate in (lambda: lane_stop_hook.evaluate(payload, "claude"),
                      lambda: handoff_stop_hook.evaluate(payload),
-                     lambda: review_stop_hook.evaluate(payload)):
+                     lambda: review_stop_hook.evaluate(payload),
+                     lambda: console_guard_stop_hook.evaluate(payload)):
             try:
                 reason = gate()
             except Exception:  # noqa: BLE001

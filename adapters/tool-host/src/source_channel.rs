@@ -695,6 +695,21 @@ fn finish_ranking<'a>(
 const INDEX_CACHE: &str = ".graphhelm/cache/source-index-v2.json";
 const INDEX_SCHEMA: &str = "graphhelm.source-index/2";
 
+/// #2372: the largest cache a build within `bounds` can write, so a bigger file was not written
+/// by one and is rebuilt unread. Per source byte, at most 16 bytes of JSON: a one-byte token and
+/// its separator become `["\u00XX",4294967295],` (22 bytes per 2 source bytes), and lowercasing
+/// grows text by at most half (`İ`, 2 bytes, becomes 3). Per file, 32 KiB: a path of `MAX_SOURCE_PATH_CHARS`
+/// escaped at 6 bytes a byte, the digest and the numbers. Plus 64 KiB for the root and envelope.
+/// With the default build bounds this is far above any real index; it bounds the read, not the
+/// ranking (cache trust is #2372 item 1).
+fn max_cache_bytes(bounds: &SourceIndexBounds) -> u64 {
+    bounds
+        .max_bytes_indexed
+        .saturating_mul(16)
+        .saturating_add((bounds.max_files_indexed as u64).saturating_mul(32 * 1024))
+        .saturating_add(64 * 1024)
+}
+
 /// One indexed text file: the (length, mtime) it was read at, and what the live search would
 /// have computed from it. `doc_len` is the lowercased text's byte length, `None` for a file that
 /// is not UTF-8 (counted as read, never as a document, exactly as the live search does).
@@ -1026,8 +1041,23 @@ impl WorkspaceSourceChannel {
     /// The persisted index, when this workspace keeps one and it was written for this root and
     /// schema. Anything else is ignored: the next refresh drops entries the walk does not see, so
     /// a stale or foreign cache can only cost a rebuild, never add a path.
+    /// #2372: the read is bounded by `max_cache_bytes`; a larger file is not read at all and is
+    /// rebuilt like a corrupt one.
     fn load_persisted(&self) -> Option<BTreeMap<String, IndexedFile>> {
-        let bytes = std::fs::read(self.cache_path()?).ok()?;
+        use std::io::Read as _;
+        let cap = max_cache_bytes(&self.index_bounds);
+        let file = std::fs::File::open(self.cache_path()?).ok()?;
+        if file.metadata().ok()?.len() > cap {
+            return None;
+        }
+        // `take` holds the bound even if the file grows between the size check and the read.
+        let mut bytes = Vec::new();
+        file.take(cap.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() as u64 > cap {
+            return None;
+        }
         let persisted: PersistedIndex = serde_json::from_slice(&bytes).ok()?;
         (persisted.schema == INDEX_SCHEMA && persisted.root == self.root.to_string_lossy())
             .then_some(persisted.files)
@@ -1153,7 +1183,7 @@ impl BoundedSourceSearch for WorkspaceSourceChannel {
 #[cfg(test)]
 mod tests {
     use super::WorkspaceSourceChannel;
-    use super::{INDEX_CACHE, SourceIndexBounds};
+    use super::{INDEX_CACHE, SourceIndexBounds, max_cache_bytes};
     use graphhelm_runtime::context::SEARCH_BOUNDS;
     use graphhelm_runtime::ports::{BoundedSourceSearch, SourceSearchError};
     use std::collections::BTreeSet;
@@ -1451,6 +1481,40 @@ mod tests {
                     .is_ok()
             );
         }
+    }
+
+    /// #2372 item 2: a cache larger than any build within the bounds could write is not read; it
+    /// is rebuilt, even when its JSON is valid and names this root and schema.
+    #[test]
+    fn a_cache_over_the_read_cap_is_rebuilt_not_read() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
+        write(root.path(), "a.rs", b"alpha\n");
+        let tight = SourceIndexBounds {
+            max_entries_visited: 1_000,
+            max_files_indexed: 2,
+            max_bytes_indexed: 1024,
+        };
+        let open = || {
+            WorkspaceSourceChannel::open(root.path())
+                .unwrap()
+                .with_index_bounds(tight)
+        };
+        assert_eq!(search(&open(), &["alpha"]), ["a.rs"]);
+        let cache = root.path().join(INDEX_CACHE);
+        let cap = max_cache_bytes(&tight);
+        // Still valid JSON for this root and schema: only its size says no build wrote it.
+        let mut padded = std::fs::read(&cache).unwrap();
+        padded.resize(usize::try_from(cap).unwrap() + 1, b' ');
+        std::fs::write(&cache, &padded).unwrap();
+        assert!(serde_json::from_slice::<serde_json::Value>(&padded).is_ok());
+
+        assert_eq!(search(&open(), &["alpha"]), ["a.rs"]);
+        let after = std::fs::metadata(&cache).unwrap().len();
+        assert!(
+            after <= cap,
+            "the oversized cache was rebuilt, not read: {after} bytes, cap {cap}"
+        );
     }
 
     /// #2319 risk 3: an edit that keeps the length and restores the mtime. On Unix the index keys

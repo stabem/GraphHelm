@@ -48,7 +48,16 @@ only after a release, or after a reinstall from a checkout.
      --graph examples/graphs/provider-less-demo.yaml --target windows-x86_64 --out <new dir>`.
    - Ubuntu: [`tools/release/build_ubuntu.sh`](../../tools/release/build_ubuntu.sh) in an
      `ubuntu:24.04` container, from a `git bundle` of the head (a clone keeps `.git`, so the
-     binary records its commit), with the sha checked after checkout.
+     binary records its commit), with the sha checked after checkout. Put the bundle in a
+     directory `<in>` (`git bundle create <in>/source.bundle HEAD`) and run
+     `docker run --rm -v <in>:/in:ro -v <out>:/out -v graphhelm-ubuntu-target:/target
+     -v graphhelm-ubuntu-rustup:/rustup -v graphhelm-ubuntu-cargo:/cargo ubuntu:24.04 sh
+     /in/build_ubuntu.sh <name of the output subdirectory> <full head sha>`; `build_ubuntu.sh`
+     itself is mounted by copying it into `<in>` first. rustup-init is pinned to 1.29.2 with its
+     published checksum; the toolchain is 1.97.1.
+   - Each archive's `--out` holds its own one-line `SHA256SUMS.txt`. The release's single
+     `SHA256SUMS.txt` is their two lines concatenated, in LF, and `sha256sum -c` run beside both
+     archives must pass before the release is cut.
    If Docker cannot run the container, the Ubuntu archive is `OBSERVER_MISSING`, never built by
    proxy. The bin-only Windows ZIP of
    [`docs/releases/WINDOWS_BINARY.md`](../releases/WINDOWS_BINARY.md) stays for local review.

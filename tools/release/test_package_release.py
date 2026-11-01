@@ -1,9 +1,11 @@
-"""Release archive layout and checksum (#2376).
+"""Release archive layout and the SHA256SUMS.txt bytes.
 
 Cost: a temp directory, a fixture "binary" (a few bytes) and a fixture repo tree; no Cargo, no
 network, no process. The smoke test needs a real GraphHelm build and is exercised at release.
 """
+import contextlib
 import hashlib
+import io
 import sys
 import tarfile
 import tempfile
@@ -61,9 +63,40 @@ class ReleaseArchive(unittest.TestCase):
                 self.assertTrue(all(n.startswith(prefix) for n in names), names)
                 self.assertEqual({n[len(prefix):] for n in names}, expected | {name})
 
-    def test_the_checksum_is_the_archives_sha256(self):
-        path = self.build("graphhelm", "ubuntu-24.04-x86_64")
-        self.assertEqual(pr.sha256(path), hashlib.sha256(path.read_bytes()).hexdigest())
+    def run_main(self, target: str, name: str, **extra) -> Path:
+        """`main()` on the fixture, the smoke step replaced by a no-op (it needs a real build)."""
+        binary = self.root / name
+        binary.write_bytes(b"fixture binary")
+        out = self.root / f"release-{target}"
+        argv = ["--binary", str(binary), "--repo", str(self.repo), "--graph", str(binary),
+                "--target", target, "--out", str(out)]
+        original = pr.smoke
+        pr.smoke = lambda *_: ["smoke skipped in this unit test"]
+        self.addCleanup(setattr, pr, "smoke", original)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(pr.main(argv), 0)
+        return out
+
+    def test_sha256sums_txt_is_the_archives_hash_with_lf_endings_for_sha256sum_c(self):
+        """Exact bytes: `<sha256 of the ARCHIVE>  <archive name>\\n`, LF only, so `sha256sum -c`
+        works on Windows output too. Red if the file holds the binary's hash or CRLF."""
+        for target, name in (("windows-x86_64", "graphhelm.exe"), ("ubuntu-24.04-x86_64", "graphhelm")):
+            with self.subTest(target=target):
+                out = self.run_main(target, name)
+                archive_path = next(p for p in out.iterdir() if p.name.startswith("graphhelm-"))
+                expected = f"{hashlib.sha256(archive_path.read_bytes()).hexdigest()}  {archive_path.name}\n"
+                self.assertEqual((out / "SHA256SUMS.txt").read_bytes(), expected.encode("utf-8"))
+                self.assertNotIn(b"\r", (out / "SHA256SUMS.txt").read_bytes())
+                self.assertNotEqual(
+                    expected.split()[0], hashlib.sha256(b"fixture binary").hexdigest(),
+                    "the checksum must cover the archive, not the binary")
+
+    def test_a_failed_run_leaves_no_output_directory_behind(self):
+        out = self.root / "failed"
+        with self.assertRaises(SystemExit):
+            pr.main(["--binary", str(self.root / "missing"), "--repo", str(self.repo),
+                     "--graph", str(self.root), "--target", "windows-x86_64", "--out", str(out)])
+        self.assertFalse(out.exists())
 
 
 if __name__ == "__main__":

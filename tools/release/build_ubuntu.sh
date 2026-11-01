@@ -11,7 +11,14 @@ apt-get update -qq
 apt-get install -y -qq --no-install-recommends ca-certificates curl build-essential pkg-config git python3 >/dev/null
 export RUSTUP_HOME=/rustup CARGO_HOME=/cargo PATH=/cargo/bin:$PATH
 if ! command -v rustup >/dev/null 2>&1; then
-  curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
+  # Pinned: rustup-init 1.29.2 for x86_64 Linux, checked against the SHA-256 published beside it at
+  # static.rust-lang.org/rustup/archive/1.29.2/x86_64-unknown-linux-gnu/rustup-init.sha256.
+  RUSTUP_INIT_SHA256=5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4
+  curl -sSf --max-time 120 -o /tmp/rustup-init \
+    https://static.rust-lang.org/rustup/archive/1.29.2/x86_64-unknown-linux-gnu/rustup-init
+  echo "$RUSTUP_INIT_SHA256  /tmp/rustup-init" | sha256sum -c -
+  chmod +x /tmp/rustup-init
+  /tmp/rustup-init -y --profile minimal --default-toolchain none --no-modify-path
 fi
 rustup toolchain install 1.97.1 --profile minimal >/dev/null
 rm -rf /src && git clone -q /in/source.bundle /src

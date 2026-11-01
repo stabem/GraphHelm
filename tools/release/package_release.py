@@ -2,11 +2,16 @@
 
 Usage:
   python package_release.py --binary <built graphhelm[.exe]> --repo <checkout at the release head>
-      --target windows-x86_64|ubuntu-24.04-x86_64 --out <new directory> [--smoke-only <archive>]
+      --graph <a valid example graph, e.g. examples/graphs/provider-less-demo.yaml>
+      --target windows-x86_64|ubuntu-24.04-x86_64 --out <new directory>
+  python package_release.py --smoke-only <archive> --graph <example graph> --target <target> --out <dir>
 
 Archive layout (as 0.1.1): graphhelm[.exe], extensions/ (builtin packages and releases/, which the
-adoption loader resolves next to the executable), LICENSE, README.md. Writes the archive and
-SHA256SUMS.txt. The smoke test extracts into a fresh scratch directory and runs --version, --help,
+adoption loader resolves next to the executable), LICENSE, README.md. Writes the archive and, in
+`--out`, a one-line SHA256SUMS.txt (LF line ends, `<sha256>  <archive name>`, so `sha256sum -c`
+works on every platform); a release with several archives concatenates those lines into one
+file. Archive member times are not normalised, so a rebuild gives a different archive hash. The
+smoke test extracts into a fresh scratch directory and runs --version, --help,
 `extension validate` on each builtin package and an offline graph validation; any failure fails
 the run. Every child runs hidden (CREATE_NO_WINDOW on Windows).
 """
@@ -106,7 +111,12 @@ def smoke(path: Path, example_graph: Path) -> list[str]:
         shutil.rmtree(scratch, ignore_errors=True)
 
 
-def main() -> int:
+def checksum_line(archive_path: Path) -> bytes:
+    """The SHA256SUMS.txt content for one archive, as bytes so Windows never writes CRLF."""
+    return f"{sha256(archive_path)}  {archive_path.name}\n".encode("utf-8")
+
+
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path)
     parser.add_argument("--repo", type=Path)
@@ -115,25 +125,34 @@ def main() -> int:
     parser.add_argument("--smoke-only", type=Path)
     parser.add_argument("--graph", type=Path, required=True,
                         help="a valid example graph from the release head (copied out of the tree)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.smoke_only:
         print("\n".join(smoke(args.smoke_only, args.graph)))
         return 0
+    for name in ("binary", "repo"):
+        value = getattr(args, name)
+        if value is None or not value.exists():
+            raise SystemExit(f"--{name} must name an existing path (got {value}); see the usage in the module docstring")
     if args.out.exists():
         raise SystemExit(f"{args.out} exists; choose a new directory")
     args.out.mkdir(parents=True)
-    staging = Path(tempfile.mkdtemp(prefix="graphhelm-stage-", dir=args.out.parent))
     try:
-        stage(args.binary, args.repo, staging / "root")
-        path = archive(staging / "root", args.out, args.target)
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
-    (args.out / "SHA256SUMS.txt").write_text(f"{sha256(path)}  {path.name}\n", encoding="utf-8")
-    manifest = {"target": args.target, "archive": path.name, "sha256": sha256(path),
-                "binarySha256": sha256(args.binary), "bytes": path.stat().st_size}
-    (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(manifest))
-    print("\n".join(smoke(path, args.graph)))
+        staging = Path(tempfile.mkdtemp(prefix="graphhelm-stage-", dir=args.out.parent))
+        try:
+            stage(args.binary, args.repo, staging / "root")
+            path = archive(staging / "root", args.out, args.target)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        (args.out / "SHA256SUMS.txt").write_bytes(checksum_line(path))
+        manifest = {"target": args.target, "archive": path.name, "sha256": sha256(path),
+                    "binarySha256": sha256(args.binary), "bytes": path.stat().st_size}
+        (args.out / "manifest.json").write_bytes((json.dumps(manifest, indent=2) + "\n").encode("utf-8"))
+        print(json.dumps(manifest))
+        print("\n".join(smoke(path, args.graph)))
+    except BaseException:
+        # A failed run leaves no half-written output, so the next run does not say "exists".
+        shutil.rmtree(args.out, ignore_errors=True)
+        raise
     return 0
 
 

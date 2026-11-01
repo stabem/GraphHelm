@@ -44,6 +44,7 @@ def toplevel(cwd):
             return folder
     return None
 
+
 def note(text):
     """One content-free line on stderr: the host shows it to the operator, never to the model."""
     print(f'console-guard: {text}', file=sys.stderr)

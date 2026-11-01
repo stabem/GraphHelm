@@ -1,13 +1,33 @@
-// @vitest-environment jsdom
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import type { Root } from "react-dom/client";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { LanesPanels } from "../lanes/LanesPanels";
+import type { LanesPanels as LanesPanelsType } from "../lanes/LanesPanels";
 import type { AttentionReason, Runtime, TasksBoard } from "../runtime/client";
 
 // #2356: Lanes rendered with the real useRunWaits (no RunWaitsGiven), so its effect and its
 // subscription run. Without the reader.read(...) call the panel stays on "Reading…" forever.
+//
+// jsdom is loaded inside beforeAll, not as the file's vitest environment: vitest gives a worker 60 s
+// to start and loading jsdom alone can take longer on a busy machine, so the file never ran. Here the
+// load is bounded by the hook's own timeout.
+const JSDOM_LOAD_MS = 300_000;
+let LanesPanels: typeof LanesPanelsType;
+let createRoot: typeof import("react-dom/client").createRoot;
+beforeAll(async () => {
+  const { JSDOM } = await import("jsdom");
+  const { window } = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://127.0.0.1/" });
+  const g = globalThis as Record<string, unknown>;
+  for (const key of Object.getOwnPropertyNames(window)) {
+    if (key in g || key.startsWith("_")) continue;
+    Object.defineProperty(g, key, { configurable: true, get: () => (window as unknown as Record<string, unknown>)[key] });
+  }
+  for (const [key, value] of [["window", window], ["document", window.document], ["navigator", window.navigator]] as const) {
+    Object.defineProperty(g, key, { configurable: true, value });
+  }
+  ({ createRoot } = await import("react-dom/client"));
+  ({ LanesPanels } = await import("../lanes/LanesPanels"));
+}, JSDOM_LOAD_MS);
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type Status = { attention?: string; attentionReasons?: AttentionReason[] };

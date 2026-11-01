@@ -78,15 +78,37 @@ export function parseBuilds(lines) {
   return builds;
 }
 
+/**
+ * Build INVOCATIONS from tab-separated `name, pid, ppid, commandline` lines: the cargo processes whose parent is
+ * not another cargo in the same snapshot. A rustup-proxied `cargo +toolchain build` is two cargo processes (the
+ * proxy and the real cargo) but one build, so counting processes would call two builds "four".
+ */
+export function countInvocations(lines) {
+  const rows = [];
+  for (const line of lines) {
+    const [name, pid, ppid] = line.split('\t');
+    if ((name || '').toLowerCase().replace(/\.exe$/, '') === 'cargo') rows.push({ pid, ppid });
+  }
+  const cargoPids = new Set(rows.map((r) => r.pid));
+  return rows.filter((r) => !cargoPids.has(r.ppid)).length;
+}
+
 function snapshotBuilds() {
   return new Promise((resolve) => {
-    const done = (err, out) => resolve(err ? { error: 'process list unavailable', builds: [] } : { builds: parseBuilds(out.split(/\r?\n/).filter(Boolean)) });
+    const done = (err, out) => {
+      if (err) return resolve({ error: 'process list unavailable', builds: [], invocations: null });
+      const lines = out.split(/\r?\n/).filter(Boolean);
+      // parseBuilds keeps its two-field input (name, command line); the ids only serve countInvocations.
+      const twoField = lines.map((l) => { const [name, , , ...rest] = l.split('\t'); return `${name}\t${rest.join('\t')}`; });
+      resolve({ builds: parseBuilds(twoField), invocations: countInvocations(lines) });
+    };
     if (process.platform === 'win32') {
-      const ps = "Get-CimInstance Win32_Process -Filter \"Name='cargo.exe' or Name='rustc.exe'\" | ForEach-Object { $_.Name + \"`t\" + $_.CommandLine }";
+      const ps = "Get-CimInstance Win32_Process -Filter \"Name='cargo.exe' or Name='rustc.exe'\" | ForEach-Object { $_.Name + \"`t\" + $_.ProcessId + \"`t\" + $_.ParentProcessId + \"`t\" + $_.CommandLine }";
       execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 20000 }, done);
     } else {
-      execFile('ps', ['-eo', 'comm=,args='], { windowsHide: true, timeout: 20000 }, (err, out) =>
-        done(err, err ? '' : out.split('\n').map((l) => l.trim().replace(/\s+/, '\t')).join('\n')));
+      execFile('ps', ['-eo', 'comm=,pid=,ppid=,args='], { windowsHide: true, timeout: 20000 }, (err, out) =>
+        done(err, err ? '' : out.split('\n').map((l) => l.trim().replace(/\s+/g, ' ').split(' ')).filter((f) => f.length > 3)
+          .map(([comm, pid, ppid, ...args]) => [comm, pid, ppid, args.join(' ')].join('\t')).join('\n')));
     }
   });
 }
@@ -182,13 +204,14 @@ async function main() {
     const nav = await page.evaluate(() => { const e = performance.getEntriesByType('navigation')[0]; return e ? { domContentLoadedMs: Math.round(e.domContentLoadedEventEnd), loadMs: Math.round(e.loadEventEnd), documentBytes: e.encodedBodySize } : null; }).catch(() => null);
     const bad = rec.routes.filter((r) => r.status === null || r.status >= 400);
     const { outcome, reason } = classify({ threw, ready, readFailure, badResponses: bad, excludedReason: null });
-    attempts.push({ n, outcome, reason, usableMs: outcome === 'success' ? usableMs : null, elapsedMs: usableMs, navigation: nav, routes: rec.routes, builds: builds.builds, buildsError: builds.error ?? null });
+    attempts.push({ n, outcome, reason, usableMs: outcome === 'success' ? usableMs : null, elapsedMs: usableMs, navigation: nav, routes: rec.routes, builds: builds.builds, buildInvocations: builds.invocations, buildsError: builds.error ?? null });
     process.stderr.write(`attempt ${n}: ${outcome} ${usableMs} ms, builds ${builds.builds.length}\n`);
   }
   const headAfter = await eventHead(o.runtime, token, o.execution);
   await browser.close();
 
   const buildCounts = attempts.map((a) => a.builds.filter((b) => b.tool === 'cargo').length);
+  const invocationCounts = attempts.map((a) => a.buildInvocations).filter((n) => Number.isInteger(n));
   const receipt = {
     schema: 'graphhelm-studio-reload-receipt/1',
     issue: 1703,
@@ -197,7 +220,13 @@ async function main() {
     machine: { platform: process.platform, arch: process.arch, node: process.version, browser: `chromium ${browser.version()}`, headless: true },
     subject: { studio: 'loopback, lane-started', runtime: 'loopback, lane-started', execution: o.execution, boardReady: BOARD_READY, timeoutMs: o.timeoutMs },
     eventHead: { before: headBefore.head, after: headAfter.head, route: '/v1/executions/{id}/tasks (max sequence)' },
-    builds: { cargoMin: Math.min(...buildCounts), cargoMax: Math.max(...buildCounts), fourActiveThroughout: Math.min(...buildCounts) >= 4 },
+    builds: {
+      cargoMin: Math.min(...buildCounts), cargoMax: Math.max(...buildCounts), fourActiveThroughout: Math.min(...buildCounts) >= 4,
+      // fourActiveThroughout counts cargo PROCESSES (a proxied cargo run is two). The issue asks for four BUILDS:
+      invocationsMin: invocationCounts.length ? Math.min(...invocationCounts) : null,
+      invocationsMax: invocationCounts.length ? Math.max(...invocationCounts) : null,
+      fourBuildsActiveThroughout: invocationCounts.length === attempts.length && Math.min(...invocationCounts) >= 4,
+    },
     summary: summarize(attempts),
     attempts,
   };

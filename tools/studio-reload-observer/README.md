@@ -33,21 +33,32 @@ Tests: `node --test tools/studio-reload-observer/reload.test.mjs`.
 | Condition | Accounted | Valid | p50 | p95 | max | Builds seen |
 |---|---|---|---|---|---|---|
 | idle | 20/20 | 20 | 106 ms | 117 ms | 120 ms | 0 cargo, 0 rustc |
-| builds | 20/20 | 20 | 104 ms | 110 ms | 117 ms | one `cargo build` (2 cargo processes), 1–6 rustc |
+| builds (one build, `builds.json`) | 20/20 | 20 | 104 ms | 110 ms | 117 ms | one `cargo build` (2 cargo processes), 1–6 rustc |
+| builds (four builds, `builds-4.json`) | 20/20 | 20 | 212 ms | 228 ms | 234 ms | 4 cargo invocations in every attempt (8 cargo processes: 1 `cargo build`, 3 `cargo test`), 6 rustc |
 
 Limits, stated plainly:
 
 - **One host, load not controlled.** Other work on the machine was not stopped or measured.
-- **One build, not four.** The `builds` receipt ran beside one workspace `cargo build`; the lane
-  did not start four, so as not to load a shared machine. `fourActiveThroughout` is `false`, and
-  the issue's four-build criterion is not met by these receipts.
+- **Four builds are the host's own load.** `builds-4.json` was taken while the host was already
+  running four cargo invocations; the lane started none (the pre-registered rule). A small gate
+  outside the tool waited until two polls in a row saw four, then ran the observer once, and the
+  receipt counts as the four-build receipt only because its own per-attempt record shows four in
+  all 20 attempts (`builds.fourBuildsActiveThroughout`). The first one-build receipt
+  (`builds.json`) stays as the lighter load.
+- **Processes are not builds.** A rustup-proxied `cargo +toolchain build` is two cargo processes
+  (the proxy and the real cargo). `builds.fourActiveThroughout` counts processes, so it is
+  `true` for two builds; `builds.invocationsMin/Max` and `fourBuildsActiveThroughout` count the
+  cargo processes whose parent is not a cargo (one per build) and are what the four-build
+  criterion is judged on. `builds.json` predates `invocations*`; its 2 cargo processes are one
+  build.
 - **Fixture, not a real project.** The subject is the studio journey fixture's disposable
   Runtime and run `demo` (about 1.3 KB of tasks). A real project's board reads more data;
   these numbers are a floor, not that project's baseline.
 - Headless Chromium, `vite` dev server (not a production build). Event head is the highest
-  sequence in `/v1/executions/{id}/tasks`; it did not move during either run (39 → 39).
+  sequence in `/v1/executions/{id}/tasks`; it did not move during any run (39 → 39).
 - Machine is recorded as platform, arch, Node and Chromium versions only: no CPU, memory or host
   name in public text.
-- `source.dirty` is `true` because the receipts were taken from the uncommitted tool itself.
+- `source.dirty` is `true` because the receipts were taken from the uncommitted tool itself
+  (`builds-4.json`: base `172ffe400` plus the `invocations` change in this PR).
 - A first `builds` run started after its build had already finished and saw 0 builds; it was
   discarded as mislabelled (not a builds condition) and re-run while the build compiled.

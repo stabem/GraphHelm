@@ -1,0 +1,2791 @@
+{
+  "schema": "graphhelm-studio-reload-receipt/1",
+  "issue": 1703,
+  "condition": "builds",
+  "source": {
+    "sha": "172ffe400e8c27be881f43159d3c41d587b557a7",
+    "dirty": true
+  },
+  "machine": {
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v22.22.2",
+    "browser": "chromium 156.0.8078.4",
+    "headless": true
+  },
+  "subject": {
+    "studio": "loopback, lane-started",
+    "runtime": "loopback, lane-started",
+    "execution": "demo",
+    "boardReady": "section#panel-lanes.lanes",
+    "timeoutMs": 30000
+  },
+  "eventHead": {
+    "before": 39,
+    "after": 39,
+    "route": "/v1/executions/{id}/tasks (max sequence)"
+  },
+  "builds": {
+    "cargoMin": 8,
+    "cargoMax": 8,
+    "fourActiveThroughout": true,
+    "invocationsMin": 4,
+    "invocationsMax": 4,
+    "fourBuildsActiveThroughout": true
+  },
+  "summary": {
+    "attempts": 20,
+    "counts": {
+      "success": 20,
+      "timeout": 0,
+      "error": 0,
+      "excluded": 0
+    },
+    "validSamples": 20,
+    "p50Ms": 212,
+    "p95Ms": 228,
+    "maxMs": 234
+  },
+  "attempts": [
+    {
+      "n": 1,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 219,
+      "elapsedMs": 219,
+      "navigation": {
+        "domContentLoadedMs": 53,
+        "loadMs": 54,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 11,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 23,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 18,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 20,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 20,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 20,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 6,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 6,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 9,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 2,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 222,
+      "elapsedMs": 222,
+      "navigation": {
+        "domContentLoadedMs": 47,
+        "loadMs": 48,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 19,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 18,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 18,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 18,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 19,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 6,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 10,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 3,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 234,
+      "elapsedMs": 234,
+      "navigation": {
+        "domContentLoadedMs": 55,
+        "loadMs": 56,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 12,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 24,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 20,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 22,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 23,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 23,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 7,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 9,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 4,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 228,
+      "elapsedMs": 228,
+      "navigation": {
+        "domContentLoadedMs": 59,
+        "loadMs": 60,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 17,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 25,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 14,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 23,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 26,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 25,
+          "bytes": 1044
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 7,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 6,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 9,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 5,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 219,
+      "elapsedMs": 219,
+      "navigation": {
+        "domContentLoadedMs": 51,
+        "loadMs": 52,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 17,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 15,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 18,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 18,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 19,
+          "bytes": 1044
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 7,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 10,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 6,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 208,
+      "elapsedMs": 208,
+      "navigation": {
+        "domContentLoadedMs": 46,
+        "loadMs": 46,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 17,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 10,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 15,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 6,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 7,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 212,
+      "elapsedMs": 212,
+      "navigation": {
+        "domContentLoadedMs": 46,
+        "loadMs": 47,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 18,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 10,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 14,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 17,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 6,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 9,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 8,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 114,
+      "elapsedMs": 114,
+      "navigation": {
+        "domContentLoadedMs": 40,
+        "loadMs": 41,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 10,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 17,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 9,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1295
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 17,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 9,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 9,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 109,
+      "elapsedMs": 109,
+      "navigation": {
+        "domContentLoadedMs": 37,
+        "loadMs": 37,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 17,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 10,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 15,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 6,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 10,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 207,
+      "elapsedMs": 207,
+      "navigation": {
+        "domContentLoadedMs": 52,
+        "loadMs": 53,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 18,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 13,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 14,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 17,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 18,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 7,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 11,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 218,
+      "elapsedMs": 218,
+      "navigation": {
+        "domContentLoadedMs": 46,
+        "loadMs": 47,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 16,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 10,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 16,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 9,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 12,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 207,
+      "elapsedMs": 207,
+      "navigation": {
+        "domContentLoadedMs": 46,
+        "loadMs": 47,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 17,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 13,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 14,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 17,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 13,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 113,
+      "elapsedMs": 113,
+      "navigation": {
+        "domContentLoadedMs": 41,
+        "loadMs": 41,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 16,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 14,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 16,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 17,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 17,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 6,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 7,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 14,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 219,
+      "elapsedMs": 219,
+      "navigation": {
+        "domContentLoadedMs": 38,
+        "loadMs": 38,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 17,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 15,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 16,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 17,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 18,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 6,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 7,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 10,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 15,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 223,
+      "elapsedMs": 223,
+      "navigation": {
+        "domContentLoadedMs": 51,
+        "loadMs": 53,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 10,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 20,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 17,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 20,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 20,
+          "bytes": 1295
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 21,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 6,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 7,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 16,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 216,
+      "elapsedMs": 216,
+      "navigation": {
+        "domContentLoadedMs": 53,
+        "loadMs": 55,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 19,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 17,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 19,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 19,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 20,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 6,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 7,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 10,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 17,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 214,
+      "elapsedMs": 214,
+      "navigation": {
+        "domContentLoadedMs": 49,
+        "loadMs": 50,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 10,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 28,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 25,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 28,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 29,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 29,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 10,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 7,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 10,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 18,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 109,
+      "elapsedMs": 109,
+      "navigation": {
+        "domContentLoadedMs": 39,
+        "loadMs": 40,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 9,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 17,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 13,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 15,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 15,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 4,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 7,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 19,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 109,
+      "elapsedMs": 109,
+      "navigation": {
+        "domContentLoadedMs": 38,
+        "loadMs": 39,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 8,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 16,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 15,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 16,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 16,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 17,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 4,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 9,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    },
+    {
+      "n": 20,
+      "outcome": "success",
+      "reason": null,
+      "usableMs": 113,
+      "elapsedMs": 113,
+      "navigation": {
+        "domContentLoadedMs": 42,
+        "loadMs": 43,
+        "documentBytes": 837
+      },
+      "routes": [
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 7,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions",
+          "status": 200,
+          "ms": 15,
+          "bytes": 695
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/requests",
+          "status": 200,
+          "ms": 11,
+          "bytes": 142
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/requests",
+          "status": 200,
+          "ms": 13,
+          "bytes": 152
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/tasks",
+          "status": 200,
+          "ms": 13,
+          "bytes": 1298
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/tasks",
+          "status": 200,
+          "ms": 14,
+          "bytes": 1047
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/events",
+          "status": 200,
+          "ms": 5,
+          "bytes": 40285
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/graphhelm-owner/events",
+          "status": 200,
+          "ms": 4,
+          "bytes": 6012
+        },
+        {
+          "method": "GET",
+          "route": "/v1/executions/demo/lanes/planner/activity",
+          "status": 200,
+          "ms": 8,
+          "bytes": 135
+        }
+      ],
+      "builds": [
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "build"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "cargo",
+          "what": "test"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "cli"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        },
+        {
+          "tool": "rustc",
+          "what": "graphhelm"
+        }
+      ],
+      "buildInvocations": 4,
+      "buildsError": null
+    }
+  ]
+}

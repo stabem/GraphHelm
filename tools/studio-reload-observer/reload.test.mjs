@@ -1,7 +1,7 @@
 // Unit tests for the receipt arithmetic and classification of the board reload observer (#1703).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { percentile, summarize, classify, routeOf, parseBuilds, parseArgs } from './reload.mjs';
+import { percentile, summarize, classify, routeOf, parseBuilds, countInvocations, parseArgs } from './reload.mjs';
 
 test('nearest-rank percentiles over 20 samples', () => {
   const v = Array.from({ length: 20 }, (_, i) => (i + 1) * 100); // 100..2000, shuffled order must not matter
@@ -56,4 +56,15 @@ test('the live Studio and Runtime ports are refused', () => {
   assert.throws(() => parseArgs(['--studio', 'http://127.0.0.1:5191', ...ok.map((x) => x.replace('8811', '8793'))]), /live/);
   assert.throws(() => parseArgs(['--studio', 'http://example.com:5191', ...ok]), /loopback/);
   assert.equal(parseArgs(['--studio', 'http://127.0.0.1:5191', ...ok]).attempts, 20);
+});
+
+test('a rustup-proxied cargo run is one build invocation, not two', () => {
+  const win = (...parts) => parts.join(String.fromCharCode(92));
+  const proxy = (pid) => `cargo.exe\t${pid}\t1\t"${win('C:', 'x', '.cargo', 'bin', 'cargo.exe')}" +1.97.1 build --locked -p a`;
+  const real = (pid, ppid) => `cargo.exe\t${pid}\t${ppid}\t"${win('C:', 'x', 'bin', 'cargo.exe')}" build --locked -p a`;
+  // two builds are four cargo processes, which a process count would have called "four builds"
+  assert.equal(countInvocations([proxy(10), real(11, 10), proxy(20), real(21, 20), 'rustc.exe\t30\t11\trustc --crate-name a']), 2);
+  assert.equal(countInvocations([proxy(10), real(11, 10), proxy(20), real(21, 20), proxy(30), real(31, 30), proxy(40), real(41, 40)]), 4);
+  assert.equal(countInvocations([]), 0);
+  assert.equal(countInvocations(['rustc.exe\t1\t2\trustc -vV']), 0);
 });

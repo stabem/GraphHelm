@@ -704,6 +704,14 @@ def _needs_studio_preparation(repo: Path, cwd: Path) -> bool:
     return _studio_app(repo, cwd) is not None and _is_lane_worktree(repo) and not (cwd / "node_modules").exists()
 
 
+class _DiscoveryCleanupError(RuntimeError):
+    """#2393: the runner's own identity-discovery helper outlived its cleanup deadline.
+
+    A tool hiccup, not a test outcome: the run stays unreusable, but a plan whose steps all
+    finished with a result keeps their verdict and names this as a tool warning.
+    """
+
+
 def _discovery_output(argv: list[str], cwd: Path, env: dict[str, str], timeout: float) -> str:
     """Bound only identity discovery, including output held by descendants."""
     import threading
@@ -757,15 +765,15 @@ def _discovery_output(argv: list[str], cwd: Path, env: dict[str, str], timeout: 
         reaped = reap_child(cleanup_deadline)
         closed = join_reader_and_close(cleanup_deadline)
         if not reaped:
-            raise RuntimeError("executable identity discovery child could not be reaped before its cleanup deadline") from None
+            raise _DiscoveryCleanupError("executable identity discovery child could not be reaped before its cleanup deadline") from None
         if not closed:
-            raise RuntimeError("executable identity discovery output remained open after cleanup") from None
+            raise _DiscoveryCleanupError("executable identity discovery output remained open after cleanup") from None
         raise RuntimeError("executable identity discovery exceeded its deadline") from None
     reader.join(timeout=max(0, deadline - time.monotonic()))
     if reader.is_alive() or overflow.is_set():
         cleanup_deadline = time.monotonic() + cleanup_timeout
         if not join_reader_and_close(cleanup_deadline):
-            raise RuntimeError("executable identity discovery output remained open after cleanup") from None
+            raise _DiscoveryCleanupError("executable identity discovery output remained open after cleanup") from None
         raise RuntimeError("executable identity discovery output is unavailable or exceeds its bound")
     if code:
         raise RuntimeError("executable identity discovery refused the selected tool")
@@ -1007,6 +1015,8 @@ def _tool_fingerprint(steps: list[dict[str, Any]], graphhelm: Path | None,
     except (OSError, RuntimeError, ValueError) as exc:
         tools.update(identityComplete=False, identityReason=str(exc) if isinstance(exc, RuntimeError) else
                      "executable identity cannot be read or decoded", stepPrograms=[])
+        if isinstance(exc, _DiscoveryCleanupError):
+            tools["identityCleanupOnly"] = True
     return tools
 
 def _fingerprint(repo: Path, steps: list[dict[str, Any]], graphhelm: Path | None, env: dict[str, str]) -> dict[str, Any]:
@@ -1281,6 +1291,7 @@ def run(args: argparse.Namespace) -> int:
                         identity_complete = False
                         identities["identityComplete"] = False
                         identities["identityReason"] = "Studio preparation appeared after identity capture; execution is not reusable"
+                        identities.pop("identityCleanupOnly", None)
                         report["fingerprint"]["toolsSha256"] = _sha(identities)
                         reused = [result for result in report["completed"] if result.get("reused")]
                         report["pending"].extend(result["index"] for result in reused)
@@ -1522,9 +1533,15 @@ def run(args: argparse.Namespace) -> int:
             if red:
                 report["status"] = "failed"  # a later stop never hides a red that already ran
             if not identity_complete:
-                report["error"] = identities.get("identityReason", "executable identity is not reusable")
-                if report["status"] == "passed":
-                    report["status"] = "incomplete"
+                reason = identities.get("identityReason", "executable identity is not reusable")
+                if report["status"] == "passed" and identities.get("identityCleanupOnly"):
+                    # #2393: every step finished with a result; only the runner's helper cleanup
+                    # failed. The steps stay the verdict, the hiccup is a named tool warning.
+                    report["toolWarnings"] = [reason]
+                else:
+                    report["error"] = reason
+                    if report["status"] == "passed":
+                        report["status"] = "incomplete"
                 for result in report["completed"]:
                     result.pop("proofKey", None)
                     result.pop("reusable", None)

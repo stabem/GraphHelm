@@ -57,6 +57,12 @@ class ConsoleGuardStopHook(unittest.TestCase):
         # A hook continuation never blocks, so the gate cannot loop.
         self.assertIsNone(self.stop({"stop_hook_active": True}))
 
+    def test_a_session_started_in_a_subdirectory_is_still_checked(self):
+        (self.repo / "app.py").write_text("import subprocess\nsubprocess.run(['x'])\n", encoding="utf-8")
+        sub = self.repo / "docs"
+        sub.mkdir()
+        self.assertIsNotNone(console_guard_stop_hook.evaluate({"cwd": str(sub)}))
+
     def test_a_new_untracked_py_is_checked_too(self):
         (self.repo / "tools").mkdir(exist_ok=True)
         (self.repo / "tools/new_tool.py").write_text("import subprocess\nsubprocess.run(['x'])\n", encoding="utf-8")

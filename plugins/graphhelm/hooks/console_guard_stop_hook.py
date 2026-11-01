@@ -36,13 +36,33 @@ def run_guard(root):
     return done.returncode == 0, (done.stdout or '') + (done.stderr or '')
 
 
-def decide(event, root):
-    if event.get('stop_hook_active'):
+def toplevel(cwd):
+    """The repository root above `cwd`, so a session started in a subdirectory is still checked."""
+    try:
+        out = subprocess.run(['git', '-C', str(cwd), 'rev-parse', '--show-toplevel'], capture_output=True,
+                             text=True, timeout=20, creationflags=NO_WINDOW).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
         return None
-    if not (root / GUARD).is_file() or not changed_python(root):
+    return Path(out) if out else None
+
+
+def note(text):
+    """One content-free line on stderr: the host shows it to the operator, never to the model."""
+    print(f'console-guard: {text}', file=sys.stderr)
+
+
+def decide(event, cwd):
+    root = toplevel(cwd)
+    if root is None or not (root / GUARD).is_file() or not changed_python(root):
+        return None
+    if event.get('stop_hook_active'):
+        note('continuation stop passes without rerunning the guard')
         return None
     passed, output = run_guard(root)
-    if passed is not False:
+    if passed is None:
+        note(f'guard unobserved (did not finish within {DEADLINE_SECONDS} s); the stop passes')
+        return None
+    if passed:
         return None
     lines = [line for line in output.splitlines() if line.strip()][-MAX_REASON_LINES:]
     return ('The repository console-window guard fails on your change '

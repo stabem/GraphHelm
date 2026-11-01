@@ -39,7 +39,19 @@ only after a release, or after a reinstall from a checkout.
    approval of the release is a comment on that pull request.
 8. Tag the merged commit and push the tag: `git tag v<version> <merge sha>`,
    `git push origin v<version>`. No GitHub Actions take part.
-9. Optional Windows package from that commit: [`docs/releases/WINDOWS_BINARY.md`](../releases/WINDOWS_BINARY.md).
+9. Release archives from that commit, Windows x86-64 and Ubuntu 24.04 x86-64, each with
+   `SHA256SUMS.txt`, built with Rust 1.97.1 and `--locked --release` and smoke-tested from a
+   scratch directory outside the tree by
+   [`tools/release/package_release.py`](../../tools/release/package_release.py):
+   - Windows: `cargo +1.97.1 build --locked --release -p graphhelm-cli --bin graphhelm`, then
+     `python tools/release/package_release.py --binary <target>/release/graphhelm.exe --repo .
+     --graph examples/graphs/provider-less-demo.yaml --target windows-x86_64 --out <new dir>`.
+   - Ubuntu: [`tools/release/build_ubuntu.sh`](../../tools/release/build_ubuntu.sh) in an
+     `ubuntu:24.04` container, from a `git bundle` of the head (a clone keeps `.git`, so the
+     binary records its commit), with the sha checked after checkout.
+   If Docker cannot run the container, the Ubuntu archive is `OBSERVER_MISSING`, never built by
+   proxy. The bin-only Windows ZIP of
+   [`docs/releases/WINDOWS_BINARY.md`](../releases/WINDOWS_BINARY.md) stays for local review.
    A package is not a published or installed release.
 
 ## Proof of a release

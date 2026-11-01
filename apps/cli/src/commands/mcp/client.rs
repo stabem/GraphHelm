@@ -23,6 +23,8 @@ struct Settings<'a> {
     idempotency_key: Option<&'a str>,
     if_match: Option<u64>,
     timeout: Duration,
+    /// #2323: sends `Prefer: respond-async` (RFC 7240).
+    prefer_async: bool,
 }
 
 /// The direct-arm bound for [`derive_key`]: an rpc id that is already `[a-z0-9-]{1,32}` rides
@@ -301,6 +303,7 @@ impl ApiClient {
                 idempotency_key: Some(idempotency_key),
                 if_match,
                 timeout: REQUEST_TIMEOUT,
+                prefer_async: false,
             },
             Some(lane),
         )
@@ -318,9 +321,7 @@ impl ApiClient {
         if_match: Option<u64>,
         timeout: Duration,
     ) -> Result<(u16, serde_json::Value), String> {
-        let endpoint = self.current_endpoint()?;
-        let result = self.request_with(
-            &endpoint,
+        self.request_settled(
             method,
             path,
             body,
@@ -328,9 +329,43 @@ impl ApiClient {
                 idempotency_key,
                 if_match,
                 timeout,
+                prefer_async: false,
             },
-            None,
-        );
+        )
+    }
+
+    /// #2323: [`Self::request`] with `Prefer: respond-async`, for `start`: the Runtime answers
+    /// once the run is committed instead of after its whole drive.
+    pub(crate) fn request_preferring_async(
+        &self,
+        method: &'static str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        idempotency_key: Option<&str>,
+        if_match: Option<u64>,
+    ) -> Result<(u16, serde_json::Value), String> {
+        self.request_settled(
+            method,
+            path,
+            body,
+            Settings {
+                idempotency_key,
+                if_match,
+                timeout: REQUEST_TIMEOUT,
+                prefer_async: true,
+            },
+        )
+    }
+
+    fn request_settled(
+        &self,
+        method: &'static str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        settings: Settings<'_>,
+    ) -> Result<(u16, serde_json::Value), String> {
+        let endpoint = self.current_endpoint()?;
+        let result = self.request_with(&endpoint, method, path, body, settings, None);
         if !self.is_discovering() {
             return result;
         }
@@ -343,18 +378,7 @@ impl ApiClient {
                 if fresh.url == endpoint.url && fresh.token.as_str() == endpoint.token.as_str() {
                     return result;
                 }
-                self.request_with(
-                    &fresh,
-                    method,
-                    path,
-                    body,
-                    Settings {
-                        idempotency_key,
-                        if_match,
-                        timeout,
-                    },
-                    None,
-                )
+                self.request_with(&fresh, method, path, body, settings, None)
             }
             // A transport failure may have landed; never retried here, only re-resolved next time.
             Err(_) => {
@@ -588,6 +612,7 @@ impl ApiClient {
             idempotency_key,
             if_match,
             timeout,
+            prefer_async,
         } = settings;
         let mut headers = vec![(
             "Authorization".to_owned(),
@@ -609,6 +634,9 @@ impl ApiClient {
         }
         if let Some(head) = if_match {
             headers.push(("If-Match".to_owned(), head.to_string()));
+        }
+        if prefer_async {
+            headers.push(("Prefer".to_owned(), "respond-async".to_owned()));
         }
         let mut payload = Vec::new();
         if let Some(body) = body {

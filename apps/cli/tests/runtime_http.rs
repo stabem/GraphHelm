@@ -4339,6 +4339,104 @@ fn a_disconnected_start_client_does_not_orphan_the_committed_runtime_drive() {
     );
 }
 
+/// #2323: the same promise with `Prefer: respond-async`. The client goes away AFTER the commit but
+/// while the handler still records the mutation (held open by the debug seam
+/// `GRAPHHELM_TEST_START_GAP_MS`); the request future is dropped there, and the committed run's
+/// drive must still begin. Cost: one served Runtime, a held provider, one dropped POST.
+#[test]
+fn a_disconnected_async_start_client_does_not_orphan_its_drive() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let project = plain_project(directory.path());
+    let key_id = "runtime-http-async-disconnect";
+    let route_id = "async_disconnect_route";
+    let (provider, arrived, release) = held_anthropic_server();
+    credential_set(&broker, &keyring, key_id, "cred_async_disconnect", route_id);
+    let manifest = write_json(
+        directory.path(),
+        "async-disconnect-manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id, "provider": "anthropic", "transport": "direct_api",
+                "authentication": "api_key", "billingMode": "per_token", "baseUrl": provider,
+                "model": "claude-sonnet-5", "credentialRef": "cred_async_disconnect",
+                "profiles": ["critical_reasoning"], "enabled": true, "timeoutSeconds": 30
+            }]
+        }),
+    );
+    let execution = "exec-async-disconnected-start";
+    let graph = agent_only_graph(directory.path(), execution);
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_TEST_START_GAP_MS".to_owned(), "5000".to_owned()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+    let url = format!("{base}/v1/executions/{execution}/start");
+    let body = serde_json::json!({
+        "file": graph.to_str().unwrap(), "mode": "autopilot", "project": project.to_str().unwrap(),
+    });
+    let (host, port, path) = split_url(&url);
+    let address = (host.as_str(), port)
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .unwrap();
+    let mut stream = TcpStream::connect_timeout(&address, scaled(Duration::from_secs(5))).unwrap();
+    stream
+        .set_write_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    let payload = serde_json::to_vec(&body).unwrap();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nIdempotency-Key: async-disconnected-start\r\nX-GraphHelm-Actor: owner-local\r\nX-GraphHelm-Actor-Type: owner\r\nPrefer: respond-async\r\nContent-Length: {}\r\n\r\n",
+        payload.len()
+    );
+    stream.write_all(request.as_bytes()).unwrap();
+    stream.write_all(&payload).unwrap();
+    // Wait for the commit (the run reads `running`), then leave inside the held gap.
+    let status_url = format!("{base}/v1/executions/{execution}");
+    let committed_by = Instant::now() + scaled(Duration::from_secs(15));
+    while get_json(&status_url, Some(&token))["data"]["status"] != "running" {
+        assert!(Instant::now() < committed_by, "the start never committed");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(stream);
+    arrived
+        .recv_timeout(scaled(Duration::from_secs(20)))
+        .expect("ORPHANED: the committed run's drive never began after the client disconnected");
+    release.send(()).unwrap();
+    let deadline = Instant::now() + scaled(Duration::from_secs(20));
+    loop {
+        let status = get_json(&status_url, Some(&token));
+        if status["data"]["status"] == "completed" {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the run never completed: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// A model-only server (no `--staging`, so no tool half and none of its workspace checks) is
 /// asked to start over a `project` that IS the keyring directory. The keyring's `<id>.json`
 /// files carry no `keyring` segment in their relative names, end in a text suffix and hold base64
@@ -7473,5 +7571,232 @@ fn a_failing_launcher_is_capped_and_escalated_to_the_owner() {
         view["data"]["tasks"][0]["assignedReviewers"],
         serde_json::json!([]),
         "{view}"
+    );
+}
+
+/// #2323: with a real executor, `/start` answers once the run is started, not after the drive.
+/// A provider that never answers makes the drive outlast its route timeout; before, the reply came
+/// only after the whole drive (35 s measured by #2299, past the CLI's 30 s REQUEST_TIMEOUT). The
+/// observation is the run's own state, not wall time: when `/start` answers the run is still
+/// `running`, and the drive then ends on its own and its end reads back through status. A retry
+/// with the same key returns the same run. Cost: one served Runtime, a loopback provider that
+/// accepts and never answers, three POSTs and a bounded status poll.
+#[test]
+fn a_real_executor_start_answers_before_its_drive_ends() {
+    start_against_a_silent_provider(true, false);
+}
+
+/// #2323's compatibility rule: without `Prefer: respond-async`, `/start` still answers after the
+/// drive, exactly as before. Same setup as the cell above, without the header.
+#[test]
+fn a_real_executor_start_without_the_preference_still_waits_for_its_drive() {
+    start_against_a_silent_provider(false, false);
+}
+
+/// #2323 review: a started-run render that fails after the commit (forced by the debug seam
+/// `GRAPHHELM_TEST_FAIL_START_RENDER`) still answers 202 with the committed run's id, and its
+/// drive still runs. A `?` on that render would answer an error for a committed start.
+#[test]
+fn a_failed_started_run_render_still_answers_202_and_drives() {
+    start_against_a_silent_provider(true, true);
+}
+
+fn start_against_a_silent_provider(prefer_async: bool, fail_render: bool) {
+    let directory = tempfile::tempdir().unwrap();
+    let project = plain_project(directory.path());
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let staging = directory.path().join("staging");
+    let key_id = "runtime-http-key";
+    let route_id = "silent_route";
+    let base_url = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                std::thread::spawn(move || {
+                    let mut request = [0_u8; 8192];
+                    let _ = stream.read(&mut request);
+                    // Accept and never answer: only the route's own timeout ends the attempt.
+                    std::thread::sleep(Duration::from_secs(600));
+                });
+            }
+        });
+        format!("http://{address}")
+    };
+    credential_set(&broker, &keyring, key_id, "cred_silent", route_id);
+    let manifest = write_json(
+        directory.path(),
+        "manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id, "provider": "anthropic", "transport": "direct_api",
+                "authentication": "api_key", "billingMode": "per_token", "baseUrl": base_url,
+                "model": "claude-sonnet-5", "credentialRef": "cred_silent",
+                "profiles": ["critical_reasoning"], "enabled": true, "timeoutSeconds": 15
+            }]
+        }),
+    );
+    let execution = "exec-2323-start-reply";
+    let graph = agent_chain_graph(directory.path(), execution);
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+            "--staging".into(),
+            staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+            "--allow-program".into(),
+            "cargo".into(),
+        ],
+        env: {
+            let mut env = vec![
+                ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+                ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+            ];
+            if fail_render {
+                env.push((
+                    "GRAPHHELM_TEST_FAIL_START_RENDER".to_owned(),
+                    "1".to_owned(),
+                ));
+            }
+            env
+        },
+    };
+    drop(
+        graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(FixedClock),
+            std::sync::Arc::new(Ids::default()),
+        )
+        .unwrap(),
+    );
+    let (_guard, base, token) = serve_with(&events, &extra);
+    let url = format!("{base}/v1/executions/{execution}/start");
+    let body = serde_json::json!({"file": graph.to_str().unwrap(), "mode": "autopilot",
+        "project": project.to_str().unwrap()});
+    let mut headers = vec![
+        ("Idempotency-Key", "issue-2323-start"),
+        ("X-GraphHelm-Actor", "agent-2323"),
+        ("X-GraphHelm-Actor-Type", "agent"),
+    ];
+    if prefer_async {
+        headers.push(("Prefer", "respond-async"));
+    }
+    let status_url = format!("{base}/v1/executions/{execution}");
+    let status = || json_body(&raw_request(&status_url, Some(&token)).unwrap());
+
+    let reply = post_request(
+        &url,
+        &token,
+        &headers,
+        &body,
+        scaled(Duration::from_secs(120)),
+    )
+    .expect("/start answered");
+    let at_reply = status();
+    let replied = json_body(&reply);
+    if !prefer_async {
+        // The old reply: after the drive, which left step_one blocked on the silent provider.
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        assert_eq!(
+            at_reply["data"]["nodeStates"]["step_one"], "blocked",
+            "without the preference /start still answers after its drive: {at_reply}"
+        );
+        assert!(
+            !reply
+                .head
+                .to_ascii_lowercase()
+                .contains("preference-applied"),
+            "{}",
+            reply.head
+        );
+        return;
+    }
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    assert!(
+        reply
+            .head
+            .lines()
+            .any(|line| line.eq_ignore_ascii_case("preference-applied: respond-async")),
+        "the 202 names the preference it applied: {}",
+        reply.head
+    );
+    assert_eq!(
+        replied["data"]["status"], "running",
+        "/start answered with the started run, not its end: {replied}"
+    );
+    if fail_render {
+        // The fallback names the committed run; a `?` on the render would have answered an error.
+        assert_eq!(
+            replied["data"]["executionId"], execution,
+            "a failed render still answers the committed start: {replied}"
+        );
+    }
+    // The silent provider holds step_one for its 15 s route timeout. A reply that waited for the
+    // drive would find step_one already blocked; one that did not finds it not yet blocked, and
+    // this status GET answering at all is the other request served while the drive runs.
+    assert_ne!(
+        at_reply["data"]["nodeStates"]["step_one"], "blocked",
+        "/start answered only after the drive ended: {at_reply}"
+    );
+    assert_eq!(
+        at_reply["data"]["status"], "running",
+        "the drive was still going when /start answered: {at_reply}"
+    );
+
+    let retry = post_request(
+        &url,
+        &token,
+        &headers,
+        &body,
+        scaled(Duration::from_secs(30)),
+    )
+    .expect("the same-key retry answered");
+    assert!(matches!(retry.status, 200 | 202), "{}", retry.body);
+    assert_eq!(
+        json_body(&retry)["data"]["executionId"],
+        replied["data"]["executionId"],
+        "a same-key retry returns the same run"
+    );
+
+    let deadline = Instant::now() + scaled(Duration::from_secs(180));
+    let ended = loop {
+        let now = status();
+        // The drive has ended when step_one is blocked on the silent provider; the run itself
+        // stays `running`, waiting for its owner.
+        if now["data"]["nodeStates"]["step_one"] == "blocked" {
+            break now;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the detached drive never ended: {now}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    assert_eq!(
+        ended["data"]["status"], "running",
+        "the drive's end reads back through status: {ended}"
+    );
+    // The drive really ran after the reply: step_one left `ready` (the loop above waited for
+    // `blocked`), and the run did not stop with nothing dispatched.
+    assert!(
+        !ended["data"]["attentionReasons"]
+            .as_array()
+            .is_some_and(|reasons| reasons.iter().any(|r| r["kind"] == "wedged_quiescence")),
+        "the detached drive stopped with nothing dispatched: {ended}"
     );
 }

@@ -1454,6 +1454,24 @@ fn with_example(name: &str, outcome: HandlerOutcome) -> HandlerOutcome {
 /// What a timed-out `start` reports once the client has looked: the status envelope when the
 /// Runtime holds the execution (the start happened; not an error, the caller must NOT retry it),
 /// and the transport error with the next step when it does not.
+/// #2323: a `start` the Runtime answered with 202 (`Prefer: respond-async`): the run is committed
+/// and its drive continues, so the reply names the tools that follow it.
+pub(crate) fn started_detached(execution_id: &str, envelope: &serde_json::Value) -> HandlerOutcome {
+    HandlerOutcome::Result(serde_json::json!({
+        "content": [
+            {"type": "text", "text": envelope.to_string()},
+            {"type": "text", "text": format!(
+                "Started; the drive continues. Follow it with the \"status\" or \"briefing\" tool \
+                 for executionId \"{execution_id}\". Known risk (#2357): a later drive or \
+                 workspace-release failure is reported only on the Runtime's stderr; status may \
+                 keep showing the run as started/running, and a failed release keeps the \
+                 execution's workspace until it is driven again or the operator removes it."
+            )},
+        ],
+        "isError": envelope.get("ok") != Some(&serde_json::Value::Bool(true)),
+    }))
+}
+
 pub(crate) fn start_after_timeout(
     transport: &str,
     observed: Option<(u16, serde_json::Value)>,
@@ -1967,7 +1985,7 @@ pub(crate) fn call(
                 if let Some(route) = str_arg(arguments, "route") {
                     body["route"] = serde_json::json!(route);
                 }
-                api.request(
+                api.request_preferring_async(
                     "POST",
                     &url::segment_path(&["v1", "executions", id, "start"]),
                     Some(&body),
@@ -2339,6 +2357,10 @@ pub(crate) fn call(
     with_example(
         name,
         match response {
+            Ok((202, envelope)) if name == "start" => started_detached(
+                str_arg(arguments, "executionId").unwrap_or_default(),
+                &envelope,
+            ),
             Ok((_status, envelope)) => {
                 let is_error = envelope.get("ok") != Some(&serde_json::Value::Bool(true));
                 HandlerOutcome::Result(serde_json::json!({
@@ -2770,6 +2792,27 @@ mod envelope_tests {
                 1,
                 "no example beside a state diagnostic"
             ),
+            HandlerOutcome::Error { .. } => panic!(),
+        }
+    }
+
+    /// #2323: a 202 start keeps the Runtime's envelope and adds the exact follow-up: the tools
+    /// and the executionId. Never an empty or error reply for a committed run.
+    #[test]
+    fn a_detached_start_names_the_tools_that_follow_it() {
+        let started = serde_json::json!({"command":"execution.start","data":{"executionId":"exec-9","status":"running"},"diagnostics":[],"ok":true});
+        match started_detached("exec-9", &started) {
+            HandlerOutcome::Result(value) => {
+                assert_eq!(value["isError"], false);
+                let content = value["content"].as_array().unwrap();
+                assert_eq!(content[0]["text"], started.to_string());
+                let next = content[1]["text"].as_str().unwrap();
+                assert!(
+                    next.contains("\"status\"") && next.contains("\"briefing\""),
+                    "{next}"
+                );
+                assert!(next.contains("\"exec-9\""), "{next}");
+            }
             HandlerOutcome::Error { .. } => panic!(),
         }
     }

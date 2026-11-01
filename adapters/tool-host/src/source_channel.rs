@@ -383,6 +383,7 @@ impl WorkspaceSourceChannel {
         let mut matched: Vec<(Vec<u32>, u64, String)> = Vec::new();
         let mut documents = 0u64;
         let mut document_bytes = 0u64;
+        let mut digests: HashMap<String, String> = HashMap::new();
         self.walk_text_files(bounds.max_entries_visited, |relative, path, metadata| {
             // The bounds are checked BEFORE the read they would bound, so the ceiling is
             // never crossed and then reported.
@@ -406,9 +407,10 @@ impl WorkspaceSourceChannel {
             if scanned_bytes.saturating_add(quoted) > bounds.max_bytes_scanned {
                 return Err(SourceSearchError::BoundExceeded);
             }
-            let (read, haystack) =
+            let (read, haystack, digest) =
                 self.read_lowered(&path, bounds.max_bytes_scanned - scanned_bytes)?;
             scanned_bytes = scanned_bytes.saturating_add(read);
+            digests.insert(relative.clone(), digest);
             let Some(haystack) = haystack else {
                 return Ok(());
             };
@@ -425,7 +427,9 @@ impl WorkspaceSourceChannel {
             }
             Ok(())
         })?;
-        Ok(finish_ranking(&matched, documents, document_bytes, bounds))
+        Ok(finish_ranking(&matched, documents, document_bytes, bounds, |path| {
+            digests.get(path).map(String::as_str)
+        }))
     }
 
     /// The walk every path shares (#2319): the same exclusions, link refusals, regular-file and
@@ -535,7 +539,7 @@ impl WorkspaceSourceChannel {
         &self,
         path: &Path,
         remaining: u64,
-    ) -> Result<(u64, Option<String>), SourceSearchError> {
+    ) -> Result<(u64, Option<String>, String), SourceSearchError> {
         // The READ ITSELF is bounded, not just reconciled after: `read_to_string` on a
         // file that grew past its quote would allocate the whole enlarged file before any
         // check could refuse it (G's TOCTOU, second half). `take` caps what can ever be
@@ -620,18 +624,32 @@ impl WorkspaceSourceChannel {
         // Not UTF-8: a file this channel does not serve — skipped, AFTER its bytes
         // were charged at their true count.
         let read = bytes.len() as u64;
-        Ok((read, String::from_utf8(bytes).ok().map(|content| content.to_lowercase())))
+        // #2319: the identity of the bytes, so identical copies can share one result slot.
+        let digest = {
+            use sha2::Digest as _;
+            hex::encode(sha2::Sha256::digest(&bytes))
+        };
+        Ok((
+            read,
+            String::from_utf8(bytes).ok().map(|content| content.to_lowercase()),
+            digest,
+        ))
     }
 }
 
 /// Rank and cut, the same for every path: BM25, strongest first, ties broken by path so the
 /// answer is deterministic, then `max_results`, which caps a search that FINISHED. Unlike the
 /// scan bounds it is not a breached ceiling, so it truncates instead of refusing.
-fn finish_ranking(
+///
+/// #2319: files whose bytes are IDENTICAL share one slot, held by the highest-ranked copy (the
+/// first path on a tie). A second copy adds no evidence, and ten vendored or duplicated copies
+/// would otherwise fill every slot, so one refused file (secret-shaped) refused the whole answer.
+fn finish_ranking<'a>(
     matched: &[(Vec<u32>, u64, String)],
     documents: u64,
     document_bytes: u64,
     bounds: &SourceSearchBounds,
+    digest_of: impl Fn(&str) -> Option<&'a str>,
 ) -> Vec<String> {
     let mut scored = rank_bm25(matched, documents, document_bytes);
     scored.sort_by(|left, right| {
@@ -640,16 +658,36 @@ fn finish_ranking(
             .total_cmp(&left.0)
             .then_with(|| left.1.cmp(&right.1))
     });
-    scored.truncate(bounds.max_results as usize);
-    scored.into_iter().map(|(_, path)| path).collect()
+    let mut seen = std::collections::HashSet::new();
+    let mut collapsed = 0u64;
+    let mut kept = Vec::new();
+    for (_, path) in scored {
+        if kept.len() >= bounds.max_results as usize {
+            break;
+        }
+        if digest_of(&path).is_none_or(|digest| seen.insert(digest)) {
+            kept.push(path);
+        } else {
+            collapsed += 1;
+        }
+    }
+    // #2319: how many ranked results the collapse removed before the cut, for a measurement
+    // harness (the #2304 scale run). Off unless the variable is set; content-free (a count).
+    if std::env::var_os("GRAPHHELM_SOURCE_SEARCH_TRACE").is_some() {
+        eprintln!(
+            "source-search: returned={} collapsed={collapsed}",
+            kept.len()
+        );
+    }
+    kept
 }
 
 /// Where a workspace that ALREADY has a `.graphhelm/` directory keeps its source index (#2319).
 /// The walk never enters `.graphhelm/`, so the cache never indexes itself. A tree without that
 /// directory (a fixture, a temporary copy) keeps the index in memory only: the channel never
 /// creates `.graphhelm/` and never leaves files in a tree that did not ask for them.
-const INDEX_CACHE: &str = ".graphhelm/cache/source-index-v1.json";
-const INDEX_SCHEMA: &str = "graphhelm.source-index/1";
+const INDEX_CACHE: &str = ".graphhelm/cache/source-index-v2.json";
+const INDEX_SCHEMA: &str = "graphhelm.source-index/2";
 
 /// One indexed text file: the (length, mtime) it was read at, and what the live search would
 /// have computed from it. `doc_len` is the lowercased text's byte length, `None` for a file that
@@ -665,6 +703,8 @@ struct IndexedFile {
     #[serde(default)]
     changed: u128,
     doc_len: Option<u64>,
+    /// SHA-256 of the file's bytes as read: identical copies share one result slot.
+    digest: String,
     /// Each maximal run of non-whitespace characters of the lowercased text, with its count.
     tokens: Vec<(String, u32)>,
 }
@@ -854,7 +894,10 @@ impl WorkspaceSourceChannel {
             index.dirty = false;
         }
         let (matched, documents, document_bytes) = index.matches(needles);
-        Ok(finish_ranking(&matched, documents, document_bytes, bounds))
+        let index = &*index;
+        Ok(finish_ranking(&matched, documents, document_bytes, bounds, |path| {
+            index.files.get(path).map(|file| file.digest.as_str())
+        }))
     }
 
     /// Index the whole workspace once, under [`SourceIndexBounds`]. Past a ceiling it refuses and
@@ -952,12 +995,13 @@ impl WorkspaceSourceChannel {
         metadata: &std::fs::Metadata,
         remaining: u64,
     ) -> Result<(IndexedFile, u64), SourceSearchError> {
-        let (read, haystack) = self.read_lowered(path, remaining)?;
+        let (read, haystack, digest) = self.read_lowered(path, remaining)?;
         let file = IndexedFile {
             len: metadata.len(),
             modified: modified_nanos(metadata),
             changed: changed_nanos(metadata),
             doc_len: haystack.as_ref().map(|text| text.len() as u64),
+            digest,
             tokens: haystack.as_deref().map(tokenize).unwrap_or_default(),
         };
         Ok((file, read))
@@ -1174,6 +1218,42 @@ mod tests {
         std::fs::write(&cache, serde_json::to_vec(&persisted).unwrap()).unwrap();
         let reopened = WorkspaceSourceChannel::open(root.path()).unwrap();
         assert_eq!(search(&reopened, &["delta"]), ["c.rs"]);
+    }
+
+    /// #2319: identical copies take one result slot (the first path wins the tie), so a
+    /// duplicated file cannot crowd distinct evidence out of the capped answer. The live scan
+    /// collapses the same way, so the two paths stay equal.
+    #[test]
+    fn identical_copies_share_one_result_slot() {
+        let root = tempfile::tempdir().unwrap();
+        for copy in ["a", "b", "c"] {
+            write(root.path(), &format!("{copy}/same.rs"), b"needle needle needle\n");
+        }
+        write(root.path(), "z/other.rs", b"needle once\n");
+        let channel = WorkspaceSourceChannel::open(root.path()).unwrap();
+        assert_eq!(search(&channel, &["needle"]), ["a/same.rs", "z/other.rs"]);
+        let wanted = needles(&["needle"]);
+        assert_eq!(
+            channel.live_search(&wanted, &SEARCH_BOUNDS).unwrap(),
+            ["a/same.rs", "z/other.rs"]
+        );
+    }
+
+    /// #2319 (Tsunade): the collapse keys on CONTENT only. Files with the same name in different
+    /// directories, or the same file edited to new content, are never collapsed.
+    #[test]
+    fn files_with_the_same_name_but_different_content_are_not_collapsed() {
+        let root = tempfile::tempdir().unwrap();
+        write(root.path(), "a/same.rs", b"needle first\n");
+        write(root.path(), "b/same.rs", b"needle second\n");
+        let channel = WorkspaceSourceChannel::open(root.path()).unwrap();
+        let mut found = search(&channel, &["needle"]);
+        found.sort();
+        assert_eq!(found, ["a/same.rs", "b/same.rs"]);
+        write(root.path(), "b/same.rs", b"needle first\n");
+        assert_eq!(search(&channel, &["needle"]).len(), 1, "identical again: one slot");
+        write(root.path(), "b/same.rs", b"needle changed again\n");
+        assert_eq!(search(&channel, &["needle"]).len(), 2, "different again: two slots");
     }
 
     /// A tree with no `.graphhelm/` is never written to: the index stays in memory.

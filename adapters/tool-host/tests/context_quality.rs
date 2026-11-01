@@ -722,6 +722,31 @@ fn the_search_answers_at_ten_times_the_repository_in_bounded_time_and_bytes() {
     assert!(m10.as_secs_f64() <= 15.0 * m1.as_secs_f64(), "10x median {m10:?} exceeds 15 times the 1x median {m1:?}");
 }
 
+/// #2319 (Tsunade): collapsing identical copies never bypasses the secret filter. A secret-shaped
+/// file is copied three times beside one ordinary file; after the collapse one copy reaches the
+/// compiler, which refuses it as before, and no copy of the secret ships. Cost: temp files only.
+#[test]
+fn a_duplicated_secret_shaped_file_never_ships_after_the_collapse() {
+    let root = tempfile::tempdir().unwrap();
+    let write = |relative: &str, body: &str| {
+        let path = root.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    };
+    let secret = "-----BEGIN RSA PRIVATE KEY-----\nzebraquill zebraquill zebraquill\n-----END RSA PRIVATE KEY-----\n";
+    for copy in ["a", "b", "c"] {
+        write(&format!("{copy}/key.txt"), secret);
+    }
+    write("docs/zebra.md", "zebraquill notes about the topic\n");
+    let terms = objective_terms("where is the zebraquill");
+    let search = WorkspaceSourceChannel::open(root.path()).unwrap();
+    let reader = WorkspaceExcerptReader::open(root.path()).unwrap();
+    let compiled = retrieve_and_compile(&search, &reader, &terms, "dedup/secret/a1", 32 * 1024);
+    assert_eq!(compiled.summary.sources, ["docs/zebra.md"], "{:?}", compiled.summary);
+    assert_eq!(compiled.summary.candidates_secret_shaped, 1, "one copy reached the filter");
+    assert!(!compiled.text.contains("PRIVATE KEY"), "no copy of the secret shipped");
+}
+
 #[test]
 fn the_measurement_is_deterministic_across_two_runs() {
     let root = frozen_corpus();

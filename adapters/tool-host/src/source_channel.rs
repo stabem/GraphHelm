@@ -1517,6 +1517,57 @@ mod tests {
         );
     }
 
+    /// #2372 items 2 and 3, measured (synthetic, so it states a scaling, not a real-repo time):
+    /// a tree of distinct tokens at 1x and 10x vocabulary. Prints the cache size, the full
+    /// rewrite one changed file costs, and a warm query. Run:
+    /// `cargo test -p graphhelm-tool-host --release --lib index_cost_scaling -- --ignored --nocapture`
+    #[test]
+    #[ignore = "measurement, prints timings; not a gate"]
+    fn index_cost_scaling() {
+        fn median(mut samples: Vec<std::time::Duration>) -> std::time::Duration {
+            samples.sort();
+            samples[samples.len() / 2]
+        }
+        for (label, files) in [("1x", 100usize), ("10x", 1_000)] {
+            let root = tempfile::tempdir().unwrap();
+            std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
+            for file in 0..files {
+                let text: String = (0..1_000)
+                    .map(|token| format!("t{file}x{token}\n"))
+                    .collect();
+                write(root.path(), &format!("src/f{file}.rs"), text.as_bytes());
+            }
+            let channel = WorkspaceSourceChannel::open(root.path()).unwrap();
+            let started = std::time::Instant::now();
+            search(&channel, &["t7x7"]);
+            let build = started.elapsed();
+            let cache = root.path().join(INDEX_CACHE);
+            let cache_bytes = std::fs::metadata(&cache).unwrap().len();
+            let mut rewrites = Vec::new();
+            let mut queries = Vec::new();
+            for round in 0..5 {
+                write(
+                    root.path(),
+                    "src/f0.rs",
+                    format!("t0x0 {}\n", "y".repeat(round + 1)).as_bytes(),
+                );
+                let started = std::time::Instant::now();
+                search(&channel, &["t7x7"]);
+                rewrites.push(started.elapsed());
+                let started = std::time::Instant::now();
+                search(&channel, &["t7x7"]);
+                queries.push(started.elapsed());
+            }
+            println!(
+                "index_cost_scaling {label}: vocabulary={} cache_bytes={cache_bytes} build={build:?} \
+                 changed_search(refresh+rewrite)={:?} warm_query={:?}",
+                files * 1_000,
+                median(rewrites),
+                median(queries)
+            );
+        }
+    }
+
     /// #2319 risk 3: an edit that keeps the length and restores the mtime. On Unix the index keys
     /// on `ctime` too, which every write changes and no tool can set back, so the edit is seen.
     /// (Windows std exposes no change time; the card declares that residual.)

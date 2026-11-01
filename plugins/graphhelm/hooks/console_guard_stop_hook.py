@@ -37,14 +37,12 @@ def run_guard(root):
 
 
 def toplevel(cwd):
-    """The repository root above `cwd`, so a session started in a subdirectory is still checked."""
-    try:
-        out = subprocess.run(['git', '-C', str(cwd), 'rev-parse', '--show-toplevel'], capture_output=True,
-                             text=True, timeout=20, creationflags=NO_WINDOW).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return Path(out) if out else None
-
+    """The repository root at or above `cwd` (the first folder holding `.git`), found without a child
+    process, so a session started in a subdirectory is still checked and a Stop pays no extra git call."""
+    for folder in [Path(cwd), *Path(cwd).parents]:
+        if (folder / '.git').exists():
+            return folder
+    return None
 
 def note(text):
     """One content-free line on stderr: the host shows it to the operator, never to the model."""

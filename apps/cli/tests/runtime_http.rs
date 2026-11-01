@@ -4339,6 +4339,104 @@ fn a_disconnected_start_client_does_not_orphan_the_committed_runtime_drive() {
     );
 }
 
+/// #2323: the same promise with `Prefer: respond-async`. The client goes away AFTER the commit but
+/// while the handler still records the mutation (held open by the debug seam
+/// `GRAPHHELM_TEST_START_GAP_MS`); the request future is dropped there, and the committed run's
+/// drive must still begin. Cost: one served Runtime, a held provider, one dropped POST.
+#[test]
+fn a_disconnected_async_start_client_does_not_orphan_its_drive() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let project = plain_project(directory.path());
+    let key_id = "runtime-http-async-disconnect";
+    let route_id = "async_disconnect_route";
+    let (provider, arrived, release) = held_anthropic_server();
+    credential_set(&broker, &keyring, key_id, "cred_async_disconnect", route_id);
+    let manifest = write_json(
+        directory.path(),
+        "async-disconnect-manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id, "provider": "anthropic", "transport": "direct_api",
+                "authentication": "api_key", "billingMode": "per_token", "baseUrl": provider,
+                "model": "claude-sonnet-5", "credentialRef": "cred_async_disconnect",
+                "profiles": ["critical_reasoning"], "enabled": true, "timeoutSeconds": 30
+            }]
+        }),
+    );
+    let execution = "exec-async-disconnected-start";
+    let graph = agent_only_graph(directory.path(), execution);
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_TEST_START_GAP_MS".to_owned(), "5000".to_owned()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+    let url = format!("{base}/v1/executions/{execution}/start");
+    let body = serde_json::json!({
+        "file": graph.to_str().unwrap(), "mode": "autopilot", "project": project.to_str().unwrap(),
+    });
+    let (host, port, path) = split_url(&url);
+    let address = (host.as_str(), port)
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .unwrap();
+    let mut stream = TcpStream::connect_timeout(&address, scaled(Duration::from_secs(5))).unwrap();
+    stream
+        .set_write_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    let payload = serde_json::to_vec(&body).unwrap();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nIdempotency-Key: async-disconnected-start\r\nX-GraphHelm-Actor: owner-local\r\nX-GraphHelm-Actor-Type: owner\r\nPrefer: respond-async\r\nContent-Length: {}\r\n\r\n",
+        payload.len()
+    );
+    stream.write_all(request.as_bytes()).unwrap();
+    stream.write_all(&payload).unwrap();
+    // Wait for the commit (the run reads `running`), then leave inside the held gap.
+    let status_url = format!("{base}/v1/executions/{execution}");
+    let committed_by = Instant::now() + scaled(Duration::from_secs(15));
+    while get_json(&status_url, Some(&token))["data"]["status"] != "running" {
+        assert!(Instant::now() < committed_by, "the start never committed");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(stream);
+    arrived
+        .recv_timeout(scaled(Duration::from_secs(20)))
+        .expect("ORPHANED: the committed run's drive never began after the client disconnected");
+    release.send(()).unwrap();
+    let deadline = Instant::now() + scaled(Duration::from_secs(20));
+    loop {
+        let status = get_json(&status_url, Some(&token));
+        if status["data"]["status"] == "completed" {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the run never completed: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// A model-only server (no `--staging`, so no tool half and none of its workspace checks) is
 /// asked to start over a `project` that IS the keyring directory. The keyring's `<id>.json`
 /// files carry no `keyring` segment in their relative names, end in a text suffix and hold base64
@@ -7485,17 +7583,25 @@ fn a_failing_launcher_is_capped_and_escalated_to_the_owner() {
 /// accepts and never answers, three POSTs and a bounded status poll.
 #[test]
 fn a_real_executor_start_answers_before_its_drive_ends() {
-    start_against_a_silent_provider(true);
+    start_against_a_silent_provider(true, false);
 }
 
 /// #2323's compatibility rule: without `Prefer: respond-async`, `/start` still answers after the
 /// drive, exactly as before. Same setup as the cell above, without the header.
 #[test]
 fn a_real_executor_start_without_the_preference_still_waits_for_its_drive() {
-    start_against_a_silent_provider(false);
+    start_against_a_silent_provider(false, false);
 }
 
-fn start_against_a_silent_provider(prefer_async: bool) {
+/// #2323 review: a started-run render that fails after the commit (forced by the debug seam
+/// `GRAPHHELM_TEST_FAIL_START_RENDER`) still answers 202 with the committed run's id, and its
+/// drive still runs. A `?` on that render would answer an error for a committed start.
+#[test]
+fn a_failed_started_run_render_still_answers_202_and_drives() {
+    start_against_a_silent_provider(true, true);
+}
+
+fn start_against_a_silent_provider(prefer_async: bool, fail_render: bool) {
     let directory = tempfile::tempdir().unwrap();
     let project = plain_project(directory.path());
     let events = directory.path().join("events");
@@ -7556,10 +7662,19 @@ fn start_against_a_silent_provider(prefer_async: bool) {
             "--allow-program".into(),
             "cargo".into(),
         ],
-        env: vec![
-            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
-            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
-        ],
+        env: {
+            let mut env = vec![
+                ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+                ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+            ];
+            if fail_render {
+                env.push((
+                    "GRAPHHELM_TEST_FAIL_START_RENDER".to_owned(),
+                    "1".to_owned(),
+                ));
+            }
+            env
+        },
     };
     drop(
         graphhelm_events::LocalEventRepository::open(
@@ -7624,6 +7739,13 @@ fn start_against_a_silent_provider(prefer_async: bool) {
         replied["data"]["status"], "running",
         "/start answered with the started run, not its end: {replied}"
     );
+    if fail_render {
+        // The fallback names the committed run; a `?` on the render would have answered an error.
+        assert_eq!(
+            replied["data"]["executionId"], execution,
+            "a failed render still answers the committed start: {replied}"
+        );
+    }
     // The silent provider holds step_one for its 15 s route timeout. A reply that waited for the
     // drive would find step_one already blocked; one that did not finds it not yet blocked, and
     // this status GET answering at all is the other request served while the drive runs.

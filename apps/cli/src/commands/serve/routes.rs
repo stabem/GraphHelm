@@ -3965,10 +3965,14 @@ pub(super) async fn start(
     // #2323: `Prefer: respond-async` (RFC 7240) asks for the reply once the run is committed. No
     // header, or any other preference, keeps the reply after the drive, as before.
     let respond_async = prefers_respond_async(&headers);
-    // The committed run's drive, handed out of the mutation and spawned only after `mutate` has
-    // returned: by then the start, its journal entry and its presence declaration are all
-    // recorded, so no step that can still fail runs between the commit and the drive (#2323).
-    let detached = Arc::new(std::sync::Mutex::new(None::<(PreparedDrive, DriveSetup)>));
+    // #2323: the go signal of a committed run's drive. The drive task is spawned right at the
+    // commit and waits on this; the handler sends it once `mutate` has recorded the journal entry
+    // and the presence declaration. If the request future is dropped first (a client that went
+    // away), the sender drops with it and the drive starts anyway: nothing after the commit can
+    // keep a committed run from advancing.
+    let detached = Arc::new(std::sync::Mutex::new(
+        None::<tokio::sync::oneshot::Sender<()>>,
+    ));
     let detached_slot = detached.clone();
 
     let mut response = mutate(
@@ -4067,13 +4071,34 @@ pub(super) async fn start(
                         // end read back through status and briefing.
                         // Infallible: a render that fails still answers the committed start.
                         let started = started_reply(
-                            execution::start::render_started(&drive_state.events, &prepared),
+                            render_started_for_reply(&drive_state.events, &prepared),
                             &drive_execution_id,
                         );
+                        let (go, wait) = tokio::sync::oneshot::channel::<()>();
                         *detached_slot
                             .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                            Some((prepared, setup));
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(go);
+                        // KNOWN RISK (#2357, review_by 2026-11-14, first post-1.0 Runtime item):
+                        // after a 202, a drive or workspace-release failure is reported only on
+                        // this server's stderr; status may keep showing the run as
+                        // started/running. A failed release has no TTL; see the doc comment
+                        // above for where the tree stays and how the operator removes it.
+                        let background_state = drive_state.clone();
+                        let background_execution_id = drive_execution_id.clone();
+                        tokio::spawn(async move {
+                            // Sent, or dropped with the request: either way the drive runs.
+                            let _ = wait.await;
+                            if drive(&background_state, &background_execution_id, prepared, setup)
+                                .await
+                                .is_err()
+                            {
+                                // Content-free: the run's own record says how it ended.
+                                eprintln!(
+                                    "serve: the detached drive of {background_execution_id} ended with an error; read its status"
+                                );
+                            }
+                        });
+                        hold_after_commit_for_tests().await;
                         Ok(started)
                     } else if drive_state.runtime.is_some() {
                         // The decision is durable before this point. A model request can take
@@ -4115,25 +4140,10 @@ pub(super) async fn start(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .take();
-    if let Some((prepared, setup)) = pending {
-        // Spawned whatever the reply says: the run is committed, so it must advance.
-        // KNOWN RISK (#2357, review_by 2026-11-14, first post-1.0 Runtime item): after a 202, a
-        // drive or workspace-release failure is reported only on this server's stderr; status may
-        // keep showing the run as started/running. A failed release has no TTL; see the doc
-        // comment above for where the tree stays and how the operator removes it.
-        let background_state = state.clone();
-        let background_execution_id = execution_id.clone();
-        tokio::spawn(async move {
-            if drive(&background_state, &background_execution_id, prepared, setup)
-                .await
-                .is_err()
-            {
-                // Content-free: the run's own record says how it ended.
-                eprintln!(
-                    "serve: the detached drive of {background_execution_id} ended with an error; read its status"
-                );
-            }
-        });
+    if let Some(go) = pending {
+        // The journal entry and presence declaration are recorded: let the drive go, whatever
+        // the reply says (the run is committed, so it must advance).
+        let _ = go.send(());
         if response.status() == StatusCode::OK {
             *response.status_mut() = StatusCode::ACCEPTED;
             response.headers_mut().insert(
@@ -4143,6 +4153,35 @@ pub(super) async fn start(
         }
     }
     response
+}
+
+/// #2323: `render_started`, with a debug-build seam (`GRAPHHELM_TEST_FAIL_START_RENDER=1`) that
+/// makes it fail, so a route-level test proves a failed render still answers the committed start.
+fn render_started_for_reply(
+    events: &Path,
+    prepared: &PreparedDrive,
+) -> Result<serde_json::Value, execution::Failure> {
+    #[cfg(debug_assertions)]
+    if std::env::var("GRAPHHELM_TEST_FAIL_START_RENDER").as_deref() == Ok("1") {
+        return Err(execution::Failure {
+            code: "GHI001_INTERNAL",
+            message: "render failure injected by GRAPHHELM_TEST_FAIL_START_RENDER".to_owned(),
+            pointer: "/".to_owned(),
+        });
+    }
+    execution::start::render_started(events, prepared)
+}
+
+/// #2323: a debug-build seam (`GRAPHHELM_TEST_START_GAP_MS`) that holds the request between the
+/// commit and the end of the mutation, so a test can drop the client inside that gap.
+async fn hold_after_commit_for_tests() {
+    #[cfg(debug_assertions)]
+    if let Some(ms) = std::env::var("GRAPHHELM_TEST_START_GAP_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+    }
 }
 
 /// #2323: whether any `Prefer` header carries `respond-async` (RFC 7240), parameters allowed.

@@ -316,8 +316,8 @@ opens it - reusing it` (or `[up] starting: graphhelm serve ...` then `[up] Runti
 link. It listens on `127.0.0.1` only, so from a container its port cannot be published; use the manual path below
 there.
 
-Manual dev server, on any platform. It listens on port 5185 (the launchers above use 5183, so the two
-paths do not clash):
+Manual dev server, on any platform. It listens on port 5183, the same port as the launchers above, so stop one
+before you start the other:
 
 ```powershell
 $env:GRAPHHELM_EVENTS = "C:\path\to\your-project\.graphhelm\events"
@@ -336,21 +336,21 @@ npm --prefix apps/studio run dev
 Expected, among the dev server's output:
 
 ```
-  Studio login: http://127.0.0.1:5185/?session=<nonce>
+  Studio login: http://127.0.0.1:5183/?session=<nonce>
 ```
 
 **In a container or VM**, the dev server's `127.0.0.1` bind is unreachable through a published
 port (measured: the connection is reset). Start it with `npm --prefix apps/studio run dev -- --host`
-inside the container instead, publish port `5185`, and open the printed URL with the host's
-published port in place of `5185`. Keep `serve` on `127.0.0.1`: the dev server proxies `/v1` and
+inside the container instead, publish port `5183`, and open the printed URL with the host's
+published port in place of `5183`. Keep `serve` on `127.0.0.1`: the dev server proxies `/v1` and
 `/health` to it from inside the container, so the Runtime never needs a wider bind.
 
 **Open that exact URL.** The page auto-connects only through the printed `?session=` link: the
 dev server reads the token beside `GRAPHHELM_EVENTS` and hands it to the page under that one-time
-session, so nobody pastes a token. Opening `http://127.0.0.1:5185/` without the query shows the
+session, so nobody pastes a token. Opening `http://127.0.0.1:5183/` without the query shows the
 connect gate instead. The gate has no field for the token. It says to run `graphhelm studio open` in the project
-folder, which opens the page already connected. `studio open` uses port 5183; for the manual dev server on 5185, add
-`--port 5185`, or it is refused with `GHCLI032_STUDIO_REFUSED`. With `--no-browser` it prints the login link as
+folder, which opens the page already connected. `studio open` uses port 5183, the port the manual dev server listens on too, so it finds the page without a flag.
+If you run the Studio on another port, pass `--port <that port>`, or it is refused with `GHCLI032_STUDIO_REFUSED`. With `--no-browser` it prints the login link as
 `data.url` instead, for a browser you open yourself. With `GRAPHHELM_EVENTS` unset there is no session endpoint at all,
 only the gate.
 
@@ -503,6 +503,6 @@ which serves every Runtime verb. If `init` detected neither harness
 | `init` says `GHCLI027_INIT_REFUSED` at `/keyring` | the keyring exists but `serve.key` no longer opens it (the key file was replaced) | pass the `--key-id` it was created with, or move `.graphhelm/keyring` aside — evidence sealed under the lost key cannot be recovered |
 | the `serve.started` line carries a `warning` `GHCLI006_SERVE_INVALID` at `/keyring` (`the keyring could not be opened with GRAPHHELM_EVENTS_KEY (…); sealed operations (messages, real executors) will refuse until serve is restarted with the right key`) | the variable is unset in this terminal, or `--key-id` is not the id the keyring was created with; reads and pause/approve/resume still work | stop `serve`, run the first `next` command from `init` again in the same terminal, restart `serve` with the `--key-id` `init` printed |
 | `serve` refuses at start with `GHCLI006_SERVE_INVALID` at `/bind` (`the requested address could not be bound`) | something already listens on `127.0.0.1:8791` — often a previous `serve` | stop it, or re-run `init --bind 127.0.0.1:<other port>` so every registration follows the new number |
-| the Studio shows the connect gate | the page was opened without the printed `?session=` URL, or `GRAPHHELM_EVENTS` was unset | open the printed URL; or run `graphhelm studio open` in the project folder (add `--port 5185` for the manual dev server) |
+| the Studio shows the connect gate | the page was opened without the printed `?session=` URL, or `GRAPHHELM_EVENTS` was unset | open the printed URL; or run `graphhelm studio open` in the project folder |
 | the Studio says `Runtime replied 502` | `GRAPHHELM_RUNTIME_URL` points at the wrong port (the default is `8080`) | set it to `http://127.0.0.1:8791` and restart the dev server |
 | the message box is refused | the Runtime started without `--keyring`/`--key-id` | restart it with the command `init` printed |

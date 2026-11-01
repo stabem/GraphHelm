@@ -21,6 +21,7 @@
     "@types/node": "24.10.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
+    "jsdom": "29.0.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11"
   }

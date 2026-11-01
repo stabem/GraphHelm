@@ -279,8 +279,8 @@ Shortest path, from your project folder: `graphhelm studio start`. It finds the 
 (`--source`, else `GRAPHHELM_SOURCE`, else the clone the binary was built from), fast-forwards it
 to `origin/main` when it is on a clean `main` (otherwise it warns how many commits it is behind and
 leaves it alone; `--no-update` skips the check), reruns `npm ci` when the Studio's lock file moved,
-and then runs `studio-up.ps1` below with this project's events, keyring and key. It needs
-PowerShell (`powershell` on Windows, `pwsh` elsewhere).
+and then runs the launcher below (`studio-up.ps1` on Windows, `studio-up.sh` on Linux and macOS) with this
+project's events, keyring and key. It needs no PowerShell on Linux or macOS.
 
 ```powershell
 cd C:\path\to\your-project
@@ -382,8 +382,9 @@ Expected (trimmed): `"command":"execution.start"`, `"attention":"needs_you"`, an
 values; this page moves on to acting on the run.
 
 Open the Studio to see the run in the Graph tab. It shows the run's objective and its status. A fixture run has no
-owner request, so the Graph lists no work for it. This version of the Studio does not show the run's blocked node or
-an approval control, so read the state with the CLI, as below. The Studio cannot approve a node.
+owner request, so the Graph lists no work for it. A run that waits on you reads `Status: waiting for you`, with a
+`Waits on:` row such as `implementation is blocked. Approve it from the CLI: graphhelm execution approve ...`. The Lanes
+tab shows the same text under Needs action. The Studio has no approve button: approve from the CLI, as below.
 
 The verbs, executed as written against a fresh store (`E` is the events directory, `F` the fixture file; same
 flags in PowerShell with the Windows paths). Pause first: a supervised run accepts `resume` only from `paused`.

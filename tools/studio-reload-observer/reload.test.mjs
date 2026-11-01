@@ -1,7 +1,7 @@
 // Unit tests for the receipt arithmetic and classification of the board reload observer (#1703).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { percentile, summarize, classify, routeOf, parseBuilds, countInvocations, parseArgs } from './reload.mjs';
+import { percentile, summarize, classify, routeOf, parseBuilds, countInvocations, parseArgs, psToLines, snapshotFrom } from './reload.mjs';
 
 test('nearest-rank percentiles over 20 samples', () => {
   const v = Array.from({ length: 20 }, (_, i) => (i + 1) * 100); // 100..2000, shuffled order must not matter
@@ -67,4 +67,32 @@ test('a rustup-proxied cargo run is one build invocation, not two', () => {
   assert.equal(countInvocations([proxy(10), real(11, 10), proxy(20), real(21, 20), proxy(30), real(31, 30), proxy(40), real(41, 40)]), 4);
   assert.equal(countInvocations([]), 0);
   assert.equal(countInvocations(['rustc.exe\t1\t2\trustc -vV']), 0);
+});
+
+test('a Linux ps listing of two proxied builds is two invocations, with names and no paths (#2402)', () => {
+  // `ps -eo comm=,pid=,ppid=,args=` as Linux prints it: padded columns, a rustup proxy cargo (pid 100, 200)
+  // with its real cargo child (101, 201), rustc under each, and unrelated processes that must be ignored.
+  const ps = [
+    '    bash  50     1 -bash',
+    '   cargo 100    50 cargo +1.97.1 build --locked -p graphhelm-cli',
+    '   cargo 101   100 /home/u/.rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/bin/cargo build --locked -p graphhelm-cli',
+    '   rustc 102   101 /home/u/.rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/bin/rustc --crate-name graphhelm_cli --edition=2024 apps/cli/src/main.rs',
+    '   cargo 200    50 cargo +1.97.1 test --locked -p tool-host',
+    '   cargo 201   200 /home/u/.rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/bin/cargo test --locked -p tool-host',
+    '   rustc 202   201 /home/u/.rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/bin/rustc --crate-name tool_host --edition=2024 src/lib.rs',
+    '   rustc 300     1 rustc -vV',
+    '',
+  ].join('\n');
+  const lines = psToLines(ps);
+  assert.equal(lines.split('\n').length, 8, 'every listed process becomes a four-field line');
+  const snap = snapshotFrom(lines);
+  assert.equal(snap.invocations, 2, 'four cargo processes are two builds');
+  assert.deepEqual(snap.builds, [
+    { tool: 'cargo', what: 'build' }, { tool: 'cargo', what: 'build' }, { tool: 'cargo', what: 'test' }, { tool: 'cargo', what: 'test' },
+    { tool: 'rustc', what: 'graphhelm_cli' }, { tool: 'rustc', what: 'tool_host' },
+  ]);
+  assert.ok(!JSON.stringify(snap).includes('/home/'), 'no path reaches the snapshot');
+  // an empty listing and a listing with no build are zero, not an error
+  assert.equal(snapshotFrom(psToLines('')).invocations, 0);
+  assert.equal(snapshotFrom(psToLines('    bash  50     1 -bash\n')).invocations, 0);
 });

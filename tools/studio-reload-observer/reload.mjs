@@ -93,22 +93,29 @@ export function countInvocations(lines) {
   return rows.filter((r) => !cargoPids.has(r.ppid)).length;
 }
 
+/** `ps -eo comm=,pid=,ppid=,args=` output as tab-separated `name, pid, ppid, commandline` lines (the Windows shape). */
+export function psToLines(out) {
+  return out.split('\n').map((l) => l.trim().replace(/\s+/g, ' ').split(' ')).filter((f) => f.length > 3)
+    .map(([comm, pid, ppid, ...args]) => [comm, pid, ppid, args.join(' ')].join('\t')).join('\n');
+}
+
+/** Builds and invocation count from tab-separated `name, pid, ppid, commandline` output (either host). */
+export function snapshotFrom(out) {
+  const lines = out.split(/\r?\n/).filter(Boolean);
+  // parseBuilds keeps its two-field input (name, command line); the ids only serve countInvocations.
+  const twoField = lines.map((l) => { const [name, , , ...rest] = l.split('\t'); return `${name}\t${rest.join('\t')}`; });
+  return { builds: parseBuilds(twoField), invocations: countInvocations(lines) };
+}
+
 function snapshotBuilds() {
   return new Promise((resolve) => {
-    const done = (err, out) => {
-      if (err) return resolve({ error: 'process list unavailable', builds: [], invocations: null });
-      const lines = out.split(/\r?\n/).filter(Boolean);
-      // parseBuilds keeps its two-field input (name, command line); the ids only serve countInvocations.
-      const twoField = lines.map((l) => { const [name, , , ...rest] = l.split('\t'); return `${name}\t${rest.join('\t')}`; });
-      resolve({ builds: parseBuilds(twoField), invocations: countInvocations(lines) });
-    };
+    const done = (err, out) => resolve(err ? { error: 'process list unavailable', builds: [], invocations: null } : snapshotFrom(out));
     if (process.platform === 'win32') {
       const ps = "Get-CimInstance Win32_Process -Filter \"Name='cargo.exe' or Name='rustc.exe'\" | ForEach-Object { $_.Name + \"`t\" + $_.ProcessId + \"`t\" + $_.ParentProcessId + \"`t\" + $_.CommandLine }";
       execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 20000 }, done);
     } else {
       execFile('ps', ['-eo', 'comm=,pid=,ppid=,args='], { windowsHide: true, timeout: 20000 }, (err, out) =>
-        done(err, err ? '' : out.split('\n').map((l) => l.trim().replace(/\s+/g, ' ').split(' ')).filter((f) => f.length > 3)
-          .map(([comm, pid, ppid, ...args]) => [comm, pid, ppid, args.join(' ')].join('\t')).join('\n')));
+        done(err, err ? '' : psToLines(out)));
     }
   });
 }

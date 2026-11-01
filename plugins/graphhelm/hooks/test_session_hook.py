@@ -773,10 +773,12 @@ class SessionHookTests(unittest.TestCase):
         """#2270: the hook asked to exit within its bar from its first line, by one of #2340's three
         paths. No exit request seen at all (no mark and no backstop dump) fails."""
         bar = self.EXIT_BAR[phase]
+        self.last_exit = None
         if "Timeout (" in result.stderr and "most recent call first" in result.stderr:
             # (c) the C-level backstop: it fires at a fixed moment after the first line by
             # construction; timed_out() checks its shape (exit 1 + dump).
             print(f"#2270 {phase}: backstop path, spawn->gone {gone - spawned:.2f} s", file=sys.stderr)
+            self.last_exit = ("backstop", None)
             return
         marks = [line.split() for line in result.stderr.splitlines() if line.startswith(self.EXIT_MARK)]
         if not marks:
@@ -801,6 +803,7 @@ class SessionHookTests(unittest.TestCase):
               f"first->exit {exit_at - start:.2f} s, exit->gone {gone - exit_at:.2f} s", file=sys.stderr)
         self.assertLessEqual(exit_at - start, bar,
                              f"{phase} asked to exit {exit_at - start:.2f} s after its first line (bar {bar} s)")
+        self.last_exit = (path, exit_at - start)
 
     def test_unbound_start_is_silent_without_explicit_keel_opt_in(self):
         result = self.run_hook("start")
@@ -1064,8 +1067,13 @@ class SessionHookTests(unittest.TestCase):
         ]), encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(spy), self.env.get("PYTHONPATH")]))
         result = self.run_hook("end")
-        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        # The promise is a count, on every path: the end hook calls os.fsync zero times.
         self.assertFalse(calls.exists(), calls.read_text() if calls.exists() else "")
+        # #2367: under build load the end may take #2340's promised timeout path (its warning is on
+        # stderr); timed_out() checks that shape, and delivery is not promised there.
+        if self.timed_out(result, "end"):
+            return
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
         self.assertEqual(len([r for r in RuntimeHandler.requests if r[0] == "POST"]), 1)
         self.assertTrue(next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")).is_file())
 
@@ -1085,9 +1093,14 @@ class SessionHookTests(unittest.TestCase):
 
     # #2340 bar (Tsunade, after Shino's host proof): "the hook's process exits within its declared
     # timeout from its first line" (30 s in hooks.json); spawn to first line is reported apart as
-    # an environment limit. These deterministic hangs run on an idle disk, so the bound here is far
-    # tighter and taken from spawn: the process done within 7 s of it.
-    SPAWN_TO_ANSWER = 7.0
+    # an environment limit. #2367: these deterministic hangs prove that the hook cuts the hang ITSELF,
+    # so the bound is the hook's own: an exit request by the hook (a mark, or the C-level backstop),
+    # no later than the backstop's moment after its first line. Interpreter start and teardown,
+    # which build load stretches, are not part of that promise and are not timed.
+    # session_hook.py: HOOK_WATCHDOG is 6.0 s for every claude phase (run_hook's default host), and
+    # dump_traceback_later fires 1.5 s after it. Not imported: importing the hook arms its watchdog.
+    BACKSTOP_AFTER_FIRST_LINE = 6.0 + 1.5
+    MARK_SLACK = 0.5  # the watchdog's mark and the backstop can race at that moment
 
     def test_first_line_marker_is_taken_before_the_hook_does_anything(self):
         # #2340: the probe classifies a red run as pre-hook only when this marker is absent.
@@ -1139,9 +1152,12 @@ class SessionHookTests(unittest.TestCase):
             text=True, capture_output=True, env=self.env, timeout=20, check=False, creationflags=NO_WINDOW)
         elapsed = time.monotonic() - started
         self.assertEqual(result.returncode, 1, result.stderr)
+        # #2367: the backstop's own dump proves its moment (7.5 s after the first line) and exit 1
+        # proves the process left; spawn-to-gone also counts interpreter start and teardown, which
+        # build load stretches, so it is printed, not asserted. The 20 s guard catches a hang.
         self.assertIn("Timeout (0:00:07.500000)!", result.stderr)
         self.assertIn("in state_path", result.stderr)  # it names where the hook hung
-        self.assertLess(elapsed, 9.0, f"left {elapsed:.2f} s after spawn")
+        print(f"#2367 backstop: spawn->gone {elapsed:.2f} s", file=sys.stderr)
 
     def test_a_hook_leaves_while_a_call_holds_the_gil(self):
         # #2340, the likeliest cause of Shino's pid 94204 (24.8 s inside an end, watchdog never ran):
@@ -1166,8 +1182,9 @@ class SessionHookTests(unittest.TestCase):
             text=True, capture_output=True, env=self.env, timeout=20, check=False, creationflags=NO_WINDOW)
         elapsed = time.monotonic() - started
         self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("Timeout (0:00:07.500000)!", result.stderr)  # #2367: the moment, from the dump
         self.assertIn("_hold_gil", result.stderr)
-        self.assertLess(elapsed, 10.0, f"left {elapsed:.2f} s after spawn")
+        print(f"#2367 backstop (GIL): spawn->gone {elapsed:.2f} s", file=sys.stderr)
 
     def test_exit_marker_names_the_watchdog_path(self):
         marker = Path(self.temp.name) / "first-line.txt"
@@ -1211,10 +1228,15 @@ class SessionHookTests(unittest.TestCase):
         self.assertIn("graphhelm-probe-exit", result.stderr)
 
     def run_hook_timed(self, phase):
-        started = time.monotonic()
+        """#2367: the hook itself ended the hang: an exit mark, or the backstop dump, no later than
+        the backstop's moment after the first line. Never timed from spawn."""
         result = self.run_hook(phase)
-        elapsed = time.monotonic() - started
-        self.assertLessEqual(elapsed, self.SPAWN_TO_ANSWER, f"{phase} answered {elapsed:.2f} s after spawn")
+        self.assertIsNotNone(self.last_exit, f"{phase}: the hook made no exit request:\n{result.stderr}")
+        path, first_to_exit = self.last_exit
+        if path != "backstop":
+            self.assertLessEqual(first_to_exit, self.BACKSTOP_AFTER_FIRST_LINE + self.MARK_SLACK,
+                                 f"{phase} asked to exit {first_to_exit:.2f} s after its first line, "
+                                 f"past the backstop's {self.BACKSTOP_AFTER_FIRST_LINE} s")
         return result
 
     def test_end_answers_while_its_state_write_hangs(self):
@@ -1369,11 +1391,16 @@ class SessionHookTests(unittest.TestCase):
         # #2270: a Codex end has a 1 s watchdog (Codex cuts SessionEnd at 3 s); on a busy host it
         # can answer before the POST, which is #2340's promised timeout path (main: 5/6 red here
         # with two cargo builds running).
-        if self.timed_out(result, "end"):
-            return
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("unobserved", result.stderr)
-        self.assertEqual(RuntimeHandler.requests[0][3]["signal"]["source"]["id"], "codex-session-session-123")
+        # #2367: no early return. Both the refusal and #2340's timeout path say "unobserved"; every
+        # signal that did reach the Runtime names the Codex session; only the normal path must POST.
+        timed = self.timed_out(result, "end")
+        if "Timeout (" not in result.stderr:  # (c) the backstop dump says nothing else
+            self.assertIn("unobserved", result.stderr)
+        posts = [r for r in RuntimeHandler.requests if r[0] == "POST"]
+        self.assertEqual({r[3]["signal"]["source"]["id"] for r in posts} - {"codex-session-session-123"}, set())
+        if not timed:
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue(posts, "the refused POST was never sent")
 
     def test_failed_delivery_is_retryable_with_the_same_signal_bytes(self):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"

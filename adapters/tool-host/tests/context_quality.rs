@@ -589,7 +589,14 @@ fn the_holdout_evaluation_is_deterministic_across_two_runs() {
 
 /// Directory names the size corpus never copies: version control, build output, caches, and the
 /// measuring instruments (this crate's tests hold every question verbatim).
-const SIZE_CORPUS_SKIPPED: [&str; 6] = [".git", "target", "node_modules", ".graphhelm", "__pycache__", ".pytest_cache"];
+const SIZE_CORPUS_SKIPPED: [&str; 6] = [
+    ".git",
+    "target",
+    "node_modules",
+    ".graphhelm",
+    "__pycache__",
+    ".pytest_cache",
+];
 
 /// Copy the repository's sources into `destination`, skipping [`SIZE_CORPUS_SKIPPED`] and this
 /// crate's `tests/`; returns (files, bytes).
@@ -643,7 +650,11 @@ fn the_search_answers_at_ten_times_the_repository_in_bounded_time_and_bytes() {
     for copy in 0..10 {
         copy_sources(&root, &ten.join(format!("copy{copy}")), &instruments);
     }
-    println!("size corpus: 1x = {files} files, {bytes} bytes; 10x = {} files, {} bytes", files * 10, bytes * 10);
+    println!(
+        "size corpus: 1x = {files} files, {bytes} bytes; 10x = {} files, {} bytes",
+        files * 10,
+        bytes * 10
+    );
 
     struct Row {
         refused: bool,
@@ -715,11 +726,21 @@ fn the_search_answers_at_ten_times_the_repository_in_bounded_time_and_bytes() {
     );
     for (label, rows) in [("1x", &small), ("10x", &large)] {
         for row in rows {
-            assert!(row.shipped_bytes <= MAX_TOTAL_CANDIDATE_BYTES, "{label}: a capsule shipped {} bytes", row.shipped_bytes);
+            assert!(
+                row.shipped_bytes <= MAX_TOTAL_CANDIDATE_BYTES,
+                "{label}: a capsule shipped {} bytes",
+                row.shipped_bytes
+            );
         }
     }
-    assert!(large.iter().all(|row| !row.refused && row.fallbacks == 0), "10x: a case was refused or fell back");
-    assert!(m10.as_secs_f64() <= 15.0 * m1.as_secs_f64(), "10x median {m10:?} exceeds 15 times the 1x median {m1:?}");
+    assert!(
+        large.iter().all(|row| !row.refused && row.fallbacks == 0),
+        "10x: a case was refused or fell back"
+    );
+    assert!(
+        m10.as_secs_f64() <= 15.0 * m1.as_secs_f64(),
+        "10x median {m10:?} exceeds 15 times the 1x median {m1:?}"
+    );
 }
 
 /// #2319 (Tsunade): collapsing identical copies never bypasses the secret filter. A secret-shaped
@@ -742,9 +763,20 @@ fn a_duplicated_secret_shaped_file_never_ships_after_the_collapse() {
     let search = WorkspaceSourceChannel::open(root.path()).unwrap();
     let reader = WorkspaceExcerptReader::open(root.path()).unwrap();
     let compiled = retrieve_and_compile(&search, &reader, &terms, "dedup/secret/a1", 32 * 1024);
-    assert_eq!(compiled.summary.sources, ["docs/zebra.md"], "{:?}", compiled.summary);
-    assert_eq!(compiled.summary.candidates_secret_shaped, 1, "one copy reached the filter");
-    assert!(!compiled.text.contains("PRIVATE KEY"), "no copy of the secret shipped");
+    assert_eq!(
+        compiled.summary.sources,
+        ["docs/zebra.md"],
+        "{:?}",
+        compiled.summary
+    );
+    assert_eq!(
+        compiled.summary.candidates_secret_shaped, 1,
+        "one copy reached the filter"
+    );
+    assert!(
+        !compiled.text.contains("PRIVATE KEY"),
+        "no copy of the secret shipped"
+    );
 }
 
 #[test]

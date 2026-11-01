@@ -427,9 +427,13 @@ impl WorkspaceSourceChannel {
             }
             Ok(())
         })?;
-        Ok(finish_ranking(&matched, documents, document_bytes, bounds, |path| {
-            digests.get(path).map(String::as_str)
-        }))
+        Ok(finish_ranking(
+            &matched,
+            documents,
+            document_bytes,
+            bounds,
+            |path| digests.get(path).map(String::as_str),
+        ))
     }
 
     /// The walk every path shares (#2319): the same exclusions, link refusals, regular-file and
@@ -631,7 +635,9 @@ impl WorkspaceSourceChannel {
         };
         Ok((
             read,
-            String::from_utf8(bytes).ok().map(|content| content.to_lowercase()),
+            String::from_utf8(bytes)
+                .ok()
+                .map(|content| content.to_lowercase()),
             digest,
         ))
     }
@@ -794,8 +800,7 @@ impl SourceIndex {
                 if !token.contains(needle.as_str()) {
                     continue;
                 }
-                let per =
-                    u32::try_from(token.matches(needle.as_str()).count()).unwrap_or(u32::MAX);
+                let per = u32::try_from(token.matches(needle.as_str()).count()).unwrap_or(u32::MAX);
                 for (id, count) in files {
                     let row = counts.entry(*id).or_insert_with(|| vec![0; width]);
                     row[term] = row[term].saturating_add(per.saturating_mul(*count));
@@ -895,9 +900,13 @@ impl WorkspaceSourceChannel {
         }
         let (matched, documents, document_bytes) = index.matches(needles);
         let index = &*index;
-        Ok(finish_ranking(&matched, documents, document_bytes, bounds, |path| {
-            index.files.get(path).map(|file| file.digest.as_str())
-        }))
+        Ok(finish_ranking(
+            &matched,
+            documents,
+            document_bytes,
+            bounds,
+            |path| index.files.get(path).map(|file| file.digest.as_str()),
+        ))
     }
 
     /// Index the whole workspace once, under [`SourceIndexBounds`]. Past a ceiling it refuses and
@@ -1049,7 +1058,8 @@ impl WorkspaceSourceChannel {
             std::process::id(),
             WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        if std::fs::create_dir_all(parent).is_ok() && std::fs::write(&temporary, bytes).is_ok()
+        if std::fs::create_dir_all(parent).is_ok()
+            && std::fs::write(&temporary, bytes).is_ok()
             && std::fs::rename(&temporary, &path).is_err()
         {
             let _ = std::fs::remove_file(&temporary);
@@ -1104,7 +1114,10 @@ impl BoundedSourceSearch for WorkspaceSourceChannel {
         // #2319: a term with whitespace cannot be answered from the token index (its matches can
         // cross a token boundary), so such a query keeps the live scan; every other query is
         // answered from the index, which counts the same occurrences without opening every file.
-        if needles.iter().any(|needle| needle.chars().any(char::is_whitespace)) {
+        if needles
+            .iter()
+            .any(|needle| needle.chars().any(char::is_whitespace))
+        {
             return self.live_search(&needles, bounds);
         }
         let ranked = self.indexed_search(&needles, bounds)?;
@@ -1162,12 +1175,32 @@ mod tests {
     #[test]
     fn the_index_ranks_exactly_as_the_live_scan() {
         let root = tempfile::tempdir().unwrap();
-        write(root.path(), "src/keel.rs", b"fn keel_readme_marker() { keel(); KEEL::run(); }\n");
-        write(root.path(), "src/lib.rs", b"pub mod keel; // the keel module\nuse crate::keel;\n");
-        write(root.path(), "docs/guide.md", b"# Guide\nThe Keel method keeps keels keel-shaped.\n");
+        write(
+            root.path(),
+            "src/keel.rs",
+            b"fn keel_readme_marker() { keel(); KEEL::run(); }\n",
+        );
+        write(
+            root.path(),
+            "src/lib.rs",
+            b"pub mod keel; // the keel module\nuse crate::keel;\n",
+        );
+        write(
+            root.path(),
+            "docs/guide.md",
+            b"# Guide\nThe Keel method keeps keels keel-shaped.\n",
+        );
         write(root.path(), "docs/long.md", "keel ".repeat(400).as_bytes());
-        write(root.path(), "notes/unicode.txt", "Straße STRASSE ñandú keel\u{a0}keel\n".as_bytes());
-        write(root.path(), "data/blob.json", &[0xff, 0xfe, b'k', b'e', b'e', b'l']);
+        write(
+            root.path(),
+            "notes/unicode.txt",
+            "Straße STRASSE ñandú keel\u{a0}keel\n".as_bytes(),
+        );
+        write(
+            root.path(),
+            "data/blob.json",
+            &[0xff, 0xfe, b'k', b'e', b'e', b'l'],
+        );
         write(root.path(), "src/other.rs", b"fn unrelated() {}\n");
         let channel = WorkspaceSourceChannel::open(root.path()).unwrap();
         for terms in [
@@ -1201,7 +1234,11 @@ mod tests {
         assert_eq!(search(&channel, &["gamma"]), Vec::<String>::new());
 
         // Edit to a different length, add, delete.
-        write(root.path(), "a.rs", b"gamma replaced the first word entirely\n");
+        write(
+            root.path(),
+            "a.rs",
+            b"gamma replaced the first word entirely\n",
+        );
         write(root.path(), "c.rs", b"delta arrives\n");
         std::fs::remove_file(root.path().join("b.rs")).unwrap();
         assert_eq!(search(&channel, &["alpha"]), Vec::<String>::new());
@@ -1210,11 +1247,13 @@ mod tests {
         assert_eq!(search(&channel, &["beta"]), Vec::<String>::new());
 
         let cache = root.path().join(INDEX_CACHE);
-        assert!(cache.is_file(), "the index persists under the existing .graphhelm/");
+        assert!(
+            cache.is_file(),
+            "the index persists under the existing .graphhelm/"
+        );
         let mut persisted: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&cache).unwrap()).unwrap();
-        persisted["files"][".graphhelm/forged.rs"] =
-            persisted["files"]["c.rs"].clone();
+        persisted["files"][".graphhelm/forged.rs"] = persisted["files"]["c.rs"].clone();
         std::fs::write(&cache, serde_json::to_vec(&persisted).unwrap()).unwrap();
         let reopened = WorkspaceSourceChannel::open(root.path()).unwrap();
         assert_eq!(search(&reopened, &["delta"]), ["c.rs"]);
@@ -1227,7 +1266,11 @@ mod tests {
     fn identical_copies_share_one_result_slot() {
         let root = tempfile::tempdir().unwrap();
         for copy in ["a", "b", "c"] {
-            write(root.path(), &format!("{copy}/same.rs"), b"needle needle needle\n");
+            write(
+                root.path(),
+                &format!("{copy}/same.rs"),
+                b"needle needle needle\n",
+            );
         }
         write(root.path(), "z/other.rs", b"needle once\n");
         let channel = WorkspaceSourceChannel::open(root.path()).unwrap();
@@ -1251,9 +1294,17 @@ mod tests {
         found.sort();
         assert_eq!(found, ["a/same.rs", "b/same.rs"]);
         write(root.path(), "b/same.rs", b"needle first\n");
-        assert_eq!(search(&channel, &["needle"]).len(), 1, "identical again: one slot");
+        assert_eq!(
+            search(&channel, &["needle"]).len(),
+            1,
+            "identical again: one slot"
+        );
         write(root.path(), "b/same.rs", b"needle changed again\n");
-        assert_eq!(search(&channel, &["needle"]).len(), 2, "different again: two slots");
+        assert_eq!(
+            search(&channel, &["needle"]).len(),
+            2,
+            "different again: two slots"
+        );
     }
 
     /// A tree with no `.graphhelm/` is never written to: the index stays in memory.
@@ -1274,7 +1325,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
         for name in ["a", "b", "c"] {
-            write(root.path(), &format!("{name}.rs"), format!("{name} common\n").as_bytes());
+            write(
+                root.path(),
+                &format!("{name}.rs"),
+                format!("{name} common\n").as_bytes(),
+            );
         }
         let tight = SourceIndexBounds {
             max_entries_visited: 1_000,
@@ -1290,7 +1345,10 @@ mod tests {
             Err(SourceSearchError::BoundExceeded)
         );
         assert!(!root.path().join(INDEX_CACHE).exists(), "nothing persisted");
-        assert!(channel.index.lock().unwrap().is_none(), "no partial index kept");
+        assert!(
+            channel.index.lock().unwrap().is_none(),
+            "no partial index kept"
+        );
         let roomy = WorkspaceSourceChannel::open(root.path()).unwrap();
         assert_eq!(search(&roomy, &["common"]).len(), 3);
     }
@@ -1304,7 +1362,11 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
         for index in 0..40 {
-            write(root.path(), &format!("f{index}.rs"), format!("shared token{index}\n").as_bytes());
+            write(
+                root.path(),
+                &format!("f{index}.rs"),
+                format!("shared token{index}\n").as_bytes(),
+            );
         }
         let path = root.path().to_path_buf();
         let writer = {
@@ -1312,7 +1374,11 @@ mod tests {
             std::thread::spawn(move || {
                 let channel = WorkspaceSourceChannel::open(&path).unwrap();
                 for round in 0..15 {
-                    write(&path, &format!("f{}.rs", round % 40), format!("shared round{round} longer\n").as_bytes());
+                    write(
+                        &path,
+                        &format!("f{}.rs", round % 40),
+                        format!("shared round{round} longer\n").as_bytes(),
+                    );
                     assert!(!search(&channel, &["shared"]).is_empty());
                 }
             })
@@ -1339,7 +1405,12 @@ mod tests {
         let leftovers = std::fs::read_dir(root.path().join(".graphhelm/cache"))
             .unwrap()
             .filter(|entry| {
-                entry.as_ref().unwrap().file_name().to_string_lossy().ends_with(".tmp")
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp")
             })
             .count();
         assert_eq!(leftovers, 0, "no temporary file left behind");
@@ -1351,14 +1422,27 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
         write(root.path(), "a.rs", b"alpha\n");
-        assert_eq!(search(&WorkspaceSourceChannel::open(root.path()).unwrap(), &["alpha"]), ["a.rs"]);
+        assert_eq!(
+            search(
+                &WorkspaceSourceChannel::open(root.path()).unwrap(),
+                &["alpha"]
+            ),
+            ["a.rs"]
+        );
         let cache = root.path().join(INDEX_CACHE);
         let whole = std::fs::read(&cache).unwrap();
-        for broken in [whole[..whole.len() / 2].to_vec(), b"not json at all".to_vec(), Vec::new()] {
+        for broken in [
+            whole[..whole.len() / 2].to_vec(),
+            b"not json at all".to_vec(),
+            Vec::new(),
+        ] {
             std::fs::write(&cache, &broken).unwrap();
             let channel = WorkspaceSourceChannel::open(root.path()).unwrap();
             assert_eq!(search(&channel, &["alpha"]), ["a.rs"]);
-            assert!(serde_json::from_slice::<serde_json::Value>(&std::fs::read(&cache).unwrap()).is_ok());
+            assert!(
+                serde_json::from_slice::<serde_json::Value>(&std::fs::read(&cache).unwrap())
+                    .is_ok()
+            );
         }
     }
 
@@ -1382,11 +1466,13 @@ mod tests {
             .unwrap()
             .set_modified(before)
             .unwrap();
-        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), before);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before
+        );
         assert_eq!(search(&channel, &["gamma"]), ["a.rs"]);
         assert_eq!(search(&channel, &["alpha"]), Vec::<String>::new());
     }
-
 
     /// Codex #622/#707: the stored root is the CANONICAL location when the supplied path reaches
     /// the workspace through a symlinked ANCESTOR — `symlink_metadata` spares only the final

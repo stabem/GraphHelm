@@ -27,6 +27,9 @@ from plugins.graphhelm.hooks import session_hook
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
+# #2279: how long cleanup waits for a waiter to be gone; past it, the test fails with the pid.
+WAITER_STOP_BOUND = 20.0
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 MANIFESTS = (HERE / "hooks.json", HERE / "codex-hooks.json",
@@ -405,13 +408,35 @@ class LaneStopTests(unittest.TestCase):
     @staticmethod
     def stop_waiter_pid(pid):
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
-                           timeout=5, creationflags=NO_WINDOW)
+            # #2279: under build load taskkill.exe itself took > 5 s to start and finish, and its
+            # TimeoutExpired errored a test whose waiter was fine. Whether the waiter is gone is
+            # what the wait below observes; taskkill only asks.
+            try:
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                               timeout=5, creationflags=NO_WINDOW)
+            except subprocess.TimeoutExpired:
+                pass
         elif session_hook._pid_alive(pid):
             os.kill(pid, signal.SIGTERM)
-        deadline = time.monotonic() + 5
+        # #2279: slowness is accepted (taskkill and the exit itself can take seconds under build
+        # load), a leftover process is not: past the bound the test fails and names the pid.
+        deadline = time.monotonic() + WAITER_STOP_BOUND
         while session_hook._pid_alive(pid) and time.monotonic() < deadline:
             time.sleep(0.05)
+        if session_hook._pid_alive(pid):
+            raise AssertionError(f"waiter {pid} survived cleanup")
+
+    def test_cleanup_fails_naming_the_pid_when_a_waiter_survives(self):
+        # #2279 break-once: slowness is accepted, a leftover process is not. A child that taskkill
+        # never reaches (here taskkill is stubbed to do nothing) must make the cleanup fail.
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                 creationflags=NO_WINDOW)
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        with mock.patch.object(subprocess, "run"), mock.patch.object(sys.modules[__name__], "WAITER_STOP_BOUND", 0.5):
+            with self.assertRaises(AssertionError) as raised:
+                self.stop_waiter_pid(child.pid)
+        self.assertIn(f"waiter {child.pid} survived cleanup", str(raised.exception))
 
     def run_cli(self, *args):
         result = subprocess.run([self.cli, *args], env=self.env, capture_output=True, text=True, timeout=15, creationflags=NO_WINDOW)

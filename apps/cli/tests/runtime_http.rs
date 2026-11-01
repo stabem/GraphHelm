@@ -5728,10 +5728,16 @@ fn a_fresh_runtime_opens_each_sealed_task_record_once_and_still_refuses_a_tamper
             opens[0], 400,
             "the first heartbeat opens the lane's 400 sealed claims: {opens:?}"
         );
-        // The second heartbeat reopens none of them; it opens only the one record it has not
-        // seen yet, the first heartbeat's own.
-        assert_eq!(
-            opens[1], 1,
+        // The second heartbeat reopens none of the 400 (a cache that stopped working shows 400 or
+        // more here, never fewer). It opens at most the one record it has not seen yet, the first
+        // heartbeat's own. #2279: that count is 1 or 0, by a race the test does not control: after
+        // every admitted signal `serve` reads the task records in the background (`dispatch`,
+        // after the reply) on the same process-wide envelope memory, and when that read lands
+        // before the second heartbeat it has already opened the record. Measured on an idle host:
+        // [400, 0] in 2 of 6 runs with no delay between the heartbeats, and in 3 of 3 with a 2 s
+        // delay.
+        assert!(
+            opens[1] <= 1,
             "a second heartbeat must not reopen the lane's sealed records: {opens:?}"
         );
         let tasks = get_json(&format!("{base}/v1/executions/{run}/tasks"), Some(&token));

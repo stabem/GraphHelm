@@ -85,11 +85,16 @@ class LaneStopTests(unittest.TestCase):
             try:
                 pid = int(pid_file.read_text())
                 if os.name == "nt":
-                    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                                   capture_output=True, timeout=5, creationflags=NO_WINDOW)
+                    # #2279: under build load taskkill.exe itself took > 5 s; the wait below is
+                    # what observes the waiter gone, taskkill only asks.
+                    try:
+                        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                       capture_output=True, timeout=5, creationflags=NO_WINDOW)
+                    except subprocess.TimeoutExpired:
+                        pass
                 else:
                     os.kill(pid, signal.SIGTERM)
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 20
                 while session_hook._pid_alive(pid) and time.monotonic() < deadline:
                     time.sleep(0.05)
                 self.assertFalse(session_hook._pid_alive(pid), f"waiter {pid} survived cleanup")

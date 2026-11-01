@@ -1058,11 +1058,18 @@ impl WorkspaceSourceChannel {
             std::process::id(),
             WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        // The cache is optional, so a failed write leaves the in-memory index serving. A
+        // temporary file that cannot be cleaned up is reported, never left in silence.
         if std::fs::create_dir_all(parent).is_ok()
             && std::fs::write(&temporary, bytes).is_ok()
             && std::fs::rename(&temporary, &path).is_err()
+            && let Err(error) = std::fs::remove_file(&temporary)
+            && error.kind() != std::io::ErrorKind::NotFound
         {
-            let _ = std::fs::remove_file(&temporary);
+            eprintln!(
+                "source-index: the temporary cache file {} could not be removed: {error}",
+                temporary.display()
+            );
         }
     }
 }

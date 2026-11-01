@@ -633,6 +633,7 @@ fn copy_sources(source: &Path, destination: &Path, instruments: &Path) -> (u64, 
 /// 1. at 10x no case is refused and every case ships a capsule (`retrieval_fallbacks == 0`);
 /// 2. the median per-question time at 10x is at most 15 times the 1x median (`keel.bigo.scale`);
 /// 3. every capsule ships at most `MAX_TOTAL_CANDIDATE_BYTES`, at both sizes.
+///
 /// Hit@3 is printed, not asserted: ten copies make every expected file appear ten times.
 #[test]
 #[ignore = "copies the repository ten times into the temp dir (hundreds of MB); run explicitly"]

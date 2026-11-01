@@ -559,7 +559,7 @@ impl WorkspaceSourceChannel {
         if self.cancelled() {
             return Err(SourceSearchError::Unavailable);
         }
-        let Ok(file) = open_candidate(&path) else {
+        let Ok(file) = open_candidate(path) else {
             return Err(SourceSearchError::Unavailable);
         };
         // The HANDLE's metadata, not the path's: `fstat` on what was actually opened is
@@ -607,7 +607,7 @@ impl WorkspaceSourceChannel {
         // the fallback catches the symlink swap and DECLARES the regular-file swap as a
         // residual (`still_names_opened_file`). The same residual exists on both platforms
         // for a directory swapped between its check and `read_dir`.
-        if !still_names_opened_file(&file, &path) {
+        if !still_names_opened_file(&file, path) {
             return Err(SourceSearchError::Unavailable);
         }
         if read_outcome.is_err() {
@@ -789,10 +789,7 @@ impl SourceIndex {
     }
 
     /// The live search's `(matched, documents, document_bytes)`, read from the index.
-    fn matches(
-        &self,
-        needles: &std::collections::BTreeSet<String>,
-    ) -> (Vec<(Vec<u32>, u64, String)>, u64, u64) {
+    fn matches(&self, needles: &std::collections::BTreeSet<String>) -> IndexMatches {
         let width = needles.len();
         let mut counts: HashMap<u32, Vec<u32>> = HashMap::new();
         for (term, needle) in needles.iter().enumerate() {
@@ -824,6 +821,9 @@ impl SourceIndex {
         (matched, documents, document_bytes)
     }
 }
+
+/// What [`SourceIndex::matches`] returns: the live search's `(matched, documents, document_bytes)`.
+type IndexMatches = (Vec<(Vec<u32>, u64, String)>, u64, u64);
 
 /// Whitespace-free tokens of `text` with their counts, sorted so the persisted form is stable.
 fn tokenize(text: &str) -> Vec<(String, u32)> {

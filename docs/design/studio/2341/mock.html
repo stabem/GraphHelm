@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><title>#2341 · waiting run: rail mark and Graph text</title></head><body>
+<h1>#2341: a run that waits for you says so in the project rail and in the Graph empty text</h1>
+<div class="pair">
+ <div><span class="tag">BEFORE · today (project rail)</span>
+  <div class="project"><strong>synthetic</strong><span class="muted">● demo · 0 agents</span><span class="muted">1 journey · 1 failing</span></div>
+  <p class="faint">Nothing in the rail says the run waits.</p></div>
+ <div class="after"><span class="tag">AFTER · proposed (project rail)</span>
+  <div class="project"><strong>synthetic</strong><span class="muted">● demo · 0 agents · <span class="wait">waits for you</span></span><span class="muted">1 journey · 1 failing</span></div>
+  <p class="faint">One more phrase on the line that already names the run; same amber as Graph's "waiting for you". Shown only when the run's attention is needs_you.</p></div>
+</div>
+<div class="pair" style="margin-top:20px">
+ <div><span class="tag">BEFORE · today (Graph, no request on the run)</span>
+  <div class="box"><dl><dt>Status</dt><dd class="wait">waiting for you</dd><dt>Waits on</dt><dd>implementation is blocked.</dd></dl><p class="muted" style="margin:0">No owner request is recorded on this run yet.</p></div>
+  <p class="faint">True, but alone it reads as "nothing to do".</p></div>
+ <div class="after"><span class="tag">AFTER · proposed (Graph)</span>
+  <div class="box"><dl><dt>Status</dt><dd class="wait">waiting for you</dd><dt>Waits on</dt><dd>implementation is blocked.</dd></dl><p class="muted" style="margin:0">No owner request is recorded on this run yet. The run waits for you; see Status above.</p></div>
+  <p class="faint">One added sentence, only when the run waits. A run that does not wait keeps today's text.</p></div>
+</div></body></html>

@@ -32,9 +32,9 @@ describe("project summary", () => {
   });
 
   it("keeps an unread count apart from zero", () => {
-    expect(subtitle({ activeRun: null, agents: null, journeys: null, toFix: null })).toEqual({ run: "no run", journeys: null });
+    expect(subtitle({ activeRun: null, agents: null, journeys: null, toFix: null })).toEqual({ run: "no run", waits: null, journeys: null });
     // #2325: the approved word; a finding is not a failed run, and Proof's chip says the same.
-    expect(subtitle({ activeRun: "gh-team", agents: 8, journeys: 24, toFix: 1 })).toEqual({ run: "● gh-team · 8 agents", journeys: "24 journeys · 1 to fix" });
-    expect(subtitle({ activeRun: "r", agents: null, journeys: 0, toFix: 0 })).toEqual({ run: "● r", journeys: "0 journeys" });
+    expect(subtitle({ activeRun: "gh-team", agents: 8, journeys: 24, toFix: 1 })).toEqual({ run: "● gh-team · 8 agents", waits: null, journeys: "24 journeys · 1 to fix" });
+    expect(subtitle({ activeRun: "r", agents: null, journeys: 0, toFix: 0 })).toEqual({ run: "● r", waits: null, journeys: "0 journeys" });
   });
 });

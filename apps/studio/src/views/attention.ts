@@ -4,7 +4,15 @@ import type { AttentionReason } from "../runtime/client";
  * reads "waiting for you" instead of "running". Any other verdict, or none from an older Runtime,
  * leaves the status as the Runtime sent it. */
 export function runState(status: string, attention: string | undefined): string {
-  return status === "running" && attention === "needs_you" ? "waiting for you" : status;
+  return waitsForYou(status, attention) ? WAITING_FOR_YOU : status;
+}
+
+/** #2341: the one phrase for a run that waits for its owner, in Graph's Status and in the project rail. */
+export const WAITING_FOR_YOU = "waiting for you";
+
+/** #2341: whether the run reads as waiting for you: running, and the Runtime says `needs_you`. */
+export function waitsForYou(status: string, attention: string | undefined): boolean {
+  return status === "running" && attention === "needs_you";
 }
 
 /** #2324: one reason in words, naming the node, draft or session it is about. */

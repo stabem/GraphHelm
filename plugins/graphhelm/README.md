@@ -39,9 +39,9 @@ codex plugin add graphhelm-codex-hooks@graphhelm
 
 After installation, start a fresh session. In Claude Code, use `/graphhelm:graphhelm-guide`, `/graphhelm:graphhelm-setup`, `/graphhelm:graphhelm-resume`, or `/graphhelm:graphhelm-kickoff`; Claude namespaces plugin skills, so the installed commands are not bare `/graphhelm-setup` or `/graphhelm-resume`. In Codex, invoke `$graphhelm-guide`, `$graphhelm-setup`, `$graphhelm-resume`, or `$graphhelm-kickoff`. The setup skill guides the separate `graphhelm setup` CLI through inventory, a reviewed plan, backup, and restore; invoking the skill alone changes no host files. The resume skill reads current evidence and offers exactly two next actions with one recommendation; it does not take either action for you. The kickoff skill starts a brand-new project: it grills the owner one question at a time, writes `docs/PROJECT.md` and draft journey flows with them, waits for the owner to approve the flows, then runs each issue through the five task steps while the owner follows in the Studio. The kickoff session is the orchestrator: it asks once which models and how many agents to use, and spawns every author and reviewer with the team skill, which bootstraps implementation authors under their own lanes and withholds implementation until own-claim admission; reviewers retain exact-head review assignments.
 
-## Session hooks (version 0.1.25)
+## Session hooks
 
-This installed plugin includes command hooks for Claude Code. Affected Codex versions use the
+Version 0.1.25 added these hooks. This installed plugin includes command hooks for Claude Code. Affected Codex versions use the
 separate `graphhelm-codex-hooks` compatibility companion, which is the only Codex hook
 registration. Unbound sessions are
 silent by default. When the session is explicitly bound to a GraphHelm execution, `SessionStart`

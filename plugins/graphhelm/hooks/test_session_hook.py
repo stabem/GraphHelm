@@ -600,6 +600,7 @@ class SessionHookTests(unittest.TestCase):
             "GRAPHHELM_RUNTIME_URL": f"http://127.0.0.1:{self.server.server_port}",
             "GRAPHHELM_TOKEN_FILE": str(self.token_file),
             "GRAPHHELM_HOOK_STATE_DIR": str(Path(self.temp.name) / "state"),
+            "GRAPHHELM_HOOK_HELPER_LIFETIME": "6",  # a helper held by a hung patch must not outlive its test
         }
         self.env.pop("GRAPHHELM_EXECUTION_ID", None)
         for key in ("GRAPHHELM_SESSION_ID", "GRAPHHELM_NODE_ID", "GRAPHHELM_KEEL_CONTEXT", "GRAPHHELM_ACTOR"):
@@ -660,6 +661,32 @@ class SessionHookTests(unittest.TestCase):
                 )
         self.assertNotIn("extensions", main_manifest)
 
+    def kill_helpers(self, roots):
+        """#2344: a helper held by a hung patch still has the temp dir's lock open. It stops by its
+        record (PID + creation time), or ends itself at its short test lifetime."""
+        hook = importlib.util.spec_from_file_location("session_hook_cleanup", SCRIPT)
+        module = importlib.util.module_from_spec(hook)
+        hook.loader.exec_module(module)
+        for root in roots:
+            for record in (root / "helpers").glob("*.json"):
+                try:
+                    data = json.loads(record.read_text(encoding="utf-8"))
+                    if data["started"] and module._process_identity(int(data["pid"])) == data["started"]:
+                        module._terminate_process(int(data["pid"]))
+                except (OSError, ValueError, KeyError):
+                    continue
+        time.sleep(0.3)
+
+    def stop_helpers(self, roots):
+        self.kill_helpers(roots)
+        deadline_at = time.monotonic() + 10
+        while time.monotonic() < deadline_at:
+            try:
+                self.temp.cleanup()
+                return
+            except OSError:
+                time.sleep(0.3)
+
     def tearDown(self):
         roots = (Path(self.temp.name) / "state",
                  Path(self.temp.name) / "local" / "GraphHelm" / "session-hooks")
@@ -676,6 +703,7 @@ class SessionHookTests(unittest.TestCase):
                     live.append(pid)
                 except (OSError, ValueError):
                     pass
+        self.stop_helpers(roots)
         self.temp.cleanup()
         real_state_after = set(self.real_state_root.iterdir()) if self.real_state_root.exists() else set()
         created = real_state_after - self.real_state_before
@@ -1140,7 +1168,9 @@ class SessionHookTests(unittest.TestCase):
             "    if self.name != 'graphhelm-hook-watchdog':",
             "        return _start(self)",
             "threading.Thread.start = _start_unless_watchdog",
-            "hashlib.sha256 = lambda *a, **k: threading.Event().wait(120)",
+            "import sys",
+            "if 'helper' not in sys.argv:  # #2344: the hang is in the hook process, not its helper",
+            "    hashlib.sha256 = lambda *a, **k: threading.Event().wait(120)",
             "",
         ]), encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
@@ -1171,7 +1201,9 @@ class SessionHookTests(unittest.TestCase):
             "import hashlib, re",
             "def _hold_gil(*args, **kwargs):",
             "    re.match(r'(a+)+$', 'a' * 40 + 'b')",
-            "hashlib.sha256 = _hold_gil",
+            "import sys",
+            "if 'helper' not in sys.argv:  # #2344: the hang is in the hook process, not its helper",
+            "    hashlib.sha256 = _hold_gil",
             "",
         ]), encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
@@ -1192,7 +1224,7 @@ class SessionHookTests(unittest.TestCase):
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         hang = Path(self.temp.name) / "hang-anything-marker"
         hang.mkdir()
-        (hang / "sitecustomize.py").write_text("import hashlib, threading\nhashlib.sha256 = lambda *a, **k: threading.Event().wait(120)\n", encoding="utf-8")
+        (hang / "sitecustomize.py").write_text("import hashlib, sys, threading\nif 'helper' not in sys.argv:  # #2344: the hang is in the hook, not its helper\n    hashlib.sha256 = lambda *a, **k: threading.Event().wait(120)\n", encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
         result = self.run_hook("end")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1531,6 +1563,122 @@ class SessionHookTests(unittest.TestCase):
                 else:
                     self.assertEqual(result.stdout, "")
 
+    def sitecustomize(self, name, *lines):
+        folder = Path(self.temp.name) / name
+        folder.mkdir()
+        (folder / "sitecustomize.py").write_text("\n".join([*lines, ""]), encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(folder), self.env.get("PYTHONPATH")]))
+        return folder
+
+    def test_the_process_the_host_waits_on_opens_no_file(self):
+        # #2344: under disk pressure the kernel cancels the file I/O a process's threads still have
+        # pending when it exits, and that held a hook for ~10 s. So after its first line the hook
+        # process touches no file of its own (code it imports aside): a helper does the state, lock,
+        # token, binding and lane-file work. An audit hook in the hook process reports any other open.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.env["GRAPHHELM_HOOK_FIRST_LINE"] = ""
+        allowed = [sys.prefix, sys.base_prefix, sys.exec_prefix, str(SCRIPT.parent), os.devnull]
+        folder = self.sitecustomize(
+            "audit-opens", "import os, sys",
+            f"ALLOWED = tuple(os.path.normcase(os.path.abspath(p)) for p in {allowed!r} + [os.path.dirname(__file__)])",
+            "WATCHED = {'open', 'os.mkdir', 'os.rename', 'os.remove', 'os.rmdir', 'os.listdir', 'os.scandir'}",
+            "def audit(event, args):",
+            "    if event not in WATCHED or not args or not isinstance(args[0], (str, bytes, os.PathLike)):",
+            "        return",
+            "    path = os.path.normcase(os.path.abspath(os.fsdecode(args[0])))",
+            "    if path != os.path.normcase(os.path.abspath(os.devnull)) and not path.startswith(ALLOWED):",
+            "        os.write(2, ('IO-OPEN ' + event + ' ' + path + chr(10)).encode())",
+            "sys.addaudithook(audit)")
+        self.assertTrue(folder.is_dir())
+        for phase in ("end", "start"):
+            with self.subTest(phase=phase):
+                RuntimeHandler.requests = []
+                result = self.run_hook(phase, session_title="lane-a - work")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("IO-OPEN", result.stderr)
+                # The helper did the work the hook used to do.
+                self.assertTrue(list(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")))
+        self.assertTrue([item for item in RuntimeHandler.requests if item[0] == "GET"])
+
+    def test_the_helper_is_reached_only_through_its_own_pipes(self):
+        # #2344: no named pipe, socket or FIFO is created for another user or process to connect to;
+        # the helper's stdin/stdout are the only channel, and only the hook holds the other ends. The
+        # only connection a hook or helper opens is the one to the Runtime.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.env["GRAPHHELM_HOOK_FIRST_LINE"] = ""
+        log = Path(self.temp.name) / "audit.log"
+        self.sitecustomize(
+            "audit-endpoints", "import os, sys",
+            f"FD = os.open({str(log)!r}, os.O_WRONLY | os.O_APPEND | os.O_CREAT)",
+            "def audit(event, args):",
+            "    if event in ('socket.bind', 'socket.listen', 'os.mkfifo', 'socket.connect'):",
+            "        os.write(FD, (event + ' ' + repr(args[-1] if event != 'os.mkfifo' else args[0]) + chr(10)).encode())",
+            "sys.addaudithook(audit)")
+        for phase in ("end", "start"):
+            self.assertEqual(self.run_hook(phase).returncode, 0)
+        events = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        runtime = repr(("127.0.0.1", self.server.server_port))
+        self.assertEqual([line for line in events if not line.startswith("socket.connect") or not line.endswith(runtime)], [])
+        self.assertTrue(events, "the hook reached the Runtime")
+        if os.name != "nt":
+            import stat
+            helpers = Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]) / "helpers"
+            self.assertEqual(stat.S_IMODE(helpers.stat().st_mode), 0o700)
+
+    def test_a_hook_whose_helper_cannot_start_answers_unobserved_and_does_no_io(self):
+        # #2344: no fallback to doing the I/O in the hook: it answers UNOBSERVED, once, and leaves.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.sitecustomize(
+            "no-helper", "import subprocess",
+            "_popen = subprocess.Popen",
+            "def _refuse(argv, *args, **kwargs):",
+            "    if 'helper' in argv:",
+            "        raise PermissionError(13, 'refused')",
+            "    return _popen(argv, *args, **kwargs)",
+            "subprocess.Popen = _refuse")
+        for phase in ("end", "start"):
+            with self.subTest(phase=phase):
+                result = self.run_hook(phase)
+                if self.timed_out(result, phase):
+                    continue
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr.count(f"graphhelm-hook: {phase} unobserved (OSError)"), 1, result.stderr)
+                self.assertFalse(self.state_files())
+                self.assertEqual([item for item in RuntimeHandler.requests if item[0] == "POST"], [])
+
+    def test_a_stale_helper_is_stopped_only_when_its_identity_matches(self):
+        # #2344: a PID alone proves nothing, because the system reuses PIDs. A record names the PID
+        # and the process's creation time; only a process still having that creation time is stopped.
+        spec = importlib.util.spec_from_file_location("session_hook_reap", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        directory = Path(self.temp.name) / "helpers"
+        directory.mkdir()
+        children = {name: subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
+                                           creationflags=NO_WINDOW) for name in ("stale", "reused", "young")}
+        try:
+            time.sleep(0.5)
+            old = time.time() - 1000
+            identity = {name: hook._process_identity(child.pid) for name, child in children.items()}
+            if None in identity.values():
+                self.skipTest("this platform cannot read a process's creation time")
+            for name, started, at in (("stale", identity["stale"], old), ("reused", "not-its-start-time", old),
+                                      ("young", identity["young"], time.time())):
+                (directory / f"{children[name].pid}.json").write_text(
+                    json.dumps({"pid": children[name].pid, "started": started, "at": at}), encoding="utf-8")
+            hook._reap_stale_helpers(directory)
+            deadline_at = time.monotonic() + 10
+            while children["stale"].poll() is None and time.monotonic() < deadline_at:
+                time.sleep(0.1)
+            self.assertIsNotNone(children["stale"].poll(), "the helper past its lifetime, with its own start time, is stopped")
+            self.assertIsNone(children["reused"].poll(), "a reused PID (another start time) is never stopped")
+            self.assertIsNone(children["young"].poll(), "a helper within its lifetime is left alone")
+            self.assertEqual(sorted(path.stem for path in directory.glob("*.json")), [str(children["young"].pid)])
+        finally:
+            for child in children.values():
+                child.kill()
+                child.wait()
+
     def test_start_and_end_answer_while_the_state_read_hangs(self):
         # #2334: the state read and the lock are file I/O too; neither may hold the answer.
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
@@ -1565,7 +1713,9 @@ class SessionHookTests(unittest.TestCase):
             "import hashlib, threading",
             "def _hang(*args, **kwargs):",
             "    threading.Event().wait(120)",
-            "hashlib.sha256 = _hang",
+            "import sys",
+            "if 'helper' not in sys.argv:  # #2344: the hang is in the hook process, not its helper",
+            "    hashlib.sha256 = _hang",
             "",
         ]), encoding="utf-8")
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
@@ -1660,6 +1810,7 @@ class SessionHookTests(unittest.TestCase):
         for phase in ("end", "start"):
             with self.subTest(phase=phase):
                 result = self.run_hook_timed(phase)
+                self.kill_helpers((Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]),))  # its lock is held by the hung helper
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("state token still pending", result.stderr)
                 self.assertEqual([r for r in RuntimeHandler.requests if r[0] == "POST"], [])

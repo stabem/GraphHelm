@@ -713,11 +713,14 @@ class _StateTimeout(BaseException):
     (the token, a second write) would only stall again on the same disk."""
 
 
-def _bounded(what: str, call):
-    """Runs one piece of hook file I/O for at most STATE_WRITE_BUDGET and returns its result. When
-    the file system has not answered by then, raises `_StateTimeout`. An error raised in time is
-    raised here."""
+def _bounded(what: str, call, budget: float | None = None):
+    """Runs one piece of hook file I/O for at most STATE_WRITE_BUDGET (`budget` when given) and
+    returns its result. When the file system has not answered by then, raises `_StateTimeout`. An
+    error raised in time is raised here. In the helper process (#2344) there is no hook answer to
+    protect, so the call runs directly."""
     global _answered_without_state
+    if _IN_HELPER:
+        return call()
     outcome: list = []
 
     def run() -> None:
@@ -728,7 +731,7 @@ def _bounded(what: str, call):
 
     worker = threading.Thread(target=run, name=f"graphhelm-state-{what}", daemon=True)
     worker.start()
-    worker.join(STATE_WRITE_BUDGET)
+    worker.join(STATE_WRITE_BUDGET if budget is None else budget)
     if not outcome:
         _answered_without_state = True
         print(f"graphhelm-session-hook: state {what} still pending; answering without it", file=sys.stderr)
@@ -832,6 +835,281 @@ def _release_lock(lock) -> None:
         # The answer and the state are already done: this is the normal path (exit 0), and start
         # and end leave with os._exit anyway, so the stuck release cannot hold the process.
         print("graphhelm-session-hook: state unlock still pending; leaving without it", file=sys.stderr)
+
+
+# #2344: the process the host waits on does no file I/O after its first line. A detached helper
+# process does the state, lock, token, binding and lane-file work; the hook asks it over the helper's
+# own stdin/stdout, two anonymous pipes that only the hook and the helper hold, so there is no named
+# endpoint for another user or process to connect to. A reply that does not come within the budget
+# means the hook answers UNOBSERVED and leaves; it never falls back to doing the I/O itself.
+HELPER_LIFETIME = 30.0  # a helper ends itself this long after it starts, whatever it is doing
+HELPER_FIRST_BUDGET = 4.0  # the first request also waits for the helper to start
+HELPER_REAP_GRACE = 10.0
+_IN_HELPER = False
+
+
+def _process_identity(pid: int) -> str | None:
+    """A token that tells one process from a later one that reuses its PID: its creation time.
+    None when it cannot be read, and then nothing is ever stopped on that PID's account."""
+    try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.windll.kernel32
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            handle = kernel.OpenProcess(0x1000, False, pid)
+            if not handle:
+                return None
+            try:
+                created, exited, kernel_time, user_time = (wintypes.FILETIME() for _ in range(4))
+                if not kernel.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                                              ctypes.byref(kernel_time), ctypes.byref(user_time)):
+                    return None
+                return str((created.dwHighDateTime << 32) | created.dwLowDateTime)
+            finally:
+                kernel.CloseHandle(handle)
+        with open(f"/proc/{pid}/stat", "rb") as source:
+            return source.read().decode("ascii", "replace").rsplit(")", 1)[1].split()[19]
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
+
+
+def _terminate_process(pid: int) -> None:
+    if os.name == "nt":
+        import ctypes
+        kernel = ctypes.windll.kernel32
+        handle = kernel.OpenProcess(0x0001, False, pid)
+        if handle:
+            kernel.TerminateProcess(handle, 1)
+            kernel.CloseHandle(handle)
+        return
+    os.kill(pid, signal.SIGKILL)
+
+
+def _helpers_dir() -> Path:
+    return _state_root() / "helpers"
+
+
+def _reap_stale_helpers(directory: Path) -> None:
+    """Stops a helper that outlived its own lifetime (stuck on a starved disk). A record names a
+    PID and the process's creation time; only a process that still has that creation time is
+    stopped, so a reused PID is never touched. A record whose process is gone, or whose identity
+    cannot be read, is only removed."""
+    now = time.time()
+    for record in directory.glob("*.json"):
+        try:
+            data = json.loads(record.read_text(encoding="utf-8"))
+            pid, started, at = int(data["pid"]), str(data["started"]), float(data["at"])
+        except (OSError, ValueError, KeyError, TypeError):
+            record.unlink(missing_ok=True)
+            continue
+        if pid == os.getpid() or now - at <= HELPER_LIFETIME + HELPER_REAP_GRACE:
+            continue
+        if started and _process_identity(pid) == started:
+            _terminate_process(pid)
+        record.unlink(missing_ok=True)
+
+
+def _helper_housekeeping() -> None:
+    """The helper's own pid record and the reaping of stale ones, off the request path: a starved
+    disk must not hold the first reply."""
+    directory = _helpers_dir()
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _reap_stale_helpers(directory)
+    record = {"pid": os.getpid(), "started": _process_identity(os.getpid()) or "", "at": time.time()}
+    descriptor = os.open(directory / f"{os.getpid()}.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        output.write(json.dumps(record, separators=(",", ":")))
+
+
+_HELPER_LOCKS: dict[int, object] = {}
+
+
+def _op_claim_lock(path: str) -> int:
+    lock = _claim_lock(Path(path))
+    _HELPER_LOCKS[id(lock)] = lock
+    return id(lock)
+
+
+def _op_release_lock(handle: int) -> None:
+    lock = _HELPER_LOCKS.pop(handle, None)
+    if lock is not None:
+        lock.close()
+
+
+_HELPER_OPS = {
+    "binding": lambda payload: binding(payload),
+    "lane_actor": lambda payload: _lane_actor(payload),
+    "remember_lane": lambda payload: _remember_lane(payload),
+    "forget_lane": lambda payload: _forget_lane(payload),
+    "start_waiter": lambda payload, bound, host: start_lane_waiter(payload, tuple(bound), host),
+    "stop_waiter": lambda payload, bound, host: stop_lane_waiter(payload, tuple(bound), host),
+    "read_state": lambda path, execution, session, host, origin: _read_state_or_empty(Path(path), execution, session, host, origin),
+    "write_state": lambda path, value, durable: _write_state(Path(path), value, durable),
+    "token": lambda path: token_from_file(path),
+    "claim_lock": _op_claim_lock,
+    "release_lock": _op_release_lock,
+}
+
+
+def _helper_dispatch(line: bytes) -> bytes:
+    import contextlib
+    import io
+    errors, printed = io.StringIO(), io.StringIO()
+    actor_before = os.environ.get("GRAPHHELM_ACTOR")
+    try:
+        request_ = json.loads(line)
+        with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(printed):
+            result = _HELPER_OPS[request_["op"]](**request_.get("args", {}))
+        reply = {"ok": True, "result": list(result) if isinstance(result, tuple) else result}
+    except Exception as error:  # every failure is handed to the hook, which raises the same type
+        reply = {"ok": False, "error": {"type": type(error).__name__, "message": str(error)}}
+    actor = os.environ.get("GRAPHHELM_ACTOR")
+    if actor and actor != actor_before:
+        reply["actor"] = actor
+    reply["stderr"] = errors.getvalue()[:8192]
+    return json.dumps(reply, separators=(",", ":")).encode("ascii") + b"\n"
+
+
+def _helper_main() -> int:
+    global _IN_HELPER
+    _IN_HELPER = True
+    # The lifetime can only be shortened (a test's hung helper must not outlive its temp dir).
+    lifetime = min(HELPER_LIFETIME, float(os.environ.get("GRAPHHELM_HOOK_HELPER_LIFETIME") or HELPER_LIFETIME))
+    threading.Thread(target=lambda: (time.sleep(lifetime), os._exit(0)), name="graphhelm-helper-lifetime", daemon=True).start()
+    threading.Thread(target=_helper_housekeeping, name="graphhelm-helper-housekeeping", daemon=True).start()
+    source, sink = sys.stdin.buffer, sys.stdout.buffer
+    while True:
+        line = source.readline()
+        if not line:
+            break  # the hook left: its requests were all answered, one at a time
+        try:
+            sink.write(_helper_dispatch(line))
+            sink.flush()
+        except OSError:
+            break  # the hook left without reading the reply
+    try:
+        (_helpers_dir() / f"{os.getpid()}.json").unlink(missing_ok=True)
+    finally:
+        os._exit(0)
+
+
+def _remote_error(kind: str, message: str) -> BaseException:
+    import builtins
+    cls = _UnreadableState if kind == "_UnreadableState" else getattr(builtins, kind, None)
+    if isinstance(cls, type) and issubclass(cls, Exception):
+        try:
+            return cls(message)
+        except TypeError:
+            return ValueError(message)
+    return RuntimeError(f"{kind}: {message}")
+
+
+class _HelperClient:
+    def __init__(self, host: str):
+        self.host = host
+        self.process = None
+        self.failure: BaseException | None = None
+        self.used = False
+        self._started = threading.Event()
+        self._turn = threading.Lock()
+        threading.Thread(target=self._spawn, name="graphhelm-helper-spawn", daemon=True).start()
+
+    def _spawn(self) -> None:
+        argv = [sys.executable, os.path.abspath(__file__), "helper", "--host", self.host]
+        flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
+        # As the waiter (#919): leave the host's job object when it allows, or the helper dies with
+        # the hook's job; a job that forbids breakaway refuses the flag.
+        attempts = (flags | CREATE_BREAKAWAY_FROM_JOB, flags) if os.name == "nt" else (flags,)
+        for creationflags in attempts:
+            try:
+                # The helper's pipes are its own: nothing of the hook's stdout/stderr pipe reaches it.
+                self.process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                                stderr=subprocess.DEVNULL, close_fds=True,
+                                                creationflags=creationflags, start_new_session=os.name != "nt")
+                break
+            except OSError as error:
+                self.failure = error
+        self._started.set()
+
+    def call(self, op: str, args: dict):
+        self._started.wait()
+        if self.process is None:
+            raise OSError(f"hook helper not started ({type(self.failure).__name__})")
+        with self._turn:
+            self.process.stdin.write(json.dumps({"op": op, "args": args}, separators=(",", ":")).encode("ascii") + b"\n")
+            self.process.stdin.flush()
+            raw = self.process.stdout.readline()
+        if not raw:
+            raise OSError("hook helper ended before it answered")
+        reply = json.loads(raw)
+        if reply.get("stderr"):
+            sys.stderr.write(reply["stderr"])
+        if reply.get("actor"):
+            os.environ["GRAPHHELM_ACTOR"] = reply["actor"]
+        if not reply["ok"]:
+            raise _remote_error(reply["error"]["type"], reply["error"]["message"])
+        return reply["result"]
+
+
+class _RemoteLock:
+    def __init__(self, handle: int):
+        self.handle = handle
+
+
+def _use_helper(host: str) -> None:
+    """Hook mode: every piece of file I/O the hook used to do becomes a request to the helper, with
+    the same bounds and the same errors, so `start` and `end` read as they always did."""
+    client = _HelperClient(host)
+
+    def remote(what: str, op: str, **args):
+        budget = None if client.used else HELPER_FIRST_BUDGET
+        client.used = True
+        return _bounded(what, lambda: client.call(op, args), budget)
+
+    real_binding = binding
+
+    def binding_(payload: dict | None = None):
+        if os.environ.get("GRAPHHELM_EXECUTION_ID") or payload is None:
+            return real_binding(payload)  # from the environment alone: no file is read
+        value = remote("binding", "binding", payload=payload)
+        return tuple(value) if value is not None else None
+
+    def release_(lock) -> None:
+        if lock is None or _answered_without_state:
+            return
+        def unlock() -> None:
+            try:
+                client.call("release_lock", {"handle": lock.handle})
+            except (OSError, ValueError) as error:
+                print(f"graphhelm-session-hook: state unlock failed ({type(error).__name__})", file=sys.stderr)
+
+        worker = threading.Thread(target=unlock, name="graphhelm-state-unlock", daemon=True)
+        worker.start()
+        worker.join(STATE_WRITE_BUDGET)
+        if worker.is_alive():
+            print("graphhelm-session-hook: state unlock still pending; leaving without it", file=sys.stderr)
+
+    def read_(path, execution, session, host_, origin):
+        return remote("read", "read_state", path=str(path), execution=execution, session=session, host=host_, origin=origin)
+
+    def write_(path, value, durable=True):
+        remote("write", "write_state", path=str(path), value=json.loads(json.dumps(value)), durable=durable)
+
+    replacements = {
+        "binding": binding_,
+        "_lane_actor": lambda payload: remote("lane", "lane_actor", payload=payload),
+        "_remember_lane": lambda payload: remote("lane", "remember_lane", payload=payload),
+        "_forget_lane": lambda payload: remote("lane", "forget_lane", payload=payload),
+        "start_lane_waiter": lambda payload, bound, host_: remote("waiter", "start_waiter", payload=payload, bound=list(bound), host=host_),
+        "stop_lane_waiter": lambda payload, bound, host_: remote("waiter", "stop_waiter", payload=payload, bound=list(bound), host=host_),
+        "_read_state_or_empty": read_,
+        "_write_state_bounded": write_,
+        "_token_bounded": lambda path: remote("token", "token", path=path),
+        "_claim_lock_bounded": lambda path: _RemoteLock(remote("lock", "claim_lock", path=str(path))),
+        "_release_lock": release_,
+    }
+    globals().update(replacements)
 
 
 def _briefing_digest(data: dict) -> dict:
@@ -1192,7 +1470,7 @@ def inspect(host: str, session: str | None, output_format: str = "native") -> No
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("start", "end", "inspect", "wait", "touch"))
+    parser.add_argument("phase", choices=("start", "end", "inspect", "wait", "touch", "helper"))
     parser.add_argument("--host", type=_host, required=True)
     parser.add_argument("--format", choices=("native", "portable"), default=None)
     parser.add_argument("--session-id")
@@ -1203,6 +1481,10 @@ def main() -> int:
     args = parser.parse_args()
     host = args.host
     output_format = args.format or ("native" if host in {"claude", "codex"} else "portable")
+    if args.phase == "helper":
+        return _helper_main()
+    if args.phase in {"start", "end"}:
+        _use_helper(host)
     try:
         if args.phase == "wait":
             if not args.session_id or args.events is None or args.heartbeat is None:

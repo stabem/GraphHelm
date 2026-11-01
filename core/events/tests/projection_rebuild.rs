@@ -886,6 +886,10 @@ fn every_nonpublication_event_kind_has_a_safe_generation_handler() {
         ],
         vec![
             serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
+            serde_json::json!({"type":"drive_failed","data":{"executionId":"execution-1","site":"drive","cause":"the execution drive failed"}}),
+        ],
+        vec![
+            serde_json::json!({"type":"execution_started","data":{"executionId":"execution-1","graphVersion":3,"graphHash":hash,"mode":"supervised"}}),
             serde_json::json!({"type":"signal_recorded","data":{"executionId":"execution-1","signalId":"signal-1","sourceKind":"node","sourceId":"node-a","kind":"unexpected_dependency","severity":"high","envelopeSha256":raw}}),
         ],
         // `wake_lease_consumed` carries NO execution-id guard, so it needs no `execution_started`

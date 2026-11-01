@@ -578,6 +578,11 @@ pub struct ExecutionProjection {
     /// inside its own detector.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub wake_mis_burns: BTreeMap<String, WakeMisBurn>,
+    /// #2357: the newest failure of a drive `serve` owned after answering its caller (202), or
+    /// of that drive's workspace release. Newest wins; an `execution_resumed` clears it, because
+    /// resuming is the operator's answer to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drive_failure: Option<DriveFailureRecord>,
     /// #1054: WHO is working this execution and WHAT MODEL is behind them, as declared by the
     /// agents themselves — keyed by actor id, last declaration wins.
     ///
@@ -655,6 +660,15 @@ pub struct DelegationRecord {
 pub struct AgentPresence {
     pub at_sequence: u64,
     pub declared: AgentPresenceDeclared,
+}
+
+/// #2357: what the fold keeps of a `drive_failed` record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveFailureRecord {
+    pub at_sequence: u64,
+    pub site: graphhelm_protocols::DriveFailureSite,
+    pub cause: String,
 }
 
 /// A consumption that burned an arming other than the one it captured.
@@ -2064,6 +2078,8 @@ fn apply_projection_event(
             {
                 return Err(ReplayError::Corrupt);
             }
+            // #2357: resuming is the operator's answer to a recorded drive failure.
+            projection.drive_failure = None;
             projection.simulation_status = Some(SimulationStatus::Running);
         }
         EventKind::SimulationCompleted(payload) => {
@@ -2338,6 +2354,16 @@ fn apply_projection_event(
                     declared: payload.clone(),
                 },
             );
+        }
+        EventKind::DriveFailed(payload) => {
+            if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {
+                return Err(ReplayError::Corrupt);
+            }
+            projection.drive_failure = Some(DriveFailureRecord {
+                at_sequence: event.sequence,
+                site: payload.site,
+                cause: payload.cause.clone(),
+            });
         }
         EventKind::OverdueException(payload) => {
             if projection.execution_id.as_deref() != Some(payload.execution_id.as_str()) {

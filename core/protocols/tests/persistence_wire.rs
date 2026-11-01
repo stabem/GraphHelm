@@ -350,6 +350,10 @@ fn safe_event_variants() -> Vec<(serde_json::Value, bool)> {
             false,
         ),
         (
+            json!({"type":"drive_failed","data":{"executionId":"execution-1","site":"workspace_release","cause":"the workspace could not be released"}}),
+            false,
+        ),
+        (
             json!({"type":"dlq_routed","data":{"executionId":"execution-1","nodeId":"implementation","episodeSequence":4,"reason":"stalled"}}),
             false,
         ),

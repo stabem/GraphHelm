@@ -245,6 +245,7 @@ pub enum EventKind {
     AgentPresenceDeclared(AgentPresenceDeclared),
     DelegationChosen(DelegationChosen),
     SubagentReused(SubagentReused),
+    DriveFailed(DriveFailed),
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -473,6 +474,7 @@ wire_names! {
     AgentPresenceDeclared => "agent_presence_declared",
     DelegationChosen => "delegation_chosen",
     SubagentReused => "subagent_reused",
+    DriveFailed => "drive_failed",
 }
 
 impl EventKind {
@@ -1439,6 +1441,32 @@ pub struct OverdueException {
     /// verdict without re-deriving it from a graph version that may since have moved.
     pub deadline: PersistedTimestamp,
 }
+
+/// #2357: where a server-owned drive of an execution failed after its caller was answered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DriveFailureSite {
+    /// The drive itself ended with an error.
+    Drive,
+    /// The drive ended, but its workspace (the execution's Tier 1 write capability) could not be
+    /// released: the tree stays held until the same execution is provisioned again or the operator
+    /// runs `graphhelm workspace remove` on it.
+    WorkspaceRelease,
+}
+
+/// #2357: a drive that `serve` owns (`Prefer: respond-async` answered 202 before it ran) failed.
+/// Recorded so status and briefing show the failure instead of a run that looks started or
+/// running forever. `cause` is the same redaction-safe message a synchronous `/start` returns.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DriveFailed {
+    pub execution_id: OpaqueId,
+    pub site: DriveFailureSite,
+    pub cause: String,
+}
+
+/// #2357: the longest `DriveFailed::cause` the schema admits, in characters.
+pub const MAX_DRIVE_FAILURE_CAUSE_CHARS: usize = 500;
 
 /// #1054: how hard the declaring agent says it is thinking.
 ///

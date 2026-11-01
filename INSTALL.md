@@ -10,6 +10,8 @@ For this agent-host installation, connect the `graphhelm` CLI, a project provisi
 registered in the selected host. Stopping after one or two of them is a **partial install**; see
 [Common partial installs](#common-partial-installs).
 
+Words such as harness, MCP, keyring and gateway are defined in [docs/install/GETTING_STARTED.md](docs/install/GETTING_STARTED.md#words-used-on-this-page).
+
 Placeholders used below:
 
 | Placeholder | Meaning |

@@ -9,16 +9,16 @@ are bash. The clean-host transcripts this page was checked against are
 [`docs/acceptance/install-rehearsal-2026-09-13.md`](../acceptance/install-rehearsal-2026-09-13.md)
 and, Studio included, [`docs/acceptance/clean-machine-2026-09-14.md`](../acceptance/clean-machine-2026-09-14.md).
 
-**What needs credentials and what does not.** A public clone needs no GitHub account. Nothing after the clone needs an
-account, an API key, a model provider, a database, or the network (the Studio's `npm ci` fetches
-packages once). Every execution below runs on fixtures. A run that calls a real model needs a
+**What needs credentials and what does not.** A public clone needs no GitHub account. Several steps use the network:
+the package managers (apt, winget, rustup), the Node download (`curl` from nodejs.org), the clone, the build's Rust
+crates, the Studio's npm packages, and `graphhelm update`. None of them needs an account, an API key, a model provider or a database. Every execution below runs on fixtures. A run that calls a real model needs a
 gateway manifest and a credential; the one command that wires both is at the end of section 2,
 and [`docs/product/PROVIDER_LESS_MODE.md`](../product/PROVIDER_LESS_MODE.md) says what works
 without a provider and what changes when you add one.
 
 **One port.** `graphhelm init` defaults to `127.0.0.1:8791`, and every command on this page uses
 that number. `install/install.sh` (the VPS systemd path) binds `127.0.0.1:8080` instead; if you
-follow that path, substitute the port. Nothing GraphHelm serves is ever bound beyond loopback.
+follow that path, substitute the port. The Runtime is bound to loopback. The Studio's dev server is too, except in a container, where section 4 tells you to start it with `-- --host`.
 
 **Existing host configuration.** `graphhelm setup --project <project> --home <disposable-profile>`
 previews supported files without changing them. An exact reviewed plan and `--accept` digest are
@@ -29,6 +29,22 @@ user-authored ActivationReceipt into proof. Follow the separate
 [disposable adoption rehearsal](../acceptance/adoption-rehearsal.md) for supported scope, exact
 commands, retained recovery guards, and the missing-observer limit. Those rehearsal commands are
 a recipe, not part of the historical executed transcripts cited above.
+
+## Words used on this page
+
+- **Runtime**: the local `graphhelm serve` process. It keeps the event store and answers the API.
+- **Execution**: one run of a graph, started with `graphhelm execution start`.
+- **Harness**: the agent host you chat with, such as Claude Code or Codex.
+- **MCP** (Model Context Protocol): the protocol a harness uses to call tools. `graphhelm mcp` is GraphHelm's server for it.
+- **Loopback**: `127.0.0.1`, this machine only. The Runtime binds it. The Studio's dev server binds it too, unless you start it with `-- --host` in a container or VM (section 4).
+- **Bearer token**: the secret in `events.token`. It goes in an `Authorization: Bearer` header; never print it.
+- **Sealing key**: the key in `serve.key`. Everything `serve` seals depends on it: if you lose `serve.key`, nothing sealed can be opened again, so keep a copy.
+- **Keyring**: `keyring.v1.json` names the key id (`studio`) and carries an authentication tag. It holds no key; `serve` needs `serve.key` to open it.
+- **Gateway** and **route**: a gateway connects to a model provider. A route is one named entry for it in `manifest.json`.
+- **Manifest**: `<project>/.graphhelm/manifest.json`, where the routes are kept.
+- **Journey**: a user-visible flow written as screens and checks, in `.graphhelm/journeys/`.
+- **Observer**: the tool that runs a journey and records what it saw. Without one, a journey reads `OBSERVER_MISSING`.
+- **Attention**: the field that says whether a run needs you. Its four values are explained in [QUICKSTART.md](../../QUICKSTART.md).
 
 ## Prerequisites
 

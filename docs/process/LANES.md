@@ -176,7 +176,12 @@ ode_modules`) can be a junction into the
   old root's directories of retired lanes by hand, and never one a live process still builds in.
   With it the slot runs the command with
   `CARGO_TARGET_DIR=<targetRoot>\<lane>\<worktree directory name>\target`, records that
-  directory, and holds each lane to `cap` of them (default 3): a run that would start one more is
+  directory, and holds each lane to `cap` of them (default 3). A claim's worktree is
+  `<lane>/<task>/wt`, and its directory name is `<task>-wt`, so a lane's claims never share one
+  (#2317, #2346). A worktree already recorded under the bare `wt` keeps its old directory. An older
+  `graphhelm` that builds in a worktree the new CLI already recorded creates a second build directory
+  for it; nothing is shared, but that worktree counts twice against the lane's cap until the CLI is
+  upgraded. A run that would start one more is
   refused before it queues, naming the ones the lane holds. A build directory whose worktree no
   longer exists is reclaimed by that lane's next slot run and by `graphhelm workspace sweep
   --apply`. The sweep also reclaims only the target of an existing worktree when it is clean,

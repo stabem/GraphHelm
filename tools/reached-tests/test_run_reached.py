@@ -1277,6 +1277,27 @@ class ResumeAndPreflightContracts(unittest.TestCase):
                     self.assertFalse(any(e.get("reusable") or e.get("proofKey") for e in report["completed"]))
         self.assertEqual(self.runs(), ["ok", "ok", "bad", "bad"])
 
+    def test_discovery_cleanup_hiccup_is_a_tool_warning_not_an_incomplete_verdict(self):
+        # #2393: the helper outliving its cleanup deadline keeps the steps' verdict and names a
+        # warning; the run stays unreusable, and any other identity failure still downgrades.
+        reaped = "executable identity discovery child could not be reaped before its cleanup deadline"
+        for command, status in ((self.ok, "passed"), (self.bad, "failed")):
+            self.steps = [command]
+            with patch.object(rr._ExecutableCapture, "_identity", side_effect=rr._DiscoveryCleanupError(reaped)):
+                for _ in range(2):
+                    code, report = self.run_once()
+                    self.assertEqual(report["status"], status)
+                    self.assertEqual(code == 0, status == "passed")
+                    self.assertEqual(report.get("toolWarnings"), [reaped] if status == "passed" else None)
+                    self.assertEqual(report["measure"]["reusedSteps"], 0)
+                    self.assertFalse(any(e.get("reusable") or e.get("proofKey") for e in report["completed"]))
+        self.steps = [self.ok]
+        with patch.object(rr._ExecutableCapture, "_identity", side_effect=RuntimeError("executable identity discovery exceeded its deadline")):
+            _, report = self.run_once()
+        self.assertEqual(report["status"], "incomplete")
+        self.assertNotIn("toolWarnings", report)
+        self.assertEqual(self.runs(), ["ok", "ok", "bad", "bad", "ok"])
+
     def test_identity_accepts_cross_api_ctime_difference_but_refuses_real_mid_read_mutation(self):
         import hashlib
         import types

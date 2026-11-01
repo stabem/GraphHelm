@@ -23,6 +23,24 @@ HOOK_WATCHDOG = 1.0 if (_watched_host, _watched_phase) == ("codex", "end") else 
 _answer_started = False
 
 
+class _ClosedStderr:
+    """#2353: stderr when the host spawned the hook with it closed. Warnings go nowhere instead of
+    `print(file=None)` falling through to stdout and corrupting the answer."""
+
+    def write(self, text):
+        return len(text)
+
+    def flush(self):
+        return None
+
+
+# A host may spawn the hook with stderr closed (Python then sets sys.stderr to None). The hook still
+# answers with the same exit shapes; only the stderr-bound backstop below is not armed.
+_stderr_open = _first_line_sys.stderr is not None
+if not _stderr_open:
+    _first_line_sys.stderr = _ClosedStderr()
+
+
 class _AnswerGuard:
     """stdout that remembers whether the hook began its answer, so the watchdog never adds a second."""
 
@@ -83,7 +101,8 @@ def _probe_mark(event: str) -> None:
         _first_line_sys.stderr.write(f"graphhelm-probe-exit {_first_line_os.getpid()} {event} {at:.3f}\n")
         _first_line_sys.stderr.flush()
     except (OSError, ValueError):
-        # keel-allow: keel.rel.no_swallow stderr itself failed, so there is nowhere left to report this probe-only mark, and the exit must not wait until #2344
+        # stderr itself failed: there is nowhere left to report this probe-only mark, and the exit
+        # must not wait.
         return
 
 
@@ -109,14 +128,20 @@ if __name__ == "__main__" and _watched_phase in {"start", "end"}:
     # which needs no Python lock, ends the process a short while after the watchdog's moment: it
     # writes every thread's stack to stderr (where it hung) and exits with status 1.
     import faulthandler as _first_line_faulthandler
-    _first_line_faulthandler.dump_traceback_later(HOOK_WATCHDOG + 1.5, exit=True)
+    if _stderr_open:
+        try:
+            _first_line_faulthandler.dump_traceback_later(HOOK_WATCHDOG + 1.5, exit=True)
+        except (RuntimeError, ValueError, OSError, AttributeError):
+            # stderr is open but has no usable file descriptor: the dump has nowhere to go, so the
+            # backstop stays off and the Python watchdog alone bounds the hook (#2353).
+            _stderr_open = False
 
 if _first_line_os.environ.get("GRAPHHELM_HOOK_FIRST_LINE"):
     try:
         _first_line_sys.stderr.write(f"graphhelm-probe-first {_first_line_os.getpid()} {_FIRST_LINE_AT:.3f}" + chr(10))
         _first_line_sys.stderr.flush()
     except (OSError, ValueError):
-        # keel-allow: keel.rel.no_swallow stderr itself failed, so there is nowhere left to report this probe-only mark, and the hook must not wait until #2344
+        # keel-allow: keel.rel.no_swallow stderr itself failed, so there is nowhere left to report this probe-only mark and the hook must not wait; re-decide with the probe (#2270, #2344) until 2027-02-01
         pass
 
 import argparse
@@ -728,10 +753,14 @@ def _read_state_or_empty(path: Path, execution: str, session: str, host: str, or
     empty or half-written after a crash or a power loss (the end write is not fsync'd), not JSON, or
     not this format. One stderr warning says so; the hook carries on as for a missing file. A
     parseable state that fails validation (another identity, a forged receipt, an injected
-    briefing) still fails closed. A read that does not answer in time raises `_StateTimeout`."""
+    briefing) still fails closed. Another OSError (permission, sharing violation) is not "empty": it
+    propagates and the hook answers UNOBSERVED. A read that does not answer in time raises
+    `_StateTimeout`."""
     try:
         return _bounded("read", lambda: _read_state(path, execution, session, host, origin))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, _UnreadableState) as error:
+    except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError, _UnreadableState) as error:
+        # #2353: any other OSError (permission, sharing violation, a directory in the way) is a real
+        # problem; it reaches main, which warns once and answers UNOBSERVED.
         print(f"graphhelm-session-hook: hook state unreadable ({type(error).__name__}); treated as empty", file=sys.stderr)
         return None
 

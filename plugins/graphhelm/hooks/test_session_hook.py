@@ -737,7 +737,7 @@ class SessionHookTests(unittest.TestCase):
 
     def state_files(self):
         root = Path(self.env.get("GRAPHHELM_HOOK_STATE_DIR", Path(self.temp.name) / "state"))
-        return {path.name: path.read_bytes() for path in root.glob("*.json")} if root.is_dir() else {}
+        return {path.name: path.read_bytes() for path in root.glob("*.json") if path.is_file()} if root.is_dir() else {}
 
     # #2270: the exit contract of #2340, from the hook's first line to its exit request (the stderr
     # mark taken right before os._exit): start within its declared 30 s, end within 10 s (the host
@@ -1483,6 +1483,53 @@ class SessionHookTests(unittest.TestCase):
             return
         self.assertIn("GraphHelm FRESH", json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"])
         self.assertEqual(result.stderr.count("treated as empty"), 1, result.stderr)
+
+    def test_a_state_read_refused_by_the_os_is_unobserved_not_empty(self):
+        # #2353: "empty" is only for a missing or damaged file. A state the OS refuses to read (here
+        # a directory in its place: PermissionError on Windows, IsADirectoryError elsewhere) is a
+        # real problem: one warning and an UNOBSERVED answer, never a fresh start over it.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.run_hook("end")
+        state = next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json"))
+        state.unlink()
+        state.mkdir()
+        for phase in ("start", "end"):
+            with self.subTest(phase=phase):
+                RuntimeHandler.requests = []
+                result = self.run_hook(phase)
+                if self.timed_out(result, phase):
+                    continue
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotIn("treated as empty", result.stderr)
+                self.assertEqual(result.stderr.count(f"graphhelm-hook: {phase} unobserved ("), 1, result.stderr)
+                self.assertEqual([item for item in RuntimeHandler.requests if item[0] == "POST"], [])
+                if phase == "start":
+                    self.assertIn("GraphHelm briefing UNOBSERVED.",
+                                  json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"])
+
+    def test_a_hook_spawned_with_stderr_closed_still_answers(self):
+        # #2353: with stderr closed at spawn (sys.stderr is None) the faulthandler backstop used to
+        # raise at import and the hook exited 1 with no answer. Now it answers with the normal exit
+        # shape, and no warning leaks into stdout.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        env = {key: value for key, value in self.env.items() if key != "GRAPHHELM_HOOK_FIRST_LINE"}
+        closed = ("import os, runpy, sys; os.close(2); sys.stderr = sys.__stderr__ = None; "
+                  "sys.argv = [sys.argv[1], sys.argv[2], '--host', 'claude']; "
+                  "runpy.run_path(sys.argv[0], run_name='__main__')")
+        for phase in ("start", "end"):
+            with self.subTest(phase=phase):
+                event = "SessionStart" if phase == "start" else "SessionEnd"
+                result = subprocess.run(
+                    [sys.executable, "-c", closed, str(SCRIPT), phase],
+                    input=json.dumps({"hook_event_name": event, "session_id": "session-123"}),
+                    text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
+                    timeout=self.EXIT_BAR[phase] + 60, check=False, creationflags=NO_WINDOW)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                if phase == "start":
+                    context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+                    self.assertIn("GraphHelm", context)
+                else:
+                    self.assertEqual(result.stdout, "")
 
     def test_start_and_end_answer_while_the_state_read_hangs(self):
         # #2334: the state read and the lock are file I/O too; neither may hold the answer.

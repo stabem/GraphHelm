@@ -51,6 +51,10 @@ def duplicates(texts: dict[str, str]) -> dict[str, list[str]]:
 RULE_OWNERS = {
     "match-head-commit": ["keel/KEEL_MERGE.md"],
     "· Head: <": ["docs/process/DELIVERY.md"],
+    # The load-probe exception and the reviewer's no-load default live in LANES §3 only (#2392);
+    # other documents link to it.
+    "a load probe, when the": ["docs/process/LANES.md"],
+    "creates no load by default": ["docs/process/LANES.md"],
 }
 RULE_FILES = FILES + ("docs/keel/KEEL_CHECK.md",)
 

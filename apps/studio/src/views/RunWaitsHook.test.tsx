@@ -15,7 +15,9 @@ const JSDOM_LOAD_MS = 300_000;
 let LanesPanels: typeof LanesPanelsType;
 let createRoot: typeof import("react-dom/client").createRoot;
 beforeAll(async () => {
-  const { JSDOM } = await import("jsdom");
+  // jsdom ships no types and the Studio has no @types/jsdom; only the one constructor is used here.
+  const specifier = "jsdom";
+  const { JSDOM } = (await import(/* @vite-ignore */ specifier)) as { JSDOM: new (html: string, options: { url: string }) => { window: Window & typeof globalThis } };
   const { window } = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://127.0.0.1/" });
   const g = globalThis as Record<string, unknown>;
   for (const key of Object.getOwnPropertyNames(window)) {

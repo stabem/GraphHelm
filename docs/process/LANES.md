@@ -215,7 +215,11 @@ ode_modules`) can be a junction into the
 - Benchmarks, load generators and store seeding run inside the slot too: they load the machine like
   a build does.
 - Urgency does not exempt cargo builds, tests or clippy from the slot.
-- Do not run CPU stress tests on the shared machine.
+- A load or stress run on the shared machine is allowed only as a declared probe: the issue or
+  pull request names it as the proof; it is announced to the team (who, what, a start and end
+  window) and does not overlap another declared measurement; it runs inside the slot, kills only
+  its own processes and leaves none behind; and it stays within a stated bound (default: at most
+  `cargo -j32` for at most 15 minutes). Any other stress run is forbidden.
 - After the machine reboots, every background run is dead. Queue it again; do not wait for it.
 - **One waiting ticket per lane.** An outer runner may contain all reached checks, but the
   default feedback batch keeps one bounded slot lease across short Cargo commands and yields at

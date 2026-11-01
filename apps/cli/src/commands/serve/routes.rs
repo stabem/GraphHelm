@@ -4093,7 +4093,7 @@ pub(super) async fn start(
                                 &background_execution_id,
                                 prepared,
                                 setup,
-                                true,
+                                DriveOwner::Server,
                             )
                             .await
                             .is_err()
@@ -4114,7 +4114,7 @@ pub(super) async fn start(
                         let background_state = drive_state.clone();
                         let background_execution_id = drive_execution_id.clone();
                         tokio::spawn(async move {
-                            drive(&background_state, &background_execution_id, prepared, setup, false)
+                            drive(&background_state, &background_execution_id, prepared, setup, DriveOwner::Caller)
                                 .await
                         })
                         .await
@@ -4125,7 +4125,7 @@ pub(super) async fn start(
                         })
                         .and_then(std::convert::identity)
                     } else {
-                        drive(&drive_state, &drive_execution_id, prepared, setup, false).await
+                        drive(&drive_state, &drive_execution_id, prepared, setup, DriveOwner::Caller).await
                     }
                 } else {
                     Ok(execution::start::execute(
@@ -5258,7 +5258,7 @@ pub(super) async fn resume(
                                 &background_execution_id,
                                 prepared,
                                 setup,
-                                false,
+                                DriveOwner::Caller,
                             )
                             .await
                         })
@@ -5270,7 +5270,14 @@ pub(super) async fn resume(
                         })
                         .and_then(std::convert::identity)
                     } else {
-                        drive(&drive_state, &drive_execution_id, prepared, setup, false).await
+                        drive(
+                            &drive_state,
+                            &drive_execution_id,
+                            prepared,
+                            setup,
+                            DriveOwner::Caller,
+                        )
+                        .await
                     }
                 } else {
                     Ok(execution::resume::execute(
@@ -5669,7 +5676,7 @@ pub(super) async fn clear(
                         key,
                     )?;
                     let mut value = if outcome == ClearanceOutcome::Cleared {
-                        drive(&drive_state, &drive_execution_id, prepared, setup, false).await?
+                        drive(&drive_state, &drive_execution_id, prepared, setup, DriveOwner::Caller).await?
                     } else {
                         // Rejected: nothing to drive. The reply is the same status render every
                         // other mutation replies with, plus the verdict.
@@ -6144,8 +6151,9 @@ async fn drive(
     execution_id: &str,
     prepared: PreparedDrive,
     setup: DriveSetup,
-    detached: bool,
+    owner: DriveOwner,
 ) -> Result<serde_json::Value, MutationError> {
+    let detached = owner == DriveOwner::Server;
     let DriveSetup { sealer, ports } = setup;
     // #2357: a DETACHED drive has no caller left to read its error, so its failure is recorded
     // in the execution's own stream, where status and briefing read it.
@@ -6363,6 +6371,15 @@ async fn drive(
             Err(MutationError::from(driver_failure(&message)))
         }
     }
+}
+
+/// #2357: who is waiting for a drive's result. `Caller`: the request awaits it and receives its
+/// error. `Server`: `/start` already answered 202, so nobody does, and a failure is recorded in the
+/// execution's stream instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DriveOwner {
+    Caller,
+    Server,
 }
 
 /// #2357: append a `drive_failed` record for a detached drive, off the reactor. Best effort and

@@ -8036,8 +8036,8 @@ spec:
 }
 
 /// #2357: the same record for the drive's OWN failure, on every platform. A debug-build seam
-/// (`GRAPHHELM_TEST_FAIL_DETACHED_DRIVE=1`) makes the detached drive end with an error after it
-/// ran; status and briefing then show `drive_failed` with `site: drive`. Cost: one served
+/// (`GRAPHHELM_TEST_FAIL_DETACHED_DRIVE=1`) turns the detached drive's result into an error after
+/// it ran, so the failure goes through the REAL error arm in `routes.rs` that records it; status and briefing then show `drive_failed` with `site: drive`. Cost: one served
 /// Runtime, a replying provider, one 202 POST and a status poll.
 #[test]
 fn a_detached_drive_that_fails_records_it_for_status_and_briefing() {
@@ -8129,7 +8129,7 @@ fn a_detached_drive_that_fails_records_it_for_status_and_briefing() {
     assert!(
         reason["cause"]
             .as_str()
-            .is_some_and(|cause| cause.contains("GRAPHHELM_TEST_FAIL_DETACHED_DRIVE")),
+            .is_some_and(|cause| cause.contains("does not allow this outcome")),
         "{reason}"
     );
     let briefing = get_json(&format!("{status_url}/briefing"), Some(&token));

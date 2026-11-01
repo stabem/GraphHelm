@@ -6264,7 +6264,8 @@ async fn drive(
         .await
         .insert(execution_id.to_owned(), cancel_tx);
 
-    let result = graphhelm_runtime::driver::drive_to_quiescence_async_with_receipts(
+    #[cfg_attr(not(debug_assertions), allow(unused_mut))]
+    let mut result = graphhelm_runtime::driver::drive_to_quiescence_async_with_receipts(
         store_open,
         sealer,
         ids,
@@ -6323,20 +6324,13 @@ async fn drive(
         }
     }
 
-    // #2357: a debug-build seam (`GRAPHHELM_TEST_FAIL_DETACHED_DRIVE=1`) that makes a DETACHED
-    // drive end with an error after it ran, so a route-level test proves the failure is recorded
-    // on every platform. Compiled out of release builds.
+    // #2357: a debug-build seam (`GRAPHHELM_TEST_FAIL_DETACHED_DRIVE=1`) that turns a DETACHED
+    // drive's `result` into an error after it ran. It writes nothing itself: the failure goes
+    // through the real `Err` arm below, the one that records it, so a route-level test fails if
+    // that arm stops recording. Compiled out of release builds.
     #[cfg(debug_assertions)]
     if detached && std::env::var("GRAPHHELM_TEST_FAIL_DETACHED_DRIVE").as_deref() == Ok("1") {
-        let message = "drive failure injected by GRAPHHELM_TEST_FAIL_DETACHED_DRIVE";
-        record_drive_failure(
-            state,
-            &failure_record,
-            graphhelm_protocols::DriveFailureSite::Drive,
-            message,
-        )
-        .await;
-        return Err(MutationError::from(driver_failure(message)));
+        result = Err(graphhelm_runtime::driver::DriverError::Transition);
     }
     match result {
         Ok(projection) => Ok(execution::render_with_context(

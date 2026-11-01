@@ -52,11 +52,11 @@ pub use memory::{
     prepare_memory_record_superseded,
 };
 pub use projection::{
-    ClearanceOutcome, CustomsScan, CustomsStage, DelegationRecord, EvidenceAvailability,
-    ExecutionProjection, MAX_PROJECTION_NODES, MemoryAdmissionRefusalReceipt,
+    ClearanceOutcome, CustomsScan, CustomsStage, DelegationRecord, DriveFailureRecord,
+    EvidenceAvailability, ExecutionProjection, MAX_PROJECTION_NODES, MemoryAdmissionRefusalReceipt,
     MemoryRecordProjection, OpenClaim, OpenWait, OverdueStage, ProjectionGeneration,
     ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository, ProjectionWatermark,
-    DriveFailureRecord, ReplayError, SubagentRecord, WakeMisBurn, claim_evidence_digest, overdue_at,
+    ReplayError, SubagentRecord, WakeMisBurn, claim_evidence_digest, overdue_at,
     project_customs_stage, projection_events_folded, replay, replay_within,
 };
 pub use repository::{

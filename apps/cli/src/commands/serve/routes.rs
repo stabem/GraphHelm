@@ -5253,8 +5253,14 @@ pub(super) async fn resume(
                         let background_state = drive_state.clone();
                         let background_execution_id = drive_execution_id.clone();
                         tokio::spawn(async move {
-                            drive(&background_state, &background_execution_id, prepared, setup, false)
-                                .await
+                            drive(
+                                &background_state,
+                                &background_execution_id,
+                                prepared,
+                                setup,
+                                false,
+                            )
+                            .await
                         })
                         .await
                         .map_err(|_| {

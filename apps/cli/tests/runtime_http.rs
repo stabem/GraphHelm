@@ -7942,7 +7942,10 @@ spec:
     )
     .expect("/start answered");
     assert_eq!(reply.status, 202, "{}", reply.body);
-    if arrived.recv_timeout(scaled(Duration::from_secs(30))).is_err() {
+    if arrived
+        .recv_timeout(scaled(Duration::from_secs(30)))
+        .is_err()
+    {
         panic!(
             "the detached drive never reached the provider: {}",
             get_json(&format!("{base}/v1/executions/{execution}"), Some(&token))
@@ -7950,7 +7953,12 @@ spec:
     }
 
     // The execution's Tier 1 tree: the one staging directory that is a git worktree.
-    fn worktrees_under(root: &Path, depth: usize, found: &mut Vec<PathBuf>, seen: &mut Vec<String>) {
+    fn worktrees_under(
+        root: &Path,
+        depth: usize,
+        found: &mut Vec<PathBuf>,
+        seen: &mut Vec<String>,
+    ) {
         let Ok(entries) = std::fs::read_dir(root) else {
             return;
         };
@@ -8004,10 +8012,16 @@ spec:
     drop(held);
     assert_eq!(reason["site"], "workspace_release", "{reason}");
     assert!(
-        reason["cause"].as_str().is_some_and(|cause| !cause.is_empty()),
+        reason["cause"]
+            .as_str()
+            .is_some_and(|cause| !cause.is_empty()),
         "{reason}"
     );
-    assert!(reason["at_sequence"].as_u64().is_some_and(|sequence| sequence > 0));
+    assert!(
+        reason["at_sequence"]
+            .as_u64()
+            .is_some_and(|sequence| sequence > 0)
+    );
 
     let briefing = get_json(&format!("{status_url}/briefing"), Some(&token));
     assert!(
@@ -8068,7 +8082,10 @@ fn a_detached_drive_that_fails_records_it_for_status_and_briefing() {
         env: vec![
             ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
             ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
-            ("GRAPHHELM_TEST_FAIL_DETACHED_DRIVE".to_owned(), "1".to_owned()),
+            (
+                "GRAPHHELM_TEST_FAIL_DETACHED_DRIVE".to_owned(),
+                "1".to_owned(),
+            ),
         ],
     };
     let (_guard, base, token) = serve_with(&events, &extra);
@@ -8094,7 +8111,11 @@ fn a_detached_drive_that_fails_records_it_for_status_and_briefing() {
         let status = get_json(&status_url, Some(&token));
         if let Some(reason) = status["data"]["attentionReasons"]
             .as_array()
-            .and_then(|reasons| reasons.iter().find(|reason| reason["kind"] == "drive_failed"))
+            .and_then(|reasons| {
+                reasons
+                    .iter()
+                    .find(|reason| reason["kind"] == "drive_failed")
+            })
         {
             break reason.clone();
         }

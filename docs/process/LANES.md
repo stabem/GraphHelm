@@ -216,12 +216,14 @@ ode_modules`) can be a junction into the
   a build does.
 - Urgency does not exempt cargo builds, tests or clippy from the slot.
 - Do not run CPU stress tests on the shared machine, with one exception: a load probe, when the
-  pull request's promise is about time or load. Only the lane that owns the probe runs it (the
-  author, or the QA lane the quality lead names). The probe's load is its own, with its process
+  pull request's promise is about time or load. Only the lane that owns the probe runs it: its
+  author, or a lane the coordinator names for it (§1). The probe runs inside the build slot like
+  any load generator (above), so it queues behind builds. Its load is its own, with its process
   ids recorded, and only its creator stops it. It never runs during another lane's benchmark or
   timed run, confirmed from the running processes, not from the clock.
 - A blind reviewer creates no load by default: it reads the author's probe receipt and repeats
-  only the short probe the pull request cites.
+  only the probe the pull request states, with its run count and duration written in the PR. A PR
+  that states no run count and no duration has no probe for a reviewer to repeat.
 - After the machine reboots, every background run is dead. Queue it again; do not wait for it.
 - **One waiting ticket per lane.** An outer runner may contain all reached checks, but the
   default feedback batch keeps one bounded slot lease across short Cargo commands and yields at

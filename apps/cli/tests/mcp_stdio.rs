@@ -4136,10 +4136,18 @@ impl LiveMcp {
         self.stdin.flush().expect("stdin flushes");
     }
 
+    /// Waits for the reply as a HANG GUARD, not a timing claim (#2371). The router bounds each tool
+    /// request's child itself (`CHILD_WAIT`, 120 s: probe 30 + 15, two requests of 30, and 15) and
+    /// always answers within it, so this guard sits above that bound. A fixed 30 s window failed
+    /// under batched reached runs, where creating a process for a freshly written file can stall
+    /// on the host (real-time scanning), while the same sequence alone answers in under 1 s.
     fn ask(&mut self, message: &serde_json::Value) -> serde_json::Value {
+        // Mirrors `commands::mcp::CHILD_WAIT`; `the_child_wait_matches_its_mirror_in_the_stdio_tests`
+        // in that module fails if the two drift apart.
+        const ROUTER_CHILD_BOUND: Duration = Duration::from_secs(120);
         self.send(message);
         self.replies
-            .recv_timeout(scaled(Duration::from_secs(30)))
+            .recv_timeout(scaled(ROUTER_CHILD_BOUND + Duration::from_secs(30)))
             .unwrap_or_else(|_| panic!("no reply to {message}"))
     }
 }

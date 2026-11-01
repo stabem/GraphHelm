@@ -7800,3 +7800,317 @@ fn start_against_a_silent_provider(prefer_async: bool, fail_render: bool) {
         "the detached drive stopped with nothing dispatched: {ended}"
     );
 }
+
+/// #2357: after `Prefer: respond-async` answers 202, the drive belongs to the server. When that
+/// drive's workspace cannot be released, the failure is RECORDED in the execution's stream and
+/// status and briefing show it as the `drive_failed` attention reason. Before, it reached only
+/// the server's stderr and the run read as if nothing were wrong. Windows only: a file held open
+/// without sharing makes the worktree removal fail, deterministically; Unix removes open files.
+/// Cost: one served Runtime with a tool half, a held provider, one 202 POST and a status poll.
+#[cfg(windows)]
+#[test]
+fn a_detached_drive_whose_workspace_cannot_be_released_records_it_for_status_and_briefing() {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let staging = directory.path().join("staging");
+    let project = scratch_project(directory.path());
+    let key_id = "runtime-http-drive-failed";
+    let route_id = "drive_failed_route";
+    let (provider, arrived, release) = held_anthropic_server();
+    credential_set(&broker, &keyring, key_id, "cred_drive_failed", route_id);
+    let manifest = write_json(
+        directory.path(),
+        "drive-failed-manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id, "provider": "anthropic", "transport": "direct_api",
+                "authentication": "api_key", "billingMode": "per_token", "baseUrl": provider,
+                "model": "claude-sonnet-5", "credentialRef": "cred_drive_failed",
+                "profiles": ["critical_reasoning"], "enabled": true, "timeoutSeconds": 30
+            }]
+        }),
+    );
+    let execution = "exec-drive-failed-release";
+    // A tool step FIRST (it provisions the execution's Tier 1 tree), then the held agent step.
+    let graph = directory.path().join(format!("{execution}.yaml"));
+    std::fs::write(
+        &graph,
+        format!(
+            r#"apiVersion: p50.dev/graph/v1
+kind: ExecutionGraph
+metadata:
+  id: exec_runtime_http_drive_failed_v1
+  name: Runtime HTTP drive-failed story
+  executionId: {execution}
+  version: 1
+spec:
+  entrypoints:
+    - look
+  nodes:
+    look:
+      type: tool
+      name: Look
+      objective: Look at the tree.
+      optionality: required
+      output:
+        schema: schema://TestReport@1
+      tool:
+        call:
+          tool: shell
+          program: git
+          arguments:
+            - status
+      completion:
+        requires:
+          - expression: output.executed > 0
+    implement:
+      type: agent
+      name: Implement
+      objective: Report on the tree.
+      optionality: required
+      agent:
+        ephemeral:
+          purpose: p
+          capabilities:
+            - change.plan
+          inputSchema: schema://TestReport@1
+          outputSchema: schema://TaskResult@1
+          instructions: i
+          completionContract:
+            requires:
+              - result
+      completion:
+        requires:
+          - outputSchemaValid: true
+  edges:
+    - id: look_to_implement
+      from: look
+      to: implement
+      type: data
+  budgets:
+    maxParallelModelCalls: 1
+  completion:
+    terminalNodes:
+      - implement
+"#
+        ),
+    )
+    .unwrap();
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+            "--staging".into(),
+            staging.to_str().unwrap().into(),
+            "--allow-program".into(),
+            "git".into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+    let url = format!("{base}/v1/executions/{execution}/start");
+    let body = serde_json::json!({
+        "file": graph.to_str().unwrap(), "mode": "autopilot", "project": project.to_str().unwrap(),
+    });
+    let reply = post_request(
+        &url,
+        &token,
+        &[
+            ("Idempotency-Key", "drive-failed-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+            ("Prefer", "respond-async"),
+        ],
+        &body,
+        scaled(Duration::from_secs(60)),
+    )
+    .expect("/start answered");
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    if arrived.recv_timeout(scaled(Duration::from_secs(30))).is_err() {
+        panic!(
+            "the detached drive never reached the provider: {}",
+            get_json(&format!("{base}/v1/executions/{execution}"), Some(&token))
+        );
+    }
+
+    // The execution's Tier 1 tree: the one staging directory that is a git worktree.
+    fn worktrees_under(root: &Path, depth: usize, found: &mut Vec<PathBuf>, seen: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            seen.push(path.display().to_string());
+            if path.join(".git").is_file() {
+                found.push(path);
+            } else if depth > 0 && path.is_dir() {
+                worktrees_under(&path, depth - 1, found, seen);
+            }
+        }
+    }
+    let (mut found, mut seen) = (Vec::new(), Vec::new());
+    worktrees_under(&staging, 3, &mut found, &mut seen);
+    let tree = found
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("no workspace under --staging; saw {seen:#?}"));
+    let held_path = tree.join("held-open.txt");
+    std::fs::write(&held_path, b"held").unwrap();
+    // No sharing at all: the worktree removal cannot delete this file while the handle lives.
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&held_path)
+        .unwrap();
+    release.send(()).unwrap();
+
+    let status_url = format!("{base}/v1/executions/{execution}");
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
+    let reason = loop {
+        let status = get_json(&status_url, Some(&token));
+        let found = status["data"]["attentionReasons"]
+            .as_array()
+            .and_then(|reasons| {
+                reasons
+                    .iter()
+                    .find(|reason| reason["kind"] == "drive_failed")
+                    .cloned()
+            });
+        if let Some(reason) = found {
+            break reason;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "status never showed the detached drive's failure: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    drop(held);
+    assert_eq!(reason["site"], "workspace_release", "{reason}");
+    assert!(
+        reason["cause"].as_str().is_some_and(|cause| !cause.is_empty()),
+        "{reason}"
+    );
+    assert!(reason["at_sequence"].as_u64().is_some_and(|sequence| sequence > 0));
+
+    let briefing = get_json(&format!("{status_url}/briefing"), Some(&token));
+    assert!(
+        briefing.to_string().contains("drive_failed"),
+        "briefing shows the failure: {briefing}"
+    );
+    let recorded = get_json(&format!("{status_url}/events"), Some(&token));
+    assert!(
+        recorded.to_string().contains("drive_failed"),
+        "the failure is an event in the execution's own stream: {recorded}"
+    );
+}
+
+/// #2357: the same record for the drive's OWN failure, on every platform. A debug-build seam
+/// (`GRAPHHELM_TEST_FAIL_DETACHED_DRIVE=1`) makes the detached drive end with an error after it
+/// ran; status and briefing then show `drive_failed` with `site: drive`. Cost: one served
+/// Runtime, a replying provider, one 202 POST and a status poll.
+#[test]
+fn a_detached_drive_that_fails_records_it_for_status_and_briefing() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let broker = directory.path().join("broker");
+    let keyring = directory.path().join("keyring");
+    std::fs::create_dir_all(&keyring).unwrap();
+    let project = plain_project(directory.path());
+    let key_id = "runtime-http-drive-failed-own";
+    let route_id = "drive_failed_own_route";
+    let provider = replying_anthropic_server();
+    credential_set(&broker, &keyring, key_id, "cred_drive_failed_own", route_id);
+    let manifest = write_json(
+        directory.path(),
+        "drive-failed-own-manifest.json",
+        &serde_json::json!({
+            "manifestVersion": 1,
+            "routes": [{
+                "id": route_id, "provider": "anthropic", "transport": "direct_api",
+                "authentication": "api_key", "billingMode": "per_token", "baseUrl": provider,
+                "model": "claude-sonnet-5", "credentialRef": "cred_drive_failed_own",
+                "profiles": ["critical_reasoning"], "enabled": true, "timeoutSeconds": 30
+            }]
+        }),
+    );
+    let execution = "exec-drive-failed-own";
+    let graph = agent_only_graph(directory.path(), execution);
+    let extra = ServeExtra {
+        args: vec![
+            "--manifest".into(),
+            manifest.to_str().unwrap().into(),
+            "--broker".into(),
+            broker.to_str().unwrap().into(),
+            "--keyring".into(),
+            keyring.to_str().unwrap().into(),
+            "--key-id".into(),
+            key_id.into(),
+            "--route".into(),
+            route_id.into(),
+        ],
+        env: vec![
+            ("GRAPHHELM_GATEWAY_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_EVENTS_KEY".to_owned(), gateway_key()),
+            ("GRAPHHELM_TEST_FAIL_DETACHED_DRIVE".to_owned(), "1".to_owned()),
+        ],
+    };
+    let (_guard, base, token) = serve_with(&events, &extra);
+    let reply = post_request(
+        &format!("{base}/v1/executions/{execution}/start"),
+        &token,
+        &[
+            ("Idempotency-Key", "drive-failed-own-start"),
+            ("X-GraphHelm-Actor", "owner-local"),
+            ("X-GraphHelm-Actor-Type", "owner"),
+            ("Prefer", "respond-async"),
+        ],
+        &serde_json::json!({
+            "file": graph.to_str().unwrap(), "mode": "autopilot", "project": project.to_str().unwrap(),
+        }),
+        scaled(Duration::from_secs(60)),
+    )
+    .expect("/start answered");
+    assert_eq!(reply.status, 202, "{}", reply.body);
+    let status_url = format!("{base}/v1/executions/{execution}");
+    let deadline = Instant::now() + scaled(Duration::from_secs(60));
+    let reason = loop {
+        let status = get_json(&status_url, Some(&token));
+        if let Some(reason) = status["data"]["attentionReasons"]
+            .as_array()
+            .and_then(|reasons| reasons.iter().find(|reason| reason["kind"] == "drive_failed"))
+        {
+            break reason.clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "status never showed the detached drive's failure: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(reason["site"], "drive", "{reason}");
+    assert!(
+        reason["cause"]
+            .as_str()
+            .is_some_and(|cause| cause.contains("GRAPHHELM_TEST_FAIL_DETACHED_DRIVE")),
+        "{reason}"
+    );
+    let briefing = get_json(&format!("{status_url}/briefing"), Some(&token));
+    assert!(briefing.to_string().contains("drive_failed"), "{briefing}");
+}

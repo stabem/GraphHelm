@@ -56,7 +56,7 @@ pub use projection::{
     ExecutionProjection, MAX_PROJECTION_NODES, MemoryAdmissionRefusalReceipt,
     MemoryRecordProjection, OpenClaim, OpenWait, OverdueStage, ProjectionGeneration,
     ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository, ProjectionWatermark,
-    ReplayError, SubagentRecord, WakeMisBurn, claim_evidence_digest, overdue_at,
+    DriveFailureRecord, ReplayError, SubagentRecord, WakeMisBurn, claim_evidence_digest, overdue_at,
     project_customs_stage, projection_events_folded, replay, replay_within,
 };
 pub use repository::{

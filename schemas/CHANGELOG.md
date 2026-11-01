@@ -104,6 +104,15 @@ the preview runner plays without a browser. Additive: every 1.2.0 flow stays val
 also allowed on `http`; `secret` stays `enter_text` only. The catalog digest is updated from
 canonical JSON.
 
+## event-envelope 1.1.0 - `drive_failed` (#2357)
+
+Adds the execution-scoped `drive_failed` kind: `{executionId, site, cause}`, with `site` one of
+`drive` or `workspace_release` and `cause` a non-empty, bounded string (at most 500 characters).
+`serve` records it when a drive it owns after answering `Prefer: respond-async` with 202 fails,
+or when that drive's workspace cannot be released, so status and briefing show the failure as
+the `drive_failed` attention reason. Additive within the unreleased 1.1.0 candidate; legacy
+streams are unchanged. The catalog digest is updated from canonical JSON.
+
 ## event-envelope 1.1.0 - operator-note routing hints (Refs #687)
 
 `signal_recorded` gains optional opaque `to` and `replyTo` fields. The Governor copies them

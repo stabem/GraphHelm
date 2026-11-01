@@ -4088,9 +4088,15 @@ pub(super) async fn start(
                         tokio::spawn(async move {
                             // Sent, or dropped with the request: either way the drive runs.
                             let _ = wait.await;
-                            if drive(&background_state, &background_execution_id, prepared, setup)
-                                .await
-                                .is_err()
+                            if drive(
+                                &background_state,
+                                &background_execution_id,
+                                prepared,
+                                setup,
+                                true,
+                            )
+                            .await
+                            .is_err()
                             {
                                 // Content-free: the run's own record says how it ended.
                                 eprintln!(
@@ -4108,7 +4114,7 @@ pub(super) async fn start(
                         let background_state = drive_state.clone();
                         let background_execution_id = drive_execution_id.clone();
                         tokio::spawn(async move {
-                            drive(&background_state, &background_execution_id, prepared, setup)
+                            drive(&background_state, &background_execution_id, prepared, setup, false)
                                 .await
                         })
                         .await
@@ -4119,7 +4125,7 @@ pub(super) async fn start(
                         })
                         .and_then(std::convert::identity)
                     } else {
-                        drive(&drive_state, &drive_execution_id, prepared, setup).await
+                        drive(&drive_state, &drive_execution_id, prepared, setup, false).await
                     }
                 } else {
                     Ok(execution::start::execute(
@@ -5247,7 +5253,7 @@ pub(super) async fn resume(
                         let background_state = drive_state.clone();
                         let background_execution_id = drive_execution_id.clone();
                         tokio::spawn(async move {
-                            drive(&background_state, &background_execution_id, prepared, setup)
+                            drive(&background_state, &background_execution_id, prepared, setup, false)
                                 .await
                         })
                         .await
@@ -5258,7 +5264,7 @@ pub(super) async fn resume(
                         })
                         .and_then(std::convert::identity)
                     } else {
-                        drive(&drive_state, &drive_execution_id, prepared, setup).await
+                        drive(&drive_state, &drive_execution_id, prepared, setup, false).await
                     }
                 } else {
                     Ok(execution::resume::execute(
@@ -5657,7 +5663,7 @@ pub(super) async fn clear(
                         key,
                     )?;
                     let mut value = if outcome == ClearanceOutcome::Cleared {
-                        drive(&drive_state, &drive_execution_id, prepared, setup).await?
+                        drive(&drive_state, &drive_execution_id, prepared, setup, false).await?
                     } else {
                         // Rejected: nothing to drive. The reply is the same status render every
                         // other mutation replies with, plus the verdict.
@@ -6132,8 +6138,16 @@ async fn drive(
     execution_id: &str,
     prepared: PreparedDrive,
     setup: DriveSetup,
+    detached: bool,
 ) -> Result<serde_json::Value, MutationError> {
     let DriveSetup { sealer, ports } = setup;
+    // #2357: a DETACHED drive has no caller left to read its error, so its failure is recorded
+    // in the execution's own stream, where status and briefing read it.
+    let failure_record = (
+        prepared.scope.clone(),
+        prepared.stream.clone(),
+        prepared.execution_id.clone(),
+    );
     let ids = Arc::new(crate::commands::UuidIds);
     let events = state.events.clone();
     let store_open: StoreOpen = Arc::new(move || event_store(&events));
@@ -6279,11 +6293,37 @@ async fn drive(
         let released = tokio::task::spawn_blocking(move || release.release())
             .await
             .unwrap_or_else(|_| Err("the workspace release task failed".to_owned()));
+        // #2357: recorded whatever the drive returned, because a held tree is a leaked write
+        // capability even when the drive itself also failed.
+        if detached && let Err(message) = &released {
+            record_drive_failure(
+                state,
+                &failure_record,
+                graphhelm_protocols::DriveFailureSite::WorkspaceRelease,
+                message,
+            )
+            .await;
+        }
         if let (Err(message), Ok(_)) = (&released, &result) {
             return Err(MutationError::from(driver_failure(message)));
         }
     }
 
+    // #2357: a debug-build seam (`GRAPHHELM_TEST_FAIL_DETACHED_DRIVE=1`) that makes a DETACHED
+    // drive end with an error after it ran, so a route-level test proves the failure is recorded
+    // on every platform. Compiled out of release builds.
+    #[cfg(debug_assertions)]
+    if detached && std::env::var("GRAPHHELM_TEST_FAIL_DETACHED_DRIVE").as_deref() == Ok("1") {
+        let message = "drive failure injected by GRAPHHELM_TEST_FAIL_DETACHED_DRIVE";
+        record_drive_failure(
+            state,
+            &failure_record,
+            graphhelm_protocols::DriveFailureSite::Drive,
+            message,
+        )
+        .await;
+        return Err(MutationError::from(driver_failure(message)));
+    }
     match result {
         Ok(projection) => Ok(execution::render_with_context(
             &projection,
@@ -6303,7 +6343,66 @@ async fn drive(
             None,
             context.as_ref(),
         )),
-        Err(error) => Err(MutationError::from(driver_failure(&error.to_string()))),
+        Err(error) => {
+            let message = error.to_string();
+            if detached {
+                record_drive_failure(
+                    state,
+                    &failure_record,
+                    graphhelm_protocols::DriveFailureSite::Drive,
+                    &message,
+                )
+                .await;
+            }
+            Err(MutationError::from(driver_failure(&message)))
+        }
+    }
+}
+
+/// #2357: append a `drive_failed` record for a detached drive, off the reactor. Best effort and
+/// reported: a record that cannot be written leaves the stderr line as the only trace, which is
+/// what happened for every such failure before.
+async fn record_drive_failure(
+    state: &ServeState,
+    (scope, stream, execution_id): &(RepositoryScope, OpaqueId, OpaqueId),
+    site: graphhelm_protocols::DriveFailureSite,
+    message: &str,
+) {
+    let mut cause: String = message
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(graphhelm_protocols::MAX_DRIVE_FAILURE_CAUSE_CHARS)
+        .collect();
+    if cause.trim().is_empty() {
+        cause = "the execution drive failed".to_owned();
+    }
+    let events = state.events.clone();
+    let (scope, stream) = (scope.clone(), stream.clone());
+    let kind = EventKind::DriveFailed(graphhelm_protocols::DriveFailed {
+        execution_id: execution_id.clone(),
+        site,
+        cause,
+    });
+    let written = tokio::task::spawn_blocking(move || {
+        let store = event_store(&events).map_err(|error| error.to_string())?;
+        execution::append_record_at_head(
+            &store,
+            &scope,
+            &stream,
+            graphhelm_protocols::NewEvent::new(
+                execution::idempotency_key("drive-failed"),
+                runtime_actor(),
+                graphhelm_protocols::Sensitivity::Internal,
+                kind,
+                Vec::new(),
+                Vec::new(),
+            ),
+        )
+        .map_err(|_| "the record was refused".to_owned())
+    })
+    .await;
+    if !matches!(written, Ok(Ok(()))) {
+        eprintln!("serve: a detached drive failure could not be recorded in its execution stream");
     }
 }
 

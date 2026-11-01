@@ -160,7 +160,7 @@ codex plugin add graphhelm-codex-hooks@graphhelm
 The hooks companion supports Codex versions whose plugin loader skips the main plugin's hooks.
 Review the host's hook trust prompt when offered; installing a companion is not proof that hooks
 ran. Python 3 is required for the hooks. See the
-[plugin's session-hook instructions](plugins/graphhelm/README.md#session-hooks-version-0125)
+[plugin's session-hook instructions](plugins/graphhelm/README.md#session-hooks)
 for explicit execution binding and host-specific settings when using hooks.
 
 The main plugin brings the `graphhelm-guide`, `graphhelm-setup` and `graphhelm-resume` skills.
@@ -391,10 +391,11 @@ not substitute for that observation, and this checklist does not claim those ses
 
 ## 8. Optional: claude.ai preferences
 
-claude.ai is separate from the Claude Code and Codex installations above. If the user also wants
-GraphHelm + Keel guidance there, ask them to write it into their claude.ai instructions/preferences
-themselves; this repository does not provide a ready-made block for that. This is an optional preference step;
-it neither installs the local Runtime nor registers its MCP server in a local host.
+claude.ai is separate from the Claude Code and Codex installations above. The GraphHelm + Keel block for
+Claude Code's instructions file is written by `graphhelm setup --resolve home/.claude/CLAUDE.md=graphhelm-block`
+(section 6a), which keeps it current between its markers. Claude.ai preferences are outside what `graphhelm setup`
+writes, so this step is optional and only the user can do it. It neither installs the local Runtime nor registers
+its MCP server in a local host.
 
 **Verify only if requested:** the user confirms the preference change. Otherwise mark it
 not applicable. A pending claude.ai preference does not block completion of the requested

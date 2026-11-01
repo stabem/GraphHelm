@@ -692,6 +692,18 @@ fn answer_one_request(args: &McpArgs) -> Outcome {
 
 #[cfg(test)]
 mod tests {
+    /// #2371: `tests/mcp_stdio.rs` (`LiveMcp::ask`, `ROUTER_CHILD_BOUND`) mirrors this bound,
+    /// because `apps/cli` has no library target its integration tests could import it from. A
+    /// change here must change that mirror too, or the test's hang guard drops below the router's.
+    #[test]
+    fn the_child_wait_matches_its_mirror_in_the_stdio_tests() {
+        assert_eq!(
+            super::CHILD_WAIT,
+            std::time::Duration::from_secs(120),
+            "CHILD_WAIT changed: update ROUTER_CHILD_BOUND in apps/cli/tests/mcp_stdio.rs to match"
+        );
+    }
+
     /// #1677 review: `wake_wait` may legitimately block until a lease matures far past
     /// [`super::CHILD_WAIT`]; the router must not cut it short and answer a rung or matured wait
     /// with an error. Every other tool keeps the bound.

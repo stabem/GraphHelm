@@ -166,9 +166,14 @@ pub struct SourceSearchBounds {
     /// the caller's declaration and the implementor's constant able to disagree silently. One
     /// declared struct, one oracle.
     pub max_entries_visited: usize,
-    /// Maximum files the implementor may OPEN. Names the cost that actually scales.
+    /// Maximum files ONE search may OPEN and read (#2319). An implementor that keeps an index
+    /// charges here only what the search itself reads: index entries it refreshes because the
+    /// file changed, and candidate files it opens. Building the index from scratch is a separate
+    /// cost with its own declared ceiling ([`SourceIndexBounds`]), never charged to a search and
+    /// never served partial. Crossing this ceiling still refuses; it never truncates.
     pub max_files_scanned: usize,
-    /// Maximum bytes the implementor may READ across those files.
+    /// Maximum bytes ONE search may READ across those files, under the same reading as
+    /// `max_files_scanned`.
     pub max_bytes_scanned: u64,
     /// Maximum paths the implementor may RETURN.
     pub max_results: u32,
@@ -183,6 +188,21 @@ pub struct SourceSearchBounds {
     /// to cap its own input. One declared struct, one oracle, for the caller-controlled inputs too.
     pub max_terms: usize,
     pub max_term_bytes: u64,
+}
+
+/// Declared ceiling for BUILDING a source index from scratch (#2319): what an implementor may
+/// walk, open and read to index a whole workspace once. Separate from [`SourceSearchBounds`]
+/// because the two costs differ in kind: a build reads every file once, a search reads what
+/// changed. Past any ceiling the build refuses with `BoundExceeded`, keeps nothing, and the
+/// search that needed it refuses too; a partial index is never served as a complete one.
+#[derive(Clone, Copy, Debug)]
+pub struct SourceIndexBounds {
+    /// Directory entries the build may visit.
+    pub max_entries_visited: usize,
+    /// Files the build may open and read.
+    pub max_files_indexed: usize,
+    /// Bytes the build may read across those files.
+    pub max_bytes_indexed: u64,
 }
 
 // RE-EXPORTED, not declared here (#724, Codex P1 on #745).

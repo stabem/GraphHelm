@@ -587,6 +587,199 @@ fn the_holdout_evaluation_is_deterministic_across_two_runs() {
     assert_eq!(first, run());
 }
 
+/// Directory names the size corpus never copies: version control, build output, caches, and the
+/// measuring instruments (this crate's tests hold every question verbatim).
+const SIZE_CORPUS_SKIPPED: [&str; 6] = [
+    ".git",
+    "target",
+    "node_modules",
+    ".graphhelm",
+    "__pycache__",
+    ".pytest_cache",
+];
+
+/// Copy the repository's sources into `destination`, skipping [`SIZE_CORPUS_SKIPPED`] and this
+/// crate's `tests/`; returns (files, bytes).
+fn copy_sources(source: &Path, destination: &Path, instruments: &Path) -> (u64, u64) {
+    let (mut files, mut bytes) = (0u64, 0u64);
+    let mut stack = vec![(source.to_path_buf(), destination.to_path_buf())];
+    while let Some((from, to)) = stack.pop() {
+        if from == instruments {
+            continue;
+        }
+        std::fs::create_dir_all(&to).unwrap();
+        for entry in std::fs::read_dir(&from).unwrap() {
+            let entry = entry.unwrap();
+            let name = entry.file_name();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                if !SIZE_CORPUS_SKIPPED.iter().any(|skip| name == *skip) {
+                    stack.push((entry.path(), to.join(&name)));
+                }
+            } else if kind.is_file() {
+                bytes += std::fs::copy(entry.path(), to.join(&name)).unwrap();
+                files += 1;
+            }
+        }
+    }
+    (files, bytes)
+}
+
+/// #2304: the source search keeps answering at ten times the repository's size, in bounded time
+/// and bytes. The 1x corpus is one copy of this repository's sources under `copy0/`; the 10x
+/// corpus is ten copies, `copy0/` to `copy9/`. The holdout v2 questions run on both.
+///
+/// Limits, fixed before the first run (issue #2304):
+/// 1. at 10x no case is refused and every case ships a capsule (`retrieval_fallbacks == 0`);
+/// 2. the median per-question time at 10x is at most 15 times the 1x median (`keel.bigo.scale`);
+/// 3. every capsule ships at most `MAX_TOTAL_CANDIDATE_BYTES`, at both sizes.
+///
+/// Hit@3 is printed, not asserted: ten copies make every expected file appear ten times.
+#[test]
+#[ignore = "copies the repository ten times into the temp dir (hundreds of MB); run explicitly"]
+fn the_search_answers_at_ten_times_the_repository_in_bounded_time_and_bytes() {
+    use graphhelm_runtime::context::MAX_TOTAL_CANDIDATE_BYTES;
+    use std::time::{Duration, Instant};
+
+    let base = std::env::temp_dir().join(format!("graphhelm-search-size-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let root = repository_root();
+    let instruments = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let one = base.join("1x");
+    let ten = base.join("10x");
+    let (files, bytes) = copy_sources(&root, &one.join("copy0"), &instruments);
+    for copy in 0..10 {
+        copy_sources(&root, &ten.join(format!("copy{copy}")), &instruments);
+    }
+    println!(
+        "size corpus: 1x = {files} files, {bytes} bytes; 10x = {} files, {} bytes",
+        files * 10,
+        bytes * 10
+    );
+
+    struct Row {
+        refused: bool,
+        fallbacks: u64,
+        shipped_bytes: u64,
+        elapsed: Duration,
+        hit: bool,
+    }
+    let run = |corpus: &Path, label: &str| -> Vec<Row> {
+        let ports = ContextPorts {
+            search: Arc::new(WorkspaceSourceChannel::open(corpus).unwrap()),
+            reader: Arc::new(WorkspaceExcerptReader::open(corpus).unwrap()),
+            ledger: ContextLedger::new(),
+            execution_tree: None,
+        };
+        HOLDOUT_V2_CASES
+            .iter()
+            .map(|&(objective, expected)| {
+                let terms = objective_terms(objective);
+                let started = Instant::now();
+                let ranked = ports.search.search(&terms, &SEARCH_BOUNDS);
+                let compiled = retrieve_and_compile(
+                    ports.search.as_ref(),
+                    ports.reader.as_ref(),
+                    &terms,
+                    "size/measure/a1",
+                    32 * 1024,
+                );
+                let elapsed = started.elapsed();
+                let refused = ranked.is_err();
+                let hit = ranked
+                    .map(|paths| paths.iter().take(3).any(|path| path.ends_with(expected)))
+                    .unwrap_or(false);
+                let row = Row {
+                    refused,
+                    fallbacks: compiled.summary.retrieval_fallbacks,
+                    shipped_bytes: compiled.summary.compiled_input_tokens * 4,
+                    elapsed,
+                    hit,
+                };
+                println!(
+                    "  [{label}] {} refused={} fallbacks={} shipped_bytes={} ms={}",
+                    if row.hit { "hit " } else { "miss" },
+                    row.refused,
+                    row.fallbacks,
+                    row.shipped_bytes,
+                    row.elapsed.as_millis()
+                );
+                row
+            })
+            .collect()
+    };
+    let median = |rows: &[Row]| -> Duration {
+        let mut times: Vec<Duration> = rows.iter().map(|row| row.elapsed).collect();
+        times.sort();
+        times[times.len() / 2]
+    };
+    let small = run(&one, "1x");
+    let large = run(&ten, "10x");
+    let _ = std::fs::remove_dir_all(&base);
+    let (m1, m10) = (median(&small), median(&large));
+    println!(
+        "median ms 1x = {} 10x = {} ratio = {:.2}; hits@3 1x = {} 10x = {}",
+        m1.as_millis(),
+        m10.as_millis(),
+        m10.as_secs_f64() / m1.as_secs_f64().max(1e-9),
+        small.iter().filter(|row| row.hit).count(),
+        large.iter().filter(|row| row.hit).count()
+    );
+    for (label, rows) in [("1x", &small), ("10x", &large)] {
+        for row in rows {
+            assert!(
+                row.shipped_bytes <= MAX_TOTAL_CANDIDATE_BYTES,
+                "{label}: a capsule shipped {} bytes",
+                row.shipped_bytes
+            );
+        }
+    }
+    assert!(
+        large.iter().all(|row| !row.refused && row.fallbacks == 0),
+        "10x: a case was refused or fell back"
+    );
+    assert!(
+        m10.as_secs_f64() <= 15.0 * m1.as_secs_f64(),
+        "10x median {m10:?} exceeds 15 times the 1x median {m1:?}"
+    );
+}
+
+/// #2319 (Tsunade): collapsing identical copies never bypasses the secret filter. A secret-shaped
+/// file is copied three times beside one ordinary file; after the collapse one copy reaches the
+/// compiler, which refuses it as before, and no copy of the secret ships. Cost: temp files only.
+#[test]
+fn a_duplicated_secret_shaped_file_never_ships_after_the_collapse() {
+    let root = tempfile::tempdir().unwrap();
+    let write = |relative: &str, body: &str| {
+        let path = root.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    };
+    let secret = "-----BEGIN RSA PRIVATE KEY-----\nzebraquill zebraquill zebraquill\n-----END RSA PRIVATE KEY-----\n";
+    for copy in ["a", "b", "c"] {
+        write(&format!("{copy}/key.txt"), secret);
+    }
+    write("docs/zebra.md", "zebraquill notes about the topic\n");
+    let terms = objective_terms("where is the zebraquill");
+    let search = WorkspaceSourceChannel::open(root.path()).unwrap();
+    let reader = WorkspaceExcerptReader::open(root.path()).unwrap();
+    let compiled = retrieve_and_compile(&search, &reader, &terms, "dedup/secret/a1", 32 * 1024);
+    assert_eq!(
+        compiled.summary.sources,
+        ["docs/zebra.md"],
+        "{:?}",
+        compiled.summary
+    );
+    assert_eq!(
+        compiled.summary.candidates_secret_shaped, 1,
+        "one copy reached the filter"
+    );
+    assert!(
+        !compiled.text.contains("PRIVATE KEY"),
+        "no copy of the secret shipped"
+    );
+}
+
 #[test]
 fn the_measurement_is_deterministic_across_two_runs() {
     let root = frozen_corpus();

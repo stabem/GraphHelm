@@ -9,5 +9,5 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "dev-session.ts", "dev-session.test.ts", "studio-port-drift.test.ts", "src/login/studio-open.ts"]
+  "include": ["vite.config.ts", "dev-session.ts", "dev-session.test.ts", "studio-port-drift.test.ts", "studio-port-meta.ts", "src/login/studio-open.ts"]
 }

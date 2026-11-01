@@ -1,5 +1,5 @@
 {
-  "version": "0.1.1",
+  "version": "1.0.0",
   "packages": [
     {"id":"graphhelm-jpd","path":"../builtin/graphhelm-jpd"},
     {"id":"graphhelm-development-contracts","path":"../builtin/graphhelm-development-contracts"}

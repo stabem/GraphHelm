@@ -677,3 +677,6 @@ button { font: inherit; }
 .gv-pr .gv-ellipsis, .gv-res .gv-ellipsis, .gv-issue .gv-ellipsis { white-space: normal; overflow-wrap: anywhere; }
 .gv-issue > .gv-row { min-width: 0; flex-wrap: wrap; }
 .project.other > .project-folder, .project.other > .project-counts { padding-left: 30px; }
+.frame-waiting { display: inline-flex; align-items: center; justify-content: center; gap: var(--s2); color: var(--faint); font-size: var(--fs-meta); }
+.frame-waiting-text { display: none; }
+@media (prefers-reduced-motion: reduce) { .frame-waiting .spin { display: none; } .frame-waiting-text { display: inline; } }

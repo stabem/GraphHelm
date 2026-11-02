@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
 import { CheckMarks, CompareFrame } from "./CompareFrame";
+import { FrameWaiting } from "./FrameWaiting";
 
 /** #2028: the step thumbnail's shape (`.step-thumb` `aspect-ratio`), for placing its check boxes. */
 const THUMB_ASPECT = 1694 / 946;
@@ -12,7 +13,7 @@ import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./
 import { askedWhen } from "../lanes/asked";
 import { OWNER } from "../runtime/client";
 import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
-import { countSteps, failsOnlyOn, staleCountsText, stepStatusText, isHeld, isWaitingReview, journeyKind, journeyScore, journeySteps, lastRunChip, historyChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, waitsForFrame, staleCountsText, stepStatusText, isHeld, isWaitingReview, journeyKind, journeyScore, journeySteps, lastRunChip, historyChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 import { Empty, Loading, ReadFailure } from "../states/ViewState";
 import { When } from "../time/Stamp";
@@ -453,7 +454,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           {steps.map((step) => (
             <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${stale ? "not-run stale" : step.status.replace(" ", "-")}`}>
               <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
-                <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <><img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /><CheckMarks step={step} aspect={THUMB_ASPECT} /></> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
+                <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <><img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /><CheckMarks step={step} aspect={THUMB_ASPECT} /></> : waitsForFrame(step, false, run, starting, stale) ? <FrameWaiting /> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
                 <span className="step-text">
                   <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{stepStatusText(step.status, run, stale)}</span></span>
                   {stale && <span className="stale-mark" title="From the earlier version of this journey">stale</span>}
@@ -466,7 +467,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
         </ol>
       </div>
       {selected !== null && (
-        <CompareFrame runtime={runtime} flowId={flow.id} step={selected} steps={steps.length} now={frame} mobileNow={mobileFrames[selected.screen]} earlier={earlierRun(history, stale ? pastAsRun(earlier) : run, selected.screen)} staleRun={stale} />
+        <CompareFrame runtime={runtime} flowId={flow.id} step={selected} steps={steps.length} now={frame} mobileNow={mobileFrames[selected.screen]} earlier={earlierRun(history, stale ? pastAsRun(earlier) : run, selected.screen)} staleRun={stale} waiting={waitsForFrame(selected, thumb(selected.screen) !== undefined, run, starting, stale)} />
       )}
     </div>
   );

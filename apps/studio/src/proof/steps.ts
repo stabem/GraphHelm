@@ -513,3 +513,12 @@ export function pastAsRun(past: JourneyPastRun): JourneyRun {
     edges: past.edges ?? {},
   };
 }
+
+/** #2440: whether a step still waits for its frame: the run is active (starting, or the Runtime
+ * says `running`), the step is a screen step (not a command, not the start precondition), this run
+ * sent it no frame yet, and the card is not an earlier version's. The moment the run ends,
+ * passed, failed, stopped or errored, this is false and the card reads "no frame" again. */
+export function waitsForFrame(step: Pick<Step, "cli" | "status">, hasFrame: boolean, run: Pick<JourneyRun, "state"> | null, starting: boolean, stale: boolean): boolean {
+  if (stale || hasFrame || step.cli || step.status === "precondition") return false;
+  return starting || run?.state === "running";
+}

@@ -1,4 +1,5 @@
 import { when as stamp } from "../time/when";
+import { FrameWaiting } from "./FrameWaiting";
 import { useEffect, useState } from "react";
 
 import type { JourneyPastRun, Runtime } from "../runtime/client";
@@ -28,6 +29,8 @@ interface CompareFrameProps {
   earlier: JourneyPastRun | null;
   /** #1956: the run on screen is the earlier version's, not one of the current version. */
   staleRun?: boolean;
+  /** #2440: this step's run is active and has sent no frame for it yet: a loader, not "No frame captured". */
+  waiting?: boolean;
 }
 
 /** The selected step's frame with its compare modes (docs/design/studio/Proof.dc.html): the frame
@@ -69,7 +72,7 @@ function MarkedFrame({ src, alt, step, marked }: { src: string; alt: string; ste
   );
 }
 
-export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobileNow, earlier, staleRun = false }: CompareFrameProps) {
+export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobileNow, earlier, staleRun = false, waiting = false }: CompareFrameProps) {
   const [mode, setMode] = useState<CompareMode>("frame");
   const [opacity, setOpacity] = useState(50);
   const [viewport, setViewport] = useState<"web" | "mobile">("web");
@@ -101,7 +104,7 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
       {shown === "frame" && (now
         // #2028: the run's rects were measured on its first viewport's frame: the one the thumbnail shows.
         ? <MarkedFrame src={now} alt={`Step ${step.n} captured`} step={step} marked={now === webNow || webNow === undefined} />
-        : <p>No frame captured for step {step.n} in this run.</p>)}
+        : waiting ? <FrameWaiting /> : <p>No frame captured for step {step.n} in this run.</p>)}
       {shown === "side" && before.url !== null && now && (
         <div role="group" aria-label="Before and Now side by side" className="compare-side">
           <figure><figcaption>Before · {when}</figcaption><img src={before.url} alt={`Step ${step.n} before`} /></figure>

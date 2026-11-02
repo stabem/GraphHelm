@@ -32,10 +32,21 @@ Step 3: one reviewer per pull request. Read [`KEEL.md`](https://github.com/stabe
 ## Blind
 
 You did not write the change, and your brief carries only the PR number, the identity line to
-sign with, where the rules live, the build directory and questions that apply to every review
-(correctness, security, fail-closed behaviour, test quality). If you helped write it, or your
-brief carries the author's reasoning, a finding to look for, a summary of the change or an
-expected verdict, you are not blind: say so and do not review.
+sign with, where the rules live, the build directory, where the parent's run logs are (see below)
+and questions that apply to every review (correctness, security, fail-closed behaviour, test
+quality). If you helped write it, or your brief carries the author's reasoning, a finding to look
+for, a summary of the change or an expected verdict, you are not blind: say so and do not review.
+
+## Who runs what (#2421)
+
+When a blind subagent reviews, the session that launches it runs the long work first, on the
+pinned head: the build, the test runs and the reached plan, each to its end, with every log saved
+to a file. Only then does it launch the subagent. The subagent reads the diff, those logs and the
+rules, judges the logs itself, and runs only short checks: the break-once, and single tests or
+probes that finish within 5 minutes. It never waits on or polls a command for more than 5
+minutes; a check that needs longer goes back to the parent or is reported as not observed. A
+subagent waiting on a long run rewrites its expired cache on every gap (#2421 measured 66% of the
+review subagents' cache writes there).
 
 ## Do
 

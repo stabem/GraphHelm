@@ -14,8 +14,8 @@ use std::sync::{
 use graphhelm_protocols::{GraphNode, NodeType, Optionality};
 use graphhelm_runtime::context::{
     CompiledContext, ContextFallback, ESTIMATOR_ID, MAX_BYTES_PER_CANDIDATE, MAX_CANDIDATES,
-    MAX_TOTAL_CANDIDATE_BYTES, STOP_WORDS, TOKENIZER_ID, compile_items, estimate_tokens,
-    objective_terms, retrieve_and_compile,
+    MAX_TOTAL_CANDIDATE_BYTES, SEARCH_POOL, STOP_WORDS, TOKENIZER_ID, compile_items,
+    estimate_tokens, objective_terms, retrieve_and_compile,
 };
 use graphhelm_runtime::context_accounting::{
     CostProvenance, ExecutionAccountingReceipt, MODEL_USAGE_PRODUCER,
@@ -703,7 +703,7 @@ fn the_capsule_cites_the_candidate_the_search_returned_and_nothing_else() {
     let seen = search.seen.lock().unwrap();
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].0, terms(&["loopback"]));
-    assert_eq!(seen[0].1.max_results as usize, MAX_CANDIDATES);
+    assert_eq!(seen[0].1.max_results as usize, SEARCH_POOL);
     let reads = reader.reads.lock().unwrap();
     assert_eq!(
         reads.as_slice(),
@@ -808,9 +808,9 @@ fn an_escaping_candidate_is_refused_by_the_reader_and_never_shipped() {
 
 #[test]
 fn candidates_beyond_the_cap_are_refused_and_counted_never_read() {
-    let paths: Vec<String> = (0..MAX_CANDIDATES + 3)
-        .map(|n| format!("f{n}.rs"))
-        .collect();
+    // #2369: the channel is asked for `SEARCH_POOL` ranked results (the backfill reserve); a
+    // surplus past THAT is refused and counted, and compile still ships at most `MAX_CANDIDATES`.
+    let paths: Vec<String> = (0..SEARCH_POOL + 3).map(|n| format!("f{n}.rs")).collect();
     let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
     let search = FakeSearch::returning(&refs);
     let files: Vec<(&str, &[u8])> = refs.iter().map(|p| (*p, b"x\n" as &[u8])).collect();
@@ -818,7 +818,7 @@ fn candidates_beyond_the_cap_are_refused_and_counted_never_read() {
     let compiled = compile(&search, &reader, &["x"]);
     assert_eq!(
         compiled.summary.candidates_returned as usize,
-        MAX_CANDIDATES + 3
+        SEARCH_POOL + 3
     );
     assert_eq!(compiled.summary.candidates_dropped, 3);
     assert_eq!(compiled.summary.sources.len(), MAX_CANDIDATES);
@@ -2361,4 +2361,57 @@ fn a_summary_without_a_root_reads_back_as_the_project() {
     published.as_object_mut().unwrap().remove("root");
     let summary: NodeContextSummary = serde_json::from_value(published).unwrap();
     assert_eq!(summary.root, ContextRoot::Project);
+}
+
+#[test]
+fn a_full_batch_of_secret_shaped_files_is_backfilled_from_the_next_ranked_results() {
+    // 9 distinct secret-shaped files rank first (#2369); the 3 below them are plain.
+    let secret_paths: Vec<String> = (0..9).map(|n| format!("src/cfg{n}.rs")).collect();
+    let plain_paths = ["src/a.rs", "src/b.rs", "src/c.rs"];
+    let mut all: Vec<&str> = secret_paths.iter().map(String::as_str).collect();
+    all.extend(plain_paths);
+    let secret_bodies: Vec<String> = (0..9)
+        .map(|n| format!("// planted{n}\nlet secret = load_it();\n"))
+        .collect();
+    let mut files: Vec<(&str, &[u8])> = secret_paths
+        .iter()
+        .zip(&secret_bodies)
+        .map(|(p, b)| (p.as_str(), b.as_bytes()))
+        .collect();
+    for p in plain_paths {
+        files.push((p, b"fn planted() {}\n" as &[u8]));
+    }
+    let search = FakeSearch::returning(&all);
+    let reader = FakeReader::with(&files);
+    let compiled = compile(&search, &reader, &["planted"]);
+    assert_eq!(compiled.summary.fallback, None, "the capsule ships");
+    assert_eq!(compiled.summary.sources, plain_paths);
+    assert_eq!(compiled.summary.candidates_secret_shaped, 9);
+    assert!(!compiled.text.contains("load_it"));
+}
+
+#[test]
+fn backfill_reads_at_most_twice_the_batch() {
+    let paths: Vec<String> = (0..SEARCH_POOL).map(|n| format!("src/cfg{n}.rs")).collect();
+    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let files: Vec<(&str, &[u8])> = refs
+        .iter()
+        .map(|p| (*p, b"let secret = load_it();\n" as &[u8]))
+        .collect();
+    let search = FakeSearch::returning(&refs);
+    let reader = FakeReader::with(&files);
+    let compiled = compile(&search, &reader, &["secret"]);
+    // Nothing ships; the cause keeps the existing rule (a drop names the budget).
+    assert!(compiled.summary.fallback.is_some());
+    assert!(!compiled.text.contains("load_it"));
+    assert_eq!(
+        reader.reads.lock().unwrap().len(),
+        2 * MAX_CANDIDATES,
+        "{:?}",
+        compiled.summary
+    );
+    assert_eq!(
+        compiled.summary.candidates_dropped as usize,
+        SEARCH_POOL - 2 * MAX_CANDIDATES
+    );
 }

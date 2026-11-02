@@ -101,9 +101,18 @@ pub const STOP_WORDS: [&str; 40] = [
     "all", "each", "every", "some",
 ];
 
-/// Candidates read per node. The channel is asked for exactly this many (`max_results`), and a
-/// channel that returns more sees the surplus REFUSED and counted, never silently ignored.
+/// Candidates SHIPPED per node: compile accepts at most this many, in rank order.
 pub const MAX_CANDIDATES: usize = 8;
+
+/// Ranked candidates the channel is asked for (`max_results`, #2369). Larger than
+/// [`MAX_CANDIDATES`] so that a candidate dropped as secret-shaped or unreadable is replaced by the
+/// next-ranked one; a channel that returns more sees the surplus REFUSED and counted.
+pub const SEARCH_POOL: usize = 32;
+
+/// Files compile may READ per node while filling the batch (#2369): twice the batch. A name that
+/// is a credential location is refused before any read and does not count; past this many reads
+/// the rest of the ranking is dropped and counted. This bounds the read cost of a backfill.
+pub const MAX_READ_ATTEMPTS: usize = 2 * MAX_CANDIDATES;
 
 /// Maximum bytes returned from one candidate source window.
 pub const MAX_BYTES_PER_CANDIDATE: u64 = 16 * 1024;
@@ -183,7 +192,7 @@ pub const SEARCH_BOUNDS: SourceSearchBounds = SourceSearchBounds {
     max_entries_visited: 50_000,
     max_files_scanned: 20_000,
     max_bytes_scanned: 256 * 1024 * 1024,
-    max_results: MAX_CANDIDATES as u32,
+    max_results: SEARCH_POOL as u32,
     max_terms: MAX_TERMS,
     max_term_bytes: 1024,
 };
@@ -392,7 +401,7 @@ impl ContextLedger {
             return Some(Err(SourceSearchError::Unavailable));
         }
         let cacheable = result.as_ref().is_ok_and(|result| {
-            result.paths.len() <= MAX_CANDIDATES
+            result.paths.len() <= SEARCH_POOL
                 && result.paths.iter().all(|path| {
                     recordable_source_path(path) && !sensitive_path(path) && !secret_shaped(path)
                 })
@@ -899,13 +908,33 @@ fn retrieve_and_compile_in_cached(
 
     let mut shipped_total: u64 = 0;
     let mut optional: Vec<(String, String, bool)> = Vec::new();
+    let mut read_attempts = 0usize;
+    // A channel that returns more than the pool it was asked for sees the surplus REFUSED and
+    // counted up front, never silently ignored (the bound is `SEARCH_POOL`).
+    summary.candidates_dropped += candidates.len().saturating_sub(SEARCH_POOL) as u64;
+    // #2369: only a candidate refused as secret-shaped or unreadable frees its slot for the next
+    // ranked one. Every other outcome (shipped, or dropped by a byte or shape bound) uses its
+    // slot, so a question whose batch fills normally reads exactly what it read before.
+    let refillable_before = summary.candidates_secret_shaped + summary.candidates_unreadable;
     for (index, path) in candidates.iter().enumerate() {
         if cancel.is_some_and(ScanCancel::is_cancelled) {
             return cancelled_fallback(summary);
         }
-        if index >= MAX_CANDIDATES {
-            summary.candidates_dropped += 1;
-            continue;
+        // #2369: a full batch stops here. The ranked results after it were a reserve for
+        // backfill, not candidates a bound refused, so they are not counted as dropped.
+        let refilled =
+            summary.candidates_secret_shaped + summary.candidates_unreadable - refillable_before;
+        if (index as u64).saturating_sub(refilled) >= MAX_CANDIDATES as u64 {
+            break;
+        }
+        if index >= SEARCH_POOL {
+            break;
+        }
+        // The bounded read budget is spent: every ranked candidate left in the pool IS refused by
+        // that bound, so all of them are dropped and counted, and the loop ends.
+        if read_attempts >= MAX_READ_ATTEMPTS {
+            summary.candidates_dropped += (candidates.len().min(SEARCH_POOL) - index) as u64;
+            break;
         }
         // A path `context-provenance@1` cannot carry — too long, or not the schema's
         // `repositoryRelativePath` shape (#1086) — is refused whole, before the read, the
@@ -923,6 +952,7 @@ fn retrieve_and_compile_in_cached(
             summary.candidates_secret_shaped += 1;
             continue;
         }
+        read_attempts += 1;
         let window = match cancel.map_or_else(
             || reader.read_relevant(path, terms, MAX_BYTES_PER_CANDIDATE),
             |cancel| reader.read_relevant_cancellable(path, terms, MAX_BYTES_PER_CANDIDATE, cancel),
@@ -998,6 +1028,15 @@ fn retrieve_and_compile_in_cached(
         optional.push((path.clone(), item, partial));
     }
 
+    // #2369: the read cost of this compile, for a measurement harness; off unless the variable is
+    // set, content-free (counts only).
+    if std::env::var_os("GRAPHHELM_SOURCE_SEARCH_TRACE").is_some() {
+        eprintln!(
+            "context-compile: reads={read_attempts} kept={} returned={}",
+            optional.len(),
+            candidates.len()
+        );
+    }
     let items: Vec<String> = optional.iter().map(|(_, item, _)| item.clone()).collect();
     if cancel.is_some_and(ScanCancel::is_cancelled) {
         return cancelled_fallback(summary);

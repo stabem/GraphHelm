@@ -708,6 +708,63 @@ fn the_pr_author_may_heartbeat_a_task_whose_pr_is_open() {
     assert_eq!(history(&events).len(), head + 1);
 }
 
+/// #2384: a second, different reviewer assigned on the same PR head is admitted (exit 0, one
+/// record appended) and the reply's `data.warnings` names the first; the first reviewer assigned
+/// again on that head, and the second reviewer on a new head, get no warning. Cost: one held
+/// fixture run and five CLI signals.
+#[test]
+fn a_second_reviewer_on_the_same_head_is_admitted_with_a_warning() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let opened = signal(
+        scratch.path(),
+        &events,
+        "second-reviewer-pr",
+        "task.pr_opened",
+        ACTOR,
+        &as_actor(package_fixture("pr-opened")),
+    );
+    assert_eq!(opened["ok"], true, "{opened}");
+    let assign = |id: &str, reviewer: &str, head: &str| {
+        let mut document = package_fixture("review-assigned");
+        document["reviewer"] = json!(reviewer);
+        document["headSha"] = json!(head);
+        let before = history(&events).len();
+        let reply = signal(
+            scratch.path(),
+            &events,
+            id,
+            "task.review_assigned",
+            ACTOR,
+            &document,
+        );
+        assert_eq!(reply["ok"], true, "{id}: {reply}");
+        assert_eq!(history(&events).len(), before + 1, "{id} is recorded");
+        reply["data"]["warnings"].clone()
+    };
+    assert_eq!(
+        assign("second-reviewer-a", "rev-a", "0123abcd"),
+        Value::Null
+    );
+    let warned = assign("second-reviewer-b", "rev-b", "0123abcd");
+    assert!(
+        warned[0]
+            .as_str()
+            .is_some_and(|text| text.contains("rev-a")),
+        "B on A's head names A: {warned}"
+    );
+    assert_eq!(
+        assign("second-reviewer-b-again", "rev-b", "0123abcd"),
+        Value::Null,
+        "B is now the current reviewer"
+    );
+    assert_eq!(
+        assign("second-reviewer-new-head", "rev-c", "4567cdef"),
+        Value::Null,
+        "a new head"
+    );
+}
+
 /// #1193 (plan A2): a claim carries its lease. Before: `leaseSeconds` was an unknown key and the
 /// whole claim was refused (`GHCLI003`), so no lane could state how long its claim stays live.
 /// Now a lease of 60 s to a day is admitted and one outside that range is refused with nothing

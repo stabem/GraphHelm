@@ -452,6 +452,45 @@ fn folds_pr_opened_block_new_head_approve_and_merged_into_the_step_sequence() {
 /// stray: `blockedBy` stayed empty, the slice read "awaiting a verdict", and the stall rule kept
 /// naming the reviewer for 2.5 h. One commit, two spellings, is one head.
 #[test]
+fn names_the_other_reviewer_already_on_the_same_head_2384() {
+    use graphhelm_execution::tasks::other_reviewer_on_head;
+    let head = "aaaaaaa1111111";
+    let assign = |sequence: u64, head: &str, reviewer: &str| {
+        record(
+            sequence,
+            "task.review_assigned",
+            "lane-a",
+            json!({"taskId": "issue-9", "pr": 90, "headSha": head, "reviewer": reviewer}),
+        )
+    };
+    let records = vec![
+        opened(1, "lane-a", "issue-9", 90, head),
+        assign(2, head, "rev-a"),
+    ];
+    let tasks = fold_task_events(&records);
+    assert_eq!(
+        other_reviewer_on_head(&tasks, 90, head, "rev-b"),
+        Some("rev-a"),
+        "B on the same head is warned about A: {tasks:?}"
+    );
+    assert_eq!(
+        other_reviewer_on_head(&tasks, 90, head, "rev-a"),
+        None,
+        "same reviewer"
+    );
+    assert_eq!(
+        other_reviewer_on_head(&tasks, 90, "bbbbbbb2222222", "rev-b"),
+        None,
+        "a new head"
+    );
+    assert_eq!(
+        other_reviewer_on_head(&tasks, 91, head, "rev-b"),
+        None,
+        "another PR"
+    );
+}
+
+#[test]
 fn a_full_sha_verdict_counts_against_a_short_sha_head_1262() {
     let short = "b9319a3a";
     let full = "b9319a3ac21f6ee1b23db30bb9563a7cab66aaba";

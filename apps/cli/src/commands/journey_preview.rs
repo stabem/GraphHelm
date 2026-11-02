@@ -1645,6 +1645,15 @@ fn play(
                     "error":error["message"],
                 });
                 run.save();
+                // #2472: a stale file the project holds is refused by name, never replaced.
+                if error["code"] == "replay.observer_stale" {
+                    let file = error["file"].as_str().unwrap_or_default();
+                    return Err(failure(
+                        "replay.observer_stale",
+                        format!("/observer/{file}"),
+                        3,
+                    ));
+                }
                 let code = if error["code"] == "observer.setup_timeout" {
                     "observer.setup_timeout"
                 } else {

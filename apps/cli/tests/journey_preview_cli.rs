@@ -1,4 +1,4 @@
-﻿//! #519: `journey preview` answers the kept result for the flow and commit it ran on, else starts
+//! #519: `journey preview` answers the kept result for the flow and commit it ran on, else starts
 //! one run in the background and answers `running`; the run ends `ready` or `failed` with a reason
 //! from the closed list, and `--force` runs anew. Credible defects: a run that never leaves
 //! `running` when it cannot start a browser, a kept result served for a changed flow, and a second
@@ -212,6 +212,9 @@ fn settled_with_path(project: &Path, path: &Path) -> Value {
 #[test]
 fn a_preview_runs_once_keeps_its_result_and_runs_anew_only_when_asked() {
     let dir = draft();
+    // #2472: the draft's tripwire driver is a stale copy, which a preview now refuses instead of
+    // replacing. This test is about a failed install, so the file is absent and the install runs.
+    std::fs::remove_file(dir.path().join(".graphhelm/observers/journey_driver.mjs")).unwrap();
     let fixture = fixture_path(dir.path(), false);
     let (code, reply) = cli(dir.path(), &["preview", "nowhere"]);
     assert_eq!(code, 2, "{reply}");

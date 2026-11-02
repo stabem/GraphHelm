@@ -179,7 +179,7 @@ pub(super) fn readiness(project: &Path, home: &Path) -> serde_json::Value {
     let summary = if browser["status"] == "ready" {
         "The browser journey observer (Playwright) is ready."
     } else {
-        "The browser observer needs installation or refresh. Run prepares it automatically; setup --install-observer playwright also installs it."
+        "The browser observer needs installation or refresh. Run prepares a missing observer automatically; a copy that differs from this GraphHelm's is replaced only by setup --install-observer playwright."
     };
     serde_json::json!({
         "browser": browser,
@@ -562,8 +562,37 @@ fn observer_install_lock(project: &Path, deadline: Instant) -> std::io::Result<s
     }
 }
 
+/// #2472: the first observer file the project already holds whose bytes differ from the copy this
+/// binary writes. Such a file is the project's own (a tracked one in a throwaway worktree, an older
+/// GraphHelm's copy), so a preview never overwrites it: only the owner's explicit
+/// `setup --install-observer playwright` does. A missing or unreadable file is not stale.
+fn stale_observer_file(project: &Path) -> Option<&'static str> {
+    [
+        (DRIVER_NAME, DRIVER),
+        (JUDGE_NAME, JUDGE),
+        (PLAYWRIGHT.script_name, PLAYWRIGHT.script.as_bytes()),
+    ]
+    .into_iter()
+    .find(|&(name, expected)| {
+        std::fs::read(project.join(SCRIPT_DIR).join(name))
+            .is_ok_and(|held| held.as_slice() != expected)
+    })
+    .map(|(name, _)| name)
+}
+
+fn stale_refusal(name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "code": "replay.observer_stale",
+        "file": name,
+        "message": format!(
+            "{SCRIPT_DIR}/{name} differs from the copy this graphhelm ships and is not overwritten; run setup --install-observer playwright in this project to refresh it, then retry"
+        ),
+    })
+}
+
 /// Ensures the Playwright journey observer is ready, serializing setup and preserving failed
 /// installs for a safe retry. The progress callback is emitted before each external stage.
+/// A missing observer is created; a present one that differs is refused (#2472), never replaced.
 pub(super) fn ensure_playwright(
     project: &Path,
     deadline: Instant,
@@ -581,6 +610,9 @@ fn ensure_playwright_with(
     if super::journey_replay::observer_ready(project).is_ok() {
         return Ok(serde_json::json!({"status":"ready", "steps":[]}));
     }
+    if let Some(name) = stale_observer_file(project) {
+        return Err(stale_refusal(name));
+    }
     let install_deadline = deadline
         .checked_sub(Duration::from_secs(10))
         .unwrap_or(deadline);
@@ -590,6 +622,10 @@ fn ensure_playwright_with(
     )?;
     if super::journey_replay::observer_ready(project).is_ok() {
         return Ok(serde_json::json!({"status":"ready", "steps":[]}));
+    }
+    // Another setup may have changed a file while this one waited for the lock.
+    if let Some(name) = stale_observer_file(project) {
+        return Err(stale_refusal(name));
     }
     let (data, outcome) = install_until_progress(
         &[ObserverKind::Playwright],
@@ -702,7 +738,10 @@ mod tests {
             assert_eq!(refused["code"], "replay.observer_stale", "{stale}");
             let message = refused["message"].as_str().unwrap();
             assert!(message.contains(stale), "{message}");
-            assert!(message.contains("--install-observer playwright"), "{message}");
+            assert!(
+                message.contains("--install-observer playwright"),
+                "{message}"
+            );
             assert_eq!(
                 std::fs::read(dir.join(stale)).unwrap(),
                 b"// tracked by the project\n",

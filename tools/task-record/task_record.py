@@ -41,6 +41,58 @@ import os
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
+def canonical_proof_json(text):
+    """Encode a bounded proof declaration; semantic admission belongs to the Runtime."""
+    if not isinstance(text, str):
+        raise ValueError("proof JSON must be text")
+    try:
+        if len(text.encode("utf-8")) > 8192:
+            raise ValueError("proof JSON exceeds 8192 UTF-8 bytes")
+    except UnicodeError as error:
+        raise ValueError("proof JSON contains invalid Unicode") from error
+
+    def object_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("proof JSON contains a duplicate key")
+            result[key] = value
+        return result
+
+    def reject_number(value):
+        raise ValueError("proof JSON permits integers, not floats or nonfinite numbers")
+
+    try:
+        value = json.loads(text, object_pairs_hook=object_pairs,
+                           parse_float=reject_number, parse_constant=reject_number)
+    except RecursionError as error:
+        raise ValueError("proof JSON nesting exceeds the decoder bound") from error
+    if not isinstance(value, dict):
+        raise ValueError("proof JSON must be an object")
+    pending = [(value, 0)]
+    while pending:
+        item, depth = pending.pop()
+        if depth > 32:
+            raise ValueError("proof JSON nesting exceeds 32 levels")
+        if isinstance(item, dict):
+            pending.extend((key, depth + 1) for key in item)
+            pending.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            pending.extend((child, depth + 1) for child in item)
+        elif isinstance(item, str):
+            try:
+                item.encode("utf-8")
+            except UnicodeError as error:
+                raise ValueError("proof JSON contains invalid Unicode") from error
+        elif type(item) is int and not -(1 << 63) <= item < (1 << 64):
+            raise ValueError("proof JSON integer is outside the portable 64-bit range")
+    encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False,
+                         separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > 8192:
+        raise ValueError("proof declaration exceeds 8192 UTF-8 bytes")
+    return encoded
+
+
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # #1851: the Runtime's `agentKind` / `agentModel` rule on task.claimed (task-event.schema.json).
 AGENT_KIND = re.compile(r"[a-z][a-z0-9-]{0,31}", re.ASCII)
@@ -133,7 +185,7 @@ def resolve_execution(explicit, token_file, project_dir=None):
 
 def credential_file(token_file, lane):
     """The lane's credential beside `--token-file` (#1148): `events.agent.token` or `events.token`
-    → `events.agent.<lane>.token`, the path `graphhelm tasks credential --lane <lane>` writes."""
+    Ã¢â€ â€™ `events.agent.<lane>.token`, the path `graphhelm tasks credential --lane <lane>` writes."""
     path = Path(token_file)
     stem = path.name
     if stem.endswith(f".agent.{lane}.token"):

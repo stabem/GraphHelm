@@ -549,7 +549,7 @@ class TaskRecordTest(unittest.TestCase):
         cases = [
             ("missing", {}), ("empty", {"executionId": ""}),
             ("slash", {"executionId": "bad/id", "token": "sentinel-secret"}),
-            ("backslash", {"executionId": "bad\\id"}), ("nonascii", {"executionId": "é"}),
+            ("backslash", {"executionId": "bad\\id"}), ("nonascii", {"executionId": "ÃƒÂ©"}),
             ("colon", {"executionId": "run:blue"}), ("control", {"executionId": "bad\nvalue"}),
             ("long", {"executionId": "a" * 129}),
             ("array", []), ("oversized", {"executionId": "ok", "padding": "x" * 65536}),
@@ -1202,7 +1202,7 @@ class Planned(unittest.TestCase):
         run("update-ref", "refs/remotes/origin/main", "HEAD")
         run("config", "core.quotePath", "true")
 
-        tracked_name = "core/policy/移動.rs"
+        tracked_name = "core/policy/Ã§Â§Â»Ã¥â€¹â€¢.rs"
         tracked_path = Path(repo, tracked_name)
         tracked_path.parent.mkdir(parents=True)
         tracked_path.write_text("tracked", encoding="utf-8")
@@ -1267,7 +1267,7 @@ class Planned(unittest.TestCase):
         with redirect_stderr(err):
             doc = self.planned("--summary", "s", "--paths", "b\\c.rs", "a/x.rs", "a/x.rs", "../up.rs",
                                "/abs.rs", "C:/win.rs", "a//b.rs", "./a.rs", "sp ace.rs", "back\\slash.rs", "",
-                               "é.rs", *self.offline())
+                               "ÃƒÂ©.rs", *self.offline())
         self.assertEqual(doc["paths"], ["a/x.rs", "b/c.rs", "back/slash.rs"])
         self.assertIn("not recording 8 path(s)", err.getvalue())
 
@@ -1501,9 +1501,9 @@ class LaneDocsGuardTest(unittest.TestCase):
         kinds = set(task_record.KINDS)
         lanes = (self.REPO / "docs/process/LANES.md").read_text(encoding="utf-8")
         section = lanes.split("## 4. Task records", 1)[1].split("\n## ", 1)[0]
-        # LANES §4: every `$T --issue N <kind>` in the command table (`$T queued` takes no issue, #1469).
+        # LANES Ã‚Â§4: every `$T --issue N <kind>` in the command table (`$T queued` takes no issue, #1469).
         in_lanes = set(re.findall(r"\$T (?:--issue N )?(\w+)", section))
-        self.assertEqual(in_lanes, kinds, f"LANES.md §4 names {sorted(in_lanes)}, task_record.py writes {sorted(kinds)}")
+        self.assertEqual(in_lanes, kinds, f"LANES.md Ã‚Â§4 names {sorted(in_lanes)}, task_record.py writes {sorted(kinds)}")
         self.assertNotIn("Until the change that does so lands", section,
                          "#508 landed: pr_opened --reviewer records review_assigned")
         self.assertNotIn("the Runtime cannot stop", section,
@@ -1582,6 +1582,33 @@ class ReviewActivityCaller(unittest.TestCase):
                 self.assertEqual(request.call_count, 2)
                 self.assertIs(request.call_args_list[0].args[0], request.call_args_list[1].args[0])
 
+
+
+class BenchmarkProofEncodingTests(unittest.TestCase):
+    def test_proof_encoding_has_a_literal_unicode_sorted_key_vector(self):
+        text = '{"z":[true,null,7],"a":"caf\\u00e9"}'
+        self.assertEqual(task_record.canonical_proof_json(text), '{"a":"caf\u00e9","z":[true,null,7]}')
+
+    def test_proof_encoding_refuses_duplicate_keys_at_every_depth(self):
+        for text in ['{"runId":"a","runId":"b"}', '{"arm":{"sha":"a","sha":"b"}}']:
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                task_record.canonical_proof_json(text)
+
+    def test_proof_encoding_refuses_nonportable_json_values(self):
+        for text in ['{"n":1.5}', '{"n":NaN}', '{"n":18446744073709551616}',
+                     '{"n":-9223372036854775809}', '{"s":"\\ud800"}']:
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                task_record.canonical_proof_json(text)
+
+    def test_proof_encoding_refuses_scalar_and_excessively_nested_inputs(self):
+        for text in ['null', '[]', '{"x":' + '[' * 40 + '0' + ']' * 40 + '}',
+                     '{"x":' + '[' * 3800 + '0' + ']' * 3800 + '}']:
+            with self.subTest(size=len(text)), self.assertRaises(ValueError):
+                task_record.canonical_proof_json(text)
+
+    def test_proof_encoding_bounds_actual_utf8_bytes(self):
+        with self.assertRaises(ValueError):
+            task_record.canonical_proof_json(json.dumps({"reference": "\u00e9" * 4096}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

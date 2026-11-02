@@ -92,3 +92,74 @@ fn the_guard_catches_a_bare_spawn_and_bare_flags() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(found.len(), 2, "{found:?}");
 }
+
+/// #2447: the Rust guard above stops at the node boundary. A headless browser is a console program
+/// that Playwright starts without `windowsHide`, so on Windows it opens its own console window even
+/// under a hidden node. Every script under `tools/` that launches a browser must default its
+/// spawns to hidden BEFORE the first launch (the shipped journey driver and every observer).
+const HIDE_MARKER: &str = "childProcess.spawn = function";
+
+fn script_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if path.is_dir() {
+            if !matches!(name.as_str(), "target" | "node_modules" | ".git") {
+                script_files(&path, out);
+            }
+        } else if name.ends_with(".mjs") || name.ends_with(".js") {
+            out.push(path);
+        }
+    }
+}
+
+fn browser_launchers_without_the_hide(root: &Path) -> (usize, Vec<String>) {
+    let mut files = Vec::new();
+    script_files(&root.join("tools"), &mut files);
+    let launches = [
+        concat!("chromium", ".launch("),
+        concat!("firefox", ".launch("),
+        concat!("webkit", ".launch("),
+    ];
+    let (mut launchers, mut found) = (0, Vec::new());
+    for path in files {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Some(first_launch) = launches.iter().filter_map(|needle| text.find(needle)).min()
+        else {
+            continue;
+        };
+        launchers += 1;
+        let at = path.strip_prefix(root).unwrap().display().to_string();
+        match text.find(HIDE_MARKER) {
+            None => found.push(format!(
+                "{at} launches a browser and never hides its spawns"
+            )),
+            Some(hide) if hide > first_launch => {
+                found.push(format!("{at} hides its spawns only after the first launch"));
+            }
+            Some(_) => {}
+        }
+    }
+    (launchers, found)
+}
+
+#[test]
+fn every_browser_launching_script_hides_the_browsers_console_window() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = crate_dir.join("../..").canonicalize().unwrap();
+    let (launchers, found) = browser_launchers_without_the_hide(&root);
+    // Non-empty is not a control: a broken walk would find no launcher and pass vacuously. The
+    // floor names today's launchers (journey driver, its browser test, the reload observer, the
+    // lanes layout check); lower it only in the commit that removes one, and name it.
+    assert!(
+        launchers >= 4,
+        "expected at least 4 browser-launching scripts under tools/, found {launchers}"
+    );
+    assert!(
+        found.is_empty(),
+        "hide the browser's console window (see HIDE_MARKER in this file):\n{}",
+        found.join("\n")
+    );
+}

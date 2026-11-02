@@ -1,3 +1,13 @@
+// #2447 (Windows): a headless browser is a console program and Playwright starts it without
+// `windowsHide`, so it opens its own console window (a terminal tab titled with its path) even under a
+// hidden node. Every child this process spawns is hidden, before any browser is launched.
+import childProcess from 'node:child_process';
+if (process.platform === 'win32') {
+  const spawn = childProcess.spawn;
+  childProcess.spawn = function (command, a, b) {
+    return Array.isArray(a) ? spawn.call(this, command, a, { windowsHide: true, ...b }) : spawn.call(this, command, { windowsHide: true, ...a });
+  };
+}
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';

@@ -17,16 +17,32 @@ export function reasonText(reason: AttentionReason): string {
     case "waiting_input_node": return `${node} waits for your answer.`;
     case "silent_node": return `${node} has said nothing past its own deadline.`;
     case "pending_draft": return reason.draft_id ? `Draft ${reason.draft_id} waits for a decision.` : "A draft waits for a decision.";
+    case "drive_failed": return driveFailedText(reason);
     case "wedged_quiescence": return "Nothing can move: no node is running, queued or ready.";
     case "foreign_wake_consumption": return `A wake for session ${reason.session ?? "?"} was taken by a writer that is not this Runtime.`;
     default: return `${reason.kind.replaceAll("_", " ")}${reason.node ? `: ${reason.node}` : ""}.`;
   }
 }
 
-/** #2324: the CLI line that acts on a reason the Studio cannot act on yet (node approval). */
+/** #2408: a drive that failed after the Runtime accepted the run, in words: where, and why. */
+function driveFailedText(reason: AttentionReason): string {
+  const where = reason.site === "workspace_release" ? " while releasing the workspace" : reason.site === "drive" ? " while driving the run" : "";
+  const why = typeof reason.cause === "string" && reason.cause !== "" ? `: ${reason.cause}` : "";
+  const text = `The run's drive failed${where}${why}`;
+  return text.endsWith(".") ? text : `${text}.`;
+}
+
+/** #2324, #2408: the CLI line that acts on a reason the Studio cannot act on yet (node approval, or
+ * resuming a run whose drive failed). */
 export function cliRemedy(reason: AttentionReason, executionId: string): string | null {
   if (reason.kind === "blocked_node" && reason.node) {
     return `graphhelm execution approve --events <events> --execution ${executionId} --node ${reason.node}`;
   }
+  if (reason.kind === "drive_failed") return `graphhelm execution resume --events <events> --execution ${executionId}`;
   return null;
+}
+
+/** #2408: what the remedy line is for, in the words that lead it. */
+export function remedyLead(reason: AttentionReason): string {
+  return reason.kind === "drive_failed" ? "Resume it from the CLI:" : "Approve it from the CLI:";
 }

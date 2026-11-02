@@ -133,7 +133,9 @@ fn browser_launchers_without_the_hide(root: &Path) -> (usize, Vec<String>) {
         launchers += 1;
         let at = path.strip_prefix(root).unwrap().display().to_string();
         match text.find(HIDE_MARKER) {
-            None => found.push(format!("{at} launches a browser and never hides its spawns")),
+            None => found.push(format!(
+                "{at} launches a browser and never hides its spawns"
+            )),
             Some(hide) if hide > first_launch => {
                 found.push(format!("{at} hides its spawns only after the first launch"));
             }
@@ -157,9 +159,7 @@ fn every_browser_launching_script_hides_the_browsers_console_window() {
     );
     assert!(
         found.is_empty(),
-        "hide the browser's console window (see HIDE_MARKER in this file):
-{}",
-        found.join("
-")
+        "hide the browser's console window (see HIDE_MARKER in this file):\n{}",
+        found.join("\n")
     );
 }

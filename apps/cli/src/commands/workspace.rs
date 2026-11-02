@@ -210,7 +210,13 @@ fn run_claim(
     }
     let file = ledger_file(root, lane, task);
     let dir = workspace_dir(root, lane, task);
-    if file.exists() || (dir.exists() && !only_claim_parts(&dir)) {
+    let reusable = read_record(&file).is_some_and(|record| {
+        record["state"] == "cleared"
+            && record["repo"].as_str().is_some_and(|saved| {
+                std::fs::canonicalize(repo).is_ok_and(|canonical| Path::new(saved) == canonical)
+            })
+    });
+    if (file.exists() && !reusable) || (dir.exists() && (!reusable || !only_claim_parts(&dir))) {
         return refuse(
             COMMAND,
             crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
@@ -356,7 +362,7 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
     let workspace = workspace_dir(root, lane, task);
     let worktree = workspace.join("wt");
     if worktree_gone(&worktree) {
-        return clear_gone(&file, &record, lane, task);
+        return clear_gone(&file, &record, &workspace, lane, task);
     }
     let Ok(head) = git(&worktree, &["rev-parse", "HEAD"]) else {
         return refuse(
@@ -651,22 +657,33 @@ fn only_claim_parts(dir: &Path) -> bool {
 
 /// #2339: the claimed workspace directory no longer exists (its session died and the folder was
 /// removed), so there is nothing left to release or sweep. Only after confirming that is the
-/// ledger entry removed, so the same task can be claimed again. The branch and its commits are
+/// claim cleared, so the same task can be claimed again. Residual directories retain their ledger
+/// provenance until reclaimed; a fully absent workspace needs no retained record. The branch and its commits are
 /// kept; git's record of the missing worktree is pruned (git only prunes worktrees whose folder is
 /// gone), so the branch is no longer reported as checked out there.
-fn clear_gone(file: &Path, record: &Value, lane: &str, task: &str) -> Outcome {
+fn clear_gone(file: &Path, record: &Value, workspace: &Path, lane: &str, task: &str) -> Outcome {
     const COMMAND: &str = "workspace.release";
     if let Some(repo) = record["repo"].as_str() {
         let _ = git(Path::new(repo), &["worktree", "prune"]);
     }
-    if std::fs::remove_file(file).is_err() {
+    if workspace.exists() {
+        // The remaining build/log directories need the original ledger as their provenance.
+        let mut cleared = record.clone();
+        cleared["state"] = json!("cleared");
+        if write_record(file, &cleared).is_err() {
+            return Outcome::internal(
+                COMMAND,
+                "the cleared workspace provenance could not be saved",
+            );
+        }
+    } else if std::fs::remove_file(file).is_err() {
         return Outcome::internal(COMMAND, "the stale workspace record could not be removed");
     }
     Outcome::success(
         COMMAND,
         json!({"lane": lane, "task": task, "cleared": true,
             "branch": record["branch"],
-            "note": "the worktree was gone; its ledger entry was cleared and the branch kept"}),
+            "note": "the worktree was gone; its claim was cleared and the branch kept"}),
     )
 }
 

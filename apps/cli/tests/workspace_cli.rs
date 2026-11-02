@@ -604,8 +604,31 @@ fn release_clears_a_claim_whose_worktree_alone_is_gone_and_the_task_can_be_claim
     let repo = repo(dir.path());
     let root = dir.path().join("root");
     let root_s = root.to_str().unwrap();
-    claim(root_s, &repo, "lane", "2435");
     let ws = root.join("lane").join("2435");
+    for part in ["target", "tmp", "logs"] {
+        std::fs::create_dir_all(ws.join(part)).unwrap();
+    }
+    std::fs::write(ws.join("target").join("foreign.txt"), "unclaimed").unwrap();
+    let (code, refused) = run(&[
+        "claim",
+        "--root",
+        root_s,
+        "--lane",
+        "lane",
+        "--task",
+        "2435",
+        "--repo",
+        repo.to_str().unwrap(),
+        "--base",
+        "HEAD",
+    ]);
+    assert_eq!(
+        code, 2,
+        "matching folder names do not establish ownership: {refused}"
+    );
+    assert!(ws.join("target").join("foreign.txt").is_file());
+    std::fs::remove_dir_all(&ws).unwrap();
+    claim(root_s, &repo, "lane", "2435");
     git(
         &repo,
         &[

@@ -53,6 +53,19 @@ fn mcp_session_inner(
     removed: &[&str],
     lines: &[serde_json::Value],
 ) -> McpSession {
+    mcp_session_guarded(args, env, removed, lines, Duration::from_secs(30))
+}
+
+/// The session, ended by its own EOF; `guard` (scaled) is only a hang guard that kills a session
+/// that never ends (#2432). A cell whose session answers many requests passes a guard far above
+/// any real run, so machine load cannot decide the result and a real hang still fails.
+fn mcp_session_guarded(
+    args: &[&str],
+    env: &[(&str, &str)],
+    removed: &[&str],
+    lines: &[serde_json::Value],
+    guard: Duration,
+) -> McpSession {
     let mut input = String::new();
     for line in lines {
         input.push_str(&line.to_string());
@@ -70,7 +83,7 @@ fn mcp_session_inner(
     }
     let output = command
         .write_stdin(input)
-        .timeout(scaled(Duration::from_secs(30)))
+        .timeout(scaled(guard))
         .output()
         .expect("the mcp server runs to EOF");
     let replies = String::from_utf8(output.stdout.clone())
@@ -902,6 +915,10 @@ const MCP_TOOL_NAMES: [&str; 46] = [
     "assign",
 ];
 
+/// The hang guard of the invalid-arguments cell (#2432): the session runs about 40 requests and
+/// answers in 2-9 s alone, over 30 s under heavy load; only a session that never ends may fail it.
+const INVALID_ARGUMENTS_HANG_GUARD: Duration = Duration::from_secs(300);
+
 /// Contract: declared argument errors never reach HTTP; accepted intents, retries and transport
 /// metadata retain their wire mapping. Regression: lossy optional projections treat invalid values
 /// as absence. Gap: mapping tests exercise valid values, while document validation is tool-local.
@@ -916,10 +933,19 @@ fn invalid_tool_arguments_are_refused_before_http_without_losing_valid_intents()
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
+    // #2432: the observer ends when the session does (`finished`), never by a wall clock of its own:
+    // under load the session can take far longer than any fixed window. A session that never ends
+    // is caught by the session's hang guard below, and `Stop` ends the observer on every exit path.
+    struct Stop(Arc<AtomicBool>);
+    impl Drop for Stop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
     let finished = Arc::new(AtomicBool::new(false));
     let stop = Arc::clone(&finished);
+    let _stop_on_exit = Stop(Arc::clone(&finished));
     let observer = std::thread::spawn(move || {
-        let deadline = Instant::now() + scaled(Duration::from_secs(30));
         let mut captured = Vec::new();
         loop {
             let mut stream = match listener.accept() {
@@ -928,7 +954,6 @@ fn invalid_tool_arguments_are_refused_before_http_without_losing_valid_intents()
                     if stop.load(Ordering::Acquire) {
                         return captured;
                     }
-                    assert!(Instant::now() < deadline, "MCP session did not finish");
                     std::thread::sleep(Duration::from_millis(5));
                     continue;
                 }
@@ -1093,10 +1118,12 @@ fn invalid_tool_arguments_are_refused_before_http_without_losing_valid_intents()
         serde_json::json!({"limit":100}),
     ));
     lines.push(serde_json::json!({"jsonrpc":"2.0","id":106,"method":"tools/call","params":{"name":"routes","_meta":{"progressToken":2}}}));
-    let session = mcp_session_with(
+    let session = mcp_session_guarded(
         &["--url", &base, "--actor", "agent-chat"],
         &[("GRAPHHELM_API_TOKEN", "test-token")],
+        &[],
         &lines,
+        INVALID_ARGUMENTS_HANG_GUARD,
     );
     finished.store(true, Ordering::Release);
     let captured = observer.join().unwrap();

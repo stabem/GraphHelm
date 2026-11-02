@@ -464,14 +464,14 @@ pub(super) fn system_actor() -> PersistedActor {
 
 /// A fresh idempotency key for one appended event, derived the same way `driver.rs` derives its
 /// own.
-pub(super) fn idempotency_key(prefix: &'static str) -> OpaqueId {
+pub(in crate::commands) fn idempotency_key(prefix: &'static str) -> OpaqueId {
     OpaqueId::parse(UuidIds.next_id(prefix)).expect("uuid-derived id is wire-safe")
 }
 
 /// Appends one prepared event to `stream` at its next sequence.
 /// Appends a record that no state check guards (a signal, a lease) at the store's current head.
 /// Anything appended after a decision on a projection goes through [`append_event`] instead.
-pub(super) fn append_record_at_head(
+pub(in crate::commands) fn append_record_at_head(
     store: &LocalEventRepository,
     scope: &RepositoryScope,
     stream: &OpaqueId,

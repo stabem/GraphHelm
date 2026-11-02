@@ -428,6 +428,7 @@ fn next_step(projection: &ExecutionProjection, answer: &Attention) -> NextStep {
         | AttentionReason::FailedNode { .. }
         | AttentionReason::WedgedQuiescence
         | AttentionReason::ForeignWakeConsumption { .. }
+        | AttentionReason::DriveFailed { .. }
         | AttentionReason::PendingDraft { .. } => None,
     });
     if let Some((node, remedy, claim_seq)) = named {

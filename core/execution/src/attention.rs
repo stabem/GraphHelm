@@ -493,6 +493,15 @@ pub enum AttentionReason {
     /// session because the record is `BTreeMap<session, WakeMisBurn>` with overwriting
     /// inserts: existence survives that shape, count and history do not.
     ForeignWakeConsumption { session: String },
+    /// #2357: a drive `serve` owned after answering its caller (202) failed, or its workspace
+    /// could not be released. Recorded in the stream so the run does not read as started or
+    /// running forever; `site` is `drive` or `workspace_release`, `cause` the redaction-safe
+    /// message, `at_sequence` the record. Cleared by resuming the execution.
+    DriveFailed {
+        site: String,
+        cause: String,
+        at_sequence: u64,
+    },
 }
 
 /// A node state that still moves without the operator: either a dispatcher can pick it up
@@ -679,6 +688,20 @@ pub fn attention(projection: &ExecutionProjection, inputs: &AttentionInputs) -> 
                 draft_id: draft_id.clone(),
             });
         }
+    }
+
+    // #2357: a recorded drive failure DOES answer "why is nothing advancing?" (the drive that
+    // would have advanced it ended), so it is pushed before the wedge decision.
+    if let Some(failure) = &projection.drive_failure {
+        reasons.push(AttentionReason::DriveFailed {
+            site: match failure.site {
+                graphhelm_protocols::DriveFailureSite::Drive => "drive",
+                graphhelm_protocols::DriveFailureSite::WorkspaceRelease => "workspace_release",
+            }
+            .to_owned(),
+            cause: failure.cause.clone(),
+            at_sequence: failure.at_sequence,
+        });
     }
 
     // CAPTURED HERE, BEFORE ANYTHING ELSE IS PUSHED, and the wedge below is decided against THIS

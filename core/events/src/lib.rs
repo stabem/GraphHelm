@@ -52,8 +52,8 @@ pub use memory::{
     prepare_memory_record_superseded,
 };
 pub use projection::{
-    ClearanceOutcome, CustomsScan, CustomsStage, DelegationRecord, EvidenceAvailability,
-    ExecutionProjection, MAX_PROJECTION_NODES, MemoryAdmissionRefusalReceipt,
+    ClearanceOutcome, CustomsScan, CustomsStage, DelegationRecord, DriveFailureRecord,
+    EvidenceAvailability, ExecutionProjection, MAX_PROJECTION_NODES, MemoryAdmissionRefusalReceipt,
     MemoryRecordProjection, OpenClaim, OpenWait, OverdueStage, ProjectionGeneration,
     ProjectionRebuildRequest, ProjectionRebuilder, ProjectionRepository, ProjectionWatermark,
     ReplayError, SubagentRecord, WakeMisBurn, claim_evidence_digest, overdue_at,

@@ -2131,6 +2131,16 @@ fn conformance_table() -> Vec<(&'static str, serde_json::Value, bool)> {
             }),
             false,
         ),
+        // #2357: a drive `serve` owned after answering 202 failed.
+        (
+            "drive_failed",
+            json!({
+                "executionId": "execution-1",
+                "site": "drive",
+                "cause": "the execution drive failed"
+            }),
+            false,
+        ),
     ]
 }
 

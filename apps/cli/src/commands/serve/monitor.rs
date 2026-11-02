@@ -204,6 +204,12 @@ fn attention_line(answer: &Attention) -> String {
             AttentionReason::PendingDraft { draft_id } => {
                 format!("governed draft {draft_id} is sealed and waiting for owner attention")
             }
+            // #2357: the drive this server owned after answering 202 failed, or its workspace
+            // stayed held. Resuming the run is the answer; a held workspace is removed with
+            // `graphhelm workspace remove`.
+            AttentionReason::DriveFailed { site, cause, .. } => {
+                format!("the server-owned drive failed at {site}: {cause}")
+            }
         })
         .collect();
     format!("needs you: {}", reasons.join("; "))
@@ -970,6 +976,7 @@ mod tests {
                     session.clone()
                 }
                 graphhelm_execution::AttentionReason::PendingDraft { draft_id } => draft_id.clone(),
+                graphhelm_execution::AttentionReason::DriveFailed { site, .. } => site.clone(),
             };
             assert!(
                 page.contains(&node),

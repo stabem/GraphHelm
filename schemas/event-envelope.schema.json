@@ -830,6 +830,16 @@
       },
       "additionalProperties": false
     },
+    "driveFailed": {
+      "type": "object",
+      "required": ["executionId", "site", "cause"],
+      "properties": {
+        "executionId": {"$ref": "#/$defs/opaqueId"},
+        "site": {"enum": ["drive", "workspace_release"]},
+        "cause": {"type": "string", "minLength": 1, "maxLength": 500}
+      },
+      "additionalProperties": false
+    },
     "wakeLease": {
       "type": "object",
       "required": ["executionId", "sessionId", "cursor", "rendezvousId"],
@@ -1532,6 +1542,15 @@
             "data": {"$ref": "#/$defs/subagentReused"}
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["type", "data"],
+          "properties": {
+            "type": {"const": "drive_failed"},
+            "data": {"$ref": "#/$defs/driveFailed"}
+          },
+          "additionalProperties": false
         }
       ]
     }
@@ -1589,7 +1608,8 @@
     {"properties": {"kind": {"properties": {"type": {"const": "overdue_exception"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "agent_presence_declared"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
     {"properties": {"kind": {"properties": {"type": {"const": "delegation_chosen"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
-    {"properties": {"kind": {"properties": {"type": {"const": "subagent_reused"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
+    {"properties": {"kind": {"properties": {"type": {"const": "subagent_reused"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}},
+    {"properties": {"kind": {"properties": {"type": {"const": "drive_failed"}}}, "scope": {"$ref": "#/$defs/scopeWithExecution"}}}
   ],
   "additionalProperties": false
 }

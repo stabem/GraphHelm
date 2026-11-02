@@ -664,7 +664,7 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
         for (name, reply) in chunk.iter().zip(session.replies[1..].iter()) {
             assert!(
                 reply.get("error").is_some(),
-                "{name} was called with an EMPTY capability allowlist and must be refused, got:                  {reply}"
+                "{name} was called with an EMPTY capability allowlist and must be refused, got: {reply}"
             );
             let message = reply["error"]["message"].as_str().unwrap_or_default();
             assert!(

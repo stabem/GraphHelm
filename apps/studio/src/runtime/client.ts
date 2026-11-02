@@ -298,11 +298,9 @@ export function boardOf(reply: Partial<TasksBoard>): TasksBoard {
 export const OWNER = { id: "studio-operator", type: "owner" };
 
 export class Runtime {
-  readonly #token: string;
   readonly #base: string;
 
-  constructor(token: string, base = "") {
-    this.#token = token;
+  constructor(base = "") {
     this.#base = base;
   }
 
@@ -328,7 +326,6 @@ export class Runtime {
       response = await fetch(`${this.#base}${path}`, {
         method,
         headers: {
-          Authorization: `Bearer ${this.#token}`,
           ...(body === undefined ? {} : { "Content-Type": "application/json" }),
           ...headers,
         },
@@ -432,7 +429,7 @@ export class Runtime {
     let response: Response;
     try {
       response = await fetch(`${this.#base}${path}`, {
-        headers: { Authorization: `Bearer ${this.#token}` },
+        credentials: "same-origin",
         signal: AbortSignal.timeout(30_000),
       });
     } catch {

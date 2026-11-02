@@ -26,7 +26,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe("a run read from an older Runtime (#1899)", () => {
   it("reads a tasks reply without waiting as a board the Lanes and Graph views can show", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(OLD_REPLY), { status: 200 })));
-    const board = await new Runtime("t").board("gh-team");
+    const board = await new Runtime().board("gh-team");
     expect(board.waiting).toEqual([]);
     // These threw `board.waiting is not iterable` and blanked the Studio before the fix.
     expect(agents(board).map((agent) => [agent.lane, agent.column])).toEqual([["claude-1", "implement"]]);
@@ -36,7 +36,7 @@ describe("a run read from an older Runtime (#1899)", () => {
 
   it("reads a reply missing every list as an empty board", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true, data: {} }), { status: 200 })));
-    const board = await new Runtime("t").board("old");
+    const board = await new Runtime().board("old");
     expect([board.tasks, board.stalls, board.waiting, board.liveness.lanes]).toEqual([[], [], [], []]);
     expect(agents(board)).toEqual([]);
   });
@@ -53,17 +53,17 @@ describe("a run read from an older Runtime (#1899)", () => {
 describe("a Runtime that refuses the token (#1897)", () => {
   it("tells a refusal (401, 403) from a Runtime that does not answer", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, data: null, diagnostics: [{ message: "bad token" }] }), { status: 401 })));
-    const refused = await new Runtime("old").runs().catch((error: unknown) => error);
+    const refused = await new Runtime().runs().catch((error: unknown) => error);
     expect(refusedToken(refused)).toBe(true);
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("down"); }));
-    const silent = await new Runtime("old").runs().catch((error: unknown) => error);
+    const silent = await new Runtime().runs().catch((error: unknown) => error);
     expect(refusedToken(silent)).toBe(false);
   });
 
   it("#1991: identical GETs in flight share one request; a later one asks again; POSTs never merge", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, data: { executions: [], flows: [] } }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const runtime = new Runtime("t");
+    const runtime = new Runtime();
     await Promise.all([runtime.runs(), runtime.runs(), runtime.journeyRun("f1"), runtime.journeyRun("f1")]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     await runtime.runs();

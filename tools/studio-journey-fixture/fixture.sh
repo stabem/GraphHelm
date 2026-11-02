@@ -11,8 +11,8 @@
 # Defaults: Runtime 127.0.0.1:8797, Studio 127.0.0.1:5184 (the flows' `base`). Both must be free.
 # Needs: `graphhelm` on PATH (or GRAPHHELM_BIN), node and npm, the Studio's dependencies installed
 # (`npm --prefix apps/studio ci`). Secrets stay in files under <fixture dir>/.graphhelm; the
-# script never prints them. The Studio's session nonce is fixed (`studio-fixture`) so the page
-# opens connected: http://127.0.0.1:<studio port>/?session=studio-fixture
+# script never prints them. The Studio creates its browser session on shell navigation, so the page
+# opens connected: http://127.0.0.1:<studio port>/
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 bin=${GRAPHHELM_BIN:-graphhelm}
@@ -421,14 +421,14 @@ risks: []
 screens:
   - id: home
     title: The Studio opens on the project
-    url: /?session=studio-fixture
+    url: /
     ignoreQuery: [session, project, run, view]
     state: stable
     expect: [{role: tab, name: Lanes, because: the Studio offers its three views as tabs}]
     scope: unknown
   - id: lanes
     title: The Lanes view is open
-    url: /?session=studio-fixture
+    url: /
     ignoreQuery: [session, project, run, view]
     state: success
     expect: [{role: region, name: Lanes, because: the Lanes tab opens the lanes board}]
@@ -755,16 +755,16 @@ NODE
       || echo "fixture: the slot holder did not take the slot (see $dir/.graphhelm/slot-holder.out)" >&2
   fi
   export GRAPHHELM_EVENTS="$rt/events" GRAPHHELM_RUNTIME_URL="http://127.0.0.1:$rport" \
-    GRAPHHELM_STUDIO_SESSION_NONCE=studio-fixture GRAPHHELM_PROJECT=demo
+    GRAPHHELM_PROJECT=demo
   nohup npm --prefix "$repo/apps/studio" run dev -- --port "$sport" --strictPort > "$dir/.graphhelm/studio.out" 2>&1 &
   echo "studio $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
-  wait_answers "http://127.0.0.1:$sport/__studio/session?nonce=studio-fixture" "$!" 60 \
+  wait_answers "http://127.0.0.1:$sport/" "$!" 60 \
     || { echo "studio did not answer on $sport"; tail -20 "$dir/.graphhelm/studio.out"; exit 1; }
   for pid in $(fixture_listeners record "$sport"); do
     if [ -r /proc/$$/winpid ]; then echo "studio-listener 0 $pid"; else echo "studio-listener $pid"; fi >> "$pids"
   done
   # #1808 studio2-two-projects: a second project, `proj-two`, with its own Runtime and one run,
-  # registered with this Studio the way `graphhelm studio open` does it. The ticket link it prints
+  # registered with this Studio the way `graphhelm studio open` does it. The reusable link it prints
   # is kept in a private file for the replay to open once; it is never echoed.
   if [ "$flow" = studio2-two-projects ]; then
     p2=$((rport + 2))
@@ -796,22 +796,8 @@ NODE
     (umask 077; "$bin" --json studio open --project "$second" --port "$sport" --no-browser > "$dir/.graphhelm/second-open.json")
     grep -q '"ok":true' "$dir/.graphhelm/second-open.json" \
       || { echo "fixture: the second project was not registered (see $dir/.graphhelm/second-open.json)" >&2; exit 1; }
-    # The owner adds proj-two in the sidebar with its folder and the ticket `studio open` minted,
-    # as the real Studio does. Every viewport of a replay opens a fresh browser that spends a
-    # ticket, so a FIXTURE-ONLY keeper puts the same ticket back once it is spent. Both values go
-    # to the private secrets file the replay reads; neither is printed.
-    ticket=$(cat "$rt2/events.studio-ticket")
-    [ -n "$ticket" ] || { echo 'fixture: studio open left no ticket' >&2; exit 1; }
     folder2=$(cd "$second" && pwd -W 2> /dev/null || pwd)
-    (umask 077; printf 'GRAPHHELM_SECRET_proj_two_folder=%s\nGRAPHHELM_SECRET_proj_two_ticket=%s\n' "$folder2" "$ticket" > "$dir/.graphhelm/secrets-second.env")
-    (umask 077; printf '%s' "$ticket" > "$dir/.graphhelm/second.ticket")
-    nohup node -e '
-      const fs = require("fs"); const [file, saved] = process.argv.slice(1);
-      const keep = fs.readFileSync(saved, "utf8");
-      setInterval(() => { let now = ""; try { now = fs.readFileSync(file, "utf8").trim(); } catch {} if (now === "") fs.writeFileSync(file, keep, { mode: 0o600 }); }, 250);
-      setTimeout(() => process.exit(0), 3600000);
-    ' "$rt2/events.studio-ticket" "$dir/.graphhelm/second.ticket" > /dev/null 2>&1 &
-    echo "ticket-keeper $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
+    (umask 077; printf 'GRAPHHELM_SECRET_proj_two_folder=%s\n' "$folder2" > "$dir/.graphhelm/secrets-second.env")
   fi
   if [ "$flow" = studio2-lanes-needs-action ]; then
     node "$repo/tools/studio-journey-fixture/seed_needs.mjs" fresh "$dir" "http://127.0.0.1:$rport" "$rt/events.token"
@@ -820,7 +806,7 @@ NODE
   (umask 077; printf 'GRAPHHELM_SECRET_STUDIO_TOKEN=%s\n' "$(head -1 "$rt/events.token")" > "$dir/.graphhelm/secrets.env"
     if [ -f "$dir/.graphhelm/secrets-second.env" ]; then cat "$dir/.graphhelm/secrets-second.env" >> "$dir/.graphhelm/secrets.env"; fi)
   chmod 600 "$dir/.graphhelm/secrets.env"
-  echo "fixture up: runtime http://127.0.0.1:$rport, studio http://127.0.0.1:$sport/?session=studio-fixture"
+  echo "fixture up: runtime http://127.0.0.1:$rport, studio http://127.0.0.1:$sport/"
   ;;
 down)
   # Each record is `<name> <shell pid> [<OS pid>]`. On Windows (Git Bash) the shell pid is an MSYS

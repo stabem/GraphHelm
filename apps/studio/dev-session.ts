@@ -1,42 +1,6 @@
-/**
- * The dev server's login handoff: `/__studio/session?nonce=<presented>` answers the Runtime's
- * bearer token only to a caller presenting one of three things:
- *
- * - this server run's nonce (`GRAPHHELM_STUDIO_SESSION_NONCE`, or a random one printed to the
- *   owner's own terminal);
- * - the stable key derived from the token on disk (handed to a page that already proved one of
- *   the others, so a reload stays logged in);
- * - the one-shot ticket `graphhelm studio open` writes beside the token (`<events>.studio-ticket`),
- *   deleted on first use.
- *
- * Same contract as the old Studio's dev-session plugin (apps/studio/vite.config.ts, #1264). #1800
- * adds the #1767 routes that let more projects join this port, in the wire contract
- * `graphhelm studio open` already speaks (apps/cli/src/commands/studio.rs):
- *
- * - `GET /__studio/identity` answers `{projectId, projectIds}`, hashes only;
- * - `POST /__studio/register?nonce=<ticket>` with `{"path": <folder>}` registers another project
- *   whose current ticket the caller holds (read, not spent) and whose Runtime is running;
- * - `/__studio/session?project=<id>` answers that project only against ITS ticket or ITS key;
- * - `/p/<id>/v1/...` and `/p/<id>/health` forward to that project's own loopback Runtime.
- *
- * #1833 adds what the sidebar shows per project and its "Add project folder" action:
- *
- * - every `/__studio/session` answer carries `folder`, the project's folder for display (`~` for the
- *   owner's home). It reaches only a caller already holding that project's token; the folder is
- *   never written to a log line, an error body or the Runtime;
- * - `POST /__studio/add` with header `X-GraphHelm-Studio-Key: <stable key of a project this tab
- *   holds>` and `{"path": <folder>, "ticket": <ticket>}` registers the folder exactly as
- *   `/__studio/register` does (a GraphHelm project whose Runtime is running at loopback) and answers
- *   that project's id and stable key. It needs BOTH proofs: the owner's key, and the new project's
- *   own one-shot ticket (`graphhelm studio open --project <folder>`), spent by the add. Holding one
- *   project's key is never proof of access to another. Registration is keyed by the canonical
- *   folder's id, so the same folder twice is one project.
- *
- * `apply: "serve"` keeps every route out of any production bundle: a built page has no way to
- * obtain a token.
- */
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync, realpathSync, statSync, unlinkSync } from "node:fs";
+/** Loopback browser sessions and authenticated project proxies; Runtime credentials stay here. */
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, toNamespacedPath } from "node:path";
@@ -52,11 +16,6 @@ function tokenPath(env: Record<string, string>): string | null {
   if (!env.GRAPHHELM_EVENTS) return null;
   const events = env.GRAPHHELM_EVENTS.replace(/[\/]+$/, "");
   return join(dirname(events), `${basename(events)}.token`);
-}
-
-function ticketPath(env: Record<string, string>): string | null {
-  const token = tokenPath(env);
-  return token === null || !token.endsWith(".token") ? null : `${token.slice(0, -".token".length)}.studio-ticket`;
 }
 
 /** The project's folder name, only for the conventional `<folder>/.graphhelm/events` layout. */
@@ -109,9 +68,8 @@ function firstFolder(env: Record<string, string>): string | null {
 }
 
 /** Another project this Studio serves: only the conventional layout of an absolute folder. */
-interface Joined { id: string; folder: string; tokenFile: string; ticketFile: string }
+interface Joined { id: string; folder: string; tokenFile: string }
 
-const PROJECT_ID = /^[0-9a-f]{64}$/;
 
 function projectAt(folder: unknown): Joined | null {
   if (typeof folder !== "string" || folder.length === 0 || folder.length > 4096 || !isAbsolute(folder)) return null;
@@ -120,7 +78,7 @@ function projectAt(folder: unknown): Joined | null {
     if (!statSync(canonical).isDirectory()) return null;
     const tokenFile = join(canonical, ".graphhelm", "events.token");
     if (readToken(tokenFile) === null) return null;
-    return { id: idOf(canonical), folder: canonical, tokenFile, ticketFile: join(canonical, ".graphhelm", "events.studio-ticket") };
+    return { id: idOf(canonical), folder: canonical, tokenFile };
   } catch {
     return null;
   }
@@ -137,17 +95,6 @@ function runtimeOf(folder: string): string | null {
     return /^(?:127\.0\.0\.1|\[::1\]):\d{1,5}$/.test(record.address) ? `http://${record.address}` : null;
   } catch {
     return null;
-  }
-}
-
-/** Whether `presented` is the project's current ticket; registration reads it, the page spends it. */
-function holdsTicket(project: Joined, presented: string): boolean {
-  if (presented.length === 0) return false;
-  try {
-    const ticket = readFileSync(project.ticketFile, "utf8").trim();
-    return ticket.length > 0 && sameSecret(presented, ticket);
-  } catch {
-    return false;
   }
 }
 
@@ -192,12 +139,17 @@ function readBody(request: IncomingMessage, limit: number): Promise<string | nul
   });
 }
 
-function forward(request: IncomingMessage, response: ServerResponse, target: string, path: string) {
+function forward(request: IncomingMessage, response: ServerResponse, target: string, path: string, token: string) {
   const url = new URL(path, target);
-  const upstream = httpRequest(url, { method: request.method, headers: { ...request.headers, host: url.host } }, (reply) => {
+  const headers: import("node:http").OutgoingHttpHeaders = { ...request.headers, host: url.host, authorization: `Bearer ${token}` };
+  delete headers.cookie;
+  delete headers.origin;
+  delete headers["x-graphhelm-studio-key"];
+  const upstream = httpRequest(url, { method: request.method, headers }, (reply) => {
     response.writeHead(reply.statusCode ?? 502, reply.headers);
     reply.pipe(response);
   });
+  upstream.setTimeout(30_000, () => upstream.destroy(new Error("Runtime response timed out")));
   upstream.on("error", () => {
     if (response.headersSent) {
       response.destroy();
@@ -232,128 +184,111 @@ function sameSecret(presented: string, expected: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-export function stableKey(token: string): string {
-  return createHmac("sha256", token).update("graphhelm-studio-session-v1").digest("hex");
-}
-
-/** True once for the ticket on disk: a match deletes it; a failed delete refuses. */
-function consumeTicket(path: string | null, presented: string): boolean {
-  if (path === null || presented.length === 0) return false;
-  let ticket: string;
-  try {
-    ticket = readFileSync(path, "utf8").trim();
-  } catch {
-    return false;
-  }
-  if (ticket.length === 0 || !sameSecret(presented, ticket)) return false;
-  try {
-    unlinkSync(path);
-  } catch {
-    return false;
-  }
-  return true;
-}
-
 export function devSession(env: Record<string, string>): Plugin {
-  const provided = (env.GRAPHHELM_STUDIO_SESSION_NONCE || "").trim();
-  const nonce = provided || randomBytes(16).toString("hex");
+  const session = randomBytes(32).toString("hex");
   return {
-    name: "graphhelm-studio-next-session",
+    name: "graphhelm-loopback-session",
     apply: "serve",
     configureServer(server) {
+      if (server.config.server.host !== "127.0.0.1" && server.config.server.host !== "localhost")
+        throw new Error("Studio must bind to 127.0.0.1 or localhost");
+      const joined = new Map<string, Joined>();
+      server.middlewares.use((request, response, next) => {
+        const address = server.httpServer?.address();
+        const port = typeof address === "object" && address !== null ? address.port : server.config.server.port;
+        // Each allowed authority is explicit; forwarded headers never participate in trust.
+        const authorities = [`127.0.0.1:${port}`, `localhost:${port}`];
+        const host = request.headers.host;
+        const origin = request.headers.origin;
+        const site = request.headers["sec-fetch-site"];
+        if (!host || !authorities.includes(host)
+          || (origin !== undefined && origin !== `http://${host}`)
+          || (site !== undefined && site !== "same-origin" && site !== "none")) {
+          return json(response, 403, { ok: false, reason: "foreign_origin" });
+        }
+        const path = new URL(request.url ?? "/", `http://${host}`).pathname;
+        const protectedPath = /^\/(?:__studio|v1|health|p)(?:\/|$)/.test(path);
+        const cookieName = `graphhelm_studio_${port}=`;
+        const cookie = (request.headers.cookie ?? "").split(";").map(part => part.trim()).find(part => part.startsWith(cookieName))?.slice(cookieName.length) ?? "";
+        const authenticated = sameSecret(cookie, session);
+        const read = request.method === "GET" || request.method === "HEAD";
+        // The CLI authenticates only this endpoint against the submitted project's credential.
+        const machineRegistration = path === "/__studio/register" && request.method === "POST"
+          && origin === undefined && site === undefined;
+        if (protectedPath && !machineRegistration && (!authenticated || (read ? (origin === undefined && site !== "same-origin") : origin === undefined))) {
+          return json(response, 403, { ok: false, reason: "session_required" });
+        }
+        if (!protectedPath && read
+          && request.headers["sec-fetch-mode"] === "navigate" && request.headers["sec-fetch-dest"] === "document") {
+          response.setHeader("Set-Cookie", `${cookieName}${session}; HttpOnly; SameSite=Strict; Path=/`);
+          response.setHeader("Cache-Control", "no-store");
+        }
+        next();
+      });
       server.httpServer?.once("listening", () => {
-        if (provided) return;
         const address = server.httpServer?.address();
         const port = typeof address === "object" && address !== null ? address.port : STUDIO_OPEN_DEFAULT_PORT;
-        server.config.logger.info(`  Studio login: http://127.0.0.1:${port}/?session=${nonce}`);
+        server.config.logger.info(`  Studio: http://127.0.0.1:${port}/`);
       });
-      // Held in memory only: a restarted Studio serves its first project until each other project
-      // runs `graphhelm studio open` again.
-      const joined = new Map<string, Joined>();
       server.middlewares.use("/__studio/identity", (request, response) => {
-        if (request.method !== "GET") return json(response, 405, { projectId: null, projectIds: [] });
+        if (request.method !== "GET") return json(response, 405, { ok: false });
         const first = firstProjectId(env);
         json(response, 200, { projectId: first, projectIds: [...new Set([...(first === null ? [] : [first]), ...joined.keys()])] });
       });
-      server.middlewares.use("/__studio/register", (request, response) => {
-        if (request.method !== "POST") return json(response, 405, { ok: false });
-        const presented = new URL(request.url ?? "/", "http://localhost").searchParams.get("nonce") ?? "";
-        void readBody(request, 8 * 1024).then((raw) => {
-          let path: unknown = null;
-          try {
-            path = raw === null ? null : (JSON.parse(raw) as { path?: unknown }).path;
-          } catch { /* an unreadable body names no project */ }
-          const project = projectAt(path);
-          if (project === null || !holdsTicket(project, presented)) return json(response, 404, { ok: false });
-          if (runtimeOf(project.folder) === null) return json(response, 409, { ok: false, reason: "runtime_not_running" });
-          if (project.id !== firstProjectId(env)) joined.set(project.id, project);
-          json(response, 200, { ok: true, projectId: project.id });
-        });
-      });
-      server.middlewares.use("/__studio/add", (request, response) => {
-        if (request.method !== "POST") return json(response, 405, { ok: false });
-        const header = request.headers["x-graphhelm-studio-key"];
-        const presented = typeof header === "string" ? header : "";
-        const firstToken = readToken(tokenPath(env));
-        const owner = presented.length > 0 && [firstToken, ...[...joined.values()].map((known) => readToken(known.tokenFile))]
-          .some((token) => token !== null && sameSecret(presented, stableKey(token)));
-        void readBody(request, 8 * 1024).then((raw) => {
-          if (!owner) return json(response, 404, { ok: false });
-          let path: unknown = null;
-          let ticket: unknown = null;
-          try {
-            const body = raw === null ? null : (JSON.parse(raw) as { path?: unknown; ticket?: unknown });
-            path = body?.path;
-            ticket = body?.ticket;
-          } catch { /* an unreadable body names no folder */ }
-          const project = projectAt(path);
-          const token = project === null ? null : readToken(project.tokenFile);
-          // The reason codes never repeat the folder the caller sent.
-          if (project === null || token === null) return json(response, 422, { ok: false, reason: "not_a_project" });
-          // The owner's key does not reach another project: that project's own ticket is the proof.
-          // It is checked (read, not spent) before anything else is told, and spent only on success,
-          // so a 409 for a stopped Runtime leaves it usable for the next attempt.
-          if (typeof ticket !== "string" || !holdsTicket(project, ticket)) return json(response, 404, { ok: false });
-          if (runtimeOf(project.folder) === null) return json(response, 409, { ok: false, reason: "runtime_not_running" });
-          if (!consumeTicket(project.ticketFile, ticket)) return json(response, 404, { ok: false });
-          if (project.id !== firstProjectId(env)) joined.set(project.id, project);
-          json(response, 200, { ok: true, projectId: project.id, sessionKey: stableKey(token) });
-        });
-      });
-      server.middlewares.use("/p", (request, response, next) => {
-        const match = /^\/([0-9a-f]{64})(\/(?:v1|health)(?:[/?].*)?)$/.exec(request.url ?? "");
-        const project = match === null ? undefined : joined.get(match[1]!);
-        if (match === null || project === undefined) return next();
-        const target = runtimeOf(project.folder);
-        if (target === null) {
-          response.writeHead(503);
-          response.end();
-          return;
-        }
-        forward(request, response, target, match[2]!);
-      });
-      server.middlewares.use(SESSION_PATH, (request, response) => {
-        const query = new URL(request.url ?? "/", "http://localhost").searchParams;
-        const presented = query.get("nonce") ?? "";
-        const wanted = query.get("project") ?? "";
-        const first = firstProjectId(env);
-        if (wanted !== "" && wanted !== first) {
-          // Another project answers only to ITS key or ITS ticket, never to this run's nonce.
-          const project = PROJECT_ID.test(wanted) ? joined.get(wanted) : undefined;
-          const token = project === undefined ? null : readToken(project.tokenFile);
-          if (project === undefined || token === null || presented.length === 0
-            || !(sameSecret(presented, stableKey(token)) || consumeTicket(project.ticketFile, presented))) {
-            return json(response, 404, { ok: false });
-          }
-          return json(response, 200, {
-            ok: true, token, project: basename(project.folder), projectId: project.id, folder: folderOf(project.folder), base: `/p/${project.id}`, sessionKey: stableKey(token), teamRun: teamRunOf(project.folder),
+      for (const route of ["/__studio/register", "/__studio/add"]) {
+        server.middlewares.use(route, (request, response) => {
+          if (request.method !== "POST") return json(response, 405, { ok: false });
+          void readBody(request, 8 * 1024).then(raw => {
+            let path: unknown;
+            try { path = raw === null ? null : (JSON.parse(raw) as {path?: unknown}).path; }
+            catch { return json(response, 422, {ok:false, reason:"not_a_project"}); }
+            const project = projectAt(path);
+            const token = project === null ? null : readToken(project.tokenFile);
+            if (project === null || token === null) return json(response, 422, {ok:false,reason:"not_a_project"});
+            if (route === "/__studio/register") {
+              const auth = request.headers.authorization ?? "";
+              if (request.headers.origin !== undefined || request.headers["sec-fetch-site"] !== undefined || !sameSecret(auth, `Bearer ${token}`))
+                return json(response, 403, {ok:false,reason:"registration_refused"});
+            }
+            if (runtimeOf(project.folder) === null) return json(response, 409, {ok:false,reason:"runtime_not_running"});
+            if (project.id !== firstProjectId(env)) joined.set(project.id, project);
+            json(response, 200, {ok:true,projectId:project.id});
           });
-        }
-        const token = readToken(tokenPath(env));
-        const allowed = token !== null && presented.length > 0
-          && (sameSecret(presented, nonce) || sameSecret(presented, stableKey(token)) || consumeTicket(ticketPath(env), presented));
-        if (!allowed || token === null) return json(response, 404, { ok: false });
-        json(response, 200, { ok: true, token, project: projectName(env), projectId: first, folder: folderOf(firstFolder(env)), base: "", sessionKey: stableKey(token), teamRun: teamRunOf(firstFolder(env)) });
+        });
+      }
+      server.middlewares.use((request, response, next) => {
+        const path = request.url ?? "/";
+        const selected = /^\/p\/([^/]+)(\/(?:v1|health)(?:[/?].*)?)$/.exec(path);
+        const first = firstProjectId(env);
+        let folder = firstFolder(env);
+        let file = tokenPath(env);
+        let upstreamPath = path;
+        if (path.startsWith("/p/")) {
+          if (!selected) return json(response,404,{ok:false,reason:"project_unavailable"});
+          const id = selected[1]!;
+          if (id !== first) {
+            const project = joined.get(id);
+            if (!project) return json(response,404,{ok:false,reason:"project_unavailable"});
+            folder = project.folder; file = project.tokenFile;
+          }
+          upstreamPath = selected[2]!;
+        } else if (!/^\/(?:v1|health)(?:[/?]|$)/.test(path)) return next();
+        const token = readToken(file);
+        const target = (folder === null ? null : runtimeOf(folder)) ?? (file === tokenPath(env) ? env.GRAPHHELM_RUNTIME_URL : null);
+        if (token === null || !target || !/^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):[0-9]+\/?$/.test(target))
+          return json(response,503,{ok:false,reason:"runtime_unavailable"});
+        forward(request,response,target,upstreamPath,token);
+      });
+      server.middlewares.use(SESSION_PATH, (request,response) => {
+        if (request.method !== "GET") return json(response,405,{ok:false});
+        const wanted = new URL(request.url ?? "/","http://localhost").searchParams.get("project");
+        const first = firstProjectId(env);
+        const project = wanted && wanted !== first ? joined.get(wanted) : undefined;
+        if (wanted && wanted !== first && !project) return json(response,404,{ok:false,reason:"project_unavailable"});
+        const folder = project?.folder ?? firstFolder(env);
+        if (readToken(project?.tokenFile ?? tokenPath(env)) === null) return json(response,503,{ok:false,reason:"project_unavailable"});
+        json(response,200,{ok:true,project:project ? basename(project.folder) : projectName(env),projectId:project?.id ?? first,
+          folder:folderOf(folder),base:project ? `/p/${project.id}` : "",teamRun:teamRunOf(folder)});
       });
     },
   };

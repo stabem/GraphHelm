@@ -49,7 +49,7 @@ $studio = Split-Path -Parent $PSScriptRoot  # this file lives in apps/studio/too
 
 # Fail before creating project files or starting a Runtime when another Studio (or any other
 # service) already owns the entry address. A second project must not silently acquire a second
-# frontend port or open the first project's page with a nonce minted for this launch.
+# frontend port or open the first project's page for this launch.
 $studioPortOccupied = $false
 $studioSocket = $null
 if (-not $RuntimeOnly) { try {
@@ -271,33 +271,23 @@ if (-not (Test-Path $modules) -or $stale) {
     try { npm ci } finally { Pop-Location }
 }
 
-# 3 - the dev server, with the environment the auto-connect session endpoint reads. The session
-# NONCE is generated here and travels only through this process's environment and the URL below:
-# the dev server hands the token exclusively to a caller presenting it, because loopback is not a
-# user boundary and the token file is owner-only on disk for a reason (PR #467 review).
+# 3 - the dev server reads credentials locally and creates its own browser session.
 $env:GRAPHHELM_EVENTS = $Events
 $env:GRAPHHELM_RUNTIME_URL = $runtimeUrl
 if ($Project) { $env:GRAPHHELM_PROJECT = $Project }
-$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-$nonceBytes = New-Object byte[] 16
-$rng.GetBytes($nonceBytes)
-$nonce = (($nonceBytes | ForEach-Object { $_.ToString("x2") }) -join "")
-$env:GRAPHHELM_STUDIO_SESSION_NONCE = $nonce
-
-# 4 - the door, with the key in the URL. The nonce-gated session endpoint proves that the
-# responding Studio is THIS launch; an unrelated page answering / is not sufficient.
+# Open the local shell after the reserved Studio port starts answering.
 if (-not $NoBrowser) {
     Start-Job -ScriptBlock {
-        param($port, $nonce)
+        param($port)
         $deadline = (Get-Date).AddSeconds(30)
         while ((Get-Date) -lt $deadline) {
             try {
-                $null = Invoke-WebRequest -Uri "http://127.0.0.1:$port/__studio/session?nonce=$nonce" -TimeoutSec 2 -UseBasicParsing
-                Start-Process "http://127.0.0.1:$port/?session=$nonce"
+                $null = Invoke-WebRequest -Uri "http://127.0.0.1:$port/" -TimeoutSec 2 -UseBasicParsing
+                Start-Process "http://127.0.0.1:$port/"
                 return
             } catch { Start-Sleep -Milliseconds 500 }
         }
-    } -ArgumentList $StudioPort, $nonce | Out-Null
+    } -ArgumentList $StudioPort | Out-Null
 }
 
 Write-Host "[up] Studio starting at http://127.0.0.1:$StudioPort - the page opens already connected"

@@ -22,6 +22,7 @@
 - [#2441](https://github.com/stabem/GraphHelm/pull/2441) Contributors run long builds and tests before starting a blind review.
 - [#2446](https://github.com/stabem/GraphHelm/pull/2446) Before a blind review, contributors also run formatting, clippy, Keel checks, and journey replays.
 - [#2438](https://github.com/stabem/GraphHelm/pull/2438) The MCP invalid-arguments test now waits for session completion instead of relying on a 30-second wall-clock timeout.
+- [#2456](https://github.com/stabem/GraphHelm/pull/2456) The Codex SessionEnd guard records the helper-spawn thread's start, so the test cannot miss a late helper launch.
 - [#2397](https://github.com/stabem/GraphHelm/pull/2397) The task recorder warns when a second reviewer is assigned to the same pull request head.
 - [#2451](https://github.com/stabem/GraphHelm/pull/2451) The docs guard catches broken relative links to files and folders, including non-Markdown targets.
 - [#2452](https://github.com/stabem/GraphHelm/pull/2452) The heartbeat and session-stop tests accept the measured timing race but still fail if cleanup leaves a waiter behind.

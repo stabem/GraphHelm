@@ -1491,7 +1491,10 @@ def main() -> int:
     output_format = args.format or ("native" if host in {"claude", "codex"} else "portable")
     if args.phase == "helper":
         return _helper_main()
-    if args.phase in {"start", "end"}:
+    # Codex clamps every SessionEnd hook to 3 s and the hook's own watchdog answers at 1 s, so a helper
+    # that has to start first does not fit: a Codex end never spawns one and does its (bounded) state
+    # work itself, as it did before #2344. This is the one path where the hook still opens files.
+    if args.phase in {"start", "end"} and (host, args.phase) != ("codex", "end"):
         _use_helper(host)
     try:
         if args.phase == "wait":

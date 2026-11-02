@@ -30,9 +30,12 @@ const SCRIPT_DIR: &str = ".graphhelm/observers";
 pub(super) const TOOLCHAIN_DIR: &str = ".graphhelm/toolchain";
 const DRIVER_NAME: &str = "journey_driver.mjs";
 const DRIVER: &[u8] = include_bytes!("../../../../tools/journey-driver/driver.mjs");
-/// The driver imports `./judge.mjs`, so it ships beside it.
+/// The driver imports `./judge.mjs` beside itself and the shared launcher from `.graphhelm/`.
 const JUDGE_NAME: &str = "judge.mjs";
 const JUDGE: &[u8] = include_bytes!("../../../../tools/journey-driver/judge.mjs");
+/// The driver imports this from its parent directory to patch Playwright's child launcher.
+const HIDDEN_NODE_CHILDREN: &[u8] = include_bytes!("../../../../tools/hidden-node-children.mjs");
+const HIDDEN_NODE_CHILDREN_PATH: &str = ".graphhelm/hidden-node-children.mjs";
 
 const PLAYWRIGHT: Spec = Spec {
     id: "playwright",
@@ -150,6 +153,15 @@ fn check(spec: &Spec, project: &Path, roots: &[PathBuf], node: bool) -> serde_js
                 "{SCRIPT_DIR}/{DRIVER_NAME} (graphhelm-journey-driver/1, this GraphHelm version)"
             ));
         }
+        let hidden_launcher = project.join(HIDDEN_NODE_CHILDREN_PATH);
+        if !super::journey_replay::safe_node(&hidden_launcher)
+            || !hidden_launcher.is_file()
+            || std::fs::read(&hidden_launcher).ok().as_deref() != Some(HIDDEN_NODE_CHILDREN)
+        {
+            missing.push(format!(
+                "{HIDDEN_NODE_CHILDREN_PATH} (graphhelm-process/1, this GraphHelm version)"
+            ));
+        }
         if std::fs::read(project.join(SCRIPT_DIR).join(JUDGE_NAME))
             .ok()
             .as_deref()
@@ -223,6 +235,7 @@ fn safe_observer_target(project: &Path) -> std::io::Result<()> {
         ".graphhelm/toolchain/package.json",
         ".graphhelm/toolchain/package-lock.json",
         ".graphhelm/observer-install.lock",
+        HIDDEN_NODE_CHILDREN_PATH,
     ] {
         if let Ok(meta) = std::fs::symlink_metadata(project.join(relative))
             && (meta.file_type().is_symlink()
@@ -244,6 +257,10 @@ fn write_script(spec: &Spec, project: &Path) -> std::io::Result<()> {
     safe_observer_target(project)?;
     super::atomic::atomic_write(&path, spec.script.as_bytes())?;
     if spec.id == "playwright" {
+        super::atomic::atomic_write(
+            &project.join(HIDDEN_NODE_CHILDREN_PATH),
+            HIDDEN_NODE_CHILDREN,
+        )?;
         super::atomic::atomic_write(&project.join(SCRIPT_DIR).join(DRIVER_NAME), DRIVER)?;
         super::atomic::atomic_write(&project.join(SCRIPT_DIR).join(JUDGE_NAME), JUDGE)?;
     }
@@ -393,12 +410,13 @@ pub(crate) enum Installed {
 
 /// The files an install may write in the project, reported back to the owner by name (#519):
 /// the result names each file by path; the project's own `package.json` is never among them (#2084).
-const TOUCHED: [&str; 6] = [
+const TOUCHED: [&str; 7] = [
     ".graphhelm/toolchain/package.json",
     ".graphhelm/toolchain/package-lock.json",
     ".graphhelm/toolchain/node_modules/@playwright/test/package.json",
     ".graphhelm/observers/journey_driver.mjs",
     ".graphhelm/observers/judge.mjs",
+    HIDDEN_NODE_CHILDREN_PATH,
     ".graphhelm/observers/playwright_observe.py",
 ];
 
@@ -813,6 +831,7 @@ mod tests {
                 {"path": ".graphhelm/toolchain/package.json", "change": "modified"},
                 {"path": ".graphhelm/observers/journey_driver.mjs", "change": "created"},
                 {"path": ".graphhelm/observers/judge.mjs", "change": "created"},
+                {"path": ".graphhelm/hidden-node-children.mjs", "change": "created"},
                 {"path": ".graphhelm/observers/playwright_observe.py", "change": "created"},
             ])
         );
@@ -828,7 +847,7 @@ mod tests {
         let browser = check(&PLAYWRIGHT, &project, &[home.join("cache")], false);
         assert_eq!(browser["status"], "missing");
         let missing = browser["missing"].as_array().expect("missing");
-        assert_eq!(missing.len(), 6, "{missing:?}");
+        assert_eq!(missing.len(), 7, "{missing:?}");
         assert!(missing.iter().any(|entry| {
             entry
                 .as_str()
@@ -862,6 +881,11 @@ mod tests {
                 .expect("written");
         assert!(written.contains("def observe("));
         assert_eq!(written, PLAYWRIGHT.script);
+        assert_eq!(
+            std::fs::read(project.join(HIDDEN_NODE_CHILDREN_PATH)).unwrap(),
+            HIDDEN_NODE_CHILDREN,
+            "the shipped driver launcher must be installed beside the observer directory"
+        );
         // Actual installed artifact, not source spelling: the companion must
         // match this binary and a stale companion must change read-only preview.
         let driver_path = project.join(SCRIPT_DIR).join("journey_driver.mjs");
@@ -892,6 +916,35 @@ mod tests {
                 .to_string()
                 .contains("playwright_observe.py"),
             "{browser}"
+        );
+    }
+
+    #[test]
+    fn an_old_observer_copy_without_the_shared_launcher_is_refreshed() {
+        let (_root, project, _home) = fixture();
+        std::fs::create_dir_all(project.join(SCRIPT_DIR)).unwrap();
+        std::fs::write(project.join(SCRIPT_DIR).join(DRIVER_NAME), DRIVER).unwrap();
+        std::fs::write(project.join(SCRIPT_DIR).join(JUDGE_NAME), JUDGE).unwrap();
+        assert_eq!(
+            super::super::journey_replay::observer_ready(&project)
+                .unwrap_err()
+                .0,
+            "replay.observer_missing",
+            "the pre-launcher observer copy must not be considered ready"
+        );
+
+        ensure_playwright_with(
+            &project,
+            Instant::now() + Duration::from_secs(60),
+            |_| {},
+            |_, _, _| Ok(Step::Exited(Some(0), String::new())),
+        )
+        .unwrap();
+
+        assert!(super::super::journey_replay::observer_ready(&project).is_ok());
+        assert_eq!(
+            std::fs::read(project.join(HIDDEN_NODE_CHILDREN_PATH)).unwrap(),
+            HIDDEN_NODE_CHILDREN
         );
     }
 

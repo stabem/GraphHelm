@@ -104,7 +104,7 @@ fn script_files(dir: &Path, out: &mut Vec<PathBuf>) {
             if !matches!(name.as_str(), "target" | "node_modules" | ".git") {
                 script_files(&path, out);
             }
-        } else if name.ends_with(".mjs") || name.ends_with(".js") {
+        } else if name.ends_with(".mjs") || name.ends_with(".js") || name.ends_with(".cjs") {
             out.push(path);
         }
     }
@@ -174,5 +174,25 @@ fn every_browser_launching_script_hides_the_browsers_console_window() {
         found.is_empty(),
         "use the shared hidden Node launcher:\n{}",
         found.join("\n")
+    );
+}
+
+#[test]
+fn the_guard_catches_a_commonjs_child_launch_without_the_shared_launcher() {
+    let root = std::env::temp_dir().join(format!("gh-nowindow-cjs-{}", std::process::id()));
+    for dir in ["tools", "docs/journeys", "adapters/model-gateway/tests"] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    std::fs::write(
+        root.join("tools/probe.cjs"),
+        "require('node:child_process').spawn('node');\n",
+    )
+    .unwrap();
+    let (launchers, found) = browser_launchers_without_the_hide(&root);
+    std::fs::remove_dir_all(&root).unwrap();
+    assert_eq!(launchers, 1);
+    assert!(
+        found.iter().any(|item| item.contains("probe.cjs bypasses")),
+        "{found:?}"
     );
 }

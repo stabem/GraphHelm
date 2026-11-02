@@ -995,16 +995,20 @@ class SessionHookTests(unittest.TestCase):
         process.stdin.flush()
         release = threading.Timer(3.0, RuntimeHandler.get_release.set)
         try:
-            self.assertTrue(RuntimeHandler.get_started.wait(timeout=deadline(3)))
+            # #2436: how long the hook takes to reach its GET is interpreter start and import time,
+            # which load stretches; it is not the contract. The wait only detects a hook that never
+            # asks (it failed once under load at deadline(3)). The contract is the hold below: a
+            # response 3 s after the GET, longer than the old 2.5 s socket budget, is still used.
+            self.assertTrue(RuntimeHandler.get_started.wait(timeout=deadline(30)))
             release.start()
             process.stdin.close()
             process.stdin = None
             # #2241: the 3 s hold is the test's own, not the hook's. Start the hook's budget at the
             # release, as every other hook test does; under a cold cargo build the state write
             # (fsync) alone took over 4 s and the hold had already spent half of deadline(6).
-            release.join(timeout=deadline(3) + 3.0)
+            release.join(timeout=deadline(30) + 3.0)
             self.assertTrue(RuntimeHandler.get_release.is_set())
-            stdout, stderr = process.communicate(timeout=deadline(6))
+            stdout, stderr = process.communicate(timeout=deadline(30))
         finally:
             release.cancel()
             RuntimeHandler.get_release.set()
@@ -1745,12 +1749,15 @@ class SessionHookTests(unittest.TestCase):
             "    return _start(self, *args, **kwargs)",
             "threading.Thread.start = _record")
         result = self.run_hook("end", host="codex")
+        # #2436: the spawn record is asserted BEFORE the timeout early return. Under load the hook can
+        # hit its 1 s watchdog and `timed_out` then ends the test, and a helper started before that
+        # point would go unnoticed (the break-once missed about 1 run in 20).
+        attempts = marker.read_text(encoding="utf-8").splitlines() if marker.exists() else []
+        self.assertEqual(attempts, [], "a Codex end started a helper")
         if self.timed_out(result, "end"):
             return
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("unobserved", result.stderr)
-        attempts = marker.read_text(encoding="utf-8").splitlines() if marker.exists() else []
-        self.assertEqual(attempts, [], "a Codex end started a helper")
         self.assertEqual(len([item for item in RuntimeHandler.requests if item[0] == "POST"]), 1)
         self.assertIs(json.loads(next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")).read_text())["delivery"]["delivered"], True)
         # The recorder works: a Claude end does start the helper, and the marker says so.
@@ -1759,6 +1766,40 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(claude.returncode, 0, claude.stderr)
         self.assertEqual(marker.read_text(encoding="utf-8").splitlines() if marker.exists() else [], ["helper-spawn"],
                          "the spawn recorder saw no helper start for a Claude end")
+
+    def test_a_codex_end_that_hits_its_watchdog_still_spawns_no_helper(self):
+        # #2436: the sibling of the test above for the path that one only reaches under load. The
+        # hook's state path hangs, so the 1 s Codex watchdog answers UNOBSERVED, which is the exact
+        # case where the early return used to hide a helper start. Same recorder: the START of the
+        # helper spawn thread, made in the hook's own thread before it can answer.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        marker = Path(self.temp.name) / "spawn-attempts.txt"
+        folder = Path(self.temp.name) / "hang-and-record"
+        folder.mkdir()
+        (folder / "sitecustomize.py").write_text("\n".join([
+            "import hashlib, sys, threading",
+            "_start = threading.Thread.start",
+            "def _record(self, *args, **kwargs):",
+            "    if self.name == 'graphhelm-helper-spawn':",
+            f"        open({str(marker)!r}, 'a').write('helper-spawn' + chr(10))",
+            "    return _start(self, *args, **kwargs)",
+            "threading.Thread.start = _record",
+            "def _hang(*args, **kwargs):",
+            "    threading.Event().wait(120)",
+            "if 'helper' not in sys.argv:  # the hang is in the hook process, not in a helper",
+            "    hashlib.sha256 = _hang",
+            "",
+        ]), encoding="utf-8")
+        self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(folder), self.env.get("PYTHONPATH")]))
+        codex = subprocess.run(
+            [sys.executable, str(SCRIPT), "end", "--host", "codex"],
+            input=json.dumps({"hook_event_name": "SessionEnd", "session_id": "session-123"}),
+            text=True, capture_output=True, env={**self.env, "GRAPHHELM_HOOK_FIRST_LINE": "1"},
+            timeout=deadline(6), check=False, creationflags=NO_WINDOW)
+        attempts = marker.read_text(encoding="utf-8").splitlines() if marker.exists() else []
+        self.assertEqual(attempts, [], "a Codex end started a helper")
+        self.assertEqual(codex.returncode, 0, codex.stderr)
+        self.assertIn("end unobserved (no answer 1 s after the first line)", codex.stderr)
 
     def test_a_stale_helper_is_stopped_only_when_its_identity_matches(self):
         # #2344: a PID alone proves nothing, because the system reuses PIDs. A record names the PID

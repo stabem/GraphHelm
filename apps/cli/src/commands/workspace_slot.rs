@@ -134,12 +134,38 @@ pub(crate) struct Grant {
     pub token: String,
 }
 
+/// The caller holds the admission lock across reading, quarantine and any later write.
 fn read_grants(admission: &Path) -> Result<Vec<Grant>, String> {
-    let text = match std::fs::read_to_string(admission.join(GRANTS_FILE)) {
-        Ok(text) => text,
+    let path = admission.join(GRANTS_FILE);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(_) => return Err("the build admission ledger could not be read".to_owned()),
+        Err(_) => {
+            return Err(format!(
+                "the build admission ledger could not be read ({})",
+                path.display()
+            ));
+        }
     };
+    // A NUL-only ledger may be evidence of a torn write. It records no run, so quarantine it and
+    // start empty; a blank ledger without NUL is the normal state after the last release.
+    if bytes
+        .iter()
+        .all(|byte| *byte == 0 || byte.is_ascii_whitespace())
+    {
+        if bytes.contains(&0) {
+            let warning = quarantine_torn_ledger(admission, &path)?;
+            eprintln!("{warning}");
+        }
+        return Ok(Vec::new());
+    }
+    let malformed = || {
+        format!(
+            "the build admission ledger is malformed ({}); move it aside to start from an empty one",
+            path.display()
+        )
+    };
+    let text = String::from_utf8(bytes).map_err(|_| malformed())?;
     text.lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| {
@@ -155,13 +181,77 @@ fn read_grants(admission: &Path) -> Result<Vec<Grant>, String> {
         })
         .collect::<Option<Vec<_>>>()
         // A ledger it cannot parse is one it cannot sum: refuse rather than guess the total.
-        .ok_or_else(|| "the build admission ledger is malformed".to_owned())
+        .ok_or_else(malformed)
+}
+
+/// Moves a NUL-filled ledger to `granted.corrupt-<UTC timestamp>` and returns one warning naming
+/// both paths. A failed move returns an error and leaves the evidence untouched.
+fn quarantine_torn_ledger(admission: &Path, ledger: &Path) -> Result<String, String> {
+    let aside = admission.join(format!(
+        "{GRANTS_FILE}.corrupt-{}",
+        utc_stamp(u64::try_from(unix_now() / 1_000_000_000).unwrap_or(0))
+    ));
+    move_corrupt_ledger(ledger, &aside)
+}
+
+fn move_corrupt_ledger(ledger: &Path, aside: &Path) -> Result<String, String> {
+    match std::fs::rename(ledger, aside) {
+        Ok(()) => Ok(format!(
+            "graphhelm: the build admission ledger {} held only NUL and whitespace bytes (possibly a torn write); moved it to {} and started from an empty ledger",
+            ledger.display(),
+            aside.display()
+        )),
+        Err(error) => Err(format!(
+            "the build admission ledger {} held only NUL and whitespace bytes but could not be moved to {} ({error}); it was not changed",
+            ledger.display(),
+            aside.display()
+        )),
+    }
+}
+
+/// `YYYYMMDDTHHMMSSZ` for a Unix time in seconds (UTC, proleptic Gregorian).
+fn utc_stamp(seconds: u64) -> String {
+    let days = (seconds / 86_400) as i64;
+    let rest = seconds % 86_400;
+    // Howard Hinnant's civil-from-days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}{month:02}{day:02}T{:02}{:02}{:02}Z",
+        rest / 3_600,
+        rest % 3_600 / 60,
+        rest % 60
+    )
 }
 
 /// #1796: the jobs the admission ledger has granted, as recorded (a run that died without
 /// releasing still counts until the next admission reaps it).
 pub(crate) fn granted_jobs(admission: &Path) -> Result<u32, String> {
-    Ok(read_grants(admission)?.iter().map(|grant| grant.jobs).sum())
+    if !admission.exists() {
+        return Ok(0);
+    }
+    let lock = open_build_admission(admission)?;
+    lock.lock()
+        .map_err(|_| "the build admission lock could not be locked".to_owned())?;
+    let result = read_grants(admission).map(|grants| grants.iter().map(|grant| grant.jobs).sum());
+    let unlock = lock.unlock();
+    match (result, unlock) {
+        (Ok(jobs), Ok(())) => Ok(jobs),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(_)) => Err("the build admission lock could not be unlocked".to_owned()),
+    }
 }
 
 fn write_grants(admission: &Path, grants: &[Grant]) -> Result<(), String> {
@@ -170,9 +260,18 @@ fn write_grants(admission: &Path, grants: &[Grant]) -> Result<(), String> {
         .map(|grant| format!("{} {} {}\n", grant.pid, grant.jobs, grant.token))
         .collect();
     let staged = admission.join(format!("{GRANTS_FILE}.{}.tmp", std::process::id()));
-    std::fs::write(&staged, text)
-        .and_then(|()| std::fs::rename(&staged, admission.join(GRANTS_FILE)))
-        .map_err(|_| "the build admission ledger could not be written".to_owned())
+    // Persist the staged data before publishing it with the rename.
+    let result = (|| {
+        let mut file = File::create(&staged)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&staged, admission.join(GRANTS_FILE))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&staged);
+    }
+    result.map_err(|_| "the build admission ledger could not be written".to_owned())
 }
 
 fn grant_token() -> String {

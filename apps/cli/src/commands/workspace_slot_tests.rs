@@ -763,6 +763,246 @@ fn a_dead_holder_is_reclaimed_and_a_malformed_ledger_refuses() {
     assert!(super::try_grant(&admission, &lock, 1, |_| true).is_err());
 }
 
+/// A ledger left as a full-length file of NUL bytes (or empty) records no run:
+/// it reads as empty and admission carries on, instead of refusing every lane on the machine. A
+/// ledger with real garbage still refuses, and the error names the file so the operator can move it
+/// aside. Cost: none.
+#[test]
+fn a_torn_ledger_recovers_and_concurrent_admissions_remain_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("authority");
+    let lock = open_build_admission(&admission).unwrap();
+    let ledger = admission.join("granted");
+
+    let asides = || -> Vec<String> {
+        std::fs::read_dir(&admission)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("granted.corrupt-"))
+            .collect()
+    };
+    // Blank without a NUL is the normal released state: read as empty, nothing moved aside.
+    for blank in [Vec::new(), b"\n  \n".to_vec()] {
+        std::fs::write(&ledger, &blank).unwrap();
+        assert_eq!(super::granted_jobs(&admission), Ok(0), "{blank:?}");
+    }
+    assert!(asides().is_empty(), "{:?}", asides());
+
+    // A NUL-filled ledger reads as empty, is kept as evidence, and admission carries on.
+    for torn in [vec![0_u8; 36], b"\0\0\n\0".to_vec()] {
+        std::fs::write(&ledger, &torn).unwrap();
+        assert_eq!(super::granted_jobs(&admission), Ok(0), "{torn:?}");
+        let moved = asides();
+        assert_eq!(
+            moved.len(),
+            1,
+            "the torn ledger is moved aside once: {moved:?}"
+        );
+        let stamp = moved[0].trim_start_matches("granted.corrupt-");
+        let stamped = chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%dT%H%M%SZ")
+            .expect("the quarantine filename carries a UTC timestamp")
+            .and_utc()
+            .timestamp();
+        let now = i64::try_from(super::unix_now() / 1_000_000_000).unwrap();
+        assert!(now.abs_diff(stamped) <= 2, "{stamp}");
+        assert_eq!(std::fs::read(admission.join(&moved[0])).unwrap(), torn);
+        let granted = super::try_grant(&admission, &lock, 4, |_| true).unwrap();
+        let Admission::Granted(token) = granted else {
+            panic!("a torn ledger must not block admission: {granted:?}")
+        };
+        let text = std::fs::read_to_string(&ledger).unwrap();
+        assert!(
+            !text.contains('\0') && text.lines().count() == 1,
+            "{text:?}"
+        );
+        super::release_grant(&admission, &lock, &token);
+        std::fs::remove_file(admission.join(&moved[0])).unwrap();
+    }
+
+    std::fs::write(&ledger, b"\0\0 not a ledger line\n").unwrap();
+    let error = super::granted_jobs(&admission).unwrap_err();
+    assert!(error.contains("malformed"), "{error}");
+    assert!(error.contains(&ledger.display().to_string()), "{error}");
+    std::fs::write(&ledger, [0xff_u8, 0xfe, b'\n']).unwrap();
+    assert!(super::granted_jobs(&admission).is_err());
+
+    // A simultaneous burst must keep every live grant, not just a parseable last writer.
+    std::fs::write(admission.join("jobs-budget"), b"8\n").unwrap();
+    std::fs::write(&ledger, b"").unwrap();
+    for _ in 0..25 {
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                let admission = admission.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let lock = open_build_admission(&admission).unwrap();
+                    barrier.wait();
+                    super::try_grant(&admission, &lock, 1, |_| true)
+                        .expect("concurrent admission must parse the complete ledger")
+                })
+            })
+            .collect();
+        let tokens: Vec<_> = workers
+            .into_iter()
+            .map(|worker| match worker.join().unwrap() {
+                Admission::Granted(token) => token,
+                decision => panic!("the eight-job budget must admit every writer: {decision:?}"),
+            })
+            .collect();
+        let bytes = std::fs::read(&ledger).unwrap();
+        assert!(!bytes.contains(&0), "a NUL byte in the ledger: {bytes:?}");
+        assert_eq!(super::granted_jobs(&admission), Ok(8));
+        for token in tokens {
+            super::release_grant(&admission, &lock, &token);
+        }
+        assert_eq!(super::granted_jobs(&admission), Ok(0));
+    }
+}
+
+#[test]
+fn failed_ledger_rename_does_not_publish_a_temporary_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("authority");
+    open_build_admission(&admission).unwrap();
+    let ledger = admission.join("granted");
+    std::fs::create_dir(&ledger).unwrap();
+
+    let result = super::write_grants(
+        &admission,
+        &[super::Grant {
+            pid: 7,
+            jobs: 1,
+            token: "test-token".to_owned(),
+        }],
+    );
+
+    assert!(result.is_err());
+    assert!(ledger.is_dir());
+    assert!(
+        !admission
+            .join(format!("granted.{}.tmp", std::process::id()))
+            .exists()
+    );
+}
+
+fn run_ledger_quarantine_probe(mode: &str, admission: &Path) -> std::process::Output {
+    std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "commands::workspace_slot::workspace_slot_tests::ledger_quarantine_probe_child",
+            "--nocapture",
+        ])
+        .env("GRAPHHELM_TEST_LEDGER_QUARANTINE_MODE", mode)
+        .env("GRAPHHELM_TEST_LEDGER_QUARANTINE_DIR", admission)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn nul_ledger_warning_names_both_files_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("authority");
+    open_build_admission(&admission).unwrap();
+    let ledger = admission.join("granted");
+    let bytes = vec![0_u8; 36];
+    std::fs::write(&ledger, &bytes).unwrap();
+
+    let output = run_ledger_quarantine_probe("recover", &admission);
+    let captured = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{captured}");
+    let warnings: Vec<_> = captured
+        .lines()
+        .filter(|line| line.contains("graphhelm: the build admission ledger"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{captured}");
+    assert!(
+        warnings[0].contains(&ledger.display().to_string()),
+        "{captured}"
+    );
+    assert!(warnings[0].contains("granted.corrupt-"), "{captured}");
+    assert!(
+        warnings[0].contains("started from an empty ledger"),
+        "{captured}"
+    );
+    let aside = std::fs::read_dir(&admission)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("granted.corrupt-")
+        })
+        .expect("the warning's evidence file exists");
+    assert_eq!(std::fs::read(aside).unwrap(), bytes);
+}
+
+#[test]
+fn failed_quarantine_returns_a_path_error_and_preserves_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("authority");
+    open_build_admission(&admission).unwrap();
+    let ledger = admission.join("granted");
+    let bytes = vec![0_u8; 36];
+    std::fs::write(&ledger, &bytes).unwrap();
+    let now = i64::try_from(super::unix_now() / 1_000_000_000).unwrap();
+    // Make the target occupied across the brief interval in which the probe runs.
+    for seconds in now..now + 120 {
+        let stamp = chrono::DateTime::<chrono::Utc>::from_timestamp(seconds, 0)
+            .unwrap()
+            .format("%Y%m%dT%H%M%SZ");
+        std::fs::create_dir(admission.join(format!("granted.corrupt-{stamp}"))).unwrap();
+    }
+
+    let output = run_ledger_quarantine_probe("refuse", &admission);
+    let captured = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{captured}");
+    assert!(captured.contains("could not be moved"), "{captured}");
+    assert!(
+        captured.contains(&ledger.display().to_string()),
+        "{captured}"
+    );
+    assert_eq!(std::fs::read(&ledger).unwrap(), bytes);
+}
+
+#[test]
+#[ignore = "spawned by the quarantine-output tests to inspect the real process streams"]
+fn ledger_quarantine_probe_child() {
+    let mode = std::env::var("GRAPHHELM_TEST_LEDGER_QUARANTINE_MODE")
+        .expect("the parent test sets the probe mode");
+    let admission = std::path::PathBuf::from(
+        std::env::var_os("GRAPHHELM_TEST_LEDGER_QUARANTINE_DIR")
+            .expect("the parent test sets the scratch admission directory"),
+    );
+    let ledger = admission.join("granted");
+    let lock = open_build_admission(&admission).unwrap();
+    match mode.as_str() {
+        "recover" => {
+            assert!(matches!(
+                super::try_grant(&admission, &lock, 1, |_| true).unwrap(),
+                Admission::Granted(_)
+            ));
+        }
+        "refuse" => {
+            let error = super::try_grant(&admission, &lock, 1, |_| true).unwrap_err();
+            assert!(error.contains("could not be moved"), "{error}");
+            assert!(error.contains(&ledger.display().to_string()), "{error}");
+            println!("{error}");
+        }
+        _ => panic!("unsupported probe mode: {mode}"),
+    }
+}
+
 /// #1254 (gh-claude-opt-1's review of #1256): an update that is waiting for the machine to drain
 /// is not starved by a steady stream of builds. While its marker names a live process, no new
 /// grant is made even with the whole budget free; once it withdraws (it took the lock, or gave

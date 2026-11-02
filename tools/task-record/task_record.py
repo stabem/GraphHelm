@@ -1067,6 +1067,10 @@ def report(code, signal_id, reply):
     for d in reply.get("diagnostics", []):
         if d.get("severity") == "error":
             print(f"  {d.get('code')} {d.get('path')}: {d.get('message')}")
+    # #2384: an admitted record can carry advisory warnings (a second reviewer on one head).
+    data = reply.get("data")
+    for warning in (data.get("warnings") or []) if isinstance(data, dict) else []:
+        print(f"task_record: warning: {warning}", file=sys.stderr)
     return code
 
 

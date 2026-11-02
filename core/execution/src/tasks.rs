@@ -1468,6 +1468,8 @@ pub fn is_unclaimed_critic(task: &TaskState) -> bool {
 /// #2384: the reviewer an open slice already has on this PR head, when it is not `reviewer`.
 /// A second `task.review_assigned` on the same head is still admitted (a handover stays possible);
 /// the Runtime only warns, naming the first. A new head or the same reviewer returns `None`.
+/// With several open slices on that head, the newest one naming another reviewer answers, so the
+/// result does not depend on the fold's slice order.
 #[must_use]
 pub fn other_reviewer_on_head<'a>(
     tasks: &'a [TaskState],
@@ -1483,8 +1485,14 @@ pub fn other_reviewer_on_head<'a>(
                 .as_deref()
                 .is_some_and(|head| same_head(head, head_sha))
         })
-        .find_map(|task| task.current_reviewer.as_deref())
-        .filter(|current| *current != reviewer)
+        .filter_map(|task| {
+            task.current_reviewer
+                .as_deref()
+                .filter(|current| *current != reviewer)
+                .map(|current| (task.last_sequence, current))
+        })
+        .max_by_key(|(sequence, _)| *sequence)
+        .map(|(_, current)| current)
 }
 
 #[derive(Clone, Debug)]

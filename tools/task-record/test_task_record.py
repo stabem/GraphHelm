@@ -110,6 +110,26 @@ class FakeRuntime(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class ReportWarningsTest(unittest.TestCase):
+    """#2384: an admitted record's data.warnings reaches the lane on stderr; none, nothing extra."""
+
+    def test_admitted_record_prints_its_warnings_to_stderr(self):
+        out, err = io.StringIO(), io.StringIO()
+        reply = {"ok": True, "data": {"warnings": ["PR #9 head abc1234 already has reviewer rev-a; rev-b is now assigned too"]}}
+        with redirect_stdout(out), redirect_stderr(err):
+            code = task_record.report(0, "sig-1", reply)
+        self.assertEqual(code, 0)
+        self.assertEqual(out.getvalue(), "recorded sig-1\n")
+        self.assertIn("task_record: warning: PR #9 head abc1234 already has reviewer rev-a", err.getvalue())
+
+    def test_reply_without_warnings_prints_nothing_on_stderr(self):
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            task_record.report(0, "sig-2", {"ok": True, "data": {"decision": "accepted"}})
+            task_record.report(0, "sig-3", {"ok": True, "data": None})
+        self.assertEqual(err.getvalue(), "")
+
+
 class TaskRecordTest(unittest.TestCase):
     FIXED_NOW = datetime_module.datetime(2026, 10, 13, 12, 0, tzinfo=datetime_module.timezone.utc)
 

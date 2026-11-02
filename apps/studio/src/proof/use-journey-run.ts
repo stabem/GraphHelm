@@ -18,8 +18,11 @@ export interface JourneyRunState {
   /** What the Runtime printed while preparing and running, oldest first. */
   log: string[];
   history: JourneyPastRun[];
-  /** #1956: the earlier version's run shown while the current version has none, else `null`. */
+  /** #1956: the earlier version's run shown while the current version has none, else `null`.
+   * #2442: while an earlier run is being viewed (`viewing`), that run. */
   earlier: JourneyPastRun | null;
+  /** #2442: the earlier run asked for with `viewing`, once the history has it; else `null`. */
+  viewed: JourneyPastRun | null;
   error: string | null;
   starting: boolean;
   /** Run; with a digest, the owner's Confirm of the commands shown under that digest (#1909). */
@@ -32,7 +35,7 @@ function message(error: unknown): string {
 
 /** The selected journey's run: read on open, started by Run, read again while it runs, and its
  * frames fetched with the session's bearer header and shown through object URLs. */
-export function useJourneyRun(runtime: Runtime, flowId: string, executionId: string | null, onFinished: () => void, onRun?: (run: JourneyRun) => void): JourneyRunState {
+export function useJourneyRun(runtime: Runtime, flowId: string, executionId: string | null, onFinished: () => void, onRun?: (run: JourneyRun) => void, viewing: string | null = null): JourneyRunState {
   const [run, setRun] = useState<JourneyRun | null>(null);
   const [frames, setFrames] = useState<Record<string, string>>({});
   const [log, setLog] = useState<string[]>([]);
@@ -129,24 +132,35 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     }
   }, [run, runtime, flowId, attempt]);
 
-  // #1956: the earlier version's frames, read by its run id, under the same slots as a run's.
-  const earlier = earlierVersion(run, history);
+  // #1956: the earlier version's frames, read by its run id. #2442: or the earlier run being viewed.
+  // Each run's frames sit under their own slots, so moving from one past run to another never shows
+  // the first one's frame for a screen the second kept none of.
+  const viewed = viewing === null ? null : history.find((past) => past.run === viewing) ?? null;
+  const earlier = viewed ?? earlierVersion(run, history);
   useEffect(() => {
     if (earlier === null) return;
-    for (const [screen, seen] of Object.entries(earlier.screens ?? {})) {
-      if (seen.frame !== true) continue;
+    const fetchFrame = (slot: string, screen: string, viewport: "mobile" | undefined) => {
       const key = `earlier:${earlier.run}`;
-      const held = urls.current.get(screen);
-      if (held?.key === key) continue;
-      urls.current.set(screen, { key, url: held?.url ?? null });
-      runtime.journeyPastFrame(flowId, earlier.run, screen).then((blob) => {
-        const entry = urls.current.get(screen);
+      const held = urls.current.get(slot);
+      if (held?.key === key) return;
+      urls.current.set(slot, { key, url: held?.url ?? null });
+      runtime.journeyPastFrame(flowId, earlier.run, screen, viewport).then((blob) => {
+        const entry = urls.current.get(slot);
         if (blob === null || entry === undefined || entry.key !== key) return;
         const url = URL.createObjectURL(blob);
         if (entry.url !== null) URL.revokeObjectURL(entry.url);
         entry.url = url;
-        setFrames((before) => ({ ...before, [screen]: url }));
-      }, () => { urls.current.delete(screen); });
+        setFrames((before) => ({ ...before, [slot]: url }));
+      }, () => { urls.current.delete(slot); });
+    };
+    for (const [screen, seen] of Object.entries(earlier.screens ?? {})) {
+      if (seen.frame === true && seen.kind !== "text") fetchFrame(pastSlot(earlier.run, screen), screen, undefined);
+    }
+    // The mobile pass, when the Runtime kept and sent it.
+    if (earlier.viewportsPlanned?.[0] !== "mobile") {
+      for (const [screen, seen] of Object.entries(earlier.viewports?.mobile?.screens ?? {})) {
+        if (seen.frame === true && seen.kind !== "text") fetchFrame(pastSlot(earlier.run, `mobile:${screen}`), screen, "mobile");
+      }
     }
   }, [earlier, runtime, flowId]);
 
@@ -167,8 +181,13 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     setAttempt((n) => n + 1);
   }, [drop]);
 
-  const split = splitFrames(frames, run?.viewportsPlanned?.[0]);
-  return { run, frames: split.web, mobileFrames: split.mobile, log, history, earlier, error, starting, start };
+  const own = Object.fromEntries(Object.entries(frames).filter(([slot]) => !slot.startsWith(PAST)));
+  const split = splitFrames(own, run?.viewportsPlanned?.[0]);
+  // A viewed run shows its own frames only; an earlier version's frames show under the run's (none yet).
+  const past = earlier === null ? { web: {}, mobile: {} } : splitFrames(pastFrames(frames, earlier.run), earlier.viewportsPlanned?.[0]);
+  const web = viewed !== null ? past.web : { ...past.web, ...split.web };
+  const mobile = viewed !== null ? past.mobile : { ...past.mobile, ...split.mobile };
+  return { run, frames: web, mobileFrames: mobile, log, history, earlier, viewed, error, starting, start };
 }
 
 /** #1777/#1878: a run's fetched frames by viewport. The top level is the run's first viewport and
@@ -182,4 +201,15 @@ export function splitFrames(slots: Record<string, string>, first: "web" | "mobil
     else top[slot] = url;
   }
   return first === "mobile" ? { web: {}, mobile: { ...later, ...top } } : { web: top, mobile: later };
+}
+
+const PAST = "past:";
+/** #2442: a past run's slot for a screen (`mobile:<screen>` for its mobile pass). */
+function pastSlot(run: string, screen: string): string {
+  return `${PAST}${run}:${screen}`;
+}
+/** The frames of one past run, with the run's prefix taken off the slot. */
+function pastFrames(slots: Record<string, string>, run: string): Record<string, string> {
+  const prefix = `${PAST}${run}:`;
+  return Object.fromEntries(Object.entries(slots).filter(([slot]) => slot.startsWith(prefix)).map(([slot, url]) => [slot.slice(prefix.length), url]));
 }

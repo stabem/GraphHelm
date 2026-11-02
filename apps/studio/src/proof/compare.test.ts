@@ -59,3 +59,14 @@ describe("earlierRun", () => {
     expect(earlierRun(runs, { state: "ready", ranAt: "c" }, "missing")).toBeNull();
   });
 });
+
+// #2442: a past run on screen is compared with the run before it, not with the newest other one.
+describe("the run to compare a viewed past run with", () => {
+  const past = (run: string): JourneyPastRun => ({ run, ranAt: `2026-11-0${run}T00:00:00Z`, screens: { list: { frame: true } } });
+  const history = [past("3"), past("2"), past("1")];
+  it("is the next older run that kept a frame", () => {
+    expect(earlierRun(history, null, "list", history[1])?.run).toBe("1");
+    expect(earlierRun(history, null, "list", history[2])).toBeNull();
+    expect(earlierRun(history, null, "list")?.run).toBe("3");
+  });
+});

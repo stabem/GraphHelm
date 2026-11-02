@@ -19,3 +19,14 @@ describe("route", () => {
     expect(parseRoute("?journey=checkout&view=lanes").view).toBe("lanes");
   });
 });
+
+// #2442: an earlier run of the opened journey rides in the URL, so it can be linked and reloaded.
+describe("the past run in the URL", () => {
+  it("is read and written only beside a journey, and only as a run id", () => {
+    expect(parseRoute("?journey=buy&past=00000000000000001000").past).toBe("00000000000000001000");
+    expect(parseRoute("?past=00000000000000001000").past).toBeUndefined();
+    expect(parseRoute("?journey=buy&past=../x").past).toBeUndefined();
+    expect(routeSearch({ project: null, run: null, view: "proof", journey: "buy", past: "00000000000000001000" })).toBe("?view=proof&journey=buy&past=00000000000000001000");
+    expect(routeSearch({ project: null, run: null, view: "proof", journey: null, past: "00000000000000001000" })).toBe("?view=proof");
+  });
+});

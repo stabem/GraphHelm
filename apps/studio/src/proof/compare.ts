@@ -12,8 +12,10 @@ export const CHANGE_THRESHOLD = 48;
 
 /** The earlier run a step is compared with: the newest finished run, other than the one on screen,
  * that kept a frame for this step's screen. `null` when no earlier run did. */
-export function earlierRun(history: JourneyPastRun[], current: JourneyRun | null, screen: string): JourneyPastRun | null {
-  return history.find((past) =>
+export function earlierRun(history: JourneyPastRun[], current: JourneyRun | null, screen: string, before?: JourneyPastRun | null): JourneyPastRun | null {
+  // #2442: for a past run being viewed, the run to compare with is the one before it.
+  const older = before == null ? history : history.slice(history.indexOf(before) + 1);
+  return older.find((past) =>
     past.screens?.[screen]?.frame === true
     && !(current?.ranAt !== undefined && past.ranAt === current.ranAt)) ?? null;
 }

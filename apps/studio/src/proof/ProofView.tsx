@@ -13,7 +13,7 @@ import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./
 import { askedWhen } from "../lanes/asked";
 import { OWNER } from "../runtime/client";
 import { clearRunAllBatch, isRunAllRunId, makeRunAllBatch, readRunAllBatch, reconcileRunAllJourney, RunAllIdentityFailure, RunAllReadFailure, RUN_ALL_TIMEOUT_MS, runAllUntil, runAllViewIsCurrent, updateRunAllJourney, writeRunAllBatch, type RunAllBatch, type RunAllJourneyState, type RunAllReason } from "./run-all";
-import { countSteps, failsOnlyOn, waitsForFrame, staleCountsText, stepStatusText, isHeld, isWaitingReview, journeyKind, journeyScore, journeySteps, lastRunChip, historyChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
+import { countSteps, failsOnlyOn, outputLines, waitsForFrame, staleCountsText, stepStatusText, isHeld, isWaitingReview, journeyKind, journeyScore, journeySteps, lastRunChip, historyChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 import { Empty, Loading, ReadFailure } from "../states/ViewState";
 import { When } from "../time/Stamp";
@@ -33,6 +33,10 @@ interface ProofViewProps {
   initial?: string | null;
   /** The owner picked a journey: the URL keeps it, so a Proof view opened again lands on it. */
   onPicked?: (id: string) => void;
+  /** #2442: the earlier run of the opened journey a `?past=` link names; `null` = the latest run. */
+  initialPast?: string | null;
+  /** #2442: the owner opened (or left) an earlier run: the URL keeps it, so it can be linked and reloaded. */
+  onPast?: (run: string | null) => void;
 }
 
 
@@ -85,7 +89,7 @@ export function runAllJourneyNotice(journey: RunAllJourneyState | undefined, rea
 
 /** The Proof region (docs/design/studio/Proof.dc.html): the journeys column, then the selected
  * journey's run bar, console, step grid and the selected step's compare and Action panel. */
-export function ProofView({ projectKey, runtime, journeys, error, executionId, onRan, initial = null, onPicked }: ProofViewProps) {
+export function ProofView({ projectKey, runtime, journeys, error, executionId, onRan, initial = null, onPicked, initialPast = null, onPast }: ProofViewProps) {
   // The journey a deep link named (`studio open --journey`), until the owner picks another.
   const [picked, setPickedState] = useState<string | null>(initial);
   const setPicked = (id: string) => { setPickedState(id); onPicked?.(id); };
@@ -141,7 +145,7 @@ export function ProofView({ projectKey, runtime, journeys, error, executionId, o
       <JourneysColumn projectKey={projectKey} runtime={runtime} journeys={journeys} selected={selected?.id ?? null} executionId={executionId} onPick={setPicked} onStarted={started} onObserved={observedRun} onRan={onRan} live={live} />
       {selected === null
         ? <div className="proof-main"><Empty title="No journeys yet" hint="This project has no journeys yet. A journey appears here once one is drafted for a request." /></div>
-        : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} executionId={executionId} onRan={onRan} onRun={(run) => setLive((before) => ({ ...before, [selected.id]: run }))} onGone={() => setLive((before) => afterPanelGone(before, selected.id))} />}
+        : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} initialPast={selected.id === initial ? initialPast : null} onPast={onPast} executionId={executionId} onRan={onRan} onRun={(run) => setLive((before) => ({ ...before, [selected.id]: run }))} onGone={() => setLive((before) => afterPanelGone(before, selected.id))} />}
     </section>
   );
 }
@@ -625,29 +629,36 @@ function viewportLine(step: Step, stale: boolean) {
   );
 }
 
-function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: { runtime: Runtime; flow: JourneyFlow; executionId: string | null; onRan: () => void; onRun: (run: JourneyRun) => void; onGone: () => void }) {
-  const { run, frames, mobileFrames, log, history, earlier, error, starting, start } = useJourneyRun(runtime, flow.id, executionId, onRan, onRun);
+export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone, initialPast = null, onPast }: { runtime: Runtime; flow: JourneyFlow; executionId: string | null; onRan: () => void; onRun: (run: JourneyRun) => void; onGone: () => void; initialPast?: string | null; onPast?: (run: string | null) => void }) {
+  // #2442: the earlier run on screen (its history id), else the latest or live run.
+  const [viewing, setViewing] = useState<string | null>(initialPast);
+  const view = (id: string | null) => { setViewing(id); onPast?.(id); };
+  const { run, frames, mobileFrames, log, history, earlier, viewed, error, starting, start } = useJourneyRun(runtime, flow.id, executionId, onRan, onRun, viewing);
   const [showLog, setShowLog] = useState(false);
   // #1914: a panel that goes away (another journey picked) stops reporting; its card must not stay "running".
   useEffect(() => onGone, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [picked, setPicked] = useState<number | null>(null);
   // #1956: with no run of the current version, the earlier version's run is shown, marked stale.
-  const stale = earlier !== null && !starting;
-  const steps = journeySteps(flow, stale ? pastAsRun(earlier) : run);
+  const stale = earlier !== null && viewed === null && !starting;
+  // #2442: a viewed earlier run is read as a finished run of its own: its steps, frames and results, never the live ones.
+  const shown = viewed !== null ? pastAsRun(viewed) : stale ? pastAsRun(earlier) : run;
+  const steps = journeySteps(flow, shown);
   const counts = countSteps(steps);
   const busy = starting || run?.state === "running";
   const status = runStatus(run, starting);
-  const said = stale ? CHANGED : verdict(run);
+  const said = stale ? CHANGED : verdict(shown);
   const selected = steps.find((step) => step.n === picked) ?? steps.find((step) => step.status === "failed")
     // #1912: a command flow opens on its first command, not on the start screen it never observes.
     ?? steps.find((step) => step.status !== "precondition") ?? steps[0] ?? null;
   const frame = selected === null ? undefined : frames[selected.screen];
   // #1878: a mobile-only run has no web frame; its step thumbnail is the mobile one.
   const thumb = (screen: string): string | undefined => frames[screen] ?? mobileFrames[screen];
-  const finished = run?.state === "ready";
+  const finished = shown?.state === "ready";
   // #1298: a failed run says where and why, above the console; its Send to fix moves into that alert.
-  const failure = busy || stale ? null : failureNotice(run, steps);
-  const fix = run !== null && offersFix(run) ? <SendToFix key={fixRequestId(flow.id, run)} runtime={runtime} flow={flow} run={run} steps={steps} executionId={executionId} /> : null;
+  const failure = (busy && viewed === null) || stale ? null : failureNotice(shown, steps);
+  // #2442: an earlier run's console is what the Runtime kept of it; the live run's is what it printed so far.
+  const consoleLines = viewed === null ? log : [...outputLines(shown), shown?.launchLog?.tail, shown?.driverLog?.tail].filter((line): line is string => typeof line === "string" && line.trim() !== "");
+  const fix = viewed === null && run !== null && offersFix(run) ? <SendToFix key={fixRequestId(flow.id, run)} runtime={runtime} flow={flow} run={run} steps={steps} executionId={executionId} /> : null;
   return (
     <div className="proof-main">
       <section aria-label="Journey run" className="journey-run">
@@ -665,7 +676,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
         <div className="run-bar">
           {finished && <span className="run-score">{counts.passed} passed · {counts.failed} failed</span>}
           {finished && run?.kind !== "replay" && <span className="preview-tag">Preview — not proof</span>}
-          <button type="button" className="b act" disabled={busy} onClick={() => { setPicked(null); start(); }}>
+          <button type="button" className="b act" disabled={busy} onClick={() => { setPicked(null); view(null); start(); }}>
             {busy ? "Running…" : run === null || run.state === "none" ? "Run" : "Run again"}
           </button>
           {busy && (
@@ -678,19 +689,34 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           {status !== null && <span role="status" aria-label={status.name} className="run-status"><span className="pulse" aria-hidden="true" />{status.text}</span>}
           {said !== null && <span role="status" aria-label={said.split(" · ")[0]} className="run-verdict" title={when(run?.ranAt).full || undefined}>{said}</span>}
           {stale && <span className="run-note stale-note">Results and frames from the earlier version ({earlier.ranAt ? when(earlier.ranAt).text : earlier.run}). Run to prove the current version.</span>}
-          {(busy || log.length > 0) && (
+          {(busy || log.length > 0 || viewed !== null) && (
             <button type="button" className="b ghost" aria-expanded={showLog} onClick={() => setShowLog(!showLog)}>{showLog ? "Hide log" : "Show log"}</button>
           )}
         </div>
         {failure !== null && <FailureAlert notice={failure} fix={fix} />}
         {showLog && (
-          <pre role="log" aria-label="Run console" className="run-log">{log.length > 0 ? log.join("\n") : busy ? "Waiting for the Runtime's first line…" : NO_LOG}</pre>
+          <pre role="log" aria-label="Run console" className="run-log">{consoleLines.length > 0 ? consoleLines.join("\n") : busy && viewed === null ? "Waiting for the Runtime's first line…" : NO_LOG}</pre>
+        )}
+        {viewed !== null && (
+          // #2442: an earlier run is on screen; the latest or live run is one click away.
+          <p role="status" className="viewing-past">
+            <span>Showing the run of {viewed.ranAt ? when(viewed.ranAt).full || viewed.run : viewed.run}{busy ? "; a run is live now" : ""}.</span>
+            <button type="button" className="b ghost" onClick={() => view(null)}>{busy ? "Show the live run" : "Back to the latest run"}</button>
+          </p>
+        )}
+        {viewing !== null && viewed === null && history.length > 0 && (
+          <p role="status" className="viewing-past">
+            <span>That run is no longer in this journey's history.</span>
+            <button type="button" className="b ghost" onClick={() => view(null)}>{busy ? "Show the live run" : "Back to the latest run"}</button>
+          </p>
         )}
         {history.length > 0 && (
           <span className="run-history" role="group" aria-label="History">
             <span className="section-label">HISTORY</span>
             {history.map((past, index) => {
-              const chip = historyChip(past, stale); return <span key={past.run} className={`history-chip${index === 0 ? " newest" : ""}`} title={chip.label}><b className={chip.tone}>{chip.mark}</b>{chip.tone === "idle" ? ` ${chip.label}` : ""} {past.ranAt ? <When at={past.ranAt} /> : past.run}</span>;
+              const chip = historyChip(past, stale);
+              const on = viewed?.run === past.run;
+              return <button type="button" key={past.run} aria-pressed={on} aria-label={`Open the run of ${past.ranAt ? when(past.ranAt).full || past.run : past.run}, ${chip.label}`} className={`b history-chip${index === 0 ? " newest" : ""}${on ? " on" : ""}`} title={chip.label} onClick={() => view(on ? null : past.run)}><b className={chip.tone}>{chip.mark}</b>{chip.tone === "idle" ? ` ${chip.label}` : ""} {past.ranAt ? <When at={past.ranAt} /> : past.run}</button>;
             })}
           </span>
         )}
@@ -719,7 +745,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
           {steps.map((step) => (
             <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${stale ? "not-run stale" : step.status.replace(" ", "-")}`}>
               <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
-                <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <><img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /><CheckMarks step={step} aspect={THUMB_ASPECT} /></> : waitsForFrame(step, false, run, starting, stale) ? <FrameWaiting /> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
+                <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <><img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /><CheckMarks step={step} aspect={THUMB_ASPECT} /></> : waitsForFrame(step, false, shown, starting && viewed === null, stale) ? <FrameWaiting /> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
                 <span className="step-text">
                   <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{stepStatusText(step.status, run, stale)}</span></span>
                   {stale && <span className="stale-mark" title="From the earlier version of this journey">stale</span>}
@@ -732,7 +758,7 @@ function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone }: {
         </ol>
       </div>
       {selected !== null && (
-        <CompareFrame runtime={runtime} flowId={flow.id} step={selected} steps={steps.length} now={frame} mobileNow={mobileFrames[selected.screen]} earlier={earlierRun(history, stale ? pastAsRun(earlier) : run, selected.screen)} staleRun={stale} waiting={waitsForFrame(selected, thumb(selected.screen) !== undefined, run, starting, stale)} />
+        <CompareFrame runtime={runtime} flowId={flow.id} step={selected} steps={steps.length} now={frame} mobileNow={mobileFrames[selected.screen]} earlier={earlierRun(history, shown, selected.screen, viewed)} staleRun={stale} waiting={waitsForFrame(selected, thumb(selected.screen) !== undefined, shown, starting && viewed === null, stale)} />
       )}
     </div>
   );

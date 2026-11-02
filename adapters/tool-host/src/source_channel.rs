@@ -1046,12 +1046,13 @@ impl WorkspaceSourceChannel {
     /// #2372: the read is bounded by `max_cache_bytes`; a larger file is not read at all and is
     /// rebuilt like a corrupt one.
     ///
-    /// Trust (#2372 item 1, a declared limit): the cache is trusted for RANKING only. A checksum
-    /// stored beside it would be rewritten by the same writer of `.graphhelm/` it is meant to
-    /// stop, so it would add cost without adding trust. What a writer cannot do: add a path (the
-    /// refresh drops what the walk does not see) or change returned bytes (candidates are read
-    /// from the workspace, not from the cache). Accidental damage that breaks the JSON, the schema,
-    /// the root or the size cap is rebuilt.
+    /// Trust (#2372 item 1, a declared limit): a writer of `.graphhelm/` steers WHICH real files a
+    /// search returns and in what order: changing the counts of a file it did not otherwise touch
+    /// can reorder it or hide it from every search until that file changes. A checksum stored
+    /// beside the cache would be rewritten by that same writer, so it would add cost without
+    /// adding trust. What the writer cannot do: add a path (the refresh drops what the walk does
+    /// not see) or change returned bytes (candidates are read from the workspace, not the cache).
+    /// Accidental damage that breaks the JSON, the schema, the root or the size cap is rebuilt.
     fn load_persisted(&self) -> Option<BTreeMap<String, IndexedFile>> {
         use std::io::Read as _;
         let cap = max_cache_bytes(&self.index_bounds);
@@ -1492,6 +1493,53 @@ mod tests {
         }
     }
 
+    /// #2372 item 2 (Itachi's pre-review point 3): an adversarial build that fills the bounds
+    /// (every file and byte used, short distinct tokens that JSON escapes as `\u00XX`, a long
+    /// path) still writes a cache under the cap, so the cap never rejects a cache a build wrote.
+    #[test]
+    fn a_build_that_fills_the_bounds_fits_under_the_cap() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
+        let bounds = SourceIndexBounds {
+            max_entries_visited: 1_000,
+            max_files_indexed: 2,
+            max_bytes_indexed: 4096,
+        };
+        // Control characters are not whitespace, so each is a one-byte token; pairs make the
+        // rest distinct. 2040 bytes per file: both files just under max_bytes_indexed (filling it
+        // exactly is refused by the build, which is the bound working, not this test's subject).
+        let mut text = Vec::new();
+        'fill: for first in 1u8..32 {
+            for second in [0u8].into_iter().chain(1u8..32) {
+                for byte in [first, second] {
+                    if byte != 0 && !(9..=13).contains(&byte) {
+                        text.push(byte);
+                    }
+                }
+                text.push(b' ');
+                if text.len() >= 2037 {
+                    break 'fill;
+                }
+            }
+        }
+        text.resize(2040, b' ');
+        let long = format!("{}/x.rs", "d".repeat(120));
+        write(root.path(), &long, &text);
+        write(root.path(), "y.rs", &text);
+        let channel = WorkspaceSourceChannel::open(root.path())
+            .unwrap()
+            .with_index_bounds(bounds);
+        search(&channel, &["x"]);
+        let written = std::fs::metadata(root.path().join(INDEX_CACHE))
+            .unwrap()
+            .len();
+        let cap = max_cache_bytes(&bounds);
+        assert!(
+            written <= cap,
+            "a full build wrote {written} bytes, cap {cap}"
+        );
+    }
+
     /// #2372 item 2: a cache larger than any build within the bounds could write is not read; it
     /// is rebuilt, even when its JSON is valid and names this root and schema.
     #[test]
@@ -1529,7 +1577,8 @@ mod tests {
     /// #2372 items 2 and 3, measured (synthetic, so it states a scaling, not a real-repo time):
     /// a tree of distinct tokens at 1x and 10x vocabulary. Prints the cache size, the full
     /// rewrite one changed file costs, and a warm query. Run:
-    /// `cargo test -p graphhelm-tool-host --release --lib index_cost_scaling -- --ignored --nocapture`
+    /// `cargo test -p graphhelm-tool-host --lib index_cost_scaling -- --ignored --nocapture`
+    /// (the PR #2404 numbers are this debug build; `--release` was not measured)
     #[test]
     #[ignore = "measurement, prints timings; not a gate"]
     fn index_cost_scaling() {

@@ -38,7 +38,11 @@ def tracked_markdown(root: Path) -> set[str]:
 
 
 def links(root: Path, document: str) -> tuple[set[str], set[str]]:
-    """Repository-relative Markdown targets of `document`: (existing, missing)."""
+    """Repository-relative link targets of `document`: (existing Markdown files, missing targets).
+
+    Only Markdown targets are walked, but every relative target is checked: a link to a missing
+    receipt, script or folder is as dead as a link to a missing document (#2450).
+    """
     text = FENCE.sub("", (root / document).read_text(encoding="utf-8", errors="replace"))
     found, missing = set(), set()
     base = PurePosixPath(document).parent
@@ -46,8 +50,7 @@ def links(root: Path, document: str) -> tuple[set[str], set[str]]:
         target = target.split("#", 1)[0].split("?", 1)[0]
         if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I) or target.startswith("/"):
             continue
-        if not target.lower().endswith(".md"):
-            continue
+        markdown = target.lower().endswith(".md")
         parts: list[str] = []
         for part in (base / target).parts:
             if part == "..":
@@ -58,7 +61,10 @@ def links(root: Path, document: str) -> tuple[set[str], set[str]]:
                 parts.append(part)
         else:
             resolved = "/".join(parts)
-            (found if (root / resolved).is_file() else missing).add(resolved)
+            if markdown:
+                (found if (root / resolved).is_file() else missing).add(resolved)
+            elif not (root / resolved).exists():
+                missing.add(resolved)
     return found, missing
 
 
@@ -93,11 +99,11 @@ class DocsReachabilityTest(unittest.TestCase):
             "or delete it:\n  " + "\n  ".join(orphans),
         )
 
-    def test_no_reached_document_links_a_markdown_file_that_does_not_exist(self):
+    def test_no_reached_document_links_a_file_that_does_not_exist(self):
         _, dead = walk(ROOT)
         self.assertEqual(
             dead, {},
-            "dead Markdown links (a deleted document is cited as `git show <sha>:<path>`, not "
+            "dead links (a deleted document is cited as `git show <sha>:<path>`, not "
             "linked):\n  " + "\n  ".join(f"{doc}: {sorted(targets)}" for doc, targets in sorted(dead.items())),
         )
 
@@ -112,7 +118,11 @@ class DocsReachabilityTest(unittest.TestCase):
                 "[one](a/one.md#part)\n```\n[fenced](a/fenced.md)\n```\n![img](a/pic.md)\n",
                 encoding="utf-8",
             )
-            (root / "docs" / "a" / "one.md").write_text("[two](../two.md) [gone](gone.md)\n", encoding="utf-8")
+            (root / "docs" / "a" / "one.md").write_text(
+                "[two](../two.md) [gone](gone.md) [receipt](r.json) [lost](lost.json) [dir](../a/)\n",
+                encoding="utf-8",
+            )
+            (root / "docs" / "a" / "r.json").write_text("{}\n", encoding="utf-8")
             (root / "docs" / "two.md").write_text("no links\n", encoding="utf-8")
             (root / "docs" / "a" / "fenced.md").write_text("orphan\n", encoding="utf-8")
             (root / "docs" / "a" / "pic.md").write_text("orphan\n", encoding="utf-8")
@@ -121,7 +131,8 @@ class DocsReachabilityTest(unittest.TestCase):
                 reached, {"README.md", "docs/INDEX.md", "docs/a/one.md", "docs/two.md"},
                 "the walk is transitive and ignores fenced code and images",
             )
-            self.assertEqual(dead, {"docs/a/one.md": {"docs/a/gone.md"}})
+            # A missing non-Markdown target is dead too; an existing file or folder is not (#2450).
+            self.assertEqual(dead, {"docs/a/one.md": {"docs/a/gone.md", "docs/a/lost.json"}})
 
 
 if __name__ == "__main__":

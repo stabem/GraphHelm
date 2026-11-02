@@ -887,7 +887,7 @@ fn failed_ledger_rename_does_not_publish_a_temporary_file() {
 }
 
 fn run_ledger_quarantine_probe(mode: &str, admission: &Path) -> std::process::Output {
-    std::process::Command::new(std::env::current_exe().unwrap())
+    graphhelm_process::command(std::env::current_exe().unwrap())
         .args([
             "--ignored",
             "--exact",

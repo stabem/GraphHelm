@@ -22,6 +22,7 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use graphhelm_protocols::Diagnostic;
@@ -43,6 +44,13 @@ const PRIORITY_MARK: &str = "!";
 /// of every implement arrival key, so finishing work is served before new work starts.
 const FINISHING_MARK: &str = "+";
 const BUILD_ADMISSION_ENV: &str = "GRAPHHELM_BUILD_ADMISSION_DIR";
+static PROCESS_ADMISSION_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_process_admission() -> Result<MutexGuard<'static, ()>, String> {
+    PROCESS_ADMISSION_LOCK
+        .lock()
+        .map_err(|_| "the in-process build admission lock could not be locked".to_owned())
+}
 
 fn refuse(message: &str, path: &str) -> Outcome {
     refuse_as(COMMAND, message, path)
@@ -239,6 +247,7 @@ fn utc_stamp(seconds: u64) -> String {
 /// #1796: the jobs the admission ledger has granted, as recorded (a run that died without
 /// releasing still counts until the next admission reaps it).
 pub(crate) fn granted_jobs(admission: &Path) -> Result<u32, String> {
+    let _process_lock = lock_process_admission()?;
     if !admission.exists() {
         return Ok(0);
     }
@@ -300,6 +309,7 @@ pub(crate) fn try_grant(
     jobs: u32,
     running: impl Fn(u32) -> bool,
 ) -> Result<Admission, String> {
+    let _process_lock = lock_process_admission()?;
     match lock.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => return Ok(Admission::Wait),
@@ -338,6 +348,9 @@ pub(crate) fn try_grant(
 /// Removes this run's grant. Best effort: a grant that cannot be removed is dropped by the next
 /// admission once this process has exited.
 pub(crate) fn release_grant(admission: &Path, lock: &File, token: &str) {
+    let Ok(_process_lock) = lock_process_admission() else {
+        return;
+    };
     if lock.lock().is_ok() {
         if let Ok(mut grants) = read_grants(admission) {
             grants.retain(|grant| grant.token != token);
@@ -417,6 +430,7 @@ pub(crate) fn try_grant_update(
     lock: &File,
     running: impl Fn(u32) -> bool,
 ) -> Result<UpdateAdmission, String> {
+    let _process_lock = lock_process_admission()?;
     match lock.try_lock() {
         Ok(()) => {}
         Err(TryLockError::WouldBlock) => return Ok(UpdateAdmission::Busy),

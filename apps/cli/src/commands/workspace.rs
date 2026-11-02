@@ -355,7 +355,7 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
     }
     let workspace = workspace_dir(root, lane, task);
     let worktree = workspace.join("wt");
-    if worktree_gone(&workspace) {
+    if worktree_gone(&worktree) {
         return clear_gone(&file, &record, lane, task);
     }
     let Ok(head) = git(&worktree, &["rev-parse", "HEAD"]) else {

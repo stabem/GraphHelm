@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { spawnSync } from '../../../tools/hidden-node-children.mjs';
+import { hiddenNodeChildren } from '../../../tools/hidden-node-children.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { run } from '../src/desktop_chats.mjs';
@@ -126,7 +126,7 @@ for (const mode of ['wrong-caller', 'truncated', 'wrong-target']) {
 }
 test('embedded module entry parses bounded stdin and refuses an invalid caller', () => {
   const source = readFileSync(new URL('../src/desktop_chats.mjs', import.meta.url), 'utf8');
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', source, '--', '--graphhelm-desktop-main'], {
+  const result = hiddenNodeChildren.spawnSync(process.execPath, ['--input-type=module', '-e', source, '--', '--graphhelm-desktop-main'], {
     input: JSON.stringify({ ...input, callerThreadId: 'invalid' }) + '\n', encoding: 'utf8', timeout: 2000,
   });
   assert.equal(result.status, 1); assert.equal(JSON.parse(result.stdout).errorKind, 'before_dispatch');

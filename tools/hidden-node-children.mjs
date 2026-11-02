@@ -12,44 +12,52 @@ const hidden = (options) => process.platform === 'win32'
   ? { ...options, windowsHide: true }
   : options;
 
-export function spawn(command, args, options) {
-  return Array.isArray(args)
-    ? original.spawn(command, args, hidden(options))
-    : original.spawn(command, hidden(args));
+function withOptions(method, target, args, options) {
+  if (Array.isArray(args)) return method(target, args, hidden(options));
+  if (args === undefined && options !== undefined) {
+    return method(target, undefined, hidden(options));
+  }
+  return method(target, hidden(args));
 }
 
-export function spawnSync(command, args, options) {
-  return Array.isArray(args)
-    ? original.spawnSync(command, args, hidden(options))
-    : original.spawnSync(command, hidden(args));
+function spawn(command, args, options) {
+  return withOptions(original.spawn, command, args, options);
 }
 
-export function exec(command, options, callback) {
+function spawnSync(command, args, options) {
+  return withOptions(original.spawnSync, command, args, options);
+}
+
+function exec(command, options, callback) {
   return typeof options === 'function'
     ? original.exec(command, hidden(undefined), options)
     : original.exec(command, hidden(options), callback);
 }
 
-export function execFile(file, args, options, callback) {
+function execFile(file, args, options, callback) {
   if (Array.isArray(args)) {
     return typeof options === 'function'
       ? original.execFile(file, args, hidden(undefined), options)
       : original.execFile(file, args, hidden(options), callback);
   }
-  return typeof args === 'function'
-    ? original.execFile(file, hidden(undefined), args)
-    : original.execFile(file, hidden(args), options);
+  if (typeof args === 'function') return original.execFile(file, hidden(undefined), args);
+  if (args === undefined) {
+    if (typeof options === 'function' && callback === undefined) {
+      return original.execFile(file, hidden(undefined), options);
+    }
+    if (options !== undefined || callback !== undefined) {
+      return original.execFile(file, undefined, hidden(options), callback);
+    }
+    return original.execFile(file, hidden(undefined));
+  }
+  return original.execFile(file, hidden(args), options);
 }
 
-export function fork(modulePath, args, options) {
-  return Array.isArray(args)
-    ? original.fork(modulePath, args, hidden(options))
-    : original.fork(modulePath, hidden(args));
+function fork(modulePath, args, options) {
+  return withOptions(original.fork, modulePath, args, options);
 }
+
+export const hiddenNodeChildren = { spawn, spawnSync, exec, execFile, fork };
 
 // Playwright obtains childProcess.spawn from the module object at launch time.
-childProcess.spawn = spawn;
-childProcess.spawnSync = spawnSync;
-childProcess.exec = exec;
-childProcess.execFile = execFile;
-childProcess.fork = fork;
+Object.assign(childProcess, hiddenNodeChildren);

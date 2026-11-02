@@ -1,4 +1,4 @@
-import { spawn } from '../hidden-node-children.mjs';
+import { hiddenNodeChildren } from '../hidden-node-children.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -21,7 +21,7 @@ const protocol='graphhelm-journey-driver/1';
 async function client(t, env={}) {
   assert.ok(project,'OBSERVER_MISSING: GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT');
   const output=await mkdtemp(join(tmpdir(),'gh-driver-'));
-  const child=spawn(process.execPath,[driver,'--project',project,'--output-dir',output],{env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TMP,USERPROFILE:process.env.USERPROFILE,HOME:process.env.HOME,LOCALAPPDATA:process.env.LOCALAPPDATA,PLAYWRIGHT_BROWSERS_PATH:process.env.PLAYWRIGHT_BROWSERS_PATH,...env},stdio:['pipe','pipe','pipe']});
+  const child=hiddenNodeChildren.spawn(process.execPath,[driver,'--project',project,'--output-dir',output],{env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TMP,USERPROFILE:process.env.USERPROFILE,HOME:process.env.HOME,LOCALAPPDATA:process.env.LOCALAPPDATA,PLAYWRIGHT_BROWSERS_PATH:process.env.PLAYWRIGHT_BROWSERS_PATH,...env},stdio:['pipe','pipe','pipe']});
   let sequence=0, stderr='', exit;
   child.stderr.on('data',chunk=>stderr+=chunk);
   const stopped=new Promise(done=>child.on('exit',code=>{exit=code;done();}));

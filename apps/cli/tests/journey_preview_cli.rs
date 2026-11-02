@@ -1,4 +1,4 @@
-//! #519: `journey preview` answers the kept result for the flow and commit it ran on, else starts
+﻿//! #519: `journey preview` answers the kept result for the flow and commit it ran on, else starts
 //! one run in the background and answers `running`; the run ends `ready` or `failed` with a reason
 //! from the closed list, and `--force` runs anew. Credible defects: a run that never leaves
 //! `running` when it cannot start a browser, a kept result served for a changed flow, and a second
@@ -277,7 +277,7 @@ fn a_preview_runs_once_keeps_its_result_and_runs_anew_only_when_asked() {
 }
 
 #[test]
-fn a_preview_installs_a_missing_observer_and_refreshes_a_stale_copy() {
+fn a_preview_installs_a_missing_observer_and_refuses_a_stale_copy() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
     let flow = FLOW.replacen("http://localhost:3000", &base, 1);
@@ -358,31 +358,66 @@ fn a_preview_installs_a_missing_observer_and_refreshes_a_stale_copy() {
         2
     );
 
-    std::fs::write(
-        dir.path().join(".graphhelm/observers/journey_driver.mjs"),
-        "// stale fixture observer\n",
-    )
-    .unwrap();
+    // #2472: a present but stale copy is the project's own file (here a tracked one): the preview
+    // refuses, names the file and the opt-in, and does not change a byte of it.
+    let driver = dir.path().join(".graphhelm/observers/journey_driver.mjs");
+    std::fs::write(&driver, "// stale fixture observer\n").unwrap();
+    for args in [
+        vec!["add", "-f", ".graphhelm/observers/journey_driver.mjs"],
+        vec!["commit", "--quiet", "--no-verify", "-m", "stale observer"],
+    ] {
+        assert!(
+            graphhelm_process::command("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(&args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
     let (code, forced) = cli_with_path(dir.path(), &["preview", "checkout", "--force"], &fixture);
     assert_eq!(code, 0, "{forced}");
     assert_eq!(forced["data"]["state"], "running", "{forced}");
-    let refreshed = settled_with_path(dir.path(), &fixture);
-    assert_eq!(refreshed["observerSetup"]["state"], "ready", "{refreshed}");
+    let refused = settled_with_path(dir.path(), &fixture);
+    assert_eq!(refused["state"], "failed", "{refused}");
     assert_eq!(
-        refreshed["screens"]["cart"]["result"], "pass",
-        "{refreshed}"
+        refused["detail"]["code"], "replay.observer_stale",
+        "{refused}"
+    );
+    assert_eq!(
+        refused["detail"]["pointer"], "/observer/journey_driver.mjs",
+        "{refused}"
+    );
+    assert_eq!(refused["observerSetup"]["state"], "failed", "{refused}");
+    assert_eq!(
+        std::fs::read(&driver).unwrap(),
+        b"// stale fixture observer\n",
+        "the preview rewrote the stale observer",
+    );
+    let status = graphhelm_process::command("git")
+        .arg("-C")
+        .arg(dir.path())
+        .args([
+            "status",
+            "--porcelain",
+            "--",
+            ".graphhelm/observers/journey_driver.mjs",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        status.stdout.is_empty(),
+        "the preview modified a tracked observer: {}",
+        String::from_utf8_lossy(&status.stdout)
     );
     assert_eq!(
         std::fs::read_to_string(dir.path().join(".graphhelm/fixture-install.log"))
             .unwrap()
             .lines()
             .count(),
-        4
-    );
-    assert_eq!(
-        std::fs::read(dir.path().join(".graphhelm/observers/journey_driver.mjs")).unwrap(),
-        include_bytes!("../../../tools/journey-driver/driver.mjs"),
-        "stale observer was not replaced by the shipped driver",
+        2,
+        "the refusal still ran the install",
     );
 }
 

@@ -667,31 +667,65 @@ mod tests {
             |_, _, _| panic!("current observer reinstalled"),
         )
         .unwrap();
+        // #2472: a stale copy is the project's file, so it is refused and left as it was.
         std::fs::write(project.join(SCRIPT_DIR).join(JUDGE_NAME), "old judge").unwrap();
-        commands.clear();
-        ensure_playwright_with(
+        let refused = ensure_playwright_with(
             &project,
             deadline,
-            |_| {},
-            |command, _, _| {
-                commands.push(command.to_owned());
-                Ok(Step::Exited(Some(0), String::new()))
-            },
+            |_| panic!("a stale observer reported installation"),
+            |_, _, _| panic!("a stale observer was reinstalled"),
         )
-        .unwrap();
-        assert_eq!(commands, PLAYWRIGHT.install);
+        .unwrap_err();
+        assert_eq!(refused["code"], "replay.observer_stale");
         assert_eq!(
             std::fs::read(project.join(SCRIPT_DIR).join(JUDGE_NAME)).unwrap(),
-            JUDGE
+            b"old judge"
         );
     }
 
     #[test]
-    fn a_failed_install_preserves_stale_scripts_and_retries_with_the_exact_failure() {
+    fn a_stale_observer_file_is_refused_by_name_and_never_overwritten() {
+        // #2472: the three files an install writes, each stale in turn and each present beside a
+        // missing sibling: the preview path names the file and leaves every byte as it found it.
+        for stale in [DRIVER_NAME, JUDGE_NAME, "playwright_observe.py"] {
+            let (_root, project, _home) = fixture();
+            let dir = project.join(SCRIPT_DIR);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(stale), "// tracked by the project\n").unwrap();
+            let refused = ensure_playwright_with(
+                &project,
+                Instant::now() + Duration::from_secs(60),
+                |_| panic!("a stale observer reported installation"),
+                |_, _, _| panic!("a stale observer was reinstalled"),
+            )
+            .unwrap_err();
+            assert_eq!(refused["code"], "replay.observer_stale", "{stale}");
+            let message = refused["message"].as_str().unwrap();
+            assert!(message.contains(stale), "{message}");
+            assert!(message.contains("--install-observer playwright"), "{message}");
+            assert_eq!(
+                std::fs::read(dir.join(stale)).unwrap(),
+                b"// tracked by the project\n",
+                "{stale} was rewritten"
+            );
+            let names: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            assert_eq!(names.len(), 1, "files appeared beside {stale}: {names:?}");
+            assert!(
+                !project.join(".graphhelm/observer-install.lock").exists(),
+                "the refusal took the install lock"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_install_preserves_current_scripts_and_retries_with_the_exact_failure() {
         let (_root, project, _home) = fixture();
         std::fs::create_dir_all(project.join(SCRIPT_DIR)).unwrap();
         let driver = project.join(SCRIPT_DIR).join(DRIVER_NAME);
-        std::fs::write(&driver, "old driver").unwrap();
+        std::fs::write(&driver, DRIVER).unwrap();
         let deadline = Instant::now() + Duration::from_secs(60);
         let failed = ensure_playwright_with(
             &project,
@@ -713,7 +747,7 @@ mod tests {
                 PLAYWRIGHT.install[0]
             )
         );
-        assert_eq!(std::fs::read_to_string(&driver).unwrap(), "old driver");
+        assert_eq!(std::fs::read(&driver).unwrap(), DRIVER);
         ensure_playwright_with(
             &project,
             deadline,

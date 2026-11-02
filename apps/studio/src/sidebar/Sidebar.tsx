@@ -26,10 +26,10 @@ export function refusalText(refusal: AddRefusal, port?: string | null): string {
 
 /** Under a project (Sidebar.dc.html): the open one shows its folder, then its team run and its
  * journeys in an indented box; another shows its folder and its run on one line. */
-function Subtitles({ project, open }: { project: ProjectEntry; open: boolean }) {
+export function Subtitles({ project, open }: { project: ProjectEntry; open: boolean }) {
   const lines = project.summary === null ? null : subtitle(project.summary);
   if (!open) {
-    const parts = [project.folder, lines?.run].filter((part): part is string => part != null);
+    const parts = [project.folder, lines?.run, lines?.waits].filter((part): part is string => part != null);
     return parts.length === 0 ? null : <span className="project-folder mono">{parts.join(" · ")}</span>;
   }
   return (
@@ -37,7 +37,7 @@ function Subtitles({ project, open }: { project: ProjectEntry; open: boolean }) 
       {project.folder !== null && <span className="project-folder mono">{project.folder}</span>}
       {lines !== null && (
         <span className="project-counts">
-          <span className="project-run">{lines.run}</span>
+          <span className="project-run">{lines.run}{lines.waits !== null && <> · <span className="run-waits">{lines.waits}</span></>}</span>
           {lines.journeys !== null && <span>{lines.journeys}</span>}
         </span>
       )}

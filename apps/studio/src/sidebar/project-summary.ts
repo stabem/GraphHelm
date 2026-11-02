@@ -1,4 +1,5 @@
 import type { JourneyFlow, LaneLiveness, RunSummary } from "../runtime/client";
+import { WAITING_FOR_YOU, waitsForYou } from "../views/attention";
 
 /** What the sidebar says under one project (Sidebar.dc.html): its active run with how many agents
  * work it, and how many journeys it has with how many are to fix. Every field comes from that
@@ -8,6 +9,8 @@ export interface ProjectSummary {
   agents: number | null;
   journeys: number | null;
   toFix: number | null;
+  /** #2341: the active run waits for its owner (`needs_you`). Absent or false: nothing is said. */
+  waiting?: boolean;
 }
 
 /** When a run last moved: its last event, else its start; `-Infinity` when it carries neither. */
@@ -49,11 +52,18 @@ export function journeyToFix(flow: JourneyFlow): boolean {
   return flow.status === "unreadable" || (flow.findings ?? []).some((finding) => finding.severity === "error");
 }
 
-/** The subtitle lines: `● <run> · N agents` (or `no run`) and `N journeys · M to fix`. */
-export function subtitle(summary: ProjectSummary): { run: string; journeys: string | null } {
+/** #2341: whether the project's active run waits for its owner, from the run list the sidebar read. */
+export function activeRunWaits(runs: readonly RunSummary[], active: string | null): boolean {
+  const run = active === null ? undefined : runs.find((row) => row.executionId === active);
+  return run !== undefined && waitsForYou(run.status, run.attention);
+}
+
+/** The subtitle lines: `● <run> · N agents` (or `no run`), `waiting for you` when that run waits
+ * (#2341), and `N journeys · M to fix`. */
+export function subtitle(summary: ProjectSummary): { run: string; waits: string | null; journeys: string | null } {
   const run = summary.activeRun === null ? "no run"
     : `● ${summary.activeRun}${summary.agents === null ? "" : ` · ${summary.agents} ${summary.agents === 1 ? "agent" : "agents"}`}`;
   const journeys = summary.journeys === null ? null
     : `${summary.journeys} ${summary.journeys === 1 ? "journey" : "journeys"}${summary.toFix ? ` · ${summary.toFix} to fix` : ""}`;
-  return { run, journeys };
+  return { run, waits: summary.activeRun !== null && summary.waiting === true ? WAITING_FOR_YOU : null, journeys };
 }

@@ -6,6 +6,7 @@ import { reviewable } from "./review";
 import { idleText, stepAged } from "../lanes/board";
 import { RequestProgress } from "./RequestProgress";
 import { Loading, ReadFailure } from "../states/ViewState";
+import { noRequestsText } from "./requests-text";
 import { cards, KANBAN, KANBAN_NAME, requestColor, type OwnerRequest } from "./requests";
 import { requestKey } from "../lanes/asked";
 import { combineBoards, combineRequests, taskRun, type ProjectRequest } from "../lanes/project-board";
@@ -25,6 +26,8 @@ interface Props {
   journeys: JourneyFlow[] | null;
   /** Opens Proof on a journey ("Open the journey in Proof"). */
   onOpenProof?: (journey: string) => void;
+  /** #2341: the one run read waits for its owner; the empty graph then says so. */
+  waiting?: boolean;
 }
 
 /**
@@ -33,7 +36,7 @@ interface Props {
  * from what was asked to the issues, their pull requests and the result, and the panel of the
  * selected issue. "Merged" is not done: a card reads Proven only when its journeys passed.
  */
-export function RequestsView({ runtime, executionIds, journeys, onOpenProof }: Props) {
+export function RequestsView({ runtime, executionIds, journeys, onOpenProof, waiting = false }: Props) {
   const key = JSON.stringify(executionIds);
   const [mode, setMode] = useState<Mode>("graph");
   const [journey, setJourney] = useState<string | null>(null);
@@ -130,7 +133,7 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof }: P
         {mode === "graph" ? (
           <section aria-label="Request graph" className="gv-canvas">
             {graph.length === 0 ? (
-              <p>{requests.length === 0 ? many ? `No owner request is recorded in the ${executionIds.length} runs of this project yet.` : "No owner request is recorded on this run yet." : "No request has work in this journey."}</p>
+              <p>{noRequestsText(many, executionIds.length, requests.length, waiting)}</p>
             ) : (
               <>
                 <div className="mono gv-cols" aria-hidden="true">

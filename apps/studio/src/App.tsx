@@ -14,6 +14,7 @@ import { ProofView } from "./proof/ProofView";
 import { LanesView } from "./lanes/LanesView";
 import { lanesRuns } from "./lanes/project-board";
 import { GraphView } from "./views/Views";
+import { waitsForYou } from "./views/attention";
 import { RequestsView } from "./graph/RequestsView";
 import { ViewBoundary } from "./views/ViewBoundary";
 import { bounded, firstRead, Loading, ReadFailure } from "./states/ViewState";
@@ -206,7 +207,7 @@ function Shell({ session, projects, closed, route, go, pickJourney, onRefused }:
         <ViewBoundary key={`${route.view}:${runId ?? ""}`} name={route.view}>
         {runs === null && route.run === null ? <section className="view" aria-label="Reading">{firstRead(runs, runsError) === "failed" ? <ReadFailure what="project's team runs" route="/v1/executions" message={runsError ?? ""} onRetry={() => void readRuns()} /> : <Loading text="Reading the project's team run…" />}</section> : <>
         {route.view === "graph" && (
-          <GraphView run={run} runId={runId} runtime={runtime} allRuns={shownRun === runId ? null : projectRuns.length} onStart={startRun} requests={projectRuns.length === 0 ? undefined : <RequestsView runtime={runtime} executionIds={projectRuns} journeys={journeys} onOpenProof={(journey) => go({ project: route.project, run: route.run, view: "proof", journey })} />}>
+          <GraphView run={run} runId={runId} runtime={runtime} allRuns={shownRun === runId ? null : projectRuns.length} onStart={startRun} requests={projectRuns.length === 0 ? undefined : <RequestsView runtime={runtime} executionIds={projectRuns} journeys={journeys} waiting={run !== null && projectRuns.length === 1 && projectRuns[0] === run.executionId && waitsForYou(run.status, run.attention)} onOpenProof={(journey) => go({ project: route.project, run: route.run, view: "proof", journey })} />}>
             {composing && runId === null && (
               <StartRun
                 runtime={runtime}

@@ -106,7 +106,9 @@ winget install --id OpenJS.NodeJS.LTS --exact --source winget --accept-source-ag
 
 The [1.0.0 release](../releases/1.0.0.md) provides verified Windows and Ubuntu x86-64
 archives, avoiding the Rust build. Download the matching archive and its `SHA256SUMS.txt`, check
-the digest, extract it, and add the binary's directory to `PATH`. You still need the repository
+the digest, extract it, and add the binary's directory to `PATH`. On Linux, check it with
+`sha256sum -c --ignore-missing SHA256SUMS.txt`: the file lists both archives, and without
+`--ignore-missing` the check fails on the one you did not download. You still need the repository
 for this guide's example graphs, Studio, and installation assets. On macOS or another platform,
 build from source using the commands below.
 

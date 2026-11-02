@@ -67,6 +67,41 @@ fn claim(root: &str, repo: &Path, lane: &str, task: &str) -> Value {
     reply
 }
 
+#[test]
+fn workspace_list_returns_a_bounded_status_error_when_git_status_stalls() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = repo(dir.path());
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    claim(root_s, &repo, "lane", "stalled-status");
+    let worktree = root.join("lane/stalled-status/wt");
+    #[cfg(windows)]
+    let hook = "cmd /c ping -n 30 127.0.0.1 >NUL";
+    #[cfg(not(windows))]
+    let hook = "sh -c 'sleep 30'";
+    git(&worktree, &["config", "core.fsmonitor", hook]);
+
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command.args(["--json", "workspace", "list", "--root", root_s]);
+    let output = graphhelm_process_tree::run_bounded(command, std::time::Duration::from_secs(15))
+        .expect("bounded process cleanup")
+        .expect("workspace list must finish before the outer safety deadline");
+    assert!(output.0, "workspace list failed: {}", output.2);
+    let reply: Value = serde_json::from_str(&output.1).unwrap();
+    assert_eq!(reply["ok"], true, "{reply}");
+    let workspace = &reply["data"]["workspaces"][0];
+    assert_eq!(
+        workspace["dirty"], true,
+        "unknown status must stay fail-closed"
+    );
+    assert!(
+        workspace["statusError"]
+            .as_str()
+            .is_some_and(|error| error.contains("deadline")),
+        "the user needs an actionable bounded error: {reply}"
+    );
+}
+
 fn release(root: &str, lane: &str, task: &str) {
     let (code, reply) = run(&["release", "--root", root, "--lane", lane, "--task", task]);
     assert_eq!(code, 0, "{reply}");

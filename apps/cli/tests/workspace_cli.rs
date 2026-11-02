@@ -595,6 +595,62 @@ fn release_clears_a_claim_whose_folder_is_gone_and_the_task_can_be_claimed_again
     );
 }
 
+/// #2437: only `<claim>/wt` is gone (what a merger's `git worktree remove` leaves); the claim's own
+/// `logs/ target/ tmp/` stay. Release clears the entry and the same task is claimed again in the
+/// same directory; a stranger file in it keeps the claim refused.
+#[test]
+fn release_clears_a_claim_whose_worktree_alone_is_gone_and_the_task_can_be_claimed_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = repo(dir.path());
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    claim(root_s, &repo, "lane", "2435");
+    let ws = root.join("lane").join("2435");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            ws.join("wt").to_str().unwrap(),
+        ],
+    );
+    assert!(ws.join("target").is_dir() && !ws.join("wt").exists());
+    let (code, reply) = run(&[
+        "release", "--root", root_s, "--lane", "lane", "--task", "2435",
+    ]);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(reply["data"]["cleared"], true, "{reply}");
+    let again = |branch: &str| {
+        run(&[
+            "claim",
+            "--root",
+            root_s,
+            "--lane",
+            "lane",
+            "--task",
+            "2435",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--base",
+            "HEAD",
+            "--branch",
+            branch,
+        ])
+    };
+    std::fs::write(ws.join("stranger.txt"), "not made by a claim").unwrap();
+    let (code, refused) = again("issue-2435-lane-r2");
+    assert_eq!(
+        code, 2,
+        "a directory with other content is never adopted: {refused}"
+    );
+    assert!(ws.join("stranger.txt").is_file(), "nothing is deleted");
+    std::fs::remove_file(ws.join("stranger.txt")).unwrap();
+    let (code, admitted) = again("issue-2435-lane-r2");
+    assert_eq!(code, 0, "the same task is claimable again: {admitted}");
+    assert!(ws.join("wt").join("a.txt").is_file());
+}
+
 #[test]
 fn sweep_removes_only_released_clean_unmoved_workspaces_and_never_follows_links() {
     let dir = tempfile::tempdir().unwrap();

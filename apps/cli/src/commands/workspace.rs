@@ -210,7 +210,7 @@ fn run_claim(
     }
     let file = ledger_file(root, lane, task);
     let dir = workspace_dir(root, lane, task);
-    if file.exists() || dir.exists() {
+    if file.exists() || (dir.exists() && !only_claim_parts(&dir)) {
         return refuse(
             COMMAND,
             crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
@@ -629,6 +629,26 @@ fn recover_interrupted_claim(
     )
 }
 
+/// #2437: a directory left by a cleared claim holds only the parts a claim makes (`target`, `tmp`,
+/// `logs`), as plain directories and no `wt`. A new claim of the same task may reuse it; anything
+/// else, a link included, keeps the claim refused, so a path the ledger did not create is never
+/// adopted. Nothing is deleted here.
+fn only_claim_parts(dir: &Path) -> bool {
+    if is_link_path(dir) {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.into_iter().all(|entry| {
+        entry.is_ok_and(|entry| {
+            PARTS.iter().any(|part| entry.file_name() == *part)
+                && std::fs::symlink_metadata(entry.path())
+                    .is_ok_and(|meta| meta.is_dir() && !is_link(&meta))
+        })
+    })
+}
+
 /// #2339: the claimed workspace directory no longer exists (its session died and the folder was
 /// removed), so there is nothing left to release or sweep. Only after confirming that is the
 /// ledger entry removed, so the same task can be claimed again. The branch and its commits are
@@ -646,7 +666,7 @@ fn clear_gone(file: &Path, record: &Value, lane: &str, task: &str) -> Outcome {
         COMMAND,
         json!({"lane": lane, "task": task, "cleared": true,
             "branch": record["branch"],
-            "note": "the workspace folder was gone; its ledger entry was cleared and the branch kept"}),
+            "note": "the worktree was gone; its ledger entry was cleared and the branch kept"}),
     )
 }
 

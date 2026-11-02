@@ -2,7 +2,7 @@ import { splitFrames } from "./use-journey-run";
 import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow, JourneyRun } from "../runtime/client";
-import { isProposed, becauseOf, CHANGED, checkMarks, countSteps, earlierVersion, failsOnlyOn, historyChip, isHeld, isWaitingReview, statusText, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, compareSentence, staleCountsText, stepStatusText, STALE_STEP, preparingStatus, readableName, reasonSentence } from "./steps";
+import { waitsForFrame, isProposed, becauseOf, CHANGED, checkMarks, countSteps, earlierVersion, failsOnlyOn, historyChip, isHeld, isWaitingReview, statusText, journeyScore, journeySteps, lastRunChip, liveCard, pastAsRun, compareSentence, staleCountsText, stepStatusText, STALE_STEP, preparingStatus, readableName, reasonSentence } from "./steps";
 
 const flow: JourneyFlow = {
   id: "buy",
@@ -272,5 +272,30 @@ describe("proposed reasons", () => {
     expect(isProposed("  Proposed by the explorer, to confirm: x")).toBe(true);
     expect(isProposed("The shopper reaches payment.")).toBe(false);
     expect(isProposed(null)).toBe(false);
+  });
+});
+
+// #2440: a step with no frame yet reads as waiting only while its run is active.
+describe("waiting for a step's frame", () => {
+  const screens = (steps: ReturnType<typeof journeySteps>, run: JourneyRun | null, frames: string[], starting = false, stale = false) =>
+    steps.map((step) => waitsForFrame(step, frames.includes(step.screen), run, starting, stale));
+
+  it("shows a loader on every step of an active run, swaps only the step that got its frame, and clears when the run ends", () => {
+    const active = { state: "running", current: "list" } as JourneyRun;
+    const steps = journeySteps(flow, active);
+    expect(screens(steps, active, [])).toEqual([true, true, true]);
+    expect(screens(steps, active, ["list"])).toEqual([false, true, true]);
+    for (const state of ["ready", "failed", "stopped", "error"]) {
+      expect(screens(steps, { state } as JourneyRun, ["list"]), state).toEqual([false, false, false]);
+    }
+    expect(screens(steps, null, [])).toEqual([false, false, false]);
+  });
+
+  it("a starting run waits too; an earlier version's card, a command step and a precondition never do", () => {
+    const steps = journeySteps(flow, null);
+    expect(screens(steps, null, [], true)).toEqual([true, true, true]);
+    expect(screens(steps, { state: "running" } as JourneyRun, [], false, true)).toEqual([false, false, false]);
+    expect(waitsForFrame({ cli: true, status: "not run" }, false, { state: "running" } as JourneyRun, false, false)).toBe(false);
+    expect(waitsForFrame({ cli: false, status: "precondition" }, false, { state: "running" } as JourneyRun, false, false)).toBe(false);
   });
 });

@@ -41,7 +41,9 @@ for, a summary of the change or an expected verdict, you are not blind: say so a
 
 When a blind subagent reviews, the session that launches it runs the long work first, on the
 pinned head: the build, the test runs and the reached plan, each to its end, with every log saved
-to a file. Only then does it launch the subagent. The subagent reads the diff, those logs and the
+to a file. That long work includes every run the steps below ask of the reviewer: the reached
+plan or the receipt check, fmt and clippy, the Keel check and any journey replay. In this split,
+"run" in those steps means the parent runs it and the subagent reads and judges its log. Only then does it launch the subagent. The subagent reads the diff, those logs and the
 rules, judges the logs itself, and runs only short checks: the break-once, and single tests or
 probes that finish within 5 minutes. It never waits on or polls a command for more than 5
 minutes; a check that needs longer goes back to the parent or is reported as not observed. A

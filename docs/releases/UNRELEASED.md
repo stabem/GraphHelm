@@ -23,5 +23,6 @@
 - [#2446](https://github.com/stabem/GraphHelm/pull/2446) Before a blind review, contributors also run formatting, clippy, Keel checks, and journey replays.
 - [#2451](https://github.com/stabem/GraphHelm/pull/2451) The docs guard catches broken relative links to files and folders, including non-Markdown targets.
 - [#2452](https://github.com/stabem/GraphHelm/pull/2452) The heartbeat and session-stop tests accept the measured timing race but still fail if cleanup leaves a waiter behind.
+- [#2460](https://github.com/stabem/GraphHelm/pull/2460) The Unreleased notes now summarize recent user-facing and contributor changes with links to their source PRs.
 
 ## Removed

@@ -66,12 +66,12 @@ const statuses = () => [...host!.querySelectorAll('[aria-label^="Step "] .step-s
 const thumbs = () => [...host!.querySelectorAll(".step-thumb")].map((node) => node.querySelector("img")?.getAttribute("src") ?? node.textContent ?? "");
 const chip = (older: boolean) => [...host!.querySelectorAll<HTMLButtonElement>("button.history-chip")][older ? 1 : 0]!;
 
-async function mount(initialPast: string | null, seen: (Array<string | null>) = []) {
+async function mount(initialPast: string | null, seen: (Array<string | null>) = [], client: Runtime = runtime) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<JourneyRunPanel runtime={runtime} flow={flow} executionId={null} onRan={() => {}} onRun={() => {}} onGone={() => {}} initialPast={initialPast} onPast={(id) => seen.push(id)} />);
+    root!.render(<JourneyRunPanel runtime={client} flow={flow} executionId={null} onRan={() => {}} onRun={() => {}} onGone={() => {}} initialPast={initialPast} onPast={(id) => seen.push(id)} />);
   });
   await settle();
   await settle();
@@ -100,6 +100,21 @@ describe("a history chip opens that run (#2442)", () => {
     expect(seen).toEqual([OLDER, null]);
     expect(thumbs()).toEqual(["blob:live-list", "blob:live-item"]);
     expect(statuses().join(" ")).toMatch(/pass.*pass/);
+  });
+
+  it("can open history while a live run is still waiting for frames", async () => {
+    const live = { ...runtime, journeyRun: async () => ({ state: "running", screens: {}, edges: {} }) } as unknown as Runtime;
+    await mount(null, [], live);
+    expect(host!.querySelectorAll("button.history-chip").length).toBe(2);
+    await act(async () => chip(true).click());
+    await settle();
+    expect(statuses()[1]).toMatch(/fail/);
+    expect(host!.textContent).toContain("a run is live now");
+    const back = [...host!.querySelectorAll("button")].find(node => node.textContent === "Show the live run")!;
+    await act(async () => back.click());
+    await settle();
+    expect(host!.querySelector('[aria-label="Journey running"]')).not.toBeNull();
+    expect(chip(true).getAttribute("aria-pressed")).toBe("false");
   });
 
   it("a link that names the run opens on it", async () => {

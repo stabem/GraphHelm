@@ -56,6 +56,16 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     setLog((lines) => (lines[lines.length - 1] === text ? lines : [...lines, text].slice(-LOG_LINES)));
   }, []);
 
+  // History must be available even when the current run has not finished yet.
+  useEffect(() => {
+    let live = true;
+    runtime.journeyHistory(flowId).then(
+      runs => { if (live) setHistory(runs); },
+      cause => { if (live) setError(`Could not read run history: ${message(cause)}`); },
+    );
+    return () => { live = false; };
+  }, [runtime, flowId]);
+
   useEffect(() => {
     let live = true;
     const ran = attempt > 0;
@@ -89,7 +99,7 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
       if (!live || last === null) return;
       note(last.launchLog?.tail);
       note(last.driverLog?.tail);
-      runtime.journeyHistory(flowId).then((runs) => { if (live) setHistory(runs.slice(0, 8)); }, () => undefined);
+      runtime.journeyHistory(flowId).then((runs) => { if (live) setHistory(runs); }, () => undefined);
       // #1914: a run that began before this panel opened (started from the column) was followed
       // here too; its end reads the journey list again, or the card stays on "not run".
       if (ran || first.state === "running") finished.current();

@@ -93,11 +93,8 @@ fn the_guard_catches_a_bare_spawn_and_bare_flags() {
     assert_eq!(found.len(), 2, "{found:?}");
 }
 
-/// #2447: the Rust guard above stops at the node boundary. A headless browser is a console program
-/// that Playwright starts without `windowsHide`, so on Windows it opens its own console window even
-/// under a hidden node. Every script under `tools/` that launches a browser must default its
-/// spawns to hidden BEFORE the first launch (the shipped journey driver and every observer).
-const HIDE_MARKER: &str = "childProcess.spawn = function";
+/// Browser launchers and Node child callers must load the shared hidden launcher first.
+const HIDE_MARKER: &str = "hidden-node-children.mjs";
 
 fn script_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -115,7 +112,9 @@ fn script_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 fn browser_launchers_without_the_hide(root: &Path) -> (usize, Vec<String>) {
     let mut files = Vec::new();
-    script_files(&root.join("tools"), &mut files);
+    for dir in ["tools", "docs/journeys", "adapters/model-gateway/tests"] {
+        script_files(&root.join(dir), &mut files);
+    }
     let launches = [
         concat!("chromium", ".launch("),
         concat!("firefox", ".launch("),
@@ -123,21 +122,36 @@ fn browser_launchers_without_the_hide(root: &Path) -> (usize, Vec<String>) {
     ];
     let (mut launchers, mut found) = (0, Vec::new());
     for path in files {
+        if path
+            .file_name()
+            .is_some_and(|name| name == "hidden-node-children.mjs")
+        {
+            continue;
+        }
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let Some(first_launch) = launches.iter().filter_map(|needle| text.find(needle)).min()
-        else {
+        let first_launch = launches.iter().filter_map(|needle| text.find(needle)).min();
+        let first_child_import = [
+            "'node:child_process'",
+            "\"node:child_process\"",
+            "'child_process'",
+            "\"child_process\"",
+        ]
+        .iter()
+        .filter_map(|needle| text.find(needle))
+        .min();
+        let Some(first_call) = first_launch.into_iter().chain(first_child_import).min() else {
             continue;
         };
         launchers += 1;
         let at = path.strip_prefix(root).unwrap().display().to_string();
         match text.find(HIDE_MARKER) {
-            None => found.push(format!(
-                "{at} launches a browser and never hides its spawns"
-            )),
-            Some(hide) if hide > first_launch => {
-                found.push(format!("{at} hides its spawns only after the first launch"));
+            None => found.push(format!("{at} bypasses the shared hidden Node launcher")),
+            Some(hide) if hide > first_call => {
+                found.push(format!(
+                    "{at} loads the hidden launcher only after its first call"
+                ));
             }
             Some(_) => {}
         }
@@ -151,15 +165,14 @@ fn every_browser_launching_script_hides_the_browsers_console_window() {
     let root = crate_dir.join("../..").canonicalize().unwrap();
     let (launchers, found) = browser_launchers_without_the_hide(&root);
     // Non-empty is not a control: a broken walk would find no launcher and pass vacuously. The
-    // floor names today's launchers (journey driver, its browser test, the reload observer, the
-    // lanes layout check); lower it only in the commit that removes one, and name it.
+    // floor names the current browser and child-process callers under the scanned paths.
     assert!(
-        launchers >= 4,
-        "expected at least 4 browser-launching scripts under tools/, found {launchers}"
+        launchers >= 6,
+        "expected at least 6 browser or child-process callers, found {launchers}"
     );
     assert!(
         found.is_empty(),
-        "hide the browser's console window (see HIDE_MARKER in this file):\n{}",
+        "use the shared hidden Node launcher:\n{}",
         found.join("\n")
     );
 }

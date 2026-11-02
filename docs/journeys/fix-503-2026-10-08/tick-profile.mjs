@@ -2,6 +2,7 @@
 // Headless Chromium; after the task graph has drawn, it watches a fixed window and reports
 // long tasks (main-thread blocks >50 ms), DOM mutations, Runtime requests and DOM size.
 // Usage: node tick-profile.mjs <studio url with ?session=...> <seconds> <out.json>
+import '../../../tools/hidden-node-children.mjs';
 import { chromium } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
 

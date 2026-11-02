@@ -1,14 +1,5 @@
 #!/usr/bin/env node
-// #2447 (Windows): a headless browser is a console program and Playwright starts it without
-// `windowsHide`, so it opens its own console window (a terminal tab titled with its path) even under a
-// hidden node. Every child this process spawns is hidden, before any browser is launched.
-import childProcess from 'node:child_process';
-if (process.platform === 'win32') {
-  const spawn = childProcess.spawn;
-  childProcess.spawn = function (command, a, b) {
-    return Array.isArray(a) ? spawn.call(this, command, a, { windowsHide: true, ...b }) : spawn.call(this, command, { windowsHide: true, ...a });
-  };
-}
+import { execFile } from '../hidden-node-children.mjs';
 // Studio board reload observer (#1703). Times N serial authenticated reloads of the Studio's
 // Lanes board against a Studio and Runtime the caller already started (the studio journey
 // fixture), and writes one JSON receipt. It only reads: it never writes to the Runtime.
@@ -20,7 +11,7 @@ if (process.platform === 'win32') {
 //
 // The session nonce and bearer token are read from files and never written to the receipt or
 // to stdout/stderr. Every child process runs hidden (windowsHide).
-import { execFile } from 'node:child_process';
+
 import { createRequire } from 'node:module';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';

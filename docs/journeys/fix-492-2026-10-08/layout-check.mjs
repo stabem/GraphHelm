@@ -2,6 +2,7 @@
 // direct conversation open), in a real headless Chromium. Reports the canvas width, whether the
 // right panel shows, and every canvas control that overlaps right-panel text; saves a screenshot.
 // Usage: node layout-check.mjs <url> <out.png>
+import '../../../tools/hidden-node-children.mjs';
 import { chromium } from '@playwright/test';
 
 const [url, out] = process.argv.slice(2);

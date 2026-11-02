@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from '../../../tools/hidden-node-children.mjs';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { run } from '../src/desktop_chats.mjs';

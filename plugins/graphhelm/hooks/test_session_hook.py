@@ -1705,6 +1705,26 @@ class SessionHookTests(unittest.TestCase):
             if closed.poll() is None:
                 closed.kill()
 
+    def test_a_codex_end_spawns_no_helper_and_still_delivers(self):
+        # #2344: Codex gives SessionEnd 3 s whatever it declares, and a helper has to start first, so
+        # a Codex end never spawns one. It still sends its signal and records its state.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.sitecustomize(
+            "no-helper-codex", "import subprocess",
+            "_popen = subprocess.Popen",
+            "def _refuse(argv, *args, **kwargs):",
+            "    if 'helper' in argv:",
+            "        raise AssertionError('a Codex end started a helper')",
+            "    return _popen(argv, *args, **kwargs)",
+            "subprocess.Popen = _refuse")
+        result = self.run_hook("end", host="codex")
+        if self.timed_out(result, "end"):
+            return
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("unobserved", result.stderr)
+        self.assertEqual(len([item for item in RuntimeHandler.requests if item[0] == "POST"]), 1)
+        self.assertIs(json.loads(next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")).read_text())["delivery"]["delivered"], True)
+
     def test_a_stale_helper_is_stopped_only_when_its_identity_matches(self):
         # #2344: a PID alone proves nothing, because the system reuses PIDs. A record names the PID
         # and the process's creation time; only a process still having that creation time is stopped.

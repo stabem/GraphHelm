@@ -977,6 +977,14 @@ def _helper_main() -> int:
     # The lifetime can only be shortened (a test's hung helper must not outlive its temp dir).
     lifetime = min(HELPER_LIFETIME, float(os.environ.get("GRAPHHELM_HOOK_HELPER_LIFETIME") or HELPER_LIFETIME))
     threading.Thread(target=lambda: (time.sleep(lifetime), os._exit(0)), name="graphhelm-helper-lifetime", daemon=True).start()
+    # A call that never releases the GIL (a runaway regex, a C loop) starves that thread, and a
+    # helper once spun for hours that way. The C-level timer needs no GIL: it ends the process at the
+    # lifetime whatever Python code is running (exit status 1; its stack dump goes to the null stderr).
+    try:
+        import faulthandler
+        faulthandler.dump_traceback_later(lifetime, exit=True)
+    except (RuntimeError, OSError, ValueError) as error:
+        print(f"graphhelm-session-hook: helper backstop not armed ({type(error).__name__})", file=sys.stderr)
     threading.Thread(target=_helper_housekeeping, name="graphhelm-helper-housekeeping", daemon=True).start()
     source, sink = sys.stdin.buffer, sys.stdout.buffer
     while True:

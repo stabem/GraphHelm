@@ -1646,6 +1646,65 @@ class SessionHookTests(unittest.TestCase):
                 self.assertFalse(self.state_files())
                 self.assertEqual([item for item in RuntimeHandler.requests if item[0] == "POST"], [])
 
+    def spawn_helper(self, lifetime):
+        """The helper alone, as the hook starts it: its own pipes, a short lifetime for the test."""
+        env = {**self.env, "GRAPHHELM_HOOK_HELPER_LIFETIME": str(lifetime)}
+        return subprocess.Popen([sys.executable, str(SCRIPT), "helper", "--host", "claude"],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                env=env, creationflags=NO_WINDOW)
+
+    def helper_gone(self, helper, lifetime):
+        """Whether the helper ended within its lifetime (plus interpreter start and teardown)."""
+        try:
+            helper.wait(timeout=deadline(lifetime))
+            return True
+        except subprocess.TimeoutExpired:
+            helper.kill()
+            helper.wait()
+            return False
+
+    def test_a_helper_ends_at_its_lifetime_even_when_a_call_holds_the_gil(self):
+        # #2344: two helpers once spun for 4 h. A call that never releases the GIL (here a runaway
+        # regex in the token read) starved the Python thread that enforced the lifetime. The C-level
+        # timer needs no GIL, so the helper is gone at its lifetime whatever Python is doing.
+        self.sitecustomize(
+            "helper-holds-gil", "import builtins, re, sys",
+            f"_open = builtins.open",
+            f"_token = {str(self.token_file)!r}",
+            "def _hold(file, *args, **kwargs):",
+            "    if str(file) == _token and 'helper' in sys.argv:",
+            "        re.match(r'(a+)+$', 'a' * 40 + 'b')",
+            "    return _open(file, *args, **kwargs)",
+            "builtins.open = _hold")
+        helper = self.spawn_helper(2)
+        try:
+            helper.stdin.write(json.dumps({"op": "token", "args": {"path": str(self.token_file)}}).encode("ascii") + b"\n")
+            helper.stdin.flush()
+            self.assertTrue(self.helper_gone(helper, 2), "a helper holding the GIL outlived its lifetime")
+        finally:
+            if helper.poll() is None:
+                helper.kill()
+
+    def test_a_helper_whose_hook_never_finishes_ends_at_its_lifetime(self):
+        # #2344: the hook can die after its first request, or hold the pipe open and say nothing more.
+        # The helper still ends at its lifetime, and at once when the pipe closes.
+        silent = self.spawn_helper(2)
+        try:
+            silent.stdin.write(json.dumps({"op": "binding", "args": {"payload": {}}}).encode("ascii") + b"\n")
+            silent.stdin.flush()
+            self.assertTrue(self.helper_gone(silent, 2), "a helper with a silent hook outlived its lifetime")
+        finally:
+            if silent.poll() is None:
+                silent.kill()
+        closed = self.spawn_helper(60)
+        try:
+            closed.stdin.close()
+            closed.wait(timeout=deadline(5))
+            self.assertEqual(closed.returncode, 0)
+        finally:
+            if closed.poll() is None:
+                closed.kill()
+
     def test_a_stale_helper_is_stopped_only_when_its_identity_matches(self):
         # #2344: a PID alone proves nothing, because the system reuses PIDs. A record names the PID
         # and the process's creation time; only a process still having that creation time is stopped.

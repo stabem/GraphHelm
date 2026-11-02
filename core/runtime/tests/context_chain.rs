@@ -13,9 +13,9 @@ use std::sync::{
 
 use graphhelm_protocols::{GraphNode, NodeType, Optionality};
 use graphhelm_runtime::context::{
-    CompiledContext, ContextFallback, ESTIMATOR_ID, MAX_BYTES_PER_CANDIDATE, MAX_CANDIDATES, SEARCH_POOL,
-    MAX_TOTAL_CANDIDATE_BYTES, STOP_WORDS, TOKENIZER_ID, compile_items, estimate_tokens,
-    objective_terms, retrieve_and_compile,
+    CompiledContext, ContextFallback, ESTIMATOR_ID, MAX_BYTES_PER_CANDIDATE, MAX_CANDIDATES,
+    MAX_TOTAL_CANDIDATE_BYTES, SEARCH_POOL, STOP_WORDS, TOKENIZER_ID, compile_items,
+    estimate_tokens, objective_terms, retrieve_and_compile,
 };
 use graphhelm_runtime::context_accounting::{
     CostProvenance, ExecutionAccountingReceipt, MODEL_USAGE_PRODUCER,
@@ -808,9 +808,9 @@ fn an_escaping_candidate_is_refused_by_the_reader_and_never_shipped() {
 
 #[test]
 fn candidates_beyond_the_cap_are_refused_and_counted_never_read() {
-    let paths: Vec<String> = (0..MAX_CANDIDATES + 3)
-        .map(|n| format!("f{n}.rs"))
-        .collect();
+    // #2369: the channel is asked for `SEARCH_POOL` ranked results (the backfill reserve); a
+    // surplus past THAT is refused and counted, and compile still ships at most `MAX_CANDIDATES`.
+    let paths: Vec<String> = (0..SEARCH_POOL + 3).map(|n| format!("f{n}.rs")).collect();
     let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
     let search = FakeSearch::returning(&refs);
     let files: Vec<(&str, &[u8])> = refs.iter().map(|p| (*p, b"x\n" as &[u8])).collect();
@@ -818,7 +818,7 @@ fn candidates_beyond_the_cap_are_refused_and_counted_never_read() {
     let compiled = compile(&search, &reader, &["x"]);
     assert_eq!(
         compiled.summary.candidates_returned as usize,
-        MAX_CANDIDATES + 3
+        SEARCH_POOL + 3
     );
     assert_eq!(compiled.summary.candidates_dropped, 3);
     assert_eq!(compiled.summary.sources.len(), MAX_CANDIDATES);
@@ -2404,7 +2404,12 @@ fn backfill_reads_at_most_twice_the_batch() {
     // Nothing ships; the cause keeps the existing rule (a drop names the budget).
     assert!(compiled.summary.fallback.is_some());
     assert!(!compiled.text.contains("load_it"));
-    assert_eq!(reader.reads.lock().unwrap().len(), 2 * MAX_CANDIDATES);
+    assert_eq!(
+        reader.reads.lock().unwrap().len(),
+        2 * MAX_CANDIDATES,
+        "{:?}",
+        compiled.summary
+    );
     assert_eq!(
         compiled.summary.candidates_dropped as usize,
         SEARCH_POOL - 2 * MAX_CANDIDATES

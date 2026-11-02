@@ -909,18 +909,32 @@ fn retrieve_and_compile_in_cached(
     let mut shipped_total: u64 = 0;
     let mut optional: Vec<(String, String, bool)> = Vec::new();
     let mut read_attempts = 0usize;
+    // A channel that returns more than the pool it was asked for sees the surplus REFUSED and
+    // counted up front, never silently ignored (the bound is `SEARCH_POOL`).
+    summary.candidates_dropped += candidates.len().saturating_sub(SEARCH_POOL) as u64;
+    // #2369: only a candidate refused as secret-shaped or unreadable frees its slot for the next
+    // ranked one. Every other outcome (shipped, or dropped by a byte or shape bound) uses its
+    // slot, so a question whose batch fills normally reads exactly what it read before.
+    let refillable_before = summary.candidates_secret_shaped + summary.candidates_unreadable;
     for (index, path) in candidates.iter().enumerate() {
         if cancel.is_some_and(ScanCancel::is_cancelled) {
             return cancelled_fallback(summary);
         }
-        // The batch is full, or the bounded read budget is spent: the rest of the ranking is
-        // dropped and counted (#2369 backfill stops here).
-        if index >= SEARCH_POOL
-            || optional.len() >= MAX_CANDIDATES
-            || read_attempts >= MAX_READ_ATTEMPTS
-        {
-            summary.candidates_dropped += 1;
-            continue;
+        // #2369: a full batch stops here. The ranked results after it were a reserve for
+        // backfill, not candidates a bound refused, so they are not counted as dropped.
+        let refilled =
+            summary.candidates_secret_shaped + summary.candidates_unreadable - refillable_before;
+        if (index as u64).saturating_sub(refilled) >= MAX_CANDIDATES as u64 {
+            break;
+        }
+        if index >= SEARCH_POOL {
+            break;
+        }
+        // The bounded read budget is spent: every ranked candidate left in the pool IS refused by
+        // that bound, so all of them are dropped and counted, and the loop ends.
+        if read_attempts >= MAX_READ_ATTEMPTS {
+            summary.candidates_dropped += (candidates.len().min(SEARCH_POOL) - index) as u64;
+            break;
         }
         // A path `context-provenance@1` cannot carry — too long, or not the schema's
         // `repositoryRelativePath` shape (#1086) — is refused whole, before the read, the
@@ -1014,6 +1028,15 @@ fn retrieve_and_compile_in_cached(
         optional.push((path.clone(), item, partial));
     }
 
+    // #2369: the read cost of this compile, for a measurement harness; off unless the variable is
+    // set, content-free (counts only).
+    if std::env::var_os("GRAPHHELM_SOURCE_SEARCH_TRACE").is_some() {
+        eprintln!(
+            "context-compile: reads={read_attempts} kept={} returned={}",
+            optional.len(),
+            candidates.len()
+        );
+    }
     let items: Vec<String> = optional.iter().map(|(_, item, _)| item.clone()).collect();
     if cancel.is_some_and(ScanCancel::is_cancelled) {
         return cancelled_fallback(summary);

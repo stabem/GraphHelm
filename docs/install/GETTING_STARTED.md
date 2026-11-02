@@ -53,6 +53,7 @@ a recipe, not part of the historical executed transcripts cited above.
 | | Needed for | Check |
 |---|---|---|
 | Rust `1.97.1` (pinned) with `rustfmt` and `clippy` | building the binary | `cargo +1.97.1 --version` |
+| Visual Studio C++ build tools and a Windows SDK (Windows MSVC only) | linking the Windows binary | `where.exe link.exe` |
 | git | the clone, and `init`'s `.gitignore` step | `git --version` |
 | curl (Linux/macOS) | the health and `401` checks in section 3; a bare Ubuntu image does not have it (`sudo apt-get install --yes curl`) | `curl --version` |
 | Node 22+ and npm | **only** the Studio (sections 4 and 5) | `node --version` |
@@ -76,6 +77,10 @@ winget install --id Rustlang.Rustup --exact --source winget --accept-source-agre
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 rustup toolchain install 1.97.1 --profile minimal --component rustfmt clippy
 ```
+
+For the default Windows MSVC toolchain, install Visual Studio or Build Tools with the **Desktop
+development with C++** workload and a Windows SDK. Rust uses the MSVC linker and Windows libraries
+to build the executable. See the [Rustup MSVC prerequisites](https://rust-lang.github.io/rustup/installation/windows-msvc.html).
 
 ```bash
 # Linux / macOS
@@ -104,27 +109,51 @@ winget install --id OpenJS.NodeJS.LTS --exact --source winget --accept-source-ag
 
 ## 1. Build or install the binary
 
-The [1.0.0 release](../releases/1.0.0.md) provides verified Windows and Ubuntu x86-64
-archives, avoiding the Rust build. Download the matching archive and its `SHA256SUMS.txt`, check
-the digest, extract it, and add the binary's directory to `PATH`. On Linux, check it with
-`sha256sum -c --ignore-missing SHA256SUMS.txt`: the file lists both archives, and without
-`--ignore-missing` the check fails on the one you did not download. You still need the repository
-for this guide's example graphs, Studio, and installation assets. On macOS or another platform,
-build from source using the commands below.
+When 1.0.0 is published, its [release page](https://github.com/stabem/GraphHelm/releases) will list
+Windows and Ubuntu x86-64 CLI archives, avoiding the Rust build. Download the matching archive and
+`SHA256SUMS.txt` from that release. If 1.0.0 is not listed yet, use the source-build steps below. The asset names are `graphhelm-windows-x86_64.zip` and
+`graphhelm-ubuntu-24.04-x86_64.tar.gz`.
 
-Clone over HTTPS using the command below; a read-only clone needs no GitHub account. SSH cloning
-requires an authenticated key. Contributors need a GitHub account to open issues and pull requests.
+On Windows, compare the archive digest with its line in `SHA256SUMS.txt`, then extract and add the
+binary directory to this shell's `PATH`:
 
 ```powershell
-git clone https://github.com/stabem/GraphHelm.git
-cd GraphHelm
-cargo +1.97.1 install --locked --path apps/cli
+$expected = ((Get-Content .\SHA256SUMS.txt | Where-Object { $_ -match 'graphhelm-windows-x86_64\.zip$' }) -split '\s+')[0]
+$actual = (Get-FileHash .\graphhelm-windows-x86_64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actual -ne $expected) { throw "SHA-256 mismatch" }
+Expand-Archive .\graphhelm-windows-x86_64.zip -DestinationPath "$HOME\graphhelm-1.0.0"
+$env:Path = "$HOME\graphhelm-1.0.0\graphhelm-windows-x86_64;$env:Path"
 graphhelm --version
 ```
 
+On Ubuntu, check and extract the archive, then add its binary directory to `PATH`:
+
 ```bash
+sha256sum -c --ignore-missing SHA256SUMS.txt
+mkdir -p "$HOME/.local/graphhelm-1.0.0"
+tar -xzf graphhelm-ubuntu-24.04-x86_64.tar.gz -C "$HOME/.local/graphhelm-1.0.0"
+export PATH="$HOME/.local/graphhelm-1.0.0/graphhelm-ubuntu-24.04-x86_64:$PATH"
+echo 'export PATH="$HOME/.local/graphhelm-1.0.0/graphhelm-ubuntu-24.04-x86_64:$PATH"' >> "$HOME/.profile"
+graphhelm --version
+```
+
+On Linux, `SHA256SUMS.txt` lists both archives, so `--ignore-missing` skips the one you did not
+download. You still need the repository for this guide's example graphs, Studio, and installation
+assets. On macOS or another platform, build from source using the commands below.
+
+Clone over HTTPS using the command below; a read-only clone needs no GitHub account. SSH cloning
+requires an authenticated key. Contributors need a GitHub account to open issues and pull requests.
+Archive users also need the source clone for the example graphs, Studio, and installation assets;
+they can skip the build command and use the binary extracted above.
+
+```sh
 git clone https://github.com/stabem/GraphHelm.git
 cd GraphHelm
+```
+
+To build the CLI from source instead of using an archive:
+
+```sh
 cargo +1.97.1 install --locked --path apps/cli
 graphhelm --version
 ```
@@ -143,8 +172,7 @@ commit <sha>
 `studio-up.ps1` as `-GraphHelm`. The harness registration `init` writes (section 6) names the
 binary that ran `init` by absolute path, so it works either way; re-run `init` after installing
 or moving the binary and the registration follows. On the rehearsal host (a clean Ubuntu 24.04 container, `nproc` = 8)
-this step took 186 s (`Finished \`release\` profile [optimized] target(s) in 3m 06s`, in the
-recorded transcript); a laptop is similar.
+the release build took 186 seconds. Build time varies with the number and speed of available CPU cores and whether build artifacts are cached.
 
 ## 2. `graphhelm init` in your project
 
@@ -155,6 +183,9 @@ The GraphHelm clone is not the project; it is where the binary and the Studio li
 cd C:\path\to\your-project
 graphhelm init --pretty
 ```
+
+If `init` reports `"harnesses": []`, rerun it with `--harness claude-code` or `--harness codex` to
+write that host's registration. Use the name of the host you have installed.
 
 ```bash
 cd /path/to/your-project
@@ -283,7 +314,9 @@ clone** (the Studio lives in `apps/studio`), not from your project.
 Shortest path, from your project folder: `graphhelm studio start`. It finds the GraphHelm clone
 (`--source`, else `GRAPHHELM_SOURCE`, else GraphHelm's own install clone, `~/.graphhelm/source`, described below), fast-forwards it
 to `origin/main` when it is on a clean `main` (otherwise it warns how many commits it is behind and
-leaves it alone; `--no-update` skips the check), reruns `npm ci` when the Studio's lock file moved,
+leaves it alone). Pass `--no-update` to skip checking and updating the source. The Studio can be newer
+than the CLI archive. To use a specific checkout, pass `--source <clone> --no-update`; the command
+will use that checkout as it is. It reruns `npm ci` when the Studio's lock file moved,
 and then runs the launcher below (`studio-up.ps1` on Windows, `studio-up.sh` on Linux and macOS) with this
 project's events, keyring and key. It needs no PowerShell on Linux or macOS.
 
@@ -292,20 +325,14 @@ cd C:\path\to\your-project
 graphhelm studio start
 ```
 
-To update GraphHelm itself, run `graphhelm update`. It works from GraphHelm's own install clone,
-`~/.graphhelm/source` (`%USERPROFILE%\.graphhelm\source` on Windows), which it creates on first
-use from the `origin` of the clone your binary was built from. Nobody else works in that clone,
-so it is always moved to `origin/main`: local changes in your own GraphHelm clone, or edits agents
-make there, never block an update (#1134). Then it runs `cargo install --locked --path apps/cli`
-inside the install clone, into its own build cache `~/.graphhelm/target` (never a shared `CARGO_TARGET_DIR`, whose lock another build can hold, #1140); the first build there compiles from scratch. `graphhelm studio start` runs the
-Studio from the same install clone. To build or run your own clone instead, pass `--source <clone>`
-or set `GRAPHHELM_SOURCE`; that clone is only fast-forwarded when it is clean and on `main`
-(`--keep-local` builds it as it is). On Windows the running `graphhelm.exe` is renamed to
-`graphhelm.old.exe` first, and restored if the install fails.
+To update the CLI, run `graphhelm update`. It builds from GraphHelm's private install clone and
+uses a separate build directory. The first update builds from scratch. To use your own clone, pass
+`--source <clone>` or set `GRAPHHELM_SOURCE`; it is fast-forwarded only when clean and on `main`.
+`--keep-local` builds that clone as it is. On Windows, the running executable is restored if the
+update fails.
 
-`graphhelm update --check` builds nothing: it fetches `origin/main` and exits non-zero unless the
-running binary was built from exactly that commit, naming how far behind it is (#1244). A binary with
-no install stamp (a dev build) fails too. Run it before any validation an agent will trust.
+`graphhelm update --check` builds nothing. It checks whether the installed binary matches
+`origin/main`; a development build without an install stamp also fails this check.
 
 The same launch by hand. Windows, one command — reuses the Runtime from section 3 if it is already answering, otherwise
 starts one; installs dependencies on the first run; opens the browser connected:
@@ -322,9 +349,10 @@ link. It listens on `127.0.0.1` only, so from a container its port cannot be pub
 there.
 
 Manual dev server, on any platform. It listens on port 5183, the same port as the launchers above, so stop one
-before you start the other:
+before you start the other. Run these commands from the GraphHelm clone:
 
 ```powershell
+cd C:\path\to\GraphHelm
 $env:GRAPHHELM_EVENTS = "C:\path\to\your-project\.graphhelm\events"
 $env:GRAPHHELM_RUNTIME_URL = "http://127.0.0.1:8791"
 npm --prefix apps/studio ci
@@ -332,6 +360,7 @@ npm --prefix apps/studio run dev
 ```
 
 ```bash
+cd /path/to/GraphHelm
 export GRAPHHELM_EVENTS=/path/to/your-project/.graphhelm/events
 export GRAPHHELM_RUNTIME_URL=http://127.0.0.1:8791
 npm --prefix apps/studio ci
@@ -363,6 +392,10 @@ The Studio's `/v1` and `/health` requests are proxied by the dev server to `GRAP
 so they stay same-origin; the default is `http://127.0.0.1:8080`, which is why the variable must
 say `8791` here.
 
+To stop a foreground Runtime or Studio dev server, press `Ctrl+C` in the terminal where it is
+running. If you started it in the background, stop it with the same process manager you used to
+start it.
+
 ## 5. The first execution — and acting on it
 
 Start a run against the store `init` created, offline. The fixture file decides what each node
@@ -391,10 +424,22 @@ owner request, so the Graph lists no work for it. A run that waits on you reads 
 `Waits on:` row such as `implementation is blocked. Approve it from the CLI: graphhelm execution approve ...`. The Lanes
 tab shows the same text under Needs action. The Studio has no approve button: approve from the CLI, as below.
 
-The verbs, executed as written against a fresh store (`E` is the events directory, `F` the fixture file; same
-flags in PowerShell with the Windows paths). Pause first: a supervised run accepts `resume` only from `paused`.
+The verbs below run against a fresh store (`E` is the events directory, `F` the fixture file). Set
+these paths first. Run from the GraphHelm clone. Pause before approving: a supervised run accepts
+`resume` only from `paused`.
+
+```powershell
+$E = "C:\path\to\your-project\.graphhelm\events"
+$F = "C:\path\to\your-project\.graphhelm\fixtures.json"
+graphhelm execution pause   --events $E --execution demo
+graphhelm execution approve --events $E --execution demo --node implementation
+graphhelm execution resume  --events $E --execution demo --file examples/graphs/manual-override-deploy.yaml --fixtures $F
+graphhelm execution status  --events $E --execution demo
+```
 
 ```bash
+E=/path/to/your-project/.graphhelm/events
+F=/path/to/your-project/.graphhelm/fixtures.json
 graphhelm execution pause   --events $E --execution demo
 graphhelm execution approve --events $E --execution demo --node implementation
 graphhelm execution resume  --events $E --execution demo --file examples/graphs/manual-override-deploy.yaml --fixtures $F
@@ -402,7 +447,7 @@ graphhelm execution status  --events $E --execution demo
 ```
 
 Approving before pausing is refused with `resume refused: not_paused` (`GHCLI005_EXECUTION_STATE`), and the run
-then reads `wedged_quiescence`. Measured on a fresh store with the CLI built from `5e6b0442`:
+then reads `wedged_quiescence`. Measured on a fresh store:
 
 ```
 execution.approve  ok     status=running  deploy=ready implementation=ready
@@ -434,6 +479,9 @@ duplicated.
 Runtime by identity. The token stays in its private file; neither the port nor the token path is
 copied into the MCP registration. Every mutation the chat makes is attributed to `agent-chat`.
 
+If no supported chat host is installed, skip this section and use the CLI steps above. A real
+chat-host run is not proven here (`OBSERVER_MISSING: real chat host`).
+
 **Claude Code** — `<project>/.mcp.json` was written (or merged, keeping any other server in it).
 Start Claude Code in the project directory; it reads `.mcp.json` from the project root. If a
 session was already open, restart it. Then, in the chat:
@@ -444,9 +492,11 @@ use the graphhelm MCP tool list
 
 Expected: one row, `demo`, with its attention verdict — the same answer the Studio shows.
 
-**One registration for every project (Claude Code, user scope).** `graphhelm setup --resolve
-home/.claude.json=register-mcp` writes `graphhelm mcp --discover --actor agent-chat` into
-`~/.claude.json`. The MCP process uses its active project directory (or `--project <path>` when
+**One registration for every project (Claude Code, user scope).** To opt into one user-wide registration, resolve `home/.claude.json=register-mcp` in a reviewed
+`graphhelm setup` plan. `--resolve` creates the plan; it does not apply it. Review that exact plan,
+save it with `--out <private-plan-file>`, then apply it with `--apply <private-plan-file> --accept sha256:<exact-reviewed-digest>` and a private `--state-root`. See the
+[adoption rehearsal](../acceptance/adoption-rehearsal.md) for the complete command sequence. The
+registration runs `graphhelm mcp --discover --actor agent-chat` from `~/.claude.json`. The MCP process uses its active project directory (or `--project <path>` when
 the host does not launch it there) to find that project's Runtime. Start that Runtime with the `serve`
 command from section 3, which passes `--project`: without it only a port record is written, and discovery, which reads the project record, finds nothing.
 Until that Runtime is running, `graphhelm mcp --discover` lists no tools. An empty list is expected, not broken: the
@@ -511,4 +561,7 @@ which serves every Runtime verb. If `init` detected neither harness
 | `serve` refuses at start with `GHCLI006_SERVE_INVALID` at `/bind` (`the requested address could not be bound`) | something already listens on `127.0.0.1:8791` — often a previous `serve` | stop it, or re-run `init --bind 127.0.0.1:<other port>` so every registration follows the new number |
 | the Studio shows the connect gate | the page was opened without the printed `?session=` URL, or `GRAPHHELM_EVENTS` was unset | open the printed URL; or run `graphhelm studio open` in the project folder |
 | the Studio says `Runtime replied 502` | `GRAPHHELM_RUNTIME_URL` points at the wrong port (the default is `8080`) | set it to `http://127.0.0.1:8791` and restart the dev server |
+| `studio open` refuses with `GHCLI032_STUDIO_REFUSED` | the requested port does not match the Studio dev server | pass `--port <the-port-from-the-dev-server>`; see [section 4](#4-start-the-studio) |
+| `cargo` is not found after installing Rust | this shell does not have Cargo's bin directory on `PATH` | open a new shell; on PowerShell run `$env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"`, or on bash run `. "$HOME/.cargo/env"` |
+| a container connection to Studio is reset | the dev server is bound to container loopback | start it with `-- --host` and publish port `5183`; see [section 4](#4-start-the-studio) |
 | the message box is refused | the Runtime started without `--keyring`/`--key-id` | restart it with the command `init` printed |

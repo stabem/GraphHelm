@@ -10,8 +10,9 @@
 - [#2407](https://github.com/stabem/GraphHelm/pull/2407) The Runtime records detached-run failures so status and briefing can show the cause.
 - [#2412](https://github.com/stabem/GraphHelm/pull/2412) Most session-hook paths hand file work to a detached helper and report `UNOBSERVED` when it does not answer by its deadline; Codex SessionEnd is the exception (#2431).
 - [#2411](https://github.com/stabem/GraphHelm/pull/2411) Getting Started explains where session hooks come from, lists `curl`, and shows the archive checksum command for one downloaded archive.
+- [#2457](https://github.com/stabem/GraphHelm/pull/2457) On Windows, four Journey browser launchers request hidden browser consoles for `spawn` calls. The full Studio-to-driver window check remains unverified.
 - [#2431](https://github.com/stabem/GraphHelm/pull/2431) A Codex session end skips the detached helper and handles bounded state work in-process under a 1 s watchdog, because Codex's 3 s cap leaves no room for a helper start. Spawn-to-exit can still exceed 3 s under load (#2436); this was not observed on a real Codex host.
-- [#2453](https://github.com/stabem/GraphHelm/pull/2453) Getting Started adds archive download, checksum, extraction, and PATH commands, plus clearer setup and troubleshooting steps. The follow-up findings are resolved; a clean Windows install and real chat-host flow remain unverified, and docs checks do not validate factual claims.
+- [#2453](https://github.com/stabem/GraphHelm/pull/2453) Getting Started explains the 1.0.0 archive steps for use once that release is published, and adds clearer setup and troubleshooting guidance. The #2443 follow-up findings were addressed; a clean Windows install and real chat-host flow remain unverified, and docs checks do not validate factual claims.
 
 ## Fixed
 - [#2406](https://github.com/stabem/GraphHelm/pull/2406) Workspace release can clear a claim when its folder is gone, so the task can be claimed again; `git worktree prune` may also clear other sessions' prunable folder-missing entries, but does not touch their working trees or branches.
@@ -21,6 +22,7 @@
 - [#2441](https://github.com/stabem/GraphHelm/pull/2441) Contributors run long builds and tests before starting a blind review.
 - [#2446](https://github.com/stabem/GraphHelm/pull/2446) Before a blind review, contributors also run formatting, clippy, Keel checks, and journey replays.
 - [#2438](https://github.com/stabem/GraphHelm/pull/2438) The MCP invalid-arguments test now waits for session completion instead of relying on a 30-second wall-clock timeout.
+- [#2397](https://github.com/stabem/GraphHelm/pull/2397) The task recorder warns when a second reviewer is assigned to the same pull request head.
 - [#2451](https://github.com/stabem/GraphHelm/pull/2451) The docs guard catches broken relative links to files and folders, including non-Markdown targets.
 - [#2452](https://github.com/stabem/GraphHelm/pull/2452) The heartbeat and session-stop tests accept the measured timing race but still fail if cleanup leaves a waiter behind.
 

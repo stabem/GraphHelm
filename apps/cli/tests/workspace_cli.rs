@@ -139,6 +139,49 @@ fn claim_lays_out_the_workspace_and_refuses_a_second_claim() {
     assert_eq!(code, 3, "{bad}");
 }
 
+/// #2339: a claim whose folder is gone used to be neither releasable ("no readable worktree")
+/// nor claimable again ("already has a workspace"). Release now clears it, and the same task
+/// can be claimed again (on a new branch: the old one, with its commits, is kept).
+#[test]
+fn release_clears_a_claim_whose_folder_is_gone_and_the_task_can_be_claimed_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = repo(dir.path());
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    claim(root_s, &repo, "lane", "2313");
+    let ws = root.join("lane").join("2313");
+    std::fs::remove_dir_all(&ws).unwrap();
+    let (code, reply) = run(&[
+        "release", "--root", root_s, "--lane", "lane", "--task", "2313",
+    ]);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(reply["data"]["cleared"], true, "{reply}");
+    assert_eq!(reply["data"]["branch"], "issue-2313-lane", "{reply}");
+    let (code, again) = run(&[
+        "claim",
+        "--root",
+        root_s,
+        "--lane",
+        "lane",
+        "--task",
+        "2313",
+        "--repo",
+        repo.to_str().unwrap(),
+        "--base",
+        "HEAD",
+        "--branch",
+        "issue-2313-lane-r2",
+    ]);
+    assert_eq!(code, 0, "the same task is claimable again: {again}");
+    assert!(ws.join("wt").join("a.txt").is_file());
+    // A folder that still exists is never cleared this way: its release reads the worktree.
+    release(root_s, "lane", "2313");
+    assert!(
+        ws.join("wt").join("a.txt").is_file(),
+        "release never deletes a live folder"
+    );
+}
+
 #[test]
 fn sweep_removes_only_released_clean_unmoved_workspaces_and_never_follows_links() {
     let dir = tempfile::tempdir().unwrap();

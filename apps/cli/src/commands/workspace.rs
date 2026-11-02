@@ -272,7 +272,11 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
             "/state",
         );
     }
-    let worktree = workspace_dir(root, lane, task).join("wt");
+    let workspace = workspace_dir(root, lane, task);
+    let worktree = workspace.join("wt");
+    if worktree_gone(&workspace) {
+        return clear_gone(&file, &record, lane, task);
+    }
     let Ok(head) = git(&worktree, &["rev-parse", "HEAD"]) else {
         return refuse(
             COMMAND,
@@ -291,6 +295,27 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
     Outcome::success(
         COMMAND,
         json!({"lane": lane, "task": task, "releasedHead": head, "dirty": dirty}),
+    )
+}
+
+/// #2339: the claimed workspace directory no longer exists (its session died and the folder was
+/// removed), so there is nothing left to release or sweep. Only after confirming that is the
+/// ledger entry removed, so the same task can be claimed again. The branch and its commits are
+/// kept; git's record of the missing worktree is pruned (git only prunes worktrees whose folder is
+/// gone), so the branch is no longer reported as checked out there.
+fn clear_gone(file: &Path, record: &Value, lane: &str, task: &str) -> Outcome {
+    const COMMAND: &str = "workspace.release";
+    if let Some(repo) = record["repo"].as_str() {
+        let _ = git(Path::new(repo), &["worktree", "prune"]);
+    }
+    if std::fs::remove_file(file).is_err() {
+        return Outcome::internal(COMMAND, "the stale workspace record could not be removed");
+    }
+    Outcome::success(
+        COMMAND,
+        json!({"lane": lane, "task": task, "cleared": true,
+            "branch": record["branch"],
+            "note": "the workspace folder was gone; its ledger entry was cleared and the branch kept"}),
     )
 }
 

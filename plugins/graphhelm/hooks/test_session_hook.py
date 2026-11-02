@@ -1599,6 +1599,15 @@ class SessionHookTests(unittest.TestCase):
                 # The helper did the work the hook used to do.
                 self.assertTrue(list(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")))
         self.assertTrue([item for item in RuntimeHandler.requests if item[0] == "GET"])
+        # The one named exception: a Codex SessionEnd (3 s cap, 1 s watchdog) does its bounded state work
+        # itself. It is asserted here so that it cannot widen: a Codex start still opens nothing, and
+        # the Codex end is the only path that may.
+        started = self.run_hook("start", host="codex", session_title="lane-a - work")
+        self.assertEqual(started.returncode, 0, started.stderr)
+        self.assertNotIn("IO-OPEN", started.stderr, "a Codex start must not open files")
+        ended = self.run_hook("end", host="codex", session_title="lane-a - work")
+        self.assertEqual(ended.returncode, 0, ended.stderr)
+        self.assertIn("IO-OPEN", ended.stderr, "the Codex end is the named exception: it does its state work itself")
 
     def test_the_helper_is_reached_only_through_its_own_pipes(self):
         # #2344: no named pipe, socket or FIFO is created for another user or process to connect to;

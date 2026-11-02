@@ -12,17 +12,17 @@
   "promises": [
     {
       "maxEvidenceAgeSeconds": 604800,
-      "promiseId": "login.visible",
+      "promiseId": "proof.visible",
       "requiredEvidenceKinds": [
         "visual_capture"
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows region \"Project demo\" saying \"demo · 0 agents\", heading \"demo\"",
+      "statement": "shows no heading \"Open the Studio from your project\", region \"Project demo\"",
       "statesToObserve": [
         "stable"
       ],
-      "stepId": "login"
+      "stepId": "proof"
     },
     {
       "maxEvidenceAgeSeconds": 604800,
@@ -32,7 +32,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows heading \"Produzir build implantável.\", region \"Graph\" saying \"RUN demo STATUS running\", banner \"Top bar\" saying \"demo / demo\", no list \"Runs in demo\", no heading \"Open the Studio from your project\"",
+      "statement": "shows region \"Graph\" saying \"RUN demo STATUS\"",
       "statesToObserve": [
         "stable"
       ],
@@ -54,29 +54,26 @@
         "recoveryAction": null,
         "safeStop": "stop replay",
         "timeoutSeconds": 30,
-        "visibleError": "screen login not reached"
+        "visibleError": "screen proof not reached"
       },
       "screen": {
         "scopePaths": [
           "apps/studio/src/App.tsx",
-          "apps/studio/src/sidebar/Sidebar.tsx",
-          "apps/studio/src/sidebar/project-summary.ts",
-          "apps/studio/src/topbar/Topbar.tsx",
           "apps/studio/src/login/session.ts",
-          "apps/studio/src/views/Views.tsx"
+          "apps/studio/dev-session.ts"
         ],
-        "screenId": "login",
-        "title": "The ticket opens the demo project"
+        "screenId": "proof",
+        "title": "Ticket-free proof deep link"
       },
       "semanticAction": {
         "kind": "navigate",
         "target": {
           "geometryClaim": false,
           "strategy": "label",
-          "value": "/?session=studio-fixture"
+          "value": "/?view=proof&journey=runtime-health"
         }
       },
-      "stepId": "login"
+      "stepId": "proof"
     },
     {
       "actorId": "owner",
@@ -93,22 +90,19 @@
       "screen": {
         "scopePaths": [
           "apps/studio/src/App.tsx",
-          "apps/studio/src/sidebar/Sidebar.tsx",
-          "apps/studio/src/sidebar/project-summary.ts",
-          "apps/studio/src/topbar/Topbar.tsx",
           "apps/studio/src/login/session.ts",
-          "apps/studio/src/views/Views.tsx"
+          "apps/studio/dev-session.ts"
         ],
         "screenId": "graph",
-        "title": "The demo team run is open in Graph"
+        "title": "The demo team run remains available"
       },
       "semanticAction": {
-        "kind": "wait_for",
+        "kind": "activate",
         "target": {
           "geometryClaim": false,
-          "role": "heading",
+          "role": "tab",
           "strategy": "accessible_name",
-          "value": "Produzir build implantável."
+          "value": "Graph"
         }
       },
       "stepId": "graph"

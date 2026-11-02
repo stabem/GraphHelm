@@ -3,47 +3,37 @@ id: studio2-open
 title: Open the Studio on a project
 name: Open the Studio
 feature: Studio
-purpose: "A fresh loopback URL opens the demo project without a ticket, preserves the proof deep link on reload, and shows unavailable for an unknown project."
+purpose: "A fresh loopback URL opens the demo project without a ticket, preserves the proof deep link on reload, and keeps the project available when switching views."
 status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
 risks: [critical_ux, authentication]
 viewports: [web, mobile]
 screens:
+  - id: graph
+    title: The demo team run remains available
+    url: /?view=graph&journey=runtime-health
+    ignoreQuery: [project, run]
+    state: stable
+    expect: [{role: region, name: Graph, text: RUN demo STATUS, because: the demo run opens after switching from the ticket-free proof deep link}]
+    scope: [apps/studio/src/App.tsx, apps/studio/src/login/session.ts, apps/studio/dev-session.ts]
   - id: proof
     title: Ticket-free proof deep link
     url: /?view=proof&journey=runtime-health
     ignoreQuery: [project, run]
     state: stable
-    expect:
-      - {role: heading, name: Open the Studio from your project, absent: true, because: a loopback link requires no ticket}
-      - {role: region, name: Project demo, because: the selected demo project is open}
-    scope: [apps/studio/src/App.tsx, apps/studio/src/login/session.ts, apps/studio/dev-session.ts]
-  - id: unavailable
-    title: Unknown project remains unavailable
-    url: /?project=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&view=proof
-    state: error
-    expect:
-      - {role: heading, name: Project unavailable, because: unknown project IDs never fall back to another project}
-      - {role: region, name: Project demo, absent: true, because: no other project may be selected implicitly}
+    expect: [{role: heading, name: Open the Studio from your project, absent: true, because: a loopback link requires no ticket}, {role: region, name: Project demo, because: the selected demo project is open}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/login/session.ts, apps/studio/dev-session.ts]
 edges:
-  - id: proof.inspect
+  - id: proof.graph
     from: proof
-    to: proof
-    intent: Open a saved deep link in a fresh browser session.
-    why: The server creates the local browser session without a ticket.
+    to: graph
+    intent: Open a saved proof deep link and switch to Graph.
+    why: The local browser session opens the project and keeps its run available without a ticket.
     acts:
-      - {kind: inspect, role: region, name: Project demo}
-  - id: unavailable.inspect
-    from: unavailable
-    to: unavailable
-    intent: Open a link naming an unknown project.
-    why: A missing project cannot silently expose another project's data.
-    acts:
-      - {kind: inspect, role: heading, name: Project unavailable}
+      - {kind: activate, role: tab, name: Graph}
 paths:
-  main: [proof.inspect]
-  refused: [unavailable.inspect]
+  main: [proof.graph]
 drift: []

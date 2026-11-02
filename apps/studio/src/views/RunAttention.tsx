@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
 
 import type { AttentionReason, Runtime } from "../runtime/client";
-import { cliRemedy, reasonText } from "./attention";
+import { cliRemedy, reasonText, remedyLead } from "./attention";
 
 /** What `useRunWaits` knows: the reasons (empty when the run waits on nothing), `"reading"` before
  * the first read lands, `"failed"` when it did not. Neither of the last two is "nothing". */
@@ -69,5 +69,5 @@ export function useRunWaits(runtime: Runtime | null, executionId: string | null,
  * a blocked node the CLI line that approves it, since node approval has no Studio surface yet. */
 export function WaitsOn({ reason, executionId }: { reason: AttentionReason; executionId: string }) {
   const remedy = cliRemedy(reason, executionId);
-  return <>{reasonText(reason)}{remedy !== null && <> Approve it from the CLI: <code>{remedy}</code></>}</>;
+  return <>{reasonText(reason)}{remedy !== null && <> {remedyLead(reason)} <code>{remedy}</code></>}</>;
 }

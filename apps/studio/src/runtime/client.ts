@@ -22,6 +22,11 @@ export interface AttentionReason {
   node?: string;
   draft_id?: string;
   session?: string;
+  /** #2408: a `drive_failed` reason: where the server-owned drive failed (`drive` or
+   * `workspace_release`), why, and the event sequence it was recorded at. */
+  site?: string;
+  cause?: string;
+  at_sequence?: number;
 }
 
 /** `GET /v1/executions/{id}/tasks` (#1149, #1234): only the Runtime's lane liveness verdicts are read. */

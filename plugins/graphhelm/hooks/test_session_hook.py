@@ -1730,30 +1730,35 @@ class SessionHookTests(unittest.TestCase):
         # a Codex end never spawns one. It still sends its signal and records its state. The stub
         # RECORDS every spawn attempt in a marker file (an error raised inside the hook would be
         # swallowed and could not fail this test), and the test asserts there is none.
+        # #2439: the helper's Popen runs in a daemon thread ("graphhelm-helper-spawn") that the hook
+        # can outlive, so a Popen recorder could miss an attempt the hook had already made. The
+        # recorder therefore logs the START of that thread, which happens in the hook's own thread
+        # before the hook can answer, so the record exists whatever the daemon thread gets to do.
         self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
         marker = Path(self.temp.name) / "spawn-attempts.txt"
         self.sitecustomize(
-            "spawn-recorder", "import subprocess",
-            "_popen = subprocess.Popen",
-            "def _record(argv, *args, **kwargs):",
-            f"    open({str(marker)!r}, 'a').write(' '.join(map(str, argv)) + chr(10))",
-            "    return _popen(argv, *args, **kwargs)",
-            "subprocess.Popen = _record")
+            "spawn-recorder", "import threading",
+            "_start = threading.Thread.start",
+            "def _record(self, *args, **kwargs):",
+            "    if self.name == 'graphhelm-helper-spawn':",
+            f"        open({str(marker)!r}, 'a').write('helper-spawn' + chr(10))",
+            "    return _start(self, *args, **kwargs)",
+            "threading.Thread.start = _record")
         result = self.run_hook("end", host="codex")
         if self.timed_out(result, "end"):
             return
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("unobserved", result.stderr)
         attempts = marker.read_text(encoding="utf-8").splitlines() if marker.exists() else []
-        self.assertEqual([line for line in attempts if " helper " in line], [], "a Codex end started a helper")
+        self.assertEqual(attempts, [], "a Codex end started a helper")
         self.assertEqual(len([item for item in RuntimeHandler.requests if item[0] == "POST"]), 1)
         self.assertIs(json.loads(next(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")).read_text())["delivery"]["delivered"], True)
         # The recorder works: a Claude end does start the helper, and the marker says so.
         marker.unlink(missing_ok=True)
         claude = self.run_hook("end")
         self.assertEqual(claude.returncode, 0, claude.stderr)
-        self.assertTrue([line for line in marker.read_text(encoding="utf-8").splitlines() if " helper " in line],
-                        "the spawn recorder saw no helper start for a Claude end")
+        self.assertEqual(marker.read_text(encoding="utf-8").splitlines() if marker.exists() else [], ["helper-spawn"],
+                         "the spawn recorder saw no helper start for a Claude end")
 
     def test_a_stale_helper_is_stopped_only_when_its_identity_matches(self):
         # #2344: a PID alone proves nothing, because the system reuses PIDs. A record names the PID

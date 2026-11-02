@@ -29,7 +29,7 @@
 ## Internal
 - [#2460](https://github.com/stabem/GraphHelm/pull/2460) The release notes list 16 merged PRs since the v1.0.0 notes merge, with links to their source PRs.
 - [#2463](https://github.com/stabem/GraphHelm/pull/2463) The notes add source-linked entries for #2457 and #2397 and correct the #2431 and #2453 claims after review.
-- [#2456](https://github.com/stabem/GraphHelm/pull/2456) The Codex-end test records the helper-spawn thread start; one of 20 break-once runs passed, and the review did not establish why.
+- [#2456](https://github.com/stabem/GraphHelm/pull/2456) The Codex-end test records the helper-spawn thread start.
 - [#2478](https://github.com/stabem/GraphHelm/pull/2478) The Codex-end guard now checks the helper marker before the timeout return and adds a watchdog-path test; the slow-briefing test no longer races interpreter startup.
 
 ## Removed

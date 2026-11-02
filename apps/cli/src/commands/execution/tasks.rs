@@ -1036,20 +1036,31 @@ pub(crate) fn holder<'a>(
     lane: &str,
     parallel_branch: Option<&str>,
 ) -> Option<&'a TaskState> {
-    tasks.iter().find(|slice| {
+    // A pre-PR claim still holding the task: not merged, not released, lease not lapsed.
+    let live = |slice: &&TaskState| {
         slice.task_id == task_id
-            // #2298: a parallel claim is held back only by an open claim on its own branch; a
-            // slice whose branch is unknown still holds, so nothing old is read as parallel.
-            && parallel_branch.is_none_or(|branch| {
-                slice.branch.as_deref().is_none_or(|held| held == branch)
-            })
             && slice.pr.is_none()
             && slice.released_by.is_none()
             && slice.step != graphhelm_execution::tasks::TaskStep::Merged
-            && slice.lane.as_deref().is_some_and(|holder| holder != lane)
             && !leases
                 .iter()
                 .any(|lease| lease.key == slice.key && lease.overdue)
+    };
+    // #2338: a lane's own re-claim is admitted (docs/process/DELIVERY.md) whether or not another
+    // lane opened a parallel slice beside it; before, the parallel slice read as the holder.
+    if tasks
+        .iter()
+        .filter(live)
+        .any(|slice| slice.lane.as_deref() == Some(lane))
+    {
+        return None;
+    }
+    tasks.iter().filter(live).find(|slice| {
+        // #2298: a parallel claim is held back only by an open claim on its own branch; a
+        // slice whose branch is unknown still holds, so nothing old is read as parallel.
+        parallel_branch
+            .is_none_or(|branch| slice.branch.as_deref().is_none_or(|held| held == branch))
+            && slice.lane.as_deref().is_some_and(|holder| holder != lane)
     })
 }
 

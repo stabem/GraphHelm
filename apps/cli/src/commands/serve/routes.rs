@@ -4546,6 +4546,17 @@ pub(super) async fn signal(
             == Some(identity.actor.id().as_str());
     let scoped_agent_authenticated = identity.actor.actor_type() == PersistedActorType::Agent
         && (verify_agent_credential(&state, &headers, &identity.actor) || verified_proof_lane);
+    // A historical retry must satisfy today's actor authentication before idempotency can
+    // return an earlier acknowledgement without entering signal admission.
+    if signal_value.get("type").and_then(serde_json::Value::as_str) == Some("task.proof_recorded")
+        && !scoped_agent_authenticated
+    {
+        return bad_request(
+            SIGNAL_COMMAND,
+            "benchmark proofs require an authenticated scoped agent",
+            "/signal/source",
+        );
+    }
     // #478: the request's ONE store open. The mutation reads through this handle and the body
     // below records through a clone of it (the clone shares the handle; it opens nothing).
     let store = match event_store(&state.events) {

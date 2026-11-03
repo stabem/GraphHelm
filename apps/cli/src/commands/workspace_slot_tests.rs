@@ -1160,6 +1160,7 @@ fn ledger_quarantine_probe_child() -> Result<(), Box<dyn std::error::Error>> {
                 .ok_or_else(|| {
                     std::io::Error::other("refused probe unexpectedly received a grant")
                 })?;
+            let error = error.to_string();
             assert!(error.contains("all 8 quarantine names"), "{error}");
             assert!(error.contains(&ledger.display().to_string()), "{error}");
             println!("{error}");

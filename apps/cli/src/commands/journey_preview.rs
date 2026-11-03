@@ -2703,7 +2703,7 @@ mod tests {
     #[test]
     fn a_preview_body_preserves_the_runtime_run_uuid_and_reads_legacy_state() {
         use super::*;
-        let flow = json!({"status":"draft","screens":[],"edges":[]});
+        let flow = json!({"status":"draft","screens":[],"edges":[],"paths":{"main":[]}});
         let digest = super::super::journey_flow::approval_digest(&flow);
         let run_id = uuid::Uuid::new_v4().to_string();
         let stored = json!({"preview":true,"digest":digest,"commit":"c1","state":"running",

@@ -624,6 +624,10 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
         "expected at least 21 tools (today's real count); got {}: {population:?}",
         population.len()
     );
+    let probe_arguments = |name: &str| match name {
+        "claim" => json!({"executionId": "exec-x", "node": "node-x"}),
+        _ => json!({}),
+    };
 
     // Negative sweep: an EMPTY capability allowlist must refuse every single tool the server
     // actually serves -- one session, one subprocess, one tools/call per population member.
@@ -647,11 +651,14 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
     for chunk in population.chunks(SWEEP_CHUNK) {
         let mut lines = vec![initialize_request(1), initialized_notification()];
         for (index, name) in chunk.iter().enumerate() {
+            // Keep `claim` valid past schema validation so the bypass probe reaches the
+            // downstream boundary instead of failing for an unrelated input error.
+            let arguments = probe_arguments(name);
             lines.push(json!({
                 "jsonrpc": "2.0",
                 "id": 2 + index as u64,
                 "method": "tools/call",
-                "params": {"name": name, "arguments": {}}
+                "params": {"name": name, "arguments": arguments}
             }));
         }
         let session = mcp_session_with(&args, &[("GRAPHHELM_API_TOKEN", "test-token")], &lines);
@@ -709,7 +716,7 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
             initialize_request(1),
             initialized_notification(),
             json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                "params": {"name": allowed_name, "arguments": {}}}),
+                "params": {"name": allowed_name, "arguments": probe_arguments(allowed_name)}}),
         ],
     );
     let control_records = read_jsonl(&control_audit_log);

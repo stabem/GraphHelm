@@ -423,7 +423,6 @@ fn recover_interrupted_claim(
             "/worktree",
         );
     }
-    let mut removed_worktree = false;
     if worktree.exists() {
         match first_link(&worktree, &worktree) {
             Ok(Some(path)) => {
@@ -500,7 +499,6 @@ fn recover_interrupted_claim(
                 "/worktree",
             );
         }
-        removed_worktree = true;
     }
     let worktree_list = match git_with_timeout(
         repo,
@@ -530,7 +528,7 @@ fn recover_interrupted_claim(
             "/worktree",
         );
     }
-    if removed_worktree && record["branchPreviouslyExisted"] == false {
+    if record["branchPreviouslyExisted"] == false {
         let (Some(branch), Some(base_head)) =
             (record["branch"].as_str(), record["baseHead"].as_str())
         else {
@@ -570,6 +568,17 @@ fn recover_interrupted_claim(
                     COMMAND,
                     crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
                     "the interrupted claim branch moved after setup; preserve the branch for inspection",
+                    "/branch",
+                );
+            }
+            if worktree_list
+                .lines()
+                .any(|line| line == format!("branch {branch_ref}"))
+            {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    "the interrupted claim branch is checked out in another worktree; preserve it for inspection",
                     "/branch",
                 );
             }

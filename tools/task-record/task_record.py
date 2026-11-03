@@ -933,13 +933,15 @@ def journey_frames_records(args, doc):
 
 
 def _proofs_view(args):
-    if not 1 <= args.limit <= 100 or (args.after not in (None, 0) and
-            (not isinstance(args.after, str) or len(args.after) > 512)):
+    # Earlier helper callers used zero for an absent cursor; continuations are opaque strings.
+    cursor = None if args.after == 0 else args.after
+    if not 1 <= args.limit <= 100 or (cursor is not None and
+            (not isinstance(cursor, str) or len(cursor) > 512)):
         sys.exit("task_record: proofs requires an opaque cursor and --limit from 1 to 100")
     token = read_credential(args)
     query = {"view": "proofs", "issue": str(args.issue), "limit": str(args.limit)}
-    if args.after not in (None, 0):
-        query["after"] = args.after
+    if cursor is not None:
+        query["after"] = cursor
     if args.run:
         query["run"] = args.run
     data, _ = _runtime_json(args, "/tasks?" + urllib.parse.urlencode(query), token, max_bytes=1024 * 1024)

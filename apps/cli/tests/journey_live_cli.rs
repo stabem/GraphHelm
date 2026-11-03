@@ -302,6 +302,7 @@ fn watch_starts_a_down_app_only_from_a_launcher_inside_the_project() {
         include_bytes!("../../../tools/journey-driver/judge.mjs"),
     )
     .unwrap();
+    std::fs::write(dir.path().join(".graphhelm/hidden-node-children.mjs"), include_bytes!("../../../tools/hidden-node-children.mjs")).unwrap();
     refuses(
         dir.path(),
         &["watch", "checkout"],
@@ -340,6 +341,7 @@ fn watch_and_preview_pass_the_selected_flow_to_the_launcher() {
         include_bytes!("../../../tools/journey-driver/judge.mjs"),
     )
     .unwrap();
+    std::fs::write(dir.path().join(".graphhelm/hidden-node-children.mjs"), include_bytes!("../../../tools/hidden-node-children.mjs")).unwrap();
     std::fs::write(
         dir.path().join(".graphhelm/journey-fixture.json"),
         r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":true}"#,
@@ -384,6 +386,7 @@ fn watch_and_preview_launch_before_refusing_a_fixture_minted_secret() {
         include_bytes!("../../../tools/journey-driver/judge.mjs"),
     )
     .unwrap();
+    std::fs::write(dir.path().join(".graphhelm/hidden-node-children.mjs"), include_bytes!("../../../tools/hidden-node-children.mjs")).unwrap();
     std::fs::write(
         dir.path().join(".graphhelm/journey-fixture.json"),
         r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":true}"#,
@@ -450,6 +453,7 @@ fn launcher_secrets_reach_preflight_without_exporting_other_keys_or_values() {
             include_bytes!("../../../tools/journey-driver/judge.mjs"),
         )
         .unwrap();
+        std::fs::write(dir.path().join(".graphhelm/hidden-node-children.mjs"), include_bytes!("../../../tools/hidden-node-children.mjs")).unwrap();
         std::fs::write(
             dir.path().join(".graphhelm/journey-fixture.json"),
             r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh"}"#,

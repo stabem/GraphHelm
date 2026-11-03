@@ -640,7 +640,7 @@ class Reach(unittest.TestCase):
 
     def test_a_journey_runtime_change_prints_the_ignored_browser_observers(self):
         # #504 review: the #[ignore] browser cells are the real proof of a driver or replay change.
-        for path in ("tools/journey-driver/driver.mjs", "apps/cli/src/commands/journey_replay.rs",
+        for path in ("tools/hidden-node-children.mjs", "tools/journey-driver/driver.mjs", "apps/cli/src/commands/journey_replay.rs",
                      "apps/cli/tests/journey_live_browser.rs"):
             *_, tools, _, _ = reach(path)
             self.assertIn(rt.BROWSER_OBSERVERS, tools, path)

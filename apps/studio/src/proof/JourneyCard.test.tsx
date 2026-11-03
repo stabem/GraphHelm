@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { JourneyFlow } from "../runtime/client";
 import { journeysToFix } from "../sidebar/project-summary";
-import { JourneyCard } from "./ProofView";
+import { JourneyCard, runAllJourneyNotice } from "./ProofView";
 
 const card = (flow: JourneyFlow) =>
   renderToStaticMarkup(<JourneyCard flow={flow} selected={false} disabled={false} onPick={() => {}} onRun={() => {}} run={null} playing={false} />);
@@ -32,6 +32,20 @@ describe("journey card findings (#2325)", () => {
 
   it("shows nothing extra for a journey without findings", () => {
     expect(card({ ...flow, findings: [] })).not.toContain("journey-findings");
+  });
+
+  it("shows a Run all journey that was not started after an interruption", () => {
+    const interruption = runAllJourneyNotice({ flowId: flow.id, phase: "not_started", reason: "read_failed", updatedAt: 1 }, "read_failed");
+    const html = renderToStaticMarkup(<JourneyCard flow={flow} selected={false} disabled={false} onPick={() => {}} onRun={() => {}} run={null} playing={false} interruption={interruption} />);
+    expect(html).toContain("role=\"status\"");
+    expect(html).toContain("Not started: batch interrupted.");
+  });
+
+  it("uses the approved unknown-state copy for an interrupted active journey", () => {
+    const interruption = runAllJourneyNotice({ flowId: flow.id, phase: "unknown", reason: "read_failed", updatedAt: 1 }, "read_failed");
+    const html = renderToStaticMarkup(<JourneyCard flow={flow} selected={false} disabled={false} onPick={() => {}} onRun={() => {}} run={null} playing={false} interruption={interruption} />);
+    expect(html).toContain("Observation interrupted; run state unknown.");
+    expect(html).not.toContain("Not started: batch interrupted.");
   });
 
   it("the rail's to-fix count equals the Proof cards with a to-fix chip, unreadable ones included (#2345)", () => {

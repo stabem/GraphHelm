@@ -222,7 +222,7 @@ function Shell({ session, projects, closed, route, go, pickJourney, onRefused }:
           </GraphView>
         )}
         {route.view === "lanes" && <LanesView runtime={runtime} runs={projectRuns} choices={runs?.map((row) => row.executionId) ?? []} filter={route.run ?? null} onFilter={(id) => go({ ...route, run: id })} journeys={journeys} onStart={startRun} />}
-        {route.view === "proof" && <ProofView runtime={runtime} journeys={journeys} error={journeysError} executionId={runId} onRan={readJourneys} initial={route.journey ?? null} onPicked={pickJourney} />}
+        {route.view === "proof" && <ProofView key={`${session.key}:${runId ?? ""}`} projectKey={session.key} runtime={runtime} journeys={journeys} error={journeysError} executionId={runId} onRan={readJourneys} initial={route.journey ?? null} onPicked={pickJourney} />}
         </>}
         </ViewBoundary>
       </div>

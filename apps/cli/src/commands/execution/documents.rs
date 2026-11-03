@@ -161,8 +161,7 @@ pub(crate) fn admit_benchmark_proof(
         return Err(refused("proof history is incomplete or unsupported"));
     }
     let repo = catalog
-        .repositories
-        .get(proof.task_id.as_str())
+        .repository(proof.task_id.as_str())?
         .ok_or_else(|| refused("proof requires an authenticated task claim with a repository"))?;
     proof
         .validate_bindings(&graphhelm_execution::tasks::BenchmarkProofBindings {
@@ -176,18 +175,12 @@ pub(crate) fn admit_benchmark_proof(
         })
         .map_err(|message| refused(&message))?;
     validate_not_retired(actor.id().as_str(), history, Some((store, scope, keyring)))?;
-    if let Some(existing) = catalog
-        .records
-        .iter()
-        .find(|record| record.record_id == digest)
-    {
+    if let Some(existing) = catalog.record(&digest)? {
         return Ok(Some(existing.as_ref().clone()));
     }
     if let Some(predecessor) = &proof.predecessor {
         let previous = catalog
-            .records
-            .iter()
-            .find(|record| &record.record_id == predecessor)
+            .record(predecessor)?
             .ok_or_else(|| refused("predecessor is not a verified proof in this execution"))?;
         let old = &previous.proof;
         if old.lane != proof.lane
@@ -202,11 +195,7 @@ pub(crate) fn admit_benchmark_proof(
                 "correction must preserve predecessor subject and original signer",
             ));
         }
-        if catalog
-            .records
-            .iter()
-            .any(|record| record.proof.predecessor.as_ref() == Some(predecessor))
-        {
+        if catalog.has_successor(predecessor)? {
             return Err(refused("predecessor already has a correction"));
         }
     }

@@ -34,25 +34,165 @@ pub(crate) struct ProofRecord {
     pub proof: graphhelm_execution::tasks::BenchmarkProof,
 }
 
-#[derive(Clone, Default)]
-pub(crate) struct ProofCatalog {
-    pub repositories: BTreeMap<String, String>,
-    pub records: Vec<Arc<ProofRecord>>,
-    pages: BTreeMap<(String, Option<String>), Arc<BTreeMap<u64, usize>>>,
+#[derive(Default)]
+struct ProofCatalog {
+    repositories: BTreeMap<String, BTreeMap<u64, String>>,
+    records: BTreeMap<u64, Arc<ProofRecord>>,
+    identities: HashMap<String, u64>,
+    successors: HashMap<String, u64>,
+    pages: BTreeMap<(String, Option<String>), BTreeMap<u64, Arc<ProofRecord>>>,
+    checkpoints: BTreeMap<u64, (usize, usize, usize)>,
+    events: BTreeMap<u64, (graphhelm_protocols::EventHash, String)>,
+    head: Option<(u64, graphhelm_protocols::EventHash)>,
+    unsupported: usize,
+    rejected: usize,
+    #[cfg(test)]
+    page_visits: std::cell::Cell<usize>,
+    #[cfg(test)]
+    appended_records: usize,
+}
+
+impl ProofCatalog {
+    fn insert_record(&mut self, record: Arc<ProofRecord>) {
+        #[cfg(test)]
+        {
+            self.appended_records += 1;
+        }
+        for run in [None, Some(record.proof.run_id.clone())] {
+            self.pages
+                .entry((record.proof.task_id.as_str().to_owned(), run))
+                .or_default()
+                .insert(record.sequence, Arc::clone(&record));
+        }
+        self.identities
+            .entry(record.record_id.clone())
+            .or_insert(record.sequence);
+        if let Some(predecessor) = &record.proof.predecessor {
+            self.successors
+                .entry(predecessor.clone())
+                .or_insert(record.sequence);
+        }
+        self.records.insert(record.sequence, record);
+    }
+}
+
+/// A cutoff into shared append-only state; appends never copy or modify a retained prefix.
+/// BTree lookup/update costs O(log N); bounded page traversal costs O(page).
+pub(crate) struct ProofSnapshot {
+    index: Arc<Mutex<ProofCatalog>>,
+    head: u64,
+    identity: String,
     pub unsupported: usize,
     pub rejected: usize,
+    pub count: usize,
 }
 
-/// Only complete authenticated snapshots are reusable. The event hash proves the prefix,
-/// and the key generation prevents reuse after revocation. Old cursor snapshots stay separate.
-#[derive(Default)]
-struct ProofCatalogCache {
-    snapshots: BTreeMap<u64, (graphhelm_protocols::EventHash, Arc<ProofCatalog>)>,
+impl ProofSnapshot {
+    fn at(index: Arc<Mutex<ProofCatalog>>, head: u64, identity: String) -> Result<Self, Failure> {
+        let (rejected, unsupported, count) = {
+            let catalog = index.lock().map_err(|_| {
+                super::execution_state("proof snapshot lock is poisoned", "/proofs")
+            })?;
+            catalog
+                .checkpoints
+                .range(..=head)
+                .next_back()
+                .map(|(_, counters)| *counters)
+                .unwrap_or_default()
+        };
+        Ok(Self {
+            index,
+            head,
+            identity,
+            rejected,
+            unsupported,
+            count,
+        })
+    }
+    fn read<T>(&self, read: impl FnOnce(&ProofCatalog) -> T) -> Result<T, Failure> {
+        let index = self
+            .index
+            .lock()
+            .map_err(|_| super::execution_state("proof index lock is poisoned", "/proofs"))?;
+        Ok(read(&index))
+    }
+
+    pub(crate) fn repository(&self, task: &str) -> Result<Option<String>, Failure> {
+        self.read(|index| {
+            index
+                .repositories
+                .get(task)
+                .and_then(|versions| versions.range(..=self.head).next_back())
+                .map(|(_, repo)| repo.clone())
+        })
+    }
+
+    pub(crate) fn record(&self, digest: &str) -> Result<Option<Arc<ProofRecord>>, Failure> {
+        self.read(|index| {
+            index
+                .identities
+                .get(digest)
+                .filter(|sequence| **sequence <= self.head)
+                .and_then(|sequence| index.records.get(sequence))
+                .cloned()
+        })
+    }
+
+    pub(crate) fn has_successor(&self, digest: &str) -> Result<bool, Failure> {
+        self.read(|index| {
+            index
+                .successors
+                .get(digest)
+                .is_some_and(|sequence| *sequence <= self.head)
+        })
+    }
+
+    pub(crate) fn latest(&self, limit: usize) -> Result<Vec<Arc<ProofRecord>>, Failure> {
+        self.read(|index| {
+            index
+                .records
+                .range(..=self.head)
+                .rev()
+                .take(limit)
+                .map(|(_, record)| Arc::clone(record))
+                .collect()
+        })
+    }
+
+    fn page(
+        &self,
+        task: &str,
+        run: &Option<String>,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<Arc<ProofRecord>>, Failure> {
+        if after >= self.head {
+            return Ok(Vec::new());
+        }
+        self.read(|index| {
+            index
+                .pages
+                .get(&(task.to_owned(), run.clone()))
+                .into_iter()
+                .flat_map(|page| {
+                    page.range((
+                        std::ops::Bound::Excluded(after),
+                        std::ops::Bound::Included(self.head),
+                    ))
+                    .inspect(|_| {
+                        #[cfg(test)]
+                        index.page_visits.set(index.page_visits.get() + 1);
+                    })
+                    .take(limit)
+                    .map(|(_, record)| Arc::clone(record))
+                })
+                .collect()
+        })
+    }
 }
 
-fn proof_catalog_caches() -> &'static Mutex<HashMap<String, Arc<Mutex<ProofCatalogCache>>>> {
-    static CACHES: OnceLock<Mutex<HashMap<String, Arc<Mutex<ProofCatalogCache>>>>> =
-        OnceLock::new();
+fn proof_catalog_caches() -> &'static Mutex<HashMap<String, Arc<Mutex<ProofCatalog>>>> {
+    static CACHES: OnceLock<Mutex<HashMap<String, Arc<Mutex<ProofCatalog>>>>> = OnceLock::new();
     CACHES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -72,193 +212,330 @@ pub(crate) fn proof_catalog(
     execution: &str,
     keyring: &SignalKeyring,
     budget: &graphhelm_events::ReadBudget,
-) -> Result<Arc<ProofCatalog>, Failure> {
+) -> Result<ProofSnapshot, Failure> {
+    indexed_proofs(
+        store,
+        scope,
+        Some(history),
+        execution,
+        keyring,
+        budget,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn indexed_proofs(
+    store: &graphhelm_events::LocalEventRepository,
+    scope: &graphhelm_protocols::RepositoryScope,
+    supplied: Option<&[graphhelm_protocols::EventEnvelope]>,
+    execution: &str,
+    keyring: &SignalKeyring,
+    budget: &graphhelm_events::ReadBudget,
+    cutoff: Option<(u64, String)>,
+) -> Result<ProofSnapshot, Failure> {
     let check = || {
-        budget.check_now(history.len() as u64).map_err(|error| {
+        budget.check_now(0).map_err(|error| {
             super::execution_state(
-                &format!("proof history read budget exhausted: {error:?}"),
+                &format!("proof read budget exhausted: {error:?}"),
                 "/proofs",
             )
         })
     };
     check()?;
     let generation = super::signal::sealer_generation(keyring)?;
-    let cache_key = format!(
+    let key = format!(
         "{}\u{0}{scope:?}\u{0}{generation}",
         cache_key(store.root(), execution)
     );
-    let cache = {
+    let shared = {
         let mut caches = proof_catalog_caches()
             .lock()
             .map_err(|_| super::execution_state("proof cache lock is poisoned", "/proofs"))?;
-        if caches.len() >= 128 && !caches.contains_key(&cache_key) {
+        if caches.len() >= 128 && !caches.contains_key(&key) {
             caches.clear();
         }
-        Arc::clone(caches.entry(cache_key).or_default())
+        Arc::clone(caches.entry(key.clone()).or_default())
     };
-    let mut cache = cache
+    let mut catalog = shared
         .lock()
-        .map_err(|_| super::execution_state("proof snapshot lock is poisoned", "/proofs"))?;
-    let head = history.last();
-    let mut start = 0;
-    let mut catalog = ProofCatalog::default();
-    if let Some(head) = head {
-        if let Some((hash, kept)) = cache.snapshots.get(&head.sequence)
-            && hash == &head.event_hash
-        {
-            return Ok(Arc::clone(kept));
+        .map_err(|_| super::execution_state("proof index lock is poisoned", "/proofs"))?;
+    let loaded;
+    let history = if let Some(history) = supplied {
+        if let Some((sequence, hash)) = &catalog.head {
+            if history
+                .last()
+                .is_some_and(|event| event.sequence < *sequence)
+            {
+                let last = history.last().ok_or_else(super::not_found)?;
+                if catalog
+                    .events
+                    .get(&last.sequence)
+                    .is_none_or(|(hash, _)| hash != &last.event_hash)
+                {
+                    return Err(super::execution_state(
+                        "proof supplied history differs from indexed prefix",
+                        "/proofs",
+                    ));
+                }
+                &history[history.len()..]
+            } else if let Ok(index) = history.binary_search_by_key(sequence, |event| event.sequence)
+            {
+                if &history[index].event_hash != hash {
+                    proof_catalog_caches()
+                        .lock()
+                        .map(|mut caches| caches.remove(&key))
+                        .ok();
+                    return Err(super::execution_state(
+                        "proof history changed; reread required",
+                        "/proofs",
+                    ));
+                }
+                &history[index + 1..]
+            } else {
+                return Err(super::execution_state(
+                    "proof history lost its indexed head",
+                    "/proofs",
+                ));
+            }
+        } else {
+            history
         }
-        if let Some((sequence, (hash, kept))) = cache.snapshots.range(..head.sequence).next_back()
-            && let Ok(index) = history.binary_search_by_key(sequence, |event| event.sequence)
-            && &history[index].event_hash == hash
-        {
-            start = index + 1;
-            catalog = kept.as_ref().clone();
+    } else {
+        let (_, stream) = super::stream_of(execution)?;
+        if let Some((sequence, hash)) = &catalog.head {
+            let (tail, head) = store
+                .read_stream_after(scope, &stream, *sequence)
+                .map_err(|error| super::repository_failure(&error))?;
+            let end = tail
+                .last()
+                .map(|event| (event.sequence, &event.event_hash))
+                .unwrap_or((*sequence, hash));
+            let continues = tail
+                .first()
+                .is_none_or(|event| event.sequence == sequence + 1 && &event.previous_hash == hash)
+                && head.as_ref().is_some_and(|head| {
+                    head.next_sequence == end.0 + 1 && &head.last_event_hash == end.1
+                });
+            if !continues {
+                proof_catalog_caches()
+                    .lock()
+                    .map(|mut caches| caches.remove(&key))
+                    .ok();
+                return Err(super::execution_state(
+                    "proof stream changed; reread required",
+                    "/proofs",
+                ));
+            }
+            loaded = tail;
+        } else {
+            loaded = store
+                .read_replay_stream(scope, &stream)
+                .map_err(|error| super::repository_failure(&error))?;
         }
+        loaded.as_slice()
+    };
+    if catalog.events.len() + history.len() > graphhelm_events::MAX_READ_ALL
+        || history.len() > graphhelm_events::MAX_READ_ALL
+    {
+        return Err(super::execution_state(
+            "proof history exceeds read bound",
+            "/proofs",
+        ));
     }
     let opener = super::signal::open_sealer(keyring)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .map_err(|_| super::execution_state("proof reader could not start", "/keyring"))?;
-    for event in &history[start..] {
-        check()?;
-        let EventKind::SignalRecorded(record) = &event.kind else {
-            continue;
-        };
-        if !matches!(record.kind.as_str(), "task.claimed" | "task.proof_recorded") {
-            continue;
-        }
-        let parsed = (|| {
-            if event.scope.project_id() != scope.project_id() || event.evidence_refs.len() != 1 {
-                return None;
-            }
-            let reference = &event.evidence_refs[0];
-            if reference.evidence_id().as_str() != format!("signal-{}", record.signal_id.as_str()) {
-                return None;
-            }
-            let envelope = opened_envelope(
-                store,
-                scope,
-                &generation,
-                reference.evidence_id(),
-                record.envelope_sha256.as_str(),
-                |sealed| {
-                    let bytes = runtime.block_on(opener.open(scope.clone(), sealed)).ok()?;
-                    bytes.expose(|value| {
-                        if value.len() > graphhelm_execution::tasks::MAX_ENVELOPE_BYTES {
-                            None
-                        } else {
-                            serde_json::from_slice(value).ok()
-                        }
-                    })
-                },
-            )?;
-            if envelope["type"].as_str() != Some(record.kind.as_str())
-                || envelope
-                    .pointer("/source/id")
-                    .and_then(serde_json::Value::as_str)
-                    != Some(event.actor.id().as_str())
-            {
-                return None;
-            }
-            Some(envelope)
-        })();
-        let Some(envelope) = parsed else {
-            catalog.rejected += 1;
-            continue;
-        };
-        let Some(description) = envelope["description"].as_str() else {
-            catalog.rejected += 1;
-            continue;
-        };
-        check()?;
-        if record.kind == "task.claimed" {
-            let Some(claim) = parse_task_event(
-                &record.kind,
-                event.actor.id().as_str(),
-                description,
-                event.sequence,
-                Some(event.occurred_at.clone()),
-            ) else {
-                catalog.rejected += 1;
-                continue;
-            };
-            if let Some(repo) = claim.repo {
-                if catalog
-                    .repositories
-                    .get(&claim.task_id)
-                    .is_some_and(|previous| previous != &repo)
-                {
-                    return Err(super::signal_invalid(
-                        "verified claims disagree about the task repository",
-                        "/proofs/repo",
-                    ));
+    let result: Result<(), Failure> = (|| {
+        for event in history {
+            check()?;
+            let parsed: Result<(), Failure> = (|| {
+                check()?;
+                let EventKind::SignalRecorded(record) = &event.kind else {
+                    return Ok(());
+                };
+                if !matches!(record.kind.as_str(), "task.claimed" | "task.proof_recorded") {
+                    return Ok(());
                 }
-                catalog.repositories.insert(claim.task_id, repo);
-            }
-            continue;
-        }
-        if record.scoped_agent_authenticated != Some(true) {
-            catalog.rejected += 1;
-            continue;
-        }
-        let proof = match graphhelm_execution::tasks::BenchmarkProof::parse(description) {
-            Ok(proof) => proof,
-            Err(_) => {
-                if serde_json::from_str::<serde_json::Value>(description)
-                    .ok()
-                    .and_then(|v| v["schema"].as_str().map(str::to_owned))
-                    .is_some_and(|schema| {
-                        schema != graphhelm_execution::tasks::BENCHMARK_PROOF_SCHEMA
-                    })
-                {
-                    catalog.unsupported += 1;
-                } else {
+                let parsed = (|| {
+                    if event.scope.project_id() != scope.project_id()
+                        || event.evidence_refs.len() != 1
+                    {
+                        return None;
+                    }
+                    let reference = &event.evidence_refs[0];
+                    if reference.evidence_id().as_str()
+                        != format!("signal-{}", record.signal_id.as_str())
+                    {
+                        return None;
+                    }
+                    let envelope = opened_envelope(
+                        store,
+                        scope,
+                        &generation,
+                        reference.evidence_id(),
+                        record.envelope_sha256.as_str(),
+                        |sealed| {
+                            let bytes =
+                                runtime.block_on(opener.open(scope.clone(), sealed)).ok()?;
+                            bytes.expose(|value| {
+                                if value.len() > graphhelm_execution::tasks::MAX_ENVELOPE_BYTES {
+                                    None
+                                } else {
+                                    serde_json::from_slice(value).ok()
+                                }
+                            })
+                        },
+                    )?;
+                    if envelope["type"].as_str() != Some(record.kind.as_str())
+                        || envelope
+                            .pointer("/source/id")
+                            .and_then(serde_json::Value::as_str)
+                            != Some(event.actor.id().as_str())
+                    {
+                        return None;
+                    }
+                    Some(envelope)
+                })();
+                let Some(envelope) = parsed else {
                     catalog.rejected += 1;
+                    return Ok(());
+                };
+                let Some(description) = envelope["description"].as_str() else {
+                    catalog.rejected += 1;
+                    return Ok(());
+                };
+                check()?;
+                if record.kind == "task.claimed" {
+                    let Some(claim) = parse_task_event(
+                        &record.kind,
+                        event.actor.id().as_str(),
+                        description,
+                        event.sequence,
+                        Some(event.occurred_at.clone()),
+                    ) else {
+                        catalog.rejected += 1;
+                        return Ok(());
+                    };
+                    if let Some(repo) = claim.repo {
+                        if catalog
+                            .repositories
+                            .get(&claim.task_id)
+                            .and_then(|versions| versions.last_key_value())
+                            .is_some_and(|(_, previous)| previous != &repo)
+                        {
+                            return Err(super::signal_invalid(
+                                "verified claims disagree about the task repository",
+                                "/proofs/repo",
+                            ));
+                        }
+                        catalog
+                            .repositories
+                            .entry(claim.task_id)
+                            .or_default()
+                            .insert(event.sequence, repo);
+                    }
+                    return Ok(());
                 }
-                continue;
+                if record.scoped_agent_authenticated != Some(true) {
+                    catalog.rejected += 1;
+                    return Ok(());
+                }
+                let proof = match graphhelm_execution::tasks::BenchmarkProof::parse(description) {
+                    Ok(proof) => proof,
+                    Err(_) => {
+                        if serde_json::from_str::<serde_json::Value>(description)
+                            .ok()
+                            .and_then(|v| v["schema"].as_str().map(str::to_owned))
+                            .is_some_and(|schema| {
+                                schema != graphhelm_execution::tasks::BENCHMARK_PROOF_SCHEMA
+                            })
+                        {
+                            catalog.unsupported += 1;
+                        } else {
+                            catalog.rejected += 1;
+                        }
+                        return Ok(());
+                    }
+                };
+                if proof.execution_id.as_str() != execution
+                    || proof.project_id.as_str() != scope.project_id().as_str()
+                    || proof.lane.as_str() != event.actor.id().as_str()
+                    || catalog
+                        .repositories
+                        .get(proof.task_id.as_str())
+                        .and_then(|versions| versions.last_key_value())
+                        .map(|(_, repo)| repo)
+                        != Some(&proof.repo)
+                {
+                    catalog.rejected += 1;
+                    return Ok(());
+                }
+                let record_id = proof_digest(&proof)?;
+                let record = Arc::new(ProofRecord {
+                    record_id: record_id.clone(),
+                    sequence: event.sequence,
+                    proof,
+                });
+                catalog.insert_record(record);
+                Ok(())
+            })();
+            parsed?;
+            catalog.events.insert(
+                event.sequence,
+                (event.event_hash.clone(), event.event_id.as_str().to_owned()),
+            );
+            let counters = (catalog.rejected, catalog.unsupported, catalog.records.len());
+            catalog.checkpoints.insert(event.sequence, counters);
+            catalog.head = Some((event.sequence, event.event_hash.clone()));
+        }
+        check()?;
+        Ok(())
+    })();
+    if result.is_err() || catalog.rejected > 0 || catalog.unsupported > 0 {
+        proof_catalog_caches()
+            .lock()
+            .map(|mut caches| caches.remove(&key))
+            .ok();
+    }
+    result?;
+    let (head, identity) = match cutoff {
+        Some((head, identity)) => {
+            let event = catalog
+                .events
+                .get(&head)
+                .ok_or_else(|| super::signal_invalid("proof snapshot is unavailable", "/after"))?;
+            let digest = graphhelm_graph::raw_content_sha256(event.1.as_bytes()).map_err(|_| {
+                super::signal_invalid("proof snapshot identity is invalid", "/after")
+            })?;
+            if digest.as_str() != identity {
+                return Err(super::signal_invalid(
+                    "proof snapshot identity changed",
+                    "/after",
+                ));
             }
-        };
-        if proof.execution_id.as_str() != execution
-            || proof.project_id.as_str() != scope.project_id().as_str()
-            || proof.lane.as_str() != event.actor.id().as_str()
-            || catalog.repositories.get(proof.task_id.as_str()) != Some(&proof.repo)
-        {
-            catalog.rejected += 1;
-            continue;
+            (head, identity)
         }
-        let record_id = proof_digest(&proof)?;
-        for run in [None, Some(proof.run_id.clone())] {
-            Arc::make_mut(
-                catalog
-                    .pages
-                    .entry((proof.task_id.as_str().to_owned(), run))
-                    .or_default(),
-            )
-            .insert(event.sequence, catalog.records.len());
+        None => {
+            let head = supplied
+                .and_then(|history| history.last())
+                .map(|event| event.sequence)
+                .or_else(|| catalog.head.as_ref().map(|(sequence, _)| *sequence))
+                .unwrap_or(0);
+            let id = catalog
+                .events
+                .get(&head)
+                .map(|(_, id)| id.as_str())
+                .unwrap_or("");
+            let identity = graphhelm_graph::raw_content_sha256(id.as_bytes()).map_err(|_| {
+                super::signal_invalid("proof snapshot identity is invalid", "/proofs")
+            })?;
+            (head, identity.as_str().to_owned())
         }
-        catalog.records.push(Arc::new(ProofRecord {
-            record_id,
-            sequence: event.sequence,
-            proof,
-        }));
-    }
-    check()?;
-    let catalog = Arc::new(catalog);
-    // Failed opens must be tried again; a later evidence recovery is not permanently hidden.
-    if catalog.rejected == 0
-        && catalog.unsupported == 0
-        && let Some(head) = head
-    {
-        if cache.snapshots.len() >= 8 {
-            cache.snapshots.pop_first();
-        }
-        cache.snapshots.insert(
-            head.sequence,
-            (head.event_hash.clone(), Arc::clone(&catalog)),
-        );
-    }
-    Ok(catalog)
+    };
+    drop(catalog);
+    ProofSnapshot::at(shared, head, identity)
 }
 
 #[derive(Clone, Debug)]
@@ -345,55 +622,6 @@ pub(crate) struct ProofsView {
     pub rejected: usize,
 }
 
-/// Retain validated history without copying its prefix on an unchanged head. Tail reads
-/// prove continuity; a replacement store or divergent chain forces a full replay read.
-fn proof_history(
-    store: &graphhelm_events::LocalEventRepository,
-    scope: &graphhelm_protocols::RepositoryScope,
-    stream: &str,
-    execution: &str,
-) -> Result<Arc<Vec<graphhelm_protocols::EventEnvelope>>, Failure> {
-    type Histories = HashMap<String, Arc<Vec<graphhelm_protocols::EventEnvelope>>>;
-    static HISTORIES: OnceLock<Mutex<Histories>> = OnceLock::new();
-    let key = cache_key(store.root(), execution);
-    let cache = HISTORIES.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut histories = cache
-        .lock()
-        .map_err(|_| super::execution_state("proof history lock is poisoned", "/proofs"))?;
-    if let Some(history) = histories.get_mut(&key)
-        && let Some(last) = history.last()
-    {
-        let (tail, head) = store
-            .read_stream_after(scope, stream, last.sequence)
-            .map_err(|error| super::repository_failure(&error))?;
-        let end = tail.last().unwrap_or(last);
-        let continues = tail.first().is_none_or(|first| {
-            first.sequence == last.sequence + 1 && first.previous_hash == last.event_hash
-        }) && head.as_ref().is_some_and(|head| {
-            head.next_sequence == end.sequence + 1 && head.last_event_hash == end.event_hash
-        });
-        if continues
-            && tail.len() <= graphhelm_events::MAX_READ_PAGE
-            && history.len() + tail.len() <= graphhelm_events::MAX_READ_ALL
-        {
-            if !tail.is_empty() {
-                Arc::make_mut(history).extend(tail);
-            }
-            return Ok(Arc::clone(history));
-        }
-    }
-    let history = Arc::new(
-        store
-            .read_replay_stream(scope, stream)
-            .map_err(|error| super::repository_failure(&error))?,
-    );
-    if histories.len() >= 128 && !histories.contains_key(&key) {
-        histories.clear();
-    }
-    histories.insert(key, Arc::clone(&history));
-    Ok(history)
-}
-
 pub(crate) fn proofs_view(
     events: &Path,
     execution: &str,
@@ -403,8 +631,7 @@ pub(crate) fn proofs_view(
 ) -> Result<ProofsView, Failure> {
     let store = crate::commands::budgeted_event_store(events, budget.clone())
         .map_err(|e| super::repository_failure(&e))?;
-    let (scope, stream) = super::stream_of(execution)?;
-    let history = proof_history(&store, &scope, &stream, execution)?;
+    let (scope, _) = super::stream_of(execution)?;
     let invalid = || {
         super::signal_invalid(
             "proof continuation does not match this execution, filters or snapshot",
@@ -426,8 +653,8 @@ pub(crate) fn proofs_view(
     .map_err(|_| invalid())?
     .as_str()
     .to_owned();
-    let (head, after) = match &query.after {
-        None => (history.last().map_or(0, |e| e.sequence), 0),
+    let (cutoff, after) = match &query.after {
+        None => (None, 0),
         Some(cursor) => {
             let parts: Vec<_> = cursor.split('.').collect();
             if parts.len() != 5 || parts[0] != "p1" || parts[4] != filter {
@@ -435,33 +662,22 @@ pub(crate) fn proofs_view(
             }
             let head = parts[1].parse::<u64>().map_err(|_| invalid())?;
             let after = parts[3].parse::<u64>().map_err(|_| invalid())?;
-            let event = history
-                .binary_search_by_key(&head, |event| event.sequence)
-                .ok()
-                .map(|index| &history[index])
-                .ok_or_else(invalid)?;
-            let identity = graphhelm_graph::raw_content_sha256(event.event_id.as_str().as_bytes())
-                .map_err(|_| invalid())?;
-            if identity.as_str() != parts[2] || after > head {
+            if after > head {
                 return Err(invalid());
             }
-            (head, after)
+            (Some((head, parts[2].to_owned())), after)
         }
     };
-    let snapshot = &history[..history.partition_point(|event| event.sequence <= head)];
-    let catalog = proof_catalog(&store, &scope, snapshot, execution, keyring, &budget)?;
-    let repo = catalog.repositories.get(&task_id).cloned().ok_or_else(|| {
+    let catalog = indexed_proofs(&store, &scope, None, execution, keyring, &budget, cutoff)?;
+    let head = catalog.head;
+    let repo = catalog.repository(&task_id)?.ok_or_else(|| {
         super::signal_invalid(
             "proof view requires an authenticated task claim with a repository",
             "/issue",
         )
     })?;
-    let page = catalog.pages.get(&(task_id.clone(), query.run.clone()));
-    let mut matching = page.into_iter().flat_map(|index| {
-        index
-            .range((std::ops::Bound::Excluded(after), std::ops::Bound::Unbounded))
-            .map(|(_, index)| &catalog.records[*index])
-    });
+    let selected = catalog.page(&task_id, &query.run, after, query.limit + 1)?;
+    let mut matching = selected.iter();
     let mut records = Vec::new();
     let mut bytes = 0;
     let mut more = false;
@@ -478,10 +694,7 @@ pub(crate) fn proofs_view(
     }
     let next_cursor = if more {
         let last = records.last().ok_or_else(invalid)?.sequence;
-        let event = snapshot.last().ok_or_else(invalid)?;
-        let identity = graphhelm_graph::raw_content_sha256(event.event_id.as_str().as_bytes())
-            .map_err(|_| invalid())?;
-        Some(format!("p1.{head}.{}.{last}.{filter}", identity.as_str()))
+        Some(format!("p1.{head}.{}.{last}.{filter}", catalog.identity))
     } else {
         None
     };
@@ -2743,6 +2956,165 @@ mod waiting_tests {
             assert_eq!(opened, lanes * WAITING_PER_LANE, "asks={asks}");
             assert_eq!(rows.len(), lanes * WAITING_PER_LANE, "asks={asks}");
             assert!(rows.iter().all(|row| row.lane_total == asks));
+        }
+    }
+}
+
+#[cfg(test)]
+mod proof_index_work_tests {
+    use super::*;
+
+    #[test]
+    fn growing_prefixes_and_overlapping_snapshots_copy_no_retained_records_and_visit_only_the_page()
+    {
+        let proof = graphhelm_execution::tasks::BenchmarkProof::parse(r###"{"schema":"graphhelm.benchmark-proof/1","executionId":"exec-1","projectId":"project-1","repo":"stabem/GraphHelm","taskId":"issue-2429","lane":"openbot-itachi","at":"2026-11-02T12:00:00Z","runId":"run-1","harnessCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","arms":[{"name":"base","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"frozenDigest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","artifacts":[{"reference":"fixture/café-雪.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"verdict":"inconclusive","limitations":["quote \" slash \\ newline\\n tab\\t café 雪 😀"],"deviations":[],"predecessor":null}"###).unwrap_or_else(|_| panic!("proof index observer operation failed"));
+        for prefix in [16_u64, 256, 4096] {
+            let shared = Arc::new(Mutex::new(ProofCatalog::default()));
+            let mut witnesses = Vec::new();
+            {
+                let mut index = shared
+                    .lock()
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+                index
+                    .repositories
+                    .entry("issue-2429".into())
+                    .or_default()
+                    .insert(1, "stabem/GraphHelm".into());
+                for sequence in 1..=prefix {
+                    let record = Arc::new(ProofRecord {
+                        record_id: format!("record-{sequence}"),
+                        sequence,
+                        proof: proof.clone(),
+                    });
+                    witnesses.push(Arc::clone(&record));
+                    index.insert_record(record);
+                    index
+                        .checkpoints
+                        .insert(sequence, (0, 0, sequence as usize));
+                }
+            }
+            let references: Vec<_> = witnesses.iter().map(Arc::strong_count).collect();
+            // Retain several snapshots while appending and reading on different threads.
+            let older = ProofSnapshot::at(Arc::clone(&shared), prefix - 1, "older".into())
+                .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+            let snapshot = ProofSnapshot::at(Arc::clone(&shared), prefix, "current".into())
+                .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+            assert_eq!(
+                witnesses.iter().map(Arc::strong_count).collect::<Vec<_>>(),
+                references,
+                "snapshot creation copied prefix record handles"
+            );
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                let read = scope.spawn(|| {
+                    barrier.wait();
+                    snapshot
+                        .page("issue-2429", &Some("run-1".into()), prefix - 3, 20)
+                        .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                });
+                barrier.wait();
+                {
+                    let mut index = shared
+                        .lock()
+                        .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+                    for sequence in prefix + 1..=prefix + 7 {
+                        index.insert_record(Arc::new(ProofRecord {
+                            record_id: format!("record-{sequence}"),
+                            sequence,
+                            proof: proof.clone(),
+                        }));
+                        index
+                            .repositories
+                            .entry("issue-2429".into())
+                            .or_default()
+                            .insert(sequence, "later/repository".into());
+                        index
+                            .checkpoints
+                            .insert(sequence, (2, 1, sequence as usize));
+                    }
+                }
+                let page = read
+                    .join()
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+                assert_eq!(
+                    page.iter()
+                        .map(|record| record.sequence)
+                        .collect::<Vec<_>>(),
+                    vec![prefix - 2, prefix - 1, prefix]
+                );
+                assert_eq!(
+                    shared
+                        .lock()
+                        .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                        .page_visits
+                        .get(),
+                    3,
+                    "page read traversed the retained prefix"
+                );
+            });
+            assert_eq!(
+                witnesses.iter().map(Arc::strong_count).collect::<Vec<_>>(),
+                references,
+                "append or overlapping reader retained copied prefix handles"
+            );
+            assert_eq!(
+                shared
+                    .lock()
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                    .appended_records,
+                prefix as usize + 7
+            );
+            assert_eq!(
+                snapshot
+                    .repository("issue-2429")
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                    .as_deref(),
+                Some("stabem/GraphHelm")
+            );
+            assert_eq!(
+                (snapshot.rejected, snapshot.unsupported, snapshot.count),
+                (0, 0, prefix as usize)
+            );
+            let reopened = ProofSnapshot::at(Arc::clone(&shared), prefix, "reopened".into())
+                .unwrap_or_else(|_| panic!("reopened cutoff failed"));
+            assert_eq!(
+                (reopened.rejected, reopened.unsupported, reopened.count),
+                (0, 0, prefix as usize)
+            );
+            assert_eq!(
+                reopened
+                    .repository("issue-2429")
+                    .unwrap_or_else(|_| panic!("reopened repository failed"))
+                    .as_deref(),
+                Some("stabem/GraphHelm")
+            );
+
+            let latest = ProofSnapshot::at(Arc::clone(&shared), prefix + 7, "later".into())
+                .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+            assert_eq!(
+                latest
+                    .repository("issue-2429")
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                    .as_deref(),
+                Some("later/repository")
+            );
+            assert_eq!(
+                (latest.rejected, latest.unsupported, latest.count),
+                (2, 1, prefix as usize + 7)
+            );
+            assert_eq!(
+                older
+                    .latest(1)
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"))[0]
+                    .sequence,
+                prefix - 1
+            );
+            assert!(
+                older
+                    .record(&format!("record-{prefix}"))
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                    .is_none()
+            );
         }
     }
 }

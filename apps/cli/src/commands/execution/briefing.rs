@@ -68,8 +68,8 @@ pub(crate) fn execute_within(
             summary.status = "available".to_owned();
             summary.unsupported = catalog.unsupported;
             summary.incomplete =
-                catalog.unsupported > 0 || catalog.rejected > 0 || catalog.records.len() > 20;
-            for record in catalog.records.iter().rev().take(20) {
+                catalog.unsupported > 0 || catalog.rejected > 0 || catalog.count > 20;
+            for record in catalog.latest(20)? {
                 let task = record.proof.task_id.as_str();
                 if let Some(issue) = task
                     .strip_prefix("issue-")

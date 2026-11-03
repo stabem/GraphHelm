@@ -343,6 +343,55 @@ pub(crate) struct ProofsView {
     pub rejected: usize,
 }
 
+/// Retain validated history without copying its prefix on an unchanged head. Tail reads
+/// prove continuity; a replacement store or divergent chain forces a full replay read.
+fn proof_history(
+    store: &graphhelm_events::LocalEventRepository,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+    execution: &str,
+) -> Result<Arc<Vec<graphhelm_protocols::EventEnvelope>>, Failure> {
+    type Histories = HashMap<String, Arc<Vec<graphhelm_protocols::EventEnvelope>>>;
+    static HISTORIES: OnceLock<Mutex<Histories>> = OnceLock::new();
+    let key = cache_key(store.root(), execution);
+    let cache = HISTORIES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut histories = cache
+        .lock()
+        .map_err(|_| super::execution_state("proof history lock is poisoned", "/proofs"))?;
+    if let Some(history) = histories.get_mut(&key)
+        && let Some(last) = history.last()
+    {
+        let (tail, head) = store
+            .read_stream_after(scope, stream, last.sequence)
+            .map_err(|error| super::repository_failure(&error))?;
+        let end = tail.last().unwrap_or(last);
+        let continues = tail.first().is_none_or(|first| {
+            first.sequence == last.sequence + 1 && first.previous_hash == last.event_hash
+        }) && head.as_ref().is_some_and(|head| {
+            head.next_sequence == end.sequence + 1 && head.last_event_hash == end.event_hash
+        });
+        if continues
+            && tail.len() <= graphhelm_events::MAX_READ_PAGE
+            && history.len() + tail.len() <= graphhelm_events::MAX_READ_ALL
+        {
+            if !tail.is_empty() {
+                Arc::make_mut(history).extend(tail);
+            }
+            return Ok(Arc::clone(history));
+        }
+    }
+    let history = Arc::new(
+        store
+            .read_replay_stream(scope, stream)
+            .map_err(|error| super::repository_failure(&error))?,
+    );
+    if histories.len() >= 128 && !histories.contains_key(&key) {
+        histories.clear();
+    }
+    histories.insert(key, Arc::clone(&history));
+    Ok(history)
+}
+
 pub(crate) fn proofs_view(
     events: &Path,
     execution: &str,
@@ -352,7 +401,8 @@ pub(crate) fn proofs_view(
 ) -> Result<ProofsView, Failure> {
     let store = crate::commands::budgeted_event_store(events, budget.clone())
         .map_err(|e| super::repository_failure(&e))?;
-    let (scope, _, history) = resolve_stream(&store, Some(execution))?;
+    let (scope, stream) = super::stream_of(execution)?;
+    let history = proof_history(&store, &scope, &stream, execution)?;
     let invalid = || {
         super::signal_invalid(
             "proof continuation does not match this execution, filters or snapshot",

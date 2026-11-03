@@ -284,8 +284,13 @@ fn indexed_proofs(
                 if &history[index].event_hash != hash {
                     proof_catalog_caches()
                         .lock()
-                        .map(|mut caches| caches.remove(&key))
-                        .ok();
+                        .map_err(|_| {
+                            super::execution_state(
+                                "proof cache eviction lock is poisoned",
+                                "/proofs",
+                            )
+                        })?
+                        .remove(&key);
                     return Err(super::execution_state(
                         "proof history changed; reread required",
                         "/proofs",
@@ -320,8 +325,10 @@ fn indexed_proofs(
             if !continues {
                 proof_catalog_caches()
                     .lock()
-                    .map(|mut caches| caches.remove(&key))
-                    .ok();
+                    .map_err(|_| {
+                        super::execution_state("proof cache eviction lock is poisoned", "/proofs")
+                    })?
+                    .remove(&key);
                 return Err(super::execution_state(
                     "proof stream changed; reread required",
                     "/proofs",
@@ -496,8 +503,10 @@ fn indexed_proofs(
     if result.is_err() || catalog.rejected > 0 || catalog.unsupported > 0 {
         proof_catalog_caches()
             .lock()
-            .map(|mut caches| caches.remove(&key))
-            .ok();
+            .map_err(|_| {
+                super::execution_state("proof cache eviction lock is poisoned", "/proofs")
+            })?
+            .remove(&key);
     }
     result?;
     let (head, identity) = match cutoff {

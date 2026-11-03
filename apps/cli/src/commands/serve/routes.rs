@@ -1996,14 +1996,17 @@ pub(super) async fn tasks(
             );
         };
         return match result {
-            Ok(view) => respond(
-                StatusCode::OK,
-                Outcome::success(
-                    COMMAND,
-                    serde_json::to_value(view).expect("proof view serializes"),
-                )
-                .output,
-            ),
+            Ok(view) => match serde_json::to_value(view) {
+                Ok(value) => respond(StatusCode::OK, Outcome::success(COMMAND, value).output),
+                Err(error) => respond(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Outcome::internal(
+                        COMMAND,
+                        &format!("proof view serialization failed: {error}"),
+                    )
+                    .output,
+                ),
+            },
             Err(failure) => respond_failure(COMMAND, failure),
         };
     }

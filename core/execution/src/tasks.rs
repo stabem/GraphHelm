@@ -271,8 +271,13 @@ impl BenchmarkProof {
         value.insert("artifacts".into(), serde_json::Value::Array(artifacts));
         value.insert(
             "deviations".into(),
-            serde_json::to_value(&self.deviations)
-                .expect("benchmark proof deviations are serializable"),
+            serde_json::Value::Array(
+                self.deviations
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
         );
         value.insert(
             "executionId".into(),
@@ -285,8 +290,13 @@ impl BenchmarkProof {
         );
         value.insert(
             "limitations".into(),
-            serde_json::to_value(&self.limitations)
-                .expect("benchmark proof limitations are serializable"),
+            serde_json::Value::Array(
+                self.limitations
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
         );
         value.insert("lane".into(), serde_json::json!(self.lane.as_str()));
         value.insert("predecessor".into(), serde_json::json!(self.predecessor));
@@ -299,7 +309,7 @@ impl BenchmarkProof {
         value.insert("schema".into(), serde_json::json!(self.schema));
         value.insert("taskId".into(), serde_json::json!(self.task_id.as_str()));
         value.insert("verdict".into(), serde_json::json!(self.verdict));
-        serde_json::to_string(&value).expect("benchmark proof canonical JSON is serializable")
+        serde_json::Value::Object(value).to_string()
     }
 }
 
@@ -542,34 +552,37 @@ mod benchmark_proof_tests {
     }
 
     #[test]
-    fn canonical_material_is_sorted_and_omits_emission_time() {
+    fn canonical_material_is_sorted_and_omits_emission_time() -> Result<(), String> {
         let wire = r###"{"schema":"graphhelm.benchmark-proof/1","executionId":"exec-1","projectId":"project-1","repo":"stabem/GraphHelm","taskId":"issue-2429","lane":"openbot-itachi","at":"2026-11-02T12:00:00Z","runId":"run-1","harnessCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","arms":[{"name":"base","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"frozenDigest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","artifacts":[{"reference":"fixture/café-雪.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"verdict":"inconclusive","limitations":["quote \" slash \\ newline\\n tab\\t café 雪 😀"],"deviations":[],"predecessor":null}"###;
-        let proof = BenchmarkProof::parse(wire).expect("literal proof vector");
+        let proof = BenchmarkProof::parse(wire).map_err(|error| error.to_string())?;
         assert_eq!(
             proof.canonical_material(),
             r###"{"arms":[{"commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"base"}],"artifacts":[{"reference":"fixture/café-雪.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"deviations":[],"executionId":"exec-1","frozenDigest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","harnessCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","lane":"openbot-itachi","limitations":["quote \" slash \\ newline\\n tab\\t café 雪 😀"],"predecessor":null,"projectId":"project-1","repo":"stabem/GraphHelm","runId":"run-1","schema":"graphhelm.benchmark-proof/1","taskId":"issue-2429","verdict":"inconclusive"}"###
         );
-        let mut later: serde_json::Value = serde_json::from_str(wire).expect("vector JSON");
+        let mut later: serde_json::Value =
+            serde_json::from_str(wire).map_err(|error| error.to_string())?;
         later["at"] = serde_json::json!("2026-11-03T12:00:00Z");
         assert_eq!(
             BenchmarkProof::parse(&later.to_string())
-                .expect("later emission")
+                .map_err(|error| error.to_string())?
                 .canonical_material(),
             proof.canonical_material()
         );
+        Ok(())
     }
 
     #[test]
-    fn strict_parser_rejects_duplicate_nested_keys_and_missing_predecessor() {
+    fn strict_parser_rejects_duplicate_nested_keys_and_missing_predecessor() -> Result<(), String> {
         let duplicate = valid_json().replace(r#""name":"base""#, r#""name":"base","name":"other""#);
         assert!(BenchmarkProof::parse(&duplicate).is_err());
         let missing = valid_json().replace(r#","predecessor":null"#, "");
         assert!(BenchmarkProof::parse(&missing).is_err());
+        Ok(())
     }
 
     #[test]
-    fn binding_validation_rejects_a_different_immutable_subject() {
-        let proof = BenchmarkProof::parse(&valid_json()).expect("valid proof");
+    fn binding_validation_rejects_a_different_immutable_subject() -> Result<(), String> {
+        let proof = BenchmarkProof::parse(&valid_json()).map_err(|error| error.to_string())?;
         let expected = BenchmarkProofBindings {
             execution_id: "exec-1".into(),
             project_id: "project-1".into(),
@@ -580,22 +593,25 @@ mod benchmark_proof_tests {
             lane: "openbot-itachi".into(),
         };
         assert!(proof.validate_bindings(&expected).is_err());
+        Ok(())
     }
 
     #[test]
-    fn parser_rejects_arbitrary_verdict_and_invalid_timestamp() {
+    fn parser_rejects_arbitrary_verdict_and_invalid_timestamp() -> Result<(), String> {
         assert!(BenchmarkProof::parse(&valid_json().replace("inconclusive", "maybe")).is_err());
         assert!(BenchmarkProof::parse(&valid_json().replace("12:00:00Z", "12:00:00.1Z")).is_err());
+        Ok(())
     }
 
     #[test]
-    fn serialized_proof_round_trips_through_strict_decoder() {
-        let proof = BenchmarkProof::parse(&valid_json()).expect("valid proof");
-        let wire = serde_json::to_string(&proof).expect("serialize");
+    fn serialized_proof_round_trips_through_strict_decoder() -> Result<(), String> {
+        let proof = BenchmarkProof::parse(&valid_json()).map_err(|error| error.to_string())?;
+        let wire = serde_json::to_string(&proof).map_err(|error| error.to_string())?;
         assert_eq!(
-            BenchmarkProof::parse(&wire).expect("parse serialized"),
+            BenchmarkProof::parse(&wire).map_err(|error| error.to_string())?,
             proof
         );
+        Ok(())
     }
 }
 

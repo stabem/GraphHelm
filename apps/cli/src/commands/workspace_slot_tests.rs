@@ -10,16 +10,21 @@ use super::{
 
 const QUARANTINE_ATTEMPTS: u32 = 8;
 
-fn expected_quarantine_path(admission: &Path, seconds: u64, attempt: u32) -> std::path::PathBuf {
-    let stamp = chrono::DateTime::<chrono::Utc>::from_timestamp(i64::try_from(seconds).unwrap(), 0)
-        .unwrap()
+fn expected_quarantine_path(
+    admission: &Path,
+    seconds: u64,
+    attempt: u32,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let seconds = i64::try_from(seconds)?;
+    let stamp = chrono::DateTime::<chrono::Utc>::from_timestamp(seconds, 0)
+        .ok_or_else(|| std::io::Error::other("timestamp is outside the supported UTC range"))?
         .format("%Y%m%dT%H%M%SZ");
     let suffix = if attempt == 0 {
         String::new()
     } else {
         format!("-{attempt}")
     };
-    admission.join(format!("granted.corrupt-{stamp}{suffix}"))
+    Ok(admission.join(format!("granted.corrupt-{stamp}{suffix}")))
 }
 
 fn marker_command(log: &Path, tag: &str, millis: u64) -> Vec<String> {
@@ -782,31 +787,34 @@ fn a_dead_holder_is_reclaimed_and_a_malformed_ledger_refuses() {
 /// ledger with real garbage still refuses, and the error names the file so the operator can move it
 /// aside. Cost: none.
 #[test]
-fn a_torn_ledger_recovers_and_concurrent_admissions_remain_whole() {
-    let dir = tempfile::tempdir().unwrap();
+fn a_torn_ledger_recovers_and_concurrent_admissions_remain_whole()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
     let admission = dir.path().join("authority");
-    let lock = open_build_admission(&admission).unwrap();
+    let lock = open_build_admission(&admission)?;
     let ledger = admission.join("granted");
 
-    let asides = || -> Vec<String> {
-        std::fs::read_dir(&admission)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+    let asides = || -> std::io::Result<Vec<String>> {
+        let names = std::fs::read_dir(&admission)?
+            .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(names
+            .into_iter()
             .filter(|name| name.starts_with("granted.corrupt-"))
-            .collect()
+            .collect())
     };
     // Blank without a NUL is the normal released state: read as empty, nothing moved aside.
     for blank in [Vec::new(), b"\n  \n".to_vec()] {
-        std::fs::write(&ledger, &blank).unwrap();
+        std::fs::write(&ledger, &blank)?;
         assert_eq!(super::granted_jobs(&admission), Ok(0), "{blank:?}");
     }
-    assert!(asides().is_empty(), "{:?}", asides());
+    assert!(asides()?.is_empty());
 
     // A NUL-filled ledger reads as empty, is kept as evidence, and admission carries on.
     for torn in [vec![0_u8; 36], b"\0\0\n\0".to_vec()] {
-        std::fs::write(&ledger, &torn).unwrap();
+        std::fs::write(&ledger, &torn)?;
         assert_eq!(super::granted_jobs(&admission), Ok(0), "{torn:?}");
-        let moved = asides();
+        let moved = asides()?;
         assert_eq!(
             moved.len(),
             1,
@@ -815,59 +823,97 @@ fn a_torn_ledger_recovers_and_concurrent_admissions_remain_whole() {
         let stamp = moved[0]
             .trim_start_matches("granted.corrupt-")
             .get(..16)
-            .expect("the quarantine filename starts with a UTC timestamp");
-        let stamped = chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%dT%H%M%SZ")
-            .expect("the quarantine filename carries a UTC timestamp")
+            .ok_or_else(|| std::io::Error::other("quarantine filename has no UTC timestamp"))?;
+        let stamped = chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%dT%H%M%SZ")?
             .and_utc()
             .timestamp();
-        let now = i64::try_from(super::unix_now() / 1_000_000_000).unwrap();
+        let now = i64::try_from(super::unix_now() / 1_000_000_000)?;
         assert!(now.abs_diff(stamped) <= 2, "{stamp}");
-        assert_eq!(std::fs::read(admission.join(&moved[0])).unwrap(), torn);
-        let granted = super::try_grant(&admission, &lock, 4, |_| true).unwrap();
+        assert_eq!(std::fs::read(admission.join(&moved[0]))?, torn);
+        let granted =
+            super::try_grant(&admission, &lock, 4, |_| true).map_err(std::io::Error::other)?;
         let Admission::Granted(token) = granted else {
-            panic!("a torn ledger must not block admission: {granted:?}")
+            return Err(std::io::Error::other(format!(
+                "a torn ledger must not block admission: {granted:?}"
+            ))
+            .into());
         };
-        let text = std::fs::read_to_string(&ledger).unwrap();
+        let text = std::fs::read_to_string(&ledger)?;
         assert!(
             !text.contains('\0') && text.lines().count() == 1,
             "{text:?}"
         );
         super::release_grant(&admission, &lock, &token);
-        std::fs::remove_file(admission.join(&moved[0])).unwrap();
+        std::fs::remove_file(admission.join(&moved[0]))?;
     }
 
-    std::fs::write(&ledger, b"\0\0 not a ledger line\n").unwrap();
-    let error = super::granted_jobs(&admission).unwrap_err();
+    std::fs::write(&ledger, b"\0\0 not a ledger line\n")?;
+    let error = super::granted_jobs(&admission)
+        .err()
+        .ok_or_else(|| std::io::Error::other("malformed ledger unexpectedly parsed"))?;
     assert!(error.contains("malformed"), "{error}");
     assert!(error.contains(&ledger.display().to_string()), "{error}");
-    std::fs::write(&ledger, [0xff_u8, 0xfe, b'\n']).unwrap();
+    std::fs::write(&ledger, [0xff_u8, 0xfe, b'\n'])?;
     assert!(super::granted_jobs(&admission).is_err());
 
     // A simultaneous burst must keep every live grant, not just a parseable last writer.
-    std::fs::write(admission.join("jobs-budget"), b"8\n").unwrap();
-    std::fs::write(&ledger, b"").unwrap();
+    std::fs::write(admission.join("jobs-budget"), b"8\n")?;
+    std::fs::write(&ledger, b"")?;
     for _ in 0..25 {
-        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let ready_workers = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let start_workers = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let workers: Vec<_> = (0..8)
             .map(|_| {
                 let admission = admission.clone();
-                let barrier = Arc::clone(&barrier);
+                let ready_workers = std::sync::Arc::clone(&ready_workers);
+                let start_workers = std::sync::Arc::clone(&start_workers);
                 std::thread::spawn(move || {
-                    let lock = open_build_admission(&admission).unwrap();
-                    barrier.wait();
+                    let lock =
+                        open_build_admission(&admission).map_err(|error| error.to_string())?;
+                    ready_workers.fetch_add(1, std::sync::atomic::Ordering::Release);
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                    while !start_workers.load(std::sync::atomic::Ordering::Acquire) {
+                        if std::time::Instant::now() >= deadline {
+                            return Err("concurrent admission start signal timed out".to_owned());
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
                     super::try_grant(&admission, &lock, 1, |_| true)
-                        .expect("concurrent admission must parse the complete ledger")
+                        .map_err(|error| error.to_string())
                 })
             })
             .collect();
-        let tokens: Vec<_> = workers
+        let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while ready_workers.load(std::sync::atomic::Ordering::Acquire) != 8 {
+            if std::time::Instant::now() >= ready_deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "concurrent admission workers did not become ready",
+                )
+                .into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        start_workers.store(true, std::sync::atomic::Ordering::Release);
+        let decisions = workers
             .into_iter()
-            .map(|worker| match worker.join().unwrap() {
-                Admission::Granted(token) => token,
-                decision => panic!("the eight-job budget must admit every writer: {decision:?}"),
+            .map(|worker| {
+                worker
+                    .join()
+                    .map_err(|_| std::io::Error::other("admission worker panicked"))?
+                    .map_err(std::io::Error::other)
             })
-            .collect();
-        let bytes = std::fs::read(&ledger).unwrap();
+            .collect::<std::io::Result<Vec<_>>>()?;
+        let tokens = decisions
+            .into_iter()
+            .map(|decision| match decision {
+                Admission::Granted(token) => Ok(token),
+                decision => Err(std::io::Error::other(format!(
+                    "the eight-job budget must admit every writer: {decision:?}"
+                ))),
+            })
+            .collect::<std::io::Result<Vec<_>>>()?;
+        let bytes = std::fs::read(&ledger)?;
         assert!(!bytes.contains(&0), "a NUL byte in the ledger: {bytes:?}");
         assert_eq!(super::granted_jobs(&admission), Ok(8));
         for token in tokens {
@@ -875,15 +921,17 @@ fn a_torn_ledger_recovers_and_concurrent_admissions_remain_whole() {
         }
         assert_eq!(super::granted_jobs(&admission), Ok(0));
     }
+    Ok(())
 }
 
 #[test]
-fn failed_ledger_rename_does_not_publish_a_temporary_file() {
-    let dir = tempfile::tempdir().unwrap();
+fn failed_ledger_rename_does_not_publish_a_temporary_file() -> Result<(), Box<dyn std::error::Error>>
+{
+    let dir = tempfile::tempdir()?;
     let admission = dir.path().join("authority");
-    open_build_admission(&admission).unwrap();
+    open_build_admission(&admission)?;
     let ledger = admission.join("granted");
-    std::fs::create_dir(&ledger).unwrap();
+    std::fs::create_dir(&ledger)?;
 
     let result = super::write_grants(
         &admission,
@@ -901,10 +949,17 @@ fn failed_ledger_rename_does_not_publish_a_temporary_file() {
             .join(format!("granted.{}.tmp", std::process::id()))
             .exists()
     );
+    Ok(())
 }
 
-fn run_ledger_quarantine_probe(mode: &str, admission: &Path) -> std::process::Output {
-    graphhelm_process::command(std::env::current_exe().unwrap())
+fn run_ledger_quarantine_probe(
+    mode: &str,
+    admission: &Path,
+) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+    let mut capture = tempfile::tempfile()?;
+    let stdout = capture.try_clone()?;
+    let stderr = capture.try_clone()?;
+    let mut child = graphhelm_process::command(std::env::current_exe()?)
         .args([
             "--ignored",
             "--exact",
@@ -913,20 +968,46 @@ fn run_ledger_quarantine_probe(mode: &str, admission: &Path) -> std::process::Ou
         ])
         .env("GRAPHHELM_TEST_LEDGER_QUARANTINE_MODE", mode)
         .env("GRAPHHELM_TEST_LEDGER_QUARANTINE_DIR", admission)
-        .output()
-        .unwrap()
+        .stdout(std::process::Stdio::from(stdout))
+        .stderr(std::process::Stdio::from(stderr))
+        .spawn()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill()?;
+            let _ = child.wait()?;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "ledger quarantine probe exceeded its 10 second deadline",
+            )
+            .into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    use std::io::{Read, Seek};
+    capture.rewind()?;
+    let mut stdout = Vec::new();
+    capture.read_to_end(&mut stdout)?;
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
 }
 
 #[test]
-fn nul_ledger_warning_names_both_files_once() {
-    let dir = tempfile::tempdir().unwrap();
+fn nul_ledger_warning_names_both_files_once() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
     let admission = dir.path().join("authority");
-    open_build_admission(&admission).unwrap();
+    open_build_admission(&admission)?;
     let ledger = admission.join("granted");
     let bytes = vec![0_u8; 36];
-    std::fs::write(&ledger, &bytes).unwrap();
+    std::fs::write(&ledger, &bytes)?;
 
-    let output = run_ledger_quarantine_probe("recover", &admission);
+    let output = run_ledger_quarantine_probe("recover", &admission)?;
     let captured = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -947,36 +1028,37 @@ fn nul_ledger_warning_names_both_files_once() {
         warnings[0].contains("started from an empty ledger"),
         "{captured}"
     );
-    let aside = std::fs::read_dir(&admission)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
+    let aside = std::fs::read_dir(&admission)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .find(|path| {
             path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("granted.corrupt-")
+                .is_some_and(|name| name.to_string_lossy().starts_with("granted.corrupt-"))
         })
-        .expect("the warning's evidence file exists");
-    assert_eq!(std::fs::read(aside).unwrap(), bytes);
+        .ok_or_else(|| std::io::Error::other("the warning's evidence file does not exist"))?;
+    assert_eq!(std::fs::read(aside)?, bytes);
+    Ok(())
 }
 
 #[test]
-fn failed_quarantine_returns_a_path_error_and_preserves_evidence() {
-    let dir = tempfile::tempdir().unwrap();
+fn failed_quarantine_returns_a_path_error_and_preserves_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
     let admission = dir.path().join("authority");
-    open_build_admission(&admission).unwrap();
+    open_build_admission(&admission)?;
     let ledger = admission.join("granted");
     let bytes = vec![0_u8; 36];
-    std::fs::write(&ledger, &bytes).unwrap();
-    let now = u64::try_from(super::unix_now() / 1_000_000_000).unwrap();
+    std::fs::write(&ledger, &bytes)?;
+    let now = u64::try_from(super::unix_now() / 1_000_000_000)?;
     // Occupy every bounded candidate across the interval in which the probe runs.
-    for seconds in now.saturating_sub(2)..=now + 120 {
+    for seconds in now.saturating_sub(2)..=now.saturating_add(120) {
         for attempt in 0..QUARANTINE_ATTEMPTS {
-            std::fs::create_dir(expected_quarantine_path(&admission, seconds, attempt)).unwrap();
+            std::fs::create_dir(expected_quarantine_path(&admission, seconds, attempt)?)?;
         }
     }
 
-    let output = run_ledger_quarantine_probe("refuse", &admission);
+    let output = run_ledger_quarantine_probe("refuse", &admission)?;
     let captured = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -988,83 +1070,92 @@ fn failed_quarantine_returns_a_path_error_and_preserves_evidence() {
         captured.contains(&ledger.display().to_string()),
         "{captured}"
     );
-    assert_eq!(std::fs::read(&ledger).unwrap(), bytes);
+    assert_eq!(std::fs::read(&ledger)?, bytes);
+    Ok(())
 }
 
 #[test]
-fn repeated_quarantine_never_overwrites_regular_file_evidence() {
-    let dir = tempfile::tempdir().unwrap();
+fn repeated_quarantine_never_overwrites_regular_file_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
     let admission = dir.path().join("authority");
-    open_build_admission(&admission).unwrap();
+    open_build_admission(&admission)?;
     let ledger = admission.join("granted");
-    let now = u64::try_from(super::unix_now() / 1_000_000_000).unwrap();
+    let now = u64::try_from(super::unix_now() / 1_000_000_000)?;
     // Cover the second boundary while keeping the test deterministic and fast.
     let mut preserved = std::collections::BTreeMap::new();
     for seconds in now.saturating_sub(2)..=now + 3 {
-        let path = expected_quarantine_path(&admission, seconds, 0);
+        let path = expected_quarantine_path(&admission, seconds, 0)?;
         let bytes = format!("previous evidence for {seconds}").into_bytes();
-        std::fs::write(&path, &bytes).unwrap();
+        std::fs::write(&path, &bytes)?;
         preserved.insert(path, bytes);
     }
 
     let first = vec![0_u8; 36];
-    std::fs::write(&ledger, &first).unwrap();
+    std::fs::write(&ledger, &first)?;
     assert_eq!(super::granted_jobs(&admission), Ok(0));
 
     let second = b"\0\0\n\0".to_vec();
-    std::fs::write(&ledger, &second).unwrap();
+    std::fs::write(&ledger, &second)?;
     assert_eq!(super::granted_jobs(&admission), Ok(0));
 
     for (path, bytes) in &preserved {
-        assert_eq!(std::fs::read(path).unwrap(), *bytes, "{path:?}");
+        assert_eq!(std::fs::read(path)?, *bytes, "{path:?}");
     }
-    let recovered: Vec<_> = std::fs::read_dir(&admission)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
+    let recovered: Vec<_> = std::fs::read_dir(&admission)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
         .filter(|path| {
             path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("granted.corrupt-")
+                .is_some_and(|name| name.to_string_lossy().starts_with("granted.corrupt-"))
                 && !preserved.contains_key(path)
         })
         .collect();
     assert_eq!(recovered.len(), 2, "{recovered:?}");
     let contents: Vec<_> = recovered
         .iter()
-        .map(|path| std::fs::read(path).unwrap())
-        .collect();
+        .map(std::fs::read)
+        .collect::<Result<Vec<_>, _>>()?;
     assert!(contents.contains(&first), "{contents:?}");
     assert!(contents.contains(&second), "{contents:?}");
     assert!(!ledger.exists());
+    Ok(())
 }
 
 #[test]
 #[ignore = "spawned by the quarantine-output tests to inspect the real process streams"]
-fn ledger_quarantine_probe_child() {
-    let mode = std::env::var("GRAPHHELM_TEST_LEDGER_QUARANTINE_MODE")
-        .expect("the parent test sets the probe mode");
+fn ledger_quarantine_probe_child() -> Result<(), Box<dyn std::error::Error>> {
+    let mode = std::env::var("GRAPHHELM_TEST_LEDGER_QUARANTINE_MODE")?;
     let admission = std::path::PathBuf::from(
         std::env::var_os("GRAPHHELM_TEST_LEDGER_QUARANTINE_DIR")
-            .expect("the parent test sets the scratch admission directory"),
+            .ok_or_else(|| std::io::Error::other("scratch admission directory was not set"))?,
     );
     let ledger = admission.join("granted");
-    let lock = open_build_admission(&admission).unwrap();
+    let lock = open_build_admission(&admission)?;
     match mode.as_str() {
         "recover" => {
             assert!(matches!(
-                super::try_grant(&admission, &lock, 1, |_| true).unwrap(),
+                super::try_grant(&admission, &lock, 1, |_| true).map_err(std::io::Error::other)?,
                 Admission::Granted(_)
             ));
         }
         "refuse" => {
-            let error = super::try_grant(&admission, &lock, 1, |_| true).unwrap_err();
+            let error = super::try_grant(&admission, &lock, 1, |_| true)
+                .map_err(std::io::Error::other)
+                .err()
+                .ok_or_else(|| {
+                    std::io::Error::other("refused probe unexpectedly received a grant")
+                })?;
             assert!(error.contains("all 8 quarantine names"), "{error}");
             assert!(error.contains(&ledger.display().to_string()), "{error}");
             println!("{error}");
         }
-        _ => panic!("unsupported probe mode: {mode}"),
+        _ => {
+            return Err(std::io::Error::other(format!("unsupported probe mode: {mode}")).into());
+        }
     }
+    Ok(())
 }
 
 /// #1254 (gh-claude-opt-1's review of #1256): an update that is waiting for the machine to drain

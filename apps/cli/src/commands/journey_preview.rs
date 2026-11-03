@@ -97,12 +97,28 @@ const PREVIEW_BUDGET: Duration = Duration::from_secs(300);
 /// The largest frame the route serves.
 const FRAME_LIMIT: u64 = 8 * 1024 * 1024;
 
-fn project_of(args: &JourneyPreviewArgs) -> std::result::Result<PathBuf, Failure> {
-    args.project
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .canonicalize()
-        .map_err(|_| failure("preview.project_invalid", "/project", 2))
+fn project_of(args: &JourneyPreviewArgs) -> std::result::Result<PathBuf, Outcome> {
+    let path = args.project.clone().unwrap_or_else(|| PathBuf::from("."));
+    path.canonicalize()
+        .and_then(|resolved| {
+            if resolved.is_dir() {
+                Ok(resolved)
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotADirectory,
+                    "project is not a directory",
+                ))
+            }
+        })
+        .map_err(|error| {
+            io_answer(
+                json!({}),
+                "preview.project_invalid",
+                "read project directory",
+                &path,
+                &error,
+            )
+        })
 }
 
 /// A flow id or screen id used as a file name: the schema's own identifier characters only.
@@ -495,9 +511,13 @@ fn read_state(dir: &Path) -> Option<Value> {
 }
 
 fn save_state(dir: &Path, state: &Value) {
-    let mut bytes = serde_json::to_vec_pretty(state).unwrap();
+    let _ = write_state(dir, state);
+}
+
+fn write_state(dir: &Path, state: &Value) -> std::io::Result<()> {
+    let mut bytes = serde_json::to_vec_pretty(state).map_err(std::io::Error::other)?;
     bytes.push(b'\n');
-    let _ = super::atomic::atomic_write(&dir.join(STATE), &bytes);
+    super::atomic::atomic_write(&dir.join(STATE), &bytes)
 }
 
 /// Whether a `running` state still has a runner. The runner writes its own pid when it starts;
@@ -651,18 +671,233 @@ fn body_with(
     state
 }
 
-fn answer(data: Value, failed: Option<Failure>) -> Outcome {
+fn failure_message(code: &str, pointer: &str) -> String {
+    let action = match code {
+        "preview.flow_unknown" => {
+            "the journey flow is missing or unsafe; check its id and .graphhelm/journeys file"
+        }
+        "preview.project_invalid" => {
+            "the project directory cannot be read; choose an existing directory with --project"
+        }
+        "preview.keyring_missing" => {
+            "recording approved proof requires the Runtime sealed keyring; use the Runtime that owns this project"
+        }
+        "preview.confirm_owner_only" => {
+            "only the owner can confirm draft commands; ask the owner to review and confirm this flow"
+        }
+        "preview.confirm_stale" => {
+            "the flow changed since confirmation; review its current commands and confirm the current digest"
+        }
+        "preview.confirm_unrecorded" => {
+            "the command confirmation could not be recorded; check the owner event store and retry"
+        }
+        "preview.state_unknown" => {
+            "the selected journey state is not declared; choose a state listed by this flow"
+        }
+        "preview.unwritable" => {
+            "the preview could not be prepared; check its directory permissions and the runner installation"
+        }
+        "watch.launch_failed" => {
+            "the application launcher failed; inspect the sanitized launchLog exit and stderr, fix the launcher and retry"
+        }
+        "watch.app_down" => {
+            "the application did not become reachable; check the launcher log and the declared base URL"
+        }
+        "watch.launcher_invalid" => {
+            "the launcher configuration is invalid; fix the project launcher declaration and retry"
+        }
+        "watch.state_not_seeded" => {
+            "the launcher did not seed the requested state; fix its state setup and retry"
+        }
+        "preview.launcher_not_isolated" => {
+            "validation requires an isolated launcher; declare an isolated fixture before retrying"
+        }
+        "observer.setup_failed" => {
+            "the browser observer could not be prepared; inspect observerSetup.error and repair the observer installation"
+        }
+        "observer.setup_timeout" => {
+            "browser observer setup exceeded its deadline; inspect observerSetup.error and retry after fixing setup"
+        }
+        "driver.observer_missing" | "replay.observer_missing" | "replay.observer_stale" => {
+            "the browser observer is missing or stale; install the project observer and retry"
+        }
+        "preview.budget_exceeded" => {
+            "the preview exceeded its execution budget; inspect its last step and launcher log before retrying"
+        }
+        _ if code.starts_with("flow.") => {
+            "the journey flow did not pass validation; fix the field named by the pointer and compile the flow again"
+        }
+        _ => {
+            "the preview was refused; inspect the named field and the sanitized run logs, correct the cause and retry"
+        }
+    };
+    safe_detail(&format!("{action} ({code}, {pointer})"))
+}
+
+fn sensitive_environment_key(key: &str) -> bool {
+    let key = key.to_ascii_uppercase();
+    key.starts_with("GRAPHHELM_SECRET_")
+        || key.ends_with("_TOKEN")
+        || key.ends_with("_KEY")
+        || key.ends_with("_PASSWORD")
+}
+
+const DETAIL_SECRET_LIMIT: usize = 64 * 1024;
+
+fn bounded_secrets(values: impl Iterator<Item = String>) -> Option<Vec<String>> {
+    let mut secrets = Vec::new();
+    let mut bytes = 0usize;
+    for value in values.filter(|value| !value.is_empty()) {
+        bytes = bytes.saturating_add(value.len());
+        if bytes > DETAIL_SECRET_LIMIT || secrets.len() >= 512 {
+            return None;
+        }
+        secrets.push(value);
+    }
+    // A shorter secret must not destroy the spelling needed to mask a longer one.
+    secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
+    Some(secrets)
+}
+
+fn detail_secrets() -> Option<Vec<String>> {
+    bounded_secrets(std::env::vars_os().filter_map(|(key, value)| {
+        sensitive_environment_key(&key.to_string_lossy())
+            .then(|| value.to_string_lossy().into_owned())
+    }))
+}
+
+fn safe_tail(bytes: &[u8], cut: bool, secrets: Option<&[String]>) -> String {
+    let Some(secrets) = secrets else {
+        return "detail withheld: configured secrets exceed the redaction bound".to_owned();
+    };
+    let mut text = String::from_utf8_lossy(bytes).into_owned();
+    for secret in secrets {
+        text = text.replace(secret, "***");
+    }
+    if cut {
+        // Mask complete occurrences before discarding the overlap; otherwise a secret crossing
+        // the retained-window edge could lose its prefix and expose its suffix.
+        let overlap = secrets.iter().map(String::len).max().unwrap_or_default();
+        let start = (overlap.min(text.len())..=text.len())
+            .find(|index| text.is_char_boundary(*index))
+            .unwrap_or(text.len());
+        text.drain(..start);
+    }
+    super::journey_replay::masked_tail(text.as_bytes(), false, 0, &[])
+}
+
+fn safe_detail(text: &str) -> String {
+    safe_tail(text.as_bytes(), false, detail_secrets().as_deref())
+}
+
+fn start_io_error(code: &str, operation: &str, path: &Path, error: &std::io::Error) -> Value {
+    let path = safe_detail(&path.to_string_lossy());
+    let next = if code == "preview.project_invalid" {
+        "choose an existing directory with --project and retry"
+    } else {
+        "check this path, permissions and the GraphHelm installation, then retry"
+    };
+    let message = safe_detail(&format!(
+        "could not {operation} at {path}: {:?} (OS code {:?}); {next}",
+        error.kind(),
+        error.raw_os_error()
+    ));
+    let pointer = if code == "preview.project_invalid" {
+        "/project"
+    } else if matches!(
+        code,
+        "preview.runner_unavailable" | "preview.runner_start_failed"
+    ) {
+        "/runner"
+    } else {
+        "/preview"
+    };
+    let mut detail = json!({"code":code,"message":message,"pointer":pointer,
+        "operation":operation,"path":path,"errorKind":format!("{:?}",error.kind())});
+    if let Some(code) = error.raw_os_error() {
+        detail["osCode"] = code.into();
+    }
+    detail
+}
+
+fn io_answer(
+    mut data: Value,
+    code: &str,
+    operation: &str,
+    path: &Path,
+    error: &std::io::Error,
+) -> Outcome {
+    data["startError"] = start_io_error(code, operation, path, error);
+    let pointer = data["startError"]["pointer"]
+        .as_str()
+        .unwrap_or("/preview")
+        .to_owned();
+    let (legacy, exit) = if code == "preview.project_invalid" {
+        ("preview.project_invalid", 2)
+    } else {
+        ("preview.unwritable", 1)
+    };
+    answer(data, Some(failure(legacy, pointer, exit)))
+}
+
+fn terminal_start_failure(dir: &Path, running: &Value, mut detail: Value) -> Value {
+    let mut terminal = running.clone();
+    terminal["state"] = "failed".into();
+    terminal["reason"] = detail["code"].clone();
+    terminal["detail"] =
+        json!({"code":detail["code"],"pointer":detail["pointer"],"message":detail["message"]});
+    if let Some(object) = terminal.as_object_mut() {
+        object.remove("pid");
+    }
+    terminal["startError"] = detail.clone();
+    if let Err(error) = write_state(dir, &terminal) {
+        detail["recoveryError"] = start_io_error(
+            "preview.state_write_failed",
+            "finalize failed preview state",
+            &dir.join(STATE),
+            &error,
+        );
+        detail["message"] = safe_detail(&format!(
+            "{}; the saved run could not be finalized; inspect state.json before retrying",
+            detail["message"].as_str().unwrap_or_default()
+        ))
+        .into();
+        terminal["startError"] = detail;
+    }
+    terminal
+}
+
+fn spawn_runner(
+    command: &mut std::process::Command,
+    dir: &Path,
+    running: &Value,
+) -> std::result::Result<(), Value> {
+    command.spawn().map(|_| ()).map_err(|error| {
+        terminal_start_failure(
+            dir,
+            running,
+            start_io_error(
+                "preview.runner_start_failed",
+                "start preview runner",
+                Path::new(command.get_program()),
+                &error,
+            ),
+        )
+    })
+}
+
+fn answer(mut data: Value, failed: Option<Failure>) -> Outcome {
     let Some((code, path, exit_code)) = failed else {
         return Outcome::success(COMMAND, data);
     };
-    let message = match code {
-        "preview.flow_unknown" => "no journey flow with this id",
-        "preview.project_invalid" => "the project directory cannot be read",
-        "preview.keyring_missing" => {
-            "recording an approved flow's proof requires the Runtime's sealed keyring"
-        }
-        _ => "the journey flow cannot be previewed",
-    };
+    if !data["startError"].is_object() {
+        data["startError"] =
+            json!({"code":code,"pointer":safe_detail(&path),"message":failure_message(code,&path)});
+    }
+    let message = data["startError"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     Outcome {
         output: CommandOutput {
             ok: false,
@@ -683,7 +918,7 @@ fn answer(data: Value, failed: Option<Failure>) -> Outcome {
 pub(crate) fn status(args: &JourneyPreviewArgs) -> Outcome {
     let project = match project_of(args) {
         Ok(project) => project,
-        Err(failed) => return answer(json!({}), Some(failed)),
+        Err(outcome) => return outcome,
     };
     match flow_and_key(&project, &args.id) {
         Ok((flow, digest, commit)) => answer(
@@ -757,7 +992,7 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
     }
     let project = match project_of(args) {
         Ok(project) => project,
-        Err(failed) => return answer(json!({}), Some(failed)),
+        Err(outcome) => return outcome,
     };
     let (flow, digest, commit) = match flow_and_key(&project, &args.id) {
         Ok(found) => found,
@@ -799,21 +1034,44 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
             Some(failure("preview.keyring_missing", "/keyring", 2)),
         );
     }
-    if safe_directory(&project.join(".graphhelm"), false).is_err()
-        || std::fs::create_dir_all(&dir).is_err()
-        || safe_directory(&dir, false).is_err()
-    {
-        return answer(current, Some(failure("preview.unwritable", "/preview", 1)));
+    if safe_directory(&project.join(".graphhelm"), false).is_err() {
+        return io_answer(
+            current,
+            "preview.directory_unavailable",
+            "access safe preview directory",
+            &project.join(".graphhelm"),
+            &std::io::Error::new(std::io::ErrorKind::InvalidInput, "unsafe directory"),
+        );
     }
-    if let Some(previous) = stored
-        .as_ref()
-        .filter(|state| matches!(state["state"].as_str(), Some("ready" | "failed")))
-    {
-        archive(&dir, previous);
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        return io_answer(
+            current,
+            "preview.directory_unavailable",
+            "create preview directory",
+            &dir,
+            &error,
+        );
     }
-    let _ = std::fs::remove_dir_all(dir.join("frames"));
-    let Ok(executable) = std::env::current_exe() else {
-        return answer(current, Some(failure("preview.unwritable", "/runner", 1)));
+    if safe_directory(&dir, false).is_err() {
+        return io_answer(
+            current,
+            "preview.directory_unavailable",
+            "access safe preview directory",
+            &dir,
+            &std::io::Error::new(std::io::ErrorKind::InvalidInput, "unsafe directory"),
+        );
+    }
+    let executable = match std::env::current_exe() {
+        Ok(executable) => executable,
+        Err(error) => {
+            return io_answer(
+                current,
+                "preview.runner_unavailable",
+                "locate preview runner",
+                &project,
+                &error,
+            );
+        }
     };
     let mut command = graphhelm_process::command(executable);
     command
@@ -856,14 +1114,10 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
     // #1298: the runner's stderr is kept, truncated per run, so a runner that dies says why.
     // A link planted at that name is never followed.
     let log = dir.join(RUNNER_LOG);
-    let stderr = (std::fs::symlink_metadata(&log).is_err() || safe_node(&log))
-        .then(|| std::fs::File::create(&log).ok())
-        .flatten()
-        .map_or_else(Stdio::null, Stdio::from);
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(stderr);
+        .stderr(Stdio::null());
     for (key, value) in std::env::vars_os()
         .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))
     {
@@ -872,16 +1126,87 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
     // The running state is written before the runner starts and never after: a runner that ends
     // quickly (no observer, app down) must not have its result overwritten by this answer. The
     // runner writes its own pid.
-    let running = json!({"preview":true,"kind":current["kind"],"digest":digest,"commit":commit,
+    let mut running = json!({"preview":true,"kind":current["kind"],"digest":digest,"commit":commit,
         "runId":uuid::Uuid::new_v4().to_string(),"state":"running","startedAt":chrono::Utc::now().to_rfc3339(),"current":null,
         "screens":{},"edges":{}});
-    save_state(&dir, &running);
-    match command.spawn() {
-        Ok(_) => answer(body(Some(running), &flow, &digest, &commit), None),
-        Err(_) => {
-            let _ = std::fs::remove_file(dir.join(STATE));
-            answer(current, Some(failure("preview.unwritable", "/runner", 1)))
+    if let Err(error) = write_state(&dir, &running) {
+        return io_answer(
+            current,
+            "preview.state_write_failed",
+            "write preview state",
+            &dir.join(STATE),
+            &error,
+        );
+    }
+    if let Some(previous) = stored
+        .as_ref()
+        .filter(|state| matches!(state["state"].as_str(), Some("ready" | "failed")))
+        && let Err(error) = archive(&dir, previous)
+    {
+        let terminal = terminal_start_failure(
+            &dir,
+            &running,
+            start_io_error(
+                "preview.archive_failed",
+                "archive previous preview",
+                &dir.join("history"),
+                &error,
+            ),
+        );
+        return answer(terminal, Some(failure("preview.unwritable", "/preview", 1)));
+    }
+    if let Err(error) = std::fs::remove_dir_all(dir.join("frames"))
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        let terminal = terminal_start_failure(
+            &dir,
+            &running,
+            start_io_error(
+                "preview.frames_unavailable",
+                "clear previous preview frames",
+                &dir.join("frames"),
+                &error,
+            ),
+        );
+        return answer(terminal, Some(failure("preview.unwritable", "/preview", 1)));
+    }
+    let log_file = if safe_node(&log)
+        || matches!(std::fs::symlink_metadata(&log), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+    {
+        std::fs::File::create(&log)
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "unsafe log",
+        ))
+    };
+    match log_file {
+        Ok(file) => {
+            command.stderr(Stdio::from(file));
         }
+        Err(error) => {
+            let warning =
+                start_io_error("preview.log_unavailable", "write runner log", &log, &error);
+            running["warnings"] =
+                json!([{"code":"preview.log_unavailable","message":warning["message"]}]);
+            if let Err(error) = write_state(&dir, &running) {
+                let terminal = terminal_start_failure(
+                    &dir,
+                    &running,
+                    start_io_error(
+                        "preview.state_write_failed",
+                        "save preview warning",
+                        &dir.join(STATE),
+                        &error,
+                    ),
+                );
+                return answer(terminal, Some(failure("preview.unwritable", "/preview", 1)));
+            }
+        }
+    }
+    match spawn_runner(&mut command, &dir, &running) {
+        Ok(()) => answer(body(Some(running), &flow, &digest, &commit), None),
+        Err(terminal) => answer(terminal, Some(failure("preview.unwritable", "/runner", 1))),
     }
 }
 
@@ -991,14 +1316,25 @@ fn reap_lost_from_with(
 /// The runner's own stderr as a lost run's `launchLog` (#1298): its path and its last
 /// `RUNNER_LOG_TAIL` bytes, or nothing when the log is missing, unsafe or empty.
 fn runner_log(dir: &Path) -> Option<Value> {
+    use std::io::{Read as _, Seek as _};
     let path = dir.join(RUNNER_LOG);
     if !safe_node(&path) {
         return None;
     }
-    let bytes = std::fs::read(&path).ok()?;
-    let start = bytes.len().saturating_sub(RUNNER_LOG_TAIL);
-    let tail = String::from_utf8_lossy(&bytes[start..]).trim().to_owned();
-    (!tail.is_empty()).then(|| json!({"path": path.to_string_lossy(), "tail": tail}))
+    let secrets = detail_secrets();
+    let slack = secrets
+        .as_ref()
+        .and_then(|values| values.iter().map(String::len).max())
+        .unwrap_or_default();
+    let limit = RUNNER_LOG_TAIL + slack;
+    let mut file = std::fs::File::open(&path).ok()?;
+    let size = file.metadata().ok()?.len();
+    let start = size.saturating_sub(limit as u64);
+    file.seek(std::io::SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::new();
+    file.take(limit as u64).read_to_end(&mut bytes).ok()?;
+    let tail = safe_tail(&bytes, start > 0, secrets.as_deref());
+    (!tail.is_empty()).then(|| json!({"path": safe_detail(&path.to_string_lossy()), "tail": tail}))
 }
 
 fn read_settled_with(
@@ -1046,7 +1382,17 @@ fn failed_reason(code: &str) -> &'static str {
 /// and the viewport kept the failed edge as `not_reached`, so nothing named the cause.
 fn record_refusal(flow: &Value, state: &mut Value, code: &str, pointer: &str) {
     state["state"] = "failed".into();
-    let detail = json!({"code":code,"pointer":pointer});
+    let mut detail = json!({"code":code,"pointer":pointer,"message":failure_message(code,pointer)});
+    if code.starts_with("watch.")
+        || code.starts_with("observer.")
+        || matches!(
+            code,
+            "driver.observer_missing" | "replay.observer_missing" | "replay.observer_stale"
+        )
+    {
+        detail["startError"] =
+            json!({"code":code,"pointer":pointer,"message":failure_message(code,pointer)});
+    }
     state["detail"] = detail.clone();
     state["reason"] = failed_reason(code).into();
     // The pointer may name a flow array index (preflight) or a stable step id (play).
@@ -1441,7 +1787,7 @@ impl Run {
 fn run(args: &JourneyPreviewArgs) -> Outcome {
     let project = match project_of(args) {
         Ok(project) => project,
-        Err(failed) => return answer(json!({}), Some(failed)),
+        Err(outcome) => return outcome,
     };
     let (flow, digest, commit, source) = match flow_key_and_source(&project, &args.id) {
         Ok(found) => found,
@@ -1529,7 +1875,15 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
                 json!({"execution":"not_run","collection":"unavailable"});
         }
     }
-    run.save();
+    if let Err(error) = write_state(&run.dir, &run.state) {
+        return io_answer(
+            run.state.clone(),
+            "preview.state_write_failed",
+            "write preview state",
+            &run.dir.join(STATE),
+            &error,
+        );
+    }
     let deadline = Instant::now() + budget_of(&run.state);
     let launched = std::sync::Arc::new(std::sync::Mutex::new(None));
     watch_budget(
@@ -1596,7 +1950,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     }
     drop(app);
     answer(
-        json!({"state":run.state["state"],"result":run.state["result"],"paths":run.state["validationPaths"],"reason":run.state["reason"],"launchLog":run.state["launchLog"]}),
+        json!({"state":run.state["state"],"result":run.state["result"],"paths":run.state["validationPaths"],"reason":run.state["reason"],"launchLog":run.state["launchLog"],"detail":run.state["detail"],"driverLog":run.state["driverLog"],"observerSetup":run.state["observerSetup"],"warnings":run.state["warnings"]}),
         None,
     )
 }
@@ -1676,7 +2030,7 @@ fn play(
             Err(error) => {
                 run.state["observerSetup"] = json!({
                     "state":"failed", "message":"Browser observer setup failed",
-                    "error":error["message"],
+                    "error":safe_detail(error["message"].as_str().unwrap_or_default()),
                 });
                 run.save();
                 let code = if error["code"] == "observer.setup_timeout" {
@@ -2356,26 +2710,35 @@ fn history_id(state: &Value) -> Option<String> {
 /// Before a new run replaces it, the finished run (its state and frames) moves to
 /// `history/<id>/`, and only the newest `HISTORY_KEEP` stay. Best effort: a run that cannot be
 /// archived is simply not in the history.
-fn archive(dir: &Path, previous: &Value) {
+fn archive(dir: &Path, previous: &Value) -> std::io::Result<()> {
     let Some(id) = history_id(previous) else {
-        return;
+        return Ok(());
     };
     let history = dir.join("history");
     let target = history.join(&id);
-    if std::fs::create_dir_all(&target).is_err() || safe_directory(&target, false).is_err() {
-        return;
+    std::fs::create_dir_all(&target)?;
+    if safe_directory(&target, false).is_err() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "unsafe history directory",
+        ));
     }
     let frames = dir.join("frames");
     if safe_directory(&frames, false).is_ok() {
-        let _ = std::fs::remove_dir_all(target.join("frames"));
-        let _ = std::fs::rename(&frames, target.join("frames"));
+        if let Err(error) = std::fs::remove_dir_all(target.join("frames"))
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(error);
+        }
+        std::fs::rename(&frames, target.join("frames"))?;
     }
-    save_state(&target, previous);
+    write_state(&target, previous)?;
     let mut runs = history_ids(&history);
     while runs.len() > HISTORY_KEEP {
         let oldest = runs.remove(0);
-        let _ = std::fs::remove_dir_all(history.join(oldest));
+        std::fs::remove_dir_all(history.join(oldest))?;
     }
+    Ok(())
 }
 
 /// The archived run ids, oldest first.
@@ -2731,6 +3094,97 @@ fn sha_of(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn start_diagnostics_mask_secrets_before_cutting_and_bound_redaction_work() {
+        let secrets = vec!["canary-long-password".to_owned(), "canary".to_owned()];
+        let input = format!(
+            "{}canary-long-password{}",
+            "é".repeat(4096),
+            "x".repeat(4080)
+        );
+        let read = &input.as_bytes()[input.len() - (4096 + secrets[0].len())..];
+        let safe = super::safe_tail(read, true, Some(&secrets));
+        assert!(!safe.contains("canary"), "{safe}");
+        assert!(!safe.contains("long-password"), "{safe}");
+        assert!(safe.len() <= 4096);
+        for value in [
+            "path/canary-long-password",
+            "cause:canary-long-password",
+            "stderr:canary-long-password",
+        ] {
+            assert!(
+                !super::safe_tail(value.as_bytes(), false, Some(&secrets)).contains("password")
+            );
+        }
+        let oversized =
+            super::bounded_secrets(std::iter::once("s".repeat(super::DETAIL_SECRET_LIMIT + 1)));
+        assert!(oversized.is_none());
+        assert!(!super::safe_tail(b"canary", false, oversized.as_deref()).contains("canary"));
+        for key in [
+            "GRAPHHELM_SECRET_fixture",
+            "FIXTURE_TOKEN",
+            "fixture_key",
+            "FIXTURE_PASSWORD",
+        ] {
+            assert!(super::sensitive_environment_key(key));
+        }
+        assert!(!super::sensitive_environment_key("PATH"));
+        if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+            assert!(
+                !super::safe_tail(format!("{home}/runner.log").as_bytes(), false, Some(&[]))
+                    .contains(&home)
+            );
+        }
+    }
+
+    #[test]
+    fn failed_runner_spawn_is_terminal_and_preserves_archived_frames() {
+        use super::*;
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
+        std::fs::create_dir(dir.join("frames")).unwrap();
+        std::fs::write(dir.join("frames/old.png"), b"previous").unwrap();
+        let previous =
+            json!({"state":"ready","startedAt":"2026-11-03T10:00:00Z","screens":{},"edges":{}});
+        let running = json!({"state":"running","startedAt":"2026-11-03T11:00:00Z"});
+        write_state(dir, &running).unwrap();
+        archive(dir, &previous).unwrap();
+        let mut command = graphhelm_process::command(dir.join("missing-runner"));
+        let failure = spawn_runner(&mut command, dir, &running).unwrap_err();
+        assert_eq!(failure["state"], "failed");
+        assert_eq!(failure["startError"]["code"], "preview.runner_start_failed");
+        assert!(failure.get("pid").is_none());
+        assert_eq!(read_state(dir).unwrap()["state"], "failed");
+        let history = history_id(&previous).unwrap();
+        assert_eq!(
+            std::fs::read(dir.join("history").join(history).join("frames/old.png")).unwrap(),
+            b"previous"
+        );
+
+        std::fs::remove_file(dir.join(STATE)).unwrap();
+        std::fs::create_dir(dir.join(STATE)).unwrap();
+        let failure = spawn_runner(&mut command, dir, &running).unwrap_err();
+        assert_eq!(
+            failure["startError"]["recoveryError"]["code"],
+            "preview.state_write_failed"
+        );
+        assert!(
+            failure["startError"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("could not be finalized")
+        );
+
+        let blocked = tempfile::tempdir().unwrap();
+        std::fs::write(blocked.path().join("history"), b"blocked").unwrap();
+        std::fs::create_dir(blocked.path().join("frames")).unwrap();
+        std::fs::write(blocked.path().join("frames/old.png"), b"previous").unwrap();
+        assert!(archive(blocked.path(), &previous).is_err());
+        assert_eq!(
+            std::fs::read(blocked.path().join("frames/old.png")).unwrap(),
+            b"previous"
+        );
+    }
     use super::{
         Guard, HISTORY_KEEP, JourneyPreviewArgs, RUNNER_LOG, archive, body, dir_of, failed_reason,
         history_frame, history_id, history_ids, newest_finished, plain_id, proof_args, read_state,
@@ -3695,7 +4149,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             "failed",
             "stored, not only shown"
         );
-        archive(&dir, &reaped);
+        archive(&dir, &reaped).unwrap();
         assert_eq!(history_ids(&dir.join("history")).len(), 1);
     }
 
@@ -3711,7 +4165,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             json!({"state":"ready","result":"pass","startedAt":at,
             "screens":{"cart":{"frame":true,"file":"cart.png","result":"pass"}},"edges":{}})
         };
-        archive(&dir, &finished("2026-10-14T10:00:00Z"));
+        archive(&dir, &finished("2026-10-14T10:00:00Z")).unwrap();
         assert!(
             !dir.join("frames").exists(),
             "the frames moved with the run"
@@ -3724,7 +4178,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         );
         assert!(history_frame(project.path(), "checkout", "../../x", "cart", None).is_none());
         for minute in 0..25 {
-            archive(&dir, &finished(&format!("2026-10-14T11:{minute:02}:00Z")));
+            archive(&dir, &finished(&format!("2026-10-14T11:{minute:02}:00Z"))).unwrap();
         }
         let runs = history_ids(&dir.join("history"));
         assert_eq!(runs.len(), HISTORY_KEEP);

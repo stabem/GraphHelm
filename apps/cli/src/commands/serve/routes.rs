@@ -1961,6 +1961,52 @@ pub(super) async fn tasks(
     headers: HeaderMap,
 ) -> Response {
     const COMMAND: &str = "execution.tasks";
+    if query
+        .as_deref()
+        .unwrap_or("")
+        .split('&')
+        .any(|part| part == "view=proofs")
+    {
+        let proof_query = match execution::tasks::ProofQuery::parse(query.as_deref().unwrap_or(""))
+        {
+            Ok(query) => query,
+            Err(failure) => return respond_failure(COMMAND, failure),
+        };
+        let Some(keyring) = state.sealing.clone() else {
+            return respond_failure(
+                COMMAND,
+                execution::execution_state("proofs require a sealed keyring", "/keyring"),
+            );
+        };
+        let events = state.events.clone();
+        let Some(result) = off_reactor(move || {
+            execution::tasks::proofs_view(
+                &events,
+                &execution_id,
+                &keyring,
+                &proof_query,
+                crate::commands::tasks_read_budget(),
+            )
+        })
+        .await
+        else {
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Outcome::internal(COMMAND, "proof read failed").output,
+            );
+        };
+        return match result {
+            Ok(view) => respond(
+                StatusCode::OK,
+                Outcome::success(
+                    COMMAND,
+                    serde_json::to_value(view).expect("proof view serializes"),
+                )
+                .output,
+            ),
+            Err(failure) => respond_failure(COMMAND, failure),
+        };
+    }
     let depth = if query
         .as_deref()
         .unwrap_or("")

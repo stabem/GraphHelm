@@ -97,6 +97,7 @@ BENCHMARK_PROOF_SCHEMA = "graphhelm.benchmark-proof/1"
 _PROOF_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _PROOF_COMMIT = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
 _PROOF_IDENTIFIER = re.compile(r"[!-~]{1,128}\Z", re.ASCII)
+_PROOF_PORTABLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z", re.ASCII)
 _PROOF_AT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
 _PROOF_KEYS = frozenset({
     "schema", "executionId", "projectId", "repo", "taskId", "lane", "at", "runId",
@@ -108,7 +109,7 @@ _PROOF_KEYS = frozenset({
 def _proof_text(value, name, maximum, *, identifier=False):
     if not isinstance(value, str) or not value or len(value) > maximum:
         raise ValueError(f"proof {name} must be nonempty text of at most {maximum} characters")
-    if any(ord(char) < 0x20 or ord(char) == 0x7f for char in value):
+    if any(ord(char) < 0x20 or 0x7f <= ord(char) <= 0x9f for char in value):
         raise ValueError(f"proof {name} contains control characters")
     if identifier and (not _PROOF_IDENTIFIER.fullmatch(value)
                        or any(char in value for char in ("/", "\\", ":"))):
@@ -161,6 +162,8 @@ def validate_benchmark_proof(text, expected_bindings=None):
                 raise ValueError(f"proof {field} does not match the trusted caller binding")
 
     _proof_text(document["runId"], "runId", 128, identifier=True)
+    if not _PROOF_PORTABLE.fullmatch(document["runId"]):
+        raise ValueError("proof runId must be a portable identifier")
     if not isinstance(document["harnessCommit"], str) or not _PROOF_COMMIT.fullmatch(document["harnessCommit"]):
         raise ValueError("proof harnessCommit must be a lowercase 40- or 64-character commit")
     if not isinstance(document["frozenDigest"], str) or not _PROOF_SHA256.fullmatch(document["frozenDigest"]):
@@ -174,6 +177,8 @@ def validate_benchmark_proof(text, expected_bindings=None):
         if not isinstance(arm, dict) or set(arm) != {"name", "commit"}:
             raise ValueError("proof arms must contain only name and commit")
         name = _proof_text(arm["name"], "arm name", 128, identifier=True)
+        if not _PROOF_PORTABLE.fullmatch(name):
+            raise ValueError("proof arm name must be a portable identifier")
         if name in names:
             raise ValueError("proof arm names must be unique")
         names.add(name)
@@ -550,7 +555,7 @@ def parse(argv):
     p.add_argument("--journey", help="journey_frames (#1839): the journey id run at the PR head")
     p.add_argument("--proof-file", help="proof_recorded: JSON benchmark declaration file")
     p.add_argument("--run", help="proofs: optional benchmark run id")
-    p.add_argument("--after", type=int, default=0, help="proofs: ascending snapshot cursor")
+    p.add_argument("--after", default=None, help="proofs: opaque snapshot cursor")
     p.add_argument("--limit", type=int, default=20, help="proofs: page size (1..100)")
     p.add_argument("--preview-project", default=".",
                    help="journey_frames: the worktree whose .graphhelm/journey-previews holds the run (default: .)")
@@ -928,13 +933,16 @@ def journey_frames_records(args, doc):
 
 
 def _proofs_view(args):
-    if not 0 <= args.after or not 1 <= args.limit <= 100:
-        sys.exit("task_record: proofs requires --after >= 0 and --limit from 1 to 100")
+    if not 1 <= args.limit <= 100 or (args.after not in (None, 0) and
+            (not isinstance(args.after, str) or len(args.after) > 512)):
+        sys.exit("task_record: proofs requires an opaque cursor and --limit from 1 to 100")
     token = read_credential(args)
-    query = {"view": "proofs", "issue": str(args.issue), "after": str(args.after), "limit": str(args.limit)}
+    query = {"view": "proofs", "issue": str(args.issue), "limit": str(args.limit)}
+    if args.after not in (None, 0):
+        query["after"] = args.after
     if args.run:
         query["run"] = args.run
-    data, _ = _runtime_json(args, "/tasks?" + urllib.parse.urlencode(query), token)
+    data, _ = _runtime_json(args, "/tasks?" + urllib.parse.urlencode(query), token, max_bytes=1024 * 1024)
     if data.get("schema") != "graphhelm.benchmark-proofs/1":
         sys.exit("task_record: Runtime does not support the benchmark proofs view; no record sent")
     for field, expected in (("executionId", args.execution), ("repo", args.repo),
@@ -943,16 +951,32 @@ def _proofs_view(args):
             sys.exit(f"task_record: proofs response has no authoritative {field} binding; no record sent")
     if not isinstance(data.get("projectId"), str) or not data["projectId"]:
         sys.exit("task_record: proofs response has no authoritative projectId; no record sent")
+    for field in ("snapshotHead", "unsupported", "rejected"):
+        if type(data.get(field)) is not int or data[field] < 0:
+            sys.exit("task_record: proofs response has invalid counts; no record sent")
+    if type(data.get("incomplete")) is not bool or (data.get("nextCursor") is not None and
+            (not isinstance(data["nextCursor"], str) or not data["nextCursor"] or len(data["nextCursor"]) > 512)):
+        sys.exit("task_record: proofs response has invalid completeness/cursor; no record sent")
+    if (data["unsupported"] or data["rejected"]) and not data["incomplete"]:
+        sys.exit("task_record: proofs response hides unread evidence; no record sent")
     records = data.get("records")
     if not isinstance(records, list) or len(records) > args.limit:
         sys.exit("task_record: proofs response is incomplete; no record sent")
+    previous = 0
     for record in records:
         if (not isinstance(record, dict) or not isinstance(record.get("recordId"), str)
                 or not isinstance(record.get("sequence"), int) or isinstance(record.get("sequence"), bool)
                 or not isinstance(record.get("proof"), dict)):
             sys.exit("task_record: proofs response contains an invalid record; no record sent")
+        if not previous < record["sequence"] <= data["snapshotHead"]:
+            sys.exit("task_record: proofs response is out of sequence; no record sent")
+        previous = record["sequence"]
         try:
-            validate_benchmark_proof(json.dumps(record["proof"], ensure_ascii=False))
+            expected = {field: data[field] for field in ("executionId", "projectId", "repo", "taskId")}
+            expected["lane"] = record["proof"].get("lane")
+            _, digest = validate_benchmark_proof(json.dumps(record["proof"], ensure_ascii=False), expected)
+            if record["recordId"] != digest or (args.run and record["proof"]["runId"] != args.run):
+                raise ValueError("record identity or run filter mismatch")
         except (TypeError, ValueError, UnicodeError) as error:
             sys.exit(f"task_record: proofs response contains an invalid proof ({error}); no record sent")
     return data
@@ -962,18 +986,21 @@ def _proof_record(args, now):
     if not args.proof_file:
         sys.exit("task_record: proof_recorded needs --proof-file")
     try:
-        raw = Path(args.proof_file).read_bytes()
+        with Path(args.proof_file).open("rb") as source:
+            raw = source.read(8193)
     except OSError as error:
         sys.exit(f"task_record: cannot read --proof-file ({error}); no record sent")
     if len(raw) > 8192:
         sys.exit("task_record: --proof-file exceeds 8192 bytes; no record sent")
     try:
-        supplied = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        supplied = json.loads(canonical_proof_json(raw.decode("utf-8")))
+    except (UnicodeError, ValueError):
         sys.exit("task_record: --proof-file is not valid UTF-8 JSON; no record sent")
     if not isinstance(supplied, dict):
         sys.exit("task_record: --proof-file must contain a JSON object; no record sent")
     view = _proofs_view(args)
+    if view["incomplete"]:
+        sys.exit("task_record: proof history is incomplete; no record sent")
     bindings = {"executionId": args.execution, "projectId": view["projectId"],
                 "repo": args.repo, "taskId": f"issue-{args.issue}", "lane": args.lane, "at": now}
     for field in bindings:
@@ -987,20 +1014,46 @@ def _proof_record(args, now):
 
 
 def proof_recorded(args, now):
+    args.after = None
     document, _ = _proof_record(args, now)
+    def find_stored():
+        read_args = argparse.Namespace(**vars(args))
+        read_args.after, read_args.limit, read_args.run = None, 100, document["runId"]
+        snapshot = None
+        seen = set()
+        for _ in range(100):
+            view = _proofs_view(read_args)
+            if view["incomplete"] or (snapshot is not None and snapshot != view["snapshotHead"]):
+                sys.exit("task_record: proof readback is incomplete or changed snapshot")
+            snapshot = view["snapshotHead"]
+            for record in view["records"]:
+                if record["recordId"] == args.proof_digest:
+                    wanted = {k: v for k, v in document.items() if k != "at"}
+                    stored = {k: v for k, v in record["proof"].items() if k != "at"}
+                    if stored != wanted:
+                        sys.exit("task_record: proof readback differs from submitted declaration")
+                    return record
+            cursor = view["nextCursor"]
+            if cursor is None:
+                return None
+            if cursor in seen:
+                sys.exit("task_record: proof readback repeated a cursor")
+            seen.add(cursor)
+            read_args.after = cursor
+        sys.exit("task_record: proof readback exceeded its page budget")
+    if not args.dry_run:
+        existing = find_stored()
+        if existing:
+            return 2, "proof-" + args.proof_digest[:58], {"data": {"recordId": args.proof_digest, "alreadyRecorded": True}}
     code, signal_id, reply = send(args, document, now)
-    if code != 0:
+    if args.dry_run:
         return code, signal_id, reply
-    record_id = reply.get("data", {}).get("recordId", signal_id) if isinstance(reply.get("data"), dict) else signal_id
-    view = _proofs_view(args)
-    matches = [record for record in view["records"] if isinstance(record, dict) and record.get("recordId") == record_id]
-    wanted = {k: v for k, v in document.items() if k != "at"}
-    if len(matches) != 1 or not isinstance(matches[0].get("proof"), dict):
-        sys.exit("task_record: proof POST succeeded but sealed proof readback was not found")
-    stored = {k: v for k, v in matches[0]["proof"].items() if k != "at"}
-    if stored != wanted:
-        sys.exit("task_record: proof POST readback differs from the submitted canonical proof")
-    return code, signal_id, reply
+    stored = find_stored()
+    if stored is None:
+        if code not in (0, 2):
+            return code, signal_id, reply
+        sys.exit("task_record: proof POST has no verified stored readback")
+    return 0 if code == 0 else 2, signal_id, reply
 
 
 def main(argv):
@@ -1218,7 +1271,7 @@ def send(args, doc, now, attachments=None):
     # a new key, so a GHE003 conflict on it can only be a retry of this exact record.
     content = json.dumps({k: v for k, v in doc.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256("\n".join((args.lane, args.kind, content)).encode()).hexdigest()[:16]
-    signal_id = f"proof-{getattr(args, 'proof_digest', digest)}" if args.kind == "proof_recorded" else f"{args.lane}-{doc['taskId']}-{args.kind}-{digest}"
+    signal_id = f"proof-{args.proof_digest[:58]}" if args.kind == "proof_recorded" else f"{args.lane}-{doc['taskId']}-{args.kind}-{digest}"
     if len(signal_id) > 64:
         # Keep accepted keys stable; the digest still covers the full lane, kind and record.
         signal_id = f"{signal_id[:47]}-{digest}"
@@ -1228,7 +1281,7 @@ def send(args, doc, now, attachments=None):
     body = {"signal": {"id": signal_id, "type": f"task.{args.kind}",
                        "source": {"type": "user", "id": args.lane}, "severity": "low",
                        "emittedAt": now, "evidence": [evidence],
-                       "description": json.dumps(doc, separators=(",", ":"))}}
+                       "description": json.dumps(doc, separators=(",", ":"), ensure_ascii=args.kind != "proof_recorded")}}
     if attachments:
         body["attachments"] = attachments
     url = f"{args.url.rstrip('/')}/v1/executions/{urllib.parse.quote(args.execution, safe='')}/signal"

@@ -35,12 +35,57 @@ pub(crate) fn execute_within(
     budget: graphhelm_events::ReadBudget,
     keyring: Option<&super::signal::SignalKeyring>,
 ) -> Result<serde_json::Value, Failure> {
-    let read = super::status::read_known_within(events, execution, budget)?;
+    let read = super::status::read_known_within(events, execution, budget.clone())?;
     let answer = graphhelm_execution::attention(&read.projection, &read.inputs);
     let mut briefing = graphhelm_execution::briefing_view(&read.projection, &answer, &read.history);
     if let (Some(keyring), Some(execution_id)) = (keyring, read.projection.execution_id.as_deref())
     {
         briefing.plan = crate::commands::journeys::newest_plan(events, execution_id, keyring);
+        let mut summary = graphhelm_execution::tasks::BenchmarkProofSummary {
+            schema: "graphhelm.benchmark-proofs/1".to_owned(),
+            status: "unavailable".to_owned(),
+            head_sequence: briefing.as_of_sequence,
+            records: Vec::new(),
+            next_cursor: None,
+            incomplete: true,
+            unsupported: 0,
+            views: Vec::new(),
+        };
+        let catalog = (|| {
+            let store = crate::commands::budgeted_event_store(events, budget.clone())
+                .map_err(|e| super::repository_failure(&e))?;
+            let (scope, _) = super::stream_of(execution_id)?;
+            super::tasks::proof_catalog(
+                &store,
+                &scope,
+                &read.history,
+                execution_id,
+                keyring,
+                &budget,
+            )
+        })();
+        if let Ok(catalog) = catalog {
+            summary.status = "available".to_owned();
+            summary.unsupported = catalog.unsupported;
+            summary.incomplete =
+                catalog.unsupported > 0 || catalog.rejected > 0 || catalog.records.len() > 20;
+            for record in catalog.records.into_iter().rev().take(20) {
+                let task = record.proof.task_id.as_str();
+                if let Some(issue) = task
+                    .strip_prefix("issue-")
+                    .and_then(|number| number.parse::<u64>().ok())
+                {
+                    let link =
+                        format!("/v1/executions/{execution_id}/tasks?view=proofs&issue={issue}");
+                    if !summary.views.contains(&link) {
+                        summary.views.push(link);
+                    }
+                }
+                summary.records.push(record.proof);
+            }
+            summary.records.reverse();
+        }
+        briefing.benchmark_proofs = Some(summary);
     }
     Ok(serde_json::to_value(briefing)
         .expect("a view built from already-serializable fold types serializes"))

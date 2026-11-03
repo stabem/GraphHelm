@@ -1668,7 +1668,7 @@ class BenchmarkProofValidationTests(unittest.TestCase):
 
     def test_proof_recorded_uses_the_authoritative_project_binding_and_one_send(self):
         args = SimpleNamespace(proof_file=None, issue=2429, execution="exec-2429", repo="stabem/GraphHelm",
-                               lane="openbot-itachi", after=0, limit=20, run=None)
+                               lane="openbot-itachi", after=0, limit=20, run=None, dry_run=False)
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False) as handle:
             path = handle.name
             json.dump({k: self.proof[k] for k in ("schema", "runId", "harnessCommit", "arms", "frozenDigest",
@@ -1679,16 +1679,38 @@ class BenchmarkProofValidationTests(unittest.TestCase):
                 "projectId": "project-authoritative", "repo": args.repo, "taskId": "issue-2429",
                 "snapshotHead": 0, "records": [], "nextCursor": None, "incomplete": False,
                 "unsupported": 0, "rejected": 0}
-        with patch.object(task_record, "_proofs_view", side_effect=[view, dict(view, records=[{
-                    "recordId": "proof-record", "sequence": 1,
+        digest = "6e98e75ce370682c9a301ee4c763d0828add0c45f300e2352ab8ad8af2d4a4bb"
+        with patch.object(task_record, "_proofs_view", side_effect=[view, view, dict(view, snapshotHead=1, records=[{
+                    "recordId": digest, "sequence": 1,
                     "proof": dict(self.proof, projectId="project-authoritative", at="2026-11-02T12:00:00Z",
                                     executionId=args.execution, repo=args.repo, taskId="issue-2429",
                                     lane=args.lane),
                 }])]), \
-                patch.object(task_record, "send", return_value=(0, "proof-record", {"data": {"recordId": "proof-record"}})) as send:
+                patch.object(task_record, "send", return_value=(0, "proof-"+digest[:58], {"data": {"recordId": digest}})) as send:
             code, _, _ = task_record.proof_recorded(args, "2026-11-02T12:00:00Z")
         self.assertEqual(code, 0)
         self.assertEqual(send.call_count, 1)
+
+    def test_duplicate_proof_file_keys_are_rejected_before_preflight_or_send(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "proof.json"
+            path.write_text('{"runId":"first","runId":"second"}', encoding="utf-8")
+            args = SimpleNamespace(proof_file=str(path))
+            with patch.object(task_record, "_proofs_view") as read, self.assertRaises(SystemExit):
+                task_record._proof_record(args, self.bindings["at"])
+            read.assert_not_called()
+
+    def test_proofs_view_refuses_hidden_missing_evidence_and_wrong_record_digest(self):
+        args = SimpleNamespace(after=None, limit=20, run=None, issue=2429, execution="exec-2429",
+                               repo="stabem/GraphHelm", lane="openbot-itachi")
+        base = {"schema":"graphhelm.benchmark-proofs/1", "executionId":args.execution,
+                "projectId":"project-1", "repo":args.repo, "taskId":"issue-2429", "snapshotHead":1,
+                "records":[], "nextCursor":None, "incomplete":False, "unsupported":0, "rejected":0}
+        for view in (dict(base, unsupported=1), dict(base, records=[{
+                "recordId":"0"*64, "sequence":1, "proof":self.proof}])):
+            with patch.object(task_record,"read_credential",return_value="fixture"), \
+                 patch.object(task_record,"_runtime_json",return_value=(view,100)), self.assertRaises(SystemExit):
+                task_record._proofs_view(args)
 
 
 if __name__ == "__main__":

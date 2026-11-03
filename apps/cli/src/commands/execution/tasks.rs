@@ -25,6 +25,358 @@ use super::signal::SignalKeyring;
 use super::{Failure, resolve_stream};
 use crate::commands::event_store;
 
+/// Immutable benchmark declarations are read separately from the delivery-state fold.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProofRecord {
+    pub record_id: String,
+    pub sequence: u64,
+    pub proof: graphhelm_execution::tasks::BenchmarkProof,
+}
+
+#[derive(Default)]
+pub(crate) struct ProofCatalog {
+    pub repositories: BTreeMap<String, String>,
+    pub records: Vec<ProofRecord>,
+    pub unsupported: usize,
+    pub rejected: usize,
+}
+
+pub(crate) fn proof_digest(
+    proof: &graphhelm_execution::tasks::BenchmarkProof,
+) -> Result<String, Failure> {
+    graphhelm_graph::raw_content_sha256(proof.canonical_material().as_bytes())
+        .map(|digest| digest.as_str().to_owned())
+        .map_err(|_| super::signal_invalid("benchmark declaration could not be hashed", "/proof"))
+}
+
+/// Every envelope is authenticated before its declaration can supply a binding or a predecessor.
+pub(crate) fn proof_catalog(
+    store: &graphhelm_events::LocalEventRepository,
+    scope: &graphhelm_protocols::RepositoryScope,
+    history: &[graphhelm_protocols::EventEnvelope],
+    execution: &str,
+    keyring: &SignalKeyring,
+    budget: &graphhelm_events::ReadBudget,
+) -> Result<ProofCatalog, Failure> {
+    let check = || {
+        budget.check_now(history.len() as u64).map_err(|error| {
+            super::execution_state(
+                &format!("proof history read budget exhausted: {error:?}"),
+                "/proofs",
+            )
+        })
+    };
+    check()?;
+    let opener = super::signal::open_sealer(keyring)?;
+    let generation = super::signal::sealer_generation(keyring)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|_| super::execution_state("proof reader could not start", "/keyring"))?;
+    let mut catalog = ProofCatalog::default();
+    for event in history {
+        check()?;
+        let EventKind::SignalRecorded(record) = &event.kind else {
+            continue;
+        };
+        if !matches!(record.kind.as_str(), "task.claimed" | "task.proof_recorded") {
+            continue;
+        }
+        let parsed = (|| {
+            if event.scope.project_id() != scope.project_id() || event.evidence_refs.len() != 1 {
+                return None;
+            }
+            let reference = &event.evidence_refs[0];
+            if reference.evidence_id().as_str() != format!("signal-{}", record.signal_id.as_str()) {
+                return None;
+            }
+            let envelope = opened_envelope(
+                store,
+                scope,
+                &generation,
+                reference.evidence_id(),
+                record.envelope_sha256.as_str(),
+                |sealed| {
+                    let bytes = runtime.block_on(opener.open(scope.clone(), sealed)).ok()?;
+                    bytes.expose(|value| {
+                        if value.len() > graphhelm_execution::tasks::MAX_ENVELOPE_BYTES {
+                            None
+                        } else {
+                            serde_json::from_slice(value).ok()
+                        }
+                    })
+                },
+            )?;
+            if envelope["type"].as_str() != Some(record.kind.as_str())
+                || envelope
+                    .pointer("/source/id")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(event.actor.id().as_str())
+            {
+                return None;
+            }
+            Some(envelope)
+        })();
+        let Some(envelope) = parsed else {
+            catalog.rejected += 1;
+            continue;
+        };
+        let Some(description) = envelope["description"].as_str() else {
+            catalog.rejected += 1;
+            continue;
+        };
+        check()?;
+        if record.kind == "task.claimed" {
+            let Some(claim) = parse_task_event(
+                &record.kind,
+                event.actor.id().as_str(),
+                description,
+                event.sequence,
+                Some(event.occurred_at.clone()),
+            ) else {
+                catalog.rejected += 1;
+                continue;
+            };
+            if let Some(repo) = claim.repo {
+                if catalog
+                    .repositories
+                    .get(&claim.task_id)
+                    .is_some_and(|previous| previous != &repo)
+                {
+                    return Err(super::signal_invalid(
+                        "verified claims disagree about the task repository",
+                        "/proofs/repo",
+                    ));
+                }
+                catalog.repositories.insert(claim.task_id, repo);
+            }
+            continue;
+        }
+        if record.scoped_agent_authenticated != Some(true) {
+            catalog.rejected += 1;
+            continue;
+        }
+        let proof = match graphhelm_execution::tasks::BenchmarkProof::parse(description) {
+            Ok(proof) => proof,
+            Err(_) => {
+                if serde_json::from_str::<serde_json::Value>(description)
+                    .ok()
+                    .and_then(|v| v["schema"].as_str().map(str::to_owned))
+                    .is_some_and(|schema| {
+                        schema != graphhelm_execution::tasks::BENCHMARK_PROOF_SCHEMA
+                    })
+                {
+                    catalog.unsupported += 1;
+                } else {
+                    catalog.rejected += 1;
+                }
+                continue;
+            }
+        };
+        if proof.execution_id.as_str() != execution
+            || proof.project_id.as_str() != scope.project_id().as_str()
+            || proof.lane.as_str() != event.actor.id().as_str()
+            || catalog.repositories.get(proof.task_id.as_str()) != Some(&proof.repo)
+        {
+            catalog.rejected += 1;
+            continue;
+        }
+        let record_id = proof_digest(&proof)?;
+        catalog.records.push(ProofRecord {
+            record_id,
+            sequence: event.sequence,
+            proof,
+        });
+    }
+    check()?;
+    Ok(catalog)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ProofQuery {
+    pub issue: u64,
+    pub run: Option<String>,
+    pub after: Option<String>,
+    pub limit: usize,
+}
+
+impl ProofQuery {
+    pub(crate) fn parse(raw: &str) -> Result<Self, Failure> {
+        let invalid = || {
+            super::signal_invalid(
+                "proofs requires issue, optional run/after and limit 1..100",
+                "/query",
+            )
+        };
+        let mut fields = BTreeMap::new();
+        for part in raw.split('&') {
+            let (key, value) = part.split_once('=').ok_or_else(invalid)?;
+            if !matches!(key, "view" | "issue" | "run" | "after" | "limit")
+                || fields.insert(key, value).is_some()
+            {
+                return Err(invalid());
+            }
+        }
+        let issue = fields
+            .get("issue")
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .ok_or_else(invalid)?;
+        let limit = fields
+            .get("limit")
+            .map(|v| v.parse::<usize>())
+            .transpose()
+            .map_err(|_| invalid())?
+            .unwrap_or(20);
+        if !(1..=100).contains(&limit) || fields.get("view") != Some(&"proofs") {
+            return Err(invalid());
+        }
+        let run = fields.get("run").map(|v| v.to_string());
+        if run.as_ref().is_some_and(|v| {
+            v.is_empty()
+                || v.len() > 128
+                || !v.bytes().enumerate().all(|(i, b)| {
+                    b.is_ascii_alphanumeric() || (i > 0 && matches!(b, b'.' | b'_' | b'-'))
+                })
+        }) {
+            return Err(invalid());
+        }
+        let after = fields
+            .get("after")
+            .filter(|v| !v.is_empty() && **v != "0")
+            .map(|v| v.to_string());
+        if after
+            .as_ref()
+            .is_some_and(|v| v.len() > 512 || !v.is_ascii())
+        {
+            return Err(invalid());
+        }
+        Ok(Self {
+            issue,
+            run,
+            after,
+            limit,
+        })
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProofsView {
+    pub schema: &'static str,
+    pub execution_id: String,
+    pub project_id: String,
+    pub repo: String,
+    pub task_id: String,
+    pub snapshot_head: u64,
+    pub records: Vec<ProofRecord>,
+    pub next_cursor: Option<String>,
+    pub incomplete: bool,
+    pub unsupported: usize,
+    pub rejected: usize,
+}
+
+pub(crate) fn proofs_view(
+    events: &Path,
+    execution: &str,
+    keyring: &SignalKeyring,
+    query: &ProofQuery,
+    budget: graphhelm_events::ReadBudget,
+) -> Result<ProofsView, Failure> {
+    let store = crate::commands::budgeted_event_store(events, budget.clone())
+        .map_err(|e| super::repository_failure(&e))?;
+    let (scope, _, history) = resolve_stream(&store, Some(execution))?;
+    let invalid = || {
+        super::signal_invalid(
+            "proof continuation does not match this execution, filters or snapshot",
+            "/after",
+        )
+    };
+    let task_id = format!("issue-{}", query.issue);
+    let filter = graphhelm_graph::raw_content_sha256(
+        serde_json::json!([
+            execution,
+            scope.project_id().as_str(),
+            task_id,
+            query.run,
+            query.limit
+        ])
+        .to_string()
+        .as_bytes(),
+    )
+    .map_err(|_| invalid())?
+    .as_str()
+    .to_owned();
+    let (head, after) = match &query.after {
+        None => (history.last().map_or(0, |e| e.sequence), 0),
+        Some(cursor) => {
+            let parts: Vec<_> = cursor.split('.').collect();
+            if parts.len() != 5 || parts[0] != "p1" || parts[4] != filter {
+                return Err(invalid());
+            }
+            let head = parts[1].parse::<u64>().map_err(|_| invalid())?;
+            let after = parts[3].parse::<u64>().map_err(|_| invalid())?;
+            let event = history
+                .iter()
+                .find(|e| e.sequence == head)
+                .ok_or_else(invalid)?;
+            let identity = graphhelm_graph::raw_content_sha256(event.event_id.as_str().as_bytes())
+                .map_err(|_| invalid())?;
+            if identity.as_str() != parts[2] || after > head {
+                return Err(invalid());
+            }
+            (head, after)
+        }
+    };
+    let snapshot: Vec<_> = history.into_iter().filter(|e| e.sequence <= head).collect();
+    let catalog = proof_catalog(&store, &scope, &snapshot, execution, keyring, &budget)?;
+    let repo = catalog.repositories.get(&task_id).cloned().ok_or_else(|| {
+        super::signal_invalid(
+            "proof view requires an authenticated task claim with a repository",
+            "/issue",
+        )
+    })?;
+    let mut matching = catalog.records.into_iter().filter(|r| {
+        r.sequence > after
+            && r.proof.task_id.as_str() == task_id
+            && query.run.as_ref().is_none_or(|run| &r.proof.run_id == run)
+    });
+    let mut records = Vec::new();
+    let mut bytes = 0;
+    let mut more = false;
+    for record in &mut matching {
+        let size = serde_json::to_vec(&record).map_err(|_| invalid())?.len();
+        if records.len() == query.limit || bytes + size > 900_000 {
+            more = true;
+            break;
+        }
+        bytes += size;
+        records.push(record);
+    }
+    let next_cursor = if more {
+        let last = records.last().ok_or_else(invalid)?.sequence;
+        let event = snapshot.last().ok_or_else(invalid)?;
+        let identity = graphhelm_graph::raw_content_sha256(event.event_id.as_str().as_bytes())
+            .map_err(|_| invalid())?;
+        Some(format!("p1.{head}.{}.{last}.{filter}", identity.as_str()))
+    } else {
+        None
+    };
+    Ok(ProofsView {
+        schema: "graphhelm.benchmark-proofs/1",
+        execution_id: execution.to_owned(),
+        project_id: scope.project_id().as_str().to_owned(),
+        repo,
+        task_id,
+        snapshot_head: head,
+        records,
+        next_cursor,
+        incomplete: catalog.rejected > 0 || catalog.unsupported > 0,
+        unsupported: catalog.unsupported,
+        rejected: catalog.rejected,
+    })
+}
+
 /// The reply of every door: the slices, the verified records they were folded from (in sequence
 /// order, with the Runtime's `occurredAt`), the stream head and how many envelopes did not verify.
 #[derive(Debug, Serialize)]

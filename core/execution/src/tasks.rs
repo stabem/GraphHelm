@@ -84,6 +84,8 @@ pub struct BenchmarkProofSummary {
     pub next_cursor: Option<String>,
     pub incomplete: bool,
     pub unsupported: usize,
+    #[serde(default)]
+    pub views: Vec<String>,
 }
 
 impl BenchmarkProof {

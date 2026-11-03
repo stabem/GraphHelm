@@ -119,6 +119,100 @@ fn document_failure(error: DocumentError) -> Failure {
     )
 }
 
+/// A correction is validated over exactly the history whose next sequence is pinned at append.
+pub(crate) fn admit_benchmark_proof(
+    value: &serde_json::Value,
+    actor: &PersistedActor,
+    execution: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+    store: &graphhelm_events::LocalEventRepository,
+    scope: &graphhelm_protocols::RepositoryScope,
+    keyring: &signal::SignalKeyring,
+) -> Result<Option<super::tasks::ProofRecord>, Failure> {
+    let refused = |message: &str| super::signal_invalid(message, "/signal/description");
+    if value
+        .pointer("/source/id")
+        .and_then(serde_json::Value::as_str)
+        != Some(actor.id().as_str())
+    {
+        return Err(refused("proof source must match its authenticated signer"));
+    }
+    let proof = graphhelm_execution::tasks::BenchmarkProof::parse(
+        value["description"]
+            .as_str()
+            .ok_or_else(|| refused("proof document is missing"))?,
+    )
+    .map_err(|message| refused(&message))?;
+    let digest = super::tasks::proof_digest(&proof)?;
+    if value["id"].as_str() != Some(format!("proof-{}", &digest[..58]).as_str()) {
+        return Err(refused(
+            "proof signal identity must match its canonical declaration",
+        ));
+    }
+    let catalog = super::tasks::proof_catalog(
+        store,
+        scope,
+        history,
+        execution,
+        keyring,
+        &crate::commands::tasks_read_budget(),
+    )?;
+    if catalog.rejected > 0 || catalog.unsupported > 0 {
+        return Err(refused("proof history is incomplete or unsupported"));
+    }
+    let repo = catalog
+        .repositories
+        .get(proof.task_id.as_str())
+        .ok_or_else(|| refused("proof requires an authenticated task claim with a repository"))?;
+    proof
+        .validate_bindings(&graphhelm_execution::tasks::BenchmarkProofBindings {
+            execution_id: execution.to_owned(),
+            project_id: scope.project_id().as_str().to_owned(),
+            repo: repo.clone(),
+            task_id: proof.task_id.as_str().to_owned(),
+            lane: actor.id().as_str().to_owned(),
+            run_id: proof.run_id.clone(),
+            harness_commit: proof.harness_commit.clone(),
+        })
+        .map_err(|message| refused(&message))?;
+    validate_not_retired(actor.id().as_str(), history, Some((store, scope, keyring)))?;
+    if let Some(existing) = catalog
+        .records
+        .iter()
+        .find(|record| record.record_id == digest)
+    {
+        return Ok(Some(existing.clone()));
+    }
+    if let Some(predecessor) = &proof.predecessor {
+        let previous = catalog
+            .records
+            .iter()
+            .find(|record| &record.record_id == predecessor)
+            .ok_or_else(|| refused("predecessor is not a verified proof in this execution"))?;
+        let old = &previous.proof;
+        if old.lane != proof.lane
+            || old.task_id != proof.task_id
+            || old.repo != proof.repo
+            || old.project_id != proof.project_id
+            || old.execution_id != proof.execution_id
+            || old.run_id != proof.run_id
+            || old.harness_commit != proof.harness_commit
+        {
+            return Err(refused(
+                "correction must preserve predecessor subject and original signer",
+            ));
+        }
+        if catalog
+            .records
+            .iter()
+            .any(|record| record.proof.predecessor.as_ref() == Some(predecessor))
+        {
+            return Err(refused("predecessor already has a correction"));
+        }
+    }
+    Ok(None)
+}
+
 /// #386 (journey-first spec §7): a `task.*` signal carries one `graphhelm-task-event-v1` document
 /// in its description (`task-event.schema.json` in the development-contracts package), and it is
 /// recorded by the lane it names. The identity check runs for `task.*` only: today every lane signs
@@ -147,45 +241,9 @@ pub(crate) fn validate_task_event(
             "/signal/description",
         )
     };
-    // Benchmark testimony has its own versioned document.  It is deliberately kept out of the
-    // task-event fold: the record is evidence about an external run, not a task state transition.
-    // Until the shared typed model is wired here, fail closed rather than accepting a record that
-    // has not had its immutable bindings and predecessor checked against the append head.
     if kind == "task.proof_recorded" {
-        let text = value["description"].as_str().ok_or_else(|| {
-            super::signal_invalid(
-                "task.proof_recorded requires a benchmark proof document",
-                "/signal/description",
-            )
-        })?;
-        let proof = graphhelm_execution::tasks::BenchmarkProof::parse(text)
-            .map_err(|message| super::signal_invalid(&message, "/signal/description"))?;
-        let expected_execution = execution.ok_or_else(|| {
-            super::signal_invalid(
-                "task.proof_recorded requires an execution binding",
-                "/execution",
-            )
-        })?;
-        let Some((_, scope, _)) = evidence else {
-            return Err(super::signal_invalid(
-                "task.proof_recorded requires a sealed execution scope",
-                "/keyring",
-            ));
-        };
-        let expected = graphhelm_execution::tasks::BenchmarkProofBindings {
-            execution_id: expected_execution.to_owned(),
-            project_id: scope.project_id().as_str().to_owned(),
-            repo: proof.repo.clone(),
-            task_id: proof.task_id.as_str().to_owned(),
-            run_id: proof.run_id.clone(),
-            harness_commit: proof.harness_commit.clone(),
-            lane: actor.id().as_str().to_owned(),
-        };
-        proof
-            .validate_bindings(&expected)
-            .map_err(|message| super::signal_invalid(&message, "/signal/description"))?;
         return Err(super::signal_invalid(
-            "benchmark proof writes are unavailable until authoritative repository and predecessor admission are implemented",
+            "benchmark proofs require atomic signal admission",
             "/signal/type",
         ));
     }

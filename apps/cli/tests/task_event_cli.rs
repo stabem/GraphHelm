@@ -1773,6 +1773,200 @@ fn reviewer_wait_is_bound_to_the_approved_head_without_changing_its_obligation()
 mod review_support;
 
 struct ReviewRuntime(std::process::Child);
+
+/// Real isolated HTTP plus the shipped Python helper: sealed identity, correction races and
+/// snapshot paging. No providers, shared Runtime, production credentials or external writes.
+#[test]
+fn benchmark_proofs_bind_subject_serialize_corrections_and_preserve_snapshot() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let (_server, base, token) = review_runtime(&events, scratch.path());
+    let claimed = review_record(
+        &base,
+        &token,
+        "review-author",
+        "claimed",
+        &[
+            "--branch",
+            "proof-fixture",
+            "--title",
+            "Proof fixture",
+            "--summary",
+            "Isolated declaration contract",
+        ],
+    );
+    assert!(
+        claimed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&claimed.stderr)
+    );
+    let read_token = review_support::read_token(&token);
+    let read = |query: &str| {
+        review_support::get_json(
+            &format!("{base}/v1/executions/{RUN}/tasks?view=proofs&issue=1745&{query}"),
+            Some(read_token.trim()),
+        )
+    };
+    let empty = read("limit=1");
+    assert_eq!(empty["ok"], true, "{empty}");
+    assert_eq!(empty["data"]["schema"], "graphhelm.benchmark-proofs/1");
+    assert_eq!(empty["data"]["repo"], "fixture/project");
+    let proof_file = scratch.path().join("proof.json");
+    let declaration = json!({"schema":"graphhelm.benchmark-proof/1","runId":"fixture-run","harnessCommit":"a".repeat(40),
+        "arms":[{"name":"control","commit":"b".repeat(40)}],"frozenDigest":"c".repeat(64),
+        "artifacts":[{"reference":"fixture/result.json","sha256":"d".repeat(64)}],"verdict":"inconclusive",
+        "limitations":["local fixture only"],"deviations":[],"predecessor":null});
+    std::fs::write(&proof_file, declaration.to_string()).unwrap();
+    let post = || {
+        review_record(
+            &base,
+            &token,
+            "review-author",
+            "proof_recorded",
+            &["--proof-file", proof_file.to_str().unwrap()],
+        )
+    };
+    let posted = post();
+    assert!(
+        posted.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&posted.stdout),
+        String::from_utf8_lossy(&posted.stderr)
+    );
+    let first = read("limit=100");
+    assert_eq!(
+        first["data"]["records"].as_array().unwrap().len(),
+        1,
+        "{first}"
+    );
+    let retry = post();
+    assert!(
+        retry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retry.stderr)
+    );
+    assert_eq!(
+        read("limit=100")["data"]["snapshotHead"],
+        first["data"]["snapshotHead"]
+    );
+    let original = &first["data"]["records"][0];
+    let credential =
+        std::fs::read_to_string(token.with_file_name("events.agent.review-author.token")).unwrap();
+    let envelope = |mut proof: Value| {
+        let typed = graphhelm_execution::tasks::BenchmarkProof::parse(&proof.to_string()).unwrap();
+        let material = typed.canonical_material();
+        let digest = graphhelm_graph::raw_content_sha256(material.as_bytes()).unwrap();
+        let id = format!("proof-{}", &digest.as_str()[..58]);
+        proof["at"] = "2099-01-01T00:00:00Z".into();
+        json!({"id":id,"type":"task.proof_recorded","source":{"type":"user","id":"review-author"},
+            "severity":"low","description":proof.to_string(),"emittedAt":"2099-01-01T00:00:00Z","evidence":["fixture"]})
+    };
+    let mut left = original["proof"].clone();
+    left["predecessor"] = original["recordId"].clone();
+    left["verdict"] = "passed".into();
+    let mut right = left.clone();
+    right["verdict"] = "failed".into();
+    let left = envelope(left);
+    let right = envelope(right);
+    let replies = std::thread::scope(|scope| {
+        let a = scope.spawn(|| {
+            review_post(
+                &base,
+                &credential,
+                "review-author",
+                left["id"].as_str().unwrap(),
+                &left,
+            )
+        });
+        let b = scope.spawn(|| {
+            review_post(
+                &base,
+                &credential,
+                "review-author",
+                right["id"].as_str().unwrap(),
+                &right,
+            )
+        });
+        [a.join().unwrap(), b.join().unwrap()]
+    });
+    assert_eq!(
+        replies.iter().filter(|reply| reply["ok"] == true).count(),
+        1,
+        "{replies:?}"
+    );
+    let after = read("limit=100");
+    assert_eq!(
+        after["data"]["records"].as_array().unwrap().len(),
+        2,
+        "{after}"
+    );
+    let mut wrong = original["proof"].clone();
+    wrong["repo"] = "other/project".into();
+    let wrong = envelope(wrong);
+    let refused = review_post(
+        &base,
+        &credential,
+        "review-author",
+        wrong["id"].as_str().unwrap(),
+        &wrong,
+    );
+    assert_eq!(refused["ok"], false, "{refused}");
+    let shared = review_post(
+        &base,
+        &read_token,
+        "review-author",
+        left["id"].as_str().unwrap(),
+        &left,
+    );
+    assert_eq!(
+        shared["ok"], false,
+        "shared token cannot attest a lane proof: {shared}"
+    );
+    let page = read("limit=1");
+    let cursor = page["data"]["nextCursor"].as_str().unwrap();
+    let mut late = original["proof"].clone();
+    late["runId"] = "late-run".into();
+    let late = envelope(late);
+    assert_eq!(
+        review_post(
+            &base,
+            &credential,
+            "review-author",
+            late["id"].as_str().unwrap(),
+            &late
+        )["ok"],
+        true
+    );
+    let second = read(&format!("limit=1&after={cursor}"));
+    assert_eq!(second["ok"], true, "{second}");
+    assert_eq!(second["data"]["snapshotHead"], page["data"]["snapshotHead"]);
+    assert_ne!(
+        second["data"]["records"][0]["recordId"],
+        page["data"]["records"][0]["recordId"]
+    );
+    assert!(second["data"]["nextCursor"].is_null());
+    assert_eq!(
+        read(&format!("limit=2&after={cursor}"))["ok"],
+        false,
+        "cursor is bound to the filters/page contract"
+    );
+    let briefing = review_support::get_json(
+        &format!("{base}/v1/executions/{RUN}/briefing"),
+        Some(read_token.trim()),
+    );
+    assert_eq!(briefing["ok"], true, "{briefing}");
+    assert_eq!(
+        briefing["data"]["benchmarkProofs"]["status"], "available",
+        "{briefing}"
+    );
+    assert_eq!(
+        briefing["data"]["benchmarkProofs"]["records"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+}
 impl Drop for ReviewRuntime {
     fn drop(&mut self) {
         let _ = self.0.kill();

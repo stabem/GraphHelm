@@ -617,7 +617,11 @@ fn tasks_schema() -> serde_json::Value {
         serde_json::json!({
             "executionId": {"type": "string"},
             "lane": {"type": "string"},
-            "issue": {"type": "integer", "minimum": 1}
+            "issue": {"type": "integer", "minimum": 1},
+            "view": {"type":"string", "enum":["proofs"]},
+            "run": {"type":"string", "maxLength":128},
+            "after": {"type":"string", "maxLength":512},
+            "limit": {"type":"integer", "minimum":1, "maximum":100}
         }),
         &["executionId"],
     )
@@ -1789,6 +1793,14 @@ pub(crate) fn call(
         }
         "tasks" => require(arguments, "executionId").map(|execution| {
             let mut query = Vec::new();
+            for name in ["view", "run", "after"] {
+                if let Some(value)=str_arg(arguments,name) {
+                    query.push(format!("{name}={}",url::encode_component(value)));
+                }
+            }
+            if let Some(limit)=arguments.get("limit").and_then(serde_json::Value::as_u64) {
+                query.push(format!("limit={limit}"));
+            }
             if let Some(lane) = str_arg(arguments, "lane") {
                 query.push(format!("lane={}", url::encode_component(lane)));
             }

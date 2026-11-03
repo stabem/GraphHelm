@@ -543,13 +543,20 @@ mod benchmark_proof_tests {
 
     #[test]
     fn canonical_material_is_sorted_and_omits_emission_time() {
-        let proof = BenchmarkProof::parse(&valid_json()).expect("valid proof");
-        assert!(
-            proof
-                .canonical_material()
-                .starts_with(r#"{"arms":[{"commit":"bbbb"#)
+        let wire = r###"{"schema":"graphhelm.benchmark-proof/1","executionId":"exec-1","projectId":"project-1","repo":"stabem/GraphHelm","taskId":"issue-2429","lane":"openbot-itachi","at":"2026-11-02T12:00:00Z","runId":"run-1","harnessCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","arms":[{"name":"base","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"frozenDigest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","artifacts":[{"reference":"fixture/café-雪.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"verdict":"inconclusive","limitations":["quote \" slash \\ newline\\n tab\\t café 雪 😀"],"deviations":[],"predecessor":null}"###;
+        let proof = BenchmarkProof::parse(wire).expect("literal proof vector");
+        assert_eq!(
+            proof.canonical_material(),
+            r###"{"arms":[{"commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"base"}],"artifacts":[{"reference":"fixture/café-雪.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"deviations":[],"executionId":"exec-1","frozenDigest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","harnessCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","lane":"openbot-itachi","limitations":["quote \" slash \\ newline\\n tab\\t café 雪 😀"],"predecessor":null,"projectId":"project-1","repo":"stabem/GraphHelm","runId":"run-1","schema":"graphhelm.benchmark-proof/1","taskId":"issue-2429","verdict":"inconclusive"}"###
         );
-        assert!(!proof.canonical_material().contains("\"at\""));
+        let mut later: serde_json::Value = serde_json::from_str(wire).expect("vector JSON");
+        later["at"] = serde_json::json!("2026-11-03T12:00:00Z");
+        assert_eq!(
+            BenchmarkProof::parse(&later.to_string())
+                .expect("later emission")
+                .canonical_material(),
+            proof.canonical_material()
+        );
     }
 
     #[test]

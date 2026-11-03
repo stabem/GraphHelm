@@ -1629,13 +1629,15 @@ class BenchmarkProofValidationTests(unittest.TestCase):
         }
 
     def test_valid_proof_returns_canonical_document_and_digest_excluding_emission_time(self):
-        encoded, digest = task_record.validate_benchmark_proof(
-            json.dumps(self.proof, ensure_ascii=False), self.bindings)
-        self.assertEqual(json.loads(encoded), self.proof)
-        without_at = dict(self.proof)
-        without_at.pop("at")
-        expected = hashlib.sha256(task_record.canonical_proof_json(json.dumps(without_at)).encode()).hexdigest()
-        self.assertEqual(digest, expected)
+        proof = json.loads('{"schema":"graphhelm.benchmark-proof/1","executionId":"exec-1","projectId":"project-1","repo":"stabem/GraphHelm","taskId":"issue-2429","lane":"openbot-itachi","at":"2026-11-02T12:00:00Z","runId":"run-1","harnessCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","arms":[{"name":"base","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"frozenDigest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","artifacts":[{"reference":"fixture/caf\xe9-\u96ea.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"verdict":"inconclusive","limitations":["quote \\" slash \\\\ newline\\\\n tab\\\\t caf\xe9 \u96ea \U0001f600"],"deviations":[],"predecessor":null}')
+        bindings = {key: proof[key] for key in self.bindings}
+        encoded, digest = task_record.validate_benchmark_proof(json.dumps(proof), bindings)
+        self.assertEqual(json.loads(encoded), proof)
+        expected = '{"arms":[{"commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"base"}],"artifacts":[{"reference":"fixture/caf\xe9-\u96ea.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"deviations":[],"executionId":"exec-1","frozenDigest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","harnessCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","lane":"openbot-itachi","limitations":["quote \\" slash \\\\ newline\\\\n tab\\\\t caf\xe9 \u96ea \U0001f600"],"predecessor":null,"projectId":"project-1","repo":"stabem/GraphHelm","runId":"run-1","schema":"graphhelm.benchmark-proof/1","taskId":"issue-2429","verdict":"inconclusive"}'
+        self.assertEqual(task_record.canonical_proof_json(json.dumps({key: value for key, value in proof.items() if key != "at"})), expected)
+        self.assertEqual(digest, "3954d4204963c01fd4005de5d5451b2b6728f10a0ecaa7e7160e4b70557c66dc")
+        proof["at"] = bindings["at"] = "2026-11-03T12:00:00Z"
+        self.assertEqual(task_record.validate_benchmark_proof(json.dumps(proof), bindings)[1], digest)
 
     def test_proof_validation_rejects_semantic_shape_and_binding_mismatches(self):
         for mutation in (

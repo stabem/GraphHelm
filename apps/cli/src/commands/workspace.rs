@@ -222,6 +222,34 @@ fn run_claim(
     if base.starts_with('-') || branch.starts_with('-') {
         return input(COMMAND, "base and branch may not start with `-`", "/base");
     }
+    let base_head = match git_with_timeout(repo, &["rev-parse", base], GIT_TIMEOUT) {
+        Ok(head) => head,
+        Err(message) => {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                &format!("the claim base could not be resolved: {message}"),
+                "/base",
+            );
+        }
+    };
+    let branch_ref = format!("refs/heads/{branch}");
+    let refs = match git_with_timeout(
+        repo,
+        &["for-each-ref", "--format=%(refname)", &branch_ref],
+        GIT_TIMEOUT,
+    ) {
+        Ok(refs) => refs,
+        Err(message) => {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                &format!("the requested branch could not be checked: {message}"),
+                "/branch",
+            );
+        }
+    };
+    let branch_previously_existed = refs.lines().any(|found| found == branch_ref);
     if std::fs::create_dir_all(dir.parent().unwrap_or(root)).is_err()
         || std::fs::create_dir(&dir).is_err()
     {
@@ -232,6 +260,21 @@ fn run_claim(
         );
     }
     let worktree = dir.join("wt");
+    let repo_path = std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
+    let mut record = json!({
+        "schema": SCHEMA, "lane": lane, "task": task, "branch": branch, "base": base,
+        "repo": repo_path.to_string_lossy(), "state": "initializing",
+        "baseHead": base_head, "branchPreviouslyExisted": branch_previously_existed,
+        "claimPid": std::process::id(), "claimedAt": null, "releasedAt": null,
+        "releasedHead": null, "sweptAt": null,
+    });
+    if write_record(&file, &record).is_err() {
+        let _ = std::fs::remove_dir(&dir);
+        return Outcome::internal(
+            COMMAND,
+            "the initializing workspace record could not be written",
+        );
+    }
     if let Err(message) = git_with_timeout(
         repo,
         &[
@@ -244,9 +287,11 @@ fn run_claim(
         ],
         WORKTREE_ADD_TIMEOUT,
     ) {
-        // Nothing was recorded; remove only the empty directories this call made.
-        let _ = std::fs::remove_dir(&dir);
-        let _ = std::fs::remove_dir(dir.parent().unwrap_or(root));
+        record["state"] = json!("failed");
+        record["claimFailure"] = json!(message);
+        if write_record(&file, &record).is_err() {
+            return Outcome::internal(COMMAND, "the failed workspace claim could not be recorded");
+        }
         return refuse(
             COMMAND,
             crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
@@ -257,12 +302,8 @@ fn run_claim(
     for part in PARTS {
         let _ = std::fs::create_dir_all(dir.join(part));
     }
-    let record = json!({
-        "schema": SCHEMA, "lane": lane, "task": task, "branch": branch, "base": base,
-        "repo": std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf()).to_string_lossy(),
-        "state": "claimed", "claimedAt": now(), "releasedAt": null, "releasedHead": null,
-        "sweptAt": null,
-    });
+    record["state"] = json!("claimed");
+    record["claimedAt"] = json!(now());
     if write_record(&file, &record).is_err() {
         return Outcome::internal(COMMAND, "the workspace record could not be written");
     }
@@ -288,6 +329,15 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
             "/task",
         );
     };
+    if record["state"] == "initializing" || record["state"] == "failed" {
+        return recover_interrupted_claim(
+            &file,
+            &record,
+            lane,
+            task,
+            &workspace_dir(root, lane, task),
+        );
+    }
     if record["state"] != "claimed" {
         return refuse(
             COMMAND,
@@ -319,6 +369,247 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
     Outcome::success(
         COMMAND,
         json!({"lane": lane, "task": task, "releasedHead": head, "dirty": dirty}),
+    )
+}
+
+fn recover_interrupted_claim(
+    file: &Path,
+    record: &Value,
+    lane: &str,
+    task: &str,
+    workspace: &Path,
+) -> Outcome {
+    const COMMAND: &str = "workspace.release";
+    let Some(pid) = record["claimPid"]
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+    else {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "the interrupted claim has no valid owner process; preserve it for manual inspection",
+            "/claimPid",
+        );
+    };
+    if graphhelm_process_tree::process_is_running(pid) {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "the workspace claim process is still running; retry release after it exits",
+            "/claimPid",
+        );
+    }
+    let Some(repo) = record["repo"].as_str().map(Path::new) else {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "the interrupted claim has no repository path; preserve it for manual inspection",
+            "/repo",
+        );
+    };
+    let worktree = workspace.join("wt");
+    if is_link_path(workspace) || is_link_path(&worktree) {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "the interrupted workspace contains a directory link; remove it only after inspection",
+            "/worktree",
+        );
+    }
+    let mut removed_worktree = false;
+    if worktree.exists() {
+        match first_link(&worktree, &worktree) {
+            Ok(Some(path)) => {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    &format!(
+                        "the interrupted worktree contains a link at {}; preserve it for inspection",
+                        path.display()
+                    ),
+                    "/worktree",
+                );
+            }
+            Err((path, error)) => {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    &format!(
+                        "the interrupted worktree could not be checked at {}: {error}",
+                        path.display()
+                    ),
+                    "/worktree",
+                );
+            }
+            Ok(None) => {}
+        }
+        let status = match git_with_timeout(
+            &worktree,
+            &[
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--ignored",
+            ],
+            GIT_TIMEOUT,
+        ) {
+            Ok(status) => status,
+            Err(message) => {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    &format!(
+                        "the interrupted worktree status could not be checked; preserve it for inspection: {message}"
+                    ),
+                    "/worktree",
+                );
+            }
+        };
+        if !status.is_empty() {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                "the interrupted worktree has changes or untracked files; preserve it for inspection",
+                "/worktree",
+            );
+        }
+        if let Err(message) = git_with_timeout(
+            repo,
+            &["worktree", "remove", worktree.to_string_lossy().as_ref()],
+            GIT_TIMEOUT,
+        ) {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                &format!("the interrupted worktree could not be safely removed: {message}"),
+                "/worktree",
+            );
+        }
+        if worktree.exists() {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                "Git reported removal but the interrupted worktree still exists; preserve it for inspection",
+                "/worktree",
+            );
+        }
+        removed_worktree = true;
+    }
+    let worktree_list = match git_with_timeout(
+        repo,
+        &["worktree", "list", "--porcelain"],
+        GIT_TIMEOUT,
+    ) {
+        Ok(list) => list,
+        Err(message) => {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                &format!(
+                    "the repository worktree registry could not be checked after removal: {message}"
+                ),
+                "/repo",
+            );
+        }
+    };
+    if worktree_list.lines().any(|line| {
+        line.strip_prefix("worktree ")
+            .is_some_and(|path| Path::new(path) == worktree)
+    }) {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "Git still lists the interrupted worktree after removal; preserve it for inspection",
+            "/worktree",
+        );
+    }
+    if removed_worktree && record["branchPreviouslyExisted"] == false {
+        let (Some(branch), Some(base_head)) =
+            (record["branch"].as_str(), record["baseHead"].as_str())
+        else {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                "the interrupted claim lacks branch ownership data; preserve it for inspection",
+                "/branch",
+            );
+        };
+        let branch_ref = format!("refs/heads/{branch}");
+        let refs = match git_with_timeout(
+            repo,
+            &[
+                "for-each-ref",
+                "--format=%(refname) %(objectname)",
+                &branch_ref,
+            ],
+            GIT_TIMEOUT,
+        ) {
+            Ok(refs) => refs,
+            Err(message) => {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    &format!("the interrupted branch could not be checked: {message}"),
+                    "/branch",
+                );
+            }
+        };
+        if let Some((_, head)) = refs.lines().find_map(|line| {
+            let (name, head) = line.split_once(' ')?;
+            (name == branch_ref).then_some((name, head))
+        }) {
+            if head != base_head {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    "the interrupted claim branch moved after setup; preserve the branch for inspection",
+                    "/branch",
+                );
+            }
+            if let Err(message) = git_with_timeout(
+                repo,
+                &["update-ref", "-d", &branch_ref, base_head],
+                GIT_TIMEOUT,
+            ) {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    &format!("the interrupted claim branch could not be cleared safely: {message}"),
+                    "/branch",
+                );
+            }
+        }
+    }
+    for part in PARTS {
+        let part_path = workspace.join(part);
+        if part_path.exists() && std::fs::remove_dir(&part_path).is_err() {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                "the interrupted workspace contains other data; preserve it for inspection",
+                "/workspace",
+            );
+        }
+    }
+    if workspace.exists() && std::fs::remove_dir(workspace).is_err() {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "the interrupted workspace contains other data; preserve it for inspection",
+            "/workspace",
+        );
+    }
+    if std::fs::remove_file(file).is_err() {
+        return Outcome::internal(
+            COMMAND,
+            "the recovered workspace record could not be removed",
+        );
+    }
+    Outcome::success(
+        COMMAND,
+        json!({"lane": lane, "task": task, "cleared": true,
+            "branch": record["branch"], "recovered": true,
+            "note": "the interrupted claim was cleaned after its process exited; unrelated data was preserved"}),
     )
 }
 

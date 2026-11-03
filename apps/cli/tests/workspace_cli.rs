@@ -1,9 +1,9 @@
 //! #360: agent workspaces are claimed, released, and removed only by the sweep, and only when the
 //! claimant released them and the tree is still clean at the released commit. Credible
 //! regressions: a sweep that deletes unreleased or dirty work, follows a junction or symlink out of
-//! the workspace, or touches a directory the ledger never created. The #2484 regression below
-//! covers a bounded list during an interrupted worktree-add fixture. Cost: a temp git repository
-//! and a handful of CLI subprocesses, a few seconds after the build; no network.
+//! the workspace, or touches a directory the ledger never created. The regressions cover a bounded
+//! list and recovery after an interrupted worktree add. Cost: temp git repositories and
+//! CLI subprocesses, a few seconds after the build; no network.
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -144,6 +144,170 @@ fn workspace_list_returns_a_bounded_status_error_when_git_status_stalls() {
             .is_some_and(|error| error.contains("deadline")),
         "the user needs an actionable bounded error: {reply}"
     );
+}
+
+#[test]
+fn interrupted_worktree_setup_is_recoverable_without_touching_lane_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = repo(dir.path());
+    let root = dir.path().join("root");
+    let lane_dir = root.join("lane");
+    std::fs::create_dir_all(&lane_dir).unwrap();
+    let sentinel = lane_dir.join("keep.txt");
+    std::fs::write(&sentinel, "owned by another task\n").unwrap();
+    let hook_marker = lane_dir.join("post-checkout-reached");
+    let hook = repo.join(".git/hooks/post-checkout");
+    let hook_body = if cfg!(windows) {
+        format!(
+            "#!/bin/sh\nprintf reached > '{}'\nsleep 30\n",
+            hook_marker.display()
+        )
+    } else {
+        format!(
+            "#!/bin/sh\nprintf reached > '{}'\nsleep 30\n",
+            hook_marker.display()
+        )
+    };
+    std::fs::write(&hook, hook_body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let root_s = root.to_str().unwrap();
+    let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+    command
+        .args([
+            "--json",
+            "workspace",
+            "claim",
+            "--root",
+            root_s,
+            "--lane",
+            "lane",
+            "--task",
+            "interrupted",
+            "--repo",
+        ])
+        .arg(&repo)
+        .args(["--base", "HEAD"]);
+    graphhelm_process_tree::configure(&mut command);
+    let mut child = command.spawn().unwrap();
+    let group = graphhelm_process_tree::create(&child).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !hook_marker.is_file() && std::time::Instant::now() < deadline {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let hook_reached = hook_marker.is_file();
+    let termination = graphhelm_process_tree::terminate(child.id(), group);
+    let output = child.wait_with_output().unwrap();
+    assert!(hook_reached, "post-checkout hook never ran");
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "the hung claim unexpectedly succeeded"
+    );
+    assert!(
+        matches!(
+            termination,
+            graphhelm_process_tree::TerminationOutcome::Complete
+        ),
+        "could not stop only the test claim process tree: {termination:?}"
+    );
+    let code = output.status.code().unwrap_or(-1);
+    assert!(hook_marker.is_file(), "post-checkout hook never ran");
+    assert_ne!(code, 0, "the hook must interrupt Git after checkout");
+    assert!(sentinel.is_file(), "the claim touched unrelated lane data");
+
+    let record = root.join(".graphhelm-workspaces/lane--interrupted.json");
+    let saved: Value =
+        serde_json::from_slice(&std::fs::read(&record).expect("recoverable ledger row"))
+            .expect("valid workspace record");
+    assert!(
+        saved["state"] == "failed" || saved["state"] == "initializing",
+        "{saved}"
+    );
+    let worktree_data = root.join("lane/interrupted/wt/keep.txt");
+    std::fs::write(&worktree_data, "preserve untracked data\n").unwrap();
+    let (dirty_code, dirty_reply) = run(&[
+        "release",
+        "--root",
+        root_s,
+        "--lane",
+        "lane",
+        "--task",
+        "interrupted",
+    ]);
+    assert_ne!(
+        dirty_code, 0,
+        "recovery must refuse dirty partial worktrees: {dirty_reply}"
+    );
+    assert!(
+        worktree_data.is_file(),
+        "recovery deleted untracked worktree data"
+    );
+    std::fs::remove_file(&worktree_data).unwrap();
+
+    let (release_code, release_reply) = run(&[
+        "release",
+        "--root",
+        root_s,
+        "--lane",
+        "lane",
+        "--task",
+        "interrupted",
+    ]);
+    assert_eq!(release_code, 0, "recovery failed: {release_reply}");
+    assert_eq!(release_reply["data"]["recovered"], true, "{release_reply}");
+    assert!(!record.exists(), "recovery left its ledger reservation");
+    assert!(sentinel.is_file(), "recovery removed unrelated lane data");
+    assert!(
+        hook_marker.is_file(),
+        "recovery removed unrelated lane data"
+    );
+    let registered = git_stdout(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(
+        !registered.contains(
+            &root
+                .join("lane/interrupted/wt")
+                .to_string_lossy()
+                .to_string()
+        ),
+        "recovery left Git's partial worktree registration: {registered}"
+    );
+    let branch_refs = git_stdout(
+        &repo,
+        &[
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/heads/issue-interrupted-lane",
+        ],
+    );
+    assert!(
+        branch_refs.is_empty(),
+        "recovery left the claim-created branch: {branch_refs}"
+    );
+
+    std::fs::remove_file(&hook).unwrap();
+    let (retry_code, retry_reply) = run(&[
+        "claim",
+        "--root",
+        root_s,
+        "--lane",
+        "lane",
+        "--task",
+        "interrupted",
+        "--repo",
+        repo.to_str().unwrap(),
+        "--base",
+        "HEAD",
+    ]);
+    assert_eq!(retry_code, 0, "next claim could not proceed: {retry_reply}");
+    assert!(sentinel.is_file(), "the retry touched unrelated lane data");
 }
 
 fn release(root: &str, lane: &str, task: &str) {

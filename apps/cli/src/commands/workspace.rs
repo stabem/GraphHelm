@@ -268,12 +268,19 @@ fn run_claim(
         "claimPid": std::process::id(), "claimedAt": null, "releasedAt": null,
         "releasedHead": null, "sweptAt": null,
     });
-    if write_record(&file, &record).is_err() {
-        let _ = std::fs::remove_dir(&dir);
-        return Outcome::internal(
-            COMMAND,
-            "the initializing workspace record could not be written",
-        );
+    if let Err(record_error) = write_record(&file, &record) {
+        return match std::fs::remove_dir(&dir) {
+            Ok(()) => Outcome::internal(
+                COMMAND,
+                &format!("the initializing workspace record could not be written: {record_error}"),
+            ),
+            Err(cleanup_error) => Outcome::internal(
+                COMMAND,
+                &format!(
+                    "the initializing workspace record could not be written ({record_error}), and its empty directory could not be removed ({cleanup_error})"
+                ),
+            ),
+        };
     }
     if let Err(message) = git_with_timeout(
         repo,

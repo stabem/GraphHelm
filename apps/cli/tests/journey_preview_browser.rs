@@ -134,6 +134,124 @@ fn an_unlisted_preview_refusal_keeps_its_code_and_stopped_step() {
     }
 }
 
+/// #2467: the persisted preview identifies the page error that caused a wrong-screen result.
+/// Cost: one synthetic local server and real desktop/mobile browser runs; no Runtime writes.
+#[test]
+#[ignore = "requires an explicitly observer-enabled validation project"]
+fn page_error_records_bounded_event_source_and_event_time_url() {
+    let toolchain = PathBuf::from(
+        std::env::var_os("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT")
+            .expect("OBSERVER_MISSING: GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT"),
+    );
+    assert!(
+        toolchain
+            .join("node_modules/@playwright/test/package.json")
+            .is_file()
+    );
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("package.json"), "{\"private\":true}").unwrap();
+    let node_modules_link = project.path().join("node_modules");
+    let linked = graphhelm_process::command("node")
+        .args(["-e", "require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
+        .arg(toolchain.join("node_modules"))
+        .arg(&node_modules_link)
+        .status()
+        .unwrap();
+    assert!(linked.success(), "OBSERVER_MISSING: toolchain link");
+    let _owned_node_modules_link = OwnedNodeModulesLink(node_modules_link);
+    let mut command = graphhelm_process::command("node");
+    command.args(["--input-type=module", "-e", r#"
+        import http from 'node:http';
+        const app=http.createServer((request,response)=>{
+            const path=new URL(request.url,'http://fixture.invalid').pathname;
+            response.writeHead(200,{'content-type':'text/html; charset=utf-8'});
+            if(path==='/start') return response.end('<h1>Start</h1><a href="/expected">Continue</a>');
+            if(path==='/expected') return response.end('<script>location.replace("/wrong?filter=recent&access_token=page_error_query_canary#private")</script>');
+            response.end('<h1>Wrong page</h1><script>throw new Error("fixture page error")</script>');
+        });
+        app.listen(0,'127.0.0.1',()=>console.log(JSON.stringify({base:'http://127.0.0.1:'+app.address().port})));
+    "#]);
+    let app = Server::start(command);
+    let base = app.started["base"].as_str().unwrap().to_owned();
+    std::fs::create_dir_all(project.path().join(".graphhelm/journeys")).unwrap();
+    std::fs::create_dir_all(project.path().join(".graphhelm/observers")).unwrap();
+    std::fs::write(
+        project
+            .path()
+            .join(".graphhelm/observers/journey_driver.mjs"),
+        DRIVER,
+    )
+    .unwrap();
+    std::fs::write(
+        project.path().join(".graphhelm/observers/judge.mjs"),
+        include_bytes!("../../../tools/journey-driver/judge.mjs"),
+    )
+    .unwrap();
+    let flow = json!({
+        "schema":"graphhelm.journey-flow/1","id":"account","title":"Page error context",
+        "status":"draft","approved":null,"base":base,"actors":["owner"],"secrets":[],"risks":[],
+        "screens":[
+            {"id":"start","url":"/start","state":"stable","expect":[{"role":"heading","name":"Start"}],"scope":"unknown"},
+            {"id":"expected","url":"/expected","state":"stable","expect":[{"role":"heading","name":"Expected"}],"scope":"unknown"}
+        ],
+        "edges":[{"id":"continue","from":"start","to":"expected","acts":[{"kind":"activate","role":"link","name":"Continue"}]}],
+        "paths":{"main":["continue"]},"drift":[]
+    });
+    std::fs::write(
+        project
+            .path()
+            .join(".graphhelm/journeys/account.journey.yaml"),
+        serde_yaml_ng::to_string(&flow).unwrap(),
+    )
+    .unwrap();
+    let (code, compiled) = cli(
+        project.path(),
+        &["journey", "compile", "account", "--fmt", "--include-draft"],
+    );
+    assert_eq!(code, 0, "{compiled}");
+    let (code, started) = cli(project.path(), &["journey", "preview", "account"]);
+    assert_eq!(code, 0, "{started}");
+    let result = settled(project.path());
+    let detail = &result["screens"]["expected"]["pageError"];
+    assert_eq!(
+        result["screens"]["expected"]["reason"], "page_error",
+        "{result}"
+    );
+    assert_eq!(detail["source"], "pageerror", "{result}");
+    assert!(
+        detail["message"]
+            .as_str()
+            .unwrap()
+            .contains("fixture page error"),
+        "{result}"
+    );
+    assert!(detail["message"].as_str().unwrap().len() <= 160, "{result}");
+    let event_url = detail["url"].as_str().unwrap();
+    assert!(event_url.contains("/wrong?"), "{result}");
+    assert!(event_url.contains("filter=recent"), "{result}");
+    assert!(
+        event_url.contains("access_token=%5Bredacted%5D"),
+        "{result}"
+    );
+    assert!(!event_url.contains('#'), "{result}");
+    assert!(event_url.len() <= 512, "{result}");
+    assert!(
+        !result.to_string().contains("page_error_query_canary"),
+        "{result}"
+    );
+    for viewport in ["web", "mobile"] {
+        assert_eq!(
+            result["viewports"][viewport]["screens"]["expected"]["reason"], "page_error",
+            "{viewport}: {result}"
+        );
+        assert_eq!(
+            result["viewports"][viewport]["screens"]["expected"]["pageError"]["source"],
+            "pageerror",
+            "{viewport}: {result}"
+        );
+    }
+}
+
 struct Server {
     child: Child,
     group: graphhelm_process_tree::ProcessGroup,

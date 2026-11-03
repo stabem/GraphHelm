@@ -1180,11 +1180,26 @@ fn combine_views(state: &mut Value) {
                 if result.is_some_and(|result| result != "pass") {
                     failed_at.push(name.clone());
                 }
-                if result.map_or(0, severity) > entry["result"].as_str().map_or(0, severity) {
+                let current_severity = entry["result"].as_str().map_or(0, severity);
+                let other_severity = result.map_or(0, severity);
+                if other_severity > current_severity {
                     entry["result"] = other["result"].clone();
                     if !other["reason"].is_null() {
                         entry["reason"] = other["reason"].clone();
                     }
+                    if other["pageError"].is_null() {
+                        if let Some(object) = entry.as_object_mut() {
+                            object.remove("pageError");
+                        }
+                    } else {
+                        entry["pageError"] = other["pageError"].clone();
+                    }
+                } else if other_severity == current_severity
+                    && current_severity > 0
+                    && entry["pageError"].is_null()
+                    && !other["pageError"].is_null()
+                {
+                    entry["pageError"] = other["pageError"].clone();
                 }
             }
             if !failed_at.is_empty() && failed_at.len() < order.len() {
@@ -1372,17 +1387,35 @@ impl Run {
     }
 
     /// Records one screen's result, keeping the worst one a screen got on any path.
-    fn screen(&mut self, id: &str, result: &str, reason: Option<&str>, frame: Option<Value>) {
+    fn screen(
+        &mut self,
+        id: &str,
+        result: &str,
+        reason: Option<&str>,
+        frame: Option<Value>,
+        page_error: Option<Value>,
+    ) {
         let previous = self.state["screens"][id]["result"]
             .as_str()
             .map_or(0, severity);
         if previous >= severity(result) && previous > 0 {
+            if previous == severity(result)
+                && self.state["screens"][id]["reason"] == "page_error"
+                && self.state["screens"][id]["pageError"].is_null()
+                && let Some(page_error) = page_error
+            {
+                self.state["screens"][id]["pageError"] = page_error;
+                self.save();
+            }
             return;
         }
         let mut entry = frame.unwrap_or_else(|| json!({"frame":false}));
         entry["result"] = result.into();
         if let Some(reason) = reason {
             entry["reason"] = reason.into();
+        }
+        if let Some(page_error) = page_error.filter(|_| reason == Some("page_error")) {
+            entry["pageError"] = page_error;
         }
         self.state["screens"][id] = entry;
         self.state["current"] = id.into();
@@ -1951,18 +1984,25 @@ fn play_path(
                 Ok(_) => {
                     let frame = run.capture(driver, output.path(), screen);
                     run.prove(screen, frame.as_ref())?;
-                    run.screen(screen, "pass", None, with_checks(frame, checks));
+                    let _ = driver.take_page_error();
+                    run.screen(screen, "pass", None, with_checks(frame, checks), None);
                     Ok(true)
                 }
                 Err((code, _, _))
                     if SURVIVABLE.contains(&code) || code == "replay.wrong_screen" =>
                 {
                     let frame = run.capture(driver, output.path(), screen);
+                    let page_error = driver.take_page_error();
                     run.screen(
                         screen,
                         "drift",
                         Some(step_reason(code)),
                         with_checks(frame, checks),
+                        if code == "replay.wrong_screen" {
+                            page_error
+                        } else {
+                            None
+                        },
                     );
                     Ok(false)
                 }
@@ -2001,7 +2041,7 @@ fn play_path(
                         let reason = step_reason(code);
                         run.edge(id, "fail", Some(reason));
                         let frame = run.capture(&mut driver, output.path(), to);
-                        run.screen(to, "fail", Some(reason), frame);
+                        run.screen(to, "fail", Some(reason), frame, None);
                         return Ok("failed");
                     }
                     Err(failed) => return Err(failed),
@@ -2108,22 +2148,22 @@ fn play_backend_path(
             // output there is drift; an `absent` one says what must not exist before the command.
             let frame = origin_frame();
             if backend::unmet(screens[first], &origin_observation()).is_some() {
-                run.screen(first, "drift", Some("expect_missing"), Some(frame));
+                run.screen(first, "drift", Some("expect_missing"), Some(frame), None);
                 return "drift";
             }
-            run.screen(first, "pass", None, Some(frame));
+            run.screen(first, "pass", None, Some(frame), None);
         } else {
             let url = screens[first]["url"].as_str().unwrap();
             match backend::request(base, "GET", url, None, None) {
                 Ok(seen) => match backend::unmet(screens[first], &seen) {
-                    None => run.screen(first, "pass", None, None),
+                    None => run.screen(first, "pass", None, None, None),
                     Some(_) => {
-                        run.screen(first, "drift", Some("expect_missing"), None);
+                        run.screen(first, "drift", Some("expect_missing"), None, None);
                         return "drift";
                     }
                 },
                 Err(_) => {
-                    run.screen(first, "fail", Some("act_failed"), None);
+                    run.screen(first, "fail", Some("act_failed"), None, None);
                     return "failed";
                 }
             }
@@ -2161,7 +2201,7 @@ fn play_backend_path(
                     }
                     Err(_) => {
                         run.edge(id, "fail", Some("act_failed"));
-                        run.screen(to, "fail", Some("act_failed"), None);
+                        run.screen(to, "fail", Some("act_failed"), None, None);
                         return "failed";
                     }
                 }
@@ -2171,10 +2211,10 @@ fn play_backend_path(
                 None => (false, None),
             };
             if met {
-                run.screen(to, "pass", None, frame);
+                run.screen(to, "pass", None, frame, None);
                 run.edge(id, "pass", None);
             } else {
-                run.screen(to, "drift", Some("expect_missing"), frame);
+                run.screen(to, "drift", Some("expect_missing"), frame, None);
                 run.edge(id, "drift", Some("expect_missing"));
                 return "drift";
             }
@@ -2889,6 +2929,43 @@ mod tests {
             old["viewports"],
             json!({"web": "passed", "mobile": "not_run"})
         );
+    }
+
+    #[test]
+    fn page_error_metadata_follows_the_worst_screen_and_first_viewport_tie() {
+        use super::*;
+        let web_error =
+            json!({"sequence":1,"source":"console","message":"web","url":"http://localhost/web"});
+        let mobile_error = json!({"sequence":1,"source":"pageerror","message":"mobile","url":"http://localhost/mobile"});
+        let screen = |result, reason, page_error: Option<Value>| {
+            let mut entry = json!({"frame":true,"result":result,"reason":reason});
+            if let Some(page_error) = page_error {
+                entry["pageError"] = page_error;
+            }
+            entry
+        };
+        let mut state = json!({
+            "viewportsPlanned":["web","mobile"],
+            "viewports":{
+                "web":{"screens":{"pay":screen("drift","page_error",Some(web_error.clone()))},"edges":{}},
+                "mobile":{"screens":{"pay":screen("drift","page_error",Some(mobile_error))},"edges":{}}
+            }
+        });
+        combine_views(&mut state);
+        assert_eq!(state["screens"]["pay"]["pageError"]["message"], "web");
+
+        state["viewports"]["web"]["screens"]["pay"] = screen("drift", "page_error", None);
+        state["viewports"]["mobile"]["screens"]["pay"] =
+            screen("drift", "page_error", Some(web_error.clone()));
+        combine_views(&mut state);
+        assert_eq!(state["screens"]["pay"]["pageError"]["message"], "web");
+
+        state["viewports"]["web"]["screens"]["pay"] =
+            screen("drift", "page_error", Some(web_error));
+        state["viewports"]["mobile"]["screens"]["pay"] = screen("fail", "act_failed", None);
+        combine_views(&mut state);
+        assert_eq!(state["screens"]["pay"]["result"], "fail");
+        assert!(state["screens"]["pay"]["pageError"].is_null());
     }
 
     /// #1777: each viewport's frame is served from its own file; no viewport is the first one's,

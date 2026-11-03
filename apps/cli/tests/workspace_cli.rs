@@ -5,6 +5,7 @@
 //! workspace command. Cost: a temp git repository and a handful of CLI subprocesses, a few seconds
 //! after the build; no network.
 use std::path::Path;
+use std::process::Stdio;
 
 use serde_json::Value;
 
@@ -75,14 +76,14 @@ fn workspace_list_returns_a_bounded_status_error_when_git_status_stalls() {
     let root_s = root.to_str().unwrap();
     claim(root_s, &repo, "lane", "stalled-status");
     let worktree = root.join("lane/stalled-status/wt");
-    #[cfg(windows)]
-    let hook = "cmd /c ping -n 30 127.0.0.1 >NUL";
-    #[cfg(not(windows))]
     let hook = "sh -c 'sleep 30'";
     git(&worktree, &["config", "core.fsmonitor", hook]);
 
     let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
-    command.args(["--json", "workspace", "list", "--root", root_s]);
+    command
+        .args(["--json", "workspace", "list", "--root", root_s])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let output = graphhelm_process_tree::run_bounded(command, std::time::Duration::from_secs(15))
         .expect("bounded process cleanup")
         .expect("workspace list must finish before the outer safety deadline");

@@ -8,7 +8,8 @@
 //! bytes: still clean, still at the released sha. A path the ledger did not create is never
 //! touched, and a symlink or junction inside a workspace is removed as a link, never followed.
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::Stdio;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use graphhelm_protocols::Diagnostic;
 use serde_json::{Value, json};
@@ -19,6 +20,9 @@ use crate::output::Outcome;
 pub(crate) const SCHEMA: &str = "graphhelm.workspace/1";
 pub(crate) const LEDGER: &str = ".graphhelm-workspaces";
 const PARTS: [&str; 3] = ["target", "tmp", "logs"];
+const GIT_TIMEOUT: Duration = Duration::from_secs(10);
+const WORKTREE_ADD_TIMEOUT: Duration = Duration::from_secs(300);
+const LIST_GIT_BUDGET: Duration = Duration::from_secs(8);
 
 pub fn run(args: &WorkspaceArgs) -> Outcome {
     match &args.command {
@@ -115,18 +119,35 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
-fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = graphhelm_process::command("git")
+fn git_with_timeout(dir: &Path, args: &[&str], timeout: Duration) -> Result<String, String> {
+    let mut command = graphhelm_process::command("git");
+    command
         .arg("-C")
         .arg(dir)
         .args(args)
-        .output()
-        .map_err(|_| "git could not be started".to_owned())?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match graphhelm_process_tree::run_bounded(command, timeout)? {
+        Some((true, stdout, _)) => Ok(stdout.trim().to_owned()),
+        Some((false, _, stderr)) => Err(stderr.trim().to_owned()),
+        None => Err(format!(
+            "git {} exceeded its {} second deadline and its process tree was stopped",
+            args.join(" "),
+            timeout.as_secs()
+        )),
     }
+}
+
+fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    git_with_timeout(dir, args, GIT_TIMEOUT)
+}
+
+fn git_before(dir: &Path, args: &[&str], deadline: Instant) -> Result<String, String> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err("workspace list reached its Git inspection deadline".to_owned());
+    }
+    git_with_timeout(dir, args, remaining)
 }
 
 fn write_record(file: &Path, record: &Value) -> std::io::Result<()> {
@@ -201,7 +222,9 @@ fn run_claim(
     if base.starts_with('-') || branch.starts_with('-') {
         return input(COMMAND, "base and branch may not start with `-`", "/base");
     }
-    if std::fs::create_dir_all(&dir).is_err() {
+    if std::fs::create_dir_all(dir.parent().unwrap_or(root)).is_err()
+        || std::fs::create_dir(&dir).is_err()
+    {
         return input(
             COMMAND,
             "the workspace directory could not be created",
@@ -209,7 +232,7 @@ fn run_claim(
         );
     }
     let worktree = dir.join("wt");
-    if let Err(message) = git(
+    if let Err(message) = git_with_timeout(
         repo,
         &[
             "worktree",
@@ -219,6 +242,7 @@ fn run_claim(
             &worktree.to_string_lossy(),
             base,
         ],
+        WORKTREE_ADD_TIMEOUT,
     ) {
         // Nothing was recorded; remove only the empty directories this call made.
         let _ = std::fs::remove_dir(&dir);
@@ -1193,7 +1217,7 @@ fn sweep_targets(root: &Path, apply: bool, held_lane: Option<(&str, &Path)>) -> 
     json!({"removed": removed, "kept": kept})
 }
 
-fn live(root: &Path, record: &Value, sizes: bool) -> Value {
+fn live(root: &Path, record: &Value, sizes: bool, deadline: Instant) -> Value {
     let (lane, task) = (
         record["lane"].as_str().unwrap_or_default(),
         record["task"].as_str().unwrap_or_default(),
@@ -1207,14 +1231,21 @@ fn live(root: &Path, record: &Value, sizes: bool) -> Value {
         Ok(false)
     };
     let blocked = ancestry.unwrap_or(true);
-    let head = if blocked {
-        None
+    let (head, dirty, status_error) = if blocked {
+        (
+            None,
+            Some(true),
+            Some("workspace path is linked or cannot be inspected".to_owned()),
+        )
     } else {
-        git(&worktree, &["rev-parse", "HEAD"]).ok()
+        match git_before(&worktree, &["rev-parse", "HEAD"], deadline) {
+            Ok(head) => match git_before(&worktree, &["status", "--porcelain"], deadline) {
+                Ok(status) => (Some(head), Some(!status.is_empty()), None),
+                Err(error) => (None, Some(true), Some(error)),
+            },
+            Err(error) => (None, Some(true), Some(error)),
+        }
     };
-    let dirty = head
-        .as_ref()
-        .map(|_| git(&worktree, &["status", "--porcelain"]).map_or(true, |s| !s.is_empty()));
     // A lane, task or worktree directory that is itself a link would make every path below it
     // resolve somewhere the ledger never created; such a workspace is reported, never removed.
     let linked = ancestry.unwrap_or(false)
@@ -1237,6 +1268,7 @@ fn live(root: &Path, record: &Value, sizes: bool) -> Value {
     json!({"lane": lane, "task": task, "branch": record["branch"], "state": record["state"],
         "linked": linked, "linkInWorktree": link_in_worktree, "scanError": scan_error,
         "path": dir.to_string_lossy(), "exists": dir.exists(), "head": head, "dirty": dirty,
+        "statusError": status_error,
         "releasedHead": record["releasedHead"], "sizeBytes": if blocked { 0 } else { size_of(&dir) }})
 }
 
@@ -1289,7 +1321,11 @@ fn measured_bytes(base: &Path) -> Result<u64, String> {
 
 pub(crate) fn run_list(root: &Path, sizes: bool) -> Outcome {
     const COMMAND: &str = "workspace.list";
-    let mut listed: Vec<Value> = records(root).iter().map(|r| live(root, r, sizes)).collect();
+    let deadline = Instant::now() + LIST_GIT_BUDGET;
+    let mut listed: Vec<Value> = records(root)
+        .iter()
+        .map(|r| live(root, r, sizes, deadline))
+        .collect();
     let mut data = json!({"root": root.to_string_lossy(), "workspaces": []});
     if sizes {
         let mut lanes = serde_json::Map::new();
@@ -1440,7 +1476,7 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
     let mut removed = Vec::new();
     let mut kept = Vec::new();
     for mut record in records(root) {
-        let view = live(root, &record, false);
+        let view = live(root, &record, false, Instant::now() + GIT_TIMEOUT);
         let (lane, task) = (
             view["lane"].as_str().unwrap_or_default().to_owned(),
             view["task"].as_str().unwrap_or_default().to_owned(),

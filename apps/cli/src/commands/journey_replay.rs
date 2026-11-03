@@ -327,11 +327,15 @@ fn keep_tail(pipe: impl Read + Send + 'static, slack: usize) -> Receiver<(Vec<u8
 /// The kept stderr as text with every secret and the user's home masked, at most
 /// `DRIVER_LOG_TAIL` bytes. A cut window first drops `slack` bytes, the longest a secret's
 /// leftover suffix can be, so no fragment of a secret survives the edge.
-pub(super) fn masked_tail(bytes: &[u8], cut: bool, slack: usize, secrets: &[String]) -> String {
-    let bytes = if cut {
-        &bytes[slack.min(bytes.len())..]
-    } else {
-        bytes
+pub(super) enum MaskWindow {
+    Complete,
+    AfterPrefix(usize),
+}
+
+pub(super) fn masked_tail(bytes: &[u8], window: MaskWindow, secrets: &[String]) -> String {
+    let bytes = match window {
+        MaskWindow::Complete => bytes,
+        MaskWindow::AfterPrefix(slack) => &bytes[slack.min(bytes.len())..],
     };
     let mut text = String::from_utf8_lossy(bytes).into_owned();
     for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
@@ -347,6 +351,10 @@ pub(super) fn masked_tail(bytes: &[u8], cut: bool, slack: usize, secrets: &[Stri
         .find(|index| text.is_char_boundary(*index))
         .unwrap_or(text.len());
     text[start..].to_owned()
+}
+
+pub(super) fn masked_complete_output(bytes: &[u8], secrets: &[String]) -> String {
+    masked_tail(bytes, MaskWindow::Complete, secrets)
 }
 
 /// The masked stderr tail of the last driver that died in this process, once (#1448).
@@ -636,7 +644,12 @@ impl Driver {
             return;
         };
         let slack = self.secrets.iter().map(String::len).max().unwrap_or(0);
-        let tail = masked_tail(&bytes, cut, slack, &self.secrets);
+        let window = if cut {
+            MaskWindow::AfterPrefix(slack)
+        } else {
+            MaskWindow::Complete
+        };
+        let tail = masked_tail(&bytes, window, &self.secrets);
         if let Ok(mut slot) = LAST_DRIVER_LOG.lock() {
             *slot = Some(json!({"tail": tail}));
         }

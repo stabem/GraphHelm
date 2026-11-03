@@ -2115,8 +2115,7 @@ fn masked_output(
 ) -> Value {
     use sha2::{Digest, Sha256};
     // The whole output is kept (no cut window), then its tail is bounded by `masked_tail`.
-    let cut = false;
-    let keep = |text: &str| super::journey_replay::masked_tail(text.as_bytes(), cut, 0, secrets);
+    let keep = |text: &str| super::journey_replay::masked_complete_output(text.as_bytes(), secrets);
     json!({
         "argv": argv,
         "exit": seen.exit,
@@ -2450,9 +2449,43 @@ fn history_entry(run: String, state: Value, secrets: &[String]) -> Value {
             entry[key] = state[key].clone();
         }
     }
+    if let Some(outputs) = state["outputs"].as_object() {
+        let outputs: serde_json::Map<String, Value> = outputs
+            .iter()
+            .map(|(name, runs)| {
+                let runs = match runs.as_array() {
+                    Some(runs) => Value::Array(
+                        runs.iter()
+                            .map(|run| {
+                                let mut masked = run.clone();
+                                if let Some(output) = masked.as_object_mut() {
+                                    output.remove("stdoutSha256");
+                                    output.remove("stderrSha256");
+                                }
+                                for key in ["stdout", "stderr"] {
+                                    if let Some(text) = run[key].as_str() {
+                                        masked[key] =
+                                            super::journey_replay::masked_complete_output(
+                                                text.as_bytes(),
+                                                secrets,
+                                            )
+                                            .into();
+                                    }
+                                }
+                                masked
+                            })
+                            .collect(),
+                    ),
+                    None => runs.clone(),
+                };
+                (name.clone(), runs)
+            })
+            .collect();
+        entry["outputs"] = Value::Object(outputs);
+    }
     for key in ["launchLog", "driverLog"] {
         if let Some(tail) = state[key]["tail"].as_str() {
-            entry[key] = json!({"tail": super::journey_replay::masked_tail(tail.as_bytes(), false, 0, secrets)});
+            entry[key] = json!({"tail": super::journey_replay::masked_complete_output(tail.as_bytes(), secrets)});
         }
     }
     entry
@@ -3776,6 +3809,30 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         ] {
             assert!(legacy.get(key).is_none(), "invented {key}");
         }
+    }
+
+    #[test]
+    fn history_masks_outputs_from_older_stored_runs_without_mutating_them() {
+        let secret = "sk-test-history-output-secret".to_owned();
+        let stored = json!({"state":"ready","outputs":{"screen":[{
+            "stdout":format!("stdout {secret}"),"stderr":format!("stderr {secret}"),"exit":0,
+            "extension":"kept"
+        }]}});
+        let before = stored.clone();
+        let reply =
+            super::history_entry("old".into(), stored.clone(), std::slice::from_ref(&secret));
+        for key in ["stdout", "stderr"] {
+            let text = reply["outputs"]["screen"][0][key].as_str().unwrap();
+            assert!(!text.contains(&secret));
+            assert!(text.contains("***"));
+        }
+        assert!(reply["outputs"]["screen"][0].get("stdoutSha256").is_none());
+        assert!(reply["outputs"]["screen"][0].get("stderrSha256").is_none());
+        assert_eq!(reply["outputs"]["screen"][0]["extension"], "kept");
+        assert_eq!(
+            stored, before,
+            "history masking must not rewrite persisted records"
+        );
     }
 
     /// #1956: a flow edited after its run reads `none` on the preview route, and that run is then

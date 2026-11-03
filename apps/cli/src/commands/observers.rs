@@ -334,8 +334,13 @@ fn run_step(
             }
         }
         // keel-allow: keel.rel.no_swallow the caller's deadline may close the receiver before the pipe drains until 2026-11-21
+        let window = if cut {
+            super::journey_replay::MaskWindow::AfterPrefix(slack)
+        } else {
+            super::journey_replay::MaskWindow::Complete
+        };
         let _ = stderr_tx.send(
-            super::journey_replay::masked_tail(&tail, cut, slack, &secrets)
+            super::journey_replay::masked_tail(&tail, window, &secrets)
                 .trim()
                 .to_owned(),
         );

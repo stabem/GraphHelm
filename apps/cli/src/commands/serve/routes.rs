@@ -2000,11 +2000,8 @@ pub(super) async fn tasks(
                 Ok(value) => respond(StatusCode::OK, Outcome::success(COMMAND, value).output),
                 Err(error) => respond(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Outcome::internal(
-                        COMMAND,
-                        format!("proof view serialization failed: {error}"),
-                    )
-                    .output,
+                    Outcome::internal(COMMAND, format!("proof view serialization failed: {error}"))
+                        .output,
                 ),
             },
             Err(failure) => respond_failure(COMMAND, failure),

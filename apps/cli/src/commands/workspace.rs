@@ -1217,7 +1217,13 @@ fn sweep_targets(root: &Path, apply: bool, held_lane: Option<(&str, &Path)>) -> 
     json!({"removed": removed, "kept": kept})
 }
 
-fn live(root: &Path, record: &Value, sizes: bool, deadline: Instant) -> Value {
+#[derive(Clone, Copy)]
+enum LiveSizeMode {
+    Include,
+    Omit,
+}
+
+fn live(root: &Path, record: &Value, size_mode: LiveSizeMode, deadline: Instant) -> Value {
     let (lane, task) = (
         record["lane"].as_str().unwrap_or_default(),
         record["task"].as_str().unwrap_or_default(),
@@ -1225,7 +1231,7 @@ fn live(root: &Path, record: &Value, sizes: bool, deadline: Instant) -> Value {
     let dir = workspace_dir(root, lane, task);
     let worktree = dir.join("wt");
     // Preserve the legacy view for plain list/sweep; sized reads never enter linked ancestors.
-    let ancestry = if sizes {
+    let ancestry = if matches!(size_mode, LiveSizeMode::Include) {
         linked_ancestor(&worktree)
     } else {
         Ok(false)
@@ -1322,9 +1328,14 @@ fn measured_bytes(base: &Path) -> Result<u64, String> {
 pub(crate) fn run_list(root: &Path, sizes: bool) -> Outcome {
     const COMMAND: &str = "workspace.list";
     let deadline = Instant::now() + LIST_GIT_BUDGET;
+    let size_mode = if sizes {
+        LiveSizeMode::Include
+    } else {
+        LiveSizeMode::Omit
+    };
     let mut listed: Vec<Value> = records(root)
         .iter()
-        .map(|r| live(root, r, sizes, deadline))
+        .map(|r| live(root, r, size_mode, deadline))
         .collect();
     let mut data = json!({"root": root.to_string_lossy(), "workspaces": []});
     if sizes {
@@ -1476,7 +1487,12 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
     let mut removed = Vec::new();
     let mut kept = Vec::new();
     for mut record in records(root) {
-        let view = live(root, &record, false, Instant::now() + GIT_TIMEOUT);
+        let view = live(
+            root,
+            &record,
+            LiveSizeMode::Omit,
+            Instant::now() + GIT_TIMEOUT,
+        );
         let (lane, task) = (
             view["lane"].as_str().unwrap_or_default().to_owned(),
             view["task"].as_str().unwrap_or_default().to_owned(),

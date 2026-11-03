@@ -4,7 +4,8 @@ import { OWNER, type JourneyFlow, type LaneAction, type Runtime, type TasksBoard
 import { controlBody, draftFor, messageBody, newId, type Draft, type LaneControl } from "./drafts";
 import { actionText } from "./format";
 import { When } from "../time/Stamp";
-import { Empty, Loading, ReadFailure } from "../states/ViewState";
+import { Empty, Loading } from "../states/ViewState";
+import { ActionError, actionErrorDetails, type ActionErrorDetails } from "../states/ActionError";
 import { readCollapsed, writeCollapsed } from "./panel-rail";
 import { LanesPanels } from "./LanesPanels";
 import { RequestProgress } from "../graph/RequestProgress";
@@ -54,7 +55,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const toggle = () => setCollapsed((prior) => { writeCollapsed(!prior); return !prior; });
   const [board, setBoard] = useState<TasksBoard | ProjectBoard | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ActionErrorDetails | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [deliveredOpen, setDeliveredOpen] = useState<boolean | null>(null);
@@ -64,6 +65,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   const [request, setRequest] = useState<string | null>(null);
   const [actions, setActions] = useState<Record<string, { at: string | null; rows: LaneAction[] }>>({});
   const seen = useRef<Record<string, string | null>>({});
+  const readSequence = useRef(0);
   // #2228: who declared presence in the project's runs, read incrementally from each run's events.
   const presenceIndex = useRef<PresenceIndex>(emptyPresence());
   const replyBox = useRef<HTMLTextAreaElement>(null);
@@ -76,12 +78,16 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   // The controls this Studio sent, so the board shows what each one did.
   const [done, setDone] = useState<{ lane: string; word: string; at: string }[]>([]);
 
-  const read = useCallback(async () => {
+  const read = useCallback(async (clearError = false) => {
+    const sequence = ++readSequence.current;
+    if (clearError) setError(null);
     const ids = JSON.parse(key) as string[];
     if (ids.length === 0) return;
     // An older Runtime without the requests route leaves the column empty, never the board.
     // #2230: the same request read in two executions is one ask, never two cards.
-    Promise.allSettled(ids.map((id) => runtime.requestsRead(id))).then((rows) => setRequests(combineRequests(rows.flatMap((row, at) => (row.status === "fulfilled" ? [{ executionId: ids[at]!, ...row.value }] : [])))));
+    Promise.allSettled(ids.map((id) => runtime.requestsRead(id))).then((rows) => {
+      if (sequence === readSequence.current) setRequests(combineRequests(rows.flatMap((row, at) => (row.status === "fulfilled" ? [{ executionId: ids[at]!, ...row.value }] : []))));
+    });
     try {
       let next: TasksBoard | ProjectBoard;
       if (ids.length === 1) next = await runtime.board(ids[0]);
@@ -90,8 +96,8 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
         presenceIndex.current = await readPresence(runtime, ids, presenceIndex.current);
         next = withPresence(combined, presenceIndex.current);
       }
+      if (sequence !== readSequence.current) return;
       setBoard(next);
-      setError(null);
       // Each lane's log is read again only when its last record moved.
       for (const agent of agents(next)) {
         if (agent.lane in seen.current && seen.current[agent.lane] === agent.lastRecordAt) continue;
@@ -104,7 +110,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
         );
       }
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "The board could not be read.");
+      if (sequence === readSequence.current) setError(actionErrorDetails("Lanes could not be read", failure, "The Runtime could not return the board.", "Retry reading the lanes."));
     }
   }, [runtime, key]);
 
@@ -118,11 +124,11 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   useEffect(() => {
     void read();
     const timer = setInterval(() => void read(), POLL_MS);
-    return () => clearInterval(timer);
+    return () => { clearInterval(timer); readSequence.current += 1; };
   }, [read]);
 
   if (runs.length === 0) return <section id="panel-lanes" aria-label="Lanes" className="view"><Empty title="No work yet" hint="Lanes appear here once a team picks up a task." onStart={onStart} /></section>;
-  if (board === null) return <section id="panel-lanes" aria-label="Lanes" className="view">{error === null ? <Loading text="Reading the lanes…" /> : <ReadFailure what="lanes list" route={`/v1/executions/${runs.join(",")}/tasks`} message={error} onRetry={() => void read()} />}</section>;
+  if (board === null) return <section id="panel-lanes" aria-label="Lanes" className="view">{error === null ? <Loading text="Reading the lanes…" /> : <ActionError error={error} onDismiss={() => setError(null)} onRetry={() => void read(true)} />}</section>;
 
   const all = agents(board);
   const asking = all.filter((agent) => agent.questions.length > 0);
@@ -165,7 +171,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
               </select>
             </label>
           )}
-          {error !== null && <span className="error">{error}</span>}
+          {error !== null && <ActionError error={error} onDismiss={() => setError(null)} onRetry={() => void read(true)} />}
         </div>
         {"origins" in board && <p className="lanes-scope">{board.runs.length} runs of this project · only what the Runtime received is shown; an agent that records nowhere here is not on the board.</p>}
         <ul className="board with-asked" aria-label="Agent board">
@@ -323,7 +329,7 @@ function AgentPanel({ runtime, executionId, agent, actions, journeys, replyBox, 
   const [target, setTarget] = useState<string>(others[0] ?? "");
   const [confirmStop, setConfirmStop] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ActionErrorDetails | null>(null);
   // The question a reply answers: the lane's oldest open one shown.
   const answering = agent.questions[0] ?? null;
   const task = agent.task;
@@ -348,7 +354,7 @@ function AgentPanel({ runtime, executionId, agent, actions, journeys, replyBox, 
       setStatus(done);
       return true;
     } catch (error) {
-      setFailure(error instanceof Error ? error.message : "The Runtime did not record it.");
+      setFailure(actionErrorDetails("Lane action failed", error, "The Runtime did not record this action.", "Check the lane state, then retry the action."));
       return false;
     } finally {
       setSending(null);
@@ -434,7 +440,7 @@ function AgentPanel({ runtime, executionId, agent, actions, journeys, replyBox, 
       {slice === null && <span className="muted small">Reassign needs a slice this agent holds.</span>}
       {confirmStop && <span className="muted small">Stop retires {agent.lane}: it stops counting as live until it is restored.</span>}
       {status !== null && <span role="status" aria-label={status} className="sent">{status}</span>}
-      {failure !== null && <span role="alert" className="error">{failure}</span>}
+      {failure !== null && <ActionError error={failure} onDismiss={() => setFailure(null)} />}
       <span className="section-label">LAST ACTIONS</span>
       {actions === null ? <span className="muted">Reading…</span> : actions.length === 0 ? <span className="muted">No action recorded.</span> : (
         <ul className="last-actions">{actions.map((action) => <li key={action.sequence} className="mono"><When at={action.occurredAt} /> {actionText(action)}</li>)}</ul>

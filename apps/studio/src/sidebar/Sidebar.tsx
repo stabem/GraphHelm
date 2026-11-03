@@ -6,6 +6,7 @@ import { studioOpenCommand } from "../login/studio-open";
 import { routeSearch, type View } from "../routing/route";
 import { subtitle, type ProjectSummary } from "./project-summary";
 import { restartDetail, type Restart } from "./use-health";
+import { ActionError, actionErrorDetails, type ActionErrorDetails } from "../states/ActionError";
 
 export interface ProjectEntry {
   key: string;
@@ -49,7 +50,7 @@ export function Subtitles({ project, open }: { project: ProjectEntry; open: bool
 export function AddFolder({ onAdd, open, setOpen }: { onAdd: (path: string, ticket: string) => Promise<AddRefusal | null>; open: boolean; setOpen: (open: boolean) => void }) {
   const [path, setPath] = useState("");
   const [ticket, setTicket] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ActionErrorDetails | null>(null);
   const [busy, setBusy] = useState(false);
   if (!open) return <button type="button" className="add-folder" aria-label="Add project folder" onClick={() => setOpen(true)}>+</button>;
   return (
@@ -60,10 +61,14 @@ export function AddFolder({ onAdd, open, setOpen }: { onAdd: (path: string, tick
         event.preventDefault();
         if (path.trim().length === 0 || ticket.trim().length === 0 || busy) return;
         setBusy(true);
+        setError(null);
         void onAdd(path.trim(), ticket.trim()).then((refusal) => {
           setBusy(false);
           setTicket("");
-          setError(refusal === null ? null : refusalText(refusal));
+          setError(refusal === null ? null : actionErrorDetails("Project folder could not be added", null, refusalText(refusal), "Check the folder and open a fresh Studio ticket."));
+        }).catch((cause: unknown) => {
+          setBusy(false);
+          setError(actionErrorDetails("Project folder could not be added", cause, "Studio could not add this project folder.", "Check the folder and try again."));
         });
       }}
     >
@@ -72,7 +77,7 @@ export function AddFolder({ onAdd, open, setOpen }: { onAdd: (path: string, tick
       <input aria-label="Ticket from graphhelm studio open --project" type="password" role="textbox" autoComplete="off" spellCheck={false} className="mono" placeholder="ticket" value={ticket} onChange={(event) => setTicket(event.target.value)} />
       <button type="submit" disabled={busy}>Add</button>
       <button type="button" onClick={() => { setOpen(false); setError(null); }}>Cancel</button>
-      {error !== null && <span role="alert" className="add-folder-error">{error}</span>}
+      {error !== null && <ActionError error={error} onDismiss={() => setError(null)} />}
     </form>
   );
 }

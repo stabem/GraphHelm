@@ -211,6 +211,8 @@ export interface JourneyRun {
   /** #2464: opaque Runtime-generated UUID that identifies this exact preview run. */
   runId?: string;
   state: "none" | "running" | "ready" | "failed";
+  /** Optional structured cause for a refused preview start; older Runtime replies omit it. */
+  startError?: { code?: string; message?: string; pointer?: string } | null;
   kind?: "replay" | "preview";
   startedAt?: string;
   ranAt?: string;
@@ -259,15 +261,18 @@ export interface JourneyPastRun {
 interface Envelope<T> {
   ok: boolean;
   data: T | null;
-  diagnostics?: { message?: string }[];
+  diagnostics?: { code?: string; pointer?: string; message?: string }[];
 }
 
 export class RuntimeError extends Error {
   /** The HTTP status the Runtime answered with, when it answered (#1897: 401/403 means it refused the token). */
   readonly status: number | null;
-  constructor(message: string, status: number | null = null) {
+  /** A Runtime diagnostic code, absent on older Runtime replies. */
+  readonly code: string | null;
+  constructor(message: string, status: number | null = null, code: string | null = null) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -340,7 +345,16 @@ export class Runtime {
       throw new RuntimeError(`The Runtime replied ${response.status} with a body the Studio could not read.`, response.status);
     }
     if (!response.ok || envelope.ok !== true || envelope.data === null) {
-      throw new RuntimeError(envelope.diagnostics?.[0]?.message ?? `The Runtime refused (${response.status}).`, response.status);
+      const diagnostic = envelope.diagnostics?.[0];
+      const startError = envelope.data !== null && typeof envelope.data === "object" && "startError" in envelope.data
+        ? envelope.data.startError
+        : null;
+      const structured = startError !== null && typeof startError === "object" ? startError as { code?: unknown; message?: unknown } : null;
+      const code = typeof structured?.code === "string" ? structured.code : diagnostic?.code ?? null;
+      const message = typeof structured?.message === "string"
+        ? structured.message
+        : diagnostic?.message ?? `The Runtime refused (${response.status}).`;
+      throw new RuntimeError(message, response.status, code);
     }
     return envelope.data;
   }

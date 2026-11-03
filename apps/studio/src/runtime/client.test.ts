@@ -4,7 +4,7 @@ import { agents } from "../lanes/board";
 import { needsAction } from "../lanes/panels";
 import { cards } from "../graph/requests";
 import { ViewBoundary } from "../views/ViewBoundary";
-import { refusedToken, Runtime } from "./client";
+import { refusedToken, Runtime, RuntimeError } from "./client";
 
 // #1899: the owner's Runtime predates #1794, so its open tasks reply has no `waiting`. This is the
 // key set that Runtime returned for a real run (read-only GET), with one open slice and one lane.
@@ -89,5 +89,32 @@ describe("a Runtime that refuses the token (#1897)", () => {
     expect(first.runId).toBe(second.runId);
     expect(requests).toHaveLength(2);
     expect(requests.every((request) => request.signal instanceof AbortSignal)).toBe(true);
+  });
+});
+
+describe("Runtime failure details for Studio action errors (#2445)", () => {
+  it("keeps the Runtime code and safe cause from a structured start failure", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      ok: false,
+      data: { startError: { code: "preview.flow_invalid", message: "Fix /edges/0 and retry." } },
+      diagnostics: [{ code: "preview.flow_invalid", pointer: "/edges/0", message: "Fix /edges/0 and retry." }],
+    }), { status: 400 })));
+
+    const failure = await new Runtime("t").startJourneyRun("demo", null).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(RuntimeError);
+    expect((failure as RuntimeError).code).toBe("preview.flow_invalid");
+    expect((failure as Error).message).toBe("Fix /edges/0 and retry.");
+  });
+
+  it("leaves the code unknown for an older Runtime diagnostic", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      ok: false,
+      data: null,
+      diagnostics: [{ message: "The Runtime refused." }],
+    }), { status: 400 })));
+
+    const failure = await new Runtime("t").startJourneyRun("demo", null).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(RuntimeError);
+    expect((failure as RuntimeError).code).toBeNull();
   });
 });

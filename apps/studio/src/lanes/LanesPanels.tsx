@@ -8,6 +8,7 @@ import { RECORDED_MS, approver, capacityRows, feed, needTag, needsAction, shownN
 import { idleText } from "./board";
 import type { OwnerRequest } from "../graph/requests";
 import { useRunWaits, WaitsOn } from "../views/RunAttention";
+import { ActionError, actionErrorDetails, type ActionErrorDetails } from "../states/ActionError";
 
 /** Collisions are re-read with the board's pace slowed down; capacity is a machine sample. */
 const COLLISIONS_MS = 15_000;
@@ -44,15 +45,22 @@ const clock = (at: number) => new Date(at).toLocaleTimeString([], { hour: "2-dig
  * capacity, and the live feed. Every read is a public Runtime route. */
 export function LanesPanels({ runtime, executionId, board, requests, actions, onAnswer, onSent }: Props) {
   const [collisions, setCollisions] = useState<FileCollisions | null>(null);
-  const [collisionsError, setCollisionsError] = useState<string | null>(null);
+  const [collisionsError, setCollisionsError] = useState<ActionErrorDetails | null>(null);
   const [capacity, setCapacity] = useState<Capacity | null>(null);
-  const [capacityError, setCapacityError] = useState<string | null>(null);
+  const [capacityError, setCapacityError] = useState<ActionErrorDetails | null>(null);
   const [sending, setSending] = useState<string | null>(null);
   const [last, setLast] = useState<string | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<ActionErrorDetails | null>(null);
   // #2348: "reading" and "failed" are not "nothing": Lanes says so instead of "Nothing waits on you."
   const runWaitsKnown = useRunWaits(runtime, executionId, board.now);
   const runWaits = Array.isArray(runWaitsKnown) ? runWaitsKnown : [];
+  const [runWaitError, setRunWaitError] = useState<ActionErrorDetails | null>(() => runWaitsKnown === "failed"
+    ? actionErrorDetails("Run status could not be read", null, "The run's status could not be read.", "Dismiss this alert or reload Lanes to try again.")
+    : null);
+  const [runWaitErrorDismissed, setRunWaitErrorDismissed] = useState(false);
+  useEffect(() => {
+    if (runWaitsKnown === "failed" && !runWaitErrorDismissed) setRunWaitError(actionErrorDetails("Run status could not be read", null, "The run's status could not be read.", "Dismiss this alert or reload Lanes to try again."));
+  }, [runWaitsKnown, runWaitErrorDismissed]);
   // #1837: a failed request is resent with the same id and bytes.
   const drafts = useRef(new Map<string, Draft>());
   // #1889: Assigns the Runtime recorded, shown as "Assigned to X" for a minute.
@@ -71,10 +79,14 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
 
   useEffect(() => {
     let live = true;
-    const read = () => runtime.collisions(executionId).then(
-      (view) => { if (live) { setCollisions(view); setCollisionsError(null); } },
-      (error: unknown) => { if (live) setCollisionsError(error instanceof Error ? error.message : "The collisions could not be read."); },
-    );
+    let sequence = 0;
+    const read = () => {
+      const current = ++sequence;
+      return runtime.collisions(executionId).then(
+        (view) => { if (live && current === sequence) setCollisions(view); },
+        (error: unknown) => { if (live && current === sequence) setCollisionsError(actionErrorDetails("File collisions could not be read", error, "The Runtime could not return file collision data.", "Dismiss this alert or reload Lanes to try again.")); },
+      );
+    };
     void read();
     const timer = setInterval(() => void read(), COLLISIONS_MS);
     return () => { live = false; clearInterval(timer); };
@@ -82,10 +94,14 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
 
   useEffect(() => {
     let live = true;
-    const read = () => runtime.capacity().then(
-      (view) => { if (live) { setCapacity(view); setCapacityError(null); } },
-      (error: unknown) => { if (live) setCapacityError(error instanceof Error ? error.message : "The capacity could not be read."); },
-    );
+    let sequence = 0;
+    const read = () => {
+      const current = ++sequence;
+      return runtime.capacity().then(
+        (view) => { if (live && current === sequence) setCapacity(view); },
+        (error: unknown) => { if (live && current === sequence) setCapacityError(actionErrorDetails("Capacity could not be read", error, "The Runtime could not return capacity data.", "Dismiss this alert or reload Lanes to try again.")); },
+      );
+    };
     void read();
     const timer = setInterval(() => void read(), CAPACITY_MS);
     return () => { live = false; clearInterval(timer); };
@@ -148,7 +164,7 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
       setLast(`${DONE[need.verb]} ${need.to !== null ? `${need.slice?.pr ? `PR #${need.slice.pr} ` : need.slice?.issue ? `#${need.slice.issue} ` : ""}to ${need.to}` : need.lane}`);
       await onSent();
     } catch (error) {
-      setFailure(error instanceof Error ? error.message : "The Runtime did not record it.");
+      setFailure(actionErrorDetails("Lane action failed", error, "The Runtime did not record this action.", "Check the lane state, then retry the action."));
     } finally {
       setSending(null);
     }
@@ -165,11 +181,11 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
       <section aria-label="Needs action" className="lane-box">
         <div className="box-head"><strong className="mono">NEEDS ACTION</strong><span className="mono faint">· oldest first</span><span className="mono count late">{shown.length + runWaits.length}</span></div>
         {last !== null && <span role="status" aria-label="Last action" className="sent small">{last}</span>}
-        {failure !== null && <span role="alert" className="error small">{failure}</span>}
+        {failure !== null && <ActionError error={failure} onDismiss={() => setFailure(null)} />}
         {/* #2324 (approved design): the run's own attention (a blocked node) is not a lane need; it is
             said here and counted, so "Nothing waits on you" is never shown over a run that waits. */}
         {runWaits.map((reason, index) => <span key={index} className="small"><span className="run-waits">The run waits for you:</span> <WaitsOn reason={reason} executionId={executionId} /></span>)}
-        {runWaitsKnown === "failed" && <span className="error small">The run's status could not be read.</span>}
+        {runWaitError !== null && <ActionError error={runWaitError} onDismiss={() => { setRunWaitError(null); setRunWaitErrorDismissed(true); }} />}
         {shown.length === 0 ? (runWaits.length > 0 || runWaitsKnown === "failed" ? null
           : runWaitsKnown === "reading" ? <span className="muted small">Reading…</span>
           : <span className="muted small">Nothing waits on you.</span>) : (
@@ -200,7 +216,7 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
       </section>
       <section aria-label="Risks and capacity" className="lane-box">
         <strong className="mono">FILE COLLISIONS</strong>
-        {collisionsError !== null ? <span className="error small">{collisionsError}</span>
+        {collisionsError !== null ? <ActionError error={collisionsError} onDismiss={() => setCollisionsError(null)} />
           : collisions === null ? <span className="muted small">Reading…</span>
           : collisions.collisions.length === 0 ? <span className="muted small">No two open slices name the same file.</span> : (
             <ul aria-label="File collisions" className="collisions">
@@ -214,7 +230,7 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
             </ul>
           )}
         <strong className="mono">CAPACITY</strong>
-        {capacityError !== null ? <span className="error small">{capacityError}</span>
+        {capacityError !== null ? <ActionError error={capacityError} onDismiss={() => setCapacityError(null)} />
           : capacityShown === null ? <span className="muted small">Reading…</span> : (
             <ul aria-label="Capacity" className="capacity">
               {capacityShown.map((row) => (

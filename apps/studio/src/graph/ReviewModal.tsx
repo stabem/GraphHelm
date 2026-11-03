@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { BoardTask, IssueJourney, Runtime } from "../runtime/client";
 import { modesOn, type ReviewMode } from "./review";
+import { ActionError, actionErrorDetails, type ActionErrorDetails } from "../states/ActionError";
 
 const MODES: { mode: ReviewMode; label: string }[] = [
   { mode: "frame", label: "Frame" },
@@ -19,20 +20,20 @@ interface Props {
 }
 
 /** A frame fetched with the session's bearer header into an object URL, released when it changes. */
-function useFrame(runtime: Runtime, url: string | null, executionId: string): { src: string | null; error: string | null } {
-  const [state, setState] = useState<{ src: string | null; error: string | null }>({ src: null, error: null });
+function useFrame(runtime: Runtime, url: string | null, executionId: string): { src: string | null; error: ActionErrorDetails | null; note: string | null; dismissError: () => void } {
+  const [state, setState] = useState<{ src: string | null; error: ActionErrorDetails | null; note: string | null }>({ src: null, error: null, note: null });
   useEffect(() => {
-    if (url === null) { setState({ src: null, error: null }); return; }
+    if (url === null) { setState({ src: null, error: null, note: null }); return; }
     let alive = true;
     let made: string | null = null;
     runtime.frameAt(url, executionId).then((blob) => {
       if (!alive) return;
       made = blob === null ? null : URL.createObjectURL(blob);
-      setState({ src: made, error: blob === null ? "That run kept no frame for this screen." : null });
-    }, (error: unknown) => alive && setState({ src: null, error: error instanceof Error ? error.message : "The frame could not be read." }));
+      setState({ src: made, error: null, note: blob === null ? "That run kept no frame for this screen." : null });
+    }, (error: unknown) => alive && setState({ src: null, note: null, error: actionErrorDetails("Frame could not be read", error, "The Runtime could not return this frame.", "Change screens or reopen the review to retry.") }));
     return () => { alive = false; if (made !== null) URL.revokeObjectURL(made); };
   }, [runtime, url, executionId]);
-  return state;
+  return { ...state, dismissError: () => setState((current) => ({ ...current, error: null })) };
 }
 
 /** The screens to pick from: Before's in its order, then any only Now kept. */
@@ -52,7 +53,7 @@ function screensOf(journey: IssueJourney | null): string[] {
  */
 export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
   const [journeys, setJourneys] = useState<IssueJourney[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ActionErrorDetails | null>(null);
   const [journeyId, setJourneyId] = useState<string | null>(null);
   const [screen, setScreen] = useState<string | null>(null);
   const [mode, setMode] = useState<ReviewMode>("frame");
@@ -68,7 +69,7 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
       setJourneys(rows);
       setJourneyId(rows[0]?.id ?? null);
       setScreen(screensOf(rows[0] ?? null)[0] ?? null);
-    }, (reason: unknown) => alive && setError(reason instanceof Error ? reason.message : "The issue's journeys could not be read."));
+    }, (reason: unknown) => alive && setError(actionErrorDetails("Issue journeys could not be read", reason, "The Runtime could not return this issue's journeys.", "Close the review and try again.")));
     return () => { alive = false; };
   }, [runtime, executionId, task.issue]);
 
@@ -105,7 +106,7 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
           <strong>{task.prTitle ?? task.title ?? ""}</strong>
           <button ref={closeRef} type="button" className="b ghost" aria-label="Close review" onClick={onClose}>✕</button>
         </header>
-        {error !== null && <p role="alert">{error}</p>}
+        {error !== null && <ActionError error={error} onDismiss={() => setError(null)} />}
         {journeys === null && error === null && <p>Reading the issue's journeys.</p>}
         {journeys !== null && journeys.length === 0 && <p>No journey is named by this issue's slices, so there is no screen to review.</p>}
         {journeys !== null && journeys.length > 0 && (
@@ -129,6 +130,8 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
               )}
             </div>
             <section aria-label="Review frame" className={`review-frame${shownViewport === "mobile" ? " phone-fit" : ""}`}>
+              {before.error !== null && <ActionError error={before.error} onDismiss={before.dismissError} />}
+              {now.error !== null && <ActionError error={now.error} onDismiss={now.dismissError} />}
               <div className="compare-bar">
                 <span className="mono small review-url">{(shownViewport === "mobile" ? mobileUrl : shot?.frameUrl) ?? "no frame"}</span>
                 <div role="group" aria-label="Viewport" className="seg-group">
@@ -170,7 +173,7 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
               {shown === "frame" && (
                 journey?.before === null && journey?.now == null
                   ? <p>This journey has not finished a run on main or on the PR head yet, so there is no frame.</p>
-                  : beforeFigure ?? nowFigure ?? <p>{before.error ?? now.error ?? "Reading the frame."}</p>
+                  : beforeFigure ?? nowFigure ?? <p>{before.note ?? now.note ?? "Reading the frame."}</p>
               )}
             </section>
           </>

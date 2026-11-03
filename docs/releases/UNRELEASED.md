@@ -17,6 +17,7 @@
 ## Fixed
 - [#2406](https://github.com/stabem/GraphHelm/pull/2406) Workspace release can clear a claim when its folder is gone, so the task can be claimed again; `git worktree prune` may also clear other sessions' prunable folder-missing entries, but does not touch their working trees or branches.
 - [#2435](https://github.com/stabem/GraphHelm/pull/2435) A lane can reclaim its own task while a parallel task slice is active.
+- [#2488](https://github.com/stabem/GraphHelm/pull/2488) When Run all cannot confirm the active Runtime run, Proof marks its state as unknown and explains why later journeys were not started, instead of leaving later journeys unexplained as not run.
 
 ## For contributors
 - [#2441](https://github.com/stabem/GraphHelm/pull/2441) Contributors run long builds and tests before starting a blind review.

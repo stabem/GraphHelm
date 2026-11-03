@@ -38,6 +38,7 @@ pub(crate) struct ProofRecord {
 pub(crate) struct ProofCatalog {
     pub repositories: BTreeMap<String, String>,
     pub records: Vec<ProofRecord>,
+    pages: BTreeMap<(String, Option<String>), BTreeMap<u64, usize>>,
     pub unsupported: usize,
     pub rejected: usize,
 }
@@ -227,6 +228,13 @@ pub(crate) fn proof_catalog(
             continue;
         }
         let record_id = proof_digest(&proof)?;
+        for run in [None, Some(proof.run_id.clone())] {
+            catalog
+                .pages
+                .entry((proof.task_id.as_str().to_owned(), run))
+                .or_default()
+                .insert(event.sequence, catalog.records.len());
+        }
         catalog.records.push(ProofRecord {
             record_id,
             sequence: event.sequence,
@@ -376,8 +384,9 @@ pub(crate) fn proofs_view(
             let head = parts[1].parse::<u64>().map_err(|_| invalid())?;
             let after = parts[3].parse::<u64>().map_err(|_| invalid())?;
             let event = history
-                .iter()
-                .find(|e| e.sequence == head)
+                .binary_search_by_key(&head, |event| event.sequence)
+                .ok()
+                .map(|index| &history[index])
                 .ok_or_else(invalid)?;
             let identity = graphhelm_graph::raw_content_sha256(event.event_id.as_str().as_bytes())
                 .map_err(|_| invalid())?;
@@ -387,18 +396,19 @@ pub(crate) fn proofs_view(
             (head, after)
         }
     };
-    let snapshot: Vec<_> = history.into_iter().filter(|e| e.sequence <= head).collect();
-    let catalog = proof_catalog(&store, &scope, &snapshot, execution, keyring, &budget)?;
+    let snapshot = &history[..history.partition_point(|event| event.sequence <= head)];
+    let catalog = proof_catalog(&store, &scope, snapshot, execution, keyring, &budget)?;
     let repo = catalog.repositories.get(&task_id).cloned().ok_or_else(|| {
         super::signal_invalid(
             "proof view requires an authenticated task claim with a repository",
             "/issue",
         )
     })?;
-    let mut matching = catalog.records.iter().filter(|r| {
-        r.sequence > after
-            && r.proof.task_id.as_str() == task_id
-            && query.run.as_ref().is_none_or(|run| &r.proof.run_id == run)
+    let page = catalog.pages.get(&(task_id.clone(), query.run.clone()));
+    let mut matching = page.into_iter().flat_map(|index| {
+        index
+            .range((std::ops::Bound::Excluded(after), std::ops::Bound::Unbounded))
+            .map(|(_, index)| &catalog.records[*index])
     });
     let mut records = Vec::new();
     let mut bytes = 0;

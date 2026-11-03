@@ -1953,6 +1953,14 @@ fn benchmark_proofs_bind_subject_serialize_corrections_and_preserve_snapshot() {
         )["ok"],
         true
     );
+    for (run, expected) in [("fixture-run", 2), ("late-run", 1), ("missing-run", 0)] {
+        let filtered = read(&format!("limit=100&run={run}"));
+        assert_eq!(filtered["ok"], true, "{filtered}");
+        let records = filtered["data"]["records"].as_array().unwrap();
+        assert_eq!(records.len(), expected, "{filtered}");
+        assert!(records.iter().all(|record| record["proof"]["runId"] == run));
+        assert!(filtered["data"]["nextCursor"].is_null());
+    }
     let second = read(&format!("limit=1&after={cursor}"));
     assert_eq!(second["ok"], true, "{second}");
     assert_eq!(second["data"]["snapshotHead"], page["data"]["snapshotHead"]);

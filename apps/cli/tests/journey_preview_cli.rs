@@ -62,6 +62,7 @@ class L {
 }
 const page = {
   _url: 'http://localhost:3000/cart',
+  on() {},
   url() { return this._url; },
   goto: async u => { page._url = u; },
   getByRole: () => new L(),

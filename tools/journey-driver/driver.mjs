@@ -47,6 +47,7 @@ let browser, context, page, baseOrigin, allowed = new Set(), hostRefused = false
 let grownFrom = null;
 let requestId = 0, opened = false, closed = false, headed = false, survive = false, showing = false;
 let coverageEnabled = false, coverageStarted = false, coverageStopped = false, mainframeNavigations = 0, coverageCdp;
+let pageErrorSequence = 0, latestPageError;
 // A headed (live) session survives an observation failure so the owner sees where the journey
 // broke (#398); so does a healing replay's session, which repairs the broken edge in place
 // (#356). Protocol, privacy and host failures still end it.
@@ -64,6 +65,36 @@ function string(v, max = 256, empty = false) { return typeof v === 'string' && (
 function redacted(text) {
   for (const [name,value] of secrets.toSorted((a,b) => b[1].length-a[1].length)) if (value) text = text.replaceAll(value, `«secret:${name.slice(17)}»`);
   return text;
+}
+function utf8Prefix(text, maxBytes) {
+  let out = '', used = 0;
+  for (const unit of text) {
+    const code = unit.charCodeAt(0);
+    const character = unit.length === 1 && code >= 0xd800 && code <= 0xdfff ? '\uFFFD' : unit;
+    const size = Buffer.byteLength(character);
+    if (used + size > maxBytes) break;
+    out += character; used += size;
+  }
+  return out;
+}
+function pageErrorUrl() {
+  let parsed;
+  try { parsed = new URL(page.url()); } catch { return '[unavailable]'; }
+  parsed.username = ''; parsed.password = ''; parsed.hash = '';
+  for (const key of parsed.searchParams.keys()) {
+    if (/(?:secret|token|password|auth|credential|api[-_]?key|session|code)/i.test(key)) parsed.searchParams.set(key, '[redacted]');
+  }
+  return utf8Prefix(redacted(parsed.href), 512) || '[unavailable]';
+}
+function notePageError(source, message) {
+  const firstLine = String(message).split(/[\r\n]/u, 1)[0];
+  const event = {
+    sequence: ++pageErrorSequence,
+    source,
+    message: utf8Prefix(redacted(normalText(firstLine)), 160),
+    url: pageErrorUrl(),
+  };
+  if (Buffer.byteLength(JSON.stringify(event)) <= 4096) latestPageError = event;
 }
 // #1781: what an element held, normalised and cut to 256 bytes so a failure stays bounded.
 function boundedText(text) {
@@ -450,6 +481,9 @@ async function run(r) {
         await context.clock.install({time:new Date(r.clock)});
       }
       page=await context.newPage();
+      pageErrorSequence = 0; latestPageError = undefined;
+      page.on('console', message => { if (message.type() === 'error') notePageError('console', message.text()); });
+      page.on('pageerror', error => notePageError('pageerror', error.message));
       if (coverageEnabled) {
         if (!page.coverage || typeof page.coverage.startJSCoverage !== 'function') fail('driver.observer_missing');
         try {
@@ -469,6 +503,7 @@ async function run(r) {
   if (r.op === 'close') { await release(); closed=true; return {closed:true}; }
   if (!opened || closed) fail('driver.protocol_invalid');
   checkHost();
+  if (r.op === 'act') latestPageError = undefined;
   if (r.op === 'coverage') {
     if (coverageStopped) fail('driver.protocol_invalid');
     coverageStopped = true;
@@ -715,12 +750,16 @@ async function reply(r) {
   try {
     validate(r);
     if (!project) fail('driver.protocol_invalid');
-    result=clean({protocol:PROTOCOL,requestId:r.requestId,ok:true,result:await run(r)});
+    result=clean({protocol:PROTOCOL,requestId:r.requestId,ok:true,result:await run(r),...(latestPageError?{pageError:latestPageError}:{})});
   } catch(err) {
     const code=err.code || (err.name==='TimeoutError' ? 'driver.timeout' : 'driver.action_failed');
-    result={protocol:PROTOCOL,requestId:Number.isSafeInteger(r?.requestId) ? r.requestId : requestId+1,ok:false,code,path:'/',...(code==='driver.expectation_failed' && err.details ? {details:clean(err.details)} : {})};
+    result={protocol:PROTOCOL,requestId:Number.isSafeInteger(r?.requestId) ? r.requestId : requestId+1,ok:false,code,path:'/',...(code==='driver.expectation_failed' && err.details ? {details:clean(err.details)} : {}),...(latestPageError?{pageError:latestPageError}:{})};
   }
   let line=JSON.stringify(result)+'\n';
+  if (Buffer.byteLength(line)>FRAME && Object.hasOwn(result,'pageError')) {
+    delete result.pageError;
+    line=JSON.stringify(result)+'\n';
+  }
   if (Buffer.byteLength(line)>FRAME) line=JSON.stringify({protocol:PROTOCOL,requestId:result.requestId,ok:false,code:'driver.frame_too_large',path:'/'})+'\n';
   await new Promise(resolveWrite => process.stdout.write(line,resolveWrite));
   if (!result.ok && survive && opened && SURVIVABLE.has(result.code)) return true;

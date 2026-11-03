@@ -107,14 +107,15 @@ STUDIO_START_SMOKE = "tools/studio-journey-fixture/test_studio_starts.py"
 # journey driver, replay, explore or live play. Printed, never run for you: they need a browser.
 BROWSER_OBSERVERS = ("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT=<dir with node_modules/@playwright/test> "
                      "cargo +1.97.1 test --locked -p graphhelm-cli --test cli "
-                     "-- --ignored journey_replay_browser:: journey_explore_browser:: journey_live_browser::")
+                     "-- --ignored journey_replay_browser:: journey_explore_browser:: journey_live_browser:: journey_preview_browser::")
 BROWSER_ARGV = ["cargo", TOOLCHAIN, "test", "--locked", "-p", CLI, "--test", "cli", "--", "--ignored",
-                "journey_replay_browser::", "journey_explore_browser::", "journey_live_browser::",
+                "journey_replay_browser::", "journey_explore_browser::", "journey_live_browser::", "journey_preview_browser::",
                 "--test-threads=2"]
 BROWSER_REACHERS = ("tools/journey-driver/", "apps/cli/src/commands/journey_replay.rs",
                     "apps/cli/src/commands/journey_explore.rs", "apps/cli/src/commands/journey_live.rs",
+                    "apps/cli/src/commands/journey_preview.rs",
                     "apps/cli/tests/journey_replay_browser.rs", "apps/cli/tests/journey_explore_browser.rs",
-                    "apps/cli/tests/journey_live_browser.rs")
+                    "apps/cli/tests/journey_live_browser.rs", "apps/cli/tests/journey_preview_browser.rs")
 INCLUDE = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
 DISPATCH = {"src/main.rs", "src/commands/mod.rs"}
 SOURCE_READ = re.compile(r'"src/|join\("src"\)')

@@ -296,6 +296,46 @@ test('a screen expectation waits for a control that renders after load, and stil
   assert.equal(never.code,'driver.expectation_failed');
 });
 
+test('page error replies keep the event source and page URL, with bounded secret masking',async t=>{
+  const secret='CANARY_page_error_context_2476';
+  const server=createServer((req,res)=>{
+    const page=new URL(req.url,'http://fixture.invalid').pathname;
+    res.writeHead(200,{'content-type':'text/html'});
+    res.end(page==='/console'
+      ? `<h1>Console</h1><script>console.error(${JSON.stringify(secret)})</script>`
+      : page==='/long'
+        ? `<h1>Long</h1><script>console.error(${JSON.stringify('😀'.repeat(1000))})</script>`
+        : `<h1>Page error</h1><script>throw new Error(${JSON.stringify(secret)})</script>`);
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(done=>server.close(done)));
+  const origin=`http://127.0.0.1:${server.address().port}`;
+  for(const [path,source] of [['/console','console'],['/pageerror','pageerror']]){
+    const c=await client(t,{GRAPHHELM_SECRET_PAGE_ERROR:secret});
+    const opened=await c.send('open',{base:`${origin}${path}?filter=recent&access_token=query_value_canary#private`,viewport,allowOrigins:[],survive:true});
+    assert.equal(opened.ok,true,JSON.stringify(opened));
+    assert.equal(opened.pageError.source,source,JSON.stringify(opened));
+    assert.ok(Buffer.byteLength(opened.pageError.message)<=160);
+    assert.ok(Buffer.byteLength(opened.pageError.url)<=512);
+    assert.ok(!JSON.stringify(opened).includes(secret),'raw configured secret never leaves the driver');
+    const eventUrl=new URL(opened.pageError.url);
+    assert.equal(eventUrl.pathname,path,'the URL is captured from the page, not the console script location');
+    assert.equal(eventUrl.searchParams.get('filter'),'recent');
+    assert.equal(eventUrl.searchParams.get('access_token'),'[redacted]');
+    assert.equal(eventUrl.hash,'');
+    await c.send('close');
+  }
+  const long=await client(t);
+  const longReply=await long.send('open',{base:`${origin}/long?filter=recent&access_token=query_value_canary&padding=${'x'.repeat(800)}#private`,viewport,allowOrigins:[]});
+  assert.equal(longReply.ok,true,JSON.stringify(longReply));
+  assert.equal(longReply.pageError.source,'console',JSON.stringify(longReply));
+  assert.ok(Buffer.byteLength(longReply.pageError.message)<=160);
+  assert.ok(Buffer.byteLength(longReply.pageError.url)<=512);
+  assert.ok(!longReply.pageError.url.includes('#'));
+  assert.ok(longReply.pageError.url.includes('access_token=%5Bredacted%5D'));
+  assert.ok(!longReply.pageError.url.includes('query_value_canary'));
+  await long.send('close');
+});
+
 // #356: a page whose accessibility snapshot is over the model budget (6 KiB) could not be
 // discovered at all (driver.snapshot_too_large), so explore could not see busy screens such as the
 // Studio's Journey tab. The model now gets the page's outline within the budget; identity still

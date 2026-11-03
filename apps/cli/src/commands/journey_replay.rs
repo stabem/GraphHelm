@@ -461,6 +461,43 @@ pub(super) struct Driver {
     /// The per-expectation judgement of the last `snapshot` reply (#1286), pass or fail. Only a
     /// shape `failed_checks`/the success validator accepted is kept; anything else reads as none.
     last_checks: Option<Value>,
+    /// Latest validated page error, correlated by observer sequence until its screen consumes it.
+    last_page_error: Option<Value>,
+}
+
+fn valid_page_error(value: &Value) -> bool {
+    let Some(fields) = value.as_object() else {
+        return false;
+    };
+    fields.len() == 4
+        && fields
+            .keys()
+            .all(|key| ["sequence", "source", "message", "url"].contains(&key.as_str()))
+        && value["sequence"]
+            .as_u64()
+            .is_some_and(|sequence| sequence > 0)
+        && matches!(value["source"].as_str(), Some("console" | "pageerror"))
+        && value["message"]
+            .as_str()
+            .is_some_and(|message| !message.is_empty() && message.len() <= 160)
+        && value["url"].as_str().is_some_and(|url| {
+            if url == "[unavailable]" {
+                return true;
+            }
+            let Some((scheme, rest)) = url.split_once("://") else {
+                return false;
+            };
+            let Some(authority) = rest.split(['/', '?']).next() else {
+                return false;
+            };
+            url.len() <= 512
+                && matches!(scheme, "http" | "https")
+                && !authority.is_empty()
+                && !authority.contains('@')
+                && !url.contains('#')
+                && !url.chars().any(char::is_whitespace)
+                && !url.contains('\\')
+        })
 }
 
 pub(super) struct TemporaryOutput(PathBuf);
@@ -563,10 +600,14 @@ impl Driver {
             stderr: Some(stderr),
             headed: false,
             last_checks: None,
+            last_page_error: None,
         })
     }
 
     pub(super) fn call(&mut self, op: &str, request: Value, path: &str) -> Result<Value> {
+        if op == "act" {
+            self.last_page_error = None;
+        }
         if op == "open" && (request["headed"] == true || request["survive"] == true) {
             self.headed = true;
         }
@@ -605,6 +646,16 @@ impl Driver {
     /// snapshot answers (#1286).
     pub(super) fn take_checks(&mut self) -> Option<Value> {
         self.last_checks.take()
+    }
+
+    /// The newest validated page error since the preceding screen consumed one.
+    pub(super) fn take_page_error(&mut self) -> Option<Value> {
+        self.last_page_error.take()
+    }
+
+    /// A screen passed, so a pending event cannot explain its outcome.
+    pub(super) fn clear_page_error(&mut self) {
+        self.last_page_error = None;
     }
 
     fn call_inner(&mut self, op: &str, mut request: Value, path: &str) -> Result<Value> {
@@ -653,6 +704,21 @@ impl Driver {
         // frame says which check refused it without echoing driver-controlled text.
         let reply: Value = serde_json::from_slice(&bytes)
             .map_err(|_| failure("replay.driver_frame_invalid", format!("{path}/json"), 1))?;
+        if let Some(page_error) = reply.get("pageError") {
+            if !valid_page_error(page_error) {
+                return Err(failure(
+                    "replay.driver_frame_invalid",
+                    format!("{path}/pageError"),
+                    1,
+                ));
+            }
+            if self.last_page_error.as_ref().map_or(0, |current| {
+                current["sequence"].as_u64().unwrap_or_default()
+            }) < page_error["sequence"].as_u64().unwrap_or_default()
+            {
+                self.last_page_error = Some(page_error.clone());
+            }
+        }
         let success = reply["ok"]
             .as_bool()
             .ok_or_else(|| failure("replay.driver_frame_invalid", format!("{path}/ok"), 1))?;
@@ -668,7 +734,11 @@ impl Driver {
         if reply["protocol"] != PROTOCOL
             || reply["requestId"] != self.sequence
             || !reply.as_object().is_some_and(|v| {
-                v.len() == keys.len() && v.keys().all(|k| keys.contains(&k.as_str()))
+                (v.len() == keys.len()
+                    || (v.len() == keys.len() + 1 && v.contains_key("pageError")))
+                    && keys.iter().all(|key| v.contains_key(*key))
+                    && v.keys()
+                        .all(|k| keys.contains(&k.as_str()) || k == "pageError")
             })
         {
             return Err(failure(
@@ -2748,6 +2818,7 @@ mod tests {
             stderr: None,
             headed: true,
             last_checks: None,
+            last_page_error: None,
         };
         let expect = json!([{"role":"heading","name":"Produto encontrado"},
             {"role":"button","name":"Salvar item"}]);
@@ -3018,6 +3089,7 @@ mod tests {
                 stderr: None,
                 headed: false,
                 last_checks: None,
+                last_page_error: None,
             };
             assert_eq!(
                 driver.call(op, request, "/peer").unwrap_err().0,
@@ -3065,6 +3137,7 @@ mod tests {
                 stderr: None,
                 headed: false,
                 last_checks: None,
+                last_page_error: None,
             };
             let reply = driver.call("snapshot", request.clone(), "/peer");
             assert_eq!(reply.is_ok(), accepted, "{request}: {reply:?}");
@@ -3115,10 +3188,127 @@ mod tests {
                 stderr: None,
                 headed: false,
                 last_checks: None,
+                last_page_error: None,
             };
             let reply = driver.call("snapshot", request.clone(), "/screens/entrar");
             assert_eq!(reply.map(|_| ()).map_err(|e| e.0), expected, "{frame}");
         }
+    }
+
+    #[test]
+    fn page_error_is_optional_but_validated_on_success_and_failure_envelopes() {
+        let page_error = json!({"sequence":1,"source":"pageerror","message":"fixture failed",
+            "url":"http://127.0.0.1:3000/page?token=%5Bredacted%5D"});
+        let frames = [
+            json!({"protocol":PROTOCOL,"requestId":1,"ok":true,"result":{"closed":true},"pageError":page_error}),
+            json!({"protocol":PROTOCOL,"requestId":1,"ok":false,"code":"driver.expectation_failed",
+                "path":"/","details":{"checks":[]},"pageError":page_error}),
+            json!({"protocol":PROTOCOL,"requestId":1,"ok":false,"code":"driver.timeout","path":"/","pageError":page_error}),
+        ];
+        for frame in frames {
+            let (writer, requests) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
+            std::thread::spawn(move || {
+                let (_, ack) = requests.recv().unwrap();
+                ack.send(true).unwrap();
+            });
+            let (peer, replies) = mpsc::sync_channel(1);
+            peer.send(Ok(Some(serde_json::to_vec(&frame).unwrap())))
+                .unwrap();
+            let mut driver = Driver {
+                owned: None,
+                writer,
+                replies,
+                sequence: 0,
+                secrets: vec![],
+                stderr: None,
+                headed: true,
+                last_checks: None,
+                last_page_error: None,
+            };
+            let reply = driver.call("close", json!({}), "/screens/example");
+            if frame["ok"] == true {
+                assert!(reply.is_ok(), "{frame}: {reply:?}");
+            } else {
+                assert_eq!(reply.unwrap_err().0, frame["code"].as_str().unwrap());
+            }
+            assert_eq!(driver.take_page_error(), Some(page_error.clone()));
+        }
+
+        for invalid in [
+            json!({"sequence":0,"source":"console","message":"x","url":"http://localhost/"}),
+            json!({"sequence":1,"source":"stack","message":"x","url":"http://localhost/"}),
+            json!({"sequence":1,"source":"console","message":"x","stack":"secret","url":"http://localhost/"}),
+            json!({"sequence":1,"source":"console","message":"x","url":"http://user@localhost/"}),
+            json!({"sequence":1,"source":"console","message":"x","url":"http://localhost/#fragment"}),
+        ] {
+            assert!(!valid_page_error(&invalid), "{invalid}");
+        }
+
+        let (writer, requests) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
+        std::thread::spawn(move || {
+            let (_, ack) = requests.recv().unwrap();
+            ack.send(true).unwrap();
+        });
+        let (peer, replies) = mpsc::sync_channel(1);
+        peer.send(Ok(Some(
+            serde_json::to_vec(&json!({"protocol":PROTOCOL,"requestId":1,
+            "ok":true,"result":{"closed":true},"pageError":{"sequence":1,"source":"stack",
+                "message":"x","url":"http://localhost/"}}))
+            .unwrap(),
+        )))
+        .unwrap();
+        let mut driver = Driver {
+            owned: None,
+            writer,
+            replies,
+            sequence: 0,
+            secrets: vec![],
+            stderr: None,
+            headed: false,
+            last_checks: None,
+            last_page_error: None,
+        };
+        assert_eq!(
+            driver.call("close", json!({}), "/peer").unwrap_err().0,
+            "replay.driver_frame_invalid"
+        );
+
+        let event = |sequence, message| json!({"sequence":sequence,"source":"console","message":message,"url":"http://127.0.0.1/page"});
+        let fingerprint = format!("sha256:{}", "a".repeat(64));
+        let frames = [
+            json!({"protocol":PROTOCOL,"requestId":1,"ok":true,"result":{"url":"http://127.0.0.1/page"},"pageError":event(2,"newer")}),
+            json!({"protocol":PROTOCOL,"requestId":2,"ok":true,"result":{"url":"http://127.0.0.1/page",
+                "ariaYaml":"- heading \\\"Page\\\"","controls":[],"fingerprint":fingerprint,"checks":[]},"pageError":event(1,"older")}),
+        ];
+        let (writer, requests) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
+        let (peer, replies) = mpsc::sync_channel(1);
+        std::thread::spawn(move || {
+            for frame in frames {
+                let (_, ack) = requests.recv().unwrap();
+                ack.send(true).unwrap();
+                peer.send(Ok(Some(serde_json::to_vec(&frame).unwrap())))
+                    .unwrap();
+            }
+        });
+        let mut driver = Driver {
+            owned: None,
+            writer,
+            replies,
+            sequence: 0,
+            secrets: vec![],
+            stderr: None,
+            headed: false,
+            last_checks: None,
+            last_page_error: None,
+        };
+        assert!(driver.call("open", json!({}), "/entry").is_ok());
+        assert!(
+            driver
+                .call("snapshot", json!({"expect":[]}), "/screen")
+                .is_ok()
+        );
+        assert_eq!(driver.take_page_error().unwrap()["message"], "newer");
+        assert_eq!(driver.take_page_error(), None);
     }
 
     /// #1041: a snapshot whose `absent` check is met (the banner is gone) is a success the driver
@@ -3163,6 +3353,7 @@ mod tests {
                 stderr: None,
                 headed: false,
                 last_checks: None,
+                last_page_error: None,
             };
             let reply = driver.call("snapshot", request.clone(), "/screens/run");
             assert_eq!(reply.map(|_| ()).map_err(|e| e.0), expected, "{frame}");

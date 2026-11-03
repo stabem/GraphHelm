@@ -1994,6 +1994,59 @@ fn benchmark_proofs_bind_subject_serialize_corrections_and_preserve_snapshot() {
         Some(read_token.trim()),
     );
     assert_eq!(briefing["ok"], true, "{briefing}");
+    // Decoder declaration from core/execution/src/briefing.rs at 909d0ff6060850b7d5b49efc3ab4de4492096e80.
+    // Nested wire types are unchanged by this patch; exercise the actual HTTP document.
+    use graphhelm_execution::{AttentionReason, Decision, NextStep, Unevaluated, WorkItem};
+    use graphhelm_protocols::{DeclaredExecutor, WireHash};
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LegacyBriefing {
+        /// The graph document's `metadata.name`, as declared at start. `None` for a history written
+        /// before the declaration carried it - absent, never invented.
+        pub name: Option<String>,
+        /// The operator's request in their own words (the first entrypoint's objective), as
+        /// declared at start.
+        pub objective: Option<String>,
+        /// What `start` was going to run the nodes with.
+        pub executor: Option<DeclaredExecutor>,
+        /// The hash of the graph the run started from, so a reader can verify the file
+        /// `resume --file` needs before trusting it.
+        pub graph_hash: Option<WireHash>,
+        pub graph_version: Option<u64>,
+        /// Every decision in the history, by sequence, with the actor the envelope recorded.
+        pub decisions: Vec<Decision>,
+        /// Every node in a terminal state, with how it got there.
+        pub work_done: Vec<WorkItem>,
+        /// A COPY of the attention answer's reasons - never recomputed here.
+        pub pending: Vec<AttentionReason>,
+        /// A copy of what the attention answer could not judge, for the same reason.
+        pub unevaluated: Vec<Unevaluated>,
+        pub next_step: NextStep,
+        /// The last sequence this briefing was folded from: 0 for an empty history.
+        pub as_of_sequence: u64,
+        /// A COPY of the newest `keel.plan` record on this execution (#382 phase B), never
+        /// recomputed. The fold cannot open sealed evidence, so this is `None` here and filled by the
+        /// surface that holds the keyring; absent when nothing planned the task or no keyring was given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub plan: Option<serde_json::Value>,
+    }
+
+    let legacy: LegacyBriefing = serde_json::from_value(briefing["data"].clone())
+        .expect("prior decoder accepts the additive proof summary");
+    let old_document = serde_json::to_value(legacy).unwrap();
+    let mut without_proofs = briefing["data"].clone();
+    without_proofs
+        .as_object_mut()
+        .unwrap()
+        .remove("benchmarkProofs");
+    assert_eq!(
+        old_document, without_proofs,
+        "all pre-existing fields survive old decoding"
+    );
+    let upgraded: graphhelm_execution::Briefing =
+        serde_json::from_value(old_document).expect("new decoder accepts prior stored documents");
+    assert!(upgraded.benchmark_proofs.is_none());
+
     assert_eq!(
         briefing["data"]["benchmarkProofs"]["status"], "available",
         "{briefing}"

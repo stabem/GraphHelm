@@ -2002,7 +2002,7 @@ pub(super) async fn tasks(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Outcome::internal(
                         COMMAND,
-                        &format!("proof view serialization failed: {error}"),
+                        format!("proof view serialization failed: {error}"),
                     )
                     .output,
                 ),

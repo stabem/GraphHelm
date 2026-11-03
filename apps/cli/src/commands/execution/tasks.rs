@@ -37,8 +37,8 @@ pub(crate) struct ProofRecord {
 #[derive(Clone, Default)]
 pub(crate) struct ProofCatalog {
     pub repositories: BTreeMap<String, String>,
-    pub records: Vec<ProofRecord>,
-    pages: BTreeMap<(String, Option<String>), BTreeMap<u64, usize>>,
+    pub records: Vec<Arc<ProofRecord>>,
+    pages: BTreeMap<(String, Option<String>), Arc<BTreeMap<u64, usize>>>,
     pub unsupported: usize,
     pub rejected: usize,
 }
@@ -229,17 +229,19 @@ pub(crate) fn proof_catalog(
         }
         let record_id = proof_digest(&proof)?;
         for run in [None, Some(proof.run_id.clone())] {
-            catalog
-                .pages
-                .entry((proof.task_id.as_str().to_owned(), run))
-                .or_default()
-                .insert(event.sequence, catalog.records.len());
+            Arc::make_mut(
+                catalog
+                    .pages
+                    .entry((proof.task_id.as_str().to_owned(), run))
+                    .or_default(),
+            )
+            .insert(event.sequence, catalog.records.len());
         }
-        catalog.records.push(ProofRecord {
+        catalog.records.push(Arc::new(ProofRecord {
             record_id,
             sequence: event.sequence,
             proof,
-        });
+        }));
     }
     check()?;
     let catalog = Arc::new(catalog);
@@ -464,13 +466,15 @@ pub(crate) fn proofs_view(
     let mut bytes = 0;
     let mut more = false;
     for record in &mut matching {
-        let size = serde_json::to_vec(&record).map_err(|_| invalid())?.len();
+        let size = serde_json::to_vec(record.as_ref())
+            .map_err(|_| invalid())?
+            .len();
         if records.len() == query.limit || bytes + size > 900_000 {
             more = true;
             break;
         }
         bytes += size;
-        records.push(record.clone());
+        records.push(record.as_ref().clone());
     }
     let next_cursor = if more {
         let last = records.last().ok_or_else(invalid)?.sequence;

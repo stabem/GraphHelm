@@ -181,7 +181,7 @@ pub(crate) fn admit_benchmark_proof(
         .iter()
         .find(|record| record.record_id == digest)
     {
-        return Ok(Some(existing.clone()));
+        return Ok(Some(existing.as_ref().clone()));
     }
     if let Some(predecessor) = &proof.predecessor {
         let previous = catalog

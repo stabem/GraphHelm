@@ -17,6 +17,175 @@ use serde_json::Value;
 const FLOW: &str = include_str!("fixtures/journey_flow/checkout.journey.yaml");
 const BACKEND_FLOW: &str = include_str!("fixtures/journey_backend/backend.journey.yaml");
 
+#[test]
+fn rejected_preview_start_explains_the_cause_and_failed_state_write_starts_no_runner() {
+    let missing = tempfile::tempdir().unwrap();
+    let project = missing.path().join("preview_canary_519");
+    let (exit, reply) = cli(&project, &["preview", "checkout"]);
+    assert_eq!(exit, 2, "{reply}");
+    assert_eq!(reply["diagnostics"][0]["code"], "preview.project_invalid");
+    assert_eq!(
+        reply["data"]["startError"]["code"],
+        "preview.project_invalid"
+    );
+    assert!(!reply.to_string().contains("preview_canary_519"), "{reply}");
+    assert!(
+        reply["data"]["startError"]["path"]
+            .as_str()
+            .unwrap()
+            .contains("***")
+    );
+    assert!(
+        reply["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("--project"),
+        "{reply}"
+    );
+
+    let dir = draft();
+    let validation = missing.path().join("validation");
+    for (args, expected) in [
+        (vec!["preview", "absent"], "preview.flow_unknown"),
+        (
+            vec![
+                "preview",
+                "checkout",
+                "--validation-dir",
+                validation.to_str().unwrap(),
+                "--state",
+                "not-declared",
+            ],
+            "preview.state_unknown",
+        ),
+    ] {
+        let (exit, reply) = cli(dir.path(), &args);
+        assert_eq!(exit, 2, "{reply}");
+        assert_eq!(reply["diagnostics"][0]["code"], expected, "{reply}");
+        assert_eq!(reply["data"]["startError"]["code"], expected, "{reply}");
+        assert!(
+            !reply["diagnostics"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("cannot be previewed")
+        );
+    }
+    let parent = dir.path().join(".graphhelm/journey-previews");
+    std::fs::write(&parent, b"blocked directory").unwrap();
+    let (exit, reply) = cli(dir.path(), &["preview", "checkout"]);
+    assert_eq!(exit, 1, "{reply}");
+    assert_eq!(
+        reply["data"]["startError"]["code"], "preview.directory_unavailable",
+        "{reply}"
+    );
+    assert_eq!(std::fs::read(&parent).unwrap(), b"blocked directory");
+    std::fs::remove_file(parent).unwrap();
+    let preview = dir.path().join(".graphhelm/journey-previews/checkout");
+    std::fs::create_dir_all(preview.join("state.json")).unwrap();
+    std::fs::create_dir_all(preview.join("frames")).unwrap();
+    std::fs::write(preview.join("frames/previous.png"), b"previous frame").unwrap();
+    let (exit, reply) = cli(dir.path(), &["preview", "checkout", "--force"]);
+    assert_eq!(exit, 1, "{reply}");
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["code"], "preview.unwritable",
+        "{reply}"
+    );
+    assert_eq!(
+        reply["data"]["startError"]["code"], "preview.state_write_failed",
+        "{reply}"
+    );
+    assert_eq!(
+        reply["data"]["startError"]["operation"],
+        "write preview state"
+    );
+    assert!(
+        !reply["data"]["startError"]["errorKind"]
+            .as_str()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        std::fs::read(preview.join("frames/previous.png")).unwrap(),
+        b"previous frame"
+    );
+    assert!(
+        !preview.join("runner.log").exists(),
+        "no runner preparation after write failure"
+    );
+    assert!(preview.join("state.json").is_dir());
+    let (exit, reply) = cli(dir.path(), &["preview", "checkout", "--run"]);
+    assert_eq!(exit, 1, "{reply}");
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(reply["data"]["state"], "failed", "{reply}");
+    assert!(reply["data"]["pid"].is_null(), "{reply}");
+    assert_eq!(
+        reply["data"]["startError"]["code"], "preview.state_write_failed",
+        "{reply}"
+    );
+}
+
+#[test]
+fn a_lost_runner_returns_a_bounded_masked_log_without_starting_another_runner() {
+    let dir = draft();
+    let (_, reply) = cli(dir.path(), &["preview", "checkout", "--read"]);
+    let mut state = reply["data"].clone();
+    state["state"] = "running".into();
+    state["startedAt"] = "2001-01-01T00:00:00Z".into();
+    let preview = dir.path().join(".graphhelm/journey-previews/checkout");
+    std::fs::create_dir_all(&preview).unwrap();
+    std::fs::write(
+        preview.join("state.json"),
+        serde_json::to_vec(&state).unwrap(),
+    )
+    .unwrap();
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
+    let log = format!(
+        "{} preview_canary_519 {home}/fixture.log",
+        "é".repeat(40000)
+    );
+    std::fs::write(preview.join("runner.log"), log).unwrap();
+    let (exit, reply) = cli(dir.path(), &["preview", "checkout", "--read"]);
+    assert_eq!(exit, 0, "{reply}");
+    assert_eq!(reply["data"]["state"], "failed", "{reply}");
+    let tail = reply["data"]["launchLog"]["tail"].as_str().unwrap();
+    assert!(tail.len() <= 4096);
+    assert!(!reply.to_string().contains("preview_canary_519"), "{reply}");
+    if home.len() > 3 {
+        assert!(!tail.contains(&home));
+    }
+    assert!(!dir.path().join("DRIVER_STARTED").exists());
+}
+
+#[test]
+fn an_unavailable_runner_log_warns_without_rejecting_the_run() {
+    let dir = draft();
+    let fixture = fixture_path(dir.path(), false);
+    let log = dir
+        .path()
+        .join(".graphhelm/journey-previews/checkout/runner.log");
+    std::fs::create_dir_all(&log).unwrap();
+    let (exit, reply) = cli_with_path(dir.path(), &["preview", "checkout"], &fixture);
+    assert_eq!(exit, 0, "{reply}");
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["data"]["state"], "running", "{reply}");
+    assert_eq!(reply["diagnostics"], serde_json::json!([]), "{reply}");
+    assert!(reply["data"]["startError"].is_null(), "{reply}");
+    assert_eq!(
+        reply["data"]["warnings"][0]["code"], "preview.log_unavailable",
+        "{reply}"
+    );
+    let finished = settled_with_path(dir.path(), &fixture);
+    assert_ne!(finished["state"], "running", "{finished}");
+    assert_eq!(
+        finished["warnings"][0]["code"], "preview.log_unavailable",
+        "{finished}"
+    );
+    assert!(log.is_dir());
+}
+
 fn cli(project: &Path, args: &[&str]) -> (i32, Value) {
     let out = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
         .args(["--json", "journey"])
@@ -238,9 +407,17 @@ fn a_preview_runs_once_keeps_its_result_and_runs_anew_only_when_asked() {
     assert_eq!(first["state"], "failed", "{first}");
     assert_eq!(first["reason"], "observer.setup_failed", "{first}");
     // #677: the closed reason must not replace the original refusal. No page text is kept.
+    assert_eq!(first["detail"]["code"], "observer.setup_failed");
+    assert_eq!(first["detail"]["pointer"], "/observer");
     assert_eq!(
-        first["detail"],
-        serde_json::json!({"code":"observer.setup_failed","pointer":"/observer"})
+        first["detail"]["startError"]["code"],
+        "observer.setup_failed"
+    );
+    assert!(
+        first["detail"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("repair")
     );
     assert_eq!(first["observerSetup"]["state"], "failed", "{first}");
     let setup_error = first["observerSetup"]["error"].as_str().unwrap_or_default();
@@ -385,6 +562,90 @@ fn a_preview_installs_a_missing_observer_and_refreshes_a_stale_copy() {
         include_bytes!("../../../tools/journey-driver/driver.mjs"),
         "stale observer was not replaced by the shipped driver",
     );
+}
+
+#[test]
+fn a_failing_launcher_masks_environment_secrets_in_replies_and_saved_state() {
+    let flow = BACKEND_FLOW.replace(
+        "kind: cli, role: exec, name: sh greet.sh",
+        "kind: http, role: GET, name: /status.json",
+    );
+    let dir = draft_with_flow(FLOW);
+    std::fs::write(
+        dir.path().join(".graphhelm/journeys/backend.journey.yaml"),
+        flow,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(".graphhelm/journey-fixture.json"),
+        r#"{"schema":"graphhelm-journey-fixture/1","script":"fail.sh","isolated":true}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("fail.sh"),
+        "if [ \"$1\" = up ]; then printf '%s\\n' \"$FIXTURE_TOKEN\" >&2; exit 1; fi\n",
+    )
+    .unwrap();
+    let (code, reply) = cli(
+        dir.path(),
+        &["compile", "backend", "--fmt", "--include-draft"],
+    );
+    assert_eq!(code, 0, "{reply}");
+    for args in [
+        vec!["add", "."],
+        vec!["commit", "--quiet", "--no-verify", "-m", "failing launcher"],
+    ] {
+        assert!(
+            graphhelm_process::command("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let canary = "fixture_canary_2502_only";
+    let invoke = |flag| {
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["--json", "journey", "preview", "backend", flag, "--project"])
+            .arg(dir.path())
+            .env("FIXTURE_TOKEN", canary)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    std::fs::create_dir_all(dir.path().join(".graphhelm/journey-previews/backend")).unwrap();
+    for flag in ["--run", "--force"] {
+        let mut reply = invoke(flag);
+        let deadline = Instant::now() + scaled(Duration::from_secs(60));
+        while reply["data"]["state"] == "running" {
+            assert!(Instant::now() < deadline, "launcher did not settle");
+            std::thread::sleep(Duration::from_millis(100));
+            reply = invoke("--read");
+        }
+        assert_eq!(reply["data"]["reason"], "watch.launch_failed", "{reply}");
+        assert!(
+            !reply.to_string().contains(canary),
+            "launcher reply leaked the canary"
+        );
+        assert!(
+            reply["data"]["launchLog"]["tail"]
+                .as_str()
+                .unwrap()
+                .contains("***")
+        );
+        let state = std::fs::read_to_string(
+            dir.path()
+                .join(".graphhelm/journey-previews/backend/state.json"),
+        )
+        .unwrap();
+        assert!(
+            !state.contains(canary),
+            "saved launcher state leaked the canary"
+        );
+    }
 }
 
 #[test]

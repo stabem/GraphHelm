@@ -978,7 +978,20 @@ fn run_ledger_quarantine_probe(
         }
         if std::time::Instant::now() >= deadline {
             child.kill()?;
-            let _ = child.wait()?;
+            let cleanup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                if child.try_wait()?.is_some() {
+                    break;
+                }
+                if std::time::Instant::now() >= cleanup_deadline {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "ledger quarantine probe did not stop after termination",
+                    )
+                    .into());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "ledger quarantine probe exceeded its 10 second deadline",

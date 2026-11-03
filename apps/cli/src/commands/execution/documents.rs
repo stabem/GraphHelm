@@ -127,6 +127,7 @@ fn document_failure(error: DocumentError) -> Failure {
 pub(crate) fn validate_task_event(
     value: &serde_json::Value,
     actor: &PersistedActor,
+    execution: Option<&str>,
     history: &[graphhelm_protocols::EventEnvelope],
     evidence: Option<(
         &graphhelm_events::LocalEventRepository,
@@ -146,6 +147,48 @@ pub(crate) fn validate_task_event(
             "/signal/description",
         )
     };
+    // Benchmark testimony has its own versioned document.  It is deliberately kept out of the
+    // task-event fold: the record is evidence about an external run, not a task state transition.
+    // Until the shared typed model is wired here, fail closed rather than accepting a record that
+    // has not had its immutable bindings and predecessor checked against the append head.
+    if kind == "task.proof_recorded" {
+        let text = value["description"].as_str().ok_or_else(|| {
+            super::signal_invalid(
+                "task.proof_recorded requires a benchmark proof document",
+                "/signal/description",
+            )
+        })?;
+        let proof = graphhelm_execution::tasks::BenchmarkProof::parse(text)
+            .map_err(|message| super::signal_invalid(&message, "/signal/description"))?;
+        let expected_execution = execution.ok_or_else(|| {
+            super::signal_invalid(
+                "task.proof_recorded requires an execution binding",
+                "/execution",
+            )
+        })?;
+        let Some((_, scope, _)) = evidence else {
+            return Err(super::signal_invalid(
+                "task.proof_recorded requires a sealed execution scope",
+                "/keyring",
+            ));
+        };
+        let expected = graphhelm_execution::tasks::BenchmarkProofBindings {
+            execution_id: expected_execution.to_owned(),
+            project_id: scope.project_id().as_str().to_owned(),
+            repo: proof.repo.clone(),
+            task_id: proof.task_id.as_str().to_owned(),
+            run_id: proof.run_id.clone(),
+            harness_commit: proof.harness_commit.clone(),
+            lane: actor.id().as_str().to_owned(),
+        };
+        proof
+            .validate_bindings(&expected)
+            .map_err(|message| super::signal_invalid(&message, "/signal/description"))?;
+        return Err(super::signal_invalid(
+            "benchmark proof writes are unavailable until authoritative repository and predecessor admission are implemented",
+            "/signal/type",
+        ));
+    }
     let actor_id = actor.id().as_str();
     if value
         .pointer("/source/id")

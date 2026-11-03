@@ -707,7 +707,7 @@ fn record_once(
     // (gh-claude-opt-2 on PR #1221).
     let heartbeat_sequence = if matches!(
         envelope.get("type").and_then(serde_json::Value::as_str),
-        Some("task.heartbeat" | "task.claimed" | "task.review_activity")
+        Some("task.heartbeat" | "task.claimed" | "task.review_activity" | "task.proof_recorded")
     ) {
         task_history
             .as_ref()
@@ -720,6 +720,7 @@ fn record_once(
         super::documents::validate_task_event(
             &envelope,
             &actor,
+            execution,
             task_history.as_deref().unwrap_or_default(),
             sealing.map(|keyring| (store, &scope, keyring)),
         )

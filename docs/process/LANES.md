@@ -326,6 +326,31 @@ ode_modules`) can be a junction into the
 
 ## 4. Task records
 
+### Benchmark declarations
+
+`proof_recorded --issue N --proof-file <json>` records a bounded external benchmark declaration;
+`proofs --issue N [--run <id>] [--after <cursor>] [--limit <n>]` reads the same projection. Both use
+the helper's existing lane, execution, repository, URL and credential options. The helper checks
+the versioned proof view before writing; a Runtime that returns an ordinary tasks reply is
+unsupported, not an invitation to fall back to a free-form note.
+
+The declaration names schema `graphhelm.benchmark-proof/1`, runId, harnessCommit, arms
+(`name`, `commit`), frozenDigest, artifacts (`reference`, `sha256`), verdict
+(`passed`, `failed`, `inconclusive`, `unobserved`), limitations, deviations and predecessor
+(`null` for an initial record). The Runtime binds execution, project, repository, task and signer.
+A declaration is testimony: artifact references are never fetched and a declared `passed` does
+not grant review approval, certification or a task transition.
+
+Corrections append a new declaration naming the predecessor's record digest. Only the original
+signer can correct it, with the same subject bindings; two competing corrections cannot both be
+admitted. Preserve the original and every failed attempt. A sequence conflict requires a fresh
+read and validation before any retry.
+
+Reads default to 20 records and cap at 100, with snapshot-bound continuation and bounded response
+bytes. Unsupported, unreadable or budget-limited evidence is explicit, never an empty complete
+result. Deploy compatible readers before enabling the writer. Rolling back the writer must retain
+a reader for declarations already appended; never rewrite history to accommodate an older binary.
+
 The owner watches the Studio Team tab, which is drawn from these records (DELIVERY.md, "Task
 records"). From a lane worktree the token path must be absolute:
 

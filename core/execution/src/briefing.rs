@@ -60,6 +60,9 @@ pub struct Briefing {
     /// surface that holds the keyring; absent when nothing planned the task or no keyring was given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<serde_json::Value>,
+    /// Bounded external benchmark declarations; absent in older stored briefings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub benchmark_proofs: Option<crate::tasks::BenchmarkProofSummary>,
 }
 
 /// One decision somebody made about this execution.
@@ -193,6 +196,7 @@ pub fn briefing_view(
         next_step: next_step(projection, answer),
         as_of_sequence: history.last().map_or(0, |event| event.sequence),
         plan: None,
+        benchmark_proofs: None,
     }
 }
 

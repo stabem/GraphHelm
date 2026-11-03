@@ -1611,5 +1611,85 @@ class BenchmarkProofEncodingTests(unittest.TestCase):
             task_record.canonical_proof_json(json.dumps({"reference": "\u00e9" * 4096}, ensure_ascii=False))
 
 
+class BenchmarkProofValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.bindings = {
+            "executionId": "exec-2429", "projectId": "project-1", "repo": "stabem/GraphHelm",
+            "taskId": "issue-2429", "lane": "openbot-itachi", "at": "2026-11-02T12:00:00Z",
+        }
+        self.proof = {
+            "schema": "graphhelm.benchmark-proof/1", "runId": "bench-1",
+            "harnessCommit": "a" * 40,
+            "arms": [{"name": "control", "commit": "b" * 40}],
+            "frozenDigest": "c" * 64,
+            "artifacts": [{"reference": "fixture/result.json", "sha256": "d" * 64}],
+            "verdict": "inconclusive", "limitations": ["synthetic fixture"], "deviations": [],
+            "predecessor": None,
+            **self.bindings,
+        }
+
+    def test_valid_proof_returns_canonical_document_and_digest_excluding_emission_time(self):
+        encoded, digest = task_record.validate_benchmark_proof(
+            json.dumps(self.proof, ensure_ascii=False), self.bindings)
+        self.assertEqual(json.loads(encoded), self.proof)
+        without_at = dict(self.proof)
+        without_at.pop("at")
+        expected = hashlib.sha256(task_record.canonical_proof_json(json.dumps(without_at)).encode()).hexdigest()
+        self.assertEqual(digest, expected)
+
+    def test_proof_validation_rejects_semantic_shape_and_binding_mismatches(self):
+        for mutation in (
+            lambda value: value.update(verdict="maybe"),
+            lambda value: value.update(arms=[{"name": "same", "commit": "b" * 40},
+                                             {"name": "same", "commit": "c" * 40}]),
+            lambda value: value.update(harnessCommit="not-a-commit"),
+            lambda value: value.update(executionId="other-execution"),
+        ):
+            candidate = dict(self.proof)
+            mutation(candidate)
+            with self.subTest(candidate=candidate), self.assertRaises(ValueError):
+                task_record.validate_benchmark_proof(json.dumps(candidate), self.bindings)
+
+    def test_proof_validation_enforces_collection_and_serialized_size_bounds(self):
+        too_many_arms = dict(self.proof, arms=[{"name": str(i), "commit": "b" * 40} for i in range(9)])
+        with self.assertRaises(ValueError):
+            task_record.validate_benchmark_proof(json.dumps(too_many_arms), self.bindings)
+        oversized = dict(self.proof, limitations=["x" * 512] * 16, deviations=["y" * 512] * 16)
+        with self.assertRaises(ValueError):
+            task_record.validate_benchmark_proof(json.dumps(oversized), self.bindings)
+
+    def test_proofs_view_rejects_an_old_runtime_tasks_response(self):
+        args = SimpleNamespace(after=0, limit=20, run=None, issue=2429, execution="exec-2429",
+                               repo="stabem/GraphHelm", lane="openbot-itachi")
+        with patch.object(task_record, "read_credential", return_value="token"), \
+                patch.object(task_record, "_runtime_json", return_value=({"tasks": []}, 20)), \
+                self.assertRaises(SystemExit):
+            task_record._proofs_view(args)
+
+    def test_proof_recorded_uses_the_authoritative_project_binding_and_one_send(self):
+        args = SimpleNamespace(proof_file=None, issue=2429, execution="exec-2429", repo="stabem/GraphHelm",
+                               lane="openbot-itachi", after=0, limit=20, run=None)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False) as handle:
+            path = handle.name
+            json.dump({k: self.proof[k] for k in ("schema", "runId", "harnessCommit", "arms", "frozenDigest",
+                                                  "artifacts", "verdict", "limitations", "deviations", "predecessor")}, handle)
+        args.proof_file = path
+        self.addCleanup(lambda: os.unlink(path))
+        view = {"schema": "graphhelm.benchmark-proofs/1", "executionId": args.execution,
+                "projectId": "project-authoritative", "repo": args.repo, "taskId": "issue-2429",
+                "snapshotHead": 0, "records": [], "nextCursor": None, "incomplete": False,
+                "unsupported": 0, "rejected": 0}
+        with patch.object(task_record, "_proofs_view", side_effect=[view, dict(view, records=[{
+                    "recordId": "proof-record", "sequence": 1,
+                    "proof": dict(self.proof, projectId="project-authoritative", at="2026-11-02T12:00:00Z",
+                                    executionId=args.execution, repo=args.repo, taskId="issue-2429",
+                                    lane=args.lane),
+                }])]), \
+                patch.object(task_record, "send", return_value=(0, "proof-record", {"data": {"recordId": "proof-record"}})) as send:
+            code, _, _ = task_record.proof_recorded(args, "2026-11-02T12:00:00Z")
+        self.assertEqual(code, 0)
+        self.assertEqual(send.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

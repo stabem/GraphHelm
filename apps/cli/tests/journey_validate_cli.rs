@@ -102,6 +102,35 @@ fn a_good_contract_is_clean() {
 }
 
 #[test]
+fn a_flow_id_resolves_like_preview_and_approve() {
+    let dir = project();
+    let journeys = dir.path().join(".graphhelm/journeys");
+    std::fs::write(
+        journeys.join("checkout.journey.yaml"),
+        include_str!("fixtures/journey_flow/checkout.journey.yaml"),
+    )
+    .unwrap();
+    for path in [
+        "app/cart/page.tsx",
+        "app/checkout/page.tsx",
+        "app/api/pay/route.ts",
+    ] {
+        let path = dir.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "fixture").unwrap();
+    }
+
+    let (output, reply) = validate(dir.path(), &[std::ffi::OsStr::new("checkout")]);
+
+    assert_eq!(output.status.code(), Some(0), "{reply}");
+    assert_eq!(reply["data"]["checked"], 1);
+    assert_eq!(
+        reply["data"]["files"][0]["file"],
+        journeys.join("checkout.journey.yaml").display().to_string()
+    );
+}
+
+#[test]
 fn a_missing_scope_path_is_a_finding() {
     let dir = project();
     let mut value = contract("cart");

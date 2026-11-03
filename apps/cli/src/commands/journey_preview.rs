@@ -843,6 +843,13 @@ fn io_answer(
     path: &Path,
     error: &std::io::Error,
 ) -> Outcome {
+    if data["state"] == "running" {
+        data["state"] = "failed".into();
+        data["reason"] = code.into();
+        if let Some(object) = data.as_object_mut() {
+            object.remove("pid");
+        }
+    }
     data["startError"] = start_io_error(code, operation, path, error);
     let pointer = data["startError"]["pointer"]
         .as_str()
@@ -1398,14 +1405,23 @@ fn failed_reason(code: &str) -> &'static str {
 /// and the viewport kept the failed edge as `not_reached`, so nothing named the cause.
 fn record_refusal(flow: &Value, state: &mut Value, code: &str, pointer: &str) {
     state["state"] = "failed".into();
-    let mut detail = json!({"code":code,"pointer":pointer,"message":failure_message(code,pointer)});
+    let mut detail = json!({"code":code,"pointer":pointer});
     if code.starts_with("watch.")
         || code.starts_with("observer.")
         || matches!(
             code,
-            "driver.observer_missing" | "replay.observer_missing" | "replay.observer_stale"
+            "driver.observer_missing"
+                | "replay.observer_missing"
+                | "replay.observer_stale"
+                | "driver.secret_missing"
+                | "driver.secret_literal"
+                | "driver.unsupported_act"
+                | "replay.act_value_missing"
+                | "replay.entry_missing"
+                | "preview.launcher_not_isolated"
         )
     {
+        detail["message"] = failure_message(code, pointer).into();
         detail["startError"] =
             json!({"code":code,"pointer":pointer,"message":failure_message(code,pointer)});
     }

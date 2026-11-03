@@ -114,6 +114,15 @@ fn rejected_preview_start_explains_the_cause_and_failed_state_write_starts_no_ru
         "no runner preparation after write failure"
     );
     assert!(preview.join("state.json").is_dir());
+    let (exit, reply) = cli(dir.path(), &["preview", "checkout", "--run"]);
+    assert_eq!(exit, 1, "{reply}");
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(reply["data"]["state"], "failed", "{reply}");
+    assert!(reply["data"]["pid"].is_null(), "{reply}");
+    assert_eq!(
+        reply["data"]["startError"]["code"], "preview.state_write_failed",
+        "{reply}"
+    );
 }
 
 #[test]

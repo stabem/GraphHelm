@@ -157,17 +157,10 @@ fn interrupted_worktree_setup_is_recoverable_without_touching_lane_data() {
     std::fs::write(&sentinel, "owned by another task\n").unwrap();
     let hook_marker = lane_dir.join("post-checkout-reached");
     let hook = repo.join(".git/hooks/post-checkout");
-    let hook_body = if cfg!(windows) {
-        format!(
-            "#!/bin/sh\nprintf reached > '{}'\nsleep 30\n",
-            hook_marker.display()
-        )
-    } else {
-        format!(
-            "#!/bin/sh\nprintf reached > '{}'\nsleep 30\n",
-            hook_marker.display()
-        )
-    };
+    let hook_body = format!(
+        "#!/bin/sh\nprintf reached > '{}'\nsleep 30\n",
+        hook_marker.display()
+    );
     std::fs::write(&hook, hook_body).unwrap();
     #[cfg(unix)]
     {

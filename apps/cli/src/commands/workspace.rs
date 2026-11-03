@@ -272,11 +272,11 @@ fn run_claim(
         return match std::fs::remove_dir(&dir) {
             Ok(()) => Outcome::internal(
                 COMMAND,
-                &format!("the initializing workspace record could not be written: {record_error}"),
+                format!("the initializing workspace record could not be written: {record_error}"),
             ),
             Err(cleanup_error) => Outcome::internal(
                 COMMAND,
-                &format!(
+                format!(
                     "the initializing workspace record could not be written ({record_error}), and its empty directory could not be removed ({cleanup_error})"
                 ),
             ),

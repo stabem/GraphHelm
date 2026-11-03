@@ -1801,6 +1801,10 @@ fn benchmark_proofs_bind_subject_serialize_corrections_and_preserve_snapshot() {
         String::from_utf8_lossy(&claimed.stderr)
     );
     let read_token = review_support::read_token(&token);
+    let board_before = review_support::get_json(
+        &format!("{base}/v1/executions/{RUN}/tasks?full=1"),
+        Some(read_token.trim()),
+    );
     let read = |query: &str| {
         review_support::get_json(
             &format!("{base}/v1/executions/{RUN}/tasks?view=proofs&issue=1745&{query}"),
@@ -1834,6 +1838,18 @@ fn benchmark_proofs_bind_subject_serialize_corrections_and_preserve_snapshot() {
         String::from_utf8_lossy(&posted.stderr)
     );
     let first = read("limit=100");
+    let board_after = review_support::get_json(
+        &format!("{base}/v1/executions/{RUN}/tasks?full=1"),
+        Some(read_token.trim()),
+    );
+    assert_eq!(
+        board_before["data"]["tasks"][0]["step"],
+        board_after["data"]["tasks"][0]["step"]
+    );
+    assert_eq!(
+        board_before["data"]["rejected"], board_after["data"]["rejected"],
+        "proofs are not malformed delivery records"
+    );
     assert_eq!(
         first["data"]["records"].as_array().unwrap().len(),
         1,

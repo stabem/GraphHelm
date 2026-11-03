@@ -759,7 +759,6 @@ fn record_once(
             super::documents::validate_task_event(
                 &envelope,
                 &actor,
-                execution,
                 task_history.as_deref().unwrap_or_default(),
                 sealing.map(|keyring| (store, &scope, keyring)),
             )

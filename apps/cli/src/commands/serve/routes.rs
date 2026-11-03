@@ -4538,8 +4538,14 @@ pub(super) async fn signal(
     // `state.events`/`execution_id` directly.
     let sealing = state.sealing.clone();
     let drive_execution_id = execution_id.clone();
+    let verified_proof_lane = signal_value.get("type").and_then(serde_json::Value::as_str)
+        == Some("task.proof_recorded")
+        && headers
+            .get(super::journey_credentials::VERIFIED_LANE_HEADER)
+            .and_then(|value| value.to_str().ok())
+            == Some(identity.actor.id().as_str());
     let scoped_agent_authenticated = identity.actor.actor_type() == PersistedActorType::Agent
-        && verify_agent_credential(&state, &headers, &identity.actor);
+        && (verify_agent_credential(&state, &headers, &identity.actor) || verified_proof_lane);
     // #478: the request's ONE store open. The mutation reads through this handle and the body
     // below records through a clone of it (the clone shares the handle; it opens nothing).
     let store = match event_store(&state.events) {

@@ -221,7 +221,6 @@ pub(crate) fn admit_benchmark_proof(
 pub(crate) fn validate_task_event(
     value: &serde_json::Value,
     actor: &PersistedActor,
-    execution: Option<&str>,
     history: &[graphhelm_protocols::EventEnvelope],
     evidence: Option<(
         &graphhelm_events::LocalEventRepository,

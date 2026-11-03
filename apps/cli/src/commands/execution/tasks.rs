@@ -1638,7 +1638,7 @@ fn fold_signals(
         let EventKind::SignalRecorded(record) = &event.kind else {
             continue;
         };
-        if !record.kind.starts_with("task.") {
+        if !record.kind.starts_with("task.") || record.kind == "task.proof_recorded" {
             continue;
         }
         if let Some(outcome) = cache.outcomes.get(&event.sequence) {

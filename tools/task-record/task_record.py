@@ -1128,7 +1128,8 @@ def _runtime_json(args, path, token, *, max_bytes=MAX_RESPONSE_BYTES):
     url = f"{args.url.rstrip('/')}/v1/executions/{urllib.parse.quote(args.execution, safe='')}{path}"
     if urllib.parse.urlsplit(url).hostname not in LOOPBACK:
         sys.exit(f"task_record: refusing {args.url}: the agent token is sent only to a loopback Runtime")
-    request = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {token}"})
+    request = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {token}",
+                                    "X-GraphHelm-Actor": args.lane, "X-GraphHelm-Actor-Type": "agent"})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             raw = response.read(max_bytes + 1)

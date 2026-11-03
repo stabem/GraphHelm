@@ -97,8 +97,8 @@ describe("journeys column chip", () => {
     const last = { ranAt: "t", reason: null, failingStep: null, flowChanged: false };
     expect(lastRunChip(undefined).text).toBe("? unknown");
     expect(lastRunChip({ ...last, status: "not_run", kind: null }).text).toBe("○ not run");
-    expect(lastRunChip({ ...last, status: "failed", kind: "replay" })).toEqual({ text: "✕ failed", tone: "fail" });
-    expect(lastRunChip({ ...last, status: "passed", kind: "preview" })).toEqual({ text: "✓ passed · preview, not proof", tone: "idle" });
+    expect(lastRunChip({ ...last, status: "failed", kind: "replay" })).toEqual({ text: "✕ failed", tone: "fail", category: "failed" });
+    expect(lastRunChip({ ...last, status: "passed", kind: "preview" })).toEqual({ text: "✓ passed · preview, not proof", tone: "idle", category: "preview" });
   });
 });
 
@@ -111,7 +111,7 @@ describe("a journey changed since its last run", () => {
     edges: { "list.item": { result: "pass" as const }, "item.done": { result: "pass" as const } } };
 
   it("reads Changed since last run on the card when the digest moved, never passed", () => {
-    expect(lastRunChip({ ...last, status: "passed", flowChanged: true })).toEqual({ text: CHANGED, tone: "idle" });
+    expect(lastRunChip({ ...last, status: "passed", flowChanged: true })).toEqual({ text: CHANGED, tone: "idle", category: "stale" });
     expect(lastRunChip({ ...last, status: "passed", flowChanged: false }).text).toBe("✓ passed");
     expect(lastRunChip({ ...last, status: "not_run", kind: null, flowChanged: null }).text).toBe("○ not run");
   });

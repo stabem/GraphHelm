@@ -1,10 +1,10 @@
 //! #360: agent workspaces are claimed, released, and removed only by the sweep, and only when the
 //! claimant released them and the tree is still clean at the released commit. Credible
 //! regressions: a sweep that deletes unreleased or dirty work, follows a junction or symlink out of
-//! the workspace, or touches a directory the ledger never created. No existing test covers any
-//! workspace command. Cost: a temp git repository and a handful of CLI subprocesses, a few seconds
-//! after the build; no network.
-use std::path::Path;
+//! the workspace, or touches a directory the ledger never created. The #2484 regression below
+//! covers a bounded list during an interrupted worktree-add fixture. Cost: a temp git repository
+//! and a handful of CLI subprocesses, a few seconds after the build; no network.
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use serde_json::Value;
@@ -25,6 +25,17 @@ fn git(dir: &Path, args: &[&str]) {
         .output()
         .unwrap();
     assert!(status.status.success(), "git {args:?}: {status:?}");
+}
+
+fn git_stdout(dir: &Path, args: &[&str]) -> String {
+    let output = graphhelm_process::command("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
 fn repo(dir: &Path) -> std::path::PathBuf {
@@ -76,6 +87,38 @@ fn workspace_list_returns_a_bounded_status_error_when_git_status_stalls() {
     let root_s = root.to_str().unwrap();
     claim(root_s, &repo, "lane", "stalled-status");
     let worktree = root.join("lane/stalled-status/wt");
+    // Reproduce the interrupted `git worktree add` fixture from #2484: an empty admin lock,
+    // a lock marker, an initializing workspace row and its stale lane target record. This is
+    // all under the test temp directory; the real lane's record is never read or changed.
+    let git_dir = PathBuf::from(git_stdout(&worktree, &["rev-parse", "--git-dir"]));
+    let git_dir = if git_dir.is_absolute() {
+        git_dir
+    } else {
+        worktree.join(git_dir)
+    };
+    std::fs::write(git_dir.join("index.lock"), []).unwrap();
+    std::fs::write(git_dir.join("locked"), "interrupted fixture\n").unwrap();
+    let workspace_record = root.join(".graphhelm-workspaces/lane--stalled-status.json");
+    let mut record: Value =
+        serde_json::from_slice(&std::fs::read(&workspace_record).unwrap()).unwrap();
+    record["state"] = serde_json::json!("initializing");
+    std::fs::write(&workspace_record, serde_json::to_vec(&record).unwrap()).unwrap();
+    let target_record = root.join(".graphhelm-workspaces/targets/openbot-yamato/2484-wt.json");
+    std::fs::create_dir_all(target_record.parent().unwrap()).unwrap();
+    std::fs::write(
+        target_record,
+        serde_json::json!({
+            "schema": "graphhelm.slot-target/1",
+            "lane": "openbot-yamato",
+            "name": "2484-wt",
+            "worktree": "C:/ghc/openbot-yamato/2484-wt",
+            "target": "C:/ghc/openbot-yamato/2484-wt/target",
+            "firstUsedAt": 1,
+            "lastUsedAt": 1
+        })
+        .to_string(),
+    )
+    .unwrap();
     let hook = "sh -c 'sleep 30'";
     git(&worktree, &["config", "core.fsmonitor", hook]);
 

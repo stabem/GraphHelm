@@ -44,6 +44,7 @@ const PRIORITY_MARK: &str = "!";
 /// of every implement arrival key, so finishing work is served before new work starts.
 const FINISHING_MARK: &str = "+";
 const BUILD_ADMISSION_ENV: &str = "GRAPHHELM_BUILD_ADMISSION_DIR";
+const QUARANTINE_ATTEMPTS: u32 = 8;
 static PROCESS_ADMISSION_LOCK: Mutex<()> = Mutex::new(());
 
 fn lock_process_admission() -> Result<MutexGuard<'static, ()>, String> {
@@ -195,26 +196,52 @@ fn read_grants(admission: &Path) -> Result<Vec<Grant>, String> {
 /// Moves a NUL-filled ledger to `granted.corrupt-<UTC timestamp>` and returns one warning naming
 /// both paths. A failed move returns an error and leaves the evidence untouched.
 fn quarantine_torn_ledger(admission: &Path, ledger: &Path) -> Result<String, String> {
-    let aside = admission.join(format!(
-        "{GRANTS_FILE}.corrupt-{}",
-        utc_stamp(u64::try_from(unix_now() / 1_000_000_000).unwrap_or(0))
-    ));
-    move_corrupt_ledger(ledger, &aside)
+    let seconds = u64::try_from(unix_now() / 1_000_000_000).unwrap_or(0);
+    for attempt in 0..QUARANTINE_ATTEMPTS {
+        let aside = quarantine_path(admission, seconds, attempt);
+        match std::fs::hard_link(ledger, &aside) {
+            Ok(()) => {
+                if let Err(error) = std::fs::remove_file(ledger) {
+                    return Err(format!(
+                        "the build admission ledger {} was preserved at {} but could not be removed ({error})",
+                        ledger.display(),
+                        aside.display()
+                    ));
+                }
+                return Ok(format!(
+                    "graphhelm: the build admission ledger {} held only NUL and whitespace bytes (possibly a torn write); moved it to {} and started from an empty ledger",
+                    ledger.display(),
+                    aside.display()
+                ));
+            }
+            Err(error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists || aside.exists() =>
+            {
+                continue;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "the build admission ledger {} held only NUL and whitespace bytes but could not be moved to {} ({error}); it was not changed",
+                    ledger.display(),
+                    aside.display()
+                ));
+            }
+        }
+    }
+    Err(format!(
+        "the build admission ledger {} held only NUL and whitespace bytes but all {QUARANTINE_ATTEMPTS} quarantine names already exist; it was not changed",
+        ledger.display()
+    ))
 }
 
-fn move_corrupt_ledger(ledger: &Path, aside: &Path) -> Result<String, String> {
-    match std::fs::rename(ledger, aside) {
-        Ok(()) => Ok(format!(
-            "graphhelm: the build admission ledger {} held only NUL and whitespace bytes (possibly a torn write); moved it to {} and started from an empty ledger",
-            ledger.display(),
-            aside.display()
-        )),
-        Err(error) => Err(format!(
-            "the build admission ledger {} held only NUL and whitespace bytes but could not be moved to {} ({error}); it was not changed",
-            ledger.display(),
-            aside.display()
-        )),
-    }
+fn quarantine_path(admission: &Path, seconds: u64, attempt: u32) -> PathBuf {
+    let stamp = utc_stamp(seconds);
+    let suffix = if attempt == 0 {
+        String::new()
+    } else {
+        format!("-{attempt}")
+    };
+    admission.join(format!("{GRANTS_FILE}.corrupt-{stamp}{suffix}"))
 }
 
 /// `YYYYMMDDTHHMMSSZ` for a Unix time in seconds (UTC, proleptic Gregorian).
@@ -277,10 +304,21 @@ fn write_grants(admission: &Path, grants: &[Grant]) -> Result<(), String> {
         drop(file);
         std::fs::rename(&staged, admission.join(GRANTS_FILE))
     })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&staged);
+    match result {
+        Ok(()) => Ok(()),
+        Err(write_error) => match std::fs::remove_file(&staged) {
+            Ok(()) => Err(format!(
+                "the build admission ledger could not be written: {write_error}"
+            )),
+            Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => Err(
+                format!("the build admission ledger could not be written: {write_error}"),
+            ),
+            Err(cleanup_error) => Err(format!(
+                "the build admission ledger could not be written ({write_error}) and staged file {} could not be removed ({cleanup_error})",
+                staged.display()
+            )),
+        },
     }
-    result.map_err(|_| "the build admission ledger could not be written".to_owned())
 }
 
 fn grant_token() -> String {

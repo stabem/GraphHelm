@@ -8,6 +8,20 @@ use super::{
     run_admitted_slot_in_with_batch, run_slot_with_batch_payload, run_status, slot_dir,
 };
 
+const QUARANTINE_ATTEMPTS: u32 = 8;
+
+fn expected_quarantine_path(admission: &Path, seconds: u64, attempt: u32) -> std::path::PathBuf {
+    let stamp = chrono::DateTime::<chrono::Utc>::from_timestamp(i64::try_from(seconds).unwrap(), 0)
+        .unwrap()
+        .format("%Y%m%dT%H%M%SZ");
+    let suffix = if attempt == 0 {
+        String::new()
+    } else {
+        format!("-{attempt}")
+    };
+    admission.join(format!("granted.corrupt-{stamp}{suffix}"))
+}
+
 fn marker_command(log: &Path, tag: &str, millis: u64) -> Vec<String> {
     let log = log.to_string_lossy().replace('\'', "''");
     if cfg!(windows) {
@@ -798,7 +812,10 @@ fn a_torn_ledger_recovers_and_concurrent_admissions_remain_whole() {
             1,
             "the torn ledger is moved aside once: {moved:?}"
         );
-        let stamp = moved[0].trim_start_matches("granted.corrupt-");
+        let stamp = moved[0]
+            .trim_start_matches("granted.corrupt-")
+            .get(..16)
+            .expect("the quarantine filename starts with a UTC timestamp");
         let stamped = chrono::NaiveDateTime::parse_from_str(stamp, "%Y%m%dT%H%M%SZ")
             .expect("the quarantine filename carries a UTC timestamp")
             .and_utc()
@@ -951,13 +968,12 @@ fn failed_quarantine_returns_a_path_error_and_preserves_evidence() {
     let ledger = admission.join("granted");
     let bytes = vec![0_u8; 36];
     std::fs::write(&ledger, &bytes).unwrap();
-    let now = i64::try_from(super::unix_now() / 1_000_000_000).unwrap();
-    // Make the target occupied across the brief interval in which the probe runs.
-    for seconds in now..now + 120 {
-        let stamp = chrono::DateTime::<chrono::Utc>::from_timestamp(seconds, 0)
-            .unwrap()
-            .format("%Y%m%dT%H%M%SZ");
-        std::fs::create_dir(admission.join(format!("granted.corrupt-{stamp}"))).unwrap();
+    let now = u64::try_from(super::unix_now() / 1_000_000_000).unwrap();
+    // Occupy every bounded candidate across the interval in which the probe runs.
+    for seconds in now.saturating_sub(2)..=now + 120 {
+        for attempt in 0..QUARANTINE_ATTEMPTS {
+            std::fs::create_dir(expected_quarantine_path(&admission, seconds, attempt)).unwrap();
+        }
     }
 
     let output = run_ledger_quarantine_probe("refuse", &admission);
@@ -967,12 +983,60 @@ fn failed_quarantine_returns_a_path_error_and_preserves_evidence() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(output.status.success(), "{captured}");
-    assert!(captured.contains("could not be moved"), "{captured}");
+    assert!(captured.contains("all 8 quarantine names"), "{captured}");
     assert!(
         captured.contains(&ledger.display().to_string()),
         "{captured}"
     );
     assert_eq!(std::fs::read(&ledger).unwrap(), bytes);
+}
+
+#[test]
+fn repeated_quarantine_never_overwrites_regular_file_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let admission = dir.path().join("authority");
+    open_build_admission(&admission).unwrap();
+    let ledger = admission.join("granted");
+    let now = u64::try_from(super::unix_now() / 1_000_000_000).unwrap();
+    // Cover the second boundary while keeping the test deterministic and fast.
+    let mut preserved = std::collections::BTreeMap::new();
+    for seconds in now.saturating_sub(2)..=now + 3 {
+        let path = expected_quarantine_path(&admission, seconds, 0);
+        let bytes = format!("previous evidence for {seconds}").into_bytes();
+        std::fs::write(&path, &bytes).unwrap();
+        preserved.insert(path, bytes);
+    }
+
+    let first = vec![0_u8; 36];
+    std::fs::write(&ledger, &first).unwrap();
+    assert_eq!(super::granted_jobs(&admission), Ok(0));
+
+    let second = b"\0\0\n\0".to_vec();
+    std::fs::write(&ledger, &second).unwrap();
+    assert_eq!(super::granted_jobs(&admission), Ok(0));
+
+    for (path, bytes) in &preserved {
+        assert_eq!(std::fs::read(path).unwrap(), *bytes, "{path:?}");
+    }
+    let recovered: Vec<_> = std::fs::read_dir(&admission)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("granted.corrupt-")
+                && !preserved.contains_key(path)
+        })
+        .collect();
+    assert_eq!(recovered.len(), 2, "{recovered:?}");
+    let contents: Vec<_> = recovered
+        .iter()
+        .map(|path| std::fs::read(path).unwrap())
+        .collect();
+    assert!(contents.contains(&first), "{contents:?}");
+    assert!(contents.contains(&second), "{contents:?}");
+    assert!(!ledger.exists());
 }
 
 #[test]
@@ -995,7 +1059,7 @@ fn ledger_quarantine_probe_child() {
         }
         "refuse" => {
             let error = super::try_grant(&admission, &lock, 1, |_| true).unwrap_err();
-            assert!(error.contains("could not be moved"), "{error}");
+            assert!(error.contains("all 8 quarantine names"), "{error}");
             assert!(error.contains(&ledger.display().to_string()), "{error}");
             println!("{error}");
         }

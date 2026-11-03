@@ -511,7 +511,17 @@ fn read_state(dir: &Path) -> Option<Value> {
 }
 
 fn save_state(dir: &Path, state: &Value) {
-    let _ = write_state(dir, state);
+    if let Err(error) = write_state(dir, state) {
+        eprintln!(
+            "{}",
+            start_io_error(
+                "preview.state_write_failed",
+                "write preview state",
+                &dir.join(STATE),
+                &error
+            )
+        );
+    }
 }
 
 fn write_state(dir: &Path, state: &Value) -> std::io::Result<()> {
@@ -743,6 +753,8 @@ fn sensitive_environment_key(key: &str) -> bool {
 }
 
 const DETAIL_SECRET_LIMIT: usize = 64 * 1024;
+const COMPLETE_DETAIL: bool = false;
+const REQUIRE_EXISTING_DIRECTORY: bool = false;
 
 fn bounded_secrets(values: impl Iterator<Item = String>) -> Option<Vec<String>> {
     let mut secrets = Vec::new();
@@ -783,11 +795,15 @@ fn safe_tail(bytes: &[u8], cut: bool, secrets: Option<&[String]>) -> String {
             .unwrap_or(text.len());
         text.drain(..start);
     }
-    super::journey_replay::masked_tail(text.as_bytes(), false, 0, &[])
+    super::journey_replay::masked_tail(text.as_bytes(), COMPLETE_DETAIL, 0, &[])
 }
 
 fn safe_detail(text: &str) -> String {
-    safe_tail(text.as_bytes(), false, detail_secrets().as_deref())
+    safe_tail(
+        text.as_bytes(),
+        COMPLETE_DETAIL,
+        detail_secrets().as_deref(),
+    )
 }
 
 fn start_io_error(code: &str, operation: &str, path: &Path, error: &std::io::Error) -> Value {
@@ -1034,7 +1050,7 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
             Some(failure("preview.keyring_missing", "/keyring", 2)),
         );
     }
-    if safe_directory(&project.join(".graphhelm"), false).is_err() {
+    if safe_directory(&project.join(".graphhelm"), REQUIRE_EXISTING_DIRECTORY).is_err() {
         return io_answer(
             current,
             "preview.directory_unavailable",
@@ -1052,7 +1068,7 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
             &error,
         );
     }
-    if safe_directory(&dir, false).is_err() {
+    if safe_directory(&dir, REQUIRE_EXISTING_DIRECTORY).is_err() {
         return io_answer(
             current,
             "preview.directory_unavailable",
@@ -2717,7 +2733,7 @@ fn archive(dir: &Path, previous: &Value) -> std::io::Result<()> {
     let history = dir.join("history");
     let target = history.join(&id);
     std::fs::create_dir_all(&target)?;
-    if safe_directory(&target, false).is_err() {
+    if safe_directory(&target, REQUIRE_EXISTING_DIRECTORY).is_err() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "unsafe history directory",

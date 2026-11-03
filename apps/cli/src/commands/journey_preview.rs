@@ -873,7 +873,7 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
     // quickly (no observer, app down) must not have its result overwritten by this answer. The
     // runner writes its own pid.
     let running = json!({"preview":true,"kind":current["kind"],"digest":digest,"commit":commit,
-        "state":"running","startedAt":chrono::Utc::now().to_rfc3339(),"current":null,
+        "runId":uuid::Uuid::new_v4().to_string(),"state":"running","startedAt":chrono::Utc::now().to_rfc3339(),"current":null,
         "screens":{},"edges":{}});
     save_state(&dir, &running);
     match command.spawn() {
@@ -1435,7 +1435,8 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
     let mut state = read_state(&dir).unwrap_or_else(|| json!({}));
     if state["digest"] != digest.as_str() || state["state"] != "running" {
-        state = json!({"preview":true,"digest":digest,"commit":commit,"state":"running",
+        state = json!({"preview":true,"digest":digest,"commit":commit,
+            "runId":uuid::Uuid::new_v4().to_string(),"state":"running",
             "startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{}});
     }
     state["kind"] = if flow["status"] == "approved" {
@@ -2696,6 +2697,31 @@ mod tests {
         reap_lost, reap_lost_from, reap_lost_from_with, runner_liveness, runner_liveness_with,
         save_state, severity, step_reason, unsealed_proof, watch_budget, with_checks,
     };
+
+    /// #2464: the Runtime run identity survives both its start answer and later reads. Older
+    /// preview state remains readable but cannot claim an identity it never stored.
+    #[test]
+    fn a_preview_body_preserves_the_runtime_run_uuid_and_reads_legacy_state() {
+        use super::*;
+        let flow = json!({"status":"draft","screens":[],"edges":[]});
+        let digest = super::super::journey_flow::approval_digest(&flow);
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let stored = json!({"preview":true,"digest":digest,"commit":"c1","state":"running",
+            "runId":run_id,"startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{}});
+        let started = body(Some(stored.clone()), &flow, &digest, "c1");
+        let read_back = body(Some(stored), &flow, &digest, "c1");
+        assert_eq!(started["runId"], run_id);
+        assert_eq!(read_back["runId"], run_id);
+        uuid::Uuid::parse_str(read_back["runId"].as_str().unwrap()).unwrap();
+
+        let legacy = json!({"preview":true,"digest":digest,"commit":"c1","state":"running",
+            "startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{}});
+        let old = body(Some(legacy), &flow, &digest, "c1");
+        assert!(
+            old["runId"].is_null(),
+            "old state stays readable without a fabricated ID"
+        );
+    }
 
     /// #2086: a draft held for review is listed with the held edge as its `failingStep`, reason
     /// `review_needed`, so the Studio card reads the wait instead of "failed" (QA and the PR #2091

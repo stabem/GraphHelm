@@ -208,6 +208,8 @@ export interface CliOutput { argv: string; exit: number | null; stdout: string; 
 /** `GET|POST /v1/journey-flows/{id}/preview` (#519): the journey's run. While `running`, `screens`
  * holds only the screens reached so far; `observerSetup` reports the browser being prepared (#1763). */
 export interface JourneyRun {
+  /** #2464: opaque Runtime-generated UUID that identifies this exact preview run. */
+  runId?: string;
   state: "none" | "running" | "ready" | "failed";
   kind?: "replay" | "preview";
   startedAt?: string;
@@ -295,18 +297,19 @@ export class Runtime {
    * fire twice, two panels asking for the same list). Settled requests are not cached. */
   readonly #inflight = new Map<string, Promise<unknown>>();
 
-  #request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+  #request<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}, timeoutMs = 30_000): Promise<T> {
     if (method !== "GET" || body !== undefined || Object.keys(headers).length > 0) return this.#send<T>(method, path, body, headers);
-    const pending = this.#inflight.get(path);
+    const key = timeoutMs === 30_000 ? path : `${path}\u0000${timeoutMs}`;
+    const pending = this.#inflight.get(key);
     if (pending !== undefined) return pending as Promise<T>;
-    const started = this.#send<T>(method, path);
-    this.#inflight.set(path, started);
-    const settle = () => { this.#inflight.delete(path); };
+    const started = this.#send<T>(method, path, body, headers, timeoutMs);
+    this.#inflight.set(key, started);
+    const settle = () => { this.#inflight.delete(key); };
     started.then(settle, settle);
     return started;
   }
 
-  async #send<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+  async #send<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}, timeoutMs = 30_000): Promise<T> {
     let response: Response;
     try {
       response = await fetch(`${this.#base}${path}`, {
@@ -317,7 +320,7 @@ export class Runtime {
           ...headers,
         },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       throw new RuntimeError("The Runtime is not answering.");
@@ -349,8 +352,8 @@ export class Runtime {
     return view.flows;
   }
 
-  async journeyRun(flowId: string): Promise<JourneyRun> {
-    return this.#request<JourneyRun>("GET", `/v1/journey-flows/${encodeURIComponent(flowId)}/preview`);
+  async journeyRun(flowId: string, timeoutMs = 30_000): Promise<JourneyRun> {
+    return this.#request<JourneyRun>("GET", `/v1/journey-flows/${encodeURIComponent(flowId)}/preview`, undefined, {}, timeoutMs);
   }
 
   /** Run: `POST /v1/journey-flows/{id}/preview` with `force`, so a cached result is not served. An

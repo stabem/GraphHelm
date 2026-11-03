@@ -71,4 +71,23 @@ describe("a Runtime that refuses the token (#1897)", () => {
     await Promise.all([runtime.startJourneyRun("f1", null), runtime.startJourneyRun("f1", null)]);
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
+
+  it("#2464: a Run all GET uses its remaining deadline and does not merge with a longer read", async () => {
+    const pending: ((response: Response) => void)[] = [];
+    const requests: RequestInit[] = [];
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(init ?? {});
+      return new Promise<Response>((resolve) => pending.push(resolve));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = new Runtime("t");
+    const short = runtime.journeyRun("f1", 1_000);
+    const long = runtime.journeyRun("f1", 20_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const resolve of pending) resolve(new Response(JSON.stringify({ ok: true, data: { state: "running", runId: "2a19a79e-1905-4bc8-8caa-91c82744ae75" } }), { status: 200 }));
+    const [first, second] = await Promise.all([short, long]);
+    expect(first.runId).toBe(second.runId);
+    expect(requests).toHaveLength(2);
+    expect(requests.every((request) => request.signal instanceof AbortSignal)).toBe(true);
+  });
 });

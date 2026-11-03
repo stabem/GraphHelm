@@ -214,9 +214,7 @@ fn quarantine_torn_ledger(admission: &Path, ledger: &Path) -> Result<String, Str
                     aside.display()
                 ));
             }
-            Err(error)
-                if error.kind() == std::io::ErrorKind::AlreadyExists || aside.exists() =>
-            {
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists || aside.exists() => {
                 continue;
             }
             Err(error) => {

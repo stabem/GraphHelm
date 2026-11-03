@@ -653,6 +653,11 @@ impl Driver {
         self.last_page_error.take()
     }
 
+    /// A screen passed, so a pending event cannot explain its outcome.
+    pub(super) fn clear_page_error(&mut self) {
+        self.last_page_error = None;
+    }
+
     fn call_inner(&mut self, op: &str, mut request: Value, path: &str) -> Result<Value> {
         if op == "snapshot" {
             self.last_checks = None;
@@ -3267,10 +3272,7 @@ mod tests {
             driver.call("close", json!({}), "/peer").unwrap_err().0,
             "replay.driver_frame_invalid"
         );
-    }
 
-    #[test]
-    fn page_error_keeps_the_newest_sequence_across_snapshots() {
         let event = |sequence, message| json!({"sequence":sequence,"source":"console","message":message,"url":"http://127.0.0.1/page"});
         let fingerprint = format!("sha256:{}", "a".repeat(64));
         let frames = [

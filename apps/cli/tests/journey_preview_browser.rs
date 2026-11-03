@@ -160,17 +160,17 @@ fn page_error_records_bounded_event_source_and_event_time_url() {
     assert!(linked.success(), "OBSERVER_MISSING: toolchain link");
     let _owned_node_modules_link = OwnedNodeModulesLink(node_modules_link);
     let mut command = graphhelm_process::command("node");
-    command.args(["--input-type=module", "-e", r#"
+    command.args(["--input-type=module", "-e", r##"
         import http from 'node:http';
         const app=http.createServer((request,response)=>{
             const path=new URL(request.url,'http://fixture.invalid').pathname;
             response.writeHead(200,{'content-type':'text/html; charset=utf-8'});
-            if(path==='/start') return response.end('<h1>Start</h1><a href="/expected">Continue</a>');
-            if(path==='/expected') return response.end('<script>location.replace("/wrong?filter=recent&access_token=page_error_query_canary#private")</script>');
-            response.end('<h1>Wrong page</h1><script>throw new Error("fixture page error")</script>');
+            if(path==='/start') return response.end('<h1>Start</h1><a href="/expected">Continue</a><script>console.error("entry console event")</script>');
+            if(path==='/expected') return response.end('<script>location.replace("/wrong?filter=recent&access_token=page_error_query_canary&padding="+"x".repeat(800)+"#private")</script>');
+            response.end('<h1>Wrong page</h1><script>if(innerWidth===390) throw new Error("fixture page error mobile " + "😀".repeat(80)); console.error("fixture console error web " + "😀".repeat(80))</script>');
         });
         app.listen(0,'127.0.0.1',()=>console.log(JSON.stringify({base:'http://127.0.0.1:'+app.address().port})));
-    "#]);
+    "##]);
     let app = Server::start(command);
     let base = app.started["base"].as_str().unwrap().to_owned();
     std::fs::create_dir_all(project.path().join(".graphhelm/journeys")).unwrap();
@@ -217,12 +217,12 @@ fn page_error_records_bounded_event_source_and_event_time_url() {
         result["screens"]["expected"]["reason"], "page_error",
         "{result}"
     );
-    assert_eq!(detail["source"], "pageerror", "{result}");
+    assert_eq!(detail["source"], "console", "{result}");
     assert!(
         detail["message"]
             .as_str()
             .unwrap()
-            .contains("fixture page error"),
+            .contains("fixture console error web"),
         "{result}"
     );
     assert!(detail["message"].as_str().unwrap().len() <= 160, "{result}");
@@ -244,12 +244,44 @@ fn page_error_records_bounded_event_source_and_event_time_url() {
             result["viewports"][viewport]["screens"]["expected"]["reason"], "page_error",
             "{viewport}: {result}"
         );
+        let (expected_source, expected_word) = if viewport == "web" {
+            ("console", "fixture console error web")
+        } else {
+            ("pageerror", "fixture page error mobile")
+        };
         assert_eq!(
             result["viewports"][viewport]["screens"]["expected"]["pageError"]["source"],
-            "pageerror",
+            expected_source,
+            "{viewport}: {result}"
+        );
+        let viewport_error = &result["viewports"][viewport]["screens"]["expected"]["pageError"];
+        assert!(
+            viewport_error["message"].as_str().unwrap().len() <= 160,
+            "{viewport}: {result}"
+        );
+        assert!(
+            viewport_error["url"].as_str().unwrap().len() <= 512,
+            "{viewport}: {result}"
+        );
+        assert!(
+            viewport_error["url"]
+                .as_str()
+                .unwrap()
+                .contains("access_token=%5Bredacted%5D"),
+            "{viewport}: {result}"
+        );
+        assert!(
+            viewport_error["message"]
+                .as_str()
+                .unwrap()
+                .contains(expected_word),
             "{viewport}: {result}"
         );
     }
+    assert!(
+        !result.to_string().contains("entry console event"),
+        "a successful screen consumes its event"
+    );
 }
 
 struct Server {

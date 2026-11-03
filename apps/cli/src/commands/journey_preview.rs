@@ -1984,7 +1984,7 @@ fn play_path(
                 Ok(_) => {
                     let frame = run.capture(driver, output.path(), screen);
                     run.prove(screen, frame.as_ref())?;
-                    let _ = driver.take_page_error();
+                    driver.clear_page_error();
                     run.screen(screen, "pass", None, with_checks(frame, checks), None);
                     Ok(true)
                 }

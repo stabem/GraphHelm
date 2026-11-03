@@ -82,9 +82,7 @@ function pageErrorUrl() {
   try { parsed = new URL(page.url()); } catch { return '[unavailable]'; }
   parsed.username = ''; parsed.password = ''; parsed.hash = '';
   for (const key of parsed.searchParams.keys()) {
-    let decoded = key;
-    try { decoded = decodeURIComponent(key.replaceAll('+', ' ')); } catch {}
-    if (/(?:secret|token|password|auth|credential|api[-_]?key|session|code)/i.test(decoded)) parsed.searchParams.set(key, '[redacted]');
+    if (/(?:secret|token|password|auth|credential|api[-_]?key|session|code)/i.test(key)) parsed.searchParams.set(key, '[redacted]');
   }
   return utf8Prefix(redacted(parsed.href), 512) || '[unavailable]';
 }

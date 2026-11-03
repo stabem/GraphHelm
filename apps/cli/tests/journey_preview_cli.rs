@@ -565,6 +565,90 @@ fn a_preview_installs_a_missing_observer_and_refreshes_a_stale_copy() {
 }
 
 #[test]
+fn a_failing_launcher_masks_environment_secrets_in_replies_and_saved_state() {
+    let flow = BACKEND_FLOW.replace(
+        "kind: cli, role: exec, name: sh greet.sh",
+        "kind: http, role: GET, name: /status.json",
+    );
+    let dir = draft_with_flow(FLOW);
+    std::fs::write(
+        dir.path().join(".graphhelm/journeys/backend.journey.yaml"),
+        flow,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(".graphhelm/journey-fixture.json"),
+        r#"{"schema":"graphhelm-journey-fixture/1","script":"fail.sh","isolated":true}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("fail.sh"),
+        "if [ \"$1\" = up ]; then printf '%s\\n' \"$FIXTURE_TOKEN\" >&2; exit 1; fi\n",
+    )
+    .unwrap();
+    let (code, reply) = cli(
+        dir.path(),
+        &["compile", "backend", "--fmt", "--include-draft"],
+    );
+    assert_eq!(code, 0, "{reply}");
+    for args in [
+        vec!["add", "."],
+        vec!["commit", "--quiet", "--no-verify", "-m", "failing launcher"],
+    ] {
+        assert!(
+            graphhelm_process::command("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    let canary = "fixture_canary_2502_only";
+    let invoke = |flag| {
+        let output = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"))
+            .args(["--json", "journey", "preview", "backend", flag, "--project"])
+            .arg(dir.path())
+            .env("FIXTURE_TOKEN", canary)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    std::fs::create_dir_all(dir.path().join(".graphhelm/journey-previews/backend")).unwrap();
+    for flag in ["--run", "--force"] {
+        let mut reply = invoke(flag);
+        let deadline = Instant::now() + scaled(Duration::from_secs(60));
+        while reply["data"]["state"] == "running" {
+            assert!(Instant::now() < deadline, "launcher did not settle");
+            std::thread::sleep(Duration::from_millis(100));
+            reply = invoke("--read");
+        }
+        assert_eq!(reply["data"]["reason"], "watch.launch_failed", "{reply}");
+        assert!(
+            !reply.to_string().contains(canary),
+            "launcher reply leaked the canary"
+        );
+        assert!(
+            reply["data"]["launchLog"]["tail"]
+                .as_str()
+                .unwrap()
+                .contains("***")
+        );
+        let state = std::fs::read_to_string(
+            dir.path()
+                .join(".graphhelm/journey-previews/backend/state.json"),
+        )
+        .unwrap();
+        assert!(
+            !state.contains(canary),
+            "saved launcher state leaked the canary"
+        );
+    }
+}
+
+#[test]
 fn a_missing_launcher_shell_is_recorded_as_a_spawn_failure() {
     let dir = draft();
     std::fs::write(

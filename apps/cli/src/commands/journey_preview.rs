@@ -1317,7 +1317,7 @@ fn reap_lost_from_with(
     {
         stop.stop();
     }
-    if let Some(log) = runner_log(dir) {
+    if let Some(log) = safe_log(&dir.join(RUNNER_LOG)) {
         state["launchLog"] = log;
     }
     state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
@@ -1338,10 +1338,9 @@ fn reap_lost_from_with(
 
 /// The runner's own stderr as a lost run's `launchLog` (#1298): its path and its last
 /// `RUNNER_LOG_TAIL` bytes, or nothing when the log is missing, unsafe or empty.
-fn runner_log(dir: &Path) -> Option<Value> {
+fn safe_log(path: &Path) -> Option<Value> {
     use std::io::{Read as _, Seek as _};
-    let path = dir.join(RUNNER_LOG);
-    if !safe_node(&path) {
+    if !safe_node(path) {
         return None;
     }
     let secrets = detail_secrets();
@@ -1350,7 +1349,7 @@ fn runner_log(dir: &Path) -> Option<Value> {
         .and_then(|values| values.iter().map(String::len).max())
         .unwrap_or_default();
     let limit = RUNNER_LOG_TAIL + slack;
-    let mut file = std::fs::File::open(&path).ok()?;
+    let mut file = std::fs::File::open(path).ok()?;
     let size = file.metadata().ok()?.len();
     let start = size.saturating_sub(limit as u64);
     file.seek(std::io::SeekFrom::Start(start)).ok()?;
@@ -1954,7 +1953,12 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         }
         Err((code, pointer, _)) => {
             if let Some(log) = super::journey_live::take_launch_log() {
-                run.state["launchLog"] = log;
+                // Read the original log with secret overlap before bounding its tail. The
+                // launcher's already-cut tail can contain only the suffix of a secret.
+                run.state["launchLog"] = log["path"]
+                    .as_str()
+                    .and_then(|path| safe_log(Path::new(path)))
+                    .unwrap_or(Value::Null);
             }
             // The driver's own masked stderr tail when it died before answering (#1448).
             if let Some(log) = super::journey_replay::take_driver_log() {

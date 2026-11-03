@@ -31,5 +31,6 @@
 - [#2463](https://github.com/stabem/GraphHelm/pull/2463) The notes add source-linked entries for #2457 and #2397 and correct the #2431 and #2453 claims after review.
 - [#2456](https://github.com/stabem/GraphHelm/pull/2456) The Codex-end test records the helper-spawn thread start.
 - [#2478](https://github.com/stabem/GraphHelm/pull/2478) The Codex-end guard now checks the helper marker before the timeout return and adds a watchdog-path test; the slow-briefing test no longer races interpreter startup.
+- [#2474](https://github.com/stabem/GraphHelm/pull/2474) The MCP tests check that every listed tool refuses calls missing its required capability.
 
 ## Removed

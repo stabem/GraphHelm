@@ -167,7 +167,7 @@ fn page_error_records_bounded_event_source_and_event_time_url() {
             response.writeHead(200,{'content-type':'text/html; charset=utf-8'});
             if(path==='/start') return response.end('<h1>Start</h1><a href="/expected">Continue</a><script>console.error("entry console event")</script>');
             if(path==='/expected') return response.end('<script>location.replace("/wrong?filter=recent&access_token=page_error_query_canary&padding="+"x".repeat(800)+"#private")</script>');
-            response.end('<h1>Wrong page</h1><script>if(innerWidth===390) throw new Error("fixture page error mobile " + "😀".repeat(80)); console.error("fixture console error web " + "😀".repeat(80))</script>');
+            response.end('<h1>Wrong page</h1><script>if(navigator.userAgent.includes("Mobile")) throw new Error("fixture page error mobile " + "😀".repeat(80)); console.error("fixture console error web " + "😀".repeat(80))</script>');
         });
         app.listen(0,'127.0.0.1',()=>console.log(JSON.stringify({base:'http://127.0.0.1:'+app.address().port})));
     "##]);

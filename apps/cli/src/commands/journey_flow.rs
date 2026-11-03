@@ -1384,7 +1384,7 @@ fn report(
     }
 }
 
-fn files(project: &Path, ids: &[String]) -> Option<Vec<std::path::PathBuf>> {
+pub(super) fn files(project: &Path, ids: &[String]) -> Option<Vec<std::path::PathBuf>> {
     let root = project.canonicalize().ok()?;
     let directory = project.join(".graphhelm/journeys");
     if !directory.canonicalize().ok()?.starts_with(&root) {

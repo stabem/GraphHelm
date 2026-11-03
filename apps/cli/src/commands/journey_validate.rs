@@ -104,6 +104,23 @@ pub fn run(args: &JourneyValidateArgs) -> Outcome {
     if files.is_empty() {
         return input_error("name at least one contract file, or pass --all", "/files");
     }
+    files = files
+        .into_iter()
+        .map(|file| {
+            if file.is_file()
+                && (file.to_string_lossy().ends_with(".json")
+                    || file.to_string_lossy().ends_with(".journey.yaml"))
+            {
+                return file;
+            }
+            let Some(id) = file.to_str().filter(|id| valid_journey_id(id)) else {
+                return file;
+            };
+            super::journey_flow::files(&project, &[id.to_owned()])
+                .and_then(|resolved| resolved.into_iter().next())
+                .unwrap_or(file)
+        })
+        .collect();
     let mut reports = Vec::new();
     let mut diagnostics = Vec::new();
     for file in &files {

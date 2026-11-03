@@ -3756,7 +3756,8 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let stored = json!({"launchLog":{"path":"/private/runner.log","tail":tail},
             "driverLog":{"path":"/private/driver.log","tail":format!("token={secret}")}});
         let before = stored.clone();
-        let reply = super::history_entry("old".into(), stored.clone(), &[secret.clone()]);
+        let reply =
+            super::history_entry("old".into(), stored.clone(), std::slice::from_ref(&secret));
         for key in ["launchLog", "driverLog"] {
             assert_eq!(reply[key].as_object().unwrap().len(), 1);
             let text = reply[key]["tail"].as_str().unwrap();

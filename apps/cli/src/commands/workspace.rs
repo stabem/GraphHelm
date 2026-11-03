@@ -8,7 +8,8 @@
 //! bytes: still clean, still at the released sha. A path the ledger did not create is never
 //! touched, and a symlink or junction inside a workspace is removed as a link, never followed.
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::Stdio;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use graphhelm_protocols::Diagnostic;
 use serde_json::{Value, json};
@@ -19,6 +20,9 @@ use crate::output::Outcome;
 pub(crate) const SCHEMA: &str = "graphhelm.workspace/1";
 pub(crate) const LEDGER: &str = ".graphhelm-workspaces";
 const PARTS: [&str; 3] = ["target", "tmp", "logs"];
+const GIT_TIMEOUT: Duration = Duration::from_secs(10);
+const WORKTREE_ADD_TIMEOUT: Duration = Duration::from_secs(300);
+const LIST_GIT_BUDGET: Duration = Duration::from_secs(8);
 
 pub fn run(args: &WorkspaceArgs) -> Outcome {
     match &args.command {
@@ -115,18 +119,35 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
-fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = graphhelm_process::command("git")
+fn git_with_timeout(dir: &Path, args: &[&str], timeout: Duration) -> Result<String, String> {
+    let mut command = graphhelm_process::command("git");
+    command
         .arg("-C")
         .arg(dir)
         .args(args)
-        .output()
-        .map_err(|_| "git could not be started".to_owned())?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match graphhelm_process_tree::run_bounded(command, timeout)? {
+        Some((true, stdout, _)) => Ok(stdout.trim().to_owned()),
+        Some((false, _, stderr)) => Err(stderr.trim().to_owned()),
+        None => Err(format!(
+            "git {} exceeded its {} second deadline and its process tree was stopped",
+            args.join(" "),
+            timeout.as_secs()
+        )),
     }
+}
+
+fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    git_with_timeout(dir, args, GIT_TIMEOUT)
+}
+
+fn git_before(dir: &Path, args: &[&str], deadline: Instant) -> Result<String, String> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err("workspace list reached its Git inspection deadline".to_owned());
+    }
+    git_with_timeout(dir, args, remaining)
 }
 
 fn write_record(file: &Path, record: &Value) -> std::io::Result<()> {
@@ -201,7 +222,37 @@ fn run_claim(
     if base.starts_with('-') || branch.starts_with('-') {
         return input(COMMAND, "base and branch may not start with `-`", "/base");
     }
-    if std::fs::create_dir_all(&dir).is_err() {
+    let base_head = match git_with_timeout(repo, &["rev-parse", base], GIT_TIMEOUT) {
+        Ok(head) => head,
+        Err(message) => {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                &format!("the claim base could not be resolved: {message}"),
+                "/base",
+            );
+        }
+    };
+    let branch_ref = format!("refs/heads/{branch}");
+    let refs = match git_with_timeout(
+        repo,
+        &["for-each-ref", "--format=%(refname)", &branch_ref],
+        GIT_TIMEOUT,
+    ) {
+        Ok(refs) => refs,
+        Err(message) => {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                &format!("the requested branch could not be checked: {message}"),
+                "/branch",
+            );
+        }
+    };
+    let branch_previously_existed = refs.lines().any(|found| found == branch_ref);
+    if std::fs::create_dir_all(dir.parent().unwrap_or(root)).is_err()
+        || std::fs::create_dir(&dir).is_err()
+    {
         return input(
             COMMAND,
             "the workspace directory could not be created",
@@ -209,7 +260,29 @@ fn run_claim(
         );
     }
     let worktree = dir.join("wt");
-    if let Err(message) = git(
+    let repo_path = std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
+    let mut record = json!({
+        "schema": SCHEMA, "lane": lane, "task": task, "branch": branch, "base": base,
+        "repo": repo_path.to_string_lossy(), "state": "initializing",
+        "baseHead": base_head, "branchPreviouslyExisted": branch_previously_existed,
+        "claimPid": std::process::id(), "claimedAt": null, "releasedAt": null,
+        "releasedHead": null, "sweptAt": null,
+    });
+    if let Err(record_error) = write_record(&file, &record) {
+        return match std::fs::remove_dir(&dir) {
+            Ok(()) => Outcome::internal(
+                COMMAND,
+                format!("the initializing workspace record could not be written: {record_error}"),
+            ),
+            Err(cleanup_error) => Outcome::internal(
+                COMMAND,
+                format!(
+                    "the initializing workspace record could not be written ({record_error}), and its empty directory could not be removed ({cleanup_error})"
+                ),
+            ),
+        };
+    }
+    if let Err(message) = git_with_timeout(
         repo,
         &[
             "worktree",
@@ -219,10 +292,13 @@ fn run_claim(
             &worktree.to_string_lossy(),
             base,
         ],
+        WORKTREE_ADD_TIMEOUT,
     ) {
-        // Nothing was recorded; remove only the empty directories this call made.
-        let _ = std::fs::remove_dir(&dir);
-        let _ = std::fs::remove_dir(dir.parent().unwrap_or(root));
+        record["state"] = json!("failed");
+        record["claimFailure"] = json!(message);
+        if write_record(&file, &record).is_err() {
+            return Outcome::internal(COMMAND, "the failed workspace claim could not be recorded");
+        }
         return refuse(
             COMMAND,
             crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
@@ -233,12 +309,8 @@ fn run_claim(
     for part in PARTS {
         let _ = std::fs::create_dir_all(dir.join(part));
     }
-    let record = json!({
-        "schema": SCHEMA, "lane": lane, "task": task, "branch": branch, "base": base,
-        "repo": std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf()).to_string_lossy(),
-        "state": "claimed", "claimedAt": now(), "releasedAt": null, "releasedHead": null,
-        "sweptAt": null,
-    });
+    record["state"] = json!("claimed");
+    record["claimedAt"] = json!(now());
     if write_record(&file, &record).is_err() {
         return Outcome::internal(COMMAND, "the workspace record could not be written");
     }
@@ -264,6 +336,15 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
             "/task",
         );
     };
+    if record["state"] == "initializing" || record["state"] == "failed" {
+        return recover_interrupted_claim(
+            &file,
+            &record,
+            lane,
+            task,
+            &workspace_dir(root, lane, task),
+        );
+    }
     if record["state"] != "claimed" {
         return refuse(
             COMMAND,
@@ -295,6 +376,256 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
     Outcome::success(
         COMMAND,
         json!({"lane": lane, "task": task, "releasedHead": head, "dirty": dirty}),
+    )
+}
+
+fn recover_interrupted_claim(
+    file: &Path,
+    record: &Value,
+    lane: &str,
+    task: &str,
+    workspace: &Path,
+) -> Outcome {
+    const COMMAND: &str = "workspace.release";
+    let Some(pid) = record["claimPid"]
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+    else {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "the interrupted claim has no valid owner process; preserve it for manual inspection",
+            "/claimPid",
+        );
+    };
+    if graphhelm_process_tree::process_is_running(pid) {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "the workspace claim process is still running; retry release after it exits",
+            "/claimPid",
+        );
+    }
+    let Some(repo) = record["repo"].as_str().map(Path::new) else {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "the interrupted claim has no repository path; preserve it for manual inspection",
+            "/repo",
+        );
+    };
+    let worktree = workspace.join("wt");
+    if is_link_path(workspace) || is_link_path(&worktree) {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "the interrupted workspace contains a directory link; remove it only after inspection",
+            "/worktree",
+        );
+    }
+    if worktree.exists() {
+        match first_link(&worktree, &worktree) {
+            Ok(Some(path)) => {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    &format!(
+                        "the interrupted worktree contains a link at {}; preserve it for inspection",
+                        path.display()
+                    ),
+                    "/worktree",
+                );
+            }
+            Err((path, error)) => {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    &format!(
+                        "the interrupted worktree could not be checked at {}: {error}",
+                        path.display()
+                    ),
+                    "/worktree",
+                );
+            }
+            Ok(None) => {}
+        }
+        let status = match git_with_timeout(
+            &worktree,
+            &[
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--ignored",
+            ],
+            GIT_TIMEOUT,
+        ) {
+            Ok(status) => status,
+            Err(message) => {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    &format!(
+                        "the interrupted worktree status could not be checked; preserve it for inspection: {message}"
+                    ),
+                    "/worktree",
+                );
+            }
+        };
+        if !status.is_empty() {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                "the interrupted worktree has changes or untracked files; preserve it for inspection",
+                "/worktree",
+            );
+        }
+        if let Err(message) = git_with_timeout(
+            repo,
+            &["worktree", "remove", worktree.to_string_lossy().as_ref()],
+            GIT_TIMEOUT,
+        ) {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                &format!("the interrupted worktree could not be safely removed: {message}"),
+                "/worktree",
+            );
+        }
+        if worktree.exists() {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                "Git reported removal but the interrupted worktree still exists; preserve it for inspection",
+                "/worktree",
+            );
+        }
+    }
+    let worktree_list = match git_with_timeout(
+        repo,
+        &["worktree", "list", "--porcelain"],
+        GIT_TIMEOUT,
+    ) {
+        Ok(list) => list,
+        Err(message) => {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                &format!(
+                    "the repository worktree registry could not be checked after removal: {message}"
+                ),
+                "/repo",
+            );
+        }
+    };
+    if worktree_list.lines().any(|line| {
+        line.strip_prefix("worktree ")
+            .is_some_and(|path| Path::new(path) == worktree)
+    }) {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "Git still lists the interrupted worktree after removal; preserve it for inspection",
+            "/worktree",
+        );
+    }
+    if record["branchPreviouslyExisted"] == false {
+        let (Some(branch), Some(base_head)) =
+            (record["branch"].as_str(), record["baseHead"].as_str())
+        else {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                "the interrupted claim lacks branch ownership data; preserve it for inspection",
+                "/branch",
+            );
+        };
+        let branch_ref = format!("refs/heads/{branch}");
+        let refs = match git_with_timeout(
+            repo,
+            &[
+                "for-each-ref",
+                "--format=%(refname) %(objectname)",
+                &branch_ref,
+            ],
+            GIT_TIMEOUT,
+        ) {
+            Ok(refs) => refs,
+            Err(message) => {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    &format!("the interrupted branch could not be checked: {message}"),
+                    "/branch",
+                );
+            }
+        };
+        if let Some((_, head)) = refs.lines().find_map(|line| {
+            let (name, head) = line.split_once(' ')?;
+            (name == branch_ref).then_some((name, head))
+        }) {
+            if head != base_head {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    "the interrupted claim branch moved after setup; preserve the branch for inspection",
+                    "/branch",
+                );
+            }
+            if worktree_list
+                .lines()
+                .any(|line| line == format!("branch {branch_ref}"))
+            {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    "the interrupted claim branch is checked out in another worktree; preserve it for inspection",
+                    "/branch",
+                );
+            }
+            if let Err(message) = git_with_timeout(
+                repo,
+                &["update-ref", "-d", &branch_ref, base_head],
+                GIT_TIMEOUT,
+            ) {
+                return refuse(
+                    COMMAND,
+                    crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                    &format!("the interrupted claim branch could not be cleared safely: {message}"),
+                    "/branch",
+                );
+            }
+        }
+    }
+    for part in PARTS {
+        let part_path = workspace.join(part);
+        if part_path.exists() && std::fs::remove_dir(&part_path).is_err() {
+            return refuse(
+                COMMAND,
+                crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+                "the interrupted workspace contains other data; preserve it for inspection",
+                "/workspace",
+            );
+        }
+    }
+    if workspace.exists() && std::fs::remove_dir(workspace).is_err() {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            "the interrupted workspace contains other data; preserve it for inspection",
+            "/workspace",
+        );
+    }
+    if std::fs::remove_file(file).is_err() {
+        return Outcome::internal(
+            COMMAND,
+            "the recovered workspace record could not be removed",
+        );
+    }
+    Outcome::success(
+        COMMAND,
+        json!({"lane": lane, "task": task, "cleared": true,
+            "branch": record["branch"], "recovered": true,
+            "note": "the interrupted claim was cleaned after its process exited; unrelated data was preserved"}),
     )
 }
 
@@ -1193,7 +1524,13 @@ fn sweep_targets(root: &Path, apply: bool, held_lane: Option<(&str, &Path)>) -> 
     json!({"removed": removed, "kept": kept})
 }
 
-fn live(root: &Path, record: &Value, sizes: bool) -> Value {
+#[derive(Clone, Copy)]
+enum LiveSizeMode {
+    Include,
+    Omit,
+}
+
+fn live(root: &Path, record: &Value, size_mode: LiveSizeMode, deadline: Instant) -> Value {
     let (lane, task) = (
         record["lane"].as_str().unwrap_or_default(),
         record["task"].as_str().unwrap_or_default(),
@@ -1201,20 +1538,27 @@ fn live(root: &Path, record: &Value, sizes: bool) -> Value {
     let dir = workspace_dir(root, lane, task);
     let worktree = dir.join("wt");
     // Preserve the legacy view for plain list/sweep; sized reads never enter linked ancestors.
-    let ancestry = if sizes {
+    let ancestry = if matches!(size_mode, LiveSizeMode::Include) {
         linked_ancestor(&worktree)
     } else {
         Ok(false)
     };
     let blocked = ancestry.unwrap_or(true);
-    let head = if blocked {
-        None
+    let (head, dirty, status_error) = if blocked {
+        (
+            None,
+            Some(true),
+            Some("workspace path is linked or cannot be inspected".to_owned()),
+        )
     } else {
-        git(&worktree, &["rev-parse", "HEAD"]).ok()
+        match git_before(&worktree, &["rev-parse", "HEAD"], deadline) {
+            Ok(head) => match git_before(&worktree, &["status", "--porcelain"], deadline) {
+                Ok(status) => (Some(head), Some(!status.is_empty()), None),
+                Err(error) => (None, Some(true), Some(error)),
+            },
+            Err(error) => (None, Some(true), Some(error)),
+        }
     };
-    let dirty = head
-        .as_ref()
-        .map(|_| git(&worktree, &["status", "--porcelain"]).map_or(true, |s| !s.is_empty()));
     // A lane, task or worktree directory that is itself a link would make every path below it
     // resolve somewhere the ledger never created; such a workspace is reported, never removed.
     let linked = ancestry.unwrap_or(false)
@@ -1237,6 +1581,7 @@ fn live(root: &Path, record: &Value, sizes: bool) -> Value {
     json!({"lane": lane, "task": task, "branch": record["branch"], "state": record["state"],
         "linked": linked, "linkInWorktree": link_in_worktree, "scanError": scan_error,
         "path": dir.to_string_lossy(), "exists": dir.exists(), "head": head, "dirty": dirty,
+        "statusError": status_error,
         "releasedHead": record["releasedHead"], "sizeBytes": if blocked { 0 } else { size_of(&dir) }})
 }
 
@@ -1289,7 +1634,16 @@ fn measured_bytes(base: &Path) -> Result<u64, String> {
 
 pub(crate) fn run_list(root: &Path, sizes: bool) -> Outcome {
     const COMMAND: &str = "workspace.list";
-    let mut listed: Vec<Value> = records(root).iter().map(|r| live(root, r, sizes)).collect();
+    let deadline = Instant::now() + LIST_GIT_BUDGET;
+    let size_mode = if sizes {
+        LiveSizeMode::Include
+    } else {
+        LiveSizeMode::Omit
+    };
+    let mut listed: Vec<Value> = records(root)
+        .iter()
+        .map(|r| live(root, r, size_mode, deadline))
+        .collect();
     let mut data = json!({"root": root.to_string_lossy(), "workspaces": []});
     if sizes {
         let mut lanes = serde_json::Map::new();
@@ -1440,7 +1794,12 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
     let mut removed = Vec::new();
     let mut kept = Vec::new();
     for mut record in records(root) {
-        let view = live(root, &record, false);
+        let view = live(
+            root,
+            &record,
+            LiveSizeMode::Omit,
+            Instant::now() + GIT_TIMEOUT,
+        );
         let (lane, task) = (
             view["lane"].as_str().unwrap_or_default().to_owned(),
             view["task"].as_str().unwrap_or_default().to_owned(),

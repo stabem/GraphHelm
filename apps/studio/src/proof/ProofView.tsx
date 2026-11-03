@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import type { JourneyFlow, JourneyRun, Runtime } from "../runtime/client";
+import { RuntimeError, type JourneyFlow, type JourneyRun, type Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
 import { CheckMarks, CompareFrame } from "./CompareFrame";
 import { FrameWaiting } from "./FrameWaiting";
@@ -12,7 +12,7 @@ import { failureNotice, type FailureNotice } from "./failure";
 import { fixAsk, fixBody, fixRequestId, fixTitle, NOTE_MAX, offersFix } from "./send-fix";
 import { askedWhen } from "../lanes/asked";
 import { OWNER } from "../runtime/client";
-import { RUN_ALL_TIMEOUT_MS, runAllUntil } from "./run-all";
+import { clearRunAllBatch, isRunAllRunId, makeRunAllBatch, readRunAllBatch, reconcileRunAllJourney, RunAllIdentityFailure, RunAllReadFailure, RUN_ALL_TIMEOUT_MS, runAllUntil, runAllViewIsCurrent, updateRunAllJourney, writeRunAllBatch, type RunAllBatch, type RunAllJourneyState, type RunAllReason } from "./run-all";
 import { countSteps, failsOnlyOn, waitsForFrame, staleCountsText, stepStatusText, isHeld, isWaitingReview, journeyKind, journeyScore, journeySteps, lastRunChip, historyChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
 import { Empty, Loading, ReadFailure } from "../states/ViewState";
@@ -21,6 +21,7 @@ import { when } from "../time/when";
 import { journeyToFix } from "../sidebar/project-summary";
 
 interface ProofViewProps {
+  projectKey: string;
   runtime: Runtime;
   journeys: JourneyFlow[] | null;
   error: string | null;
@@ -48,9 +49,43 @@ function nameOf(flow: JourneyFlow): string {
   return flow.name || flow.title || flow.id;
 }
 
+function runAllReasonText(reason: RunAllReason | undefined): string {
+  switch (reason) {
+    case "start_rejected": return "The Runtime rejected the start request.";
+    case "post_outcome_unknown": return "The Runtime may have accepted the start, but Studio did not get its reply.";
+    case "read_deadline": return "Studio could not confirm the run before the wait limit.";
+    case "read_failed": return "Studio could not read the Runtime; this run may still be active.";
+    case "run_identity_unknown": return "The Runtime did not confirm this exact run.";
+    case "storage_failed": return "Studio could not safely save the batch state.";
+    case "view_left": return "The Proof view closed while this batch was running.";
+    case "reloaded": return "Studio was reloaded before this batch finished.";
+    default: return "The batch stopped before this journey started.";
+  }
+}
+
+function withInterruptedReason(batch: RunAllBatch, reason: RunAllReason, updatedAt = Date.now()): RunAllBatch {
+  return { ...batch, reason, updatedAt, journeys: batch.journeys.map((journey) => journey.phase === "not_started"
+    ? { ...journey, reason, updatedAt }
+    : journey) };
+}
+
+function lockName(projectKey: string): string {
+  return `graphhelm:studio:run-all:v1:${encodeURIComponent(projectKey)}`;
+}
+
+export function runAllJourneyNotice(journey: RunAllJourneyState | undefined, reason: RunAllReason | undefined): string | null {
+  if (journey === undefined || reason === undefined) return null;
+  const detail = runAllReasonText(journey.reason ?? reason);
+  if (journey.phase === "not_started") return `Not started: batch interrupted. ${detail}`;
+  if (journey.phase === "start_pending") return "Observation interrupted; run state unknown. Studio did not get the start reply and cannot say whether the Runtime accepted it.";
+  if (journey.phase === "running") return "Observation interrupted; run state unknown. The Runtime last confirmed it was running; it may still be active, and Studio did not record a result.";
+  if (journey.phase === "unknown") return `Observation interrupted; run state unknown. ${detail}`;
+  return `This run finished, but the batch remainder was not resumed. ${detail}`;
+}
+
 /** The Proof region (docs/design/studio/Proof.dc.html): the journeys column, then the selected
  * journey's run bar, console, step grid and the selected step's compare and Action panel. */
-export function ProofView({ runtime, journeys, error, executionId, onRan, initial = null, onPicked }: ProofViewProps) {
+export function ProofView({ projectKey, runtime, journeys, error, executionId, onRan, initial = null, onPicked }: ProofViewProps) {
   // The journey a deep link named (`studio open --journey`), until the owner picks another.
   const [picked, setPickedState] = useState<string | null>(initial);
   const setPicked = (id: string) => { setPickedState(id); onPicked?.(id); };
@@ -100,9 +135,10 @@ export function ProofView({ runtime, journeys, error, executionId, onRan, initia
     setLive((before) => ({ ...before, [id]: { state: "running" } }));
     if (id === selected?.id) setReread((n) => n + 1);
   };
+  const observedRun = (id: string, run: JourneyRun) => { setLive((before) => ({ ...before, [id]: run })); };
   return (
     <section id="panel-proof" aria-label="Proof" className="proof">
-      <JourneysColumn runtime={runtime} journeys={journeys} selected={selected?.id ?? null} executionId={executionId} onPick={setPicked} onStarted={started} onRan={onRan} live={live} />
+      <JourneysColumn projectKey={projectKey} runtime={runtime} journeys={journeys} selected={selected?.id ?? null} executionId={executionId} onPick={setPicked} onStarted={started} onObserved={observedRun} onRan={onRan} live={live} />
       {selected === null
         ? <div className="proof-main"><Empty title="No journeys yet" hint="This project has no journeys yet. A journey appears here once one is drafted for a request." /></div>
         : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} executionId={executionId} onRan={onRan} onRun={(run) => setLive((before) => ({ ...before, [selected.id]: run }))} onGone={() => setLive((before) => afterPanelGone(before, selected.id))} />}
@@ -111,21 +147,133 @@ export function ProofView({ runtime, journeys, error, executionId, onRan, initia
 }
 
 interface ColumnProps {
+  projectKey: string;
   runtime: Runtime;
   journeys: JourneyFlow[];
   selected: string | null;
   executionId: string | null;
   onPick: (id: string) => void;
   onStarted: (id: string) => void;
+  onObserved: (id: string, run: JourneyRun) => void;
   onRan: () => void;
   live: Record<string, JourneyRun>;
 }
 
-function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onStarted, onRan, live }: ColumnProps) {
+function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, onPick, onStarted, onObserved, onRan, live }: ColumnProps) {
   const [busy, setBusy] = useState<string | null>(null);
   // #1914: the journey Run all is playing now; its card reads running even when no panel follows it.
   const [active, setActive] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [interruptedBatch, setInterruptedBatch] = useState<RunAllBatch | null>(null);
+  const mounted = useRef(true);
+  const viewGeneration = useRef(0);
+  const observed = useRef(onObserved);
+  observed.current = onObserved;
+  useEffect(() => {
+    const generation = ++viewGeneration.current;
+    let live = true;
+    mounted.current = true;
+    let storage: Storage;
+    try { storage = window.localStorage; }
+    catch { if (live) setRefusal("Studio could not read saved Run all status in this browser."); return () => { live = false; }; }
+    const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+    const apply = (batch: RunAllBatch | null) => { if (live) setInterruptedBatch(batch); };
+    const restore = async () => {
+      let saved: RunAllBatch | null;
+      try {
+        saved = readRunAllBatch(storage, projectKey);
+      } catch {
+        if (live) setRefusal("Studio could not read the saved Run all status. Start a new batch to replace it.");
+        return;
+      }
+      if (saved === null) { apply(null); return; }
+      if (locks === undefined) {
+        apply(saved);
+        if (live) setRefusal("This browser cannot safely coordinate Run all between Studio tabs.");
+        return;
+      }
+      const hasPending = saved.journeys.some((journey) => journey.phase !== "terminal");
+      if (!hasPending) {
+        apply(null);
+        try {
+          await locks.request(lockName(projectKey), { mode: "exclusive", ifAvailable: true }, async (lock) => {
+            if (lock === null) return;
+            const current = readRunAllBatch(storage, projectKey);
+            if (current?.batchId === saved!.batchId) clearRunAllBatch(storage, projectKey);
+          });
+        } catch { /* Terminal results remain valid even if cleanup cannot run. */ }
+        return;
+      }
+      saved = withInterruptedReason(saved, saved.reason ?? "reloaded");
+      apply(saved);
+      const index = saved.journeys.findIndex((journey) => ["start_pending", "running", "unknown"].includes(journey.phase));
+      if (index < 0) {
+        // The batch was saved before its first POST; every journey is still safely not started.
+        try {
+          await locks.request(lockName(projectKey), { mode: "exclusive", ifAvailable: true }, async (lock) => {
+            if (lock === null) return;
+            const current = readRunAllBatch(storage, projectKey);
+            if (current?.batchId !== saved!.batchId) return;
+            writeRunAllBatch(storage, saved!);
+          });
+        } catch { if (live) setRefusal(runAllReasonText("storage_failed")); }
+        return;
+      }
+      const active = saved.journeys[index];
+      if (active.phase === "start_pending" || !isRunAllRunId(active.runId)) {
+        const unknown = withInterruptedReason(updateRunAllJourney(saved, index, "unknown", {
+          reason: "post_outcome_unknown", updatedAt: Date.now(),
+        }), "post_outcome_unknown");
+        apply(unknown);
+        try {
+          await locks.request(lockName(projectKey), { mode: "exclusive", ifAvailable: true }, async (lock) => {
+            if (lock === null) return;
+            const current = readRunAllBatch(storage, projectKey);
+            if (current?.batchId === unknown.batchId) writeRunAllBatch(storage, unknown);
+          });
+        } catch { if (live) setRefusal(runAllReasonText("storage_failed")); }
+        return;
+      }
+      try {
+        await locks.request(lockName(projectKey), { mode: "exclusive", ifAvailable: true }, async (lock) => {
+          if (lock === null) {
+            if (live) setRefusal("Run all is active in another Studio tab. This tab will not replace or continue it.");
+            return;
+          }
+          const current = readRunAllBatch(storage, projectKey);
+          if (current?.batchId !== saved!.batchId) return;
+          const remainingMs = active.deadlineAt === undefined ? 0 : active.deadlineAt - Date.now();
+          if (remainingMs <= 0) {
+            const next = reconcileRunAllJourney(current, index, null, { reason: "read_deadline" });
+            try { writeRunAllBatch(storage, next); }
+            catch { if (live) setRefusal(runAllReasonText("storage_failed")); }
+            apply(next);
+            return;
+          }
+          let run: JourneyRun | null = null;
+          let readFailed = false;
+          try { run = await runtime.journeyRun(active.flowId, Math.min(30_000, remainingMs)); }
+          catch { readFailed = true; }
+          const next = reconcileRunAllJourney(current, index, run, {
+            readFailed,
+            ...(readFailed && active.deadlineAt !== undefined && active.deadlineAt <= Date.now() ? { reason: "read_deadline" as const } : {}),
+          });
+          try { writeRunAllBatch(storage, next); }
+          catch { if (live) setRefusal(runAllReasonText("storage_failed")); }
+          apply(next);
+          if (run !== null && run.runId === active.runId && ["running", "ready", "failed"].includes(run.state) && live) observed.current(active.flowId, run);
+        });
+      } catch {
+        if (live) setRefusal("Studio could not reconcile the saved Run all status with the Runtime.");
+      }
+    };
+    void restore();
+    return () => {
+      live = false;
+      mounted.current = false;
+      if (viewGeneration.current === generation) viewGeneration.current += 1;
+    };
+  }, [projectKey, runtime]);
   const counts = { passed: 0, failed: 0, stale: 0, not_run: 0 };
   for (const flow of journeys) {
     const last = flow.lastRun;
@@ -143,9 +291,10 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
   // it would accept now. The Runtime decides who may approve (owner credential only).
   const approvable = journeys.filter((flow) => flow.approvable === true && decisionOf(flow) !== "approved");
 
-  const runOne = async (flow: JourneyFlow): Promise<void> => {
-    await runtime.startJourneyRun(flow.id, executionId);
-    onStarted(flow.id);
+  const runOne = async (flow: JourneyFlow, isLive = () => mounted.current): Promise<JourneyRun> => {
+    const run = await runtime.startJourneyRun(flow.id, executionId);
+    if (isLive()) onStarted(flow.id);
+    return run;
   };
   const runSingle = (flow: JourneyFlow) => {
     setRefusal(null);
@@ -154,26 +303,140 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
     runOne(flow).catch((cause: unknown) => setRefusal(message(cause, "The Runtime refused the run."))).finally(() => setBusy(null));
   };
   const runAll = async () => {
+    const generation = viewGeneration.current;
+    const isCurrentView = () => mounted.current && runAllViewIsCurrent(generation, viewGeneration.current);
     setRefusal(null);
+    if (typeof navigator === "undefined" || navigator.locks === undefined) {
+      setRefusal("This browser cannot safely coordinate Run all between Studio tabs.");
+      return;
+    }
+    let storage: Storage;
+    let batchId: string;
     try {
-      for (const [index, flow] of journeys.entries()) {
-        setBusy(`Running all · ${index + 1}/${journeys.length}`);
-        setActive(flow.id);
-        await runOne(flow);
-        if (await runAllUntil(() => runtime.journeyRun(flow.id)) === "timeout") {
-          setRefusal(`Run all stopped: ${nameOf(flow)} was still running after ${RUN_ALL_TIMEOUT_MS / 60_000} minutes.`);
+      storage = window.localStorage;
+      batchId = crypto.randomUUID();
+    } catch {
+      setRefusal("Studio could not prepare a safe Run all record in this browser.");
+      return;
+    }
+    setBusy("Starting Run all");
+    try {
+      await navigator.locks.request(lockName(projectKey), { mode: "exclusive", ifAvailable: true }, async (lock) => {
+        if (!isCurrentView()) return;
+        if (lock === null) {
+          if (isCurrentView()) setRefusal("Run all is active in another Studio tab. This tab did not start or replace a batch.");
           return;
         }
-        // #1914: each card shows its result as its run ends, not when the whole batch has.
+        let batch = makeRunAllBatch(projectKey, journeys.map((flow) => flow.id), batchId);
+        try { writeRunAllBatch(storage, batch); }
+        catch {
+          if (isCurrentView()) setRefusal(runAllReasonText("storage_failed"));
+          return;
+        }
+        if (isCurrentView()) setInterruptedBatch(batch);
+        const save = (next: RunAllBatch) => {
+          const stored = readRunAllBatch(storage, projectKey);
+          if (stored?.batchId !== batchId) throw new Error("Run all batch ownership changed.");
+          writeRunAllBatch(storage, next);
+          batch = next;
+          if (isCurrentView()) setInterruptedBatch(next);
+        };
+        const showStorageFailure = (index: number, phase: RunAllJourneyState["phase"], runId?: string) => {
+          if (!isCurrentView()) return;
+          const state = updateRunAllJourney(batch, index, phase, { ...(runId === undefined ? {} : { runId }), reason: "storage_failed" });
+          setInterruptedBatch(withInterruptedReason(state, "storage_failed"));
+          setRefusal(runAllReasonText("storage_failed"));
+        };
+        for (const [index, flow] of journeys.entries()) {
+          if (!isCurrentView()) {
+            const stopped = withInterruptedReason(updateRunAllJourney(batch, index, batch.journeys[index].phase, {
+              ...(batch.journeys[index].runId === undefined ? {} : { runId: batch.journeys[index].runId }), reason: "view_left",
+            }), "view_left");
+            try { save(stopped); } catch { /* Keep the last complete record. */ }
+            return;
+          }
+          setBusy(`Running all · ${index + 1}/${journeys.length}`);
+          setActive(flow.id);
+          try { save(updateRunAllJourney(batch, index, "start_pending")); }
+          catch {
+            if (isCurrentView()) {
+              setInterruptedBatch(withInterruptedReason(batch, "storage_failed"));
+              setRefusal(runAllReasonText("storage_failed"));
+            }
+            return;
+          }
+          let started: JourneyRun;
+          try { started = await runOne(flow, isCurrentView); }
+          catch (cause) {
+            const rejected = cause instanceof RuntimeError && (cause.status === 401 || cause.status === 403);
+            const reason: RunAllReason = rejected ? "start_rejected" : "post_outcome_unknown";
+            const phase = rejected ? "not_started" : "unknown";
+            try { save(withInterruptedReason(updateRunAllJourney(batch, index, phase, { reason }), reason)); }
+            catch { showStorageFailure(index, phase); return; }
+            if (isCurrentView()) setRefusal(runAllReasonText(reason));
+            return;
+          }
+          if (!isRunAllRunId(started.runId) || !["running", "ready", "failed"].includes(started.state)) {
+            const reason = "run_identity_unknown" as const;
+            try { save(withInterruptedReason(updateRunAllJourney(batch, index, "unknown", { reason }), reason)); }
+            catch { showStorageFailure(index, "unknown"); return; }
+            if (isCurrentView()) setRefusal(runAllReasonText(reason));
+            return;
+          }
+          const deadlineAt = started.state === "running" ? Date.now() + RUN_ALL_TIMEOUT_MS : undefined;
+          try { save(updateRunAllJourney(batch, index, started.state === "running" ? "running" : "terminal", { runId: started.runId, deadlineAt })); }
+          catch { showStorageFailure(index, started.state === "running" ? "unknown" : "terminal", started.runId); return; }
+          if (started.state !== "running" && isCurrentView()) onObserved(flow.id, started);
+          if (started.state === "running") {
+            try {
+              const outcome = await runAllUntil(started.runId, (timeoutMs) => runtime.journeyRun(flow.id, timeoutMs), {
+                timeoutMs: Math.max(0, deadlineAt! - Date.now()),
+                live: isCurrentView,
+              });
+              if (outcome.state === "cancelled") {
+                const stopped = withInterruptedReason(updateRunAllJourney(batch, index, "running", { runId: started.runId, reason: "view_left" }), "view_left");
+                try { save(stopped); } catch { /* Keep the last complete record. */ }
+                return;
+              }
+              if (outcome.state === "timeout") {
+                const reason = "read_deadline" as const;
+                try { save(withInterruptedReason(updateRunAllJourney(batch, index, "unknown", { runId: started.runId, reason }), reason)); }
+                catch { showStorageFailure(index, "unknown", started.runId); return; }
+                if (isCurrentView()) setRefusal(`${runAllReasonText(reason)} (${RUN_ALL_TIMEOUT_MS / 60_000} minute limit).`);
+                return;
+              }
+              onObserved(flow.id, outcome.run);
+              try { save(updateRunAllJourney(batch, index, "terminal", { runId: started.runId })); }
+              catch { showStorageFailure(index, "terminal", started.runId); return; }
+            } catch (cause) {
+              const reason: RunAllReason = cause instanceof RunAllIdentityFailure ? "run_identity_unknown" : cause instanceof RunAllReadFailure ? cause.reason : "read_failed";
+              try { save(withInterruptedReason(updateRunAllJourney(batch, index, "unknown", { runId: started.runId, reason }), reason)); }
+              catch { showStorageFailure(index, "unknown", started.runId); return; }
+              if (isCurrentView()) setRefusal(runAllReasonText(reason));
+              return;
+            }
+          }
+          if (isCurrentView()) {
+            setActive(null);
+            onRan();
+          }
+        }
+        try {
+          const stored = readRunAllBatch(storage, projectKey);
+          if (stored?.batchId === batchId) clearRunAllBatch(storage, projectKey);
+          if (isCurrentView()) setInterruptedBatch(null);
+        } catch {
+          if (isCurrentView()) setRefusal("All runs finished, but Studio could not clear the saved batch marker.");
+        }
+      });
+    } catch {
+      if (isCurrentView()) setRefusal("Studio could not coordinate or save this Run all batch.");
+    } finally {
+      if (isCurrentView()) {
         setActive(null);
+        setBusy(null);
         onRan();
       }
-    } catch (cause) {
-      setRefusal(message(cause, "The Runtime refused the run."));
-    } finally {
-      setActive(null);
-      setBusy(null);
-      onRan();
     }
   };
   const approveAll = async () => {
@@ -198,6 +461,7 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
         <button type="button" className="b ghost" disabled={busy !== null || approvable.length === 0} onClick={() => { void approveAll(); }}>Approve {approvable.length}</button>
         <button type="button" className="b ghost" disabled={busy !== null || journeys.length === 0} onClick={() => { void runAll(); }}>▶ Run all</button>
       </div>
+      {interruptedBatch?.reason !== undefined && <p role="status" className="run-status">Run all stopped: {runAllReasonText(interruptedBatch.reason)} {interruptedBatch.journeys.filter((journey) => journey.phase === "not_started").length} journeys not started.</p>}
       {busy !== null && <span role="status" className="run-status"><span className="pulse" aria-hidden="true" />{busy}</span>}
       {refusal !== null && <p className="error">{refusal}</p>}
       {journeys.some((flow) => flow.lastRun !== undefined) && (
@@ -214,7 +478,7 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
                 <span className={`mono group-score${failed ? " fail" : passed > 0 ? " pass" : ""}`} aria-label={`${feature}: ${passed} of ${flows.length} passed`}>{passed}/{flows.length}</span>
               </div>
               <ul>
-                {flows.map((flow) => <JourneyCard key={flow.id} flow={flow} selected={flow.id === selected} disabled={busy !== null} onPick={onPick} onRun={runSingle} run={live[flow.id] ?? null} playing={active === flow.id} />)}
+                {flows.map((flow) => <JourneyCard key={flow.id} flow={flow} selected={flow.id === selected} disabled={busy !== null} onPick={onPick} onRun={runSingle} run={live[flow.id] ?? null} playing={active === flow.id} interruption={runAllJourneyNotice(interruptedBatch?.journeys.find((journey) => journey.flowId === flow.id), interruptedBatch?.reason)} />)}
               </ul>
             </li>
           );
@@ -224,7 +488,7 @@ function JourneysColumn({ runtime, journeys, selected, executionId, onPick, onSt
   );
 }
 
-export function JourneyCard({ flow, selected, disabled, onPick, onRun, run, playing }: { flow: JourneyFlow; selected: boolean; disabled: boolean; onPick: (id: string) => void; onRun: (flow: JourneyFlow) => void; run: JourneyRun | null; playing: boolean }) {
+export function JourneyCard({ flow, selected, disabled, onPick, onRun, run, playing, interruption = null }: { flow: JourneyFlow; selected: boolean; disabled: boolean; onPick: (id: string) => void; onRun: (flow: JourneyFlow) => void; run: JourneyRun | null; playing: boolean; interruption?: string | null }) {
   // #1914: the run the open panel follows beats the list's last result until the list is read again.
   const now = liveCard(flow, run) ?? (playing ? liveCard(flow, { state: "running" }) : null);
   // #1919: a playing run's chip blinks blue (static under reduced motion), as in the header.
@@ -244,6 +508,7 @@ export function JourneyCard({ flow, selected, disabled, onPick, onRun, run, play
         <span className="mono journey-score">{score.passed === null ? "?" : score.passed}/{score.total}</span>
         <button type="button" className="b ghost journey-run" aria-label={`Run ${nameOf(flow)}`} disabled={disabled} onClick={() => onRun(flow)}>▶ Run</button>
       </div>
+      {interruption !== null && <span role="status" className="error run-status">{interruption}</span>}
       {score.total > 0 && (
         <span className="journey-bar" aria-hidden="true">{score.bar.map((cell, index) => <span key={index} className={cell} />)}</span>
       )}

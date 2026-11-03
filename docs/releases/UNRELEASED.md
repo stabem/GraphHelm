@@ -17,6 +17,7 @@
 ## Fixed
 - [#2406](https://github.com/stabem/GraphHelm/pull/2406) Workspace release can clear a claim when its folder is gone, so the task can be claimed again; `git worktree prune` may also clear other sessions' prunable folder-missing entries, but does not touch their working trees or branches.
 - [#2435](https://github.com/stabem/GraphHelm/pull/2435) A lane can reclaim its own task while a parallel task slice is active.
+- [#2488](https://github.com/stabem/GraphHelm/pull/2488) When Run all cannot confirm the active Runtime run, Proof marks its state as unknown and explains why later journeys were not started, instead of leaving later journeys unexplained as not run.
 
 ## For contributors
 - [#2441](https://github.com/stabem/GraphHelm/pull/2441) Contributors run long builds and tests before starting a blind review.
@@ -31,5 +32,6 @@
 - [#2463](https://github.com/stabem/GraphHelm/pull/2463) The notes add source-linked entries for #2457 and #2397 and correct the #2431 and #2453 claims after review.
 - [#2456](https://github.com/stabem/GraphHelm/pull/2456) The Codex-end test records the helper-spawn thread start.
 - [#2478](https://github.com/stabem/GraphHelm/pull/2478) The Codex-end guard now checks the helper marker before the timeout return and adds a watchdog-path test; the slow-briefing test no longer races interpreter startup.
+- [#2474](https://github.com/stabem/GraphHelm/pull/2474) The MCP tests check that every listed tool refuses calls missing its required capability.
 
 ## Removed

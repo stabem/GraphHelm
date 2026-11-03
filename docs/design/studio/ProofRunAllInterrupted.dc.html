@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Proof — Run all interrupted</title>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+:root{color-scheme:dark;font:12px/1.45 system-ui,sans-serif;background:#0a0a0b;color:#f5f5f6}
+*{box-sizing:border-box}
+body{margin:0;padding:24px;background:#0a0a0b}
+.screen{max-width:980px;margin:auto;padding:20px;background:#111114;border:1px solid #2a2a30;border-radius:12px}
+.eyebrow{font:11px ui-monospace,monospace;letter-spacing:.08em;color:#8a8a96;text-transform:uppercase}
+h1{font-size:16px;margin:8px 0 4px}
+p{color:#a2a2ad;margin:4px 0 16px}
+.columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.card{display:flex;flex-direction:column;gap:10px;min-height:180px;padding:14px;border:1px solid #34343c;border-radius:10px;background:#151517}
+.card h2{font-size:13px;margin:0}
+.meta{font:11px ui-monospace,monospace;color:#8a8a96}
+.notice{padding:10px 12px;border:1px solid #5c4325;border-radius:7px;background:#211b13;color:#f0c47a;line-height:1.5}
+.detail{color:#a2a2ad}
+.button{align-self:flex-start;margin-top:auto;padding:8px 12px;border:1px solid #5a5144;border-radius:6px;background:#201d19;color:#f5f5f6;font:inherit}
+.foot{margin:14px 0 0;padding-top:12px;border-top:1px solid #2a2a30;color:#8a8a96;font-size:11px}
+@media(max-width:640px){.columns{grid-template-columns:1fr}body{padding:12px}}
+</style>
+</helmet>
+<main class="screen" aria-label="Proof screen with an interrupted Run all batch">
+  <div class="eyebrow">Proof · Demo project · Owner approved · 2026-11-03</div>
+  <h1>Run all stopped before the batch finished</h1>
+  <p>Studio could not confirm the current run. The next journey was not started.</p>
+  <div class="columns">
+    <section class="card" aria-label="Journey A observation interrupted">
+      <div class="meta">Journey A · current run</div>
+      <h2>Imports the demo graph</h2>
+      <div class="notice" role="status">Observation interrupted; run state unknown</div>
+      <div class="detail">The Runtime may still be running this journey. Studio did not record a result.</div>
+    </section>
+    <section class="card" aria-label="Journey B not started">
+      <div class="meta">Journey B · batch remainder</div>
+      <h2>Opens the demo workspace</h2>
+      <div class="notice" role="status">Not started: batch interrupted</div>
+      <div class="detail">This journey was not sent to the Runtime.</div>
+    </section>
+  </div>
+  <button class="button" type="button">Start a new batch</button>
+  <p class="foot">No automatic retry or resume. A new batch is an explicit owner action. <a href="https://claude.ai/chat/0e7997a8-98b1-4518-ac61-8cff5a20c574?artifact=54d8fdad-f0a9-41f1-a5ab-43e34ada1d55">Owner-approved design artifact</a>.</p>
+</main>
+</x-dc>
+</body>
+</html>

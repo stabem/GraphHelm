@@ -172,6 +172,9 @@ fn validated_package_exposes_each_contributions_own_surfaces() {
 // -------------------------------------------------------------------------------------------
 
 use std::time::Duration;
+#[path = "support/time_scale.rs"]
+mod time_scale;
+use time_scale::scaled;
 
 struct McpSession {
     replies: Vec<Value>,
@@ -193,7 +196,7 @@ fn mcp_session_with(args: &[&str], env: &[(&str, &str)], lines: &[Value]) -> Mcp
     }
     let output = command
         .write_stdin(input)
-        .timeout(Duration::from_secs(30))
+        .timeout(scaled(Duration::from_secs(30)))
         .output()
         .expect("the mcp server runs to EOF");
     let replies = String::from_utf8(output.stdout.clone())
@@ -548,6 +551,10 @@ fn a_minted_development_tool_is_allowed_while_another_is_refused_by_the_same_tok
 /// never a hand-typed array -- so a tool silently added or removed from that list changes what
 /// this test covers without anyone needing to update it (population-is-the-instrument, #318's
 /// sibling discipline applied to this subsystem).
+/// Tools per session in the negative sweep (#2434): small enough that one session is a fraction of
+/// the harness timeout, however long a single gated call takes.
+const SWEEP_CHUNK: usize = 8;
+
 fn real_tool_population() -> Vec<String> {
     let session = mcp_session_with(
         &["--url", "http://127.0.0.1:9", "--actor", "agent-x"],
@@ -617,6 +624,10 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
         "expected at least 21 tools (today's real count); got {}: {population:?}",
         population.len()
     );
+    let probe_arguments = |name: &str| match name {
+        "claim" => json!({"executionId": "exec-x", "node": "node-x"}),
+        _ => json!({}),
+    };
 
     // Negative sweep: an EMPTY capability allowlist must refuse every single tool the server
     // actually serves -- one session, one subprocess, one tools/call per population member.
@@ -630,33 +641,44 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
         "agent-x",
         audit_log.to_str().unwrap(),
     );
-    let mut lines = vec![initialize_request(1), initialized_notification()];
-    for (index, name) in population.iter().enumerate() {
-        lines.push(json!({
-            "jsonrpc": "2.0",
-            "id": 2 + index as u64,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": {}}
-        }));
-    }
-    let session = mcp_session_with(&args, &[("GRAPHHELM_API_TOKEN", "test-token")], &lines);
-    assert_eq!(
-        session.replies.len(),
-        1 + population.len(),
-        "one reply for initialize, then one per tools/call: {:?}",
-        session.replies
-    );
-    for (name, reply) in population.iter().zip(session.replies[1..].iter()) {
-        assert!(
-            reply.get("error").is_some(),
-            "{name} was called with an EMPTY capability allowlist and must be refused, got: \
-             {reply}"
+    // #2434: the gate re-validates the whole package on EVERY call (never a cached digest, by
+    // design), so a call costs real time and one session over the whole population outran the
+    // harness timeout: the child was killed mid-sweep, only the replies it had already written
+    // came back (29 of 47), and the unanswered tools were never observed at all. The sweep runs
+    // in chunks, one session each (a fresh process, the same token, the same append-only audit
+    // log), so no session depends on the population staying small; every tool still gets its
+    // own tools/call, its own reply and its own audit record.
+    for chunk in population.chunks(SWEEP_CHUNK) {
+        let mut lines = vec![initialize_request(1), initialized_notification()];
+        for (index, name) in chunk.iter().enumerate() {
+            // Keep `claim` valid past schema validation so the bypass probe reaches the
+            // downstream boundary instead of failing for an unrelated input error.
+            let arguments = probe_arguments(name);
+            lines.push(json!({
+                "jsonrpc": "2.0",
+                "id": 2 + index as u64,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments}
+            }));
+        }
+        let session = mcp_session_with(&args, &[("GRAPHHELM_API_TOKEN", "test-token")], &lines);
+        assert_eq!(
+            session.replies.len(),
+            1 + chunk.len(),
+            "one reply for initialize, then one per tools/call: {:?}",
+            session.replies
         );
-        let message = reply["error"]["message"].as_str().unwrap_or_default();
-        assert!(
-            message.contains("capability") || message.contains("allow"),
-            "{name}'s refusal must name the capability gate, not a downstream error: {message}"
-        );
+        for (name, reply) in chunk.iter().zip(session.replies[1..].iter()) {
+            assert!(
+                reply.get("error").is_some(),
+                "{name} was called with an EMPTY capability allowlist and must be refused, got: {reply}"
+            );
+            let message = reply["error"]["message"].as_str().unwrap_or_default();
+            assert!(
+                message.contains("capability") || message.contains("allow"),
+                "{name}'s refusal must name the capability gate, not a downstream error: {message}"
+            );
+        }
     }
     let records = read_jsonl(&audit_log);
     assert_eq!(records.len(), population.len(), "{records:?}");
@@ -694,7 +716,7 @@ fn every_real_tool_is_gated_by_capability_not_just_the_two_already_covered() {
             initialize_request(1),
             initialized_notification(),
             json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                "params": {"name": allowed_name, "arguments": {}}}),
+                "params": {"name": allowed_name, "arguments": probe_arguments(allowed_name)}}),
         ],
     );
     let control_records = read_jsonl(&control_audit_log);

@@ -69,7 +69,7 @@ pub(crate) fn execute_within(
             summary.unsupported = catalog.unsupported;
             summary.incomplete =
                 catalog.unsupported > 0 || catalog.rejected > 0 || catalog.records.len() > 20;
-            for record in catalog.records.into_iter().rev().take(20) {
+            for record in catalog.records.iter().rev().take(20) {
                 let task = record.proof.task_id.as_str();
                 if let Some(issue) = task
                     .strip_prefix("issue-")
@@ -81,7 +81,7 @@ pub(crate) fn execute_within(
                         summary.views.push(link);
                     }
                 }
-                summary.records.push(record.proof);
+                summary.records.push(record.proof.clone());
             }
             summary.records.reverse();
         }

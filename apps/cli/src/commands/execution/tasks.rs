@@ -34,12 +34,25 @@ pub(crate) struct ProofRecord {
     pub proof: graphhelm_execution::tasks::BenchmarkProof,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct ProofCatalog {
     pub repositories: BTreeMap<String, String>,
     pub records: Vec<ProofRecord>,
     pub unsupported: usize,
     pub rejected: usize,
+}
+
+/// Only complete authenticated snapshots are reusable. The event hash proves the prefix,
+/// and the key generation prevents reuse after revocation. Old cursor snapshots stay separate.
+#[derive(Default)]
+struct ProofCatalogCache {
+    snapshots: BTreeMap<u64, (graphhelm_protocols::EventHash, Arc<ProofCatalog>)>,
+}
+
+fn proof_catalog_caches() -> &'static Mutex<HashMap<String, Arc<Mutex<ProofCatalogCache>>>> {
+    static CACHES: OnceLock<Mutex<HashMap<String, Arc<Mutex<ProofCatalogCache>>>>> =
+        OnceLock::new();
+    CACHES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub(crate) fn proof_digest(
@@ -58,7 +71,7 @@ pub(crate) fn proof_catalog(
     execution: &str,
     keyring: &SignalKeyring,
     budget: &graphhelm_events::ReadBudget,
-) -> Result<ProofCatalog, Failure> {
+) -> Result<Arc<ProofCatalog>, Failure> {
     let check = || {
         budget.check_now(history.len() as u64).map_err(|error| {
             super::execution_state(
@@ -68,13 +81,45 @@ pub(crate) fn proof_catalog(
         })
     };
     check()?;
-    let opener = super::signal::open_sealer(keyring)?;
     let generation = super::signal::sealer_generation(keyring)?;
+    let cache_key = format!(
+        "{}\u{0}{scope:?}\u{0}{generation}",
+        cache_key(store.root(), execution)
+    );
+    let cache = {
+        let mut caches = proof_catalog_caches()
+            .lock()
+            .map_err(|_| super::execution_state("proof cache lock is poisoned", "/proofs"))?;
+        if caches.len() >= 128 && !caches.contains_key(&cache_key) {
+            caches.clear();
+        }
+        Arc::clone(caches.entry(cache_key).or_default())
+    };
+    let mut cache = cache
+        .lock()
+        .map_err(|_| super::execution_state("proof snapshot lock is poisoned", "/proofs"))?;
+    let head = history.last();
+    let mut start = 0;
+    let mut catalog = ProofCatalog::default();
+    if let Some(head) = head {
+        if let Some((hash, kept)) = cache.snapshots.get(&head.sequence)
+            && hash == &head.event_hash
+        {
+            return Ok(Arc::clone(kept));
+        }
+        if let Some((sequence, (hash, kept))) = cache.snapshots.range(..head.sequence).next_back()
+            && let Ok(index) = history.binary_search_by_key(sequence, |event| event.sequence)
+            && &history[index].event_hash == hash
+        {
+            start = index + 1;
+            catalog = kept.as_ref().clone();
+        }
+    }
+    let opener = super::signal::open_sealer(keyring)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .build()
         .map_err(|_| super::execution_state("proof reader could not start", "/keyring"))?;
-    let mut catalog = ProofCatalog::default();
-    for event in history {
+    for event in &history[start..] {
         check()?;
         let EventKind::SignalRecorded(record) = &event.kind else {
             continue;
@@ -189,6 +234,20 @@ pub(crate) fn proof_catalog(
         });
     }
     check()?;
+    let catalog = Arc::new(catalog);
+    // Failed opens must be tried again; a later evidence recovery is not permanently hidden.
+    if catalog.rejected == 0
+        && catalog.unsupported == 0
+        && let Some(head) = head
+    {
+        if cache.snapshots.len() >= 8 {
+            cache.snapshots.pop_first();
+        }
+        cache.snapshots.insert(
+            head.sequence,
+            (head.event_hash.clone(), Arc::clone(&catalog)),
+        );
+    }
     Ok(catalog)
 }
 
@@ -336,7 +395,7 @@ pub(crate) fn proofs_view(
             "/issue",
         )
     })?;
-    let mut matching = catalog.records.into_iter().filter(|r| {
+    let mut matching = catalog.records.iter().filter(|r| {
         r.sequence > after
             && r.proof.task_id.as_str() == task_id
             && query.run.as_ref().is_none_or(|run| &r.proof.run_id == run)
@@ -351,7 +410,7 @@ pub(crate) fn proofs_view(
             break;
         }
         bytes += size;
-        records.push(record);
+        records.push(record.clone());
     }
     let next_cursor = if more {
         let last = records.last().ok_or_else(invalid)?.sequence;

@@ -1927,16 +1927,31 @@ fn benchmark_proofs_bind_subject_serialize_corrections_and_preserve_snapshot() {
         &wrong,
     );
     assert_eq!(refused["ok"], false, "{refused}");
-    let shared = review_post(
-        &base,
-        &read_token,
-        "review-author",
-        left["id"].as_str().unwrap(),
-        &left,
-    );
+    let winner = if replies[0]["ok"] == true {
+        &left
+    } else {
+        &right
+    };
+    let mut fresh = original["proof"].clone();
+    fresh["runId"] = "unauthorized-run".into();
+    let fresh = envelope(fresh);
+    let before_unauthorized = read("limit=100")["data"]["snapshotHead"].clone();
+    for candidate in [winner, &fresh] {
+        let shared = review_post(
+            &base,
+            &read_token,
+            "review-author",
+            candidate["id"].as_str().unwrap(),
+            candidate,
+        );
+        assert_eq!(
+            shared["ok"], false,
+            "shared token cannot attest or acknowledge a lane proof: {shared}"
+        );
+    }
     assert_eq!(
-        shared["ok"], false,
-        "shared token cannot attest a lane proof: {shared}"
+        read("limit=100")["data"]["snapshotHead"],
+        before_unauthorized
     );
     let page = read("limit=1");
     let cursor = page["data"]["nextCursor"].as_str().unwrap();

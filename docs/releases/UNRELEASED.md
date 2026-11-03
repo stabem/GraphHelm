@@ -19,6 +19,7 @@
 - [#2435](https://github.com/stabem/GraphHelm/pull/2435) A lane can reclaim its own task while a parallel task slice is active.
 - [#2488](https://github.com/stabem/GraphHelm/pull/2488) When Run all cannot confirm the active Runtime run, Proof marks its state as unknown and explains why later journeys were not started, instead of leaving later journeys unexplained as not run.
 - [#2493](https://github.com/stabem/GraphHelm/pull/2493) When a journey preview reaches the wrong page, its result includes the browser error, its source, and the page URL with sensitive URL values redacted.
+- [#2492](https://github.com/stabem/GraphHelm/pull/2492) You can run `graphhelm journey validate checkout` to validate `.graphhelm/journeys/checkout.journey.yaml`; validate now resolves the ID like preview and approve.
 
 ## For contributors
 - [#2441](https://github.com/stabem/GraphHelm/pull/2441) Contributors run long builds and tests before starting a blind review.

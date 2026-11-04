@@ -2505,8 +2505,7 @@ fn masked_output(
 ) -> Value {
     use sha2::{Digest, Sha256};
     // The whole output is kept (no cut window), then its tail is bounded by `masked_tail`.
-    let cut = false;
-    let keep = |text: &str| super::journey_replay::masked_tail(text.as_bytes(), cut, 0, secrets);
+    let keep = |text: &str| super::journey_replay::masked_complete_output(text.as_bytes(), secrets);
     json!({
         "argv": argv,
         "exit": seen.exit,
@@ -2807,27 +2806,11 @@ pub(crate) fn history(project: &Path, id: &str) -> Outcome {
     }
     let dir = dir_of(project, id);
     let history = dir.join("history");
-    let entry = |run: String, state: Value| {
-        let mut entry = json!({"run": run});
-        for key in [
-            "state",
-            "kind",
-            "result",
-            "reason",
-            "digest",
-            "commit",
-            "startedAt",
-            "ranAt",
-            "screens",
-            "edges",
-            "detail",
-        ] {
-            if !state[key].is_null() {
-                entry[key] = state[key].clone();
-            }
-        }
-        entry
-    };
+    let secrets: Vec<String> = std::env::vars_os()
+        .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))
+        .filter_map(|(_, value)| value.into_string().ok())
+        .collect();
+    let entry = |run: String, state: Value| history_entry(run, state, &secrets);
     let archived = history_ids(&history);
     let earlier = slot_run(&dir)
         .filter(|(run, _)| !archived.contains(run))
@@ -2840,6 +2823,71 @@ pub(crate) fn history(project: &Path, id: &str) -> Outcome {
         }))
         .collect();
     answer(json!({"id": id, "runs": runs}), None)
+}
+
+/// History uses only the selected record. Log paths stay private and stored records remain intact.
+fn history_entry(run: String, state: Value, secrets: &[String]) -> Value {
+    let mut entry = json!({"run": run});
+    for key in [
+        "state",
+        "kind",
+        "result",
+        "reason",
+        "digest",
+        "commit",
+        "startedAt",
+        "ranAt",
+        "screens",
+        "edges",
+        "detail",
+        "viewportsPlanned",
+        "viewports",
+        "outputs",
+    ] {
+        if !state[key].is_null() {
+            entry[key] = state[key].clone();
+        }
+    }
+    if let Some(outputs) = state["outputs"].as_object() {
+        let outputs: serde_json::Map<String, Value> = outputs
+            .iter()
+            .map(|(name, runs)| {
+                let runs = match runs.as_array() {
+                    Some(runs) => Value::Array(
+                        runs.iter()
+                            .map(|run| {
+                                let mut masked = run.clone();
+                                if let Some(output) = masked.as_object_mut() {
+                                    output.remove("stdoutSha256");
+                                    output.remove("stderrSha256");
+                                }
+                                for key in ["stdout", "stderr"] {
+                                    if let Some(text) = run[key].as_str() {
+                                        masked[key] =
+                                            super::journey_replay::masked_complete_output(
+                                                text.as_bytes(),
+                                                secrets,
+                                            )
+                                            .into();
+                                    }
+                                }
+                                masked
+                            })
+                            .collect(),
+                    ),
+                    None => runs.clone(),
+                };
+                (name.clone(), runs)
+            })
+            .collect();
+        entry["outputs"] = Value::Object(outputs);
+    }
+    for key in ["launchLog", "driverLog"] {
+        if let Some(tail) = state[key]["tail"].as_str() {
+            entry[key] = json!({"tail": super::journey_replay::masked_complete_output(tail.as_bytes(), secrets)});
+        }
+    }
+    entry
 }
 
 /// #1795 (R4a): the journey's newest finished run on this Runtime's checkout (the "Before = main"
@@ -4224,6 +4272,59 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         );
     }
 
+    #[test]
+    fn history_logs_are_masked_bounded_and_do_not_expose_paths() {
+        let secret = "sk-test-history-secret-123456789".to_owned();
+        let tail = format!("{} password={secret} end", "x".repeat(40_000));
+        let stored = json!({"launchLog":{"path":"/private/runner.log","tail":tail},
+            "driverLog":{"path":"/private/driver.log","tail":format!("token={secret}")}});
+        let before = stored.clone();
+        let reply =
+            super::history_entry("old".into(), stored.clone(), std::slice::from_ref(&secret));
+        for key in ["launchLog", "driverLog"] {
+            assert_eq!(reply[key].as_object().unwrap().len(), 1);
+            let text = reply[key]["tail"].as_str().unwrap();
+            assert!(!text.contains(&secret));
+            assert!(text.contains("***"));
+            assert!(text.len() <= 4096, "tail was not bounded");
+        }
+        assert_eq!(stored, before);
+        let legacy = super::history_entry("legacy".into(), json!({"state":"ready"}), &[]);
+        for key in [
+            "launchLog",
+            "driverLog",
+            "outputs",
+            "viewports",
+            "viewportsPlanned",
+        ] {
+            assert!(legacy.get(key).is_none(), "invented {key}");
+        }
+    }
+
+    #[test]
+    fn history_masks_outputs_from_older_stored_runs_without_mutating_them() {
+        let secret = "sk-test-history-output-secret".to_owned();
+        let stored = json!({"state":"ready","outputs":{"screen":[{
+            "stdout":format!("stdout {secret}"),"stderr":format!("stderr {secret}"),"exit":0,
+            "extension":"kept"
+        }]}});
+        let before = stored.clone();
+        let reply =
+            super::history_entry("old".into(), stored.clone(), std::slice::from_ref(&secret));
+        for key in ["stdout", "stderr"] {
+            let text = reply["outputs"]["screen"][0][key].as_str().unwrap();
+            assert!(!text.contains(&secret));
+            assert!(text.contains("***"));
+        }
+        assert!(reply["outputs"]["screen"][0].get("stdoutSha256").is_none());
+        assert!(reply["outputs"]["screen"][0].get("stderrSha256").is_none());
+        assert_eq!(reply["outputs"]["screen"][0]["extension"], "kept");
+        assert_eq!(
+            stored, before,
+            "history masking must not rewrite persisted records"
+        );
+    }
+
     /// #1956: a flow edited after its run reads `none` on the preview route, and that run is then
     /// the newest history entry with its frame readable by run id, so Proof shows the earlier
     /// version's result instead of "not run". Defects named: the run vanishes from every route,
@@ -4279,9 +4380,40 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             history_frame(project.path(), id, &run, "run", None).unwrap(),
             b"old run"
         );
-        // A slot still running is no earlier result.
+        // Distinct recorded runs must retain their own viewport, output and log data.
+        let details = |label: &str, viewport: &str| {
+            json!({
+                "viewportsPlanned":[viewport], "viewports":{(viewport):{"screens":{"run":{"result":label}}}},
+                "outputs":{"edge":[{"argv":label,"exit":0,"stdout":label,"stderr":""}]},
+                "launchLog":{"tail":format!("launch {label}")}, "driverLog":{"tail":format!("driver {label}")}
+            })
+        };
+        let mut old = kept(&digest, "ready");
+        for (key, value) in details("old", "web").as_object().unwrap() {
+            old[key] = value.clone();
+        }
+        save_state(&dir, &old);
+        archive(&dir, &old);
+        let mut newest = kept(&digest, "ready");
+        newest["startedAt"] = "2026-10-23T21:53:00Z".into();
+        newest["ranAt"] = "2026-10-23T21:53:09Z".into();
+        for (key, value) in details("new", "mobile").as_object().unwrap() {
+            newest[key] = value.clone();
+        }
+        save_state(&dir, &newest);
+        let listed = runs(project.path());
+        for (index, expected) in [details("new", "mobile"), details("old", "web")]
+            .iter()
+            .enumerate()
+        {
+            for (key, value) in expected.as_object().unwrap() {
+                assert_eq!(&listed[index][key], value, "{key}: {listed}");
+            }
+        }
+        assert_eq!(read_state(&dir).unwrap(), newest);
+        // A slot still running is not offered; its archived predecessor stays available.
         save_state(&dir, &kept("sha256:old", "running"));
-        assert_eq!(runs(project.path()), json!([]));
+        assert_eq!(runs(project.path()).as_array().unwrap().len(), 1);
     }
 
     /// #560 review: a `running` state past the budget reads as a dead runner even when its pid is

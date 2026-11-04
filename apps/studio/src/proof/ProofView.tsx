@@ -277,14 +277,18 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
       if (viewGeneration.current === generation) viewGeneration.current += 1;
     };
   }, [projectKey, runtime]);
-  const counts = { passed: 0, failed: 0, stale: 0, not_run: 0 };
-  for (const flow of journeys) {
-    const last = flow.lastRun;
-    if (last === undefined) continue;
-    if (last.status === "not_run") counts.not_run += 1;
-    else if (last.flowChanged === true) counts.stale += 1;
-    else if (last.kind === "replay" && last.status !== "held") counts[last.status] += 1;
-  }
+  const statuses = new Map(journeys.map((flow) => [flow.id,
+    liveCard(flow, live[flow.id] ?? null)
+      ?? (active === flow.id ? liveCard(flow, { state: "running" }) : null)
+      ?? lastRunChip(flow.lastRun)]));
+  const counts = { passed: 0, failed: 0, stale: 0, not_run: 0, preview: 0, running: 0, waiting: 0, unknown: 0 };
+  for (const status of statuses.values()) counts[status.category] += 1;
+  const otherCounts = [
+    counts.preview > 0 ? `${counts.preview} previews (not proof)` : null,
+    counts.running > 0 ? `${counts.running} running` : null,
+    counts.waiting > 0 ? `${counts.waiting} waiting` : null,
+    counts.unknown > 0 ? `${counts.unknown} unknown` : null,
+  ].filter((text) => text !== null).join(" \u00b7 ");
   const groups = new Map<string, JourneyFlow[]>();
   for (const flow of journeys) {
     const feature = flow.feature || "Other";
@@ -467,13 +471,14 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
       {interruptedBatch?.reason !== undefined && <p role="status" className="run-status">Run all stopped: {runAllReasonText(interruptedBatch.reason)} {interruptedBatch.journeys.filter((journey) => journey.phase === "not_started").length} journeys not started.</p>}
       {busy !== null && <span role="status" className="run-status"><span className="pulse" aria-hidden="true" />{busy}</span>}
       {refusal !== null && <ActionError error={refusal} onDismiss={() => setRefusal(null)} />}
-      {journeys.some((flow) => flow.lastRun !== undefined) && (
+      {journeys.length > 0 && (
         <span className="proof-counts">{counts.passed} passed · {counts.failed} failed · {counts.stale} stale · {counts.not_run} not run</span>
       )}
+      {otherCounts !== "" && <span className="proof-counts">{otherCounts}</span>}
       <ul className="journey-list" aria-label="Journeys">
         {[...groups].map(([feature, flows]) => {
-          const passed = flows.filter((flow) => flow.lastRun?.status === "passed").length;
-          const failed = flows.some((flow) => flow.lastRun?.status === "failed");
+          const passed = flows.filter((flow) => statuses.get(flow.id)?.category === "passed").length;
+          const failed = flows.some((flow) => statuses.get(flow.id)?.category === "failed");
           return (
             <li key={feature} className="journey-group">
               <div className="journey-feature">

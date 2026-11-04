@@ -438,36 +438,38 @@ export function afterPanelGone<T extends { state: string }>(live: Record<string,
 /** #1914: a card's chip, score and bar from the run the open panel is following, so the card
  * reads `running` with its live step count while the run plays and the result the moment it ends,
  * before the journey list is read again. `null` when the run says nothing yet (state `none`). */
-export function liveCard(flow: JourneyFlow, run: JourneyRun | null): { text: string; tone: "pass" | "fail" | "idle" | "wait"; passed: number; total: number; bar: BarCell[] } | null {
+export type CardCategory = "passed" | "failed" | "stale" | "not_run" | "preview" | "running" | "waiting" | "unknown";
+
+export function liveCard(flow: JourneyFlow, run: JourneyRun | null): { text: string; tone: "pass" | "fail" | "idle" | "wait"; category: CardCategory; passed: number; total: number; bar: BarCell[] } | null {
   if (run === null || run.state === "none") return null;
   const steps = journeySteps(flow, run);
   const passed = steps.filter((step) => step.status === "passed").length;
   const bar = steps.map((step): BarCell => (step.status === "passed" ? "pass" : step.status === "failed" || step.status === "drift" ? "fail" : "none"));
   const total = steps.length;
-  if (run.state === "running") return { text: "● running", tone: "wait", passed, total, bar };
+  if (run.state === "running") return { text: "● running", tone: "wait", category: "running", passed, total, bar };
   const waits = waitingCardText(run);
-  if (waits !== null) return { text: waits, tone: "idle", passed, total, bar };
+  if (waits !== null) return { text: waits, tone: "idle", category: "waiting", passed, total, bar };
   const ok = run.state === "ready" && run.result === "pass";
   const mark = ok ? "✓ passed" : "✕ failed";
   const tail = run.kind === "replay" ? "" : " · preview, not proof";
-  return { text: `${mark}${tail}`, tone: run.kind === "replay" ? (ok ? "pass" : "fail") : "idle", passed, total, bar };
+  return { text: `${mark}${tail}`, tone: run.kind === "replay" ? (ok ? "pass" : "fail") : "idle", category: run.kind === "replay" ? (ok ? "passed" : "failed") : "preview", passed, total, bar };
 }
 
 /** The journeys column's chip. Only a replay is proof; a preview's verdict is labelled as such, and
  * a Runtime that does not serve `lastRun` reads unknown, never `not run`. */
-export function lastRunChip(lastRun: JourneyLastRun | undefined): { text: string; tone: "pass" | "fail" | "idle" } {
-  if (lastRun === undefined) return { text: "? unknown", tone: "idle" };
-  if (lastRun.status === "not_run") return { text: "○ not run", tone: "idle" };
+export function lastRunChip(lastRun: JourneyLastRun | undefined): { text: string; tone: "pass" | "fail" | "idle"; category: CardCategory } {
+  if (lastRun === undefined) return { text: "? unknown", tone: "idle", category: "unknown" };
+  if (lastRun.status === "not_run") return { text: "○ not run", tone: "idle", category: "not_run" };
   // #1956: a run of an earlier version of the flow proves nothing about this one.
-  if (lastRun.flowChanged === true) return { text: CHANGED, tone: "idle" };
+  if (lastRun.flowChanged === true) return { text: CHANGED, tone: "idle", category: "stale" };
   // #2086: a run that stopped before a draft's commands waits; it did not fail.
   const stop = lastRun.failingStep?.reason;
-  if (stop === "review_needed") return { text: "waits for review", tone: "idle" };
-  if (stop === "confirm_needed") return { text: "waits for your confirmation", tone: "idle" };
-  if (lastRun.status === "held") return { text: "waiting", tone: "idle" };
+  if (stop === "review_needed") return { text: "waits for review", tone: "idle", category: "waiting" };
+  if (stop === "confirm_needed") return { text: "waits for your confirmation", tone: "idle", category: "waiting" };
+  if (lastRun.status === "held") return { text: "waiting", tone: "idle", category: "waiting" };
   const mark = lastRun.status === "passed" ? "✓ passed" : "✕ failed";
-  if (lastRun.kind !== "replay") return { text: `${mark} · preview, not proof`, tone: "idle" };
-  return { text: mark, tone: lastRun.status === "passed" ? "pass" : "fail" };
+  if (lastRun.kind !== "replay") return { text: `${mark} · preview, not proof`, tone: "idle", category: "preview" };
+  return { text: mark, tone: lastRun.status === "passed" ? "pass" : "fail", category: lastRun.status === "passed" ? "passed" : "failed" };
 }
 
 /**

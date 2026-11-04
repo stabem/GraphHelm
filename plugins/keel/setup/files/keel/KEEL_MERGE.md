@@ -5,12 +5,12 @@ Step 4. Only the reviewer who approved merges. Read [`KEEL.md`](../KEEL.md) firs
 1. **Pin the head.** `gh pr view <N> --json headRefOid` must equal the sha the review named, and
    no BLOCK on that head is left unanswered. Merge exactly that commit:
    `gh pr merge <N> --squash --match-head-commit <sha>`.
-2. **Main gets one whole run after merges.** Two changes that each pass alone can break
-   together, so after merges land the orchestrator owns one whole-package run on main, at most
-   once an hour while main moves. A red main is fixed first, by a revert or a fix-forward PR,
-   before any new merge. A hidden scheduled task runs it unattended:
-   `python tools/reached-tests/main_whole_run.py` (skips unless main moved and an hour passed;
-   records a `main.whole_run` signal, severity `high` with the red steps named when it failed).
+2. **Main gets one full reached plan nightly.** Two changes that pass alone can break together.
+   The orchestrator owns the nightly run on main, under the shared build slot and outside declared
+   benchmark windows. Do not run the full plan per PR, per merge or hourly. Preserve any failed
+   receipt and open a P0 linked to the responsible PR after identifying it from evidence; fix red
+   main first with a revert or fix-forward PR. Scheduling and observed execution are separate
+   operational work: this rule does not install a job or change an existing runner's cadence.
 3. **Closing keywords** in the body and the commits must match what the change closes. Never
    write a closing keyword (`close`, `fix`, `resolve` and their forms) next to an issue you do not
    mean to close, not even inside a negation; write `Refs #N` instead.

@@ -36,10 +36,17 @@ How much card a change needs, and what goes in it, is [keel/KEEL_PLAN.md](../../
 ## 3. Work
 
 Follow the four Keel moves: start from the promise, start from the card and search on purpose, add
-only the surface the promise needs, prove with the smallest adequate observer. Before opening the
-PR, the author runs the tests the change can reach and lists them, with their result, in the PR
-body. The reached plan (`run_reached.py`, below) includes the fast Python `tools/` steps; run it
-before asking for review and put its summary line in the PR body.
+only the surface the promise needs, prove with the smallest adequate observer. Before the
+PR is reviewed, the author runs the tests of the touched crates/files and their direct tests,
+plus fmt, the source guard and clippy on touched Rust crates, and lists each command and result.
+Push as soon as the fix and its red-to-green regression proof exist; finish the scoped checks on
+that pushed head. Do not delay the first push for a broad batch. A changed head needs fresh proof
+for the affected scope; receipts from another head do not silently become current evidence.
+
+The full reached plan is not a PR gate. It runs once nightly on main, outside declared benchmark
+windows and under the shared build slot. A red nightly run opens a P0 linked to the responsible
+PR; identify that PR from evidence rather than guessing. Preserve the failed receipt. Scheduling
+and observed execution are operational work: this rule alone does not install a nightly job.
 
 **Retire the path you replace** (the rule is `keel/KEEL_EXEC.md`; how to check it here:). When a change removes, replaces or redirects
 a production caller, check the displaced declarations and their exclusive helpers/types, styles,
@@ -80,7 +87,8 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 - an unfiltered single selection of that same `cli` target uses the same metadata-backed partition;
   it cannot fall back to one broad command;
 - `tests/support/` or a fixture reaches its package's tests;
-- a crate's source reaches that crate and every crate that depends on it, except an
+- the selector conservatively lists a crate and its dependents for a source change; ordinary PR
+  proof narrows that list to touched crates/files and their direct tests, documenting the selection; an
   `apps/cli/src/commands/<module>` change (a directory's `mod.rs` counts as its module): it reaches
   `--bin graphhelm commands::<module>::`, the `cli` modules that name its command (a submodule no
   test names falls back to its command; `CLI_COMMAND_WORDS` in the selector lists the modules whose
@@ -105,12 +113,12 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 
 **One test budget for authors and reviewers:**
 
-- Run only the checks reached by `tools/reached-tests/reached_tests.py`. Check any "not mapped"
-  path by hand. If the computed set misses an obligation, name the extra check and why it is
+- Use `tools/reached-tests/reached_tests.py` to discover candidate checks, then select the
+  touched scope and its direct tests. Check any "not mapped" path by hand. If the computed set misses an obligation, name the extra check and why it is
   needed in the card before running it. A full-package or whole-suite run is allowed only when
   the card names it and explains why, including when the script prints a whole-package command.
   Lanes do not pass `--allow-whole-package` by default (#1608): the whole `graphhelm-cli` package
-  runs once per main change in the scheduled main whole run (#1540), which reports a red on the
+  runs once nightly on main in the scheduled whole run (#1540), which reports a red on the
   board, so a lane runs only what its diff reaches.
 - Run Studio checks (`vitest`, `tsc`, npm scripts) only when `apps/studio` or something it imports
   is reached. Run `npm ci --prefer-offline --no-audit --no-fund` in that worktree's `apps/studio`
@@ -124,12 +132,15 @@ the workspace graph (`cargo metadata --no-deps`, no build) and prints the comman
 - Docs-only changes need only the existing applicable docs guards and `git diff --check`, not
   Rust builds, Studio checks or journey previews.
 
-Execute the plan with `python tools/reached-tests/run_reached.py` (the command, its batches, slot
-admission and 900-second budget are LANES.md §3). The author runs it once on main + head and
-leaves the receipt, the JSON report, as a file path in the PR body together with its summary line;
-the receipt names the head sha (`headBefore`) and the base main sha (`baseSha`). A budget miss is
-never green. Raw receipts are never committed: the JSON report and captures go to a PR comment or to the
-untracked `.graphhelm/` area, and the repo keeps only a summary table with a link to them.
+For scoped PR proof, retain a receipt with the exact head and base SHA, commands, scope,
+environment and passed/failed/skipped/unobserved results. A `run_reached.py` JSON report may be
+used when its selected plan is proportional; running the full plan is not required for a PR.
+The reviewer checks the receipt against the current head, reuses valid results and reruns only
+one or two tests justified by the risk by default. For persistence, permissions, compatibility or
+security changes, the reviewer reruns the tests reached by those paths, not the whole plan.
+Missing, stale or failed evidence requires repair of
+that scope, not an automatic full rebuild. Raw receipts stay in PR attachments/comments or the
+untracked `.graphhelm/` area, not in source control.
 
 **Resume, summary and preflight.** Rerun the same command with the same `--output` after
 any stop: a step is reused only when the previous run passed it, ended with HEAD unchanged and a
@@ -200,6 +211,15 @@ decision (approve a design, choose an option) goes to the user. The plugin's Sto
 Before asking for review, quote the diff-hygiene status line in the PR body; the rule is in
 [`keel/KEEL_EXEC.md`](../../keel/KEEL_EXEC.md) (Hand off).
 
+### Priority and delivery time
+
+An owner-reported bug takes the P0 lane: assign its reviewer before the first push, give it the
+next build-slot turn, and target merge within four hours. A holding lane yields at the next safe
+boundary, saving its checkpoint and receipt; never kill an unknown process or discard work.
+Normal work targets merge within one day. These targets never replace proof or independent review.
+Kakashi reports for each merged PR the issue-to-first-push, push-to-review-start and
+review-start-to-merge intervals. Record unavailable timestamps as unobserved.
+
 ## 4. One review, by another session or a blind subagent
 
 - One review from a reviewer that did not write the change: another session, or a **blind
@@ -228,15 +248,13 @@ Before asking for review, quote the diff-hygiene status line in the PR body; the
   a `keel.yaml` invariant class still needs the isolated tests `keel/KEEL_EXEC.md` asks for, with their failure list; the review checks they are there.
   For a user-visible change the reviewer also runs `graphhelm journey replay` for each journey the
   card names, on the head, and pastes its summary.
-- The reviewer **reuses the author's receipt** (§3) when its head equals the PR head and nothing in
-  it is failed or pending, and then runs the end-to-end proof of the promise, any cell the reviewer
-  doubts, and fmt and clippy on the touched crates. The reviewer reruns the whole reached plan
-  only when the receipt is missing, stale, red or pending, or when the diff touches persistence,
-  permissions, security, compatibility or the plan selector itself. The review comment names what
-  was reused and what was rerun, each command and its result. The reached set is what
-  `tools/reached-tests/reached_tests.py --base <merge base> --head <head>` prints, subject to the
-  same test budget as the author (§3). Any extra check needs its scope and reason in the card;
-  review is not a reason to run unrelated Studio checks, all journey previews or a full suite.
+- The reviewer **reuses the author's exact-head receipt** (§3), checking its scope and outcomes.
+  Do not rebuild or rerun valid author checks on the same head. Rerun only one or two tests the
+  risk needs by default. For persistence, permissions, compatibility or security changes, rerun
+  the reached scope (the tests those paths reach), not the whole plan.
+  Missing, stale, red or pending evidence requires repair of that scope, not the full
+  plan. Name reused and rerun commands and results. Independent review still examines the diff,
+  earlier comments and the adequacy of the proof, including security and compatibility risks.
 - **The reviewer runs the Keel check on the head under review and pastes its output** in the
   review: `graphhelm --json keel check --diff <base>..<head> --card <card.json>`, where `<base>` is
   the merge base with `main` and the card is the one in the PR body saved as JSON
@@ -245,8 +263,7 @@ Before asking for review, quote the diff-hygiene status line in the PR body; the
   author widens the card in the PR body (and says why) or removes the change. The surface counts
   and warnings are signals the reviewer weighs, not a verdict. A change whose row in §2 needs no
   card is checked without `--card`, which reports the counts only.
-- **A change to Rust code also runs the lints on the crates it touches**, author and reviewer
-  alike: `cargo +1.97.1 fmt --all -- --check` and
+- **A change to Rust code also runs the lints on the crates it touches**, by the author; the reviewer reuses the exact-head lint receipt: `cargo +1.97.1 fmt --all -- --check` and
   `cargo +1.97.1 clippy --locked -p <crate> --all-targets --all-features -- -D warnings` for each
   touched crate. Tests alone do not catch a lint: a change once merged with passing tests and left `main`
   red under clippy. Clippy runs through the build slot, on touched crates only.
@@ -285,8 +302,8 @@ Before asking for review, quote the diff-hygiene status line in the PR body; the
 The reviewer who approved merges (a blind subagent included). There is no separate gate run and no separate presser: the Keel checks the reviewer runs (`KEEL.md`) are what block, and a blocking finding is a `BLOCK`.
 
 The steps are in [`keel/KEEL_MERGE.md`](../../keel/KEEL_MERGE.md): pin the head, merge, check after,
-and clean up the PR's worktrees and branch (its step 5). It also says why main gets one whole run
-after merges, and it defines delivered. Two checks run from here:
+and clean up the PR's worktrees and branch (its step 5). It also defines the nightly full-main
+plan (not a per-merge run) and delivered. Two checks run from here:
 
 1. Closing check: `ci/closing-keywords.ps1 -Number <N> -Repository stabem/GraphHelm -Closes <issues>`.
    It reads the body and the commit messages; their union must equal the intent (the keyword rule

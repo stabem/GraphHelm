@@ -13,9 +13,9 @@ for, a summary of the change or an expected verdict, you are not blind: say so a
 ## Who runs what (#2421)
 
 When a blind subagent reviews, the session that launches it runs the long work first, on the
-pinned head: the build, the test runs and the reached plan, each to its end, with every log saved
+pinned head: any required build and proportional test runs, each to its end, with every log saved
 to a file. That long work includes every run the steps below ask of the reviewer: the reached
-plan or the receipt check, fmt and clippy, the Keel check and any journey replay. In this split,
+receipt check and any risk-selected tests, Keel check or journey replay. In this split,
 "run" in those steps means the parent runs it and the subagent reads and judges its log. Only then does it launch the subagent. The subagent reads the diff, those logs and the
 rules, judges the logs itself, and runs only short checks: the break-once, and single tests or
 probes that finish within 5 minutes. It never waits on or polls a command for more than 5
@@ -26,15 +26,13 @@ review subagents' cache writes there).
 ## Do
 
 1. **Read the earlier comments** and answer any open block on this head.
-2. **Reuse the author's receipt, rerun what proves.** The author leaves the `run_reached.py` JSON
-   report as a file path in the PR body with its summary line; it names the head (`headBefore`)
-   and the base main sha (`baseSha`). Reuse it when its head equals the PR head and nothing in it
-   is failed or pending. Then run the end-to-end proof of the promise, any cell you doubt, and fmt
-   and clippy on the touched crates. Rerun the whole reached plan on main plus the head only when
-   the receipt is missing, stale, red or pending, or when the diff touches persistence,
-   permissions, security, compatibility or the plan selector itself. Name what you reused and what
-   you reran, each command and its result, and the size of each population (for example, how many
-   test files ran).
+2. **Reuse the author's exact-head receipt.** Check its head, scope, commands and outcomes.
+   Do not rerun valid author checks or rebuild the same head merely for review. Run only one or
+   two tests justified by the risk by default. If the diff touches persistence, permissions,
+   compatibility or security, the reviewer reruns the reached scope: the tests those paths reach,
+   not the whole plan. Missing, stale or failed evidence requires scoped repair,
+   never an automatic whole-plan run. Name reused and rerun commands with their results and
+   populations. DELIVERY.md §3 defines proportional scope and the nightly full-main run.
    **Await the checkout before any proof.** A checkout, fetch or reset that returns a live or
    background session is not finished: wait for it to exit, then read `git rev-parse HEAD` and an
    empty `git status --short`, and pass that full sha to the runner as `--head`. A run started

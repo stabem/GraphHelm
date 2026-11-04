@@ -82,9 +82,10 @@ Step 2, from an accepted card to a proven change. Read `KEEL.md` and the card fi
    it can fail and proves each one.
 5. **Break it once.** Before you call it done, break the change on purpose in one place the
    promise depends on, and show that a proof turns red. Restore it and say what you broke.
-6. **Run the whole reached plan.** `tools/reached-tests/run_reached.py` on main plus the change,
-   every step, never a hand-picked subset. Cite each step and its result in the pull request, and
-   leave the JSON report as the receipt the reviewer reuses (`KEEL_REVIEW.md` step 2).
+6. **Run proportional proof.** Follow DELIVERY.md §3: touched crates/files and their direct
+   tests, plus fmt, source guard and clippy for touched Rust crates. Save exact-head command
+   receipts for review. The full reached plan runs nightly on main and does not gate the PR.
+   Push once the fix and red-to-green regression proof exist, then finish scoped checks on that head.
 7. **Assert what the user reads** (`keel.proof.reads_screen`, `keel.test.intent`). A journey
    over a screen checks the rendered text the promise is about: the amount with its cents, the
    exact date phrase under a fixed clock, the plural, the label, and the effect on the other
@@ -125,8 +126,8 @@ When origin/main cannot be fetched or the card cannot be read, the check reports
 the reason, never `passed`. It is not a merge gate: the reviewer reads the status line and may BLOCK
 when it is missing or red.
 
-Open the pull request with the card, the receipts, the broken-on-purpose result, the reached-plan
-steps, every exception you wrote with its reason, and what context the card was missing.
+Open the pull request with the card, the receipts, the broken-on-purpose result, the scoped proof
+results, every exception you wrote with its reason, and what context the card was missing.
 
 When a rule fires, record its cause (the card, the tool, the task or the agent) before anyone
 tightens anything.

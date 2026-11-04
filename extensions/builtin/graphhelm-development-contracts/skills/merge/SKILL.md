@@ -25,9 +25,11 @@ Step 5 of the per-task graph (`docs/process/DELIVERY.md` §5). Only the approvin
 
 1. Pin the head: `gh pr view <N> --json headRefOid` must equal the sha the approval named, and no
    BLOCK on that head is left unanswered. If the head moved, the approval does not cover it.
-   A moved main is not rerun per merge: after merges land, the orchestrator owns one
-   whole-package run on main, at most once an hour while main moves, and a red main is fixed
-   first (revert or fix-forward PR) before any new merge.
+   The orchestrator owns one full reached plan nightly on main, under the shared build slot
+   and outside declared benchmark windows, never per PR, per merge or hourly. Preserve a failed
+   receipt and open a P0 linked to the responsible PR after identifying it from evidence.
+   Fix red main first (revert or fix-forward PR). This rule does not install a nightly job or
+   change an existing runner's cadence.
 2. Closing check: the union of closing keywords in the body and commits must equal the intent
    (`ci/closing-keywords.ps1 -Number <N> -Repository <owner/repo> -Closes <issues>` in GraphHelm).
    Use `Refs #N` for an issue that must stay open.

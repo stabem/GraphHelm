@@ -295,6 +295,9 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(report["status"], "passed")
             self.assertEqual(report["completed"][0]["index"], 0)
+            self.assertEqual(report["progressErrors"], [
+                {"operation": "stderr.write", "error": "[Errno 22] Invalid argument"}
+            ])
 
     def test_unexpected_oserror_receipt_names_the_operation(self):
         with tempfile.TemporaryDirectory() as temp:

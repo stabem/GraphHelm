@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { JourneyPastRun, JourneyRun, Runtime } from "../runtime/client";
+import { RuntimeError } from "../runtime/client";
+import { actionErrorDetails, type ActionErrorDetails } from "../states/ActionError";
 import { followRun } from "./run-all";
 import { earlierVersion, outputLines } from "./steps";
 
@@ -23,14 +25,11 @@ export interface JourneyRunState {
   earlier: JourneyPastRun | null;
   /** #2442: the earlier run asked for with `viewing`, once the history has it; else `null`. */
   viewed: JourneyPastRun | null;
-  error: string | null;
+  error: ActionErrorDetails | null;
   starting: boolean;
   /** Run; with a digest, the owner's Confirm of the commands shown under that digest (#1909). */
   start: (confirmDigest?: string) => void;
-}
-
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : "The Runtime refused.";
+  dismissError: () => void;
 }
 
 /** The selected journey's run: read on open, started by Run, read again while it runs, and its
@@ -40,7 +39,7 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
   const [frames, setFrames] = useState<Record<string, string>>({});
   const [log, setLog] = useState<string[]>([]);
   const [history, setHistory] = useState<JourneyPastRun[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ActionErrorDetails | null>(null);
   const [starting, setStarting] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const confirming = useRef<string | null>(null);
@@ -61,7 +60,7 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     let live = true;
     runtime.journeyHistory(flowId).then(
       runs => { if (live) setHistory(runs); },
-      cause => { if (live) setError(`Could not read run history: ${message(cause)}`); },
+      cause => { if (live) setError(actionErrorDetails("Run history could not be read", cause, "The Runtime could not return this journey's history.", "Try opening this journey again.")); },
     );
     return () => { live = false; };
   }, [runtime, flowId]);
@@ -72,7 +71,6 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     const show = (next: JourneyRun) => {
       setRun(next);
       seen.current?.(next);
-      setError(null);
       setStarting(false);
       note(next.observerSetup?.message);
       note(next.observerSetup?.error);
@@ -82,7 +80,11 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     const fail = (cause: unknown) => {
       if (!live) return;
       setStarting(false);
-      setError(message(cause));
+      const code = cause instanceof RuntimeError ? cause.code : null;
+      const flowCommand = code?.startsWith("flow.") === true || code?.startsWith("preview.flow_") === true
+        ? "graphhelm journey validate --all"
+        : undefined;
+      setError(actionErrorDetails("Run could not start", cause, "The Runtime refused to start the journey run.", "Fix the cause and try Run again.", flowCommand));
     };
     // #1912: the answer to Run or Confirm is followed to the run's recorded result. A read that
     // fails on the way is read again; it no longer leaves the panel on "Running" for good.
@@ -91,12 +93,30 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
       pollMs: POLL_MS,
       onRun: show,
       onError: (cause, failures, final) => {
-        setError(final
-          ? `Lost the run: ${message(cause)} Reload to read it again.`
-          : `Reading the run again (${failures}): ${message(cause)}`);
+        setError(actionErrorDetails(
+          final ? "Run status could not be read" : "Run status read failed",
+          cause,
+          final ? "Studio lost the current run status." : "Studio could not read the current run status.",
+          final ? "Reload Studio to read the run again." : `Studio will retry reading the run (attempt ${failures}).`,
+        ));
       },
     }).then((last) => {
       if (!live || last === null) return;
+      if (last.startError !== undefined && last.startError !== null) {
+        const code = last.startError.code ?? null;
+        const failure = new RuntimeError(last.startError.message ?? "The Runtime refused to start the journey run.", null, code);
+        const flowCommand = code?.startsWith("flow.") === true || code?.startsWith("preview.flow_") === true
+          ? "graphhelm journey validate --all"
+          : undefined;
+        setError(actionErrorDetails(
+          "Run could not start",
+          failure,
+          "The Runtime refused to start the journey run.",
+          "Fix the named issue, then try Run again.",
+          flowCommand,
+        ));
+        return;
+      }
       note(last.launchLog?.tail);
       note(last.driverLog?.tail);
       runtime.journeyHistory(flowId).then((runs) => { if (live) setHistory(runs); }, () => undefined);
@@ -191,13 +211,14 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     setAttempt((n) => n + 1);
   }, [drop]);
 
+  const dismissError = useCallback(() => setError(null), []);
   const own = Object.fromEntries(Object.entries(frames).filter(([slot]) => !slot.startsWith(PAST)));
   const split = splitFrames(own, run?.viewportsPlanned?.[0]);
   // A viewed run shows its own frames only; an earlier version's frames show under the run's (none yet).
   const past = earlier === null ? { web: {}, mobile: {} } : splitFrames(pastFrames(frames, earlier.run), earlier.viewportsPlanned?.[0]);
   const web = viewed !== null ? past.web : { ...past.web, ...split.web };
   const mobile = viewed !== null ? past.mobile : { ...past.mobile, ...split.mobile };
-  return { run, frames: web, mobileFrames: mobile, log, history, earlier, viewed, error, starting, start };
+  return { run, frames: web, mobileFrames: mobile, log, history, earlier, viewed, error, starting, start, dismissError };
 }
 
 /** #1777/#1878: a run's fetched frames by viewport. The top level is the run's first viewport and

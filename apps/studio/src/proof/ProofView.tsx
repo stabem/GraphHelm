@@ -15,7 +15,8 @@ import { OWNER } from "../runtime/client";
 import { clearRunAllBatch, isRunAllRunId, makeRunAllBatch, readRunAllBatch, reconcileRunAllJourney, RunAllIdentityFailure, RunAllReadFailure, RUN_ALL_TIMEOUT_MS, runAllUntil, runAllViewIsCurrent, updateRunAllJourney, writeRunAllBatch, type RunAllBatch, type RunAllJourneyState, type RunAllReason } from "./run-all";
 import { countSteps, failsOnlyOn, outputLines, waitsForFrame, staleCountsText, stepStatusText, isHeld, isWaitingReview, journeyKind, journeyScore, journeySteps, lastRunChip, historyChip, liveCard, pastAsRun, CHANGED, withoutLive, afterPanelGone, watchedIds, liveAfterList, preparingStatus, type JourneyKind, type Step, type Viewport } from "./steps";
 import { useJourneyRun } from "./use-journey-run";
-import { Empty, Loading, ReadFailure } from "../states/ViewState";
+import { Empty, Loading } from "../states/ViewState";
+import { ActionError, actionErrorDetails, type ActionErrorDetails } from "../states/ActionError";
 import { When } from "../time/Stamp";
 import { when } from "../time/when";
 import { journeyToFix } from "../sidebar/project-summary";
@@ -44,10 +45,6 @@ interface ProofViewProps {
  * row hand its card back to the journey list. */
 const WATCH_POLL_MS = 2_000;
 const WATCH_MAX_FAILURES = 5;
-
-function message(cause: unknown, fallback: string): string {
-  return cause instanceof Error ? cause.message : fallback;
-}
 
 function nameOf(flow: JourneyFlow): string {
   return flow.name || flow.title || flow.id;
@@ -90,6 +87,7 @@ export function runAllJourneyNotice(journey: RunAllJourneyState | undefined, rea
 /** The Proof region (docs/design/studio/Proof.dc.html): the journeys column, then the selected
  * journey's run bar, console, step grid and the selected step's compare and Action panel. */
 export function ProofView({ projectKey, runtime, journeys, error, executionId, onRan, initial = null, onPicked, initialPast = null, onPast }: ProofViewProps) {
+  const [journeyReadErrorDismissed, setJourneyReadErrorDismissed] = useState(false);
   // The journey a deep link named (`studio open --journey`), until the owner picks another.
   const [picked, setPickedState] = useState<string | null>(initial);
   const setPicked = (id: string) => { setPickedState(id); onPicked?.(id); };
@@ -131,7 +129,7 @@ export function ProofView({ projectKey, runtime, journeys, error, executionId, o
     }, WATCH_POLL_MS);
     return () => { on = false; clearInterval(timer); };
   }, [watched, runtime]);
-  if (error !== null && journeys === null) return <section id="panel-proof" aria-label="Proof" className="view"><ReadFailure what="journeys" route="/v1/journey-flows" message={error} onRetry={onRan} /></section>;
+  if (error !== null && journeys === null && !journeyReadErrorDismissed) return <section id="panel-proof" aria-label="Proof" className="view"><ActionError error={actionErrorDetails("Journeys could not be read", error, error, "Retry reading the journeys.")} onDismiss={() => setJourneyReadErrorDismissed(true)} onRetry={() => { setJourneyReadErrorDismissed(false); onRan(); }} /></section>;
   if (journeys === null) return <section id="panel-proof" aria-label="Proof" className="view"><Loading text="Reading the journeys…" /></section>;
   const selected = journeys.find((flow) => flow.id === picked) ?? journeys[0] ?? null;
   const started = (id: string) => {
@@ -167,7 +165,8 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
   const [busy, setBusy] = useState<string | null>(null);
   // #1914: the journey Run all is playing now; its card reads running even when no panel follows it.
   const [active, setActive] = useState<string | null>(null);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const [refusal, setRefusalState] = useState<ActionErrorDetails | null>(null);
+  const setRefusal = (value: string | ActionErrorDetails | null) => setRefusalState(value === null || typeof value !== "string" ? value : actionErrorDetails("Journey action failed", null, value, "Dismiss this message or retry the action."));
   const [interruptedBatch, setInterruptedBatch] = useState<RunAllBatch | null>(null);
   const mounted = useRef(true);
   const viewGeneration = useRef(0);
@@ -304,7 +303,7 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
     setRefusal(null);
     setBusy(`Starting ${nameOf(flow)}`);
     onPick(flow.id);
-    runOne(flow).catch((cause: unknown) => setRefusal(message(cause, "The Runtime refused the run."))).finally(() => setBusy(null));
+    runOne(flow).catch((cause: unknown) => setRefusal(actionErrorDetails("Journey run failed", cause, "The Runtime refused the run.", "Check the Runtime response, then try Run again."))).finally(() => setBusy(null));
   };
   const runAll = async () => {
     const generation = viewGeneration.current;
@@ -451,7 +450,7 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
         await runtime.approveJourney(flow.id);
       }
     } catch (cause) {
-      setRefusal(message(cause, "The Runtime refused."));
+      setRefusal(actionErrorDetails("Journeys could not be approved", cause, "The Runtime refused this approval.", "Check the journey state, then try again."));
     } finally {
       setBusy(null);
       onRan();
@@ -467,7 +466,7 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
       </div>
       {interruptedBatch?.reason !== undefined && <p role="status" className="run-status">Run all stopped: {runAllReasonText(interruptedBatch.reason)} {interruptedBatch.journeys.filter((journey) => journey.phase === "not_started").length} journeys not started.</p>}
       {busy !== null && <span role="status" className="run-status"><span className="pulse" aria-hidden="true" />{busy}</span>}
-      {refusal !== null && <p className="error">{refusal}</p>}
+      {refusal !== null && <ActionError error={refusal} onDismiss={() => setRefusal(null)} />}
       {journeys.some((flow) => flow.lastRun !== undefined) && (
         <span className="proof-counts">{counts.passed} passed · {counts.failed} failed · {counts.stale} stale · {counts.not_run} not run</span>
       )}
@@ -633,7 +632,7 @@ export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGo
   // #2442: the earlier run on screen (its history id), else the latest or live run.
   const [viewing, setViewing] = useState<string | null>(initialPast);
   const view = (id: string | null) => { setViewing(id); onPast?.(id); };
-  const { run, frames, mobileFrames, log, history, earlier, viewed, error, starting, start } = useJourneyRun(runtime, flow.id, executionId, onRan, onRun, viewing);
+  const { run, frames, mobileFrames, log, history, earlier, viewed, error, starting, start, dismissError } = useJourneyRun(runtime, flow.id, executionId, onRan, onRun, viewing);
   const [showLog, setShowLog] = useState(false);
   // #1914: a panel that goes away (another journey picked) stops reporting; its card must not stay "running".
   useEffect(() => onGone, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -724,7 +723,7 @@ export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGo
           <span className="run-segments" aria-hidden="true">{steps.map((step) => <span key={step.n} className={stale ? "not-run" : step.status.replace(" ", "-")} />)}</span>
         )}
       </section>
-      {error !== null && <p className="error">{error}</p>}
+      {error !== null && <ActionError error={error} onDismiss={dismissError} />}
       {isHeld(run) && run?.cliConfirm != null && !busy && (
         // #1909: the commands the draft would run and the digest they are confirmed under. Confirm
         // sends exactly this digest; the Runtime refuses it when the flow changed since, and
@@ -797,7 +796,7 @@ function SendToFix({ runtime, flow, run, steps, executionId }: { runtime: Runtim
   const [note, setNote] = useState("");
   const [sent, setSent] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<ActionErrorDetails | null>(null);
   // A resend after a lost answer carries the first press's instant, so its bytes are the same.
   const [at] = useState(() => new Date().toISOString().replace(/\.\d{3}Z$/, "Z"));
   const find = async (): Promise<boolean> => {
@@ -817,17 +816,17 @@ function SendToFix({ runtime, flow, run, steps, executionId }: { runtime: Runtim
       if (!(await find().catch(() => false))) setSent(at);
     } catch (cause) {
       // The first press may have landed and only its answer been lost: then it is sent.
-      if (!(await find().catch(() => false))) setRefusal(message(cause, "The Runtime did not record the request."));
+      if (!(await find().catch(() => false))) setRefusal(actionErrorDetails("Request could not be sent", cause, "The Runtime did not record the request.", "Check the run's request list, then try again."));
     } finally {
       setBusy(false);
     }
   };
   return (
-    <span className="send-fix">
+    <div className="send-fix">
       <input aria-label="Note for the fix" placeholder="Note (optional)" maxLength={NOTE_MAX} value={note} disabled={busy} onChange={(event) => setNote(event.target.value)} />
       <button type="button" className="b ghost" disabled={busy} onClick={() => { void send(); }}>{busy ? "Sending…" : "Send to fix"}</button>
-      {refusal !== null && <span role="alert" className="error">{refusal}</span>}
-    </span>
+      {refusal !== null && <ActionError error={refusal} onDismiss={() => setRefusal(null)} />}
+    </div>
   );
 }
 
@@ -837,17 +836,17 @@ function SendToFix({ runtime, flow, run, steps, executionId }: { runtime: Runtim
 function DecisionBar({ runtime, flow, runFinished, stale = false, onDecided }: { runtime: Runtime; flow: JourneyFlow; runFinished: boolean; stale?: boolean; onDecided: () => void }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
-  const [refusal, setRefusal] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<ActionErrorDetails | null>(null);
   const decision = decisionOf(flow);
   const act = (send: () => Promise<void>) => {
     setBusy(true);
     setRefusal(null);
-    send().then(() => { setReason(""); onDecided(); }, (cause: unknown) => setRefusal(message(cause, "The Runtime refused.")))
+    send().then(() => { setReason(""); onDecided(); }, (cause: unknown) => setRefusal(actionErrorDetails("Decision could not be recorded", cause, "The Runtime refused this decision.", "Check the journey state, then try again.")))
       .finally(() => setBusy(false));
   };
   const reject = () => {
     const checked = rejectNote(reason);
-    if ("refusal" in checked) { setRefusal(checked.refusal); return; }
+    if ("refusal" in checked) { setRefusal(actionErrorDetails("Decision could not be recorded", null, checked.refusal, "Correct the reason, then try Reject again.")); return; }
     act(() => runtime.rejectJourney(flow.id, checked.note));
   };
   return (
@@ -861,7 +860,7 @@ function DecisionBar({ runtime, flow, runFinished, stale = false, onDecided }: {
           <button type="button" className="b ghost" disabled={busy} onClick={reject}>Reject</button>
         </>
       )}
-      {refusal !== null && <p role="alert" aria-label={refusal} className="error">{refusal}</p>}
+      {refusal !== null && <ActionError error={refusal} onDismiss={() => setRefusal(null)} />}
     </div>
   );
 }

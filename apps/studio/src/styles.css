@@ -99,6 +99,15 @@ button { font: inherit; }
 /* #2324 (docs/design/studio/2325-2324/): a run that waits for you, amber like a journey to fix. */
 .run-waits { color: #ffb35c; }
 .error { color: var(--accent); }
+.action-error { display: flex; flex: 0 0 100%; flex-direction: column; gap: var(--s2); min-width: 0; max-width: 100%; padding: var(--s3); border: 1px solid #5a2a2a; border-left: 3px solid #ff6262; border-radius: var(--card-radius); background: #1a0f0f; color: var(--text); overflow-wrap: anywhere; }
+.action-error-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s2); }
+.action-error-title { color: #ff7373; font-size: var(--fs-card); font-weight: 600; }
+.action-error-code { color: var(--muted); font-size: var(--fs-meta); }
+.action-error-cause, .action-error-next { margin: 0; line-height: 1.5; }
+.action-error-cause { color: var(--text); }
+.action-error-next { color: var(--muted); }
+.action-error-next code { color: var(--text); font: 11px var(--mono); overflow-wrap: anywhere; }
+.action-error-dismiss, .action-error-retry { align-self: flex-start; }
 
 .start { display: flex; flex-direction: column; gap: 8px; max-width: 560px; padding: 14px; border-radius: 10px; border: 1px solid var(--edge-strong); background: var(--card); }
 .start label { color: var(--muted); }

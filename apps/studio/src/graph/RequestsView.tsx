@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import type { BoardTask, JourneyFlow, Runtime, TasksBoard } from "../runtime/client";
 import { ReviewModal } from "./ReviewModal";
 import { reviewable } from "./review";
 import { idleText, stepAged } from "../lanes/board";
 import { RequestProgress } from "./RequestProgress";
-import { Loading, ReadFailure } from "../states/ViewState";
+import { Loading } from "../states/ViewState";
+import { ActionError, actionErrorDetails, type ActionErrorDetails } from "../states/ActionError";
 import { noRequestsText } from "./requests-text";
 import { cards, KANBAN, KANBAN_NAME, requestColor, type OwnerRequest } from "./requests";
 import { requestKey } from "../lanes/asked";
@@ -42,39 +43,50 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof, wai
   const [journey, setJourney] = useState<string | null>(null);
   const [board, setBoard] = useState<TasksBoard | null>(null);
   const [requests, setRequests] = useState<(OwnerRequest & { runs?: string[] })[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ActionErrorDetails | null>(null);
   const [reviewing, setReviewing] = useState<BoardTask | null>(null);
   const [deliveredOpen, setDeliveredOpen] = useState<boolean | null>(null);
   const [olderShown, setOlderShown] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
+  const readSequence = useRef(0);
+  const readInFlight = useRef<number | null>(null);
 
   const read = useCallback(async () => {
+    // Polls do not supersede a read that has not finished. Otherwise a Runtime slower
+    // than POLL_MS can return successfully forever while every reply is discarded.
+    if (readInFlight.current !== null) return;
+    const sequence = ++readSequence.current;
+    readInFlight.current = sequence;
     try {
       const ids = JSON.parse(key) as string[];
       if (ids.length === 1) {
         const [nextBoard, nextRequests] = await Promise.all([runtime.board(ids[0]), runtime.requests(ids[0])]);
+        if (sequence !== readSequence.current) return;
         setBoard(nextBoard);
         setRequests(nextRequests);
       } else {
         // #2230: every execution of the project, read as one: slices keep their execution in their key.
         const parts = await Promise.all(ids.map(async (id) => ({ executionId: id, board: await runtime.board(id), ...(await runtime.requestsRead(id)) })));
+        if (sequence !== readSequence.current) return;
         setBoard(combineBoards(parts));
         setRequests(combineRequests(parts));
       }
-      setError(null);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The requests could not be read.");
+      if (sequence === readSequence.current) setError(actionErrorDetails("Requests could not be read", reason, "The Runtime could not return the request board.", "Retry reading the requests."));
+    } finally {
+      if (readInFlight.current === sequence) readInFlight.current = null;
     }
   }, [runtime, key]);
+  const retryRead = () => { setError(null); void read(); };
 
   useEffect(() => {
     void read();
     const timer = setInterval(() => void read(), POLL_MS);
-    return () => clearInterval(timer);
+    return () => { clearInterval(timer); readSequence.current += 1; readInFlight.current = null; };
   }, [read]);
 
   const many = executionIds.length > 1;
-  if (error !== null && board === null) return <ReadFailure what={many ? "project's requests" : "run's requests"} route={`/v1/executions/${executionIds.join(",")}/requests`} message={error} onRetry={() => void read()} />;
+  if (error !== null && board === null) return <section className="view"><ActionError error={error} onDismiss={() => setError(null)} onRetry={retryRead} /></section>;
   if (board === null || requests === null) return <Loading text={many ? "Reading the project's requests…" : "Reading the run's requests…"} />;
 
   const flows = journeys ?? [];
@@ -126,7 +138,7 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof, wai
             <button type="button" role="tab" className="b gv-tab" aria-label="Kanban view" aria-selected={mode === "kanban"} onClick={() => setMode("kanban")}>Kanban</button>
             <button type="button" role="tab" className="b gv-tab" aria-label="Graph view" aria-selected={mode === "graph"} onClick={() => setMode("graph")}>Graph</button>
           </div>
-          {error !== null && <span role="status" className="muted small">Last read failed: {error}</span>}
+          {error !== null && <ActionError error={error} onDismiss={() => setError(null)} onRetry={retryRead} />}
         </div>
         {many && <p className="lanes-scope">{executionIds.length} runs of this project · only what the Runtime received is shown; work recorded nowhere here is not on the graph.</p>}
 

@@ -745,7 +745,7 @@ export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGo
           {steps.map((step) => (
             <li key={step.n} aria-label={`Step ${step.n}`} className={`step ${stale ? "not-run stale" : step.status.replace(" ", "-")}`}>
               <button type="button" className="b" aria-pressed={selected?.n === step.n} onClick={() => setPicked(step.n)}>
-                <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <><img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /><CheckMarks step={step} aspect={THUMB_ASPECT} /></> : waitsForFrame(step, false, shown, starting && viewed === null, stale) ? <FrameWaiting /> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
+                <span className="step-thumb">{step.cli ? <CliThumb step={step} /> : thumb(step.screen) ? <><img src={thumb(step.screen)} alt={`Step ${step.n} frame`} /><CheckMarks step={step} aspect={THUMB_ASPECT} /></> : waitsForFrame(step, thumb(step.screen) !== undefined, shown, starting && viewed === null, stale) ? <FrameWaiting /> : <span>{step.frame ? "loading" : step.status === "precondition" ? "start" : "no frame"}</span>}</span>
                 <span className="step-text">
                   <span className="step-head"><span className="mono">{step.n} DOES</span><span className="step-status">{stepStatusText(step.status, run, stale)}</span></span>
                   {stale && <span className="stale-mark" title="From the earlier version of this journey">stale</span>}

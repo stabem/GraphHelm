@@ -207,6 +207,15 @@ export function devSession(env: Record<string, string>): Plugin {
           return json(response, 403, { ok: false, reason: "foreign_origin" });
         }
         const path = new URL(request.url ?? "/", `http://${host}`).pathname;
+        // Vite can serve files below its root (and through /@fs) before any Studio route.
+        // Keep project secrets private even when the served root contains a project.
+        let staticPath: string;
+        try { staticPath = decodeURIComponent(path).replaceAll("\\", "/").toLowerCase(); }
+        catch { return json(response, 400, { ok: false, reason: "bad_path" }); }
+        if (/(?:^|\/)\.graphhelm(?:\/|$)/.test(staticPath)
+          || /(?:^|\/)\.env(?:\.[^/]*)?$/.test(staticPath)
+          || /\.token$/.test(staticPath))
+          return json(response, 404, { ok: false, reason: "not_found" });
         const protectedPath = /^\/(?:__studio|v1|health|p)(?:\/|$)/.test(path);
         const cookieName = `graphhelm_studio_${port}=`;
         const cookie = (request.headers.cookie ?? "").split(";").map(part => part.trim()).find(part => part.startsWith(cookieName))?.slice(cookieName.length) ?? "";

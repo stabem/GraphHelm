@@ -29,4 +29,6 @@ The complete Studio suite passed 215/215 on the implementation commit. The help 
 
 ## Test scope
 
+Review follow-up: a synthetic credential under Vite's served root was reachable by `GET /.graphhelm/events.token` without a cookie on `b5ed254b` (review BLOCK). The focused test failed before the fix and passed 12/12 after the first middleware denied project-secret paths, including the `/@fs/` form. This is local fixture evidence; no installed secret exposure was observed.
+
 The first broad run encountered stale generated journey contracts, which were recompiled and validated with `graphhelm journey validate --all` (passed). The current delivery uses focused tests and touched-crate checks; the full 111-step reached plan was not run on this head.

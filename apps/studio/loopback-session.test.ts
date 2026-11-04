@@ -48,6 +48,13 @@ it("refuses cookieless protected routes and cross-site shell loads",async()=>{
     expect((await call(path,{"sec-fetch-site":"same-origin"})).status).toBe(403);
   expect((await call("/",{"sec-fetch-site":"cross-site"})).status).toBe(403);
 });
+it("never serves a project credential from Vite's static root",async()=>{
+  for (const path of ["/.graphhelm/events.token", `/@fs/${join(root,".graphhelm/events.token").replaceAll("\\","/")}`]) {
+    const result = await call(path);
+    expect(result.status).not.toBe(200);
+    expect(result.body).not.toContain("fixture-owner-secret");
+  }
+});
 
 async function browserHeaders() {
  const shell=await call("/",{"sec-fetch-mode":"navigate","sec-fetch-dest":"document","sec-fetch-site":"none"});

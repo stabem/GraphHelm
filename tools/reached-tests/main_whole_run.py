@@ -158,7 +158,8 @@ def quiet_preflight(args, now, run=subprocess.run):
 
 
 def first_parent_commits(repo, baseline, head):
-    return set(filter(None, git(repo, "rev-list", "--first-parent", f"{baseline}..{head}").splitlines()))
+    return {commit for commit in git(repo, "rev-list", "--first-parent", f"{baseline}..{head}").splitlines()
+            if commit}
 
 
 def merges_since_green(repo, github, baseline, head, run=subprocess.run):
@@ -229,7 +230,10 @@ def find_failure_issue(github, marker, run=subprocess.run):
                      stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
         if result.returncode:
             raise RuntimeError("GitHub issue search failed")
-        return next((item for item in json.loads(result.stdout) if marker in item.get("body", "")), None)
+        for item in json.loads(result.stdout):
+            if marker in item.get("body", ""):
+                return item
+        return {}
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         raise RuntimeError("GitHub issue search failed") from error
 
@@ -385,7 +389,7 @@ def run_nightly(args, raw_argv, run=subprocess.run, now=None):
         except (OSError, ValueError):
             report = {"status": "incomplete", "error": "no reached report was written"}
         red = red_steps(report)
-        if returncode not in (0, None) and not red:
+        if returncode is not None and returncode != 0 and not red:
             red = [f"run_reached exited {returncode}"]
         status = "passed" if report.get("status") == "passed" and returncode == 0 else report.get("status", "incomplete")
         receipt.update(status=status, completedAt=utc_now().isoformat(), reachedReturncode=returncode,
@@ -413,7 +417,7 @@ def run_nightly(args, raw_argv, run=subprocess.run, now=None):
         return 1
     finally:
         if not continuing:
-            lock.__exit__(None, None, None)
+            lock.__exit__()
 
 
 def due(state, main_sha, now, min_interval):

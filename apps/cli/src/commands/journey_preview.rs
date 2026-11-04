@@ -1998,15 +1998,15 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     }
     // Persist the handle through teardown so a crash or failed down remains recoverable.
     run.save();
-    if let Ok(mut slot) = launched.lock() {
-        if let Some(stop) = slot.take() {
-            if stop.stop().complete() {
-                if let Some(object) = run.state.as_object_mut() {
-                    object.remove("launched");
-                }
-            } else {
-                run.state["cleanup"] = "preview.cleanup_incomplete".into();
+    if let Ok(mut slot) = launched.lock()
+        && let Some(stop) = slot.take()
+    {
+        if stop.stop().complete() {
+            if let Some(object) = run.state.as_object_mut() {
+                object.remove("launched");
             }
+        } else {
+            run.state["cleanup"] = "preview.cleanup_incomplete".into();
         }
     }
     drop(app);

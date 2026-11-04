@@ -185,7 +185,7 @@ def main():
             state = project / ".graphhelm/journey-previews" / name / "state.json"
             info["stopRecord"] = json.loads(state.read_text())["launched"]
             infos.append(info)
-        assert len({i["namespace"] for i in infos}) == 2
+        assert len({i["namespace"] for i in infos}) == 2, "launch namespaces collided"
         assert len({i["directory"] for i in infos}) == 2
         assert len({i["port"] for i in infos}) == 2
         assert all(i["namespace"] != env["COMPOSE_PROJECT_NAME"] for i in infos)

@@ -644,6 +644,58 @@ fn release_clears_a_claim_whose_worktree_alone_is_gone_and_the_task_can_be_claim
     ]);
     assert_eq!(code, 0, "{reply}");
     assert_eq!(reply["data"]["cleared"], true, "{reply}");
+    let ledger = root.join(".graphhelm-workspaces").join("lane--2435.json");
+    let ledger_before = std::fs::read(&ledger).unwrap();
+    let record: Value = serde_json::from_slice(&ledger_before).unwrap();
+    assert_eq!(record["state"], "cleared");
+    for part in ["target", "tmp", "logs"] {
+        std::fs::write(ws.join(part).join("keep.txt"), part).unwrap();
+    }
+    let other_dir = tempfile::tempdir().unwrap();
+    let other_repo = self::repo(other_dir.path());
+    let (code, refused) = run(&[
+        "claim",
+        "--root",
+        root_s,
+        "--lane",
+        "lane",
+        "--task",
+        "2435",
+        "--repo",
+        other_repo.to_str().unwrap(),
+        "--base",
+        "HEAD",
+        "--branch",
+        "issue-2435-other-repo",
+    ]);
+    assert_eq!(
+        code, 2,
+        "another repository cannot adopt residue: {refused}"
+    );
+    assert_eq!(
+        refused["diagnostics"][0]["code"],
+        "GHCLI037_WORKSPACE_REFUSED"
+    );
+    assert_eq!(refused["diagnostics"][0]["path"], "/task");
+    assert_eq!(std::fs::read(&ledger).unwrap(), ledger_before);
+    for part in ["target", "tmp", "logs"] {
+        assert_eq!(
+            std::fs::read(ws.join(part).join("keep.txt")).unwrap(),
+            part.as_bytes()
+        );
+    }
+    assert!(!ws.join("wt").exists());
+    let branches = graphhelm_process::command("git")
+        .arg("-C")
+        .arg(&other_repo)
+        .args(["branch", "--list", "issue-2435-other-repo"])
+        .output()
+        .unwrap();
+    assert!(branches.status.success(), "{branches:?}");
+    assert!(
+        branches.stdout.is_empty(),
+        "refusal created a branch in repo B"
+    );
     let again = |branch: &str| {
         run(&[
             "claim",

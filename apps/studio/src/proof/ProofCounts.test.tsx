@@ -42,7 +42,7 @@ describe("summary after loading a saved run", () => {
     const saved: JourneyRun = {state:"ready",kind:"replay",result,screens:{},edges:{}};
     const runtime = {journeyRun:async()=>saved,journeyHistory:async()=>[],requests:async()=>[]} as unknown as Runtime;
     const host=document.createElement("div");document.body.append(host);root=createRoot(host);
-    await act(async()=>{root!.render(<ProofView runtime={runtime} journeys={[flow]} error={null} executionId={null} onRan={()=>{}} />);});
+    await act(async()=>{root!.render(<ProofView projectKey="demo" runtime={runtime} journeys={[flow]} error={null} executionId={null} onRan={()=>{}} />);});
     await act(async()=>{await new Promise(resolve=>setTimeout(resolve,30));});
     expect(host.querySelector("li.journey .chip")?.textContent).toContain(result === "pass" ? "passed" : "failed");
     expect(host.querySelector(".proof-counts")?.textContent).toBe(`${result === "pass" ? 1 : 0} passed \u00b7 ${result === "fail" ? 1 : 0} failed \u00b7 0 stale \u00b7 0 not run`);
@@ -57,7 +57,7 @@ it("keeps previews, waits, unknown and running apart from replay proof", async (
   flows.push({...flows[0],id:"running",running:{}} as JourneyFlow);
   const runtime={journeyRun:async()=>({state:"none"}),journeyHistory:async()=>[],requests:async()=>[]} as unknown as Runtime;
   const host=document.createElement("div");document.body.append(host);root=createRoot(host);
-  await act(async()=>{root!.render(<ProofView runtime={runtime} journeys={flows} error={null} executionId={null} onRan={()=>{}} />);});
+  await act(async()=>{root!.render(<ProofView projectKey="demo" runtime={runtime} journeys={flows} error={null} executionId={null} onRan={()=>{}} />);});
   expect([...host.querySelectorAll(".proof-counts")].map(el=>el.textContent)).toEqual([
     "1 passed \u00b7 1 failed \u00b7 1 stale \u00b7 1 not run",
     "2 previews (not proof) \u00b7 1 running \u00b7 1 waiting \u00b7 1 unknown"

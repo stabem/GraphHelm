@@ -566,6 +566,8 @@ fn a_preview_installs_a_missing_observer_and_refreshes_a_stale_copy() {
 
 #[test]
 fn a_failing_launcher_masks_environment_secrets_in_replies_and_saved_state() {
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = ["fixture-a", "fixture-b"].into_iter().map(|cause| scope.spawn(move || {
     let flow = BACKEND_FLOW.replace(
         "kind: cli, role: exec, name: sh greet.sh",
         "kind: http, role: GET, name: /status.json",
@@ -583,7 +585,7 @@ fn a_failing_launcher_masks_environment_secrets_in_replies_and_saved_state() {
     .unwrap();
     std::fs::write(
         dir.path().join("fail.sh"),
-        "if [ \"$1\" = up ]; then printf '%s\\n' \"$FIXTURE_TOKEN\" >&2; exit 1; fi\n",
+        format!("if [ \"$1\" = up ]; then printf '%s\\n' \"$FIXTURE_TOKEN\" \"Conflict: {cause} at C:\\Users\\synthetic\\app.js\" >&2; exit 1; fi\n"),
     )
     .unwrap();
     let (code, reply) = cli(
@@ -611,6 +613,8 @@ fn a_failing_launcher_masks_environment_secrets_in_replies_and_saved_state() {
             .args(["--json", "journey", "preview", "backend", flag, "--project"])
             .arg(dir.path())
             .env("FIXTURE_TOKEN", canary)
+            .env("USERPROFILE", r"C:\Users\synthetic")
+            .env("HOME", r"C:\Users\synthetic")
             .output()
             .unwrap();
         assert!(output.status.success());
@@ -626,6 +630,10 @@ fn a_failing_launcher_masks_environment_secrets_in_replies_and_saved_state() {
             reply = invoke("--read");
         }
         assert_eq!(reply["data"]["reason"], "watch.launch_failed", "{reply}");
+        let tail = reply["data"]["launchLog"]["tail"].as_str().unwrap();
+        assert!(tail.contains(&format!("Conflict: {cause}")), "{reply}");
+        assert!(!tail.contains("synthetic"), "home path leaked: {tail}");
+        assert!(tail.len() <= 20_000, "public tail is bounded");
         assert!(
             !reply.to_string().contains(canary),
             "launcher reply leaked the canary"
@@ -645,7 +653,14 @@ fn a_failing_launcher_masks_environment_secrets_in_replies_and_saved_state() {
             !state.contains(canary),
             "saved launcher state leaked the canary"
         );
+        let saved: Value = serde_json::from_str(&state).unwrap();
+        assert!(saved["launchLog"]["tail"].as_str().unwrap().contains(&format!("Conflict: {cause}")), "{state}");
     }
+        })).collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    });
 }
 
 #[test]

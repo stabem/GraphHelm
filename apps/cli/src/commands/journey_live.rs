@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use graphhelm_protocols::Diagnostic;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use super::journey_replay::{
     Driver, Failure, OP_BUDGET, RUN_BUDGET, Result, SURVIVABLE, TemporaryOutput, failure,
@@ -763,7 +764,8 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
         let state = super::journey_flow::declared_states(&flow)
             .into_iter()
             .next();
-        let launched = launch(&project, &base, &args.id, state.as_deref(), |_| Ok(()))?;
+        let launched = launch(&project, &base, &args.id, state.as_deref(), |_| Ok(()))
+            .map_err(|failed| failed.failure)?;
         data["launched"] = true.into();
         if let Some(own) = &launched.base {
             base = own.clone();
@@ -1061,6 +1063,7 @@ pub(super) struct Launched {
     project: PathBuf,
     script: String,
     dir: PathBuf,
+    ownership: Option<Value>,
     /// The base the launched app answers on, when it is not the flow's own: an isolated
     /// launcher runs on free ports (#585), so two lanes can play the same flows at once.
     pub(super) base: Option<String>,
@@ -1118,20 +1121,67 @@ pub(super) struct LaunchedStop {
     project: PathBuf,
     script: String,
     dir: PathBuf,
+    ownership: Option<Value>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum StopOutcome {
+    Stopped,
+    AlreadyStopped,
+    CleanupIncomplete,
+    Refused,
+}
+
+impl StopOutcome {
+    pub(super) fn complete(&self) -> bool {
+        matches!(self, Self::Stopped | Self::AlreadyStopped)
+    }
+}
+
+const OWNER_FILE: &str = ".graphhelm-launch-owner.json";
+const SCOPED_LAUNCH: &str = "graphhelm-scoped-launcher/1";
+
+fn script_digest(project: &Path, script: &str) -> Option<String> {
+    let path = project.join(script);
+    if Path::new(script).is_absolute()
+        || script.split(['/', '\\']).any(|part| part == "..")
+        || !safe_node(&path)
+    {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(FRAME as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() <= FRAME).then(|| hex::encode(Sha256::digest(bytes)))
 }
 
 impl LaunchedStop {
     /// What a reader needs to stop this app after its runner is gone (#593 review): the launcher
     /// script and the fixture directory. The project is the reader's own.
     pub(super) fn record(&self) -> Value {
-        json!({"script": self.script, "dir": self.dir.to_string_lossy()})
+        match &self.ownership {
+            Some(owner) => json!({"script": owner, "dir": self.dir.to_string_lossy()}),
+            None => json!({"script": self.script, "dir": self.dir.to_string_lossy()}),
+        }
     }
 
     /// The stop handle a record names, only when it still names this project's declared launcher
     /// and a `graphhelm-watch-*` directory directly in this machine's temp directory: an edited
     /// state file cannot make a reader run another script or remove another directory.
-    pub(super) fn from_record(project: &Path, record: &Value) -> Option<Self> {
-        let script = record["script"].as_str()?;
+    pub(super) fn from_record(project: &Path, flow: &str, record: &Value) -> Option<Self> {
+        let ownership = record["script"]
+            .is_object()
+            .then(|| record["script"].clone());
+        let script = match &ownership {
+            Some(owner) if owner["schema"] == SCOPED_LAUNCH && owner["flow"] == flow => {
+                owner["path"].as_str()?
+            }
+            Some(_) => return None,
+            None => record["script"].as_str()?,
+        };
         let declared: Value = std::fs::read(project.join(FIXTURE_FILE))
             .ok()
             .filter(|bytes| bytes.len() <= FRAME)
@@ -1149,15 +1199,83 @@ impl LaunchedStop {
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.starts_with("graphhelm-watch-"));
-        (in_temp && named).then(|| LaunchedStop {
+        let stop = LaunchedStop {
             project: project.to_path_buf(),
             script: script.to_owned(),
             dir,
-        })
+            ownership,
+        };
+        (in_temp && named && stop.owned()).then_some(stop)
+    }
+
+    fn owned(&self) -> bool {
+        let Some(owner) = &self.ownership else {
+            return true;
+        };
+        let Some(identity) = owner["identity"].as_str() else {
+            return false;
+        };
+        let namespace = format!("graphhelm-watch-{identity}");
+        let marker = self.dir.join(OWNER_FILE);
+        let temp = std::env::temp_dir().canonicalize().ok();
+        let declared = std::fs::File::open(self.project.join(FIXTURE_FILE))
+            .ok()
+            .and_then(|file| {
+                let mut bytes = Vec::new();
+                file.take(FRAME as u64 + 1).read_to_end(&mut bytes).ok()?;
+                (bytes.len() <= FRAME)
+                    .then(|| serde_json::from_slice::<Value>(&bytes).ok())
+                    .flatten()
+            });
+        if identity.len() != 32
+            || !identity
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || owner["schema"] != SCOPED_LAUNCH
+            || owner["namespace"] != namespace
+            || self.dir.file_name().and_then(|name| name.to_str()) != Some(namespace.as_str())
+            || temp.is_none()
+            || self
+                .dir
+                .parent()
+                .and_then(|parent| parent.canonicalize().ok())
+                != temp
+            || !safe_node(&self.dir)
+            || !safe_node(&marker)
+            || !std::fs::symlink_metadata(&marker).is_ok_and(|metadata| metadata.is_file())
+            || declared
+                .as_ref()
+                .and_then(|fixture| fixture["script"].as_str())
+                != Some(self.script.as_str())
+            || self
+                .project
+                .canonicalize()
+                .ok()
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned())
+                .as_deref()
+                != owner["project"].as_str()
+            || script_digest(&self.project, &self.script).as_deref()
+                != owner["scriptSha256"].as_str()
+        {
+            return false;
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(marker)
+            .and_then(|file| file.take(FRAME as u64 + 1).read_to_end(&mut bytes))
+            .is_ok()
+            && bytes.len() <= FRAME
+            && serde_json::from_slice::<Value>(&bytes).ok().as_ref() == Some(owner)
     }
 
     /// Runs the launcher's `down`, bounded, then removes the fixture directory.
-    pub(super) fn stop(&self) {
+    pub(super) fn stop(&self) -> StopOutcome {
+        if !self.dir.exists() {
+            return StopOutcome::AlreadyStopped;
+        }
+        if !self.owned() {
+            return StopOutcome::Refused;
+        }
         let mut command = posix_shell();
         command
             .arg(&self.script)
@@ -1167,8 +1285,25 @@ impl LaunchedStop {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let _ = run_within(command, LAUNCH_DOWN);
-        let _ = std::fs::remove_dir_all(&self.dir);
+        if let Some(owner) = &self.ownership {
+            command.env(
+                "COMPOSE_PROJECT_NAME",
+                owner["namespace"].as_str().unwrap_or_default(),
+            );
+        }
+        if !matches!(
+            run_within(command, LAUNCH_DOWN),
+            CommandOutcome::Exited(true)
+        ) {
+            return StopOutcome::CleanupIncomplete;
+        }
+        match std::fs::remove_dir_all(&self.dir) {
+            Ok(()) => StopOutcome::Stopped,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                StopOutcome::AlreadyStopped
+            }
+            Err(_) => StopOutcome::CleanupIncomplete,
+        }
     }
 }
 
@@ -1221,6 +1356,7 @@ impl Launched {
             project: self.project.clone(),
             script: self.script.clone(),
             dir: self.dir.clone(),
+            ownership: self.ownership.clone(),
         }
     }
 }
@@ -1262,23 +1398,20 @@ fn posix_shell() -> Command {
     graphhelm_process::posix_shell()
 }
 
-/// The most of a failed launcher's output the report keeps.
-const LAUNCH_LOG_TAIL: usize = 4096;
-static LAST_LAUNCH_LOG: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
-
-/// Keeps the tail of a failed launch's output (`{path, tail}`) for [`take_launch_log`].
-fn record_launch_log(path: &Path) {
-    let bytes = std::fs::read(path).unwrap_or_default();
-    let tail =
-        String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(LAUNCH_LOG_TAIL)..]).into_owned();
-    if let Ok(mut slot) = LAST_LAUNCH_LOG.lock() {
-        *slot = Some(serde_json::json!({"path": path, "tail": tail}));
-    }
+/// A failed launch owns its private diagnostic file; concurrent runs never share a mailbox.
+#[derive(Debug)]
+pub(super) struct LaunchFailure {
+    pub(super) failure: Failure,
+    pub(super) log_path: Option<PathBuf>,
 }
 
-/// The output of the last failed launch in this process, once.
-pub(super) fn take_launch_log() -> Option<Value> {
-    LAST_LAUNCH_LOG.lock().ok()?.take()
+impl From<Failure> for LaunchFailure {
+    fn from(failure: Failure) -> Self {
+        Self {
+            failure,
+            log_path: None,
+        }
+    }
 }
 
 /// Starts the declared app under test and waits until the flow's base answers.
@@ -1288,7 +1421,7 @@ pub(super) fn launch(
     flow: &str,
     state: Option<&str>,
     before_up: impl FnOnce(&LaunchedStop) -> Result<()>,
-) -> Result<Launched> {
+) -> std::result::Result<Launched, LaunchFailure> {
     launch_within(project, base, flow, state, LAUNCH_READY, before_up)
 }
 
@@ -1318,10 +1451,10 @@ pub(super) fn launch_within(
     state: Option<&str>,
     ready: Duration,
     before_up: impl FnOnce(&LaunchedStop) -> Result<()>,
-) -> Result<Launched> {
+) -> std::result::Result<Launched, LaunchFailure> {
     let declared = project.join(FIXTURE_FILE);
     if !safe_node(&declared) {
-        return Err(failure("watch.app_down", "/base", 2));
+        return Err(failure("watch.app_down", "/base", 2).into());
     }
     let fixture: Value = std::fs::read(&declared)
         .ok()
@@ -1339,10 +1472,33 @@ pub(super) fn launch_within(
         })
         .ok_or_else(|| failure("watch.launcher_invalid", "/launcher", 2))?
         .to_owned();
-    let dir = std::env::temp_dir().join(format!(
-        "graphhelm-watch-{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..12]
-    ));
+    let identity = uuid::Uuid::new_v4().simple().to_string();
+    let namespace = format!("graphhelm-watch-{identity}");
+    let dir = std::env::temp_dir().join(&namespace);
+    let ownership = if fixture["isolated"] == true {
+        let digest = script_digest(project, &script)
+            .ok_or_else(|| failure("watch.launcher_invalid", "/launcher/script", 2))?;
+        let canonical = project
+            .canonicalize()
+            .map_err(|_| failure("watch.launcher_invalid", "/launcher/project", 2))?;
+        let owner = json!({"schema":SCOPED_LAUNCH,"identity":identity,"namespace":namespace,
+            "project":canonical.to_string_lossy(),"flow":flow,"path":script,"scriptSha256":digest});
+        std::fs::create_dir(&dir)
+            .and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(dir.join(OWNER_FILE))
+            })
+            .and_then(|mut file| {
+                file.write_all(owner.to_string().as_bytes())?;
+                file.sync_all()
+            })
+            .map_err(|_| failure("watch.launch_failed", "/launcher/ownership", 1))?;
+        Some(owner)
+    } else {
+        None
+    };
     let mut command = posix_shell();
     command
         .arg(&script)
@@ -1350,6 +1506,9 @@ pub(super) fn launch_within(
         .arg(&dir)
         .current_dir(project)
         .stdin(Stdio::null());
+    if ownership.is_some() {
+        command.env("COMPOSE_PROJECT_NAME", &namespace);
+    }
     // The ml-saas trial: a failed `up` said only `launch_failed`. Its output goes to a log
     // outside `<dir>` (which `stop` removes); on failure the tail is kept for the report.
     let log_path = std::env::temp_dir().join(format!(
@@ -1369,7 +1528,7 @@ pub(super) fn launch_within(
     // flow is played on the app port instead of its own base.
     let isolated_base = if fixture["isolated"] == true {
         let (Some(runtime_port), Some(app_port)) = (free_port(), free_port()) else {
-            return Err(failure("watch.launch_failed", "/launcher/ports", 1));
+            return Err(failure("watch.launch_failed", "/launcher/ports", 1).into());
         };
         command
             .arg(runtime_port.to_string())
@@ -1395,6 +1554,7 @@ pub(super) fn launch_within(
         project: project.to_path_buf(),
         script,
         dir,
+        ownership,
         base: isolated_base,
         secrets: BTreeMap::new(),
     };
@@ -1437,8 +1597,10 @@ pub(super) fn launch_within(
             use std::io::Write;
             let _ = writeln!(file, "{why}");
         }
-        record_launch_log(&log_path);
-        return Err(failure("watch.launch_failed", "/launcher", 1));
+        return Err(LaunchFailure {
+            failure: failure("watch.launch_failed", "/launcher", 1),
+            log_path: Some(log_path),
+        });
     }
     let _ = std::fs::remove_file(&log_path);
     // #1784: a launcher that cannot seed the asked state says so by not confirming it; the run
@@ -1447,7 +1609,7 @@ pub(super) fn launch_within(
         && seeded_state(&launched.dir).as_deref() != Some(state)
     {
         launched.stop();
-        return Err(failure("watch.state_not_seeded", "/states", 2));
+        return Err(failure("watch.state_not_seeded", "/states", 2).into());
     }
     // The launcher may mint secrets during `up`. Read data, never source shell code or
     // mutate the process environment. Bound the file and reject links before opening it.
@@ -1463,14 +1625,14 @@ pub(super) fn launch_within(
                 || !safe_node(&secret_dir)
                 || !safe_node(&secret_file)
             {
-                return Err(invalid());
+                return Err(invalid().into());
             }
             let mut bytes = Vec::new();
             std::fs::File::open(&secret_file)
                 .and_then(|file| file.take(65_537).read_to_end(&mut bytes))
                 .map_err(|_| invalid())?;
             if bytes.len() > 65_536 {
-                return Err(invalid());
+                return Err(invalid().into());
             }
             let contents = std::str::from_utf8(&bytes).map_err(|_| invalid())?;
             for line in contents.lines() {
@@ -1489,7 +1651,7 @@ pub(super) fn launch_within(
                     || value.contains('\0')
                     || launched.secrets.contains_key(name)
                 {
-                    return Err(invalid());
+                    return Err(invalid().into());
                 }
                 launched.secrets.insert(name.to_owned(), value.to_owned());
             }
@@ -2171,6 +2333,153 @@ mod caption_tests {
 
 #[cfg(test)]
 mod launch_tests {
+    #[test]
+    fn scoped_cleanup_preserves_failed_down_and_rejects_changed_ownership() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir(project.path().join(".graphhelm")).unwrap();
+        let config = project.path().join(".graphhelm/journey-fixture.json");
+        std::fs::write(
+            &config,
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":true}"#,
+        )
+        .unwrap();
+        std::fs::write(project.path().join("fixture.sh"),
+            "printf '%s %s\\n' \"$1\" \"$COMPOSE_PROJECT_NAME\" >> calls\nif [ \"$1\" = up ]; then exit 1; fi\nif [ ! -f allow-down ]; then exit 1; fi\n").unwrap();
+        let mut record = serde_json::Value::Null;
+        assert!(
+            super::launch_within(
+                project.path(),
+                "http://127.0.0.1:9",
+                "flow-a",
+                None,
+                std::time::Duration::from_secs(2),
+                |stop| {
+                    record = stop.record();
+                    Ok(())
+                }
+            )
+            .is_err()
+        );
+        let dir = std::path::PathBuf::from(record["dir"].as_str().unwrap());
+        assert!(
+            dir.join(super::OWNER_FILE).exists(),
+            "failed down keeps its owner manifest"
+        );
+        assert!(
+            record["script"].as_str().is_none(),
+            "old readers must refuse a scoped script object"
+        );
+        assert!(super::LaunchedStop::from_record(project.path(), "flow-b", &record).is_none());
+        let mut edited = record.clone();
+        edited["script"]["namespace"] = "foreign".into();
+        assert!(super::LaunchedStop::from_record(project.path(), "flow-a", &edited).is_none());
+        let stop = super::LaunchedStop::from_record(project.path(), "flow-a", &record).unwrap();
+        assert_eq!(stop.stop(), super::StopOutcome::CleanupIncomplete);
+        std::fs::write(
+            &config,
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":false}"#,
+        )
+        .unwrap();
+        std::fs::write(project.path().join("allow-down"), "").unwrap();
+        let stop = super::LaunchedStop::from_record(project.path(), "flow-a", &record).unwrap();
+        assert_eq!(stop.stop(), super::StopOutcome::Stopped);
+        assert_eq!(stop.stop(), super::StopOutcome::AlreadyStopped);
+        let calls = std::fs::read_to_string(project.path().join("calls")).unwrap();
+        let namespace = record["script"]["namespace"].as_str().unwrap();
+        assert!(
+            calls.lines().all(|line| line.ends_with(namespace)),
+            "{calls}"
+        );
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn scoped_recovery_refuses_replacement_script_without_removing_manifest() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir(project.path().join(".graphhelm")).unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"fixture.sh","isolated":true}"#,
+        )
+        .unwrap();
+        let script = project.path().join("fixture.sh");
+        let original = "exit 1\n";
+        std::fs::write(&script, original).unwrap();
+        let mut record = serde_json::Value::Null;
+        assert!(
+            super::launch_within(
+                project.path(),
+                "http://127.0.0.1:9",
+                "flow",
+                None,
+                std::time::Duration::from_secs(2),
+                |stop| {
+                    record = stop.record();
+                    Ok(())
+                }
+            )
+            .is_err()
+        );
+        std::fs::write(&script, "echo replacement >> forbidden\n").unwrap();
+        assert!(super::LaunchedStop::from_record(project.path(), "flow", &record).is_none());
+        let dir = std::path::PathBuf::from(record["dir"].as_str().unwrap());
+        assert!(dir.join(super::OWNER_FILE).exists());
+        assert!(!project.path().join("forbidden").exists());
+        std::fs::write(&script, original).unwrap();
+        // This test owns the disposable directory; the deliberately failing script cannot clean it.
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_failed_launches_keep_their_own_cause() {
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = ["fixture-a", "fixture-b"]
+                .into_iter()
+                .map(|flow| {
+                    let barrier = barrier.clone();
+                    scope.spawn(move || {
+                        let project = tempfile::tempdir().unwrap();
+                        std::fs::create_dir(project.path().join(".graphhelm")).unwrap();
+                        std::fs::write(
+                            project.path().join(".graphhelm/journey-fixture.json"),
+                            r#"{"schema":"graphhelm-journey-fixture/1","script":"fail.sh","isolated":true}"#,
+                        )
+                        .unwrap();
+                        std::fs::write(
+                            project.path().join("fail.sh"),
+                            "if [ \"$1\" = up ]; then echo \"Conflict: $GRAPHHELM_JOURNEY_FLOW\" >&2; exit 1; fi\n",
+                        )
+                        .unwrap();
+                        let failed = super::launch_within(
+                            project.path(),
+                            "http://127.0.0.1:9",
+                            flow,
+                            None,
+                            std::time::Duration::from_secs(5),
+                            |_| Ok(()),
+                        )
+                        .err().expect("synthetic launch fails");
+                        barrier.wait();
+                        let log = failed.log_path.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
+                        (flow, failed.failure.0, log)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        for (flow, failed, log) in results {
+            assert_eq!(failed, "watch.launch_failed");
+            assert!(
+                log.as_ref().is_some_and(|tail| tail.contains(flow)),
+                "{flow} lost or received another launch's cause: {log:?}"
+            );
+        }
+    }
+
     /// #585: an isolated launch plays the flow on the port it was given, keeping the flow's
     /// scheme, host and path; a base the code cannot rewrite safely is refused, never guessed.
     /// Cost: microseconds.
@@ -2233,7 +2542,7 @@ mod launch_tests {
             |_| Ok(()),
         );
         let took = started.elapsed();
-        let code = outcome.err().map(|(code, _, _)| code);
+        let code = outcome.err().map(|failed| failed.failure.0);
         assert_eq!(code, Some("watch.launch_failed"));
         assert!(
             took < Duration::from_secs(40),
@@ -2271,11 +2580,9 @@ mod launch_tests {
             std::time::Duration::from_secs(2),
             |_| Ok(()),
         );
-        assert_eq!(
-            outcome.err().map(|(code, _, _)| code),
-            Some("watch.launch_failed")
-        );
-        let log = super::take_launch_log().expect("launch log kept");
+        let failed = outcome.err().expect("launch fails");
+        assert_eq!(failed.failure.0, "watch.launch_failed");
+        let log = serde_json::json!({"tail": std::fs::read_to_string(failed.log_path.expect("launch log kept")).unwrap()});
         assert!(
             log["tail"]
                 .as_str()

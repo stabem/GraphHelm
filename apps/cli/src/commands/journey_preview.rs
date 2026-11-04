@@ -1258,7 +1258,14 @@ fn watch_budget(
         state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
         save_state(&dir, &state);
         if let Some(stop) = launched.lock().ok().and_then(|mut slot| slot.take()) {
-            stop.stop();
+            if stop.stop().complete() {
+                if let Some(object) = state.as_object_mut() {
+                    object.remove("launched");
+                }
+            } else {
+                state["cleanup"] = "preview.cleanup_incomplete".into();
+            }
+            save_state(&dir, &state);
         }
         end();
     })
@@ -1302,6 +1309,23 @@ fn reap_lost_from_with(
         verdict
     })?;
     let Some(probed) = dead.into_inner() else {
+        if state["state"] != "running"
+            && !state["launched"].is_null()
+            && liveness(&state) == Liveness::Dead
+        {
+            let complete =
+                LaunchedStop::from_record(project, dir.file_name()?.to_str()?, &state["launched"])
+                    .is_some_and(|stop| stop.stop().complete());
+            if complete {
+                if let Some(object) = state.as_object_mut() {
+                    object.remove("launched");
+                    object.remove("cleanup");
+                }
+            } else {
+                state["cleanup"] = "preview.cleanup_incomplete".into();
+            }
+            save_state(dir, &state);
+        }
         return Some(state);
     };
     if state["state"] != "running"
@@ -1312,10 +1336,14 @@ fn reap_lost_from_with(
     }
     // #1298: a runner that died before it launched any app is lost all the same; storing it
     // `failed` lets the next run archive it instead of erasing it.
-    if !state["launched"].is_null()
-        && let Some(stop) = LaunchedStop::from_record(project, &state["launched"])
-    {
-        stop.stop();
+    let cleanup_complete = if state["launched"].is_null() {
+        true
+    } else {
+        LaunchedStop::from_record(project, dir.file_name()?.to_str()?, &state["launched"])
+            .is_some_and(|stop| stop.stop().complete())
+    };
+    if !cleanup_complete {
+        state["cleanup"] = "preview.cleanup_incomplete".into();
     }
     if let Some(log) = safe_log(&dir.join(RUNNER_LOG)) {
         state["launchLog"] = log;
@@ -1329,7 +1357,7 @@ fn reap_lost_from_with(
     state["state"] = "failed".into();
     state["reason"] = reason.into();
     state["current"] = Value::Null;
-    if let Some(object) = state.as_object_mut() {
+    if cleanup_complete && let Some(object) = state.as_object_mut() {
         object.remove("launched");
     }
     save_state(dir, &state);
@@ -1939,9 +1967,6 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     }
     run.state["current"] = Value::Null;
     run.state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
-    if let Some(object) = run.state.as_object_mut() {
-        object.remove("launched");
-    }
     let app = match outcome {
         Ok(app) => {
             run.state["state"] = "ready".into();
@@ -1952,14 +1977,6 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             app
         }
         Err((code, pointer, _)) => {
-            if let Some(log) = super::journey_live::take_launch_log() {
-                // Read the original log with secret overlap before bounding its tail. The
-                // launcher's already-cut tail can contain only the suffix of a secret.
-                run.state["launchLog"] = log["path"]
-                    .as_str()
-                    .and_then(|path| safe_log(Path::new(path)))
-                    .unwrap_or(Value::Null);
-            }
             // The driver's own masked stderr tail when it died before answering (#1448).
             if let Some(log) = super::journey_replay::take_driver_log() {
                 run.state["driverLog"] = log;
@@ -1979,12 +1996,21 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             run.state["observer"] = observer;
         }
     }
-    // Publish completion before down: teardown can block or end the runner (#676).
+    // Persist the handle through teardown so a crash or failed down remains recoverable.
     run.save();
     if let Ok(mut slot) = launched.lock() {
-        slot.take();
+        if let Some(stop) = slot.take() {
+            if stop.stop().complete() {
+                if let Some(object) = run.state.as_object_mut() {
+                    object.remove("launched");
+                }
+            } else {
+                run.state["cleanup"] = "preview.cleanup_incomplete".into();
+            }
+        }
     }
     drop(app);
+    run.save();
     answer(
         json!({"state":run.state["state"],"result":run.state["result"],"paths":run.state["validationPaths"],"reason":run.state["reason"],"launchLog":run.state["launchLog"],"detail":run.state["detail"],"driverLog":run.state["driverLog"],"observerSetup":run.state["observerSetup"],"warnings":run.state["warnings"]}),
         None,
@@ -2155,6 +2181,12 @@ fn play(
     // first, so a flow that changes state finds the same starting state at each one.
     each_view(flow, views, run, |run, index, view| {
         if index > 0 && launched.is_some() {
+            if let Some(app) = &launched
+                && !app.stopper().stop().complete()
+            {
+                run.state["cleanup"] = "preview.cleanup_incomplete".into();
+                return Err(failure("watch.launch_failed", "/launcher/cleanup", 1));
+            }
             drop(launched.take());
             let app = start_app(project, &flow_base, flow, run, stopper)?;
             base = app.base.clone().unwrap_or_else(|| flow_base.clone());
@@ -2208,6 +2240,14 @@ fn start_app(
             Ok(())
         },
     )
+    .map_err(|failed| {
+        run.state["launchLog"] = failed
+            .log_path
+            .as_deref()
+            .and_then(safe_log)
+            .unwrap_or(Value::Null);
+        failed.failure
+    })
 }
 
 /// #1777: plays `body` for each viewport in order and keeps what each recorded under
@@ -5107,7 +5147,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             run.save();
             let _ = super::play(
                 &project,
-                &json!({"base":"http://127.0.0.1:1","paths":{},"edges":[],"screens":[]}),
+                &json!({"id":"preview","base":"http://127.0.0.1:1","paths":{},"edges":[],"screens":[]}),
                 &mut run,
                 Instant::now() + Duration::from_secs(30),
                 &Arc::new(Mutex::new(None)),
@@ -5187,17 +5227,25 @@ fi
             .map_or(0, |log| log.lines().count());
         let fixture = fixture.expect("the real up process reached its sleeping marker");
         let removed = !Path::new(&fixture).exists();
-        // Keep the RED run clean too: the old code has no persisted handle for the reader.
+        // A failing assertion still cleans only the handle this test actually persisted.
         if !removed {
             super::LaunchedStop::from_record(
                 project.path(),
-                &json!({"script":"fake.sh","dir":fixture}),
+                "preview",
+                &recorded.as_ref().unwrap()["launched"],
             )
             .unwrap()
             .stop();
         }
         let recorded = recorded.unwrap();
-        assert_eq!(recorded["launched"]["script"], "fake.sh", "{recorded}");
+        assert_eq!(
+            recorded["launched"]["script"]["path"], "fake.sh",
+            "{recorded}"
+        );
+        assert_eq!(
+            recorded["launched"]["script"]["flow"], "preview",
+            "{recorded}"
+        );
         assert_eq!(recorded["launched"]["dir"], fixture);
         let reaped = reaped.unwrap();
         assert_eq!(reaped["state"], "failed", "{reaped}");

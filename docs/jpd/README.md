@@ -131,6 +131,24 @@ a missing module, the report says `baselineCause: dependencies_missing`; `baseli
 
 ## Safety: drafts, approval and destructive acts
 
+Isolated launchers receive a unique `COMPOSE_PROJECT_NAME` for each launch. Both `up`
+and `down` use that launch-time value, even if `isolated` changes later. This scopes
+Compose's default resource names; explicit Compose project flags, fixed container names
+and external volumes remain the launcher's responsibility. Free ports are observations,
+not reservations.
+
+Scoped launches persist a private owner manifest and a typed stop handle before starting
+`up`. Recovery checks the project, flow, script digest and namespace before running `down`.
+A changed script or inconsistent owner record refuses cleanup. Failed teardown retains
+the handle and manifest and reports `preview.cleanup_incomplete`; it never implies that
+resources were removed. Restore the original launcher before retrying recovery.
+
+Older binaries refuse the typed scoped handle and may discard it from preview state.
+Stop all scoped fixtures with a compatible binary before downgrading. Keep that binary
+and the private owner manifests for explicit recovery of any orphan; an old binary cannot
+perform safe cleanup. These checks assume trusted local state and do not protect against
+an actor rewriting both the entire state record and its matching manifest.
+
 - A **draft** runs a `cli` act only after the owner confirms that exact digest and argv list
   (`confirm_needed` until then, #1662), and never sends a mutating request (`guard_refused`). Approval records the flow's digest at a commit, so the owner
   approves the exact argv and requests the flow holds.

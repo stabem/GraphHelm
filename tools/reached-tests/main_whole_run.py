@@ -398,7 +398,7 @@ def run_nightly(args, raw_argv, run=subprocess.run, now=None):
             atomic_json(green_path, {"sha": head, "nightDate": date, "receipt": str(receipt_path),
                                      "greenAt": receipt["completedAt"]})
         print(f"main_whole_run: nightly {status} on {head[:8]}; receipt {receipt_path}")
-        if receipt.get("p0Issue", {}).get("status") == "failed":
+        if (receipt.get("p0Issue") or {}).get("status") == "failed":
             print("main_whole_run: red receipt saved, but P0 issue creation failed")
             return 1
         return 0 if status == "passed" else 1
@@ -579,7 +579,7 @@ def main(argv=None):
         if copy:
             print(f"main_whole_run: running main's copy {copy}")
             try:
-                return reexec(copy, raw_argv, args.timeout)
+                return reexec(copy, raw_argv, args.timeout).returncode
             except subprocess.TimeoutExpired:
                 print("main_whole_run: re-exec exceeded its deadline; receipt is incomplete")
                 return 1

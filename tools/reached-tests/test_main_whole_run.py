@@ -249,6 +249,80 @@ class WholeRun(unittest.TestCase):
             self.assertIn("Merges since last green: UNOBSERVED", issue)
             self.assertIn("cargo test -p graphhelm-cli", issue)
 
+    def test_green_nightly_run_keeps_passed_receipt_and_does_not_open_p0(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            idle = root / "IDLE-WINDOWS.md"
+            why = "#2510: single hidden latest-main full reached run at 22:15Z; 60-minute timeout and 30-minute margin"
+            idle.write_text(f"| 2026-11-04 22:00Z | 2026-11-04 23:30Z | {why} | openbot-shikaku |\n",
+                            encoding="utf-8")
+            args = SimpleNamespace(receipt_root=str(root / "nightly"), night_date="2026-11-04",
+                                   root=str(root / "build"), repo="repo", github="stabem/GraphHelm",
+                                   timeout=60, idle_windows_file=str(idle))
+            head, base = "a" * 40, "b" * 40
+            old_git, old_prepare, old_newer = mw.git, mw.prepare_tree, mw.newer_copy
+            calls = []
+
+            def fake_git(_repo, *parts):
+                if parts == ("rev-parse", "origin/main"):
+                    return head
+                if parts == ("rev-parse", "origin/main^"):
+                    return base
+                return ""
+
+            def fake_prepare(_repo, tree, _sha):
+                Path(tree).mkdir(parents=True, exist_ok=True)
+
+            def fake_run(command, **kwargs):
+                calls.append(command)
+                if command[0] == "powershell.exe":
+                    return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+                if "run_reached.py" in str(command[1]):
+                    report = Path(command[command.index("--output") + 1])
+                    report.parent.mkdir(parents=True, exist_ok=True)
+                    report.write_text(json.dumps({"status": "passed", "completed": []}), encoding="utf-8")
+                    return SimpleNamespace(returncode=0, stdout="green", stderr="")
+                self.fail(f"unexpected command: {command}")
+
+            mw.git, mw.prepare_tree, mw.newer_copy = fake_git, fake_prepare, lambda *_: None
+            try:
+                result = mw.run_nightly(args, ["--nightly"], run=fake_run,
+                                        now=datetime.datetime(2026, 11, 4, 22, 15, tzinfo=datetime.timezone.utc))
+            finally:
+                mw.git, mw.prepare_tree, mw.newer_copy = old_git, old_prepare, old_newer
+
+            receipt_dir = root / "nightly" / "2026-11-04"
+            saved = json.loads((receipt_dir / "receipt.json").read_text(encoding="utf-8"))
+            green = json.loads((root / "nightly" / "last-green.json").read_text(encoding="utf-8"))
+            self.assertEqual(result, 0)
+            self.assertEqual(saved["status"], "passed")
+            self.assertIsNone(saved["p0Issue"])
+            self.assertEqual(green["sha"], head)
+            self.assertEqual(green["receipt"], str(receipt_dir / "receipt.json"))
+            self.assertFalse(any(command[:3] == ["gh", "issue", "create"] for command in calls))
+
+    def test_legacy_main_returns_the_reexec_child_exit_code(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            repo.mkdir()
+            copy = root / "main.py"
+            copy.write_text("child", encoding="utf-8")
+            old_resolve, old_git = mw.resolve_execution, mw.git
+            old_prepare, old_newer, old_reexec = mw.prepare_tree, mw.newer_copy, mw.reexec
+            mw.resolve_execution = lambda _args: "execution"
+            mw.git = lambda _repo, *parts: "a" * 40 if parts == ("rev-parse", "origin/main") else ""
+            mw.prepare_tree = lambda _repo, tree, _sha: Path(tree).mkdir(parents=True, exist_ok=True)
+            mw.newer_copy = lambda *_: copy
+            mw.reexec = lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="", stderr="")
+            try:
+                result = mw.main(["--repo", str(repo), "--root", str(root / "build")])
+            finally:
+                mw.resolve_execution, mw.git = old_resolve, old_git
+                mw.prepare_tree, mw.newer_copy, mw.reexec = old_prepare, old_newer, old_reexec
+            self.assertIs(type(result), int)
+            self.assertEqual(result, 0)
+
     def test_main_posts_to_bound_execution_before_state_completion(self):
         seen = []
 

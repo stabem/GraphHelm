@@ -51,8 +51,7 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof, wai
   const readSequence = useRef(0);
   const readInFlight = useRef<number | null>(null);
 
-  const read = useCallback(async (clearError = false) => {
-    if (clearError) setError(null);
+  const read = useCallback(async () => {
     // Polls do not supersede a read that has not finished. Otherwise a Runtime slower
     // than POLL_MS can return successfully forever while every reply is discarded.
     if (readInFlight.current !== null) return;
@@ -78,6 +77,7 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof, wai
       if (readInFlight.current === sequence) readInFlight.current = null;
     }
   }, [runtime, key]);
+  const retryRead = () => { setError(null); void read(); };
 
   useEffect(() => {
     void read();
@@ -86,7 +86,7 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof, wai
   }, [read]);
 
   const many = executionIds.length > 1;
-  if (error !== null && board === null) return <section className="view"><ActionError error={error} onDismiss={() => setError(null)} onRetry={() => void read(true)} /></section>;
+  if (error !== null && board === null) return <section className="view"><ActionError error={error} onDismiss={() => setError(null)} onRetry={retryRead} /></section>;
   if (board === null || requests === null) return <Loading text={many ? "Reading the project's requests…" : "Reading the run's requests…"} />;
 
   const flows = journeys ?? [];
@@ -138,7 +138,7 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof, wai
             <button type="button" role="tab" className="b gv-tab" aria-label="Kanban view" aria-selected={mode === "kanban"} onClick={() => setMode("kanban")}>Kanban</button>
             <button type="button" role="tab" className="b gv-tab" aria-label="Graph view" aria-selected={mode === "graph"} onClick={() => setMode("graph")}>Graph</button>
           </div>
-          {error !== null && <ActionError error={error} onDismiss={() => setError(null)} onRetry={() => void read(true)} />}
+          {error !== null && <ActionError error={error} onDismiss={() => setError(null)} onRetry={retryRead} />}
         </div>
         {many && <p className="lanes-scope">{executionIds.length} runs of this project · only what the Runtime received is shown; work recorded nowhere here is not on the graph.</p>}
 

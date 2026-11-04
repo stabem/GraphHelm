@@ -81,8 +81,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   // The controls this Studio sent, so the board shows what each one did.
   const [done, setDone] = useState<{ lane: string; word: string; at: string }[]>([]);
 
-  const read = useCallback(async (clearError = false) => {
-    if (clearError) setError(null);
+  const read = useCallback(async () => {
     const ids = JSON.parse(key) as string[];
     if (ids.length === 0) return;
     // An older Runtime without the requests route leaves the column empty, never the board.
@@ -128,6 +127,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
       if (readInFlight.current === sequence) readInFlight.current = null;
     }
   }, [runtime, key]);
+  const retryRead = () => { setError(null); void read(); };
 
   // The first card shown stays selected while the board moves under it (a reply takes it out of
   // "wait for a reply" but the panel stays on it).
@@ -143,7 +143,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   }, [read]);
 
   if (runs.length === 0) return <section id="panel-lanes" aria-label="Lanes" className="view"><Empty title="No work yet" hint="Lanes appear here once a team picks up a task." onStart={onStart} /></section>;
-  if (board === null) return <section id="panel-lanes" aria-label="Lanes" className="view">{error === null ? <Loading text="Reading the lanes…" /> : <ActionError error={error} onDismiss={() => setError(null)} onRetry={() => void read(true)} />}</section>;
+  if (board === null) return <section id="panel-lanes" aria-label="Lanes" className="view">{error === null ? <Loading text="Reading the lanes…" /> : <ActionError error={error} onDismiss={() => setError(null)} onRetry={retryRead} />}</section>;
 
   const all = agents(board);
   const asking = all.filter((agent) => agent.questions.length > 0);
@@ -186,7 +186,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
               </select>
             </label>
           )}
-          {error !== null && <ActionError error={error} onDismiss={() => setError(null)} onRetry={() => void read(true)} />}
+          {error !== null && <ActionError error={error} onDismiss={() => setError(null)} onRetry={retryRead} />}
         </div>
         {"origins" in board && <p className="lanes-scope">{board.runs.length} runs of this project · only what the Runtime received is shown; an agent that records nowhere here is not on the board.</p>}
         <ul className="board with-asked" aria-label="Agent board">

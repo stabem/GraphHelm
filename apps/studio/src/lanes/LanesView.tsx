@@ -66,6 +66,9 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   const [actions, setActions] = useState<Record<string, { at: string | null; rows: LaneAction[] }>>({});
   const seen = useRef<Record<string, string | null>>({});
   const readSequence = useRef(0);
+  const readInFlight = useRef<number | null>(null);
+  const requestsSequence = useRef(0);
+  const requestsInFlight = useRef<number | null>(null);
   // #2228: who declared presence in the project's runs, read incrementally from each run's events.
   const presenceIndex = useRef<PresenceIndex>(emptyPresence());
   const replyBox = useRef<HTMLTextAreaElement>(null);
@@ -79,15 +82,25 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   const [done, setDone] = useState<{ lane: string; word: string; at: string }[]>([]);
 
   const read = useCallback(async (clearError = false) => {
-    const sequence = ++readSequence.current;
     if (clearError) setError(null);
     const ids = JSON.parse(key) as string[];
     if (ids.length === 0) return;
     // An older Runtime without the requests route leaves the column empty, never the board.
     // #2230: the same request read in two executions is one ask, never two cards.
-    Promise.allSettled(ids.map((id) => runtime.requestsRead(id))).then((rows) => {
-      if (sequence === readSequence.current) setRequests(combineRequests(rows.flatMap((row, at) => (row.status === "fulfilled" ? [{ executionId: ids[at]!, ...row.value }] : []))));
-    });
+    if (requestsInFlight.current === null) {
+      const requestsRead = ++requestsSequence.current;
+      requestsInFlight.current = requestsRead;
+      void Promise.allSettled(ids.map((id) => runtime.requestsRead(id))).then((rows) => {
+        if (requestsRead === requestsSequence.current) setRequests(combineRequests(rows.flatMap((row, at) => (row.status === "fulfilled" ? [{ executionId: ids[at]!, ...row.value }] : []))));
+      }).finally(() => {
+        if (requestsInFlight.current === requestsRead) requestsInFlight.current = null;
+      });
+    }
+    // Keep one board read at a time, so a slow successful response is not discarded
+    // merely because the next poll began before it completed.
+    if (readInFlight.current !== null) return;
+    const sequence = ++readSequence.current;
+    readInFlight.current = sequence;
     try {
       let next: TasksBoard | ProjectBoard;
       if (ids.length === 1) next = await runtime.board(ids[0]);
@@ -111,6 +124,8 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
       }
     } catch (failure) {
       if (sequence === readSequence.current) setError(actionErrorDetails("Lanes could not be read", failure, "The Runtime could not return the board.", "Retry reading the lanes."));
+    } finally {
+      if (readInFlight.current === sequence) readInFlight.current = null;
     }
   }, [runtime, key]);
 
@@ -124,7 +139,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   useEffect(() => {
     void read();
     const timer = setInterval(() => void read(), POLL_MS);
-    return () => { clearInterval(timer); readSequence.current += 1; };
+    return () => { clearInterval(timer); readSequence.current += 1; readInFlight.current = null; requestsSequence.current += 1; requestsInFlight.current = null; };
   }, [read]);
 
   if (runs.length === 0) return <section id="panel-lanes" aria-label="Lanes" className="view"><Empty title="No work yet" hint="Lanes appear here once a team picks up a task." onStart={onStart} /></section>;

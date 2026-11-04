@@ -49,10 +49,15 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof, wai
   const [olderShown, setOlderShown] = useState(false);
   const [selected, setSelected] = useState<number | null>(null);
   const readSequence = useRef(0);
+  const readInFlight = useRef<number | null>(null);
 
   const read = useCallback(async (clearError = false) => {
-    const sequence = ++readSequence.current;
     if (clearError) setError(null);
+    // Polls do not supersede a read that has not finished. Otherwise a Runtime slower
+    // than POLL_MS can return successfully forever while every reply is discarded.
+    if (readInFlight.current !== null) return;
+    const sequence = ++readSequence.current;
+    readInFlight.current = sequence;
     try {
       const ids = JSON.parse(key) as string[];
       if (ids.length === 1) {
@@ -69,13 +74,15 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof, wai
       }
     } catch (reason) {
       if (sequence === readSequence.current) setError(actionErrorDetails("Requests could not be read", reason, "The Runtime could not return the request board.", "Retry reading the requests."));
+    } finally {
+      if (readInFlight.current === sequence) readInFlight.current = null;
     }
   }, [runtime, key]);
 
   useEffect(() => {
     void read();
     const timer = setInterval(() => void read(), POLL_MS);
-    return () => { clearInterval(timer); readSequence.current += 1; };
+    return () => { clearInterval(timer); readSequence.current += 1; readInFlight.current = null; };
   }, [read]);
 
   const many = executionIds.length > 1;

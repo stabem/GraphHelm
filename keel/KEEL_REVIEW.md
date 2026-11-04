@@ -28,7 +28,9 @@ review subagents' cache writes there).
 1. **Read the earlier comments** and answer any open block on this head.
 2. **Reuse the author's exact-head receipt.** Check its head, scope, commands and outcomes.
    Do not rerun valid author checks or rebuild the same head merely for review. Run only one or
-   two tests justified by the risk. Missing, stale or failed evidence requires scoped repair,
+   two tests justified by the risk by default. If the diff touches persistence, permissions,
+   compatibility or security, the reviewer reruns the reached scope: the tests those paths reach,
+   not the whole plan. Missing, stale or failed evidence requires scoped repair,
    never an automatic whole-plan run. Name reused and rerun commands with their results and
    populations. DELIVERY.md §3 defines proportional scope and the nightly full-main run.
    **Await the checkout before any proof.** A checkout, fetch or reset that returns a live or

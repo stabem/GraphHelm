@@ -246,7 +246,9 @@ push and the once-nightly full main plan follow DELIVERY.md §3; do not hold a P
 
   This command executes its computed plan; do not mistake its availability for a full-plan PR
   requirement. For PRs, save the proportional command receipts instead when this plan is broader.
-  Reviewers reuse exact-head author evidence and rerun only one or two risk-selected tests.
+  Reviewers reuse exact-head author evidence and normally rerun only one or two risk-selected
+  tests. Persistence, permissions, compatibility or security changes require the reviewer to
+  rerun the tests reached by those paths, not the whole plan (DELIVERY.md §3–4).
   The full plan runs once nightly on main, not after every merge (DELIVERY.md §3).
 
   Pin the agent CLI with `--graphhelm <absolute-executable>` or `GRAPHHELM_CLI`; an explicit

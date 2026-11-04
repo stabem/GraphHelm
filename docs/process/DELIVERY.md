@@ -136,7 +136,9 @@ For scoped PR proof, retain a receipt with the exact head and base SHA, commands
 environment and passed/failed/skipped/unobserved results. A `run_reached.py` JSON report may be
 used when its selected plan is proportional; running the full plan is not required for a PR.
 The reviewer checks the receipt against the current head, reuses valid results and reruns only
-one or two tests justified by the risk. Missing, stale or failed evidence requires repair of
+one or two tests justified by the risk by default. For persistence, permissions, compatibility or
+security changes, the reviewer reruns the tests reached by those paths, not the whole plan.
+Missing, stale or failed evidence requires repair of
 that scope, not an automatic full rebuild. Raw receipts stay in PR attachments/comments or the
 untracked `.graphhelm/` area, not in source control.
 
@@ -248,7 +250,9 @@ review-start-to-merge intervals. Record unavailable timestamps as unobserved.
   card names, on the head, and pastes its summary.
 - The reviewer **reuses the author's exact-head receipt** (§3), checking its scope and outcomes.
   Do not rebuild or rerun valid author checks on the same head. Rerun only one or two tests the
-  risk needs. Missing, stale, red or pending evidence requires repair of that scope, not the full
+  risk needs by default. For persistence, permissions, compatibility or security changes, rerun
+  the reached scope (the tests those paths reach), not the whole plan.
+  Missing, stale, red or pending evidence requires repair of that scope, not the full
   plan. Name reused and rerun commands and results. Independent review still examines the diff,
   earlier comments and the adequacy of the proof, including security and compatibility risks.
 - **The reviewer runs the Keel check on the head under review and pastes its output** in the

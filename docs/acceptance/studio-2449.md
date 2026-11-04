@@ -4,6 +4,8 @@ Contract: https://github.com/stabem/GraphHelm/issues/2449#issuecomment-657757226
 
 ## Observed browser behavior
 
+On 2026-11-04, the rebased Studio at `ff2957bd03247bb6013ea08a3d9782e5135a7d6d` was observed with an isolated synthetic project on loopback Runtime port 8853 and Studio port 62401. A ticket-free `?view=proof&journey=runtime-health` visit selected the demo project and Proof journey; reload retained the project and deep link. The older capture below remains evidence for the earlier commit only. No current run success or separate browser profile is claimed.
+
 On 2026-11-02, source commit `5092634443ff7fc997620304dd541a38aa14fd67`, an isolated synthetic project was served by the real Runtime on loopback port 8852 and the real Studio on port 62399. No owner project or owner screenshot is included.
 
 - A first visit to a new loopback origin opened `?view=proof&journey=runtime-health` without a ticket and displayed **Project demo** with **Proof** selected.
@@ -25,6 +27,6 @@ Cases cover ticket-free cookie issuance, no credential disclosure, foreign/null 
 
 The complete Studio suite passed 215/215 on the implementation commit. The help golden initially failed because it still described ticket URLs; its six Studio entries now match the new documented behavior and its targeted test passes. A launcher unit test exceeded its unrelated two-second deadline during the broad run; it passes alone (0.25 seconds). These isolated results do not make the broad run green.
 
-## Full-plan receipt
+## Test scope
 
-The PR body records the final reached-test report and head. The first broad run encountered stale generated journey contracts, which were recompiled and validated with `graphhelm journey validate --all` (passed). Do not interpret this document as a completed full-plan receipt.
+The first broad run encountered stale generated journey contracts, which were recompiled and validated with `graphhelm journey validate --all` (passed). The current delivery uses focused tests and touched-crate checks; the full 111-step reached plan was not run on this head.

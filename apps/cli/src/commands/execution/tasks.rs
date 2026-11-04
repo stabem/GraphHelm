@@ -25,6 +25,703 @@ use super::signal::SignalKeyring;
 use super::{Failure, resolve_stream};
 use crate::commands::event_store;
 
+/// Immutable benchmark declarations are read separately from the delivery-state fold.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProofRecord {
+    pub record_id: String,
+    pub sequence: u64,
+    pub proof: graphhelm_execution::tasks::BenchmarkProof,
+}
+
+#[derive(Default)]
+struct ProofCatalog {
+    repositories: BTreeMap<String, BTreeMap<u64, String>>,
+    records: BTreeMap<u64, Arc<ProofRecord>>,
+    identities: HashMap<String, u64>,
+    successors: HashMap<String, u64>,
+    pages: BTreeMap<(String, Option<String>), BTreeMap<u64, Arc<ProofRecord>>>,
+    checkpoints: BTreeMap<u64, (usize, usize, usize)>,
+    events: BTreeMap<u64, (graphhelm_protocols::EventHash, String)>,
+    head: Option<(u64, graphhelm_protocols::EventHash)>,
+    unsupported: usize,
+    rejected: usize,
+    #[cfg(test)]
+    page_visits: std::cell::Cell<usize>,
+    #[cfg(test)]
+    appended_records: usize,
+}
+
+impl ProofCatalog {
+    fn insert_record(&mut self, record: Arc<ProofRecord>) {
+        #[cfg(test)]
+        {
+            self.appended_records += 1;
+        }
+        for run in [None, Some(record.proof.run_id.clone())] {
+            self.pages
+                .entry((record.proof.task_id.as_str().to_owned(), run))
+                .or_default()
+                .insert(record.sequence, Arc::clone(&record));
+        }
+        self.identities
+            .entry(record.record_id.clone())
+            .or_insert(record.sequence);
+        if let Some(predecessor) = &record.proof.predecessor {
+            self.successors
+                .entry(predecessor.clone())
+                .or_insert(record.sequence);
+        }
+        self.records.insert(record.sequence, record);
+    }
+}
+
+/// A cutoff into shared append-only state; appends never copy or modify a retained prefix.
+/// BTree lookup/update costs O(log N); bounded page traversal costs O(page).
+pub(crate) struct ProofSnapshot {
+    index: Arc<Mutex<ProofCatalog>>,
+    head: u64,
+    identity: String,
+    pub unsupported: usize,
+    pub rejected: usize,
+    pub count: usize,
+}
+
+impl ProofSnapshot {
+    fn at(index: Arc<Mutex<ProofCatalog>>, head: u64, identity: String) -> Result<Self, Failure> {
+        let (rejected, unsupported, count) = {
+            let catalog = index.lock().map_err(|_| {
+                super::execution_state("proof snapshot lock is poisoned", "/proofs")
+            })?;
+            catalog
+                .checkpoints
+                .range(..=head)
+                .next_back()
+                .map(|(_, counters)| *counters)
+                .unwrap_or_default()
+        };
+        Ok(Self {
+            index,
+            head,
+            identity,
+            rejected,
+            unsupported,
+            count,
+        })
+    }
+    fn read<T>(&self, read: impl FnOnce(&ProofCatalog) -> T) -> Result<T, Failure> {
+        let index = self
+            .index
+            .lock()
+            .map_err(|_| super::execution_state("proof index lock is poisoned", "/proofs"))?;
+        Ok(read(&index))
+    }
+
+    pub(crate) fn repository(&self, task: &str) -> Result<Option<String>, Failure> {
+        self.read(|index| {
+            index
+                .repositories
+                .get(task)
+                .and_then(|versions| versions.range(..=self.head).next_back())
+                .map(|(_, repo)| repo.clone())
+        })
+    }
+
+    pub(crate) fn record(&self, digest: &str) -> Result<Option<Arc<ProofRecord>>, Failure> {
+        self.read(|index| {
+            index
+                .identities
+                .get(digest)
+                .filter(|sequence| **sequence <= self.head)
+                .and_then(|sequence| index.records.get(sequence))
+                .cloned()
+        })
+    }
+
+    pub(crate) fn has_successor(&self, digest: &str) -> Result<bool, Failure> {
+        self.read(|index| {
+            index
+                .successors
+                .get(digest)
+                .is_some_and(|sequence| *sequence <= self.head)
+        })
+    }
+
+    pub(crate) fn latest(&self, limit: usize) -> Result<Vec<Arc<ProofRecord>>, Failure> {
+        self.read(|index| {
+            index
+                .records
+                .range(..=self.head)
+                .rev()
+                .take(limit)
+                .map(|(_, record)| Arc::clone(record))
+                .collect()
+        })
+    }
+
+    fn page(
+        &self,
+        task: &str,
+        run: &Option<String>,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<Arc<ProofRecord>>, Failure> {
+        if after >= self.head {
+            return Ok(Vec::new());
+        }
+        self.read(|index| {
+            index
+                .pages
+                .get(&(task.to_owned(), run.clone()))
+                .into_iter()
+                .flat_map(|page| {
+                    page.range((
+                        std::ops::Bound::Excluded(after),
+                        std::ops::Bound::Included(self.head),
+                    ))
+                    .inspect(|_| {
+                        #[cfg(test)]
+                        index.page_visits.set(index.page_visits.get() + 1);
+                    })
+                    .take(limit)
+                    .map(|(_, record)| Arc::clone(record))
+                })
+                .collect()
+        })
+    }
+}
+
+fn proof_catalog_caches() -> &'static Mutex<HashMap<String, Arc<Mutex<ProofCatalog>>>> {
+    static CACHES: OnceLock<Mutex<HashMap<String, Arc<Mutex<ProofCatalog>>>>> = OnceLock::new();
+    CACHES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn proof_digest(
+    proof: &graphhelm_execution::tasks::BenchmarkProof,
+) -> Result<String, Failure> {
+    graphhelm_graph::raw_content_sha256(proof.canonical_material().as_bytes())
+        .map(|digest| digest.as_str().to_owned())
+        .map_err(|_| super::signal_invalid("benchmark declaration could not be hashed", "/proof"))
+}
+
+/// Every envelope is authenticated before its declaration can supply a binding or a predecessor.
+pub(crate) fn proof_catalog(
+    store: &graphhelm_events::LocalEventRepository,
+    scope: &graphhelm_protocols::RepositoryScope,
+    history: &[graphhelm_protocols::EventEnvelope],
+    execution: &str,
+    keyring: &SignalKeyring,
+    budget: &graphhelm_events::ReadBudget,
+) -> Result<ProofSnapshot, Failure> {
+    indexed_proofs(
+        store,
+        scope,
+        Some(history),
+        execution,
+        keyring,
+        budget,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn indexed_proofs(
+    store: &graphhelm_events::LocalEventRepository,
+    scope: &graphhelm_protocols::RepositoryScope,
+    supplied: Option<&[graphhelm_protocols::EventEnvelope]>,
+    execution: &str,
+    keyring: &SignalKeyring,
+    budget: &graphhelm_events::ReadBudget,
+    cutoff: Option<(u64, String)>,
+) -> Result<ProofSnapshot, Failure> {
+    let check = || {
+        budget.check_now(0).map_err(|error| {
+            super::execution_state(
+                &format!("proof read budget exhausted: {error:?}"),
+                "/proofs",
+            )
+        })
+    };
+    check()?;
+    let generation = super::signal::sealer_generation(keyring)?;
+    let key = format!(
+        "{}\u{0}{scope:?}\u{0}{generation}",
+        cache_key(store.root(), execution)
+    );
+    let shared = {
+        let mut caches = proof_catalog_caches()
+            .lock()
+            .map_err(|_| super::execution_state("proof cache lock is poisoned", "/proofs"))?;
+        if caches.len() >= 128 && !caches.contains_key(&key) {
+            caches.clear();
+        }
+        Arc::clone(caches.entry(key.clone()).or_default())
+    };
+    let mut catalog = shared
+        .lock()
+        .map_err(|_| super::execution_state("proof index lock is poisoned", "/proofs"))?;
+    let loaded;
+    let history = if let Some(history) = supplied {
+        if let Some((sequence, hash)) = &catalog.head {
+            if history
+                .last()
+                .is_some_and(|event| event.sequence < *sequence)
+            {
+                let last = history.last().ok_or_else(super::not_found)?;
+                if catalog
+                    .events
+                    .get(&last.sequence)
+                    .is_none_or(|(hash, _)| hash != &last.event_hash)
+                {
+                    return Err(super::execution_state(
+                        "proof supplied history differs from indexed prefix",
+                        "/proofs",
+                    ));
+                }
+                &history[history.len()..]
+            } else if let Ok(index) = history.binary_search_by_key(sequence, |event| event.sequence)
+            {
+                if &history[index].event_hash != hash {
+                    proof_catalog_caches()
+                        .lock()
+                        .map_err(|_| {
+                            super::execution_state(
+                                "proof cache eviction lock is poisoned",
+                                "/proofs",
+                            )
+                        })?
+                        .remove(&key);
+                    return Err(super::execution_state(
+                        "proof history changed; reread required",
+                        "/proofs",
+                    ));
+                }
+                &history[index + 1..]
+            } else {
+                return Err(super::execution_state(
+                    "proof history lost its indexed head",
+                    "/proofs",
+                ));
+            }
+        } else {
+            history
+        }
+    } else {
+        let (_, stream) = super::stream_of(execution)?;
+        if let Some((sequence, hash)) = &catalog.head {
+            let (tail, head) = store
+                .read_stream_after(scope, &stream, *sequence)
+                .map_err(|error| super::repository_failure(&error))?;
+            let end = tail
+                .last()
+                .map(|event| (event.sequence, &event.event_hash))
+                .unwrap_or((*sequence, hash));
+            let continues = tail
+                .first()
+                .is_none_or(|event| event.sequence == sequence + 1 && &event.previous_hash == hash)
+                && head.as_ref().is_some_and(|head| {
+                    head.next_sequence == end.0 + 1 && &head.last_event_hash == end.1
+                });
+            if !continues {
+                proof_catalog_caches()
+                    .lock()
+                    .map_err(|_| {
+                        super::execution_state("proof cache eviction lock is poisoned", "/proofs")
+                    })?
+                    .remove(&key);
+                return Err(super::execution_state(
+                    "proof stream changed; reread required",
+                    "/proofs",
+                ));
+            }
+            loaded = tail;
+        } else {
+            loaded = store
+                .read_replay_stream(scope, &stream)
+                .map_err(|error| super::repository_failure(&error))?;
+        }
+        loaded.as_slice()
+    };
+    if catalog.events.len() + history.len() > graphhelm_events::MAX_READ_ALL
+        || history.len() > graphhelm_events::MAX_READ_ALL
+    {
+        return Err(super::execution_state(
+            "proof history exceeds read bound",
+            "/proofs",
+        ));
+    }
+    let opener = super::signal::open_sealer(keyring)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .map_err(|_| super::execution_state("proof reader could not start", "/keyring"))?;
+    let result: Result<(), Failure> = (|| {
+        for event in history {
+            check()?;
+            let parsed: Result<(), Failure> = (|| {
+                check()?;
+                let EventKind::SignalRecorded(record) = &event.kind else {
+                    return Ok(());
+                };
+                if !matches!(record.kind.as_str(), "task.claimed" | "task.proof_recorded") {
+                    return Ok(());
+                }
+                let parsed = (|| {
+                    if event.scope.project_id() != scope.project_id()
+                        || event.evidence_refs.len() != 1
+                    {
+                        return None;
+                    }
+                    let reference = &event.evidence_refs[0];
+                    if reference.evidence_id().as_str()
+                        != format!("signal-{}", record.signal_id.as_str())
+                    {
+                        return None;
+                    }
+                    let envelope = opened_envelope(
+                        store,
+                        scope,
+                        &generation,
+                        reference.evidence_id(),
+                        record.envelope_sha256.as_str(),
+                        |sealed| {
+                            let bytes =
+                                runtime.block_on(opener.open(scope.clone(), sealed)).ok()?;
+                            bytes.expose(|value| {
+                                if value.len() > graphhelm_execution::tasks::MAX_ENVELOPE_BYTES {
+                                    None
+                                } else {
+                                    serde_json::from_slice(value).ok()
+                                }
+                            })
+                        },
+                    )?;
+                    if envelope["type"].as_str() != Some(record.kind.as_str())
+                        || envelope
+                            .pointer("/source/id")
+                            .and_then(serde_json::Value::as_str)
+                            != Some(event.actor.id().as_str())
+                    {
+                        return None;
+                    }
+                    Some(envelope)
+                })();
+                let Some(envelope) = parsed else {
+                    catalog.rejected += 1;
+                    return Ok(());
+                };
+                let Some(description) = envelope["description"].as_str() else {
+                    catalog.rejected += 1;
+                    return Ok(());
+                };
+                check()?;
+                if record.kind == "task.claimed" {
+                    let Some(claim) = parse_task_event(
+                        &record.kind,
+                        event.actor.id().as_str(),
+                        description,
+                        event.sequence,
+                        Some(event.occurred_at.clone()),
+                    ) else {
+                        catalog.rejected += 1;
+                        return Ok(());
+                    };
+                    if let Some(repo) = claim.repo {
+                        if catalog
+                            .repositories
+                            .get(&claim.task_id)
+                            .and_then(|versions| versions.last_key_value())
+                            .is_some_and(|(_, previous)| previous != &repo)
+                        {
+                            return Err(super::signal_invalid(
+                                "verified claims disagree about the task repository",
+                                "/proofs/repo",
+                            ));
+                        }
+                        catalog
+                            .repositories
+                            .entry(claim.task_id)
+                            .or_default()
+                            .insert(event.sequence, repo);
+                    }
+                    return Ok(());
+                }
+                if record.scoped_agent_authenticated != Some(true) {
+                    catalog.rejected += 1;
+                    return Ok(());
+                }
+                let proof = match graphhelm_execution::tasks::BenchmarkProof::parse(description) {
+                    Ok(proof) => proof,
+                    Err(_) => {
+                        if serde_json::from_str::<serde_json::Value>(description)
+                            .ok()
+                            .and_then(|v| v["schema"].as_str().map(str::to_owned))
+                            .is_some_and(|schema| {
+                                schema != graphhelm_execution::tasks::BENCHMARK_PROOF_SCHEMA
+                            })
+                        {
+                            catalog.unsupported += 1;
+                        } else {
+                            catalog.rejected += 1;
+                        }
+                        return Ok(());
+                    }
+                };
+                if proof.execution_id.as_str() != execution
+                    || proof.project_id.as_str() != scope.project_id().as_str()
+                    || proof.lane.as_str() != event.actor.id().as_str()
+                    || catalog
+                        .repositories
+                        .get(proof.task_id.as_str())
+                        .and_then(|versions| versions.last_key_value())
+                        .map(|(_, repo)| repo)
+                        != Some(&proof.repo)
+                {
+                    catalog.rejected += 1;
+                    return Ok(());
+                }
+                let record_id = proof_digest(&proof)?;
+                let record = Arc::new(ProofRecord {
+                    record_id: record_id.clone(),
+                    sequence: event.sequence,
+                    proof,
+                });
+                catalog.insert_record(record);
+                Ok(())
+            })();
+            parsed?;
+            catalog.events.insert(
+                event.sequence,
+                (event.event_hash.clone(), event.event_id.as_str().to_owned()),
+            );
+            let counters = (catalog.rejected, catalog.unsupported, catalog.records.len());
+            catalog.checkpoints.insert(event.sequence, counters);
+            catalog.head = Some((event.sequence, event.event_hash.clone()));
+        }
+        check()?;
+        Ok(())
+    })();
+    if result.is_err() || catalog.rejected > 0 || catalog.unsupported > 0 {
+        proof_catalog_caches()
+            .lock()
+            .map_err(|_| {
+                super::execution_state("proof cache eviction lock is poisoned", "/proofs")
+            })?
+            .remove(&key);
+    }
+    result?;
+    let (head, identity) = match cutoff {
+        Some((head, identity)) => {
+            let event = catalog
+                .events
+                .get(&head)
+                .ok_or_else(|| super::signal_invalid("proof snapshot is unavailable", "/after"))?;
+            let digest = graphhelm_graph::raw_content_sha256(event.1.as_bytes()).map_err(|_| {
+                super::signal_invalid("proof snapshot identity is invalid", "/after")
+            })?;
+            if digest.as_str() != identity {
+                return Err(super::signal_invalid(
+                    "proof snapshot identity changed",
+                    "/after",
+                ));
+            }
+            (head, identity)
+        }
+        None => {
+            let head = supplied
+                .and_then(|history| history.last())
+                .map(|event| event.sequence)
+                .or_else(|| catalog.head.as_ref().map(|(sequence, _)| *sequence))
+                .unwrap_or(0);
+            let id = catalog
+                .events
+                .get(&head)
+                .map(|(_, id)| id.as_str())
+                .unwrap_or("");
+            let identity = graphhelm_graph::raw_content_sha256(id.as_bytes()).map_err(|_| {
+                super::signal_invalid("proof snapshot identity is invalid", "/proofs")
+            })?;
+            (head, identity.as_str().to_owned())
+        }
+    };
+    drop(catalog);
+    ProofSnapshot::at(shared, head, identity)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ProofQuery {
+    pub issue: u64,
+    pub run: Option<String>,
+    pub after: Option<String>,
+    pub limit: usize,
+}
+
+impl ProofQuery {
+    pub(crate) fn parse(raw: &str) -> Result<Self, Failure> {
+        let invalid = || {
+            super::signal_invalid(
+                "proofs requires issue, optional run/after and limit 1..100",
+                "/query",
+            )
+        };
+        let mut fields = BTreeMap::new();
+        for part in raw.split('&') {
+            let (key, value) = part.split_once('=').ok_or_else(invalid)?;
+            if !matches!(key, "view" | "issue" | "run" | "after" | "limit")
+                || fields.insert(key, value).is_some()
+            {
+                return Err(invalid());
+            }
+        }
+        let issue = fields
+            .get("issue")
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .ok_or_else(invalid)?;
+        let limit = fields
+            .get("limit")
+            .map(|v| v.parse::<usize>())
+            .transpose()
+            .map_err(|_| invalid())?
+            .unwrap_or(20);
+        if !(1..=100).contains(&limit) || fields.get("view") != Some(&"proofs") {
+            return Err(invalid());
+        }
+        let run = fields.get("run").map(|v| v.to_string());
+        if run.as_ref().is_some_and(|v| {
+            v.is_empty()
+                || v.len() > 128
+                || !v.bytes().enumerate().all(|(i, b)| {
+                    b.is_ascii_alphanumeric() || (i > 0 && matches!(b, b'.' | b'_' | b'-'))
+                })
+        }) {
+            return Err(invalid());
+        }
+        let after = fields
+            .get("after")
+            .filter(|v| !v.is_empty() && **v != "0")
+            .map(|v| v.to_string());
+        if after
+            .as_ref()
+            .is_some_and(|v| v.len() > 512 || !v.is_ascii())
+        {
+            return Err(invalid());
+        }
+        Ok(Self {
+            issue,
+            run,
+            after,
+            limit,
+        })
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProofsView {
+    pub schema: &'static str,
+    pub execution_id: String,
+    pub project_id: String,
+    pub repo: String,
+    pub task_id: String,
+    pub snapshot_head: u64,
+    pub records: Vec<ProofRecord>,
+    pub next_cursor: Option<String>,
+    pub incomplete: bool,
+    pub unsupported: usize,
+    pub rejected: usize,
+}
+
+pub(crate) fn proofs_view(
+    events: &Path,
+    execution: &str,
+    keyring: &SignalKeyring,
+    query: &ProofQuery,
+    budget: graphhelm_events::ReadBudget,
+) -> Result<ProofsView, Failure> {
+    let store = crate::commands::budgeted_event_store(events, budget.clone())
+        .map_err(|e| super::repository_failure(&e))?;
+    let (scope, _) = super::stream_of(execution)?;
+    let invalid = || {
+        super::signal_invalid(
+            "proof continuation does not match this execution, filters or snapshot",
+            "/after",
+        )
+    };
+    let task_id = format!("issue-{}", query.issue);
+    let filter = graphhelm_graph::raw_content_sha256(
+        serde_json::json!([
+            execution,
+            scope.project_id().as_str(),
+            task_id,
+            query.run,
+            query.limit
+        ])
+        .to_string()
+        .as_bytes(),
+    )
+    .map_err(|_| invalid())?
+    .as_str()
+    .to_owned();
+    let (cutoff, after) = match &query.after {
+        None => (None, 0),
+        Some(cursor) => {
+            let parts: Vec<_> = cursor.split('.').collect();
+            if parts.len() != 5 || parts[0] != "p1" || parts[4] != filter {
+                return Err(invalid());
+            }
+            let head = parts[1].parse::<u64>().map_err(|_| invalid())?;
+            let after = parts[3].parse::<u64>().map_err(|_| invalid())?;
+            if after > head {
+                return Err(invalid());
+            }
+            (Some((head, parts[2].to_owned())), after)
+        }
+    };
+    let catalog = indexed_proofs(&store, &scope, None, execution, keyring, &budget, cutoff)?;
+    let head = catalog.head;
+    let repo = catalog.repository(&task_id)?.ok_or_else(|| {
+        super::signal_invalid(
+            "proof view requires an authenticated task claim with a repository",
+            "/issue",
+        )
+    })?;
+    let selected = catalog.page(&task_id, &query.run, after, query.limit + 1)?;
+    let mut matching = selected.iter();
+    let mut records = Vec::new();
+    let mut bytes = 0;
+    let mut more = false;
+    for record in &mut matching {
+        let size = serde_json::to_vec(record.as_ref())
+            .map_err(|_| invalid())?
+            .len();
+        if records.len() == query.limit || bytes + size > 900_000 {
+            more = true;
+            break;
+        }
+        bytes += size;
+        records.push(record.as_ref().clone());
+    }
+    let next_cursor = if more {
+        let last = records.last().ok_or_else(invalid)?.sequence;
+        Some(format!("p1.{head}.{}.{last}.{filter}", catalog.identity))
+    } else {
+        None
+    };
+    Ok(ProofsView {
+        schema: "graphhelm.benchmark-proofs/1",
+        execution_id: execution.to_owned(),
+        project_id: scope.project_id().as_str().to_owned(),
+        repo,
+        task_id,
+        snapshot_head: head,
+        records,
+        next_cursor,
+        incomplete: catalog.rejected > 0 || catalog.unsupported > 0,
+        unsupported: catalog.unsupported,
+        rejected: catalog.rejected,
+    })
+}
+
 /// The reply of every door: the slices, the verified records they were folded from (in sequence
 /// order, with the Runtime's `occurredAt`), the stream head and how many envelopes did not verify.
 #[derive(Debug, Serialize)]
@@ -1286,7 +1983,7 @@ fn fold_signals(
         let EventKind::SignalRecorded(record) = &event.kind else {
             continue;
         };
-        if !record.kind.starts_with("task.") {
+        if !record.kind.starts_with("task.") || record.kind == "task.proof_recorded" {
             continue;
         }
         if let Some(outcome) = cache.outcomes.get(&event.sequence) {
@@ -2268,6 +2965,165 @@ mod waiting_tests {
             assert_eq!(opened, lanes * WAITING_PER_LANE, "asks={asks}");
             assert_eq!(rows.len(), lanes * WAITING_PER_LANE, "asks={asks}");
             assert!(rows.iter().all(|row| row.lane_total == asks));
+        }
+    }
+}
+
+#[cfg(test)]
+mod proof_index_work_tests {
+    use super::*;
+
+    #[test]
+    fn growing_prefixes_and_overlapping_snapshots_copy_no_retained_records_and_visit_only_the_page()
+    {
+        let proof = graphhelm_execution::tasks::BenchmarkProof::parse(r###"{"schema":"graphhelm.benchmark-proof/1","executionId":"exec-1","projectId":"project-1","repo":"stabem/GraphHelm","taskId":"issue-2429","lane":"openbot-itachi","at":"2026-11-02T12:00:00Z","runId":"run-1","harnessCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","arms":[{"name":"base","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"frozenDigest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","artifacts":[{"reference":"fixture/café-雪.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"verdict":"inconclusive","limitations":["quote \" slash \\ newline\\n tab\\t café 雪 😀"],"deviations":[],"predecessor":null}"###).unwrap_or_else(|_| panic!("proof index observer operation failed"));
+        for prefix in [16_u64, 256, 4096] {
+            let shared = Arc::new(Mutex::new(ProofCatalog::default()));
+            let mut witnesses = Vec::new();
+            {
+                let mut index = shared
+                    .lock()
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+                index
+                    .repositories
+                    .entry("issue-2429".into())
+                    .or_default()
+                    .insert(1, "stabem/GraphHelm".into());
+                for sequence in 1..=prefix {
+                    let record = Arc::new(ProofRecord {
+                        record_id: format!("record-{sequence}"),
+                        sequence,
+                        proof: proof.clone(),
+                    });
+                    witnesses.push(Arc::clone(&record));
+                    index.insert_record(record);
+                    index
+                        .checkpoints
+                        .insert(sequence, (0, 0, sequence as usize));
+                }
+            }
+            let references: Vec<_> = witnesses.iter().map(Arc::strong_count).collect();
+            // Retain several snapshots while appending and reading on different threads.
+            let older = ProofSnapshot::at(Arc::clone(&shared), prefix - 1, "older".into())
+                .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+            let snapshot = ProofSnapshot::at(Arc::clone(&shared), prefix, "current".into())
+                .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+            assert_eq!(
+                witnesses.iter().map(Arc::strong_count).collect::<Vec<_>>(),
+                references,
+                "snapshot creation copied prefix record handles"
+            );
+            let barrier = std::sync::Barrier::new(2);
+            std::thread::scope(|scope| {
+                let read = scope.spawn(|| {
+                    barrier.wait();
+                    snapshot
+                        .page("issue-2429", &Some("run-1".into()), prefix - 3, 20)
+                        .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                });
+                barrier.wait();
+                {
+                    let mut index = shared
+                        .lock()
+                        .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+                    for sequence in prefix + 1..=prefix + 7 {
+                        index.insert_record(Arc::new(ProofRecord {
+                            record_id: format!("record-{sequence}"),
+                            sequence,
+                            proof: proof.clone(),
+                        }));
+                        index
+                            .repositories
+                            .entry("issue-2429".into())
+                            .or_default()
+                            .insert(sequence, "later/repository".into());
+                        index
+                            .checkpoints
+                            .insert(sequence, (2, 1, sequence as usize));
+                    }
+                }
+                let page = read
+                    .join()
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+                assert_eq!(
+                    page.iter()
+                        .map(|record| record.sequence)
+                        .collect::<Vec<_>>(),
+                    vec![prefix - 2, prefix - 1, prefix]
+                );
+                assert_eq!(
+                    shared
+                        .lock()
+                        .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                        .page_visits
+                        .get(),
+                    3,
+                    "page read traversed the retained prefix"
+                );
+            });
+            assert_eq!(
+                witnesses.iter().map(Arc::strong_count).collect::<Vec<_>>(),
+                references,
+                "append or overlapping reader retained copied prefix handles"
+            );
+            assert_eq!(
+                shared
+                    .lock()
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                    .appended_records,
+                prefix as usize + 7
+            );
+            assert_eq!(
+                snapshot
+                    .repository("issue-2429")
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                    .as_deref(),
+                Some("stabem/GraphHelm")
+            );
+            assert_eq!(
+                (snapshot.rejected, snapshot.unsupported, snapshot.count),
+                (0, 0, prefix as usize)
+            );
+            let reopened = ProofSnapshot::at(Arc::clone(&shared), prefix, "reopened".into())
+                .unwrap_or_else(|_| panic!("reopened cutoff failed"));
+            assert_eq!(
+                (reopened.rejected, reopened.unsupported, reopened.count),
+                (0, 0, prefix as usize)
+            );
+            assert_eq!(
+                reopened
+                    .repository("issue-2429")
+                    .unwrap_or_else(|_| panic!("reopened repository failed"))
+                    .as_deref(),
+                Some("stabem/GraphHelm")
+            );
+
+            let latest = ProofSnapshot::at(Arc::clone(&shared), prefix + 7, "later".into())
+                .unwrap_or_else(|_| panic!("proof index observer operation failed"));
+            assert_eq!(
+                latest
+                    .repository("issue-2429")
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                    .as_deref(),
+                Some("later/repository")
+            );
+            assert_eq!(
+                (latest.rejected, latest.unsupported, latest.count),
+                (2, 1, prefix as usize + 7)
+            );
+            assert_eq!(
+                older
+                    .latest(1)
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"))[0]
+                    .sequence,
+                prefix - 1
+            );
+            assert!(
+                older
+                    .record(&format!("record-{prefix}"))
+                    .unwrap_or_else(|_| panic!("proof index observer operation failed"))
+                    .is_none()
+            );
         }
     }
 }

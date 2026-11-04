@@ -1961,6 +1961,52 @@ pub(super) async fn tasks(
     headers: HeaderMap,
 ) -> Response {
     const COMMAND: &str = "execution.tasks";
+    if query
+        .as_deref()
+        .unwrap_or("")
+        .split('&')
+        .any(|part| part == "view=proofs")
+    {
+        let proof_query = match execution::tasks::ProofQuery::parse(query.as_deref().unwrap_or(""))
+        {
+            Ok(query) => query,
+            Err(failure) => return respond_failure(COMMAND, failure),
+        };
+        let Some(keyring) = state.sealing.clone() else {
+            return respond_failure(
+                COMMAND,
+                execution::execution_state("proofs require a sealed keyring", "/keyring"),
+            );
+        };
+        let events = state.events.clone();
+        let Some(result) = off_reactor(move || {
+            execution::tasks::proofs_view(
+                &events,
+                &execution_id,
+                &keyring,
+                &proof_query,
+                crate::commands::tasks_read_budget(),
+            )
+        })
+        .await
+        else {
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Outcome::internal(COMMAND, "proof read failed").output,
+            );
+        };
+        return match result {
+            Ok(view) => match serde_json::to_value(view) {
+                Ok(value) => respond(StatusCode::OK, Outcome::success(COMMAND, value).output),
+                Err(error) => respond(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Outcome::internal(COMMAND, format!("proof view serialization failed: {error}"))
+                        .output,
+                ),
+            },
+            Err(failure) => respond_failure(COMMAND, failure),
+        };
+    }
     let depth = if query
         .as_deref()
         .unwrap_or("")
@@ -4492,8 +4538,25 @@ pub(super) async fn signal(
     // `state.events`/`execution_id` directly.
     let sealing = state.sealing.clone();
     let drive_execution_id = execution_id.clone();
+    let verified_proof_lane = signal_value.get("type").and_then(serde_json::Value::as_str)
+        == Some("task.proof_recorded")
+        && headers
+            .get(super::journey_credentials::VERIFIED_LANE_HEADER)
+            .and_then(|value| value.to_str().ok())
+            == Some(identity.actor.id().as_str());
     let scoped_agent_authenticated = identity.actor.actor_type() == PersistedActorType::Agent
-        && verify_agent_credential(&state, &headers, &identity.actor);
+        && (verify_agent_credential(&state, &headers, &identity.actor) || verified_proof_lane);
+    // A historical retry must satisfy today's actor authentication before idempotency can
+    // return an earlier acknowledgement without entering signal admission.
+    if signal_value.get("type").and_then(serde_json::Value::as_str) == Some("task.proof_recorded")
+        && !scoped_agent_authenticated
+    {
+        return bad_request(
+            SIGNAL_COMMAND,
+            "benchmark proofs require an authenticated scoped agent",
+            "/signal/source",
+        );
+    }
     // #478: the request's ONE store open. The mutation reads through this handle and the body
     // below records through a clone of it (the clone shares the handle; it opens nothing).
     let store = match event_store(&state.events) {

@@ -12,10 +12,11 @@
 //! opens the sealed envelope, checks its digest against the recorded event and that its signer is
 //! the actor that recorded it) and never reads a store, a clock or the network.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use graphhelm_protocols::PersistedTimestamp;
-use serde::{Deserialize, Serialize};
+use graphhelm_protocols::{OpaqueId, PersistedTimestamp};
+use serde::de::{self, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// The schema every `task.*` description must name.
 pub const TASK_EVENT_SCHEMA: &str = "graphhelm-task-event-v1";
@@ -23,6 +24,607 @@ pub const TASK_EVENT_SCHEMA: &str = "graphhelm-task-event-v1";
 pub const MAX_ENVELOPE_BYTES: usize = 1024 * 1024;
 /// #591: a gap at least this long between two records of one lane is a stall, not active work.
 pub const ACTIVE_GAP_MS: i64 = 30 * 60_000;
+
+/// The versioned, immutable payload used to describe one external benchmark run.
+pub const BENCHMARK_PROOF_SCHEMA: &str = "graphhelm.benchmark-proof/1";
+pub const MAX_BENCHMARK_PROOF_BYTES: usize = 8192;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenchmarkProofArm {
+    pub name: String,
+    pub commit: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BenchmarkProofArtifact {
+    pub reference: String,
+    pub sha256: String,
+}
+
+/// Expected immutable subject identifiers supplied by the caller, never inferred from JSON.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BenchmarkProofBindings {
+    pub execution_id: String,
+    pub project_id: String,
+    pub repo: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub harness_commit: String,
+    pub lane: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkProof {
+    pub schema: String,
+    pub execution_id: OpaqueId,
+    pub project_id: OpaqueId,
+    pub repo: String,
+    pub task_id: OpaqueId,
+    pub lane: OpaqueId,
+    pub at: PersistedTimestamp,
+    pub run_id: String,
+    pub harness_commit: String,
+    pub arms: Vec<BenchmarkProofArm>,
+    pub frozen_digest: String,
+    pub artifacts: Vec<BenchmarkProofArtifact>,
+    pub verdict: String,
+    pub limitations: Vec<String>,
+    pub deviations: Vec<String>,
+    pub predecessor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BenchmarkProofSummary {
+    pub schema: String,
+    pub status: String,
+    pub head_sequence: u64,
+    pub records: Vec<BenchmarkProof>,
+    pub next_cursor: Option<String>,
+    pub incomplete: bool,
+    pub unsupported: usize,
+    #[serde(default)]
+    pub views: Vec<String>,
+}
+
+impl BenchmarkProof {
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        if raw.len() > MAX_BENCHMARK_PROOF_BYTES {
+            return Err("benchmark proof exceeds 8192 bytes".into());
+        }
+        let mut deserializer = serde_json::Deserializer::from_str(raw);
+        let value = deserializer
+            .deserialize_any(StrictJson)
+            .map_err(|error| format!("invalid benchmark proof JSON: {error}"))?;
+        deserializer
+            .end()
+            .map_err(|error| format!("trailing benchmark proof data: {error}"))?;
+        Self::from_value(value)
+    }
+
+    fn from_value(value: serde_json::Value) -> Result<Self, String> {
+        let object = value
+            .as_object()
+            .ok_or("benchmark proof must be an object")?;
+        require_keys(
+            object,
+            &[
+                "schema",
+                "executionId",
+                "projectId",
+                "repo",
+                "taskId",
+                "lane",
+                "at",
+                "runId",
+                "harnessCommit",
+                "arms",
+                "frozenDigest",
+                "artifacts",
+                "verdict",
+                "limitations",
+                "deviations",
+                "predecessor",
+            ],
+        )?;
+        if object.get("schema").and_then(serde_json::Value::as_str) != Some(BENCHMARK_PROOF_SCHEMA)
+        {
+            return Err("invalid benchmark proof schema".into());
+        }
+        let opaque = |key: &str| {
+            object[key]
+                .as_str()
+                .ok_or_else(|| format!("{key} must be an opaque identifier"))
+                .and_then(|value| OpaqueId::parse(value).map_err(|_| format!("invalid {key}")))
+        };
+        let execution_id = opaque("executionId")?;
+        let project_id = opaque("projectId")?;
+        let task_id = opaque("taskId")?;
+        let lane = opaque("lane")?;
+        let repo = object["repo"].as_str().ok_or("repo must be a string")?;
+        if !valid_repo(repo) {
+            return Err("invalid repo".into());
+        }
+        let at_value = object["at"].as_str().ok_or("at must be a string")?;
+        if at_value.len() != 20 || !at_value.ends_with('Z') {
+            return Err("invalid at".into());
+        }
+        let at = object["at"]
+            .as_str()
+            .ok_or("at must be a string")
+            .and_then(|v| PersistedTimestamp::parse(v).map_err(|_| "invalid at"))?;
+        let run_id = identifier(
+            object["runId"].as_str().ok_or("runId must be a string")?,
+            "runId",
+        )?;
+        let harness_commit = commit(
+            object["harnessCommit"]
+                .as_str()
+                .ok_or("harnessCommit must be a string")?,
+            "harnessCommit",
+        )?;
+        let arms = parse_arms(&object["arms"])?;
+        let frozen_digest = digest(
+            object["frozenDigest"]
+                .as_str()
+                .ok_or("frozenDigest must be a string")?,
+            "frozenDigest",
+        )?;
+        let artifacts = parse_artifacts(&object["artifacts"])?;
+        let verdict = bounded_note(
+            object["verdict"]
+                .as_str()
+                .ok_or("verdict must be a string")?,
+            128,
+            "verdict",
+        )?;
+        if !matches!(
+            verdict.as_str(),
+            "passed" | "failed" | "inconclusive" | "unobserved"
+        ) {
+            return Err("invalid verdict".into());
+        }
+        let limitations = parse_notes(&object["limitations"], "limitations")?;
+        let deviations = parse_notes(&object["deviations"], "deviations")?;
+        let predecessor = match &object["predecessor"] {
+            serde_json::Value::Null => None,
+            serde_json::Value::String(value) if value.len() == 64 && lower_hex(value) => {
+                Some(value.clone())
+            }
+            _ => return Err("predecessor must be null or a lowercase 64-character digest".into()),
+        };
+        Ok(Self {
+            schema: BENCHMARK_PROOF_SCHEMA.to_owned(),
+            execution_id,
+            project_id,
+            repo: repo.to_owned(),
+            task_id,
+            lane,
+            at,
+            run_id,
+            harness_commit,
+            arms,
+            frozen_digest,
+            artifacts,
+            verdict,
+            limitations,
+            deviations,
+            predecessor,
+        })
+    }
+
+    pub fn validate_bindings(&self, expected: &BenchmarkProofBindings) -> Result<(), String> {
+        let actual = [
+            (
+                "executionId",
+                self.execution_id.as_str(),
+                expected.execution_id.as_str(),
+            ),
+            (
+                "projectId",
+                self.project_id.as_str(),
+                expected.project_id.as_str(),
+            ),
+            ("repo", self.repo.as_str(), expected.repo.as_str()),
+            ("taskId", self.task_id.as_str(), expected.task_id.as_str()),
+            ("runId", self.run_id.as_str(), expected.run_id.as_str()),
+            (
+                "harnessCommit",
+                self.harness_commit.as_str(),
+                expected.harness_commit.as_str(),
+            ),
+            ("lane", self.lane.as_str(), expected.lane.as_str()),
+        ];
+        actual
+            .into_iter()
+            .find(|(_, got, want)| got != want)
+            .map_or(Ok(()), |(field, _, _)| {
+                Err(format!("benchmark proof binding mismatch: {field}"))
+            })
+    }
+
+    /// Compact sorted literal-Unicode JSON used for identity; at is omitted.
+    pub fn canonical_material(&self) -> String {
+        let mut value = serde_json::Map::new();
+        let arms = self
+            .arms
+            .iter()
+            .map(|arm| {
+                let mut item = serde_json::Map::new();
+                item.insert("commit".into(), serde_json::json!(arm.commit));
+                item.insert("name".into(), serde_json::json!(arm.name));
+                serde_json::Value::Object(item)
+            })
+            .collect();
+        let artifacts = self
+            .artifacts
+            .iter()
+            .map(|artifact| {
+                let mut item = serde_json::Map::new();
+                item.insert("reference".into(), serde_json::json!(artifact.reference));
+                item.insert("sha256".into(), serde_json::json!(artifact.sha256));
+                serde_json::Value::Object(item)
+            })
+            .collect();
+        value.insert("arms".into(), serde_json::Value::Array(arms));
+        value.insert("artifacts".into(), serde_json::Value::Array(artifacts));
+        value.insert(
+            "deviations".into(),
+            serde_json::Value::Array(
+                self.deviations
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
+        value.insert(
+            "executionId".into(),
+            serde_json::json!(self.execution_id.as_str()),
+        );
+        value.insert("frozenDigest".into(), serde_json::json!(self.frozen_digest));
+        value.insert(
+            "harnessCommit".into(),
+            serde_json::json!(self.harness_commit),
+        );
+        value.insert(
+            "limitations".into(),
+            serde_json::Value::Array(
+                self.limitations
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
+        value.insert("lane".into(), serde_json::json!(self.lane.as_str()));
+        value.insert("predecessor".into(), serde_json::json!(self.predecessor));
+        value.insert(
+            "projectId".into(),
+            serde_json::json!(self.project_id.as_str()),
+        );
+        value.insert("repo".into(), serde_json::json!(self.repo));
+        value.insert("runId".into(), serde_json::json!(self.run_id));
+        value.insert("schema".into(), serde_json::json!(self.schema));
+        value.insert("taskId".into(), serde_json::json!(self.task_id.as_str()));
+        value.insert("verdict".into(), serde_json::json!(self.verdict));
+        serde_json::Value::Object(value).to_string()
+    }
+}
+
+impl<'de> Deserialize<'de> for BenchmarkProof {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let raw = serde_json::to_string(&value).map_err(serde::de::Error::custom)?;
+        Self::parse(&raw).map_err(serde::de::Error::custom)
+    }
+}
+
+fn require_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    allowed: &[&str],
+) -> Result<(), String> {
+    if object.keys().all(|key| allowed.contains(&key.as_str())) && object.len() == allowed.len() {
+        Ok(())
+    } else {
+        Err("unknown or missing benchmark proof key".into())
+    }
+}
+fn lower_hex(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
+}
+fn digest(value: &str, field: &str) -> Result<String, String> {
+    (value.len() == 64 && lower_hex(value))
+        .then(|| value.to_owned())
+        .ok_or_else(|| format!("invalid {field}"))
+}
+fn commit(value: &str, field: &str) -> Result<String, String> {
+    (matches!(value.len(), 40 | 64) && lower_hex(value))
+        .then(|| value.to_owned())
+        .ok_or_else(|| format!("invalid {field}"))
+}
+fn identifier(value: &str, field: &str) -> Result<String, String> {
+    (!value.is_empty()
+        && value.len() <= 128
+        && value.bytes().enumerate().all(|(index, byte)| {
+            (index == 0 && byte.is_ascii_alphanumeric())
+                || (index > 0
+                    && (byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')))
+        }))
+    .then(|| value.to_owned())
+    .ok_or_else(|| format!("invalid {field}"))
+}
+fn bounded_note(value: &str, max: usize, field: &str) -> Result<String, String> {
+    (!value.is_empty() && value.chars().count() <= max && !value.chars().any(char::is_control))
+        .then(|| value.to_owned())
+        .ok_or_else(|| format!("invalid {field}"))
+}
+fn parse_arms(value: &serde_json::Value) -> Result<Vec<BenchmarkProofArm>, String> {
+    let values = value.as_array().ok_or("arms must be an array")?;
+    if values.is_empty() || values.len() > 8 {
+        return Err("arms must contain 1 to 8 entries".into());
+    }
+    let mut names = HashSet::new();
+    values
+        .iter()
+        .map(|item| {
+            let object = item.as_object().ok_or("arm must be an object")?;
+            require_keys(object, &["name", "commit"])?;
+            let name = identifier(
+                object["name"].as_str().ok_or("arm name must be a string")?,
+                "arm name",
+            )?;
+            if !names.insert(name.clone()) {
+                return Err("arm names must be unique".into());
+            }
+            Ok(BenchmarkProofArm {
+                name,
+                commit: commit(
+                    object["commit"]
+                        .as_str()
+                        .ok_or("arm commit must be a string")?,
+                    "arm commit",
+                )?,
+            })
+        })
+        .collect()
+}
+fn parse_artifacts(value: &serde_json::Value) -> Result<Vec<BenchmarkProofArtifact>, String> {
+    let values = value.as_array().ok_or("artifacts must be an array")?;
+    if values.is_empty() || values.len() > 8 {
+        return Err("artifacts must contain 1 to 8 entries".into());
+    }
+    values
+        .iter()
+        .map(|item| {
+            let object = item.as_object().ok_or("artifact must be an object")?;
+            require_keys(object, &["reference", "sha256"])?;
+            let reference = object["reference"]
+                .as_str()
+                .ok_or("artifact reference must be a string")?;
+            if reference.is_empty()
+                || reference.chars().count() > 1024
+                || reference.chars().any(char::is_control)
+            {
+                return Err("invalid artifact reference".into());
+            }
+            Ok(BenchmarkProofArtifact {
+                reference: reference.to_owned(),
+                sha256: digest(
+                    object["sha256"]
+                        .as_str()
+                        .ok_or("artifact sha256 must be a string")?,
+                    "artifact sha256",
+                )?,
+            })
+        })
+        .collect()
+}
+fn parse_notes(value: &serde_json::Value, field: &str) -> Result<Vec<String>, String> {
+    let values = value
+        .as_array()
+        .ok_or_else(|| format!("{field} must be an array"))?;
+    if values.len() > 16 {
+        return Err(format!("{field} must contain at most 16 entries"));
+    }
+    values
+        .iter()
+        .map(|value| {
+            bounded_note(
+                value
+                    .as_str()
+                    .ok_or_else(|| format!("{field} entry must be a string"))?,
+                512,
+                field,
+            )
+        })
+        .collect()
+}
+
+struct StrictJson;
+impl<'de> Visitor<'de> for StrictJson {
+    type Value = serde_json::Value;
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("strict JSON")
+    }
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(serde_json::Value::Bool(value))
+    }
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(serde_json::json!(value))
+    }
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(serde_json::json!(value))
+    }
+    fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Err(E::custom("floating-point numbers are forbidden"))
+    }
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(serde_json::Value::String(value.to_owned()))
+    }
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(serde_json::Value::String(value))
+    }
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(serde_json::Value::Null)
+    }
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        Ok(serde_json::Value::Null)
+    }
+    fn visit_seq<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(value) = access.next_element_seed(StrictSeed)? {
+            values.push(value);
+        }
+        Ok(serde_json::Value::Array(values))
+    }
+    fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut values = serde_json::Map::new();
+        while let Some(key) = access.next_key::<String>()? {
+            if values.contains_key(&key) {
+                return Err(de::Error::custom("duplicate JSON key"));
+            }
+            values.insert(key, access.next_value_seed(StrictSeed)?);
+        }
+        Ok(serde_json::Value::Object(values))
+    }
+}
+#[cfg(test)]
+mod benchmark_proof_tests {
+    use super::*;
+
+    fn valid_json() -> String {
+        serde_json::json!({
+            "schema": BENCHMARK_PROOF_SCHEMA,
+            "executionId": "exec-1",
+            "projectId": "project-1",
+            "repo": "stabem/GraphHelm",
+            "taskId": "issue-2429",
+            "lane": "openbot-itachi",
+            "at": "2026-11-02T12:00:00Z",
+            "runId": "run-1",
+            "harnessCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "arms": [{"name": "base", "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],
+            "frozenDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "artifacts": [{"reference": "fixture", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],
+            "verdict": "inconclusive",
+            "limitations": [],
+            "deviations": [],
+            "predecessor": null
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn canonical_material_is_sorted_and_omits_emission_time() -> Result<(), String> {
+        let wire = r###"{"schema":"graphhelm.benchmark-proof/1","executionId":"exec-1","projectId":"project-1","repo":"stabem/GraphHelm","taskId":"issue-2429","lane":"openbot-itachi","at":"2026-11-02T12:00:00Z","runId":"run-1","harnessCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","arms":[{"name":"base","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}],"frozenDigest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","artifacts":[{"reference":"fixture/café-雪.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"verdict":"inconclusive","limitations":["quote \" slash \\ newline\\n tab\\t café 雪 😀"],"deviations":[],"predecessor":null}"###;
+        let proof = BenchmarkProof::parse(wire).map_err(|error| error.to_string())?;
+        assert_eq!(
+            proof.canonical_material(),
+            r###"{"arms":[{"commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","name":"base"}],"artifacts":[{"reference":"fixture/café-雪.json","sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}],"deviations":[],"executionId":"exec-1","frozenDigest":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","harnessCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","lane":"openbot-itachi","limitations":["quote \" slash \\ newline\\n tab\\t café 雪 😀"],"predecessor":null,"projectId":"project-1","repo":"stabem/GraphHelm","runId":"run-1","schema":"graphhelm.benchmark-proof/1","taskId":"issue-2429","verdict":"inconclusive"}"###
+        );
+        let mut later: serde_json::Value =
+            serde_json::from_str(wire).map_err(|error| error.to_string())?;
+        later["at"] = serde_json::json!("2026-11-03T12:00:00Z");
+        assert_eq!(
+            BenchmarkProof::parse(&later.to_string())
+                .map_err(|error| error.to_string())?
+                .canonical_material(),
+            proof.canonical_material()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn strict_parser_rejects_duplicate_nested_keys_and_missing_predecessor() -> Result<(), String> {
+        let duplicate = valid_json().replace(r#""name":"base""#, r#""name":"base","name":"other""#);
+        assert!(BenchmarkProof::parse(&duplicate).is_err());
+        let missing = valid_json().replace(r#","predecessor":null"#, "");
+        assert!(BenchmarkProof::parse(&missing).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn binding_validation_rejects_a_different_immutable_subject() -> Result<(), String> {
+        let proof = BenchmarkProof::parse(&valid_json()).map_err(|error| error.to_string())?;
+        let expected = BenchmarkProofBindings {
+            execution_id: "exec-1".into(),
+            project_id: "project-1".into(),
+            repo: "stabem/GraphHelm".into(),
+            task_id: "issue-2429".into(),
+            run_id: "run-2".into(),
+            harness_commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            lane: "openbot-itachi".into(),
+        };
+        assert!(proof.validate_bindings(&expected).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn parser_rejects_arbitrary_verdict_and_invalid_timestamp() -> Result<(), String> {
+        assert!(BenchmarkProof::parse(&valid_json().replace("inconclusive", "maybe")).is_err());
+        assert!(BenchmarkProof::parse(&valid_json().replace("12:00:00Z", "12:00:00.1Z")).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn serialized_proof_round_trips_through_strict_decoder() -> Result<(), String> {
+        let proof = BenchmarkProof::parse(&valid_json()).map_err(|error| error.to_string())?;
+        let wire = serde_json::to_string(&proof).map_err(|error| error.to_string())?;
+        assert_eq!(
+            BenchmarkProof::parse(&wire).map_err(|error| error.to_string())?,
+            proof
+        );
+        Ok(())
+    }
+}
+
+struct StrictSeed;
+impl<'de> de::DeserializeSeed<'de> for StrictSeed {
+    type Value = serde_json::Value;
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(StrictJson)
+    }
+}
 
 /// The record kinds a lane (or, for `task.queued`, whoever reads the issue list) writes
 /// (DELIVERY.md, "Task records"), and the owner's lane retirement.

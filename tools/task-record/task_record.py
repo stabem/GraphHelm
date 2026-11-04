@@ -41,11 +41,184 @@ import os
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
+def canonical_proof_json(text):
+    """Encode a bounded proof declaration; semantic admission belongs to the Runtime."""
+    if not isinstance(text, str):
+        raise ValueError("proof JSON must be text")
+    try:
+        if len(text.encode("utf-8")) > 8192:
+            raise ValueError("proof JSON exceeds 8192 UTF-8 bytes")
+    except UnicodeError as error:
+        raise ValueError("proof JSON contains invalid Unicode") from error
+
+    def object_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("proof JSON contains a duplicate key")
+            result[key] = value
+        return result
+
+    def reject_number(value):
+        raise ValueError("proof JSON permits integers, not floats or nonfinite numbers")
+
+    try:
+        value = json.loads(text, object_pairs_hook=object_pairs,
+                           parse_float=reject_number, parse_constant=reject_number)
+    except RecursionError as error:
+        raise ValueError("proof JSON nesting exceeds the decoder bound") from error
+    if not isinstance(value, dict):
+        raise ValueError("proof JSON must be an object")
+    pending = [(value, 0)]
+    while pending:
+        item, depth = pending.pop()
+        if depth > 32:
+            raise ValueError("proof JSON nesting exceeds 32 levels")
+        if isinstance(item, dict):
+            pending.extend((key, depth + 1) for key in item)
+            pending.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            pending.extend((child, depth + 1) for child in item)
+        elif isinstance(item, str):
+            try:
+                item.encode("utf-8")
+            except UnicodeError as error:
+                raise ValueError("proof JSON contains invalid Unicode") from error
+        elif type(item) is int and not -(1 << 63) <= item < (1 << 64):
+            raise ValueError("proof JSON integer is outside the portable 64-bit range")
+    encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False,
+                         separators=(",", ":"))
+    if len(encoded.encode("utf-8")) > 8192:
+        raise ValueError("proof declaration exceeds 8192 UTF-8 bytes")
+    return encoded
+
+
+BENCHMARK_PROOF_SCHEMA = "graphhelm.benchmark-proof/1"
+_PROOF_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_PROOF_COMMIT = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
+_PROOF_IDENTIFIER = re.compile(r"[!-~]{1,128}\Z", re.ASCII)
+_PROOF_PORTABLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z", re.ASCII)
+_PROOF_AT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
+_PROOF_KEYS = frozenset({
+    "schema", "executionId", "projectId", "repo", "taskId", "lane", "at", "runId",
+    "harnessCommit", "arms", "frozenDigest", "artifacts", "verdict", "limitations",
+    "deviations", "predecessor",
+})
+
+
+def _proof_text(value, name, maximum, *, identifier=False):
+    if not isinstance(value, str) or not value or len(value) > maximum:
+        raise ValueError(f"proof {name} must be nonempty text of at most {maximum} characters")
+    if any(ord(char) < 0x20 or 0x7f <= ord(char) <= 0x9f for char in value):
+        raise ValueError(f"proof {name} contains control characters")
+    if identifier and (not _PROOF_IDENTIFIER.fullmatch(value)
+                       or any(char in value for char in ("/", "\\", ":"))):
+        raise ValueError(f"proof {name} must be an ASCII portable identifier")
+    return value
+
+
+def _valid_proof_repo(value):
+    if not isinstance(value, str) or len(value) > 140 or value.count("/") != 1:
+        return False
+    owner, name = value.split("/")
+    if not 1 <= len(owner) <= 39 or not owner[0].isalnum() or not all(
+            char.isascii() and (char.isalnum() or char == "-") for char in owner):
+        return False
+    if not 1 <= len(name) <= 100 or not all(
+            char.isascii() and (char.isalnum() or char in "_.-") for char in name):
+        return False
+    return name.strip(".") != ""
+
+
+def validate_benchmark_proof(text, expected_bindings=None):
+    """Validate and hash one immutable benchmark declaration without performing I/O.
+
+    ``expected_bindings`` is the caller's trusted execution/project/task/lane context.  The
+    emission time is part of the returned record but deliberately excluded from its identity.
+    """
+    canonical = canonical_proof_json(text)
+    document = json.loads(canonical)
+    if set(document) != _PROOF_KEYS:
+        unknown = sorted(set(document) - _PROOF_KEYS)
+        missing = sorted(_PROOF_KEYS - set(document))
+        raise ValueError(f"proof fields do not match schema (unknown={unknown}, missing={missing})")
+    if document["schema"] != BENCHMARK_PROOF_SCHEMA:
+        raise ValueError("proof schema must be graphhelm.benchmark-proof/1")
+    for field in ("executionId", "projectId", "taskId", "lane"):
+        _proof_text(document[field], field, 128, identifier=True)
+    if not _valid_proof_repo(document["repo"]):
+        raise ValueError("proof repo must be a valid owner/name repository")
+    if (not isinstance(document["at"], str) or not _PROOF_AT.fullmatch(document["at"])):
+        raise ValueError("proof at must be an RFC3339 UTC second timestamp")
+    try:
+        datetime.datetime.strptime(document["at"], "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError as error:
+        raise ValueError("proof at must be an RFC3339 UTC second timestamp") from error
+    if expected_bindings is not None:
+        if not isinstance(expected_bindings, dict):
+            raise ValueError("proof expected bindings must be an object")
+        for field in ("executionId", "projectId", "repo", "taskId", "lane"):
+            if field not in expected_bindings or document[field] != expected_bindings[field]:
+                raise ValueError(f"proof {field} does not match the trusted caller binding")
+
+    _proof_text(document["runId"], "runId", 128, identifier=True)
+    if not _PROOF_PORTABLE.fullmatch(document["runId"]):
+        raise ValueError("proof runId must be a portable identifier")
+    if not isinstance(document["harnessCommit"], str) or not _PROOF_COMMIT.fullmatch(document["harnessCommit"]):
+        raise ValueError("proof harnessCommit must be a lowercase 40- or 64-character commit")
+    if not isinstance(document["frozenDigest"], str) or not _PROOF_SHA256.fullmatch(document["frozenDigest"]):
+        raise ValueError("proof frozenDigest must be a lowercase SHA-256 digest")
+
+    arms = document["arms"]
+    if not isinstance(arms, list) or not 1 <= len(arms) <= 8:
+        raise ValueError("proof arms must contain 1 to 8 entries")
+    names = set()
+    for arm in arms:
+        if not isinstance(arm, dict) or set(arm) != {"name", "commit"}:
+            raise ValueError("proof arms must contain only name and commit")
+        name = _proof_text(arm["name"], "arm name", 128, identifier=True)
+        if not _PROOF_PORTABLE.fullmatch(name):
+            raise ValueError("proof arm name must be a portable identifier")
+        if name in names:
+            raise ValueError("proof arm names must be unique")
+        names.add(name)
+        if not isinstance(arm["commit"], str) or not _PROOF_COMMIT.fullmatch(arm["commit"]):
+            raise ValueError("proof arm commit must be a lowercase 40- or 64-character commit")
+
+    artifacts = document["artifacts"]
+    if not isinstance(artifacts, list) or not 1 <= len(artifacts) <= 8:
+        raise ValueError("proof artifacts must contain 1 to 8 entries")
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or set(artifact) != {"reference", "sha256"}:
+            raise ValueError("proof artifacts must contain only reference and sha256")
+        _proof_text(artifact["reference"], "artifact reference", 1024)
+        if not isinstance(artifact["sha256"], str) or not _PROOF_SHA256.fullmatch(artifact["sha256"]):
+            raise ValueError("proof artifact sha256 must be a lowercase SHA-256 digest")
+
+    if document["verdict"] not in {"passed", "failed", "inconclusive", "unobserved"}:
+        raise ValueError("proof verdict is unsupported")
+    for field in ("limitations", "deviations"):
+        values = document[field]
+        if not isinstance(values, list) or len(values) > 16:
+            raise ValueError(f"proof {field} must contain at most 16 entries")
+        for value in values:
+            _proof_text(value, field[:-1], 512)
+    predecessor = document["predecessor"]
+    if predecessor is not None and (not isinstance(predecessor, str) or not _PROOF_SHA256.fullmatch(predecessor)):
+        raise ValueError("proof predecessor must be null or a lowercase SHA-256 digest")
+
+    identity = dict(document)
+    identity.pop("at")
+    identity_json = canonical_proof_json(json.dumps(identity, ensure_ascii=False, separators=(",", ":")))
+    return canonical, hashlib.sha256(identity_json.encode("utf-8")).hexdigest()
+
+
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # #1851: the Runtime's `agentKind` / `agentModel` rule on task.claimed (task-event.schema.json).
 AGENT_KIND = re.compile(r"[a-z][a-z0-9-]{0,31}", re.ASCII)
 AGENT_MODEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}", re.ASCII)
 KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "review_activity", "merged", "closed", "critic_verdict", "queued", "lane_retired", "request_recorded", "request_linked", "journey_frames")
+CLI_KINDS = KINDS + ("proof_recorded", "proofs")
 # #1469: `queued` records the open issues carrying this label that no open PR closes, oldest
 # first, at most QUEUED_MAX (the schema's maxItems), as the Lanes Backlog reads them.
 WAVE_LABEL = "current-wave"
@@ -133,7 +306,7 @@ def resolve_execution(explicit, token_file, project_dir=None):
 
 def credential_file(token_file, lane):
     """The lane's credential beside `--token-file` (#1148): `events.agent.token` or `events.token`
-    → `events.agent.<lane>.token`, the path `graphhelm tasks credential --lane <lane>` writes."""
+    Ã¢â€ â€™ `events.agent.<lane>.token`, the path `graphhelm tasks credential --lane <lane>` writes."""
     path = Path(token_file)
     stem = path.name
     if stem.endswith(f".agent.{lane}.token"):
@@ -309,7 +482,7 @@ def words(args):
 
 def parse(argv):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("kind", choices=KINDS)
+    p.add_argument("kind", choices=CLI_KINDS)
     p.add_argument("--lane", required=True, help="the recording actor (your ListAgents name)")
     p.add_argument("--issue", type=int, help="the task is issue-<N> for its whole life (every kind but queued)")
     p.add_argument("--revision", type=int, help="defaults to the step's position: claimed 1 (planned 1) ... merged 5")
@@ -380,6 +553,10 @@ def parse(argv):
     p.add_argument("--summary", help="claimed/pr_opened: one sentence; default: the body's 'Summary:' line, read with gh."
                    " planned: the plan in one line (at most 300 characters), required")
     p.add_argument("--journey", help="journey_frames (#1839): the journey id run at the PR head")
+    p.add_argument("--proof-file", help="proof_recorded: JSON benchmark declaration file")
+    p.add_argument("--run", help="proofs: optional benchmark run id")
+    p.add_argument("--after", default=None, help="proofs: opaque snapshot cursor")
+    p.add_argument("--limit", type=int, default=20, help="proofs: page size (1..100)")
     p.add_argument("--preview-project", default=".",
                    help="journey_frames: the worktree whose .graphhelm/journey-previews holds the run (default: .)")
     p.add_argument("--no-github", action="store_true", help="do not call gh for the title and summary")
@@ -755,9 +932,142 @@ def journey_frames_records(args, doc):
     return out
 
 
+def _proofs_view(args):
+    # Earlier helper callers used zero for an absent cursor; continuations are opaque strings.
+    cursor = None if args.after == 0 else args.after
+    if not 1 <= args.limit <= 100 or (cursor is not None and
+            (not isinstance(cursor, str) or len(cursor) > 512)):
+        sys.exit("task_record: proofs requires an opaque cursor and --limit from 1 to 100")
+    token = read_credential(args)
+    query = {"view": "proofs", "issue": str(args.issue), "limit": str(args.limit)}
+    if cursor is not None:
+        query["after"] = cursor
+    if args.run:
+        query["run"] = args.run
+    data, _ = _runtime_json(args, "/tasks?" + urllib.parse.urlencode(query), token, max_bytes=1024 * 1024)
+    if data.get("schema") != "graphhelm.benchmark-proofs/1":
+        sys.exit("task_record: Runtime does not support the benchmark proofs view; no record sent")
+    for field, expected in (("executionId", args.execution), ("repo", args.repo),
+                            ("taskId", f"issue-{args.issue}")):
+        if not isinstance(data.get(field), str) or data[field] != expected:
+            sys.exit(f"task_record: proofs response has no authoritative {field} binding; no record sent")
+    if not isinstance(data.get("projectId"), str) or not data["projectId"]:
+        sys.exit("task_record: proofs response has no authoritative projectId; no record sent")
+    for field in ("snapshotHead", "unsupported", "rejected"):
+        if type(data.get(field)) is not int or data[field] < 0:
+            sys.exit("task_record: proofs response has invalid counts; no record sent")
+    if type(data.get("incomplete")) is not bool or (data.get("nextCursor") is not None and
+            (not isinstance(data["nextCursor"], str) or not data["nextCursor"] or len(data["nextCursor"]) > 512)):
+        sys.exit("task_record: proofs response has invalid completeness/cursor; no record sent")
+    if (data["unsupported"] or data["rejected"]) and not data["incomplete"]:
+        sys.exit("task_record: proofs response hides unread evidence; no record sent")
+    records = data.get("records")
+    if not isinstance(records, list) or len(records) > args.limit:
+        sys.exit("task_record: proofs response is incomplete; no record sent")
+    previous = 0
+    for record in records:
+        if (not isinstance(record, dict) or not isinstance(record.get("recordId"), str)
+                or not isinstance(record.get("sequence"), int) or isinstance(record.get("sequence"), bool)
+                or not isinstance(record.get("proof"), dict)):
+            sys.exit("task_record: proofs response contains an invalid record; no record sent")
+        if not previous < record["sequence"] <= data["snapshotHead"]:
+            sys.exit("task_record: proofs response is out of sequence; no record sent")
+        previous = record["sequence"]
+        try:
+            expected = {field: data[field] for field in ("executionId", "projectId", "repo", "taskId")}
+            expected["lane"] = record["proof"].get("lane")
+            _, digest = validate_benchmark_proof(json.dumps(record["proof"], ensure_ascii=False), expected)
+            if record["recordId"] != digest or (args.run and record["proof"]["runId"] != args.run):
+                raise ValueError("record identity or run filter mismatch")
+        except (TypeError, ValueError, UnicodeError) as error:
+            sys.exit(f"task_record: proofs response contains an invalid proof ({error}); no record sent")
+    return data
+
+
+def _proof_record(args, now):
+    if not args.proof_file:
+        sys.exit("task_record: proof_recorded needs --proof-file")
+    try:
+        with Path(args.proof_file).open("rb") as source:
+            raw = source.read(8193)
+    except OSError as error:
+        sys.exit(f"task_record: cannot read --proof-file ({error}); no record sent")
+    if len(raw) > 8192:
+        sys.exit("task_record: --proof-file exceeds 8192 bytes; no record sent")
+    try:
+        supplied = json.loads(canonical_proof_json(raw.decode("utf-8")))
+    except (UnicodeError, ValueError):
+        sys.exit("task_record: --proof-file is not valid UTF-8 JSON; no record sent")
+    if not isinstance(supplied, dict):
+        sys.exit("task_record: --proof-file must contain a JSON object; no record sent")
+    view = _proofs_view(args)
+    if view["incomplete"]:
+        sys.exit("task_record: proof history is incomplete; no record sent")
+    bindings = {"executionId": args.execution, "projectId": view["projectId"],
+                "repo": args.repo, "taskId": f"issue-{args.issue}", "lane": args.lane, "at": now}
+    for field in bindings:
+        if field in supplied and supplied[field] != bindings[field]:
+            sys.exit(f"task_record: proof {field} conflicts with the trusted binding; no record sent")
+    document = dict(supplied)
+    document.update(bindings)
+    canonical, digest = validate_benchmark_proof(json.dumps(document, ensure_ascii=False), bindings)
+    args.proof_digest = digest
+    return json.loads(canonical), view
+
+
+def proof_recorded(args, now):
+    args.after = None
+    document, _ = _proof_record(args, now)
+    def find_stored():
+        read_args = argparse.Namespace(**vars(args))
+        read_args.after, read_args.limit, read_args.run = None, 100, document["runId"]
+        snapshot = None
+        seen = set()
+        for _ in range(100):
+            view = _proofs_view(read_args)
+            if view["incomplete"] or (snapshot is not None and snapshot != view["snapshotHead"]):
+                sys.exit("task_record: proof readback is incomplete or changed snapshot")
+            snapshot = view["snapshotHead"]
+            for record in view["records"]:
+                if record["recordId"] == args.proof_digest:
+                    wanted = {k: v for k, v in document.items() if k != "at"}
+                    stored = {k: v for k, v in record["proof"].items() if k != "at"}
+                    if stored != wanted:
+                        sys.exit("task_record: proof readback differs from submitted declaration")
+                    return record
+            cursor = view["nextCursor"]
+            if cursor is None:
+                return None
+            if cursor in seen:
+                sys.exit("task_record: proof readback repeated a cursor")
+            seen.add(cursor)
+            read_args.after = cursor
+        sys.exit("task_record: proof readback exceeded its page budget")
+    if not args.dry_run:
+        existing = find_stored()
+        if existing:
+            return 2, "proof-" + args.proof_digest[:58], {"data": {"recordId": args.proof_digest, "alreadyRecorded": True}}
+    code, signal_id, reply = send(args, document, now)
+    if args.dry_run:
+        return code, signal_id, reply
+    stored = find_stored()
+    if stored is None:
+        if code not in (0, 2):
+            return code, signal_id, reply
+        sys.exit("task_record: proof POST has no verified stored readback")
+    return 0 if code == 0 else 2, signal_id, reply
+
+
 def main(argv):
     args = parse(argv)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if args.kind == "proofs":
+        data = _proofs_view(args)
+        print(json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        return 0
+    if args.kind == "proof_recorded":
+        code, signal_id, reply = proof_recorded(args, now)
+        return report(code, signal_id, reply)
     if args.kind == "heartbeat":
         reject_heartbeat_overrides(args)
         doc = heartbeat_document(args, now)
@@ -820,7 +1130,8 @@ def _runtime_json(args, path, token, *, max_bytes=MAX_RESPONSE_BYTES):
     url = f"{args.url.rstrip('/')}/v1/executions/{urllib.parse.quote(args.execution, safe='')}{path}"
     if urllib.parse.urlsplit(url).hostname not in LOOPBACK:
         sys.exit(f"task_record: refusing {args.url}: the agent token is sent only to a loopback Runtime")
-    request = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {token}"})
+    request = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {token}",
+                                    "X-GraphHelm-Actor": args.lane, "X-GraphHelm-Actor-Type": "agent"})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             raw = response.read(max_bytes + 1)
@@ -963,7 +1274,7 @@ def send(args, doc, now, attachments=None):
     # a new key, so a GHE003 conflict on it can only be a retry of this exact record.
     content = json.dumps({k: v for k, v in doc.items() if k != "at"}, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256("\n".join((args.lane, args.kind, content)).encode()).hexdigest()[:16]
-    signal_id = f"{args.lane}-{doc['taskId']}-{args.kind}-{digest}"
+    signal_id = f"proof-{args.proof_digest[:58]}" if args.kind == "proof_recorded" else f"{args.lane}-{doc['taskId']}-{args.kind}-{digest}"
     if len(signal_id) > 64:
         # Keep accepted keys stable; the digest still covers the full lane, kind and record.
         signal_id = f"{signal_id[:47]}-{digest}"
@@ -973,7 +1284,7 @@ def send(args, doc, now, attachments=None):
     body = {"signal": {"id": signal_id, "type": f"task.{args.kind}",
                        "source": {"type": "user", "id": args.lane}, "severity": "low",
                        "emittedAt": now, "evidence": [evidence],
-                       "description": json.dumps(doc, separators=(",", ":"))}}
+                       "description": json.dumps(doc, separators=(",", ":"), ensure_ascii=args.kind != "proof_recorded")}}
     if attachments:
         body["attachments"] = attachments
     url = f"{args.url.rstrip('/')}/v1/executions/{urllib.parse.quote(args.execution, safe='')}/signal"
@@ -992,7 +1303,7 @@ def send(args, doc, now, attachments=None):
     # under the same key is safe to send again.
     # #1526: a read timeout can follow a committed append. The key is the record's content, so
     # sending it again either lands it or answers GHE003 ("already recorded"); never a failure.
-    attempts = 2 if args.kind == "review_activity" else 3
+    attempts = 2 if args.kind == "review_activity" else 1 if args.kind == "proof_recorded" else 3
     for attempt in range(attempts):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
@@ -1007,7 +1318,7 @@ def send(args, doc, now, attachments=None):
             reply = json.loads(error.read() or b"{}")
         except urllib.error.URLError as error:
             sys.exit(f"task_record: no Runtime at {args.url}: {error.reason}")
-        retry_codes = {"GHE001_SEQUENCE_CONFLICT"}
+        retry_codes = set() if args.kind == "proof_recorded" else {"GHE001_SEQUENCE_CONFLICT"}
         if args.kind == "review_activity":
             # A racing append may check its key before its sequence. Re-enter the sealed
             # verifier with this SAME request once; GHE003 itself never means success.

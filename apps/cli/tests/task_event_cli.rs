@@ -1773,6 +1773,292 @@ fn reviewer_wait_is_bound_to_the_approved_head_without_changing_its_obligation()
 mod review_support;
 
 struct ReviewRuntime(std::process::Child);
+
+/// Real isolated HTTP plus the shipped Python helper: sealed identity, correction races and
+/// snapshot paging. No providers, shared Runtime, production credentials or external writes.
+#[test]
+fn benchmark_proofs_bind_subject_serialize_corrections_and_preserve_snapshot() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let (_server, base, token) = review_runtime(&events, scratch.path());
+    let claimed = review_record(
+        &base,
+        &token,
+        "review-author",
+        "claimed",
+        &[
+            "--branch",
+            "proof-fixture",
+            "--title",
+            "Proof fixture",
+            "--summary",
+            "Isolated declaration contract",
+        ],
+    );
+    assert!(
+        claimed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&claimed.stderr)
+    );
+    let read_token = review_support::read_token(&token);
+    let board_before = review_support::get_json(
+        &format!("{base}/v1/executions/{RUN}/tasks?full=1"),
+        Some(read_token.trim()),
+    );
+    let read = |query: &str| {
+        review_support::get_json(
+            &format!("{base}/v1/executions/{RUN}/tasks?view=proofs&issue=1745&{query}"),
+            Some(read_token.trim()),
+        )
+    };
+    let empty = read("limit=1");
+    assert_eq!(empty["ok"], true, "{empty}");
+    assert_eq!(empty["data"]["schema"], "graphhelm.benchmark-proofs/1");
+    assert_eq!(empty["data"]["repo"], "fixture/project");
+    let proof_file = scratch.path().join("proof.json");
+    let declaration = json!({"schema":"graphhelm.benchmark-proof/1","runId":"fixture-run","harnessCommit":"a".repeat(40),
+        "arms":[{"name":"control","commit":"b".repeat(40)}],"frozenDigest":"c".repeat(64),
+        "artifacts":[{"reference":"fixture/result.json","sha256":"d".repeat(64)}],"verdict":"inconclusive",
+        "limitations":["local fixture only"],"deviations":[],"predecessor":null});
+    std::fs::write(&proof_file, declaration.to_string()).unwrap();
+    let post = || {
+        review_record(
+            &base,
+            &token,
+            "review-author",
+            "proof_recorded",
+            &["--proof-file", proof_file.to_str().unwrap()],
+        )
+    };
+    let posted = post();
+    assert!(
+        posted.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&posted.stdout),
+        String::from_utf8_lossy(&posted.stderr)
+    );
+    let first = read("limit=100");
+    let board_after = review_support::get_json(
+        &format!("{base}/v1/executions/{RUN}/tasks?full=1"),
+        Some(read_token.trim()),
+    );
+    assert_eq!(
+        board_before["data"]["tasks"][0]["step"],
+        board_after["data"]["tasks"][0]["step"]
+    );
+    assert_eq!(
+        board_before["data"]["rejected"], board_after["data"]["rejected"],
+        "proofs are not malformed delivery records"
+    );
+    assert_eq!(
+        first["data"]["records"].as_array().unwrap().len(),
+        1,
+        "{first}"
+    );
+    let retry = post();
+    assert!(
+        retry.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retry.stderr)
+    );
+    assert_eq!(
+        read("limit=100")["data"]["snapshotHead"],
+        first["data"]["snapshotHead"]
+    );
+    let original = &first["data"]["records"][0];
+    let credential =
+        std::fs::read_to_string(token.with_file_name("events.agent.review-author.token")).unwrap();
+    let envelope = |mut proof: Value| {
+        let typed = graphhelm_execution::tasks::BenchmarkProof::parse(&proof.to_string()).unwrap();
+        let material = typed.canonical_material();
+        let digest = graphhelm_graph::raw_content_sha256(material.as_bytes()).unwrap();
+        let id = format!("proof-{}", &digest.as_str()[..58]);
+        proof["at"] = "2099-01-01T00:00:00Z".into();
+        json!({"id":id,"type":"task.proof_recorded","source":{"type":"user","id":"review-author"},
+            "severity":"low","description":proof.to_string(),"emittedAt":"2099-01-01T00:00:00Z","evidence":["fixture"]})
+    };
+    let mut left = original["proof"].clone();
+    left["predecessor"] = original["recordId"].clone();
+    left["verdict"] = "passed".into();
+    let mut right = left.clone();
+    right["verdict"] = "failed".into();
+    let left = envelope(left);
+    let right = envelope(right);
+    let replies = std::thread::scope(|scope| {
+        let a = scope.spawn(|| {
+            review_post(
+                &base,
+                &credential,
+                "review-author",
+                left["id"].as_str().unwrap(),
+                &left,
+            )
+        });
+        let b = scope.spawn(|| {
+            review_post(
+                &base,
+                &credential,
+                "review-author",
+                right["id"].as_str().unwrap(),
+                &right,
+            )
+        });
+        [a.join().unwrap(), b.join().unwrap()]
+    });
+    assert_eq!(
+        replies.iter().filter(|reply| reply["ok"] == true).count(),
+        1,
+        "{replies:?}"
+    );
+    let after = read("limit=100");
+    assert_eq!(
+        after["data"]["records"].as_array().unwrap().len(),
+        2,
+        "{after}"
+    );
+    let mut wrong = original["proof"].clone();
+    wrong["repo"] = "other/project".into();
+    let wrong = envelope(wrong);
+    let refused = review_post(
+        &base,
+        &credential,
+        "review-author",
+        wrong["id"].as_str().unwrap(),
+        &wrong,
+    );
+    assert_eq!(refused["ok"], false, "{refused}");
+    let winner = if replies[0]["ok"] == true {
+        &left
+    } else {
+        &right
+    };
+    let mut fresh = original["proof"].clone();
+    fresh["runId"] = "unauthorized-run".into();
+    let fresh = envelope(fresh);
+    let before_unauthorized = read("limit=100")["data"]["snapshotHead"].clone();
+    for candidate in [winner, &fresh] {
+        let shared = review_post(
+            &base,
+            &read_token,
+            "review-author",
+            candidate["id"].as_str().unwrap(),
+            candidate,
+        );
+        assert_eq!(
+            shared["ok"], false,
+            "shared token cannot attest or acknowledge a lane proof: {shared}"
+        );
+    }
+    assert_eq!(
+        read("limit=100")["data"]["snapshotHead"],
+        before_unauthorized
+    );
+    let page = read("limit=1");
+    let cursor = page["data"]["nextCursor"].as_str().unwrap();
+    let mut late = original["proof"].clone();
+    late["runId"] = "late-run".into();
+    let late = envelope(late);
+    assert_eq!(
+        review_post(
+            &base,
+            &credential,
+            "review-author",
+            late["id"].as_str().unwrap(),
+            &late
+        )["ok"],
+        true
+    );
+    for (run, expected) in [("fixture-run", 2), ("late-run", 1), ("missing-run", 0)] {
+        let filtered = read(&format!("limit=100&run={run}"));
+        assert_eq!(filtered["ok"], true, "{filtered}");
+        let records = filtered["data"]["records"].as_array().unwrap();
+        assert_eq!(records.len(), expected, "{filtered}");
+        assert!(records.iter().all(|record| record["proof"]["runId"] == run));
+        assert!(filtered["data"]["nextCursor"].is_null());
+    }
+    let second = read(&format!("limit=1&after={cursor}"));
+    assert_eq!(second["ok"], true, "{second}");
+    assert_eq!(second["data"]["snapshotHead"], page["data"]["snapshotHead"]);
+    assert_ne!(
+        second["data"]["records"][0]["recordId"],
+        page["data"]["records"][0]["recordId"]
+    );
+    assert!(second["data"]["nextCursor"].is_null());
+    assert_eq!(
+        read(&format!("limit=2&after={cursor}"))["ok"],
+        false,
+        "cursor is bound to the filters/page contract"
+    );
+    let briefing = review_support::get_json(
+        &format!("{base}/v1/executions/{RUN}/briefing"),
+        Some(read_token.trim()),
+    );
+    assert_eq!(briefing["ok"], true, "{briefing}");
+    // Decoder declaration from core/execution/src/briefing.rs at 909d0ff6060850b7d5b49efc3ab4de4492096e80.
+    // Nested wire types are unchanged by this patch; exercise the actual HTTP document.
+    use graphhelm_execution::{AttentionReason, Decision, NextStep, Unevaluated, WorkItem};
+    use graphhelm_protocols::{DeclaredExecutor, WireHash};
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LegacyBriefing {
+        /// The graph document's `metadata.name`, as declared at start. `None` for a history written
+        /// before the declaration carried it - absent, never invented.
+        pub name: Option<String>,
+        /// The operator's request in their own words (the first entrypoint's objective), as
+        /// declared at start.
+        pub objective: Option<String>,
+        /// What `start` was going to run the nodes with.
+        pub executor: Option<DeclaredExecutor>,
+        /// The hash of the graph the run started from, so a reader can verify the file
+        /// `resume --file` needs before trusting it.
+        pub graph_hash: Option<WireHash>,
+        pub graph_version: Option<u64>,
+        /// Every decision in the history, by sequence, with the actor the envelope recorded.
+        pub decisions: Vec<Decision>,
+        /// Every node in a terminal state, with how it got there.
+        pub work_done: Vec<WorkItem>,
+        /// A COPY of the attention answer's reasons - never recomputed here.
+        pub pending: Vec<AttentionReason>,
+        /// A copy of what the attention answer could not judge, for the same reason.
+        pub unevaluated: Vec<Unevaluated>,
+        pub next_step: NextStep,
+        /// The last sequence this briefing was folded from: 0 for an empty history.
+        pub as_of_sequence: u64,
+        /// A COPY of the newest `keel.plan` record on this execution (#382 phase B), never
+        /// recomputed. The fold cannot open sealed evidence, so this is `None` here and filled by the
+        /// surface that holds the keyring; absent when nothing planned the task or no keyring was given.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub plan: Option<serde_json::Value>,
+    }
+
+    let legacy: LegacyBriefing = serde_json::from_value(briefing["data"].clone())
+        .expect("prior decoder accepts the additive proof summary");
+    let old_document = serde_json::to_value(legacy).unwrap();
+    let mut without_proofs = briefing["data"].clone();
+    without_proofs
+        .as_object_mut()
+        .unwrap()
+        .remove("benchmarkProofs");
+    assert_eq!(
+        old_document, without_proofs,
+        "all pre-existing fields survive old decoding"
+    );
+    let upgraded: graphhelm_execution::Briefing =
+        serde_json::from_value(old_document).expect("new decoder accepts prior stored documents");
+    assert!(upgraded.benchmark_proofs.is_none());
+
+    assert_eq!(
+        briefing["data"]["benchmarkProofs"]["status"], "available",
+        "{briefing}"
+    );
+    assert_eq!(
+        briefing["data"]["benchmarkProofs"]["records"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+}
 impl Drop for ReviewRuntime {
     fn drop(&mut self) {
         let _ = self.0.kill();

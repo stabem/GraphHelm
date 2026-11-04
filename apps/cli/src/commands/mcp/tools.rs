@@ -30,7 +30,7 @@ struct ToolSpec {
 const TOOLS: [ToolSpec; 46] = [
     ToolSpec {
         name: "start",
-        description: "Start an execution (POST /v1/executions/{executionId}/start): a new executionId, mode, and file (a graph path on the Runtime host) or inline graph. held: true starts without driving. After a client timeout it may have started: read status, never retry. Mode governs proposals; pause holds dispatch.",
+        description: "Start (POST /v1/executions/{executionId}/start): new executionId, mode, file on Runtime host or inline graph. held:true skips driving. Timeout: read status, never retry. Mode governs proposals; pause holds dispatch.",
         schema: start_schema,
     },
     ToolSpec {
@@ -50,7 +50,7 @@ const TOOLS: [ToolSpec; 46] = [
     },
     ToolSpec {
         name: "briefing",
-        description: "Read an execution's resume briefing (GET /v1/executions/{executionId}/briefing): purpose, executors, graph hash, decisions with their actors, work done, pending, next step. Call it FIRST when picking up a run another session drove. Read-only.",
+        description: "Read resume briefing (GET /v1/executions/{executionId}/briefing): purpose, executors, graph hash, actor decisions, work, pending, next step. FIRST on handoff. Read-only.",
         schema: execution_only_schema,
     },
     ToolSpec {
@@ -60,7 +60,7 @@ const TOOLS: [ToolSpec; 46] = [
     },
     ToolSpec {
         name: "tasks",
-        description: "Read a run's open task board (GET /v1/executions/{executionId}/tasks): each open task's step, lane, issue, PR, head, BLOCK, heartbeat. lane or issue narrows it (a few KB). Read-only.",
+        description: "Read task board (GET /v1/executions/{executionId}/tasks): step, lane, issue, PR, head, BLOCK, heartbeat. lane/issue filters. view:proofs requires issue; run/after/limit page declarations. Read-only.",
         schema: tasks_schema,
     },
     ToolSpec {
@@ -617,7 +617,11 @@ fn tasks_schema() -> serde_json::Value {
         serde_json::json!({
             "executionId": {"type": "string"},
             "lane": {"type": "string"},
-            "issue": {"type": "integer", "minimum": 1}
+            "issue": {"type": "integer", "minimum": 1},
+            "view": {"type":"string", "enum":["proofs"]},
+            "run": {"type":"string", "maxLength":128},
+            "after": {"type":"string", "maxLength":512},
+            "limit": {"type":"integer", "minimum":1, "maximum":100}
         }),
         &["executionId"],
     )
@@ -1789,6 +1793,14 @@ pub(crate) fn call(
         }
         "tasks" => require(arguments, "executionId").map(|execution| {
             let mut query = Vec::new();
+            for name in ["view", "run", "after"] {
+                if let Some(value)=str_arg(arguments,name) {
+                    query.push(format!("{name}={}",url::encode_component(value)));
+                }
+            }
+            if let Some(limit)=arguments.get("limit").and_then(serde_json::Value::as_u64) {
+                query.push(format!("limit={limit}"));
+            }
             if let Some(lane) = str_arg(arguments, "lane") {
                 query.push(format!("lane={}", url::encode_component(lane)));
             }

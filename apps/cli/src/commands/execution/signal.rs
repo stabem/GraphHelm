@@ -707,7 +707,7 @@ fn record_once(
     // (gh-claude-opt-2 on PR #1221).
     let heartbeat_sequence = if matches!(
         envelope.get("type").and_then(serde_json::Value::as_str),
-        Some("task.heartbeat" | "task.claimed" | "task.review_activity")
+        Some("task.heartbeat" | "task.claimed" | "task.review_activity" | "task.proof_recorded")
     ) {
         task_history
             .as_ref()
@@ -716,14 +716,54 @@ fn record_once(
     } else {
         None
     };
-    super::timing::phase("task.admission", || {
-        super::documents::validate_task_event(
+    let benchmark_proof = envelope["type"] == "task.proof_recorded";
+    if benchmark_proof {
+        if !scoped_agent_authenticated
+            || actor.actor_type() != graphhelm_protocols::PersistedActorType::Agent
+        {
+            return Err(signal_invalid(
+                "benchmark proofs require the signer's scoped lane credential",
+                "/signal/source",
+            ));
+        }
+        if !attachments.is_empty() || evidence_out.is_some() {
+            return Err(signal_invalid(
+                "benchmark proofs cannot carry attachments or choose an evidence path",
+                "/signal",
+            ));
+        }
+        let keyring = sealing
+            .ok_or_else(|| signal_invalid("benchmark proofs require sealed history", "/keyring"))?;
+        let execution_id = projection
+            .execution_id
+            .as_deref()
+            .ok_or_else(|| signal_invalid("proof execution is missing", "/execution"))?;
+        if let Some(existing) = super::documents::admit_benchmark_proof(
             &envelope,
             &actor,
+            execution_id,
             task_history.as_deref().unwrap_or_default(),
-            sealing.map(|keyring| (store, &scope, keyring)),
-        )
-    })?;
+            store,
+            &scope,
+            keyring,
+        )? {
+            return Ok(ReviewActivityHttpOutcome::HistoricalAck {
+                original_decision_sequence: existing.sequence,
+                reply: serde_json::json!({"executionId":execution_id,"signalId":envelope["id"],"kind":"task.proof_recorded",
+                    "recordId":existing.record_id,"sequence":existing.sequence,"alreadyRecorded":true,
+                    "decision":"rejected","rejectionReason":"signal_not_actionable","mayProposeMutation":false}),
+            });
+        }
+    } else {
+        super::timing::phase("task.admission", || {
+            super::documents::validate_task_event(
+                &envelope,
+                &actor,
+                task_history.as_deref().unwrap_or_default(),
+                sealing.map(|keyring| (store, &scope, keyring)),
+            )
+        })?;
+    }
     validate_task_attachments(&envelope, attachments)?;
     // #2384: a second reviewer on the same head is admitted, but the reply names the first.
     let warnings = second_reviewer_warning(
@@ -1111,6 +1151,13 @@ fn record_once(
         "decision": decision_label(decision),
         "rejectionReason": rejection_label(decision),
     });
+    if benchmark_proof {
+        let proof = graphhelm_execution::tasks::BenchmarkProof::parse(
+            envelope["description"].as_str().unwrap_or_default(),
+        )
+        .map_err(|message| signal_invalid(&message, "/signal/description"))?;
+        reply["recordId"] = super::tasks::proof_digest(&proof)?.into();
+    }
     // Absent when empty, so replies without attachments stay byte-identical.
     if !attachment_reply.is_empty() {
         reply["attachments"] = serde_json::Value::Array(attachment_reply);

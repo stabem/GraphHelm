@@ -834,7 +834,7 @@ type IndexMatches = (Vec<(Vec<u32>, u64, String)>, u64, u64);
 fn plausible(file: &IndexedFile) -> bool {
     match file.doc_len {
         None => file.tokens.is_empty(),
-        Some(0) => file.tokens.is_empty(),
+        Some(0) => file.len == 0 && file.tokens.is_empty(),
         Some(length) => {
             if file
                 .tokens
@@ -1377,6 +1377,18 @@ mod tests {
         let mut found = search(&second, &["needle"]);
         found.sort();
         assert_eq!(found, ["a.rs", "b.rs"], "the tampered file is read again");
+
+        // A second cache edit also zeroes doc_len. The source still has bytes, so this
+        // must not be treated as a genuinely empty document on the next process.
+        let mut persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&cache).unwrap()).unwrap();
+        persisted["files"]["a.rs"]["tokens"] = serde_json::json!([]);
+        persisted["files"]["a.rs"]["doc_len"] = serde_json::json!(0);
+        std::fs::write(&cache, serde_json::to_vec(&persisted).unwrap()).unwrap();
+        let third = WorkspaceSourceChannel::open(root.path()).unwrap();
+        let mut found = search(&third, &["needle"]);
+        found.sort();
+        assert_eq!(found, ["a.rs", "b.rs"], "zero doc_len is re-read");
     }
 
     /// #2418: what `plausible` accepts and refuses.
@@ -1396,6 +1408,9 @@ mod tests {
         )));
         assert!(super::plausible(&entry(None, vec![])));
         assert!(super::plausible(&entry(Some(0), vec![])));
+        let mut zeroed_nonempty = entry(Some(0), vec![]);
+        zeroed_nonempty.len = 1;
+        assert!(!super::plausible(&zeroed_nonempty));
         assert!(
             !super::plausible(&entry(Some(12), vec![])),
             "bytes without a token"

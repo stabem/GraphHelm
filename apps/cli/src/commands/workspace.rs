@@ -257,7 +257,7 @@ fn run_claim(
     };
     let branch_previously_existed = refs.lines().any(|found| found == branch_ref);
     if std::fs::create_dir_all(dir.parent().unwrap_or(root)).is_err()
-        || std::fs::create_dir(&dir).is_err()
+        || (!reusable && std::fs::create_dir(&dir).is_err())
     {
         return input(
             COMMAND,

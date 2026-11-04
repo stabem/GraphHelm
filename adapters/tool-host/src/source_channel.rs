@@ -825,6 +825,32 @@ impl SourceIndex {
 /// What [`SourceIndex::matches`] returns: the live search's `(matched, documents, document_bytes)`.
 type IndexMatches = (Vec<(Vec<u32>, u64, String)>, u64, u64);
 
+/// #2418: whether a cached entry can be what `tokenize` made of a document. A document with bytes
+/// but no token, a document without bytes holding tokens, or tokens longer in total than the
+/// document are not (a writer of the cache zeroing a file's counts leaves the file looking
+/// unchanged yet never matched). A whitespace-only file is also dropped, and is simply read again.
+/// Declared limit: a writer that keeps the counts plausible is not caught; it already writes
+/// `.graphhelm/`, which holds lane credentials, and a seal would need a key outside it.
+fn plausible(file: &IndexedFile) -> bool {
+    match file.doc_len {
+        None => file.tokens.is_empty(),
+        Some(0) => file.len == 0 && file.tokens.is_empty(),
+        Some(length) => {
+            if file
+                .tokens
+                .iter()
+                .any(|(token, count)| token.is_empty() || *count == 0)
+            {
+                return false;
+            }
+            let total = file.tokens.iter().fold(0_u64, |total, (token, count)| {
+                total.saturating_add((token.len() as u64).saturating_mul(u64::from(*count)))
+            });
+            !file.tokens.is_empty() && total <= length
+        }
+    }
+}
+
 /// Whitespace-free tokens of `text` with their counts, sorted so the persisted form is stable.
 fn tokenize(text: &str) -> Vec<(String, u32)> {
     let mut counts: HashMap<&str, u32> = HashMap::new();
@@ -1031,6 +1057,12 @@ impl WorkspaceSourceChannel {
         let persisted: PersistedIndex = serde_json::from_slice(&bytes).ok()?;
         (persisted.schema == INDEX_SCHEMA && persisted.root == self.root.to_string_lossy())
             .then_some(persisted.files)
+            .map(|mut files| {
+                // #2418: an entry the cache cannot honestly hold is dropped, so the refresh reads
+                // that file again instead of trusting counts that would hide it from every search.
+                files.retain(|_, file| plausible(file));
+                files
+            })
     }
 
     /// Write the index atomically (temporary file, then rename). A workspace that cannot be
@@ -1311,6 +1343,101 @@ mod tests {
             search(&channel, &["needle"]).len(),
             2,
             "different again: two slots"
+        );
+    }
+
+    /// #2418: a writer of the cache zeroes one file's counts and leaves its (len, mtime, ctime) as
+    /// cached. The next process must not trust the entry: the file is read again and still found.
+    #[test]
+    fn a_cache_that_hides_an_unchanged_file_is_rebuilt() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
+        write(
+            root.path(),
+            "a.rs",
+            b"needle alpha
+",
+        );
+        write(
+            root.path(),
+            "b.rs",
+            b"needle beta
+",
+        );
+        let first = WorkspaceSourceChannel::open(root.path()).unwrap();
+        let mut found = search(&first, &["needle"]);
+        found.sort();
+        assert_eq!(found, ["a.rs", "b.rs"]);
+        let cache = root.path().join(INDEX_CACHE);
+        let mut persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&cache).unwrap()).unwrap();
+        persisted["files"]["a.rs"]["tokens"] = serde_json::json!([]);
+        std::fs::write(&cache, serde_json::to_vec(&persisted).unwrap()).unwrap();
+        let second = WorkspaceSourceChannel::open(root.path()).unwrap();
+        let mut found = search(&second, &["needle"]);
+        found.sort();
+        assert_eq!(found, ["a.rs", "b.rs"], "the tampered file is read again");
+
+        // A second cache edit also zeroes doc_len. The source still has bytes, so this
+        // must not be treated as a genuinely empty document on the next process.
+        let mut persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&cache).unwrap()).unwrap();
+        persisted["files"]["a.rs"]["tokens"] = serde_json::json!([]);
+        persisted["files"]["a.rs"]["doc_len"] = serde_json::json!(0);
+        std::fs::write(&cache, serde_json::to_vec(&persisted).unwrap()).unwrap();
+        let third = WorkspaceSourceChannel::open(root.path()).unwrap();
+        let mut found = search(&third, &["needle"]);
+        found.sort();
+        assert_eq!(found, ["a.rs", "b.rs"], "zero doc_len is re-read");
+    }
+
+    /// #2418: what `plausible` accepts and refuses.
+    #[test]
+    fn a_cached_entry_is_plausible_only_when_its_counts_fit_its_document() {
+        let entry = |doc_len, tokens: Vec<(&str, u32)>| super::IndexedFile {
+            len: 0,
+            modified: 0,
+            changed: 0,
+            doc_len,
+            digest: String::new(),
+            tokens: tokens.into_iter().map(|(t, c)| (t.to_owned(), c)).collect(),
+        };
+        assert!(super::plausible(&entry(
+            Some(12),
+            vec![("needle", 1), ("beta", 1)]
+        )));
+        assert!(super::plausible(&entry(None, vec![])));
+        assert!(super::plausible(&entry(Some(0), vec![])));
+        let mut zeroed_nonempty = entry(Some(0), vec![]);
+        zeroed_nonempty.len = 1;
+        assert!(!super::plausible(&zeroed_nonempty));
+        assert!(
+            !super::plausible(&entry(Some(12), vec![])),
+            "bytes without a token"
+        );
+        assert!(
+            !super::plausible(&entry(Some(3), vec![("needle", 1)])),
+            "tokens longer than the text"
+        );
+        assert!(
+            !super::plausible(&entry(Some(12), vec![("needle", u32::MAX)])),
+            "token counts too large for the text"
+        );
+        assert!(
+            !super::plausible(&entry(Some(12), vec![("needle", 0)])),
+            "a token with zero occurrences cannot be produced by tokenize"
+        );
+        assert!(
+            !super::plausible(&entry(Some(12), vec![("", 1)])),
+            "an empty token cannot be produced by tokenize"
+        );
+        assert!(
+            !super::plausible(&entry(Some(0), vec![("a", 1)])),
+            "tokens without bytes"
+        );
+        assert!(
+            !super::plausible(&entry(None, vec![("a", 1)])),
+            "tokens of a non-text file"
         );
     }
 

@@ -21,7 +21,7 @@ export function refusalText(refusal: AddRefusal, port?: string | null): string {
   switch (refusal) {
     case "not_a_project": return "That folder is not a GraphHelm project.";
     case "runtime_not_running": return `That project's Runtime is not running. Run ${studioOpenCommand("", port)} there first.`;
-    case "refused": return `The Studio refused to add that folder. The ticket may be missing or already used: run ${studioOpenCommand("--project", port)} there for a new one.`;
+    case "refused": return `The Studio refused to add that folder. Check that the Runtime is running: run ${studioOpenCommand("--project", port)} there.`;
   }
 }
 
@@ -46,10 +46,9 @@ export function Subtitles({ project, open }: { project: ProjectEntry; open: bool
   );
 }
 
-/** "Add project folder": one absolute path plus that project's own ticket, answered by the dev server's closed list of refusals. */
-export function AddFolder({ onAdd, open, setOpen }: { onAdd: (path: string, ticket: string) => Promise<AddRefusal | null>; open: boolean; setOpen: (open: boolean) => void }) {
+/** "Add project folder": one absolute path in the local browser session, answered by the dev server's closed list of refusals. */
+export function AddFolder({ onAdd, open, setOpen }: { onAdd: (path: string) => Promise<AddRefusal | null>; open: boolean; setOpen: (open: boolean) => void }) {
   const [path, setPath] = useState("");
-  const [ticket, setTicket] = useState("");
   const [error, setError] = useState<ActionErrorDetails | null>(null);
   const [busy, setBusy] = useState(false);
   if (!open) return <button type="button" className="add-folder" aria-label="Add project folder" onClick={() => setOpen(true)}>+</button>;
@@ -59,13 +58,12 @@ export function AddFolder({ onAdd, open, setOpen }: { onAdd: (path: string, tick
       aria-label="Add project folder"
       onSubmit={(event) => {
         event.preventDefault();
-        if (path.trim().length === 0 || ticket.trim().length === 0 || busy) return;
+        if (path.trim().length === 0 || busy) return;
         setBusy(true);
         setError(null);
-        void onAdd(path.trim(), ticket.trim()).then((refusal) => {
+        void onAdd(path.trim()).then((refusal) => {
           setBusy(false);
-          setTicket("");
-          setError(refusal === null ? null : actionErrorDetails("Project folder could not be added", null, refusalText(refusal), "Check the folder and open a fresh Studio ticket."));
+          setError(refusal === null ? null : actionErrorDetails("Project folder could not be added", null, refusalText(refusal), "Check the folder and try again."));
         }).catch((cause: unknown) => {
           setBusy(false);
           setError(actionErrorDetails("Project folder could not be added", cause, "Studio could not add this project folder.", "Check the folder and try again."));
@@ -73,8 +71,6 @@ export function AddFolder({ onAdd, open, setOpen }: { onAdd: (path: string, tick
       }}
     >
       <input aria-label="Project folder" className="mono" placeholder="absolute folder path" value={path} onChange={(event) => setPath(event.target.value)} autoFocus />
-      {/* #1898: a real password input, masked in every browser; role=textbox keeps the textbox name an agent or a screen reader addresses it by. */}
-      <input aria-label="Ticket from graphhelm studio open --project" type="password" role="textbox" autoComplete="off" spellCheck={false} className="mono" placeholder="ticket" value={ticket} onChange={(event) => setTicket(event.target.value)} />
       <button type="submit" disabled={busy}>Add</button>
       <button type="button" onClick={() => { setOpen(false); setError(null); }}>Cancel</button>
       {error !== null && <ActionError error={error} onDismiss={() => setError(null)} />}
@@ -84,14 +80,14 @@ export function AddFolder({ onAdd, open, setOpen }: { onAdd: (path: string, tick
 
 interface Props {
   projects: ProjectEntry[];
-  /** Joined projects this tab has no key for (#1800): listed, opened only by their own ticket. */
+  /** Registered projects whose metadata is currently unavailable. */
   closed: string[];
   current: string;
   view: View;
   live: boolean;
   onProject: (project: string) => void;
   /** Null when this tab holds no key that proves the owner. */
-  onAdd: ((path: string, ticket: string) => Promise<AddRefusal | null>) | null;
+  onAdd: ((path: string) => Promise<AddRefusal | null>) | null;
   /** The running Runtime's restart (`/health` previousExit), shown as the design's notice. */
   restart: Restart | null;
   /** Opens a view of the open project: the footer's Runtime log and Models land on Lanes (#1904). */

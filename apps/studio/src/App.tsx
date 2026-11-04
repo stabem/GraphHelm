@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { addFolder, forgetKey, login, servedProjects, type Session } from "./login/session";
+import { addFolder, login, servedProjects, type Session } from "./login/session";
 import { parseRoute, routeSearch, type Route, type View } from "./routing/route";
 import { rereadOnReturn } from "./runtime/reread-on-return";
 import { refusedToken, Runtime, type JourneyFlow, type RunSummary } from "./runtime/client";
@@ -18,17 +18,10 @@ import { waitsForYou } from "./views/attention";
 import { RequestsView } from "./graph/RequestsView";
 import { ViewBoundary } from "./views/ViewBoundary";
 import { bounded, firstRead, Loading, ReadFailure } from "./states/ViewState";
-import { studioOpenCommand } from "./login/studio-open";
 
-/** The page with no login ticket. The command it hands the user names this page's port when that is
- * not the CLI's default, so it opens this Studio instead of being refused. */
-export function LoginGate({ port }: { port?: string | null }) {
-  return (
-    <main className="gate">
-      <h1>Open the Studio from your project</h1>
-      <p>This page has no login ticket, or its ticket was already used. Run <code className="mono">{studioOpenCommand("", port)}</code> in the project folder to open a logged-in Studio.</p>
-    </main>
-  );
+/** A failed bootstrap reports project availability without requesting a login ticket. */
+export function LoginGate() {
+  return <main className="gate" role="alert"><h1>Project unavailable</h1><p>The Studio could not load this project. Check that its Runtime is running, then reload this page.</p><button type="button" onClick={() => location.reload()}>Try again</button></main>;
 }
 
 /** How often the run list is read again: one page of at most 50 rows per poll. */
@@ -55,8 +48,7 @@ export function App() {
       const served = sessions === null ? null : await servedProjects();
       if (!live) return;
       setAuth(sessions === null ? { state: "refused" } : { state: "in", sessions, closed: closedProjects(sessions, served) });
-      // The ticket is spent; it does not stay in the address bar or the history. The URL keeps the
-      // project the ticket opened, so a reload lands on it.
+      // Preserve the selected project and deep-link state across a reload.
       const landed = parseRoute(location.search);
       const next = sessions !== null && landed.project === null && sessions[0]!.key !== "first" ? { ...landed, project: sessions[0]!.key } : landed;
       history.replaceState(null, "", `${location.pathname}${routeSearch(next)}`);
@@ -97,7 +89,6 @@ export function App() {
 
   // #1897: a project whose Runtime refuses its token leaves this tab; the last one leaves the connect screen.
   const dropSession = useCallback((key: string) => {
-    forgetKey(key);
     setAuth((now) => {
       if (now.state !== "in") return now;
       const left = now.sessions.filter((known) => known.key !== key);
@@ -132,7 +123,7 @@ interface ShellProps {
 }
 
 function Shell({ session, projects, closed, route, go, pickJourney, pickPast, onRefused }: ShellProps) {
-  const runtime = useMemo(() => new Runtime(session.token, session.base), [session.token, session.base]);
+  const runtime = useMemo(() => new Runtime(session.base), [session.base]);
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
   const [live, setLive] = useState(false);
   const [updated, setUpdated] = useState<number | null>(null);
@@ -197,10 +188,10 @@ function Shell({ session, projects, closed, route, go, pickJourney, pickPast, on
         restart={restart}
         onView={(view) => go({ ...route, view })}
         onProject={(key) => go({ project: key, run: null, view: route.view })}
-        onAdd={session.sessionKey === null ? null : async (path, ticket) => {
-          const added = await addFolder(path, session.sessionKey!, ticket);
+        onAdd={async (path) => {
+          const added = await addFolder(path);
           if ("refused" in added) return added.refused;
-          // The new project's key is in this tab's keys now; a fresh login opens it.
+          // Reload the newly registered project's metadata.
           location.assign(`${location.pathname}${routeSearch({ project: added.projectId, run: null, view: route.view })}`);
           return null;
         }}

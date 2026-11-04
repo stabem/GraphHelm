@@ -1,5 +1,7 @@
 # GraphHelm documentation
 
+[Ticket-free Studio acceptance receipt](acceptance/studio-2449.md).
+
 Start with the [repository README](../README.md) for the current product boundary. GraphHelm is experimental: a specification describes intended behavior, while a getting-started guide or current test shows what can be tried now. Older acceptance records are historical evidence, not a release guarantee. [Source provenance](open-source/SOURCE_PROVENANCE.md) explains the one-commit public import and private issue references.
 
 ## Find your path

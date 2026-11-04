@@ -118,22 +118,20 @@ if [ ! -f "$modules/.package-lock.json" ] || [ ! -e "$modules/.bin/vite" ] || [ 
   (cd "$studio" && npm ci)
 fi
 
-# 3 - the dev server environment; the nonce travels only through the environment and the URL.
+# 3 - the dev server environment; credentials stay in its process.
 GRAPHHELM_EVENTS=$events
 GRAPHHELM_RUNTIME_URL=$runtime_url
-GRAPHHELM_STUDIO_SESSION_NONCE=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
-export GRAPHHELM_EVENTS GRAPHHELM_RUNTIME_URL GRAPHHELM_STUDIO_SESSION_NONCE
+export GRAPHHELM_EVENTS GRAPHHELM_RUNTIME_URL
 if [ -n "$project" ]; then GRAPHHELM_PROJECT=$project; export GRAPHHELM_PROJECT; fi
 if [ -n "$project_path" ]; then GRAPHHELM_PROJECT_PATH=$project_path; export GRAPHHELM_PROJECT_PATH; fi
-nonce=$GRAPHHELM_STUDIO_SESSION_NONCE
 
-# 4 - the door, opened only once THIS launch's session endpoint answers.
+# 4 - open the local shell once the reserved Studio port answers.
 if [ "$no_browser" -eq 0 ]; then
   (
     tries=0
     while [ "$tries" -lt 60 ]; do
-      if answers "http://127.0.0.1:$studio_port/__studio/session?nonce=$nonce"; then
-        url="http://127.0.0.1:$studio_port/?session=$nonce"
+      if answers "http://127.0.0.1:$studio_port/"; then
+        url="http://127.0.0.1:$studio_port/"
         # `open` is macOS's; on Debian `open` can be openvt, so Linux always uses xdg-open.
         if [ "$(uname -s)" = Darwin ]; then open "$url"; else xdg-open "$url" >/dev/null 2>&1 || true; fi
         exit 0
@@ -144,6 +142,6 @@ if [ "$no_browser" -eq 0 ]; then
 fi
 
 echo "[up] Studio starting at http://127.0.0.1:$studio_port - the page opens already connected"
-[ "$no_browser" -eq 0 ] || echo "[up] open: http://127.0.0.1:$studio_port/?session=$nonce"
+[ "$no_browser" -eq 0 ] || echo "[up] open: http://127.0.0.1:$studio_port/"
 cd "$studio"
 exec npm run dev -- --port "$studio_port"

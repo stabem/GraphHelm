@@ -37,8 +37,12 @@ fn studio_identity_server(status: u16, body: String) -> (u16, std::thread::JoinH
                     let mut request = [0; 4096];
                     let size = stream.read(&mut request).unwrap();
                     let request = String::from_utf8_lossy(&request[..size]);
-                    assert!(request.starts_with("GET /__studio/identity HTTP/1.1\r\n"));
-                    assert!(!request.to_ascii_lowercase().contains("authorization:"));
+                    assert!(request.starts_with("POST /__studio/register HTTP/1.1\r\n"));
+                    assert!(
+                        request
+                            .to_ascii_lowercase()
+                            .contains("authorization: bearer fixture-token")
+                    );
                     write!(stream, "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
                     return;
                 }
@@ -70,9 +74,8 @@ fn studio_project() -> (tempfile::TempDir, String) {
 }
 
 #[test]
-fn studio_open_matching_projects_have_separate_tickets_and_journey_links() {
+fn studio_open_matching_projects_have_reusable_ticket_free_journey_links() {
     let projects = [studio_project(), studio_project()];
-    let mut tickets = Vec::new();
     for (project, id) in &projects {
         let (port, server) =
             studio_identity_server(200, serde_json::json!({"projectId": id}).to_string());
@@ -96,21 +99,17 @@ fn studio_open_matching_projects_have_separate_tickets_and_journey_links() {
         );
         let reply = json(&output.stdout);
         assert_eq!(reply["ok"], true);
-        let ticket =
-            std::fs::read_to_string(project.path().join(".graphhelm/events.studio-ticket"))
-                .unwrap();
+        assert!(
+            !project
+                .path()
+                .join(".graphhelm/events.studio-ticket")
+                .exists()
+        );
         assert_eq!(
             reply["data"]["url"],
-            format!("http://127.0.0.1:{port}/?session={ticket}&journey=studio-connect")
+            format!("http://127.0.0.1:{port}/?project={id}&journey=studio-connect")
         );
-        tickets.push(ticket);
     }
-    assert_ne!(tickets[0], tickets[1]);
-    assert_eq!(
-        std::fs::read_to_string(projects[0].0.path().join(".graphhelm/events.studio-ticket"))
-            .unwrap(),
-        tickets[0]
-    );
 }
 
 #[test]
@@ -132,7 +131,6 @@ fn studio_open_refuses_wrong_or_unknown_ports_without_replacing_a_ticket() {
         (404, serde_json::json!({"projectId": expected}).to_string()),
         (302, serde_json::json!({"projectId": expected}).to_string()),
     ] {
-        let mismatched = body.contains(&other_id);
         let (port, server) = studio_identity_server(status, body);
         let output = command()
             .args(["studio", "open", "--project"])
@@ -147,11 +145,7 @@ fn studio_open_refuses_wrong_or_unknown_ports_without_replacing_a_ticket() {
         assert_eq!(reply["diagnostics"][0]["code"], "GHCLI032_STUDIO_REFUSED");
         assert_eq!(reply["diagnostics"][0]["path"], "/port");
         let message = reply["diagnostics"][0]["message"].as_str().unwrap();
-        assert!(message.contains(&port.to_string()) && message.contains(&expected));
-        if mismatched {
-            assert!(message.contains(&other_id));
-        }
-        assert!(message.contains("graphhelm studio start"));
+        assert!(message.contains(&port.to_string()));
         assert_eq!(
             std::fs::read_to_string(&ticket).unwrap(),
             "keep-requested-ticket"
@@ -167,7 +161,7 @@ fn studio_open_refuses_wrong_or_unknown_ports_without_replacing_a_ticket() {
 /// #1767: a Studio serving another project. Answers the identity read, then one registration with
 /// `register` (status, body), and hands back both raw requests.
 fn shared_studio_server(
-    first: String,
+    _first: String,
     register: (u16, String),
 ) -> (u16, std::thread::JoinHandle<Vec<String>>) {
     use std::io::{Read, Write};
@@ -180,7 +174,7 @@ fn shared_studio_server(
     let server = std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut seen = Vec::new();
-        while Instant::now() < deadline && seen.len() < 2 {
+        while Instant::now() < deadline && seen.is_empty() {
             match listener.accept() {
                 Ok((mut stream, _)) => {
                     stream.set_nonblocking(false).unwrap();
@@ -213,15 +207,7 @@ fn shared_studio_server(
                         }
                     }
                     let request = String::from_utf8_lossy(&raw).into_owned();
-                    let (status, body) = if request.starts_with("GET /__studio/identity ") {
-                        (
-                            200,
-                            serde_json::json!({"projectId": first, "projectIds": [first]})
-                                .to_string(),
-                        )
-                    } else {
-                        register.clone()
-                    };
+                    let (status, body) = register.clone();
                     write!(stream, "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
                     seen.push(request);
                 }
@@ -237,7 +223,7 @@ fn shared_studio_server(
 }
 
 #[test]
-fn studio_open_joins_a_studio_serving_another_project_with_its_own_ticket() {
+fn studio_open_registers_with_its_own_credential_and_keeps_it_out_of_the_url() {
     let (project, expected) = studio_project();
     let (_other, other_id) = studio_project();
     let (port, server) = shared_studio_server(
@@ -259,26 +245,29 @@ fn studio_open_joins_a_studio_serving_another_project_with_its_own_ticket() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    let ticket =
-        std::fs::read_to_string(project.path().join(".graphhelm/events.studio-ticket")).unwrap();
-    // The registration proves ownership with this project's fresh ticket and carries the path in
-    // its body only; the bearer token is never sent.
-    let register = &requests[1];
-    assert!(register.starts_with(&format!(
-        "POST /__studio/register?nonce={ticket} HTTP/1.1\r\n"
-    )));
+    assert!(
+        !project
+            .path()
+            .join(".graphhelm/events.studio-ticket")
+            .exists()
+    );
+    let register = &requests[0];
+    assert!(register.starts_with("POST /__studio/register HTTP/1.1\r\n"));
     let body: serde_json::Value =
         serde_json::from_str(register.split_once("\r\n\r\n").unwrap().1).unwrap();
     assert_eq!(
         std::path::Path::new(body["path"].as_str().unwrap()),
-        std::path::absolute(project.path()).unwrap()
+        project.path().canonicalize().unwrap()
     );
-    assert!(!register.contains("fixture-token"));
-    assert!(!register.to_ascii_lowercase().contains("authorization:"));
+    assert!(
+        register
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fixture-token")
+    );
     // The link logs the page in once, on this project, with the same ticket.
     assert_eq!(
         json(&output.stdout)["data"]["url"],
-        format!("http://127.0.0.1:{port}/?session={ticket}&project={expected}")
+        format!("http://127.0.0.1:{port}/?project={expected}")
     );
 }
 

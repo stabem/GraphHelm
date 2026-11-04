@@ -13,15 +13,10 @@ import { STUDIO_OPEN_DEFAULT_PORT } from "./src/login/studio-open.ts";
  */
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
-  const target = env.GRAPHHELM_RUNTIME_URL || "http://127.0.0.1:8080";
-  const proxy = {
-    "/v1": { target, changeOrigin: false },
-    "/health": { target, changeOrigin: false },
-  };
   return {
     plugins: [react(), devSession(env), studioPortMeta()],
-    server: { host: "127.0.0.1", port: STUDIO_OPEN_DEFAULT_PORT, strictPort: true, proxy },
-    preview: { host: "127.0.0.1", port: STUDIO_OPEN_DEFAULT_PORT, strictPort: true, proxy },
+    server: { host: "127.0.0.1", port: STUDIO_OPEN_DEFAULT_PORT, strictPort: true, cors: false },
+    preview: { host: "127.0.0.1", port: STUDIO_OPEN_DEFAULT_PORT, strictPort: true, cors: false },
     test: { environment: "node", maxWorkers: 1, css: { include: [/styles.css/] } },
   };
 });

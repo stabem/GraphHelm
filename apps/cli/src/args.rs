@@ -707,9 +707,9 @@ pub enum StudioCommand {
     /// Update the GraphHelm clone the Studio runs from (fast-forward of `main`, only when the
     /// clone is clean and on `main`), then start the Runtime and the Studio for this project.
     Start(StudioStartArgs),
-    /// Open the running Studio for this project in the browser, already connected (#1264). The
-    /// link carries a key derived from the project's token file, so only someone who can read
-    /// that file can make it; no console window is opened.
+    /// Open the running loopback Studio with a reusable project link, without a login ticket.
+    /// Registers the project using its local Runtime credential; credentials never enter the URL.
+    /// The Studio establishes the browser session itself. No console window is opened.
     Open(StudioOpenArgs),
 }
 

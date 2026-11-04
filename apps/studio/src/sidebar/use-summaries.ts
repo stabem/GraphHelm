@@ -7,7 +7,7 @@ import { activeRun, activeRunWaits, agentCount, journeysToFix, type ProjectSumma
 /** How often every project's subtitle is read again: at most three reads per project. */
 const SUMMARY_MS = 15_000;
 
-export async function summaryOf(session: Session, runtime: Pick<Runtime, "runs" | "journeys" | "lanes"> = new Runtime(session.token, session.base)): Promise<ProjectSummary> {
+export async function summaryOf(session: Session, runtime: Pick<Runtime, "runs" | "journeys" | "lanes"> = new Runtime(session.base)): Promise<ProjectSummary> {
   const [runs, flows] = await Promise.allSettled([runtime.runs(), runtime.journeys()]);
   const run = runs.status === "fulfilled" ? activeRun(runs.value, session.teamRun) : null;
   let agents: number | null = null;

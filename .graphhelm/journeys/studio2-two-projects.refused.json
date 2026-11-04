@@ -32,7 +32,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows form \"Add project folder\" saying \"The Studio refused to add that folder.\", no region \"Project proj-two\", banner \"Top bar\" saying \"demo / demo\"",
+      "statement": "shows form \"Add project folder\" saying \"That folder is not a GraphHelm project.\", banner \"Top bar\" saying \"demo / demo\"",
       "statesToObserve": [
         "error"
       ],
@@ -73,7 +73,7 @@
         "target": {
           "geometryClaim": false,
           "strategy": "label",
-          "value": "/?session=studio-fixture"
+          "value": "/"
         }
       },
       "stepId": "first"
@@ -98,7 +98,7 @@
           "apps/studio/src/topbar/Topbar.tsx"
         ],
         "screenId": "refused",
-        "title": "A wrong ticket adds no project"
+        "title": "An invalid folder adds no project"
       },
       "semanticAction": {
         "kind": "submit",

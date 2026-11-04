@@ -3,39 +3,39 @@ id: studio2-two-projects
 title: Switch between two projects
 name: Switch projects
 feature: Studio
-purpose: "The owner adds a second project folder, proj-two, with the ticket graphhelm studio open --project minted for it; it appears as its own sidebar card in the same Studio with its own team run, second-run, and switching back to demo opens demo's run again, with no run list; a wrong ticket adds nothing."
-status: approved
-approved: {revision: c749e21e07e5083437e360c56a23d0bd6c6d3d32, digest: sha256:888aa66e68c18be1c27a003b6d91210629b45c9b93664d06b5c0a590589164a1}
+purpose: "The owner adds a second project folder, proj-two, within the local browser session; it appears as its own sidebar card in the same Studio with its own team run, second-run, and switching back to demo opens demo's run again, with no run list; an invalid folder adds nothing."
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
-secrets: [proj_two_folder, proj_two_ticket]
+secrets: [proj_two_folder]
 risks: [critical_ux, multiple_components, authentication]
 viewports: [web, mobile]
 screens:
   - id: back
     title: demo opens again with its own run
-    url: /?session=studio-fixture
+    url: /
     ignoreQuery: [session, project, run]
     state: stable
     expect: [{role: banner, name: Top bar, text: demo / demo, because: "the top bar reads project / run: demo and its own team run, demo, not proj-two's second-run"}, {role: region, name: Graph, text: RUN demo STATUS, because: "Graph shows demo's own run, so the switch did not keep second-run open under the demo label"}, {role: heading, name: proj-two, absent: true, because: the top bar no longer names proj-two once the owner switched back}, {role: link, name: proj-two, because: "proj-two stays in the sidebar as its own card, one click away"}, {role: complementary, name: Journeys with work, text: 0 of 24, because: "demo's own 24 journeys are read again after the switch back, none with work in flight, so the Graph is not left with proj-two's list or a half-loaded one"}, {role: list, name: Runs in demo, absent: true, because: each project is one card with no run list under it}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts, apps/studio/src/graph/RequestsView.tsx]
   - id: first
     title: demo is open with its own run
-    url: /?session=studio-fixture
+    url: /
     ignoreQuery: [session, project]
     state: stable
     expect: [{role: region, name: Project demo, text: demo · 0 agents, because: "demo's sidebar card names its active run, demo"}, {role: banner, name: Top bar, text: demo / demo, because: "the top bar reads project / run, both demo"}, {role: region, name: Graph, text: RUN demo STATUS, because: Graph shows demo's own team run}, {role: list, name: Runs in demo, absent: true, because: each project is one card with no run list under it}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
   - id: refused
-    title: A wrong ticket adds no project
-    url: /?session=studio-fixture
+    title: An invalid folder adds no project
+    url: /
     ignoreQuery: [session, project]
     state: error
-    expect: [{role: form, name: Add project folder, text: The Studio refused to add that folder., because: "a ticket the second project never minted is refused, and the form says so instead of failing silently"}, {role: region, name: Project proj-two, absent: true, because: "a refused ticket must not add proj-two's card, or a wrong ticket would expose that project"}, {role: banner, name: Top bar, text: demo / demo, because: "nothing changed: demo and its run stay open"}]
+    expect: [{role: form, name: Add project folder, text: That folder is not a GraphHelm project., because: "an invalid project folder is refused, and the form says so instead of failing silently"}, {role: banner, name: Top bar, text: demo / demo, because: "nothing changed: demo and its run stay open"}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/login/session.ts, apps/studio/src/topbar/Topbar.tsx]
   - id: second
     title: The added project opens with its own run
-    url: /?session=studio-fixture
+    url: /
     ignoreQuery: [session, project, run]
     state: stable
     expect: [{role: region, name: Project proj-two, text: second-run, because: "proj-two joined as its own sidebar card, naming its own team run, second-run"}, {role: banner, name: Top bar, text: proj-two / second-run, because: the top bar reads project / run for the project just added}, {role: region, name: Graph, text: RUN second-run STATUS, because: "Graph shows proj-two's own run, not demo's"}, {role: link, name: demo, because: "demo is still in the same Studio as its own card, so the owner can switch back"}, {role: list, name: Runs in proj-two, absent: true, because: each project is one card with no run list under it}, {role: region, name: Error, absent: true, because: "proj-two's own Runtime serves its run's requests, so the Graph opens without an error box"}]
@@ -44,22 +44,20 @@ edges:
   - id: first.refused
     from: first
     to: refused
-    intent: The owner adds proj-two's folder but types a ticket that was never minted.
-    why: "A folder is added only with the ticket minted for it, so a wrong ticket cannot attach another project to this Studio."
+    intent: The owner adds proj-two's folder but enters an invalid folder.
+    why: "A folder is added only with the valid local browser session, so an invalid folder cannot attach another project to this Studio."
     acts:
       - {kind: activate, role: button, name: Add project folder}
-      - {kind: enter_text, role: textbox, name: Project folder, secret: proj_two_folder}
-      - {kind: enter_text, role: textbox, name: Ticket from graphhelm studio open --project, text: not-a-ticket}
+      - {kind: enter_text, role: textbox, name: Project folder, text: missing-project-folder}
       - {kind: submit, role: button, name: Add}
   - id: first.second
     from: first
     to: second
-    intent: The owner adds the second project's folder with the ticket graphhelm studio open --project minted for it.
-    why: "Adding a second project folder with its own ticket opens it as its own card in the same Studio, so the owner watches both projects from one port."
+    intent: The owner adds the second project's folder within the local browser session.
+    why: "Adding a second project folder through the local browser session opens it as its own card in the same Studio, so the owner watches both projects from one port."
     acts:
       - {kind: activate, role: button, name: Add project folder}
       - {kind: enter_text, role: textbox, name: Project folder, secret: proj_two_folder}
-      - {kind: enter_text, role: textbox, name: Ticket from graphhelm studio open --project, secret: proj_two_ticket}
       - {kind: submit, role: button, name: Add}
   - id: second.back
     from: second

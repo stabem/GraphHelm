@@ -827,35 +827,6 @@ pub(super) fn add_project(launch: &mut Command, project: &Path) {
         .arg(plain(project.to_path_buf()));
 }
 
-/// #1264: the one-shot ticket `graphhelm studio open` leaves for the Studio dev server, next to the
-/// token file (`<events>.token` -> `<events>.studio-ticket`). The dev server accepts it once and
-/// deletes it (`apps/studio/vite.config.ts`), so the link in browser history is dead after use.
-pub(super) fn ticket_path(events: &Path) -> PathBuf {
-    let name = events.file_name().map_or_else(
-        || "events".into(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    events.with_file_name(format!("{name}.studio-ticket"))
-}
-
-/// Writes a fresh random ticket, owner-only where the OS has modes.
-pub(super) fn write_ticket(path: &Path) -> std::io::Result<String> {
-    use std::io::Write;
-    let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).map_err(|error| std::io::Error::other(error.to_string()))?;
-    let ticket: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    let _ = std::fs::remove_file(path);
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)?.write_all(ticket.as_bytes())?;
-    Ok(ticket)
-}
-
 /// The command that opens a URL in the default browser, without a console window.
 pub(super) fn browser_command(url: &str) -> Command {
     let (program, prefix): (&str, &[&str]) = if cfg!(windows) {
@@ -870,22 +841,9 @@ pub(super) fn browser_command(url: &str) -> Command {
     command
 }
 
-fn is_project_id(id: &str) -> bool {
-    id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// What the Studio on a port says it serves (`/__studio/identity`): the project it was started for
-/// and, since #1767, every project registered with it. Hashes only.
-struct StudioIdentity {
-    first: Option<String>,
-    served: Vec<String>,
-    /// The Studio has the #1767 registration route, so another project can join it.
-    shared: bool,
-}
-
-fn studio_identity(port: u16) -> Option<StudioIdentity> {
+/// Probe the protected identity route without asking for its project metadata.
+fn studio_is_running(port: u16) -> bool {
     use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest, UreqTransport};
-
     let request = TransportRequest {
         method: "GET",
         url: format!("http://127.0.0.1:{port}/__studio/identity"),
@@ -893,80 +851,44 @@ fn studio_identity(port: u16) -> Option<StudioIdentity> {
         body: Vec::new(),
         timeout: std::time::Duration::from_secs(2),
     };
-    let body = UreqTransport::new()
+    UreqTransport::new()
         .execute(&request)
-        .ok()
-        .filter(|response| response.status == 200 && response.body.len() <= 16 * 1024)
-        .and_then(|response| serde_json::from_slice::<serde_json::Value>(&response.body).ok())?;
-    let first = body["projectId"]
-        .as_str()
-        .filter(|id| is_project_id(id))
-        .map(str::to_owned);
-    let served = body["projectIds"].as_array().map(|ids| {
-        ids.iter()
-            .filter_map(serde_json::Value::as_str)
-            .filter(|id| is_project_id(id))
-            .map(str::to_owned)
-            .collect::<Vec<_>>()
-    });
-    Some(StudioIdentity {
-        first,
-        shared: served.is_some(),
-        served: served.unwrap_or_default(),
-    })
+        .is_ok_and(|response| {
+            response.status == 403
+                && response.body.len() <= 16 * 1024
+                && serde_json::from_slice::<serde_json::Value>(&response.body)
+                    .is_ok_and(|body| body["reason"] == "session_required")
+        })
 }
 
-/// How `studio open` reaches the requested project on a Studio port.
-#[derive(Debug, PartialEq, Eq)]
-enum Reach {
-    /// The Studio was started for this project.
-    First,
-    /// The project is already registered with that Studio (#1767).
-    Registered,
-    /// The Studio serves another project and accepts this one (#1767).
-    Join,
-}
-
-fn check_studio_project(project: &Path, port: u16) -> Result<(String, Reach), String> {
+/// Register the project with the local Studio before opening a reusable deep link.
+fn check_studio_project(project: &Path, port: u16) -> Result<String, String> {
     let expected = super::execution::delivery::project_id(project)
         .map_err(|_| "the requested project identity could not be read".to_owned())?;
-    let identity = studio_identity(port);
-    if let Some(identity) = &identity {
-        if identity.first.as_deref() == Some(expected.as_str()) {
-            return Ok((expected, Reach::First));
-        }
-        if identity.served.contains(&expected) {
-            return Ok((expected, Reach::Registered));
-        }
-        if identity.shared {
-            return Ok((expected, Reach::Join));
-        }
-    }
-    let served = identity.and_then(|identity| identity.first).map_or_else(
-        || "no verifiable Studio project".to_owned(),
-        |id| format!("project {id}"),
-    );
-    Err(format!(
-        "Studio port {port} serves {served}; requested project {expected}. Use `graphhelm studio open --port <this-project-studio-port>` in the requested project, or free Studio port 5183 and run `graphhelm studio start` there. Update/restart an older Studio that has no identity route."
-    ))
+    let credential = std::fs::read_to_string(project.join(".graphhelm/events.token"))
+        .map_err(|_| "the project's Runtime credential could not be read".to_owned())?;
+    register_with_studio(project, port, credential.trim(), &expected)?;
+    Ok(expected)
 }
 
-/// #1767: registers the project with the Studio on `port`, proving ownership with the ticket just
-/// written beside its token. The path travels in the body; this call does not spend the ticket.
+/// Local-machine registration proves access to the selected project without minting a browser session.
 fn register_with_studio(
     project: &Path,
     port: u16,
-    ticket: &str,
+    credential: &str,
     expected: &str,
 ) -> Result<(), String> {
     use graphhelm_model_gateway::transport::{HttpTransport, TransportRequest, UreqTransport};
 
-    let folder = std::path::absolute(project)
+    let folder = std::fs::canonicalize(project)
         .map_err(|_| "the project folder could not be resolved".to_owned())?;
     let request = TransportRequest {
         method: "POST",
-        url: format!("http://127.0.0.1:{port}/__studio/register?nonce={ticket}"),
-        headers: vec![("Content-Type".to_owned(), "application/json".to_owned())],
+        url: format!("http://127.0.0.1:{port}/__studio/register"),
+        headers: vec![
+            ("Content-Type".to_owned(), "application/json".to_owned()),
+            ("Authorization".to_owned(), format!("Bearer {credential}")),
+        ],
         body: serde_json::to_vec(&json!({ "path": folder.display().to_string() }))
             .map_err(|_| "the registration could not be encoded".to_owned())?,
         timeout: std::time::Duration::from_secs(5),
@@ -974,6 +896,11 @@ fn register_with_studio(
     let response = UreqTransport::new()
         .execute(&request)
         .map_err(|_| format!("the Studio on port {port} did not answer the registration"))?;
+    if response.body.len() > 16 * 1024 {
+        return Err(format!(
+            "the Studio on port {port} returned an oversized registration response"
+        ));
+    }
     let body = serde_json::from_slice::<serde_json::Value>(&response.body).unwrap_or_default();
     match response.status {
         200 if body["projectId"].as_str() == Some(expected) => Ok(()),
@@ -1021,33 +948,11 @@ pub fn open(args: &StudioOpenArgs) -> Outcome {
 
 /// The tail of `studio open`, shared with `studio start` when it joins a running Studio (#1767).
 fn open_project(project: &Path, port: u16, journey: Option<&str>, no_browser: bool) -> Outcome {
-    let events = project.join(".graphhelm").join("events");
-    let (expected, reach) = match check_studio_project(project, port) {
+    let expected = match check_studio_project(project, port) {
         Ok(found) => found,
         Err(message) => return refused(message, "/port"),
     };
-    let ticket = match write_ticket(&ticket_path(&events)) {
-        Ok(ticket) => ticket,
-        Err(error) => {
-            return refused(
-                format!("the Studio ticket could not be written: {error}"),
-                "/project",
-            );
-        }
-    };
-    // #1767: a project that is not the Studio's first registers before the link opens; the same
-    // ticket then logs the page in once. Registering again after a Studio restart is harmless.
-    if reach != Reach::First
-        && let Err(message) = register_with_studio(project, port, &ticket, &expected)
-    {
-        let _ = std::fs::remove_file(ticket_path(&events));
-        return refused(message, "/port");
-    }
-    let mut url = format!("http://127.0.0.1:{port}/?session={ticket}");
-    if reach != Reach::First {
-        url.push_str("&project=");
-        url.push_str(&expected);
-    }
+    let mut url = format!("http://127.0.0.1:{port}/?project={expected}");
     if let Some(journey) = journey {
         url.push_str("&journey=");
         url.push_str(journey);
@@ -1059,8 +964,7 @@ fn open_project(project: &Path, port: u16, journey: Option<&str>, no_browser: bo
             .stderr(std::process::Stdio::null())
             .status()
             .is_ok_and(|status| status.success());
-    // The link holds a one-shot ticket, dead once the Studio uses it; printed only when no
-    // browser took it, to the owner's own terminal.
+    // The URL contains project identity only and can be bookmarked safely.
     let data = if opened {
         json!({ "opened": true })
     } else {
@@ -1209,10 +1113,7 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     // #1767: a Studio already serving ANOTHER project on the Studio port keeps it. This project's
     // Runtime is started (or reused) on its own, and the project then joins that Studio, instead
     // of the launcher refusing the port or replacing the other project's Studio.
-    let joining = matches!(
-        check_studio_project(&project, STUDIO_PORT),
-        Ok((_, Reach::Join | Reach::Registered))
-    );
+    let joining = studio_is_running(STUDIO_PORT);
     if joining {
         launch.arg(flag("RuntimeOnly"));
     }
@@ -1552,31 +1453,6 @@ mod tests {
         assert!(!refused.ok);
         assert_eq!(refused.diagnostics[0].path, "/journey");
         assert!(!graphhelm.join("events.studio-ticket").exists());
-    }
-
-    #[test]
-    fn the_open_ticket_is_one_line_next_to_the_token_and_owner_only() {
-        let dir = tempfile::tempdir().unwrap();
-        let events = dir.path().join(".graphhelm").join("events");
-        std::fs::create_dir_all(&events).unwrap();
-        let path = ticket_path(&events);
-        assert_eq!(
-            path,
-            dir.path().join(".graphhelm").join("events.studio-ticket")
-        );
-        let first = write_ticket(&path).unwrap();
-        let second = write_ticket(&path).unwrap();
-        assert_ne!(first, second);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), second);
-        assert_eq!(second.len(), 32);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
     }
 
     #[test]

@@ -246,6 +246,14 @@ export interface JourneyPastRun {
   digest?: string;
   screens?: Record<string, { frame?: boolean; kind?: "text"; width?: number; height?: number; result?: StepResult; reason?: string }>;
   edges?: Record<string, { result?: StepResult | "skipped" | null; reason?: string }>;
+  /** #2442: what the Runtime keeps of a past run's mobile pass and console, when it sends them
+   * (the history route is asked for them in #2442; an older Runtime sends neither). */
+  startedAt?: string;
+  viewportsPlanned?: ("web" | "mobile")[];
+  viewports?: Partial<Record<"web" | "mobile", JourneyViewportRun>>;
+  launchLog?: { tail?: string };
+  driverLog?: { tail?: string };
+  outputs?: Record<string, CliOutput[]>;
 }
 
 interface Envelope<T> {

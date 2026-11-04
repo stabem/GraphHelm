@@ -511,6 +511,13 @@ export function pastAsRun(past: JourneyPastRun): JourneyRun {
     reason: past.reason,
     screens: Object.fromEntries(Object.entries(past.screens ?? {}).map(([id, seen]) => [id, { ...seen, frame: seen.frame === true }])),
     edges: past.edges ?? {},
+    // #2442: a viewed run's mobile pass and console, when the Runtime kept them.
+    ...(past.startedAt !== undefined ? { startedAt: past.startedAt } : {}),
+    ...(past.viewportsPlanned !== undefined ? { viewportsPlanned: past.viewportsPlanned } : {}),
+    ...(past.viewports !== undefined ? { viewports: past.viewports } : {}),
+    ...(past.launchLog !== undefined ? { launchLog: past.launchLog } : {}),
+    ...(past.driverLog !== undefined ? { driverLog: past.driverLog } : {}),
+    ...(past.outputs !== undefined ? { outputs: past.outputs } : {}),
   };
 }
 

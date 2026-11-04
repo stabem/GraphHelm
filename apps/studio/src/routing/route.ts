@@ -10,6 +10,8 @@ export interface Route {
   view: View;
   /** The journey Proof opens on (`graphhelm studio open --journey`); `null` = the first. */
   journey?: string | null;
+  /** #2442: an earlier run of that journey (its history id) Proof shows instead of the latest; `null` = the latest or live run. */
+  past?: string | null;
 }
 
 const RUN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -24,12 +26,14 @@ export function parseRoute(search: string): Route {
   const view = query.get("view");
   const asked = query.get("journey");
   const journey = asked !== null && JOURNEY_ID.test(asked) && !asked.includes("..") ? asked : null;
+  const pastAsked = query.get("past");
   return {
     project: project !== null && PROJECT.test(project) ? project : null,
     run: run !== null && RUN_ID.test(run) ? run : null,
     // A journey link opens Proof unless it names another view.
     view: VIEWS.includes(view as View) ? (view as View) : journey !== null ? "proof" : "graph",
     journey,
+    ...(journey !== null && pastAsked !== null && RUN_ID.test(pastAsked) ? { past: pastAsked } : {}),
   };
 }
 
@@ -40,6 +44,7 @@ export function routeSearch(route: Route): string {
   if (route.run !== null) query.set("run", route.run);
   if (route.view !== "graph") query.set("view", route.view);
   if (route.journey) query.set("journey", route.journey);
+  if (route.journey && route.past) query.set("past", route.past);
   const text = query.toString();
   return text ? `?${text}` : "";
 }

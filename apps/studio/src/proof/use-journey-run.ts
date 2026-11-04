@@ -60,7 +60,7 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     let live = true;
     runtime.journeyHistory(flowId).then(
       runs => { if (live) setHistory(runs); },
-      cause => { if (live) setError(actionErrorDetails("Run history could not be read", cause, `Could not read run history: ${message(cause)}`, "Try opening this journey again.")); },
+      cause => { if (live) setError(actionErrorDetails("Run history could not be read", cause, "The Runtime could not return this journey's history.", "Try opening this journey again.")); },
     );
     return () => { live = false; };
   }, [runtime, flowId]);

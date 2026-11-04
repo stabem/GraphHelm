@@ -66,12 +66,12 @@ const statuses = () => [...host!.querySelectorAll('[aria-label^="Step "] .step-s
 const thumbs = () => [...host!.querySelectorAll(".step-thumb")].map((node) => node.querySelector("img")?.getAttribute("src") ?? node.textContent ?? "");
 const chip = (older: boolean) => [...host!.querySelectorAll<HTMLButtonElement>("button.history-chip")][older ? 1 : 0]!;
 
-async function mount(initialPast: string | null, seen: (Array<string | null>) = [], client: Runtime = runtime) {
+async function mount(initialPast: string | null, seen: (Array<string | null>) = [], client: Runtime = runtime, selectedFlow: JourneyFlow = flow) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<JourneyRunPanel runtime={client} flow={flow} executionId={null} onRan={() => {}} onRun={() => {}} onGone={() => {}} initialPast={initialPast} onPast={(id) => seen.push(id)} />);
+    root!.render(<JourneyRunPanel runtime={client} flow={selectedFlow} executionId={null} onRan={() => {}} onRun={() => {}} onGone={() => {}} initialPast={initialPast} onPast={(id) => seen.push(id)} />);
   });
   await settle();
   await settle();
@@ -79,6 +79,32 @@ async function mount(initialPast: string | null, seen: (Array<string | null>) = 
 }
 
 describe("a history chip opens that run (#2442)", () => {
+  it("does not offer approval of an unrun draft when viewing a successful past run", async () => {
+    const draft = { ...flow, status: "draft" } as JourneyFlow;
+    const unrun = { ...runtime, journeyRun: async () => ({ state: "none", screens: {}, edges: {} }) } as unknown as Runtime;
+    await mount(null, [], unrun, draft);
+    const approve = () => [...host!.querySelectorAll("button")].filter((button) => button.textContent === "Approve");
+    expect(approve()).toHaveLength(0);
+    await act(async () => chip(false).click());
+    await settle();
+    expect(host!.textContent).toContain("Showing the run of");
+    expect(approve()).toHaveLength(0);
+  });
+
+  it("offers a current finished draft's decision only in the current run view", async () => {
+    const draft = { ...flow, status: "draft" } as JourneyFlow;
+    await mount(null, [], runtime, draft);
+    const approve = () => [...host!.querySelectorAll("button")].filter((button) => button.textContent === "Approve");
+    expect(approve()).toHaveLength(1);
+    await act(async () => chip(true).click());
+    await settle();
+    expect(approve()).toHaveLength(0);
+    const back = [...host!.querySelectorAll("button")].find((button) => button.textContent === "Back to the latest run")!;
+    await act(async () => back.click());
+    await settle();
+    expect(approve()).toHaveLength(1);
+  });
+
   it("shows the older run's statuses and frames, not the latest run's, and goes back", async () => {
     const seen = await mount(null);
     expect(statuses().join(" ")).toMatch(/pass.*pass/);

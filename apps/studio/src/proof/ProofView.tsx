@@ -737,9 +737,9 @@ export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGo
           <button type="button" className="b act" onClick={() => { setPicked(null); start(run.cliConfirm!.digest); }}>Confirm and run</button>
         </section>
       )}
-      {/* #1956/#2082: an earlier version's run, or a run that stopped to wait, proves nothing about
-          this version: Approve is offered only once this version's commands ran. */}
-      <DecisionBar runtime={runtime} flow={flow} runFinished={finished && !isHeld(run) && !isWaitingReview(run)} stale={stale} onDecided={onRan} />
+      {/* A selected history run describes the past; only the current run can authorize a decision
+          on this version. Keep its approval controls hidden until returning to the current run. */}
+      <DecisionBar runtime={runtime} flow={flow} runFinished={viewed === null && run?.state === "ready" && !isHeld(run) && !isWaitingReview(run)} stale={stale || viewed !== null} onDecided={onRan} />
       <div className="steps-card">
         <ol className="steps" aria-label="Steps">
           {steps.map((step) => (

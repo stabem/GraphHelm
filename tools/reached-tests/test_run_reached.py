@@ -254,6 +254,74 @@ class RunnerContracts(unittest.TestCase):
             self.assertEqual(calls[0][0][calls[0][0].index("--jobs") + 1], "1")
             self.assertEqual(calls[1][0][calls[1][0].index("--jobs") + 1], "1")
 
+    def test_finished_batch_survives_invalid_progress_stderr(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            output = repo.parent / f"{repo.name}-progress-report.json"
+            plan = {"steps": [{"argv": ["cargo", "+1.97.1", "test", "--lib"],
+                               "cwd": ".", "slot": True}]}
+
+            def fake_git(_repo, *args):
+                return "HEAD" if args[0] == "rev-parse" else ""
+
+            def fake_run(command, **kwargs):
+                batch = {"schema": "graphhelm.slot-batch-result/1",
+                         "completed": [{"index": 0, "exitCode": 0, "elapsedSeconds": 1}],
+                         "remaining": [], "stopReason": "exhausted"}
+                kwargs["stdout"].write(json.dumps({"command": "workspace.slot", "ok": True,
+                    "data": {"waitedSeconds": 0, "heldSeconds": 1, "exitCode": 0,
+                             "batch": batch}}) + "\n")
+                return subprocess.CompletedProcess(command, 0, "", "")
+
+            class InvalidProgress:
+                def write(self, value):
+                    if "exit 0;" in value:
+                        raise OSError(22, "Invalid argument")
+                    return len(value)
+
+                def flush(self):
+                    pass
+
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD",
+                                      "head": "HEAD", "root": "D:/gh", "lane": "test",
+                                      "budget_seconds": 180, "allow_whole_package": None,
+                                      "plan": False, "graphhelm": sys.executable, "jobs": 1})()
+            with patch.object(rr, "_selector", return_value=plan), \
+                    patch.object(rr, "_git", side_effect=fake_git), \
+                    patch.object(rr.subprocess, "run", side_effect=fake_run), \
+                    patch.object(rr.sys, "stderr", InvalidProgress()):
+                result = rr.run(args)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(result, 0)
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["completed"][0]["index"], 0)
+
+    def test_unexpected_oserror_receipt_names_the_operation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            output = repo.parent / f"{repo.name}-oserror-report.json"
+            plan = {"steps": [{"argv": [sys.executable, "-c", "pass"],
+                               "cwd": ".", "slot": False}]}
+
+            def fake_git(_repo, *args):
+                return "HEAD" if args[0] == "rev-parse" else ""
+
+            def broken_child(*_args, **_kwargs):
+                raise OSError(22, "Invalid argument")
+
+            args = type("Args", (), {"repo": str(repo), "output": str(output), "base": "HEAD",
+                                      "head": "HEAD", "root": "D:/gh", "lane": "test",
+                                      "budget_seconds": 180, "allow_whole_package": None,
+                                      "plan": False, "graphhelm": sys.executable, "jobs": 1})()
+            with patch.object(rr, "_selector", return_value=plan), \
+                    patch.object(rr, "_git", side_effect=fake_git), \
+                    patch.object(rr.subprocess, "run", side_effect=broken_child):
+                result = rr.run(args)
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(result, 1)
+            self.assertEqual(report["status"], "incomplete")
+            self.assertIn("broken_child", report["errorTraceback"])
+
     def test_jobs_flag_reaches_every_slot_command_and_defaults_to_six(self):
         # #1188: the owner's rule is one root at up to 16 jobs; the runner must carry the chosen
         # count into the slot command, and an older caller without `jobs` keeps six.

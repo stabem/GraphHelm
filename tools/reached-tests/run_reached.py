@@ -18,6 +18,7 @@ import os
 import shutil
 import subprocess
 import sys
+import traceback
 import tempfile
 import time
 import re
@@ -213,7 +214,7 @@ def _install_absent_studio(repo: Path, studio: Path) -> None:
         return
     npm = shutil.which("npm") or "npm"
     app = studio.relative_to(repo).as_posix()
-    print(f"[reached-tests] {app}/node_modules is absent: npm ci in {studio}", file=sys.stderr, flush=True)
+    _progress(f"[reached-tests] {app}/node_modules is absent: npm ci in {studio}")
     try:
         proc = subprocess.run([npm, "ci"], cwd=studio, capture_output=True, text=True,
                               timeout=STUDIO_INSTALL_TIMEOUT, stdin=subprocess.DEVNULL,
@@ -563,8 +564,8 @@ def _run_parallel(jobs: list[dict[str, Any]], limit: int, env: dict[str, str],
                 job["returncode"] = code
             if job["running"] == 0 and not any(j is job for j, _ in pending):
                 job["seconds"] = round(time.monotonic() - job["started"], 3)
-                print(f"[reached-tests]   step {job['index']}: tests {job['seconds']:.1f}s side by side "
-                      f"(exit {job['returncode']})", file=sys.stderr, flush=True)
+                _progress(f"[reached-tests]   step {job['index']}: tests {job['seconds']:.1f}s side by side "
+                          f"(exit {job['returncode']})")
 
 
 def _batch_result(value: Any, count: int, cli_returncode: int) -> tuple[dict[str, Any] | None, str | None]:
@@ -1131,6 +1132,14 @@ def _summary(report: dict[str, Any], output: Path) -> str:
     return "\n".join(lines)
 
 
+def _progress(message: str) -> None:
+    """Progress is advisory; a detached Windows stderr must not discard a test result."""
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except OSError:
+        pass
+
+
 def run(args: argparse.Namespace) -> int:
     # #1188: the slot's build parallelism. Six when the caller does not choose; one root may go to
     # 16, and the jobs of every root building at the same time add up to at most 24 (LANES.md §3).
@@ -1233,7 +1242,7 @@ def run(args: argparse.Namespace) -> int:
             threads = getattr(args, "test_threads", None) or _test_threads(_free_memory_gb(), os.cpu_count(), reserve)
             child_env["RUST_TEST_THREADS"] = str(threads)
             report["testThreads"] = threads
-            print(f"[reached-tests] test threads: {threads}", file=sys.stderr, flush=True)
+            _progress(f"[reached-tests] test threads: {threads}")
             identities = report["fingerprint"].get("tools", {})
             identity_complete = identities.get("identityComplete", True)
             keys = [_proof_key(report["fingerprint"], step) if identity_complete else None for step in steps]
@@ -1284,7 +1293,7 @@ def run(args: argparse.Namespace) -> int:
                 indices = [item["index"] for item in group]
                 cwd = repo / entry["cwd"]
                 logfile = logs / (f"batch-{indices[0]}.log" if len(group) > 1 else f"step-{indices[0]}.log")
-                print(f"[reached-tests] steps {indices}: {' | '.join(' '.join(item['argv']) for item in group)}", file=sys.stderr, flush=True)
+                _progress(f"[reached-tests] steps {indices}: {' | '.join(' '.join(item['argv']) for item in group)}")
                 commands = []
                 for item in group:
                     if item["argv"][0] == "npx" and _needs_studio_preparation(repo, cwd) and item["index"] not in identities.get("preparationSteps", []):
@@ -1321,8 +1330,8 @@ def run(args: argparse.Namespace) -> int:
                     for local in side:
                         commands[local] = _no_run(commands[local])
                     if side:
-                        print(f"[reached-tests] steps {[indices[local] for local in side]}: build with --no-run, "
-                              f"then run up to {limit} test executables side by side", file=sys.stderr, flush=True)
+                        _progress(f"[reached-tests] steps {[indices[local] for local in side]}: build with --no-run, "
+                                  f"then run up to {limit} test executables side by side")
                 is_batch = batch_mode and len(group) > 1 or batch_mode and _batchable(entry)
                 if is_batch:
                     # The CLI receives original argv; its Rust worker selects the child cwd/target.
@@ -1370,8 +1379,8 @@ def run(args: argparse.Namespace) -> int:
                     report["error"] = f"step {index} exceeded the remaining runner budget"
                     break
                 # #1892: name the slow step as it finishes, not only in the JSON report.
-                print(f"[reached-tests] steps {indices}: {step_seconds:.1f}s (exit {proc.returncode}; "
-                      f"total {elapsed:.1f}s)", file=sys.stderr, flush=True)
+                _progress(f"[reached-tests] steps {indices}: {step_seconds:.1f}s (exit {proc.returncode}; "
+                          f"total {elapsed:.1f}s)")
                 if entry["slot"]:
                     if is_batch:
                         batch, q, h = _batch_envelope(logfile, proc.returncode)
@@ -1392,8 +1401,7 @@ def run(args: argparse.Namespace) -> int:
                         deferred: list[dict[str, Any]] = []
                         for local, child in enumerate(parsed["completed"]):
                             index = indices[local]
-                            print(f"[reached-tests]   step {index}: {child['elapsedSeconds']}s (exit {child['exitCode']})",
-                                  file=sys.stderr, flush=True)
+                            _progress(f"[reached-tests]   step {index}: {child['elapsedSeconds']}s (exit {child['exitCode']})")
                             if local in side and child["exitCode"] == 0:
                                 package, targets, tail = side[local]
                                 deferred.append({"index": index, "local": local, "package": package,
@@ -1422,8 +1430,8 @@ def run(args: argparse.Namespace) -> int:
                             fallback = [job for job in deferred if job["executables"] is None]
                             built.extend(job for job in deferred if job["executables"] is not None)
                             if fallback:
-                                print(f"[reached-tests] steps {[job['index'] for job in fallback]}: executables not "
-                                      "found in the build log; running them through cargo", file=sys.stderr, flush=True)
+                                _progress(f"[reached-tests] steps {[job['index'] for job in fallback]}: executables not "
+                                          "found in the build log; running them through cargo")
                                 work[0:0] = [{**group[job["local"]], "serial": True} for job in fallback]
                         # A lease boundary ends a batch after its first long build: keep the built
                         # executables until the rest are built too, so they still run side by side.
@@ -1431,9 +1439,8 @@ def run(args: argparse.Namespace) -> int:
                             ready, built = built, []
                             parallel_started = time.monotonic()
                             _run_parallel(ready, limit, child_env, reserve)
-                            print(f"[reached-tests] steps {[job['index'] for job in ready]}: side by side "
-                                  f"{time.monotonic() - parallel_started:.1f}s (total {time.monotonic() - started:.1f}s)",
-                                  file=sys.stderr, flush=True)
+                            _progress(f"[reached-tests] steps {[job['index'] for job in ready]}: side by side "
+                                      f"{time.monotonic() - parallel_started:.1f}s (total {time.monotonic() - started:.1f}s)")
                             side_red = False
                             for job in ready:
                                 index = job["index"]
@@ -1565,6 +1572,7 @@ def run(args: argparse.Namespace) -> int:
                     entry["reusable"] = True
     except Exception as exc:
         report["error"] = str(exc)
+        report["errorTraceback"] = traceback.format_exc()
         report["status"] = "incomplete"
     report["elapsedSeconds"] = round(time.monotonic() - started, 3)
     # #1516: the receipt splits its wall time into waiting for the slot and working, so a reader of

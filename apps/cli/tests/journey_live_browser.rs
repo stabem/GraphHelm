@@ -215,6 +215,11 @@ fn open_live_at_a_step_replays_cached_edges_headed_and_stops_open_at_a_drifted_e
         include_bytes!("../../../tools/journey-driver/judge.mjs"),
     )
     .unwrap();
+    std::fs::write(
+        observer.join("../hidden-node-children.mjs"),
+        include_bytes!("../../../tools/hidden-node-children.mjs"),
+    )
+    .unwrap();
     let (code, value) = journey(
         &project,
         &["compile", "checkout", "--fmt", "--include-draft"],

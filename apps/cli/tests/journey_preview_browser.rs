@@ -115,6 +115,11 @@ fn an_unlisted_preview_refusal_keeps_its_code_and_stopped_step() {
             include_bytes!("../../../tools/journey-driver/judge.mjs"),
         )
         .unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/hidden-node-children.mjs"),
+            include_bytes!("../../../tools/hidden-node-children.mjs"),
+        )
+        .unwrap();
         let (code, compiled) = cli(
             project.path(),
             &["journey", "compile", "account", "--fmt", "--include-draft"],
@@ -491,6 +496,11 @@ fn an_approved_journey_holds_before_its_destructive_act_and_plays_it_only_when_c
         include_bytes!("../../../tools/journey-driver/judge.mjs"),
     )
     .unwrap();
+    std::fs::write(
+        observer.join("../hidden-node-children.mjs"),
+        include_bytes!("../../../tools/hidden-node-children.mjs"),
+    )
+    .unwrap();
     let (code, value) = cli(
         &project,
         &["journey", "compile", "account", "--fmt", "--include-draft"],
@@ -718,6 +728,11 @@ fn coverage_fixture() -> (tempfile::TempDir, PathBuf, OwnedNodeModulesLink, Path
     std::fs::write(
         project.join(".graphhelm/observers/judge.mjs"),
         include_bytes!("../../../tools/journey-driver/judge.mjs"),
+    )
+    .unwrap();
+    std::fs::write(
+        project.join(".graphhelm/hidden-node-children.mjs"),
+        include_bytes!("../../../tools/hidden-node-children.mjs"),
     )
     .unwrap();
 

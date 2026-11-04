@@ -131,6 +131,11 @@ fn actual_exploration_redacts_model_input_and_repeats_the_same_draft() {
             include_bytes!("../../../tools/journey-driver/judge.mjs"),
         )
         .unwrap();
+        std::fs::write(
+            observer.join("../hidden-node-children.mjs"),
+            include_bytes!("../../../tools/hidden-node-children.mjs"),
+        )
+        .unwrap();
         let (code, value) = reply(
             cli()
                 .args(["journey", "explore", "--id", "checkout", "--base"])
@@ -461,6 +466,11 @@ fn observed_project(root: &Path, name: &str, toolchain: &std::ffi::OsStr) -> std
     std::fs::write(
         observer.join("judge.mjs"),
         include_bytes!("../../../tools/journey-driver/judge.mjs"),
+    )
+    .unwrap();
+    std::fs::write(
+        observer.join("../hidden-node-children.mjs"),
+        include_bytes!("../../../tools/hidden-node-children.mjs"),
     )
     .unwrap();
     project

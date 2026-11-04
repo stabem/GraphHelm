@@ -1249,9 +1249,9 @@ pub(super) fn with_declared(mut open: Value, declared: Option<&Value>) -> Value 
     open
 }
 
-/// The observer files the driver needs, each byte-equal to the copy this binary ships: the driver
-/// imports `./judge.mjs` (#1324), so a project holding only the driver is not ready (#1448).
-const OBSERVER_FILES: [(&str, &[u8]); 2] = [
+/// The observer files the driver needs, each byte-equal to the copy this binary ships. The driver
+/// imports `./judge.mjs` and `../hidden-node-children.mjs`, so all three must be current.
+const OBSERVER_FILES: [(&str, &[u8]); 3] = [
     (
         ".graphhelm/observers/journey_driver.mjs",
         include_bytes!("../../../../tools/journey-driver/driver.mjs"),
@@ -1259,6 +1259,10 @@ const OBSERVER_FILES: [(&str, &[u8]); 2] = [
     (
         ".graphhelm/observers/judge.mjs",
         include_bytes!("../../../../tools/journey-driver/judge.mjs"),
+    ),
+    (
+        ".graphhelm/hidden-node-children.mjs",
+        include_bytes!("../../../../tools/hidden-node-children.mjs"),
     ),
 ];
 
@@ -1273,6 +1277,7 @@ pub(super) fn observer_ready(project: &Path) -> Result<()> {
         let installed = project.join(relative);
         let mut installed_bytes = Vec::new();
         if !safe_node(&installed)
+            || !installed.is_file()
             || std::fs::File::open(&installed)
                 .and_then(|file| {
                     file.take(expected.len() as u64 + 1)
@@ -2687,17 +2692,23 @@ mod tests {
     /// preview to read once. Regression: the driver sent `details.checks` (#1324) but Rust dropped
     /// it, so the Studio painted the step's single status on every assertion. Cost: milliseconds,
     /// one fixed peer frame through the existing writer/reply channels; no new seam.
-    /// #1448: the driver imports `./judge.mjs`, so a project holding only the driver is refused
-    /// as OBSERVER_MISSING before a child starts. Regression: readiness compared the driver alone,
-    /// the child died on its import, and the run read `replay.driver_frame_invalid /entry/eof`.
+    /// #1448: the driver imports `./judge.mjs` and the hidden child launcher, so a project holding
+    /// only the driver is refused as OBSERVER_MISSING before a child starts. Regression: readiness
+    /// compared the driver alone and the child died on its import before the first frame.
     #[test]
-    fn an_observer_without_its_judge_is_not_ready() {
+    fn an_observer_without_a_required_companion_is_not_ready() {
         let project = tempfile::tempdir().unwrap();
         let observers = project.path().join(".graphhelm/observers");
         std::fs::create_dir_all(&observers).unwrap();
         let (driver, driver_bytes) = OBSERVER_FILES[0];
         let (judge, judge_bytes) = OBSERVER_FILES[1];
+        let (launcher, launcher_bytes) = OBSERVER_FILES[2];
         std::fs::write(project.path().join(driver), driver_bytes).unwrap();
+        assert_eq!(
+            observer_ready(project.path()).unwrap_err().0,
+            "replay.observer_missing"
+        );
+        std::fs::write(project.path().join(launcher), launcher_bytes).unwrap();
         assert_eq!(
             observer_ready(project.path()).unwrap_err().0,
             "replay.observer_missing"

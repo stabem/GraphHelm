@@ -111,7 +111,7 @@ BROWSER_OBSERVERS = ("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT=<dir with node_modules
 BROWSER_ARGV = ["cargo", TOOLCHAIN, "test", "--locked", "-p", CLI, "--test", "cli", "--", "--ignored",
                 "journey_replay_browser::", "journey_explore_browser::", "journey_live_browser::", "journey_preview_browser::",
                 "--test-threads=2"]
-BROWSER_REACHERS = ("tools/journey-driver/", "apps/cli/src/commands/journey_replay.rs",
+BROWSER_REACHERS = ("tools/hidden-node-children.mjs", "tools/journey-driver/", "apps/cli/src/commands/journey_replay.rs",
                     "apps/cli/src/commands/journey_explore.rs", "apps/cli/src/commands/journey_live.rs",
                     "apps/cli/src/commands/journey_preview.rs",
                     "apps/cli/tests/journey_replay_browser.rs", "apps/cli/tests/journey_explore_browser.rs",
@@ -723,6 +723,10 @@ def reach(changed, packages, embedded, repo=None):
                 single.add(target)
         if path.startswith(BROWSER_REACHERS):
             tools.add(BROWSER_OBSERVERS)
+        if path == "tools/hidden-node-children.mjs":
+            tools.add("node --test tools/journey-driver/driver.test.mjs")
+            tools.add(RUST_NO_WINDOW_GUARD)
+            hit = True
         handoff_scenario = ".graphhelm/fixtures/keel-task-handoff/scenario.py"
         handoff_readme = ".graphhelm/fixtures/keel-task-handoff/README.md"
         handoff_test = ".graphhelm/fixtures/keel-task-handoff/test_scenario.py"

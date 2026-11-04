@@ -1,11 +1,37 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { hiddenNodeChildren } from '../hidden-node-children.mjs';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { judgeExpectations, viewportRect } from './judge.mjs';
+
+test('the shared launcher preserves options and callbacks when args are omitted', async t => {
+  const parent = mkdtempSync(join(tmpdir(), 'gh-child-overload-'));
+  const missingCwd = join(parent, 'missing-cwd');
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+
+  const spawnResult = await new Promise(resolve => {
+    const child = hiddenNodeChildren.spawn(process.execPath, undefined, { cwd: missingCwd, windowsHide: true });
+    child.once('error', error => resolve({ error }));
+    child.once('close', code => resolve({ code }));
+    child.stdin?.end();
+  });
+  assert.equal(spawnResult.error?.code, 'ENOENT', JSON.stringify(spawnResult));
+
+  const execFileResult = await new Promise(resolve => {
+    let callbackCalled = false;
+    const child = hiddenNodeChildren.execFile(process.execPath, undefined, { cwd: missingCwd, windowsHide: true }, error => {
+      callbackCalled = true;
+      resolve({ callbackCalled, error });
+    });
+    child.once('close', () => setImmediate(() => resolve({ callbackCalled })));
+    child.stdin?.end();
+  });
+  assert.equal(execFileResult.callbackCalled, true, JSON.stringify(execFileResult));
+  assert.equal(execFileResult.error?.code, 'ENOENT', JSON.stringify(execFileResult));
+});
 
 // #2028: the matched element's box, as fractions of the frame, clipped to it; none off-frame.
 test('a matched element is placed on the frame as viewport fractions, clipped, never invented', () => {
@@ -123,7 +149,7 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
   writeFileSync(join(unloadable, 'package.json'), '{"name":"@playwright/test","main":"index.js"}');
   writeFileSync(join(unloadable, 'index.js'), "throw new Error('not installed in this project');");
   for (const [request, code] of cases) {
-    const child = spawn(process.execPath, [driver, '--project', bare, '--output-dir', bare], {
+    const child = hiddenNodeChildren.spawn(process.execPath, [driver, '--project', bare, '--output-dir', bare], {
       env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, GRAPHHELM_SECRET_PASSWORD: 'canary' },
       stdio: ['pipe', 'pipe', 'pipe'],
     });

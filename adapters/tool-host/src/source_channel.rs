@@ -1087,6 +1087,13 @@ impl WorkspaceSourceChannel {
         let Ok(bytes) = serde_json::to_vec(&persisted) else {
             return;
         };
+        // #2372: a refresh reads changed files under the larger per-search bounds, so its index can
+        // outgrow what `load_persisted` accepts. Writing it would make the next process reject
+        // the cache and rebuild under the build bounds. Keep the in-memory index and the previous
+        // (smaller) cache instead: the same policy on both sides of the file.
+        if bytes.len() as u64 > max_cache_bytes(&self.index_bounds) {
+            return;
+        }
         let Some(parent) = path.parent() else {
             return;
         };
@@ -1572,6 +1579,38 @@ mod tests {
             after <= cap,
             "the oversized cache was rebuilt, not read: {after} bytes, cap {cap}"
         );
+    }
+
+    /// #2372 (Neji's BLOCK, point 2): a refresh reads a changed file under the per-search bounds,
+    /// which are larger than the build bounds, so its index can outgrow the read cap. It must not
+    /// persist a cache the next process rejects: after close and reopen the search still succeeds
+    /// and the cache on disk stays within the cap.
+    #[test]
+    fn a_refreshed_index_over_the_cap_is_not_persisted_and_survives_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
+        write(root.path(), "a.rs", b"x");
+        let tiny = SourceIndexBounds {
+            max_entries_visited: 1_000,
+            max_files_indexed: 1,
+            max_bytes_indexed: 2,
+        };
+        let open = || {
+            WorkspaceSourceChannel::open(root.path())
+                .unwrap()
+                .with_index_bounds(tiny)
+        };
+        assert_eq!(search(&open(), &["x"]), ["a.rs"]);
+        // 20,000 one-byte control tokens' worth of one run: JSON escapes each as `\u0001`.
+        write(root.path(), "a.rs", &[1u8; 20_000]);
+        assert_eq!(search(&open(), &["\u{1}"]), ["a.rs"]);
+        let cap = max_cache_bytes(&tiny);
+        let written = std::fs::metadata(root.path().join(INDEX_CACHE))
+            .unwrap()
+            .len();
+        assert!(written <= cap, "persisted {written} bytes, cap {cap}");
+        // A fresh channel (a restart) finds the changed file again instead of BoundExceeded.
+        assert_eq!(search(&open(), &["\u{1}"]), ["a.rs"]);
     }
 
     /// #2372 items 2 and 3, measured (synthetic, so it states a scaling, not a real-repo time):

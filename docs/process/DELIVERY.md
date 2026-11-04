@@ -302,8 +302,8 @@ review-start-to-merge intervals. Record unavailable timestamps as unobserved.
 The reviewer who approved merges (a blind subagent included). There is no separate gate run and no separate presser: the Keel checks the reviewer runs (`KEEL.md`) are what block, and a blocking finding is a `BLOCK`.
 
 The steps are in [`keel/KEEL_MERGE.md`](../../keel/KEEL_MERGE.md): pin the head, merge, check after,
-and clean up the PR's worktrees and branch (its step 5). It also says why main gets one whole run
-after merges, and it defines delivered. Two checks run from here:
+and clean up the PR's worktrees and branch (its step 5). It also defines the nightly full-main
+plan (not a per-merge run) and delivered. Two checks run from here:
 
 1. Closing check: `ci/closing-keywords.ps1 -Number <N> -Repository stabem/GraphHelm -Closes <issues>`.
    It reads the body and the commit messages; their union must equal the intent (the keyword rule

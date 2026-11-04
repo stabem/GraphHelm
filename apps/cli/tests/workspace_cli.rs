@@ -595,6 +595,137 @@ fn release_clears_a_claim_whose_folder_is_gone_and_the_task_can_be_claimed_again
     );
 }
 
+/// #2437: only `<claim>/wt` is gone (what a merger's `git worktree remove` leaves); the claim's own
+/// `logs/ target/ tmp/` stay. Release clears the entry and the same task is claimed again in the
+/// same directory; a stranger file in it keeps the claim refused.
+#[test]
+fn release_clears_a_claim_whose_worktree_alone_is_gone_and_the_task_can_be_claimed_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = repo(dir.path());
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    let ws = root.join("lane").join("2435");
+    for part in ["target", "tmp", "logs"] {
+        std::fs::create_dir_all(ws.join(part)).unwrap();
+    }
+    std::fs::write(ws.join("target").join("foreign.txt"), "unclaimed").unwrap();
+    let (code, refused) = run(&[
+        "claim",
+        "--root",
+        root_s,
+        "--lane",
+        "lane",
+        "--task",
+        "2435",
+        "--repo",
+        repo.to_str().unwrap(),
+        "--base",
+        "HEAD",
+    ]);
+    assert_eq!(
+        code, 2,
+        "matching folder names do not establish ownership: {refused}"
+    );
+    assert!(ws.join("target").join("foreign.txt").is_file());
+    std::fs::remove_dir_all(&ws).unwrap();
+    claim(root_s, &repo, "lane", "2435");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            ws.join("wt").to_str().unwrap(),
+        ],
+    );
+    assert!(ws.join("target").is_dir() && !ws.join("wt").exists());
+    let (code, reply) = run(&[
+        "release", "--root", root_s, "--lane", "lane", "--task", "2435",
+    ]);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(reply["data"]["cleared"], true, "{reply}");
+    let ledger = root.join(".graphhelm-workspaces").join("lane--2435.json");
+    let ledger_before = std::fs::read(&ledger).unwrap();
+    let record: Value = serde_json::from_slice(&ledger_before).unwrap();
+    assert_eq!(record["state"], "cleared");
+    for part in ["target", "tmp", "logs"] {
+        std::fs::write(ws.join(part).join("keep.txt"), part).unwrap();
+    }
+    let other_dir = tempfile::tempdir().unwrap();
+    let other_repo = self::repo(other_dir.path());
+    let (code, refused) = run(&[
+        "claim",
+        "--root",
+        root_s,
+        "--lane",
+        "lane",
+        "--task",
+        "2435",
+        "--repo",
+        other_repo.to_str().unwrap(),
+        "--base",
+        "HEAD",
+        "--branch",
+        "issue-2435-other-repo",
+    ]);
+    assert_eq!(
+        code, 2,
+        "another repository cannot adopt residue: {refused}"
+    );
+    assert_eq!(
+        refused["diagnostics"][0]["code"],
+        "GHCLI037_WORKSPACE_REFUSED"
+    );
+    assert_eq!(refused["diagnostics"][0]["path"], "/task");
+    assert_eq!(std::fs::read(&ledger).unwrap(), ledger_before);
+    for part in ["target", "tmp", "logs"] {
+        assert_eq!(
+            std::fs::read(ws.join(part).join("keep.txt")).unwrap(),
+            part.as_bytes()
+        );
+    }
+    assert!(!ws.join("wt").exists());
+    let branches = graphhelm_process::command("git")
+        .arg("-C")
+        .arg(&other_repo)
+        .args(["branch", "--list", "issue-2435-other-repo"])
+        .output()
+        .unwrap();
+    assert!(branches.status.success(), "{branches:?}");
+    assert!(
+        branches.stdout.is_empty(),
+        "refusal created a branch in repo B"
+    );
+    let again = |branch: &str| {
+        run(&[
+            "claim",
+            "--root",
+            root_s,
+            "--lane",
+            "lane",
+            "--task",
+            "2435",
+            "--repo",
+            repo.to_str().unwrap(),
+            "--base",
+            "HEAD",
+            "--branch",
+            branch,
+        ])
+    };
+    std::fs::write(ws.join("stranger.txt"), "not made by a claim").unwrap();
+    let (code, refused) = again("issue-2435-lane-r2");
+    assert_eq!(
+        code, 2,
+        "a directory with other content is never adopted: {refused}"
+    );
+    assert!(ws.join("stranger.txt").is_file(), "nothing is deleted");
+    std::fs::remove_file(ws.join("stranger.txt")).unwrap();
+    let (code, admitted) = again("issue-2435-lane-r2");
+    assert_eq!(code, 0, "the same task is claimable again: {admitted}");
+    assert!(ws.join("wt").join("a.txt").is_file());
+}
+
 #[test]
 fn sweep_removes_only_released_clean_unmoved_workspaces_and_never_follows_links() {
     let dir = tempfile::tempdir().unwrap();

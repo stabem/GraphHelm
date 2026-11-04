@@ -323,6 +323,10 @@ class SkillChain(unittest.TestCase):
                     target.write_bytes(source.read_bytes())
         self.git("add", "-A")
         self.git("commit", "-qm", "base")
+        self.git("branch", "-M", "main")
+        guard.write(self.repo, "main")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "normalize generated fixture chain")
 
     release = False
 

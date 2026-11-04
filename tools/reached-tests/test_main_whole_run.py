@@ -5,6 +5,8 @@ import threading
 import os
 import tempfile
 import sys
+import subprocess
+import datetime
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
@@ -15,6 +17,312 @@ import run_reached as runner
 
 
 class WholeRun(unittest.TestCase):
+    def test_nightly_key_is_the_utc_calendar_date(self):
+        moment = datetime.datetime(2026, 11, 4, 22, 15, tzinfo=datetime.timezone.utc)
+        self.assertEqual(mw.night_date(moment), "2026-11-04")
+
+    def test_nightly_lock_refuses_a_second_process_lock(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "nightly.lock"
+            with mw.NightlyLock(path):
+                source = ("import sys; sys.path.insert(0, " + repr(str(Path(mw.__file__).parent)) + "); "
+                          "import main_whole_run; "
+                          "lock = main_whole_run.NightlyLock(sys.argv[1]); "
+                          "\ntry:\n lock.__enter__()\nexcept RuntimeError:\n raise SystemExit(2)\n"
+                          "raise SystemExit(0)")
+                child = subprocess.run([sys.executable, "-c", source, str(path)],
+                                       capture_output=True, text=True, timeout=10,
+                                       stdin=subprocess.DEVNULL, creationflags=mw.NO_WINDOW)
+                self.assertEqual(child.returncode, 2, child.stderr)
+
+    def test_quiet_preflight_requires_the_reserved_window_and_empty_slot(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "IDLE-WINDOWS.md"
+            why = "#2510: single hidden latest-main full reached run at 22:15Z; 60-minute timeout and 30-minute margin"
+            path.write_text(f"| 2026-11-04 22:00Z | 2026-11-04 23:30Z | {why} | openbot-shikaku |\n",
+                            encoding="utf-8")
+            args = SimpleNamespace(night_date="2026-11-04", idle_windows_file=str(path))
+            moment = datetime.datetime(2026, 11, 4, 22, 15, tzinfo=datetime.timezone.utc)
+
+            def empty_processes(command, **kwargs):
+                self.assertEqual(command[0], "powershell.exe")
+                return SimpleNamespace(returncode=0, stdout="[]")
+
+            path.write_text(f"| 2026-11-04 22:00Z | 2026-11-04 23:30Z | {why} | another-lane |\n",
+                            encoding="utf-8")
+            allowed, _ = mw.quiet_preflight(args, moment, lambda *_a, **_k: self.fail("wrong owner must stop first"))
+            self.assertFalse(allowed)
+            path.write_text(f"| 2026-11-04 22:00Z | 2026-11-04 23:30Z | {why} | openbot-shikaku |\n",
+                            encoding="utf-8")
+            allowed, _ = mw.quiet_preflight(args, moment, empty_processes)
+            self.assertTrue(allowed)
+            busy_args = SimpleNamespace(**vars(args))
+            busy = lambda *_a, **_k: SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"ProcessId": 12, "Name": "cargo.exe", "CommandLine": "cargo test -p graphhelm-cli"}]))
+            allowed, reason = mw.quiet_preflight(busy_args, moment, busy)
+            self.assertFalse(allowed)
+            self.assertIn("active heavy processes", reason["reason"])
+            self.assertEqual(reason["processes"], [{"pid": 12, "name": "cargo.exe"}])
+
+    def test_busy_slot_writes_blocked_receipt_without_running_or_opening_p0(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            idle = root / "IDLE-WINDOWS.md"
+            why = "#2510: single hidden latest-main full reached run at 22:15Z; 60-minute timeout and 30-minute margin"
+            idle.write_text(f"| 2026-11-04 22:00Z | 2026-11-04 23:30Z | {why} | openbot-shikaku |\n",
+                            encoding="utf-8")
+            args = SimpleNamespace(receipt_root=str(root / "nightly"), night_date="2026-11-04",
+                                   idle_windows_file=str(idle))
+            calls = []
+
+            def busy_process(command, **kwargs):
+                calls.append(command)
+                return SimpleNamespace(returncode=0, stdout=json.dumps([
+                    {"ProcessId": 12, "Name": "cargo.exe", "CommandLine": "cargo test -p graphhelm-cli"}]))
+
+            result = mw.run_nightly(args, ["--nightly"], run=busy_process,
+                                    now=datetime.datetime(2026, 11, 4, 22, 15, tzinfo=datetime.timezone.utc))
+            receipt = json.loads((root / "nightly" / "2026-11-04" / "receipt.json").read_text(encoding="utf-8"))
+            self.assertEqual(result, 2)
+            self.assertEqual(receipt["status"], "blocked")
+            self.assertIsNone(receipt["p0Issue"])
+            self.assertEqual(len(calls), 1)
+
+    def test_main_copy_timeout_saves_logs_and_opens_one_p0(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            idle = root / "IDLE-WINDOWS.md"
+            why = "#2510: single hidden latest-main full reached run at 22:15Z; 60-minute timeout and 30-minute margin"
+            idle.write_text(f"| 2026-11-04 22:00Z | 2026-11-04 23:30Z | {why} | openbot-shikaku |\n",
+                            encoding="utf-8")
+            latest_script = root / "latest_main_whole_run.py"
+            latest_script.write_text("--nightly", encoding="utf-8")
+            args = SimpleNamespace(receipt_root=str(root / "nightly"), night_date="2026-11-04",
+                                   idle_windows_file=str(idle), root=str(root / "build"), repo="repo",
+                                   github="stabem/GraphHelm", timeout=1)
+            old_git, old_prepare, old_newer, old_reexec = mw.git, mw.prepare_tree, mw.newer_copy, mw.reexec
+            mw.git = lambda _repo, *parts: "a" * 40 if parts == ("rev-parse", "origin/main") else ""
+            mw.prepare_tree = lambda _repo, tree, _sha: Path(tree).mkdir(parents=True, exist_ok=True)
+            mw.newer_copy = lambda *_: latest_script
+            mw.reexec = lambda *_a, **_k: (_ for _ in ()).throw(subprocess.TimeoutExpired("runner", 1, output=b"partial out", stderr=b"partial err"))
+
+            def fake_run(command, **kwargs):
+                if command[0] == "powershell.exe":
+                    return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+                if command[:3] == ["gh", "issue", "list"]:
+                    return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+                if command[:3] == ["gh", "issue", "create"]:
+                    return SimpleNamespace(returncode=0, stdout="https://github.com/stabem/GraphHelm/issues/2521\n", stderr="")
+                self.fail(f"unexpected command: {command}")
+
+            try:
+                result = mw.run_nightly(args, ["--nightly"], run=fake_run,
+                                        now=datetime.datetime(2026, 11, 4, 22, 15, tzinfo=datetime.timezone.utc))
+            finally:
+                mw.git, mw.prepare_tree, mw.newer_copy, mw.reexec = old_git, old_prepare, old_newer, old_reexec
+            receipt_dir = root / "nightly" / "2026-11-04"
+            saved = json.loads((receipt_dir / "receipt.json").read_text(encoding="utf-8"))
+            self.assertEqual(result, 1)
+            self.assertEqual(saved["status"], "incomplete")
+            self.assertEqual(saved["p0Issue"]["url"], "https://github.com/stabem/GraphHelm/issues/2521")
+            self.assertEqual((receipt_dir / "runner.stdout.log").read_text(encoding="utf-8"), "partial out")
+            self.assertEqual((receipt_dir / "runner.stderr.log").read_text(encoding="utf-8"), "partial err")
+            self.assertIn("pinned copy exceeded the deadline", saved["redSteps"][0])
+
+    def test_merge_list_names_only_main_commits_since_last_green(self):
+        old_commits = mw.first_parent_commits
+        mw.first_parent_commits = lambda *_: {"merge-sha"}
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            if command[0] == "git":
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout=json.dumps([
+                {"number": 2511, "title": "Merged after green", "mergeCommit": {"oid": "merge-sha"}},
+                {"number": 2512, "title": "Not on this main path", "mergeCommit": {"oid": "other-sha"}},
+            ]), stderr="")
+
+        try:
+            result = mw.merges_since_green("repo", "stabem/GraphHelm", "green-sha", "head-sha", fake_run)
+        finally:
+            mw.first_parent_commits = old_commits
+        self.assertEqual(result["status"], "observed")
+        self.assertEqual([item["number"] for item in result["merges"]], [2511])
+        self.assertEqual(len(calls), 2)
+
+    def test_failure_issue_body_marks_missing_green_as_unobserved(self):
+        body, marker = mw.failure_issue_body("2026-11-04", "head-sha", None,
+                                              {"status": "UNOBSERVED", "merges": []},
+                                              "nightly/reached.json", ["cargo test failed"])
+        self.assertEqual(marker, "nightly-main-2026-11-04")
+        self.assertIn("Last green SHA: `UNOBSERVED`", body)
+        self.assertIn("Merges since last green: UNOBSERVED", body)
+        self.assertIn("cargo test failed", body)
+        self.assertIn("does not claim that any merge caused", body)
+
+    def test_p0_search_failure_fails_closed_without_creating_a_duplicate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            calls = []
+            def search_fails(command, **kwargs):
+                calls.append(command)
+                return SimpleNamespace(returncode=1, stdout="", stderr="unavailable")
+            args = SimpleNamespace(github="stabem/GraphHelm")
+            result = mw.open_failure_issue(args, "2026-11-04", "head", None,
+                                           {"status": "UNOBSERVED", "merges": []},
+                                           Path(temp) / "reached.json", ["failed step"], run=search_fails)
+            self.assertEqual(result, {"status": "failed"})
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][:2], ["gh", "issue"])
+            self.assertIn("list", calls[0])
+
+    def test_existing_nightly_receipt_prevents_a_second_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            receipt_dir = root / "2026-11-04"
+            receipt_dir.mkdir()
+            receipt = receipt_dir / "receipt.json"
+            original = b'{"nightDate":"2026-11-04","status":"incomplete"}\n'
+            receipt.write_bytes(original)
+            args = SimpleNamespace(receipt_root=str(root), night_date="2026-11-04")
+            result = mw.run_nightly(args, [], run=lambda *a, **k: self.fail("must not rerun"),
+                                    now=datetime.datetime(2026, 11, 4, tzinfo=datetime.timezone.utc))
+            self.assertEqual(result, 1)
+            self.assertEqual(receipt.read_bytes(), original)
+
+    def test_red_nightly_run_keeps_logs_receipt_and_opens_one_p0(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            args = SimpleNamespace(receipt_root=str(root / "nightly"), night_date="2026-11-04",
+                                   root=str(root / "build"), repo="repo", github="stabem/GraphHelm",
+                                   timeout=60, idle_windows_file=str(root / "IDLE-WINDOWS.md"))
+            why = "#2510: single hidden latest-main full reached run at 22:15Z; 60-minute timeout and 30-minute margin"
+            Path(args.idle_windows_file).write_text(
+                f"| 2026-11-04 22:00Z | 2026-11-04 23:30Z | {why} | openbot-shikaku |\n", encoding="utf-8")
+            head, base = "a" * 40, "b" * 40
+            old_git, old_prepare, old_newer = mw.git, mw.prepare_tree, mw.newer_copy
+
+            def fake_git(_repo, *parts):
+                if parts == ("rev-parse", "origin/main"):
+                    return head
+                if parts == ("rev-parse", "origin/main^"):
+                    return base
+                return ""
+
+            def fake_prepare(_repo, tree, _sha):
+                Path(tree).mkdir(parents=True, exist_ok=True)
+
+            mw.git, mw.prepare_tree, mw.newer_copy = fake_git, fake_prepare, lambda *_: None
+
+            def fake_run(command, **kwargs):
+                if command[0] == "powershell.exe":
+                    return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+                if "run_reached.py" in str(command[1]):
+                    report = Path(command[command.index("--output") + 1])
+                    report.parent.mkdir(parents=True, exist_ok=True)
+                    report.write_text(json.dumps({"status": "failed", "completed": [
+                        {"name": "cargo test -p graphhelm-cli", "returncode": 101}]}), encoding="utf-8")
+                    return SimpleNamespace(returncode=1, stdout="test output", stderr="test error")
+                if command[:3] == ["gh", "issue", "list"]:
+                    return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+                if command[:3] == ["gh", "issue", "create"]:
+                    return SimpleNamespace(returncode=0, stdout="https://github.com/stabem/GraphHelm/issues/2520\n", stderr="")
+                self.fail(f"unexpected command: {command}")
+
+            try:
+                result = mw.run_nightly(args, ["--nightly"], run=fake_run,
+                                        now=datetime.datetime(2026, 11, 4, 22, 15, tzinfo=datetime.timezone.utc))
+            finally:
+                mw.git, mw.prepare_tree, mw.newer_copy = old_git, old_prepare, old_newer
+
+            receipt_dir = root / "nightly" / "2026-11-04"
+            saved = json.loads((receipt_dir / "receipt.json").read_text(encoding="utf-8"))
+            issue = (receipt_dir / "p0-issue.md").read_text(encoding="utf-8")
+            self.assertEqual(result, 1)
+            self.assertEqual(saved["status"], "failed")
+            self.assertEqual(saved["headSha"], head)
+            self.assertEqual(saved["baseSha"], base)
+            self.assertEqual(saved["baseline"], "UNOBSERVED")
+            self.assertEqual(saved["p0Issue"]["url"], "https://github.com/stabem/GraphHelm/issues/2520")
+            self.assertTrue((receipt_dir / "runner.stdout.log").is_file())
+            self.assertTrue((receipt_dir / "runner.stderr.log").is_file())
+            self.assertIn("Merges since last green: UNOBSERVED", issue)
+            self.assertIn("cargo test -p graphhelm-cli", issue)
+
+    def test_green_nightly_run_keeps_passed_receipt_and_does_not_open_p0(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            idle = root / "IDLE-WINDOWS.md"
+            why = "#2510: single hidden latest-main full reached run at 22:15Z; 60-minute timeout and 30-minute margin"
+            idle.write_text(f"| 2026-11-04 22:00Z | 2026-11-04 23:30Z | {why} | openbot-shikaku |\n",
+                            encoding="utf-8")
+            args = SimpleNamespace(receipt_root=str(root / "nightly"), night_date="2026-11-04",
+                                   root=str(root / "build"), repo="repo", github="stabem/GraphHelm",
+                                   timeout=60, idle_windows_file=str(idle))
+            head, base = "a" * 40, "b" * 40
+            old_git, old_prepare, old_newer = mw.git, mw.prepare_tree, mw.newer_copy
+            calls = []
+
+            def fake_git(_repo, *parts):
+                if parts == ("rev-parse", "origin/main"):
+                    return head
+                if parts == ("rev-parse", "origin/main^"):
+                    return base
+                return ""
+
+            def fake_prepare(_repo, tree, _sha):
+                Path(tree).mkdir(parents=True, exist_ok=True)
+
+            def fake_run(command, **kwargs):
+                calls.append(command)
+                if command[0] == "powershell.exe":
+                    return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+                if "run_reached.py" in str(command[1]):
+                    report = Path(command[command.index("--output") + 1])
+                    report.parent.mkdir(parents=True, exist_ok=True)
+                    report.write_text(json.dumps({"status": "passed", "completed": []}), encoding="utf-8")
+                    return SimpleNamespace(returncode=0, stdout="green", stderr="")
+                self.fail(f"unexpected command: {command}")
+
+            mw.git, mw.prepare_tree, mw.newer_copy = fake_git, fake_prepare, lambda *_: None
+            try:
+                result = mw.run_nightly(args, ["--nightly"], run=fake_run,
+                                        now=datetime.datetime(2026, 11, 4, 22, 15, tzinfo=datetime.timezone.utc))
+            finally:
+                mw.git, mw.prepare_tree, mw.newer_copy = old_git, old_prepare, old_newer
+
+            receipt_dir = root / "nightly" / "2026-11-04"
+            saved = json.loads((receipt_dir / "receipt.json").read_text(encoding="utf-8"))
+            green = json.loads((root / "nightly" / "last-green.json").read_text(encoding="utf-8"))
+            self.assertEqual(result, 0)
+            self.assertEqual(saved["status"], "passed")
+            self.assertIsNone(saved["p0Issue"])
+            self.assertEqual(green["sha"], head)
+            self.assertEqual(green["receipt"], str(receipt_dir / "receipt.json"))
+            self.assertFalse(any(command[:3] == ["gh", "issue", "create"] for command in calls))
+
+    def test_legacy_main_returns_the_reexec_child_exit_code(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            repo.mkdir()
+            copy = root / "main.py"
+            copy.write_text("child", encoding="utf-8")
+            old_resolve, old_git = mw.resolve_execution, mw.git
+            old_prepare, old_newer, old_reexec = mw.prepare_tree, mw.newer_copy, mw.reexec
+            mw.resolve_execution = lambda _args: "execution"
+            mw.git = lambda _repo, *parts: "a" * 40 if parts == ("rev-parse", "origin/main") else ""
+            mw.prepare_tree = lambda _repo, tree, _sha: Path(tree).mkdir(parents=True, exist_ok=True)
+            mw.newer_copy = lambda *_: copy
+            mw.reexec = lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="", stderr="")
+            try:
+                result = mw.main(["--repo", str(repo), "--root", str(root / "build")])
+            finally:
+                mw.resolve_execution, mw.git = old_resolve, old_git
+                mw.prepare_tree, mw.newer_copy, mw.reexec = old_prepare, old_newer, old_reexec
+            self.assertIs(type(result), int)
+            self.assertEqual(result, 0)
+
     def test_main_posts_to_bound_execution_before_state_completion(self):
         seen = []
 
@@ -224,12 +532,13 @@ class WholeRun(unittest.TestCase):
         real = mw.subprocess.run
         mw.subprocess.run = fake
         try:
-            self.assertEqual(mw.reexec(Path("c.py"), ["--x"], {}), 7)
+            self.assertEqual(mw.reexec(Path("c.py"), ["--x"], {}).returncode, 7)
         finally:
             mw.subprocess.run = real
         self.assertEqual(seen["env"]["MAIN_WHOLE_RUN_REEXEC"], "1")
         self.assertEqual(seen["creationflags"], mw.NO_WINDOW)
         self.assertIs(seen["stdin"], mw.subprocess.DEVNULL)
+        self.assertTrue(seen["capture_output"])
         self.assertEqual(seen["cmd"][1:], ["c.py", "--x"])
 
 

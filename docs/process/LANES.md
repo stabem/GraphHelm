@@ -115,6 +115,12 @@ ode_modules`) can be a junction into the
 
 ## 3. Builds: one slot for the whole machine
 
+Owner-reported P0 bugs take the next slot turn. The coordinator pre-assigns a reviewer before
+push; the holder yields safely with a saved checkpoint and receipt, without destroying work.
+Only one heavy build runs at a time. Respect declared benchmark windows. Proof scope, early
+push and the once-nightly full main plan follow DELIVERY.md §3; do not hold a PR for that plan.
+
+
 - Every Cargo build, test or clippy invocation runs under the existing build slot, with a direct
   Cargo command and an explicit package. Each test invocation names exactly one package and one
   explicit target. Multiple module filters for that executable may follow `--`:
@@ -234,13 +240,14 @@ ode_modules`) can be a junction into the
   default feedback batch keeps one bounded slot lease across short Cargo commands and yields at
   its time boundary. `--no-batch-slot` restores one Cargo command per slot invocation. Never put the entire outer
   runner inside the slot: scripts and unrestricted command lists remain refused.
-- **Use the reached-test runner for ordinary feedback:**
+- **Optional runner for the selected feedback scope; full plan for nightly main:**
 
       python tools/reached-tests/run_reached.py --repo . --base origin/main --head HEAD --root D:/gh --lane <lane> --output <outside-repo>/feedback.json
 
-  The author's run of this command is the receipt the reviewer reuses instead of a second
-  whole-plan run on the same head, and main gets its one whole run after merges; when each
-  applies is [DELIVERY.md](DELIVERY.md) §3 to §5.
+  This command executes its computed plan; do not mistake its availability for a full-plan PR
+  requirement. For PRs, save the proportional command receipts instead when this plan is broader.
+  Reviewers reuse exact-head author evidence and rerun only one or two risk-selected tests.
+  The full plan runs once nightly on main, not after every merge (DELIVERY.md §3).
 
   Pin the agent CLI with `--graphhelm <absolute-executable>` or `GRAPHHELM_CLI`; an explicit
   missing executable is an error, never a reason to fall back to another installation. The
@@ -415,6 +422,12 @@ After the end lands, the command releases, as the lane, every pre-PR claim the l
 that ended without a PR will not open one, so its issue is free at once, not after the lease.
 
 ### Autonomous lane wake loop
+
+Until the doorbell is delivered and its host wake is observed, retain the existing per-agent
+30-minute OpenBot routines. After that, pending work must arm the doorbell before turn end.
+Record the next action, owner and evidence before waiting. An armed lease without host completion
+notification is not an observed wake; report the gap and retain the fallback routines.
+
 
 Studio's **Ask for status** appends an `operator_note` addressed with `to: <lane>` on the
 team execution. SendMessage is not its delivery mechanism. Every active lane must maintain

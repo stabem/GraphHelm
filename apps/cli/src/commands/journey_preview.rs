@@ -795,7 +795,7 @@ fn safe_tail(bytes: &[u8], cut: bool, secrets: Option<&[String]>) -> String {
             .unwrap_or(text.len());
         text.drain(..start);
     }
-    super::journey_replay::masked_tail(text.as_bytes(), COMPLETE_DETAIL, 0, &[])
+    super::journey_replay::masked_complete_output(text.as_bytes(), &[])
 }
 
 fn safe_detail(text: &str) -> String {

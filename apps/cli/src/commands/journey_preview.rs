@@ -4393,7 +4393,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             old[key] = value.clone();
         }
         save_state(&dir, &old);
-        archive(&dir, &old).expect(" archive the old run before replacing it\);
+        archive(&dir, &old).expect("archive the old run before replacing it");
         let mut newest = kept(&digest, "ready");
         newest["startedAt"] = "2026-10-23T21:53:00Z".into();
         newest["ranAt"] = "2026-10-23T21:53:09Z".into();

@@ -906,6 +906,82 @@ pub(crate) fn pr_target_path(root: &Path, pr: u32) -> PathBuf {
     root.join("targets").join(format!("pr-{pr}")).join("target")
 }
 
+const PR_TARGET_IDENTITY: &str = ".graphhelm-pr-target.json";
+
+fn publish_pr_target_identity(target: &Path, repository_id: &str, pr: u32) -> Result<(), String> {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    let parent = target
+        .parent()
+        .ok_or("pull-request target has no parent directory")?;
+    let identity_path = target.join(PR_TARGET_IDENTITY);
+    let identity = serde_json::to_vec(&json!({
+        "schema": "graphhelm.pr-cargo-target/1",
+        "repositoryId": repository_id,
+        "pr": pr,
+    }))
+    .map_err(|_| "pull-request target identity could not be serialized")?;
+
+    for _ in 0..16 {
+        let temp_path = parent.join(format!(
+            ".{PR_TARGET_IDENTITY}.{}.{}.tmp",
+            std::process::id(),
+            NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => {
+                return Err(
+                    "pull-request target identity temporary file could not be created".into(),
+                );
+            }
+        };
+        if file
+            .write_all(&identity)
+            .and_then(|()| file.sync_all())
+            .is_err()
+        {
+            drop(file);
+            return match std::fs::remove_file(&temp_path) {
+                Ok(()) => {
+                    Err("pull-request target identity temporary file could not be saved".into())
+                }
+                Err(_) => Err(
+                    "pull-request target identity temporary file could not be saved or removed"
+                        .into(),
+                ),
+            };
+        }
+        drop(file);
+
+        // The final name is created only after the complete file is synced; hard_link also
+        // refuses to replace an identity published by another admission.
+        if let Err(error) = std::fs::hard_link(&temp_path, &identity_path) {
+            let cleanup = std::fs::remove_file(&temp_path);
+            if cleanup.is_err() {
+                return Err("pull-request target identity could not be published and its temporary file could not be removed".into());
+            }
+            return if error.kind() == std::io::ErrorKind::AlreadyExists {
+                Err("pull-request target identity already exists".into())
+            } else {
+                Err("pull-request target identity could not be published atomically".into())
+            };
+        }
+        std::fs::remove_file(&temp_path)
+            .map_err(|_| "pull-request target identity was published but its temporary file could not be removed")?;
+        return Ok(());
+    }
+    Err("pull-request target identity temporary file could not be allocated".into())
+}
+
 /// Validate or create the per-PR Cargo cache inside the workspace root. The existing slot
 /// serializes writers; retirement remains a separate follow-up.
 pub(crate) fn check_pr_target(
@@ -987,7 +1063,7 @@ pub(crate) fn check_pr_target(
     }
 
     if target.is_dir() {
-        let identity_path = target.join(".graphhelm-pr-target.json");
+        let identity_path = target.join(PR_TARGET_IDENTITY);
         match std::fs::symlink_metadata(&identity_path) {
             Ok(metadata) if is_link(&metadata) || !metadata.is_file() || metadata.len() > 4096 => {
                 return Err("pull-request target identity is not a regular bounded file".into());
@@ -1007,27 +1083,15 @@ pub(crate) fn check_pr_target(
                 }
                 Err(_) => return Err("pull-request target identity could not be read".into()),
             },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound && create => {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let mut entries = std::fs::read_dir(target)
                     .map_err(|_| "pull-request target could not be listed")?;
                 if entries.next().is_some() {
                     return Err("unidentified pull-request target is not empty".into());
                 }
-                let identity = serde_json::to_vec(&serde_json::json!({
-                    "schema": "graphhelm.pr-cargo-target/1",
-                    "repositoryId": repository_id,
-                    "pr": pr,
-                }))
-                .map_err(|_| "pull-request target identity could not be serialized")?;
-                use std::io::Write as _;
-                let mut file = std::fs::File::create_new(&identity_path)
-                    .map_err(|_| "pull-request target identity could not be created")?;
-                file.write_all(&identity)
-                    .and_then(|()| file.sync_all())
-                    .map_err(|_| "pull-request target identity could not be saved")?;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err("pull-request target has no verified identity".into());
+                if create {
+                    publish_pr_target_identity(target, repository_id, pr)?;
+                }
             }
             Err(_) => return Err("pull-request target identity could not be inspected".into()),
         }

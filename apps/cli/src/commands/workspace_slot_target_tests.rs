@@ -303,7 +303,7 @@ fn sibling_worktrees_reuse_one_pr_target_and_rebuild_changed_source()
     );
     let wrong_head_error = match wrong_head_result {
         Err(error) => error,
-        Ok(()) => return Err(std::io::Error::other("wrong PR head was accepted").into()),
+        Ok(_) => return Err(std::io::Error::other("wrong PR head was accepted").into()),
     };
     assert!(wrong_head_error.contains("--pr-head must match the current full HEAD"));
     assert!(!root.join("targets").exists());

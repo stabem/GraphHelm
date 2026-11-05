@@ -14,14 +14,15 @@
 
 use std::path::{Path, PathBuf};
 
-/// The workspace root, found by walking UP to the `Cargo.toml` that declares `[workspace]`.
+/// The active workspace root, found by walking UP from the test process's current directory.
 ///
-/// Not `CARGO_MANIFEST_DIR` plus a fixed number of parents. That form is correct only for an
-/// includer at one particular depth, and the whole point of extracting this file is that the next
-/// includer sits somewhere else -- `adapters/<name>` and `core/<name>` are both two deep today, and
-/// nothing promises the third one is.
+/// A compile-time `CARGO_MANIFEST_DIR` belongs to the worktree that built a shared target artifact.
+/// Another worktree can reuse that artifact after the source worktree is removed, so runtime
+/// discovery avoids retaining a stale checkout path.
 pub fn workspace_root() -> PathBuf {
-    let start = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let start = std::env::current_dir().unwrap_or_else(|error| {
+        panic!("the active workspace directory must resolve: {error}");
+    });
     let mut candidate = start.as_path();
     loop {
         let manifest = candidate.join("Cargo.toml");

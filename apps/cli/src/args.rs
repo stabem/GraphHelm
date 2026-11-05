@@ -2583,6 +2583,12 @@ pub struct WorkspaceSlotArgs {
     /// it did not build (#361). Opt-in only, for builds whose result does not vouch for a tree.
     #[arg(long)]
     pub shared_target: bool,
+    /// Use the PR-scoped target below the workspace root; the existing slot still serializes builds.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    pub pr: Option<u32>,
+    /// Full pinned commit for --pr; it must match HEAD both before waiting and after admission.
+    #[arg(long, requires = "pr")]
+    pub pr_head: Option<String>,
     /// Give up after this many minutes of waiting (fractions allowed). Without it a waiter waits
     /// as long as it takes (#540). A waiter that gives up keeps its place for 30 minutes: the
     /// same lane and label queueing again within that time are served where they first arrived.

@@ -1344,7 +1344,7 @@ def run(args: argparse.Namespace) -> int:
                     # The CLI receives original argv; its Rust worker selects the child cwd/target.
                     command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
                                "--lane", args.lane, "--jobs", jobs, *stage_args, "--label", f"reached-batch-{indices[0]}",
-                               "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
+                               "--max-wait", repr(remaining_budget / 60.0), *pr_target_args(args, before), "--", *commands[0]]
                     # Batch commands are carried by the opt-in environment, never by the CLI argv.
                     payload = {"schema": _BATCH_SCHEMA, "commands": commands,
                                "budgetSeconds": remaining_budget, "deadlineUnixMs": deadline_unix_ms,
@@ -1352,7 +1352,7 @@ def run(args: argparse.Namespace) -> int:
                 elif entry["slot"]:
                     command = [str(selected_graphhelm), "--json", "workspace", "slot", "--root", args.root,
                                "--lane", args.lane, "--jobs", jobs, *stage_args, "--label", f"reached-step-{entry['index']}",
-                               "--max-wait", repr(remaining_budget / 60.0), "--", *commands[0]]
+                               "--max-wait", repr(remaining_budget / 60.0), *pr_target_args(args, before), "--", *commands[0]]
                     payload = None
                 else:
                     command = commands[0]
@@ -1610,6 +1610,14 @@ def default_lane(repo: Path) -> str:
     return f"reached-{name}"
 
 
+def pr_target_args(args: argparse.Namespace, head: str) -> list[str]:
+    """Carry one optional PR identity to every managed Cargo slot command."""
+    pr = getattr(args, "pr", None)
+    if pr is None:
+        return []
+    return ["--pr", str(pr), "--pr-head", head]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--repo", default=".")
@@ -1617,6 +1625,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--head", default="HEAD")
     ap.add_argument("--root", default="D:/gh")
     ap.add_argument("--lane", help="build-slot lane (default: reached-<worktree directory name>)")
+    ap.add_argument("--pr", type=int, help="share a warm target for this pull request")
     ap.add_argument("--graphhelm", help="GraphHelm executable; overrides GRAPHHELM_CLI and PATH")
     ap.add_argument("--output", help="report path, outside the repository "
                     "(default: <system temp>/graphhelm-reached/<repo dir>-<lane>.json)")
@@ -1657,6 +1666,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if not 1 <= args.jobs <= 32:
         ap.error("--jobs must be between 1 and 32")
+    if args.pr is not None and args.pr <= 0:
+        ap.error("--pr must be a positive integer")
     if args.test_threads is not None and not 1 <= args.test_threads <= 64:
         ap.error("--test-threads must be between 1 and 64")
     if args.memory_reserve_gib is not None and not 0 <= args.memory_reserve_gib <= 1024:

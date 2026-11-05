@@ -58,6 +58,8 @@ pub fn run(args: &WorkspaceArgs) -> Outcome {
                     jobs: slot.jobs,
                     clean_workspace: slot.clean_workspace,
                     shared: slot.shared_target,
+                    pr: slot.pr,
+                    pr_head: slot.pr_head.as_deref(),
                     max_wait: slot.max_wait,
                     priority: slot.priority,
                     stage: slot.stage,
@@ -788,6 +790,12 @@ pub(crate) struct TargetRule {
     pub min_free_gb: u64,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum PrTargetMode {
+    BeforeSlotAdmission,
+    AfterSlotAdmission,
+}
+
 /// `Ok(None)`: no rule file. A file that cannot be read or does not say where to build is an
 /// error, never a silent fall back to the worktree's own disk: the owner wrote a rule.
 pub(crate) fn target_rule(root: &Path) -> Result<Option<TargetRule>, String> {
@@ -892,6 +900,209 @@ fn worktree_gone(path: &Path) -> bool {
 /// record: a record cannot point the delete at another path.
 fn target_dir(rule: &TargetRule, lane: &str, name: &str) -> PathBuf {
     rule.root.join(lane).join(name).join("target")
+}
+
+pub(crate) fn pr_target_path(root: &Path, pr: u32) -> PathBuf {
+    root.join("targets").join(format!("pr-{pr}")).join("target")
+}
+
+const PR_TARGET_IDENTITY: &str = ".graphhelm-pr-target.json";
+const IDENTITY_TEMP_FILE_IS_WRITABLE: bool = true;
+const IDENTITY_TEMP_FILE_MUST_NOT_EXIST: bool = true;
+
+fn publish_pr_target_identity(target: &Path, repository_id: &str, pr: u32) -> Result<(), String> {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    let parent = target
+        .parent()
+        .ok_or("pull-request target has no parent directory")?;
+    let identity_path = target.join(PR_TARGET_IDENTITY);
+    let identity = serde_json::to_vec(&json!({
+        "schema": "graphhelm.pr-cargo-target/1",
+        "repositoryId": repository_id,
+        "pr": pr,
+    }))
+    .map_err(|_| "pull-request target identity could not be serialized")?;
+
+    for _ in 0..16 {
+        let temp_path = parent.join(format!(
+            ".{PR_TARGET_IDENTITY}.{}.{}.tmp",
+            std::process::id(),
+            NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut file = match std::fs::OpenOptions::new()
+            .write(IDENTITY_TEMP_FILE_IS_WRITABLE)
+            .create_new(IDENTITY_TEMP_FILE_MUST_NOT_EXIST)
+            .open(&temp_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => {
+                return Err(
+                    "pull-request target identity temporary file could not be created".into(),
+                );
+            }
+        };
+        if file
+            .write_all(&identity)
+            .and_then(|()| file.sync_all())
+            .is_err()
+        {
+            drop(file);
+            return match std::fs::remove_file(&temp_path) {
+                Ok(()) => {
+                    Err("pull-request target identity temporary file could not be saved".into())
+                }
+                Err(_) => Err(
+                    "pull-request target identity temporary file could not be saved or removed"
+                        .into(),
+                ),
+            };
+        }
+        drop(file);
+
+        // The final name is created only after the complete file is synced; hard_link also
+        // refuses to replace an identity published by another admission.
+        if let Err(error) = std::fs::hard_link(&temp_path, &identity_path) {
+            let cleanup = std::fs::remove_file(&temp_path);
+            if cleanup.is_err() {
+                return Err("pull-request target identity could not be published and its temporary file could not be removed".into());
+            }
+            return if error.kind() == std::io::ErrorKind::AlreadyExists {
+                Err("pull-request target identity already exists".into())
+            } else {
+                Err("pull-request target identity could not be published atomically".into())
+            };
+        }
+        std::fs::remove_file(&temp_path)
+            .map_err(|_| "pull-request target identity was published but its temporary file could not be removed")?;
+        return Ok(());
+    }
+    Err("pull-request target identity temporary file could not be allocated".into())
+}
+
+/// Validate or create the per-PR Cargo cache inside the workspace root. The existing slot
+/// serializes writers; retirement remains a separate follow-up.
+pub(crate) fn check_pr_target(
+    root: &Path,
+    rule: &TargetRule,
+    target: &Path,
+    repository_id: &str,
+    pr: u32,
+    mode: PrTargetMode,
+) -> Result<(), String> {
+    let create = matches!(mode, PrTargetMode::AfterSlotAdmission);
+    use std::path::Component;
+    let root = root
+        .canonicalize()
+        .map_err(|_| "workspace root could not be resolved")?;
+    let expected = pr_target_path(&root, pr);
+    if target != expected {
+        return Err("pull-request target does not match its PR-derived path".into());
+    }
+    let relative = target
+        .strip_prefix(&root)
+        .map_err(|_| "pull-request target escaped the workspace root")?;
+    if relative
+        .components()
+        .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err("pull-request target path contains an unsafe component".into());
+    }
+    for ancestor in root.ancestors() {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(metadata) if is_link(&metadata) => {
+                return Err("workspace root contains a link or reparse point".into());
+            }
+            Ok(_) => {}
+            Err(_) => return Err("workspace root could not be inspected".into()),
+        }
+    }
+    let root_metadata = std::fs::metadata(&root).map_err(|_| "workspace root is unavailable")?;
+    if !root_metadata.is_dir() {
+        return Err("workspace root is not a directory".into());
+    }
+    if rule.min_free_gb > 0 {
+        let free = fs2::available_space(&root)
+            .map_err(|_| "workspace target free space could not be measured")?;
+        if free < rule.min_free_gb.saturating_mul(1024_u64.pow(3)) {
+            return Err(format!(
+                "workspace target volume has {} GB free, below the floor of {} GB",
+                free / 1024_u64.pow(3),
+                rule.min_free_gb
+            ));
+        }
+    }
+    let mut current = root.clone();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if is_link(&metadata) => {
+                return Err("pull-request target contains a link or reparse point".into());
+            }
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err("pull-request target path has a non-directory component".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && create => {
+                match std::fs::create_dir(&current) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(_) => {
+                        return Err("pull-request target directory could not be created".into());
+                    }
+                }
+                let metadata = std::fs::symlink_metadata(&current)
+                    .map_err(|_| "pull-request target directory could not be verified")?;
+                if is_link(&metadata) || !metadata.is_dir() {
+                    return Err("pull-request target path changed during creation".into());
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("pull-request target path could not be inspected".into()),
+        }
+    }
+
+    if target.is_dir() {
+        let identity_path = target.join(PR_TARGET_IDENTITY);
+        match std::fs::symlink_metadata(&identity_path) {
+            Ok(metadata) if is_link(&metadata) || !metadata.is_file() || metadata.len() > 4096 => {
+                return Err("pull-request target identity is not a regular bounded file".into());
+            }
+            Ok(_) => match std::fs::read(&identity_path) {
+                Ok(bytes) => {
+                    let identity: Value = serde_json::from_slice(&bytes)
+                        .map_err(|_| "pull-request target identity is unreadable")?;
+                    if identity["schema"] != "graphhelm.pr-cargo-target/1"
+                        || identity["repositoryId"] != repository_id
+                        || identity["pr"] != pr
+                    {
+                        return Err(
+                            "pull-request target belongs to a different repository or PR".into(),
+                        );
+                    }
+                }
+                Err(_) => return Err("pull-request target identity could not be read".into()),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let mut entries = std::fs::read_dir(target)
+                    .map_err(|_| "pull-request target could not be listed")?;
+                if entries.next().is_some() {
+                    return Err("unidentified pull-request target is not empty".into());
+                }
+                if create {
+                    publish_pr_target_identity(target, repository_id, pr)?;
+                }
+            }
+            Err(_) => return Err("pull-request target identity could not be inspected".into()),
+        }
+    } else if target.exists() {
+        return Err("pull-request target is not a directory".into());
+    } else if create {
+        return Err("pull-request target directory was not created".into());
+    }
+    Ok(())
 }
 
 /// Validate the recorded target against its derived path and refuse linked ancestors or target.

@@ -207,6 +207,22 @@ push and the once-nightly full main plan follow DELIVERY.md §3; do not hold a P
   `export CARGO_TARGET_DIR=...` inside the script overrides the slot and puts the build back where
   the rule says not to: leave it out. The worktree's directory name must be a workspace id
   (lowercase letters, digits, `.`, `_`, `-`).
+- Reached runs may opt into one PR-scoped cache with `run_reached.py --pr <number>`. It passes the
+  captured full `HEAD` to `workspace slot --pr <number> --pr-head <sha>` for every Cargo command.
+  For the standard slot root `D:/gh`, the slot selects `D:/gh/targets/pr-<number>/target`; the
+  identity file binds that directory to the canonical Git common directory and PR number. The
+  current full `HEAD` is checked before queueing and again after admission. The checked-out source
+  may advance on the same PR; Cargo fingerprints, rather than copied artifacts, decide what must
+  rebuild. A different PR gets a different path, and a different canonical Git repository cannot
+  reuse the same PR path. The build still goes through the same `D:/gh` FIFO slot and machine job
+  admission; this is not a second queue or a caller-supplied target override. The PR cache is shared
+  across lanes and therefore is not counted as one lane's per-worktree target. The configured
+  free-space floor is checked on the slot-root volume for this path. Shared PR target retirement is
+  outside this change and remains a follow-up in #2521; do not infer that the existing sweep owns
+  these targets. A reclaimed cache is cold again on the next run. The slot response reports
+  `waitedSeconds`; `run_reached.py` already passes
+  its bounded total budget (900 seconds by default) as `--max-wait` and reports `slotWaitSeconds`
+  separately from `runSeconds`.
   `minFreeGb` is an integer from 0 to 4096, defaults to 20 when absent, and 0 disables the
   free-space floor. With the floor enabled the target root's volume must report its free space.
   A run below the floor refuses before queueing when no other lane has target records to

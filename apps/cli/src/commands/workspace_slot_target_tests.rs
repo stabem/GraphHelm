@@ -1,7 +1,7 @@
 //! Private queue/target lifecycle observers. Public admission has no test bypass.
 use super::{SlotRequest, run_admitted_slot_in};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn run(args: &[&str]) -> (i32, Value) {
     use clap::Parser;
@@ -45,6 +45,8 @@ fn slot_in(root: &Path, lane: &str, worktree: &Path, log: &Path) -> (i32, Value)
         jobs: 6,
         clean_workspace: false,
         shared: false,
+        pr: None,
+        pr_head: None,
         max_wait: None,
         priority: false,
         stage: crate::args::SlotStage::Implement,
@@ -73,6 +75,27 @@ fn git(dir: &Path, args: &[&str]) {
         .output()
         .unwrap();
     assert!(status.status.success(), "git {args:?}: {status:?}");
+}
+
+fn git_bounded(dir: &Path, args: &[&str]) -> Result<(String, String), String> {
+    let mut command = graphhelm_process::command("git");
+    command
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    match graphhelm_process_tree::run_bounded(command, std::time::Duration::from_secs(5))? {
+        Some((true, stdout, stderr)) => Ok((stdout, stderr)),
+        Some((false, _, stderr)) => Err(format!("git {args:?} failed: {stderr}")),
+        None => Err(format!("git {args:?} exceeded the 5 second deadline")),
+    }
+}
+
+fn git_text(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let (stdout, _) = git_bounded(dir, args)?;
+    Ok(stdout.trim().to_owned())
 }
 
 fn repo(dir: &Path) -> std::path::PathBuf {
@@ -122,6 +145,322 @@ fn claim(root: &str, repo: &Path, lane: &str, task: &str) -> Value {
 fn release(root: &str, lane: &str, task: &str) {
     let (code, reply) = run(&["release", "--root", root, "--lane", lane, "--task", task]);
     assert_eq!(code, 0, "{reply}");
+}
+
+#[test]
+fn pull_request_targets_are_isolated_by_pr_and_repository_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path().join("workspace-root");
+    std::fs::create_dir_all(&root)?;
+    let root = root.canonicalize()?;
+    let target_root = dir.path().join("targets");
+    std::fs::create_dir_all(&target_root)?;
+    let rule = super::super::workspace::TargetRule {
+        root: target_root.clone(),
+        cap: 1,
+        min_free_gb: 0,
+    };
+    let author = super::super::workspace::pr_target_path(&root, 2505);
+    let reviewer = super::super::workspace::pr_target_path(&root, 2505);
+    let other_pr = super::super::workspace::pr_target_path(&root, 2506);
+
+    assert_eq!(author, reviewer);
+    assert_ne!(author, other_pr);
+    assert_eq!(author, root.join("targets/pr-2505/target"));
+    use super::super::workspace::PrTargetMode;
+    super::super::workspace::check_pr_target(
+        &root,
+        &rule,
+        &author,
+        "repo-a",
+        2505,
+        PrTargetMode::AfterSlotAdmission,
+    )
+    .map_err(std::io::Error::other)?;
+    std::fs::write(author.join("warm-artifact"), b"kept")?;
+    super::super::workspace::check_pr_target(
+        &root,
+        &rule,
+        &reviewer,
+        "repo-a",
+        2505,
+        PrTargetMode::AfterSlotAdmission,
+    )
+    .map_err(std::io::Error::other)?;
+    assert_eq!(std::fs::read(author.join("warm-artifact"))?, b"kept");
+    assert!(
+        super::super::workspace::check_pr_target(
+            &root,
+            &rule,
+            &author,
+            "repo-b",
+            2505,
+            PrTargetMode::BeforeSlotAdmission,
+        )
+        .is_err()
+    );
+    assert!(
+        !root
+            .join(".graphhelm-workspaces/targets/lane-a.json")
+            .exists()
+    );
+
+    let escaped = target_root
+        .parent()
+        .ok_or_else(|| std::io::Error::other("target root has no parent"))?
+        .join("escaped-target");
+    assert!(
+        super::super::workspace::check_pr_target(
+            &root,
+            &rule,
+            &escaped,
+            "repo-a",
+            2505,
+            PrTargetMode::AfterSlotAdmission,
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn refuses_nonempty_unidentified_malformed_and_foreign_pr_targets()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path().join("workspace-root");
+    std::fs::create_dir_all(&root)?;
+    let root = root.canonicalize()?;
+    let target_root = dir.path().join("targets");
+    std::fs::create_dir_all(&target_root)?;
+    let rule = super::super::workspace::TargetRule {
+        root: target_root,
+        cap: 1,
+        min_free_gb: 0,
+    };
+    let target = super::super::workspace::pr_target_path(&root, 2505);
+    std::fs::create_dir_all(&target)?;
+    use super::super::workspace::PrTargetMode::{AfterSlotAdmission, BeforeSlotAdmission};
+
+    super::super::workspace::check_pr_target(
+        &root,
+        &rule,
+        &target,
+        "repo-a",
+        2505,
+        BeforeSlotAdmission,
+    )?;
+    assert!(std::fs::read_dir(&target)?.next().is_none());
+    super::super::workspace::check_pr_target(
+        &root,
+        &rule,
+        &target,
+        "repo-a",
+        2505,
+        AfterSlotAdmission,
+    )?;
+    let identity_path = target.join(".graphhelm-pr-target.json");
+    assert!(identity_path.is_file());
+    std::fs::remove_file(&identity_path)?;
+
+    let leftover = target.join("partial-cargo-cache");
+    std::fs::write(&leftover, b"unowned")?;
+    for mode in [BeforeSlotAdmission, AfterSlotAdmission] {
+        let error =
+            super::super::workspace::check_pr_target(&root, &rule, &target, "repo-a", 2505, mode)
+                .unwrap_err();
+        assert!(
+            error.contains("unidentified pull-request target is not empty"),
+            "{error}"
+        );
+    }
+    assert_eq!(std::fs::read(&leftover)?, b"unowned");
+    std::fs::remove_file(leftover)?;
+
+    std::fs::write(&identity_path, b"")?;
+    for mode in [BeforeSlotAdmission, AfterSlotAdmission] {
+        let error =
+            super::super::workspace::check_pr_target(&root, &rule, &target, "repo-a", 2505, mode)
+                .unwrap_err();
+        assert!(
+            error.contains("pull-request target identity is unreadable"),
+            "{error}"
+        );
+    }
+    assert!(std::fs::read(&identity_path)?.is_empty());
+
+    std::fs::write(
+        &identity_path,
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "graphhelm.pr-cargo-target/1",
+            "repositoryId": "repo-b",
+            "pr": 2505,
+        }))?,
+    )?;
+    for mode in [BeforeSlotAdmission, AfterSlotAdmission] {
+        let error =
+            super::super::workspace::check_pr_target(&root, &rule, &target, "repo-a", 2505, mode)
+                .unwrap_err();
+        assert!(
+            error.contains("pull-request target belongs to a different repository or PR"),
+            "{error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn sibling_worktrees_reuse_one_pr_target_and_rebuild_changed_source()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let repo = repo(dir.path());
+    std::fs::create_dir_all(repo.join("src"))?;
+    std::fs::write(
+        repo.join("Cargo.toml"),
+        "[package]\nname = \"warm-pr-target\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(
+        repo.join("src/lib.rs"),
+        "pub fn value() -> u8 { 1 }\n#[test] fn current_value_is_tested() { assert_eq!(value(), 1); }\n",
+    )?;
+    git_bounded(&repo, &["add", "Cargo.toml", "src/lib.rs"]).map_err(std::io::Error::other)?;
+    git_bounded(&repo, &["commit", "-m", "add local crate"]).map_err(std::io::Error::other)?;
+    let reviewer = dir.path().join("wt-reviewer");
+    git_bounded(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            reviewer
+                .to_str()
+                .ok_or_else(|| std::io::Error::other("reviewer path is not UTF-8"))?,
+        ],
+    )
+    .map_err(std::io::Error::other)?;
+
+    let root = dir.path().join("workspace-root");
+    let target_root = dir.path().join("targets");
+    std::fs::create_dir_all(&target_root)?;
+    std::fs::create_dir_all(root.join(".graphhelm-workspaces"))?;
+    std::fs::write(
+        root.join(".graphhelm-workspaces/slot-targets.json"),
+        serde_json::json!({"targetRoot": target_root, "cap": 1, "minFreeGb": 0}).to_string(),
+    )?;
+    let command = vec![
+        "cargo".into(),
+        "+1.97.1".into(),
+        "test".into(),
+        "--offline".into(),
+        "-p".into(),
+        "warm-pr-target".into(),
+        "--lib".into(),
+    ];
+    let run = |cwd: &Path, head: &str| {
+        let request = SlotRequest {
+            root: &root,
+            lane: "lane-a",
+            label: "pr-target-integration",
+            jobs: 2,
+            clean_workspace: false,
+            shared: false,
+            pr: Some(2505),
+            pr_head: Some(head),
+            max_wait: None,
+            priority: false,
+            stage: crate::args::SlotStage::Implement,
+            command: &command,
+        };
+        run_admitted_slot_in(&request, cwd)
+    };
+    let first_head = git_text(&repo, &["rev-parse", "HEAD"]).map_err(std::io::Error::other)?;
+    let wrong_head = "0000000000000000000000000000000000000000";
+    let wrong_head_result = super::pull_request_target(
+        &root,
+        &repo,
+        &super::super::workspace::TargetRule {
+            root: target_root.clone(),
+            cap: 1,
+            min_free_gb: 0,
+        },
+        2505,
+        wrong_head,
+    );
+    let wrong_head_error = match wrong_head_result {
+        Err(error) => error,
+        Ok(_) => return Err(std::io::Error::other("wrong PR head was accepted").into()),
+    };
+    assert!(wrong_head_error.contains("--pr-head must match the current full HEAD"));
+    assert!(!root.join("targets").exists());
+
+    // Simulate a process interruption after creating the PR target directory but before
+    // publishing its identity. The next slot admission must safely initialize this empty dir.
+    let interrupted_target = super::super::workspace::pr_target_path(&root, 2505);
+    std::fs::create_dir_all(&interrupted_target)?;
+    assert!(std::fs::read_dir(&interrupted_target)?.next().is_none());
+
+    let author_result = run(&repo, &first_head);
+    assert!(author_result.output.ok, "{:?}", author_result.output);
+    let author_target = author_result
+        .output
+        .data
+        .as_ref()
+        .and_then(|data| data["targetDir"].as_str())
+        .ok_or_else(|| std::io::Error::other("author slot receipt has no targetDir"))?
+        .to_owned();
+
+    std::fs::write(
+        reviewer.join("src/lib.rs"),
+        "pub fn value() -> u8 { 2 }\n#[test] fn current_value_is_tested() { assert_eq!(value(), 2); }\n",
+    )?;
+    git_bounded(&reviewer, &["add", "src/lib.rs"]).map_err(std::io::Error::other)?;
+    git_bounded(&reviewer, &["commit", "-m", "change local crate source"])
+        .map_err(std::io::Error::other)?;
+    let reviewer_head =
+        git_text(&reviewer, &["rev-parse", "HEAD"]).map_err(std::io::Error::other)?;
+    let reviewer_result = run(&reviewer, &reviewer_head);
+    assert!(reviewer_result.output.ok, "{:?}", reviewer_result.output);
+    let reviewer_target = reviewer_result
+        .output
+        .data
+        .as_ref()
+        .and_then(|data| data["targetDir"].as_str())
+        .ok_or_else(|| std::io::Error::other("reviewer slot receipt has no targetDir"))?
+        .to_owned();
+
+    assert_eq!(author_target, reviewer_target);
+    assert!(Path::new(&author_target).is_dir());
+    let expected_target = root.join("targets/pr-2505/target").canonicalize()?;
+    assert_eq!(Path::new(&reviewer_target), expected_target.as_path());
+    assert!(Path::new(&reviewer_target).join("debug/deps").is_dir());
+    let identity: Value = serde_json::from_slice(&std::fs::read(
+        expected_target.join(".graphhelm-pr-target.json"),
+    )?)?;
+    assert_eq!(identity["schema"], "graphhelm.pr-cargo-target/1");
+    let git_common_dir = PathBuf::from(
+        git_text(&repo, &["rev-parse", "--git-common-dir"]).map_err(std::io::Error::other)?,
+    );
+    let git_common_dir = if git_common_dir.is_absolute() {
+        git_common_dir
+    } else {
+        repo.join(git_common_dir)
+    }
+    .canonicalize()?;
+    use sha2::Digest as _;
+    let repository_id = hex::encode(sha2::Sha256::digest(
+        git_common_dir.to_string_lossy().as_bytes(),
+    ));
+    assert_eq!(identity["repositoryId"], repository_id);
+    assert_eq!(identity["pr"], 2505);
+    let expected_target_parent = expected_target
+        .parent()
+        .ok_or_else(|| std::io::Error::other("PR target path has no parent directory"))?;
+    assert_eq!(
+        std::fs::read_dir(expected_target_parent)?.count(),
+        1,
+        "atomic publication must not leave a temporary identity beside the target"
+    );
+    Ok(())
 }
 
 #[test]

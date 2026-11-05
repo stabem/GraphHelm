@@ -340,7 +340,7 @@ class RunnerContracts(unittest.TestCase):
             def fake_git(_repo, *args):
                 return "HEAD" if args[0] == "rev-parse" else ""
 
-            def runner(jobs, stage=None):
+            def runner(jobs, stage=None, pr=None):
                 calls = []
 
                 def fake_run(command, **kwargs):
@@ -361,6 +361,8 @@ class RunnerContracts(unittest.TestCase):
                     fields["jobs"] = jobs
                 if stage is not None:
                     fields["stage"] = stage
+                if pr is not None:
+                    fields["pr"] = pr
                 args = type("Args", (), fields)()
                 with patch.object(rr, "_selector", return_value=plan), patch.object(rr, "_git", side_effect=fake_git),                         patch.object(rr.subprocess, "run", side_effect=fake_run):
                     self.assertEqual(rr.run(args), 0)
@@ -376,12 +378,17 @@ class RunnerContracts(unittest.TestCase):
             self.assertNotIn("--stage", implement)
             review = runner(2, "review")
             self.assertEqual(review[review.index("--stage") + 1], "review")
+            warm = runner(2, "implement", 2505)
+            self.assertEqual(warm[warm.index("--pr") + 1], "2505")
+            self.assertEqual(warm[warm.index("--pr-head") + 1], "HEAD")
         with self.assertRaises(SystemExit):
             rr.main(["--output", "x.json", "--jobs", "0"])
         with self.assertRaises(SystemExit):
             rr.main(["--output", "x.json", "--jobs", "33"])
         with self.assertRaises(SystemExit):
             rr.main(["--output", "x.json", "--stage", "plan"])
+        with self.assertRaises(SystemExit):
+            rr.main(["--output", "x.json", "--pr", "0"])
 
     def test_batch_runner_observes_deadline_and_final_child_failure(self):
         def run_case(batch, cli_code):

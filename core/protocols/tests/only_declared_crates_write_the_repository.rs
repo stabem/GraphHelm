@@ -143,6 +143,7 @@ fn is_comment(line: &str) -> bool {
 /// stated rather than left to be discovered the day one does.
 fn member_roots() -> Vec<String> {
     workspace_members()
+        .expect("workspace root and members must resolve")
         .into_iter()
         .map(|member| relative(&member))
         .collect()
@@ -458,7 +459,7 @@ fn unreachable_targets(text: &str) -> Vec<String> {
 #[test]
 fn every_declared_target_path_is_under_src() {
     let mut manifests = Vec::new();
-    for member in workspace_members() {
+    for member in workspace_members().expect("workspace root and members must resolve") {
         manifests.push(member.join("Cargo.toml"));
     }
     assert!(
@@ -625,6 +626,7 @@ fn only_declared_crates_append_to_the_repository() {
     // single count, which is why the shared helper exposes it, and its own doc records the same
     // defect from #578. The first version of this file called `walk` per member (Codex, on this PR).
     let roots: Vec<PathBuf> = workspace_members()
+        .expect("workspace root and members must resolve")
         .into_iter()
         .map(|member| member.join("src"))
         .collect();

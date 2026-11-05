@@ -3,6 +3,8 @@
 //! keeps the old `<root>/target-shared`, unsafe for tests. With the owner's rule file
 //! (`slot-targets.json`, #360) the build directory is `<targetRoot>/<lane>/<worktree>/target`
 //! instead, recorded, capped per lane, and reclaimed when its worktree is gone.
+//! `--pr <number> --pr-head <full-sha>` selects `<root>/targets/pr-<number>/target` after checking
+//! the canonical Git common directory and the full HEAD; the same root slot serializes its writers.
 //!
 //! Each waiter creates a ticket file under `<root>/.graphhelm-workspaces/slot/` and holds an
 //! exclusive OS lock on it for as long as it lives. A ticket whose lock can be taken belongs to a
@@ -27,6 +29,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use graphhelm_protocols::Diagnostic;
 use serde_json::json;
+use sha2::Digest as _;
 
 use crate::output::Outcome;
 
@@ -77,6 +80,64 @@ pub(crate) fn refuse_args() -> Outcome {
 /// The opt-in shared target directory (`--shared-target`).
 pub(crate) fn shared_target(root: &Path) -> PathBuf {
     root.join("target-shared")
+}
+
+fn bounded_output(program: &str, cwd: &Path, args: &[&str]) -> Result<String, String> {
+    let mut command = graphhelm_process::command(program);
+    command
+        .current_dir(cwd)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    match graphhelm_process_tree::run_bounded(command, Duration::from_secs(5))? {
+        Some((true, stdout, _)) => Ok(stdout.trim().to_owned()),
+        Some((false, _, _)) => Err("pull-request target identity could not be verified".into()),
+        None => Err("pull-request target identity check exceeded its 5 second deadline".into()),
+    }
+}
+
+fn pull_request_target(
+    root: &Path,
+    cwd: &Path,
+    rule: &super::workspace::TargetRule,
+    pr: u32,
+    pinned_head: &str,
+) -> Result<(PathBuf, String), String> {
+    if pr == 0
+        || !matches!(pinned_head.len(), 40 | 64)
+        || !pinned_head.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("--pr needs a positive number and --pr-head needs a full Git object id".into());
+    }
+    let head = bounded_output("git", cwd, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    if !head.eq_ignore_ascii_case(pinned_head) {
+        return Err("--pr-head must match the current full HEAD".into());
+    }
+    let common_dir = bounded_output("git", cwd, &["rev-parse", "--git-common-dir"])?;
+    let common_dir = PathBuf::from(common_dir);
+    let common_dir = if common_dir.is_absolute() {
+        common_dir
+    } else {
+        cwd.join(common_dir)
+    }
+    .canonicalize()
+    .map_err(|_| "the repository's canonical Git common directory is unavailable")?;
+    let repository_id = hex::encode(sha2::Sha256::digest(
+        common_dir.to_string_lossy().as_bytes(),
+    ));
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|_| "workspace root could not be resolved")?;
+    let target = super::workspace::pr_target_path(&canonical_root, pr);
+    super::workspace::check_pr_target(
+        &canonical_root,
+        rule,
+        &target,
+        &repository_id,
+        pr,
+        super::workspace::PrTargetMode::BeforeSlotAdmission,
+    )?;
+    Ok((target, repository_id))
 }
 
 /// The one OS lock shared by every GraphHelm build and update on this user account.
@@ -650,6 +711,8 @@ pub(crate) struct SlotRequest<'a> {
     pub jobs: u32,
     pub clean_workspace: bool,
     pub shared: bool,
+    pub pr: Option<u32>,
+    pub pr_head: Option<&'a str>,
     /// Minutes; `None` waits as long as it takes (#540).
     pub max_wait: Option<f64>,
     pub priority: bool,
@@ -1436,6 +1499,18 @@ fn run_admitted_slot_core(
             "/priority",
         );
     }
+    if request.shared && request.pr.is_some() {
+        return refuse("--pr cannot be combined with --shared-target", "/pr");
+    }
+    if request.pr.is_some() != request.pr_head.is_some() {
+        return refuse("--pr and --pr-head must be supplied together", "/pr");
+    }
+    if request.pr.is_some() && request.clean_workspace {
+        return refuse(
+            "--clean-workspace cannot erase a retained pull-request target",
+            "/cleanWorkspace",
+        );
+    }
 
     // #360: the owner's build-directory rule. A lane over its cap or below the floor refuses before it
     // queues, so nobody waits for a turn the slot would then refuse.
@@ -1447,8 +1522,24 @@ fn run_admitted_slot_core(
             Err(message) => return refuse(&message, "/targetRoot"),
         }
     };
+    if request.pr.is_some() && rule.is_none() {
+        return refuse(
+            "--pr requires the configured slot target root",
+            "/targetRoot",
+        );
+    }
+    let pr_target =
+        if let (Some(pr), Some(head), Some(rule)) = (request.pr, request.pr_head, rule.as_ref()) {
+            match pull_request_target(root, cwd, rule, pr, head) {
+                Ok(target) => Some(target),
+                Err(message) => return refuse(&message, "/pr"),
+            }
+        } else {
+            None
+        };
     let worktree = rule.as_ref().map(|_| cwd.to_owned());
-    if let (Some(rule), Some(worktree)) = (&rule, &worktree)
+    if request.pr.is_none()
+        && let (Some(rule), Some(worktree)) = (&rule, &worktree)
         && let Err(message) = super::workspace::slot_target(root, rule, lane, worktree, false)
     {
         return refuse(&message, "/target");
@@ -1552,7 +1643,8 @@ fn run_admitted_slot_core(
             // a build directory); waiting out admission would only end in this same refusal, and
             // it blocks every request behind this one. No reclaim and no record here: those
             // happen once admitted, as before.
-            if let (Some(rule), Some(worktree)) = (&rule, &worktree)
+            if request.pr.is_none()
+                && let (Some(rule), Some(worktree)) = (&rule, &worktree)
                 && let Err(message) =
                     super::workspace::slot_target(root, rule, lane, worktree, false)
             {
@@ -1603,7 +1695,45 @@ fn run_admitted_slot_core(
         remove_ticket(&mine);
     };
     let mut reclaimed = Vec::new();
-    let target = if request.shared {
+    let target = if let Some((path, repository_id)) = pr_target {
+        let Some(rule) = rule.as_ref() else {
+            release(slot, ticket, &admission);
+            return refuse(
+                "--pr requires the configured slot target root",
+                "/targetRoot",
+            );
+        };
+        let (Some(pr), Some(head)) = (request.pr, request.pr_head) else {
+            release(slot, ticket, &admission);
+            return refuse("--pr and --pr-head must be supplied together", "/pr");
+        };
+        let refreshed = match pull_request_target(root, cwd, rule, pr, head) {
+            Ok(identity) => identity,
+            Err(message) => {
+                release(slot, ticket, &admission);
+                return refuse(&message, "/pr");
+            }
+        };
+        if refreshed != (path.clone(), repository_id.clone()) {
+            release(slot, ticket, &admission);
+            return refuse(
+                "pull-request target identity changed while waiting for the slot",
+                "/pr",
+            );
+        }
+        if let Err(message) = super::workspace::check_pr_target(
+            root,
+            rule,
+            &path,
+            &repository_id,
+            pr,
+            super::workspace::PrTargetMode::AfterSlotAdmission,
+        ) {
+            release(slot, ticket, &admission);
+            return refuse(&message, "/pr");
+        }
+        path
+    } else if request.shared {
         shared_target(root)
     } else if let (Some(rule), Some(worktree)) = (&rule, &worktree) {
         // Holding the slot: reclaim, recheck the free-space floor and cap, then record.

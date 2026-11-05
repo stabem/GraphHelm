@@ -63,6 +63,8 @@ fn request<'a>(
         jobs: 3,
         clean_workspace: false,
         shared: true,
+        pr: None,
+        pr_head: None,
         max_wait: None,
         priority: false,
         stage: crate::args::SlotStage::Implement,

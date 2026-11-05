@@ -695,6 +695,21 @@ fn finish_ranking<'a>(
 const INDEX_CACHE: &str = ".graphhelm/cache/source-index-v2.json";
 const INDEX_SCHEMA: &str = "graphhelm.source-index/2";
 
+/// #2372: the largest cache a build within `bounds` can write, so a bigger file was not written
+/// by one and is rebuilt unread. Per source byte, at most 16 bytes of JSON: a one-byte token and
+/// its separator become `["\u00XX",4294967295],` (22 bytes per 2 source bytes), and lowercasing
+/// grows text by at most half (`İ`, 2 bytes, becomes 3). Per file, 32 KiB: a path of `MAX_SOURCE_PATH_CHARS`
+/// escaped at 6 bytes a byte, the digest and the numbers. Plus 64 KiB for the root and envelope.
+/// With the default build bounds this is far above any real index; it bounds the read, not the
+/// ranking (cache trust is #2372 item 1).
+fn max_cache_bytes(bounds: &SourceIndexBounds) -> u64 {
+    bounds
+        .max_bytes_indexed
+        .saturating_mul(16)
+        .saturating_add((bounds.max_files_indexed as u64).saturating_mul(32 * 1024))
+        .saturating_add(64 * 1024)
+}
+
 /// One indexed text file: the (length, mtime) it was read at, and what the live search would
 /// have computed from it. `doc_len` is the lowercased text's byte length, `None` for a file that
 /// is not UTF-8 (counted as read, never as a document, exactly as the live search does).
@@ -705,7 +720,9 @@ struct IndexedFile {
     /// Unix `ctime` in nanoseconds (0 elsewhere). Changed by every write and not settable by
     /// tools, so an edit that keeps the length and restores the mtime is still seen on Unix.
     /// Windows std exposes no change time: there such an edit stays unseen until the file
-    /// changes again or the index is rebuilt (a declared residual, #2319).
+    /// changes again or the index is rebuilt (a declared residual, #2319). #2372 item 4 keeps it
+    /// declared: the `digest` cannot close it, because checking it means reading every file on
+    /// every search, the full scan this index exists to avoid. Returned bytes are still read live.
     #[serde(default)]
     changed: u128,
     doc_len: Option<u64>,
@@ -1052,8 +1069,31 @@ impl WorkspaceSourceChannel {
     /// The persisted index, when this workspace keeps one and it was written for this root and
     /// schema. Anything else is ignored: the next refresh drops entries the walk does not see, so
     /// a stale or foreign cache can only cost a rebuild, never add a path.
+    /// #2372: the read is bounded by `max_cache_bytes`; a larger file is not read at all and is
+    /// rebuilt like a corrupt one.
+    ///
+    /// Trust (#2372 item 1, a declared limit): a writer of `.graphhelm/` steers WHICH real files a
+    /// search returns and in what order: changing the counts of a file it did not otherwise touch
+    /// can reorder it or hide it from every search until that file changes. A checksum stored
+    /// beside the cache would be rewritten by that same writer, so it would add cost without
+    /// adding trust. What the writer cannot do: add a path (the refresh drops what the walk does
+    /// not see) or change returned bytes (candidates are read from the workspace, not the cache).
+    /// Accidental damage that breaks the JSON, the schema, the root or the size cap is rebuilt.
     fn load_persisted(&self) -> Option<BTreeMap<String, IndexedFile>> {
-        let bytes = std::fs::read(self.cache_path()?).ok()?;
+        use std::io::Read as _;
+        let cap = max_cache_bytes(&self.index_bounds);
+        let file = std::fs::File::open(self.cache_path()?).ok()?;
+        if file.metadata().ok()?.len() > cap {
+            return None;
+        }
+        // `take` holds the bound even if the file grows between the size check and the read.
+        let mut bytes = Vec::new();
+        file.take(cap.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() as u64 > cap {
+            return None;
+        }
         let persisted: PersistedIndex = serde_json::from_slice(&bytes).ok()?;
         (persisted.schema == INDEX_SCHEMA && persisted.root == self.root.to_string_lossy())
             .then_some(persisted.files)
@@ -1079,6 +1119,13 @@ impl WorkspaceSourceChannel {
         let Ok(bytes) = serde_json::to_vec(&persisted) else {
             return;
         };
+        // #2372: a refresh reads changed files under the larger per-search bounds, so its index can
+        // outgrow what `load_persisted` accepts. Writing it would make the next process reject
+        // the cache and rebuild under the build bounds. Keep the in-memory index and the previous
+        // (smaller) cache instead: the same policy on both sides of the file.
+        if bytes.len() as u64 > max_cache_bytes(&self.index_bounds) {
+            return;
+        }
         let Some(parent) = path.parent() else {
             return;
         };
@@ -1185,7 +1232,7 @@ impl BoundedSourceSearch for WorkspaceSourceChannel {
 #[cfg(test)]
 mod tests {
     use super::WorkspaceSourceChannel;
-    use super::{INDEX_CACHE, SourceIndexBounds};
+    use super::{INDEX_CACHE, SourceIndexBounds, max_cache_bytes};
     use graphhelm_runtime::context::SEARCH_BOUNDS;
     use graphhelm_runtime::ports::{BoundedSourceSearch, SourceSearchError};
     use std::collections::BTreeSet;
@@ -1576,6 +1623,171 @@ mod tests {
             assert!(
                 serde_json::from_slice::<serde_json::Value>(&std::fs::read(&cache).unwrap())
                     .is_ok()
+            );
+        }
+    }
+
+    /// #2372 item 2 (Itachi's pre-review point 3): an adversarial build that fills the bounds
+    /// (every file and byte used, short distinct tokens that JSON escapes as `\u00XX`, a long
+    /// path) still writes a cache under the cap, so the cap never rejects a cache a build wrote.
+    #[test]
+    fn a_build_that_fills_the_bounds_fits_under_the_cap() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
+        let bounds = SourceIndexBounds {
+            max_entries_visited: 1_000,
+            max_files_indexed: 2,
+            max_bytes_indexed: 4096,
+        };
+        // Control characters are not whitespace, so each is a one-byte token; pairs make the
+        // rest distinct. 2040 bytes per file: both files just under max_bytes_indexed (filling it
+        // exactly is refused by the build, which is the bound working, not this test's subject).
+        let mut text = Vec::new();
+        'fill: for first in 1u8..32 {
+            for second in [0u8].into_iter().chain(1u8..32) {
+                for byte in [first, second] {
+                    if byte != 0 && !(9..=13).contains(&byte) {
+                        text.push(byte);
+                    }
+                }
+                text.push(b' ');
+                if text.len() >= 2037 {
+                    break 'fill;
+                }
+            }
+        }
+        text.resize(2040, b' ');
+        let long = format!("{}/x.rs", "d".repeat(120));
+        write(root.path(), &long, &text);
+        write(root.path(), "y.rs", &text);
+        let channel = WorkspaceSourceChannel::open(root.path())
+            .unwrap()
+            .with_index_bounds(bounds);
+        search(&channel, &["x"]);
+        let written = std::fs::metadata(root.path().join(INDEX_CACHE))
+            .unwrap()
+            .len();
+        let cap = max_cache_bytes(&bounds);
+        assert!(
+            written <= cap,
+            "a full build wrote {written} bytes, cap {cap}"
+        );
+    }
+
+    /// #2372 item 2: a cache larger than any build within the bounds could write is not read; it
+    /// is rebuilt, even when its JSON is valid and names this root and schema.
+    #[test]
+    fn a_cache_over_the_read_cap_is_rebuilt_not_read() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
+        write(root.path(), "a.rs", b"alpha\n");
+        let tight = SourceIndexBounds {
+            max_entries_visited: 1_000,
+            max_files_indexed: 2,
+            max_bytes_indexed: 1024,
+        };
+        let open = || {
+            WorkspaceSourceChannel::open(root.path())
+                .unwrap()
+                .with_index_bounds(tight)
+        };
+        assert_eq!(search(&open(), &["alpha"]), ["a.rs"]);
+        let cache = root.path().join(INDEX_CACHE);
+        let cap = max_cache_bytes(&tight);
+        // Still valid JSON for this root and schema: only its size says no build wrote it.
+        let mut padded = std::fs::read(&cache).unwrap();
+        padded.resize(usize::try_from(cap).unwrap() + 1, b' ');
+        std::fs::write(&cache, &padded).unwrap();
+        assert!(serde_json::from_slice::<serde_json::Value>(&padded).is_ok());
+
+        assert_eq!(search(&open(), &["alpha"]), ["a.rs"]);
+        let after = std::fs::metadata(&cache).unwrap().len();
+        assert!(
+            after <= cap,
+            "the oversized cache was rebuilt, not read: {after} bytes, cap {cap}"
+        );
+    }
+
+    /// #2372 (Neji's BLOCK, point 2): a refresh reads a changed file under the per-search bounds,
+    /// which are larger than the build bounds, so its index can outgrow the read cap. It must not
+    /// persist a cache the next process rejects: after close and reopen the search still succeeds
+    /// and the cache on disk stays within the cap.
+    #[test]
+    fn a_refreshed_index_over_the_cap_is_not_persisted_and_survives_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
+        write(root.path(), "a.rs", b"x");
+        let tiny = SourceIndexBounds {
+            max_entries_visited: 1_000,
+            max_files_indexed: 1,
+            max_bytes_indexed: 2,
+        };
+        let open = || {
+            WorkspaceSourceChannel::open(root.path())
+                .unwrap()
+                .with_index_bounds(tiny)
+        };
+        assert_eq!(search(&open(), &["x"]), ["a.rs"]);
+        // 20,000 one-byte control tokens' worth of one run: JSON escapes each as `\u0001`.
+        write(root.path(), "a.rs", &[1u8; 20_000]);
+        assert_eq!(search(&open(), &["\u{1}"]), ["a.rs"]);
+        let cap = max_cache_bytes(&tiny);
+        let written = std::fs::metadata(root.path().join(INDEX_CACHE))
+            .unwrap()
+            .len();
+        assert!(written <= cap, "persisted {written} bytes, cap {cap}");
+        // A fresh channel (a restart) finds the changed file again instead of BoundExceeded.
+        assert_eq!(search(&open(), &["\u{1}"]), ["a.rs"]);
+    }
+
+    /// #2372 items 2 and 3, measured (synthetic, so it states a scaling, not a real-repo time):
+    /// a tree of distinct tokens at 1x and 10x vocabulary. Prints the cache size, the full
+    /// rewrite one changed file costs, and a warm query. Run:
+    /// `cargo test -p graphhelm-tool-host --lib index_cost_scaling -- --ignored --nocapture`
+    /// (the PR #2404 numbers are this debug build; `--release` was not measured)
+    #[test]
+    #[ignore = "measurement, prints timings; not a gate"]
+    fn index_cost_scaling() {
+        fn median(mut samples: Vec<std::time::Duration>) -> std::time::Duration {
+            samples.sort();
+            samples[samples.len() / 2]
+        }
+        for (label, files) in [("1x", 100usize), ("10x", 1_000)] {
+            let root = tempfile::tempdir().unwrap();
+            std::fs::create_dir(root.path().join(".graphhelm")).unwrap();
+            for file in 0..files {
+                let text: String = (0..1_000)
+                    .map(|token| format!("t{file}x{token}\n"))
+                    .collect();
+                write(root.path(), &format!("src/f{file}.rs"), text.as_bytes());
+            }
+            let channel = WorkspaceSourceChannel::open(root.path()).unwrap();
+            let started = std::time::Instant::now();
+            search(&channel, &["t7x7"]);
+            let build = started.elapsed();
+            let cache = root.path().join(INDEX_CACHE);
+            let cache_bytes = std::fs::metadata(&cache).unwrap().len();
+            let mut rewrites = Vec::new();
+            let mut queries = Vec::new();
+            for round in 0..5 {
+                write(
+                    root.path(),
+                    "src/f0.rs",
+                    format!("t0x0 {}\n", "y".repeat(round + 1)).as_bytes(),
+                );
+                let started = std::time::Instant::now();
+                search(&channel, &["t7x7"]);
+                rewrites.push(started.elapsed());
+                let started = std::time::Instant::now();
+                search(&channel, &["t7x7"]);
+                queries.push(started.elapsed());
+            }
+            println!(
+                "index_cost_scaling {label}: vocabulary={} cache_bytes={cache_bytes} build={build:?} \
+                 changed_search(refresh+rewrite)={:?} warm_query={:?}",
+                files * 1_000,
+                median(rewrites),
+                median(queries)
             );
         }
     }

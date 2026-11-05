@@ -174,7 +174,7 @@ fn the_form_catches_an_aliased_path_and_leaves_its_siblings_alone() {
 #[test]
 fn no_production_surface_names_the_clearance_outside_the_declared_sites() {
     let mut files = Vec::new();
-    for member in workspace_members() {
+    for member in workspace_members().expect("workspace root and members must resolve") {
         let source = member.join("src");
         walk(&source, &["rs"], &mut files);
     }

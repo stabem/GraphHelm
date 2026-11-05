@@ -173,7 +173,7 @@ fn exempt(path: &str) -> Option<&'static str> {
 /// the day they appear -- the same reason the POPULATION comes from `Cargo.toml` rather than a
 /// list: a guard that has to be widened by hand is one somebody forgets to widen.
 fn authored_files() -> Vec<PathBuf> {
-    let mut roots = workspace_members();
+    let mut roots = workspace_members().expect("workspace root and members must resolve");
     // The shared files this sweep is BUILT FROM are not workspace members, so the population
     // derived from `Cargo.toml` cannot reach them -- and both are `include!`d into crates that
     // are. Found by reading this file's own output: `walk.rs` was carrying an eighteen-space run
@@ -184,7 +184,11 @@ fn authored_files() -> Vec<PathBuf> {
     // here, and that is a worse property than the members list has -- said plainly rather than
     // hidden, since "a list somebody must remember to widen" is the defect #577 was about.
     for shared in ["tools/workspace-walk", "tools/source-invariants"] {
-        roots.push(workspace_root().join(shared));
+        roots.push(
+            workspace_root()
+                .expect("workspace root must resolve from the test working directory")
+                .join(shared),
+        );
     }
     // ONE budget across the whole sweep, and each root walked once. Calling `walk` per member gave
     // every root its own fresh counter, so each root was bounded and the sweep was not — and a
@@ -588,7 +592,9 @@ members = [\"a\"]
     // walked a path that does not exist and the set-equality cell compared a wildcard against real
     // directories -- the gate rejecting a LAWFUL layout. Exercised against the real tree, because
     // an expansion is only right against a filesystem.
-    let expanded = expand_member_pattern(&workspace_root(), "core/*");
+    let root =
+        workspace_root().expect("workspace root must resolve from the test working directory");
+    let expanded = expand_member_pattern(&root, "core/*");
     assert!(
         expanded.len() > 5,
         "`core/*` must expand to the crates under core/, or a lawful manifest is rejected: \
@@ -614,6 +620,7 @@ members = [\"a\"]
 
     // And the real manifest reaches the crates the per-crate guards never covered.
     let swept: BTreeSet<String> = workspace_members()
+        .expect("workspace root and members must resolve")
         .iter()
         .map(|member| relative(member))
         .collect();
@@ -650,7 +657,8 @@ members = [\"a\"]
 /// says nothing about WHICH member went missing, and the first thing a reader needs is the name.
 #[test]
 fn every_crate_on_disk_is_a_parsed_member_and_the_reverse() {
-    let root = workspace_root();
+    let root =
+        workspace_root().expect("workspace root must resolve from the test working directory");
     let mut manifests = Vec::new();
     walk(&root, &["toml"], &mut manifests);
     let on_disk: BTreeSet<String> = manifests
@@ -661,6 +669,7 @@ fn every_crate_on_disk_is_a_parsed_member_and_the_reverse() {
         .collect();
 
     let parsed: BTreeSet<String> = workspace_members()
+        .expect("workspace root and members must resolve")
         .iter()
         .map(|member| relative(member))
         .collect();
@@ -688,7 +697,9 @@ fn every_crate_on_disk_is_a_parsed_member_and_the_reverse() {
 #[test]
 fn every_exemption_is_load_bearing() {
     for (path, reason) in EXEMPT {
-        let full = workspace_root().join(path);
+        let full = workspace_root()
+            .expect("workspace root must resolve from the test working directory")
+            .join(path);
         // The size bound belongs HERE too (Codex, #578). `offending_lines` skips exempt files
         // before its own check, so the earlier fix did not cover them and one exempt file could
         // still kill this process with an unbounded read.

@@ -19,10 +19,8 @@ use std::path::{Path, PathBuf};
 /// A compile-time `CARGO_MANIFEST_DIR` belongs to the worktree that built a shared target artifact.
 /// Another worktree can reuse that artifact after the source worktree is removed, so runtime
 /// discovery avoids retaining a stale checkout path.
-pub fn workspace_root() -> PathBuf {
-    let start = std::env::current_dir().unwrap_or_else(|error| {
-        panic!("the active workspace directory must resolve: {error}");
-    });
+pub fn workspace_root() -> std::io::Result<PathBuf> {
+    let start = std::env::current_dir()?;
     let mut candidate = start.as_path();
     loop {
         let manifest = candidate.join("Cargo.toml");
@@ -34,16 +32,14 @@ pub fn workspace_root() -> PathBuf {
             // exactly one place -- `walk_all`'s deduplication key -- and left the traversal, the
             // member paths and `relative`'s prefix on the raw form. A normalization that exists and
             // is used at one of the six sites that need it is worse than none: it reads as solved.
-            return std::fs::canonicalize(candidate).unwrap_or_else(|error| {
-                panic!(
-                    "the workspace root {} must resolve: {error}",
-                    candidate.display()
-                )
-            });
+            return std::fs::canonicalize(candidate);
         }
-        candidate = candidate
-            .parent()
-            .unwrap_or_else(|| panic!("no [workspace] manifest above {}", start.display()));
+        candidate = candidate.parent().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no [workspace] manifest above {}", start.display()),
+            )
+        })?;
     }
 }
 
@@ -52,14 +48,14 @@ pub fn workspace_root() -> PathBuf {
 /// A guard has two hand-chosen parameters -- its POPULATION and its FORM -- and measuring one
 /// leaves the other a guess. Deriving the population removes one of them from the guessing: a crate
 /// added to the workspace is swept the day it is added, with nobody remembering to widen a list.
-pub fn workspace_members() -> Vec<PathBuf> {
-    let root = workspace_root();
-    let text = std::fs::read_to_string(root.join("Cargo.toml")).expect("workspace Cargo.toml");
-    member_names_from_manifest(&text)
+pub fn workspace_members() -> std::io::Result<Vec<PathBuf>> {
+    let root = workspace_root()?;
+    let text = std::fs::read_to_string(root.join("Cargo.toml"))?;
+    Ok(member_names_from_manifest(&text)
         .into_iter()
         .flat_map(|name| expand_member_pattern(&root, &name))
         .map(|path| member_root_inside(&root, &path))
-        .collect()
+        .collect())
 }
 
 /// A member path resolved to its canonical form, refused if it leaves the workspace.
@@ -313,7 +309,9 @@ pub fn walk_bounded(
 /// A workspace-relative path with forward slashes, so a failure message reads the same on every
 /// platform and can be pasted into a `git` command.
 pub fn relative(path: &Path) -> String {
-    path.strip_prefix(workspace_root())
+    workspace_root()
+        .ok()
+        .and_then(|root| path.strip_prefix(root).ok())
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")

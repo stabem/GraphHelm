@@ -139,7 +139,7 @@ fn the_narrow_form_separates_the_variant_from_the_customs_stage() {
 #[test]
 fn no_rust_outside_the_declared_sites_names_the_dead_letter_variant() {
     let mut files = Vec::new();
-    for member in workspace_members() {
+    for member in workspace_members().expect("workspace root and members must resolve") {
         walk(&member, &["rs"], &mut files);
     }
 
@@ -283,7 +283,9 @@ spec:
 #[test]
 fn no_document_in_the_repository_authors_a_dead_letter_node() {
     let mut documents = Vec::new();
-    walk(&workspace_root(), &["json", "yaml", "yml"], &mut documents);
+    let root =
+        workspace_root().expect("workspace root must resolve from the test working directory");
+    walk(&root, &["json", "yaml", "yml"], &mut documents);
 
     let mut parsed = 0_usize;
     let mut offenders: BTreeSet<String> = BTreeSet::new();

@@ -907,6 +907,8 @@ pub(crate) fn pr_target_path(root: &Path, pr: u32) -> PathBuf {
 }
 
 const PR_TARGET_IDENTITY: &str = ".graphhelm-pr-target.json";
+const IDENTITY_TEMP_FILE_IS_WRITABLE: bool = true;
+const IDENTITY_TEMP_FILE_MUST_NOT_EXIST: bool = true;
 
 fn publish_pr_target_identity(target: &Path, repository_id: &str, pr: u32) -> Result<(), String> {
     use std::io::Write as _;
@@ -932,8 +934,8 @@ fn publish_pr_target_identity(target: &Path, repository_id: &str, pr: u32) -> Re
             NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
         ));
         let mut file = match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
+            .write(IDENTITY_TEMP_FILE_IS_WRITABLE)
+            .create_new(IDENTITY_TEMP_FILE_MUST_NOT_EXIST)
             .open(&temp_path)
         {
             Ok(file) => file,

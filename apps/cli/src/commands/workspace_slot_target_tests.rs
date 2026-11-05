@@ -452,8 +452,11 @@ fn sibling_worktrees_reuse_one_pr_target_and_rebuild_changed_source()
     ));
     assert_eq!(identity["repositoryId"], repository_id);
     assert_eq!(identity["pr"], 2505);
+    let expected_target_parent = expected_target
+        .parent()
+        .ok_or_else(|| std::io::Error::other("PR target path has no parent directory"))?;
     assert_eq!(
-        std::fs::read_dir(expected_target.parent().unwrap())?.count(),
+        std::fs::read_dir(expected_target_parent)?.count(),
         1,
         "atomic publication must not leave a temporary identity beside the target"
     );

@@ -974,3 +974,52 @@ fn a_tracked_observer_is_reported_and_left_alone_by_init_and_setup() {
     let status = git(&["status", "--porcelain", "--", ".graphhelm/observers"]);
     assert_eq!(status.trim(), "", "an observer changed: {status}");
 }
+
+/// #2360: `serve` without `--project` uses an initialised current directory as the project and
+/// says so on its startup line; an empty directory keeps today's behaviour and names `--project`
+/// in its hint; an explicit `--project` always wins.
+#[test]
+fn serve_uses_an_initialised_current_directory_as_the_project() {
+    let project = git_project();
+    init(project.path());
+    let paths = layout(project.path());
+    let other = git_project();
+    init(other.path());
+    let empty = tempfile::tempdir().unwrap();
+    let started_in = |cwd: &Path, events: &Path, project_flag: Option<&Path>| -> Value {
+        let mut command = graphhelm_process::command(assert_cmd::cargo::cargo_bin!("graphhelm"));
+        command
+            .current_dir(cwd)
+            .args(["serve", "--events"])
+            .arg(events)
+            .args(["--bind", "127.0.0.1:0"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if let Some(flag) = project_flag {
+            command.arg("--project").arg(flag);
+        }
+        let mut child = command.spawn().unwrap();
+        let line = first_stdout_line_within(&mut child, Duration::from_secs(30));
+        let _ = child.kill();
+        let _ = child.wait();
+        json(line.as_bytes())
+    };
+
+    let inside = started_in(project.path(), &paths.events, None);
+    assert_eq!(
+        inside["data"]["project"]["source"], "current-directory",
+        "{inside}"
+    );
+    assert!(inside["data"]["project"]["id"].is_string(), "{inside}");
+    assert!(inside["data"]["project"]["hint"].is_null(), "{inside}");
+
+    let other_events = layout(other.path()).events;
+    let flagged = started_in(project.path(), &other_events, Some(other.path()));
+    assert_eq!(flagged["data"]["project"]["source"], "flag", "{flagged}");
+
+    let bare = empty.path().join(".graphhelm").join("events");
+    let none = started_in(empty.path(), &bare, None);
+    assert_eq!(none["data"]["project"]["source"], "none", "{none}");
+    let hint = none["data"]["project"]["hint"].as_str().unwrap_or_default();
+    assert!(hint.contains("--project"), "{none}");
+}

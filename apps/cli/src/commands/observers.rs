@@ -61,6 +61,20 @@ const E2E: Spec = Spec {
     script: include_str!("../../../../tools/e2e-observer/e2e_observe.py"),
 };
 
+/// The bytes this binary ships for a project-relative observer path, by exact name; `None` for any
+/// other path. `keel check` skips the line rules on a file only when its head text equals these bytes
+/// (stabem/GraphHelm#2549): the file cannot carry a `keel-allow`, since any edit makes it stale.
+pub(super) fn shipped_observer(path: &str) -> Option<&'static [u8]> {
+    match path {
+        ".graphhelm/observers/journey_driver.mjs" => Some(DRIVER),
+        ".graphhelm/observers/judge.mjs" => Some(JUDGE),
+        HIDDEN_NODE_CHILDREN_PATH => Some(HIDDEN_NODE_CHILDREN),
+        ".graphhelm/observers/playwright_observe.py" => Some(PLAYWRIGHT.script.as_bytes()),
+        ".graphhelm/observers/e2e_observe.py" => Some(E2E.script.as_bytes()),
+        _ => None,
+    }
+}
+
 fn spec(kind: ObserverKind) -> &'static Spec {
     match kind {
         ObserverKind::Playwright => &PLAYWRIGHT,

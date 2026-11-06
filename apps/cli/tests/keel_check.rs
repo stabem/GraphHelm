@@ -2314,6 +2314,29 @@ fn line_rules_honour_and_print_excuses_and_skip_test_and_existing_code() {
     let (_, reply) = run(repo.path(), None);
     assert_eq!(line_rules(&reply), Vec::<String>::new(), "{reply}");
 
+    // stabem/GraphHelm#2549: an observer GraphHelm ships, at its exact path and byte-equal to the
+    // shipped copy, is the binary's own output and is not judged (the real file holds a
+    // `filter(None, …)` that no_bare_flag reads as a bare flag). A changed copy, a new file in the
+    // same directory, or the same bytes at another path are the project's code and still judged.
+    let shipped = include_str!("../../../tools/playwright-observer/playwright_observe.py");
+    let observer = ".graphhelm/observers/playwright_observe.py";
+    let judged = |path: &str, after: &str| {
+        let repo = change(path, "# base\n", after);
+        let (_, reply) = run(repo.path(), None);
+        line_rules(&reply)
+    };
+    assert_eq!(judged(observer, shipped), Vec::<String>::new());
+    let edited = format!("{shipped}save(doc, None)\n");
+    assert!(judged(observer, &edited).contains(&"keel.names.no_bare_flag".to_owned()));
+    assert_eq!(
+        judged(".graphhelm/observers/extra.py", "# base\nsave(doc, None)\n"),
+        ["keel.names.no_bare_flag"]
+    );
+    assert!(
+        judged(".graphhelm/other/playwright_observe.py", shipped)
+            .contains(&"keel.names.no_bare_flag".to_owned())
+    );
+
     // A break that already existed does not block a change that only adds a clean line.
     let repo = change(
         "src/lib.rs",

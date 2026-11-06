@@ -379,8 +379,12 @@ pub(super) fn check(
         }
     };
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    report.add_lines(graphhelm_policy::keel_lines::check_lines(
-        &diff, &head_text, &today,
+    // stabem/GraphHelm#2549: an observer GraphHelm ships, byte-equal to that copy, is its own output.
+    let shipped = |path: &str, text: &str| {
+        super::observers::shipped_observer(path).is_some_and(|bytes| bytes == text.as_bytes())
+    };
+    report.add_lines(graphhelm_policy::keel_lines::check_lines_except_shipped(
+        &diff, &head_text, &today, &shipped,
     ));
     let changed: Vec<String> = report
         .changed_paths

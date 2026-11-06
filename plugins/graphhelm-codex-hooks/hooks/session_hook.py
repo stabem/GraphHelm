@@ -511,7 +511,7 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
     cwd = payload.get("cwd")
     if isinstance(cwd, str) and Path(cwd).is_absolute():
         argv += ["--cwd", cwd]
-    flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     # #919: the host runs hooks in a job object that is closed when the hook returns, which
     # killed every waiter before it could log an exit. Leave the job; a job that forbids
     # breakaway refuses the flag, and then the waiter starts inside it as before.
@@ -1025,7 +1025,7 @@ class _HelperClient:
 
     def _spawn(self) -> None:
         argv = [sys.executable, os.path.abspath(__file__), "helper", "--host", self.host]
-        flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         # As the waiter (#919): leave the host's job object when it allows, or the helper dies with
         # the hook's job; a job that forbids breakaway refuses the flag.
         attempts = (flags | CREATE_BREAKAWAY_FROM_JOB, flags) if os.name == "nt" else (flags,)

@@ -1837,7 +1837,14 @@ fn live(root: &Path, record: &Value, size_mode: LiveSizeMode, deadline: Instant)
         "linked": linked, "linkInWorktree": link_in_worktree, "scanError": scan_error,
         "path": dir.to_string_lossy(), "exists": dir.exists(), "head": head, "dirty": dirty,
         "statusError": status_error,
-        "releasedHead": record["releasedHead"], "sizeBytes": if blocked { 0 } else { size_of(&dir) }})
+        "releasedHead": record["releasedHead"],
+        "sizeBytes": match size_mode {
+            // Sizing walks the whole workspace: only sized reads pay for it, and sweep sizes just
+            // the workspaces it is about to remove (see `run_sweep`).
+            LiveSizeMode::Include if !blocked => json!(size_of(&dir)),
+            LiveSizeMode::Include => json!(0),
+            LiveSizeMode::Omit => Value::Null,
+        }})
 }
 
 /// Inspect parents from the filesystem root down, so even an intermediate junction is not entered.
@@ -2067,12 +2074,14 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
             }
             continue;
         }
-        if !apply {
-            removed.push(json!({"lane": lane, "task": task, "sizeBytes": view["sizeBytes"]}));
-            continue;
-        }
         let dir = workspace_dir(root, &lane, &task);
         let worktree = dir.join("wt");
+        if !apply {
+            let size = size_of(&dir);
+            removed.push(json!({"lane": lane, "task": task, "sizeBytes": size}));
+            continue;
+        }
+        let size = size_of(&dir);
         // `git worktree remove` without --force refuses a dirty tree: a second check at the act.
         let common = if incomplete {
             Ok(String::new())
@@ -2132,7 +2141,7 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
         record["sweptAt"] = json!(now());
         let _ = write_record(&ledger_file(root, &lane, &task), &record);
         removed.push(
-            json!({"lane": lane, "task": task, "sizeBytes": view["sizeBytes"],
+            json!({"lane": lane, "task": task, "sizeBytes": size,
             "notRemoved": failed}),
         );
     }

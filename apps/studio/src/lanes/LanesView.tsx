@@ -9,7 +9,7 @@ import { ActionError, actionErrorDetails, type ActionErrorDetails } from "../sta
 import { readCollapsed, writeCollapsed } from "./panel-rail";
 import { LanesPanels } from "./LanesPanels";
 import { RequestProgress } from "../graph/RequestProgress";
-import { agentsFor, arrangeAsked, askedCards, requestKey, requestColors, requestLanes, requestTitles, unlinkedIssue } from "./asked";
+import { arrangeAsked, askedCards, requestKey, requestColors, requestLanes, requestTitles, unlinkedIssue } from "./asked";
 import { applyAskFilter, readAskParam, withAskParam } from "./request-filter";
 import type { OwnerRequest } from "../graph/requests";
 import { BoardColumn } from "./BoardColumn";

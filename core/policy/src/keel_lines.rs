@@ -2,8 +2,9 @@
 //!
 //! Only added production lines are judged, so code that already exists never blocks a change (the
 //! ratchet). Test code is out of scope: `#[cfg(test)]` items in Rust and every test path
-//! (`tests/`, `*.test.ts(x)`, `test_*.py`, ...). The journey observers GraphHelm generates under
-//! `.graphhelm/observers/` are not judged either: they are this binary's own output. A finding is excused only by a comment on its line
+//! (`tests/`, `*.test.ts(x)`, `test_*.py`, ...). A file the caller recognises as one GraphHelm itself ships,
+//! byte-equal to the shipped copy (the journey observers, stabem/zuvemo#1569), is not judged either; a changed copy
+//! or any other file beside it is. A finding is excused only by a comment on its line
 //! or the line above, `keel-allow: <rule id> <reason> until <YYYY-MM-DD|#issue>`, and every excuse
 //! that was honoured is reported beside the findings. The rule ids are the ones `KEEL.md` lists.
 //!
@@ -68,15 +69,34 @@ pub fn check_lines(
     head_text: &dyn Fn(&str) -> Option<String>,
     today: &str,
 ) -> LineReport {
+    check_lines_except_shipped(diff, head_text, today, &|_, _| false)
+}
+
+/// [`check_lines`], skipping each file for which `shipped(path, head_text)` says it is a file
+/// GraphHelm itself writes into the project, byte-equal to the copy the binary ships. Such a file
+/// cannot carry a `keel-allow` (an edit makes it stale) and is not the project's code to judge.
+#[must_use]
+pub fn check_lines_except_shipped(
+    diff: &str,
+    head_text: &dyn Fn(&str) -> Option<String>,
+    today: &str,
+    shipped: &dyn Fn(&str, &str) -> bool,
+) -> LineReport {
     let mut report = LineReport::default();
     for file in added_lines(diff) {
         let Some(language) = Language::of(&file.path) else {
             continue;
         };
-        if is_test_path(&file.path) || is_generated_observer(&file.path) {
+        if is_test_path(&file.path) {
             continue;
         }
         let text = head_text(&file.path);
+        if text
+            .as_deref()
+            .is_some_and(|text| shipped(&file.path, text))
+        {
+            continue;
+        }
         let lines: Vec<&str> = text
             .as_deref()
             .map_or_else(Vec::new, |text| text.lines().collect());
@@ -127,16 +147,6 @@ pub fn check_lines(
         }
     }
     report
-}
-
-/// The journey observers GraphHelm itself writes into a project (`graphhelm setup --install-observer`).
-/// They must stay byte-for-byte what this binary ships, or `journey replay` refuses them as stale, so
-/// a `keel-allow` comment cannot be added to them and their lines are not the project's code to judge
-/// (stabem/zuvemo#1569).
-const GENERATED_OBSERVER_DIR: &str = ".graphhelm/observers/";
-
-fn is_generated_observer(path: &str) -> bool {
-    path.starts_with(GENERATED_OBSERVER_DIR)
 }
 
 fn finding(rule: &str, path: &str, line: u32, raw: &str, fix: &str) -> Finding {

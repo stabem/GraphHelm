@@ -1,11 +1,13 @@
 {
-  "promise": "graphhelm keel check no longer judges the added lines of .graphhelm/observers/, the journey observers GraphHelm writes into a project and that must stay byte-for-byte what the binary ships; the same line anywhere else is still judged.",
+  "promise": "graphhelm keel check skips the line rules on an observer file GraphHelm ships only when it sits at that exact path and its head text equals the bytes this binary embeds; a changed copy, a new file in .graphhelm/observers/ and the same bytes at another path are still judged.",
   "scopePaths": [
     ".graphhelm/cards/issue-2549.json",
     "core/policy/src/keel_lines.rs",
+    "apps/cli/src/commands/keel.rs",
+    "apps/cli/src/commands/observers.rs",
     "apps/cli/tests/keel_check.rs"
   ],
-  "proof": "graphhelm workspace slot ... -- cargo +1.97.1 test --locked -p graphhelm-cli --test cli -- --test-threads=2 keel_check:: ; break-once: without the observer skip the new case is red (keel.names.no_bare_flag on .graphhelm/observers/playwright_observe.py); cargo +1.97.1 fmt --all -- --check; clippy -p graphhelm-policy -p graphhelm-cli --all-targets --all-features -D warnings; cargo +1.97.1 test --locked -p graphhelm-protocols --test authored_strings_across_the_workspace",
+  "proof": "graphhelm workspace slot ... -- cargo +1.97.1 test --locked -p graphhelm-cli --test cli -- --test-threads=2 keel_check:: ; break-once: shipped check off -> the real shipped file is flagged; prefix-only skip -> the edited copy escapes; cargo +1.97.1 fmt --all -- --check; clippy -p graphhelm-policy -p graphhelm-cli --all-targets --all-features -D warnings; cargo +1.97.1 test --locked -p graphhelm-protocols --test authored_strings_across_the_workspace",
   "exportedSymbols": [],
   "journeys": []
 }

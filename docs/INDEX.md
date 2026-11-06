@@ -62,6 +62,7 @@ ADRs); a dated filename records when the design was approved, not that it is out
 
 Point-in-time evidence of what ran on a dated head; none validates today's head.
 
+- [Proof counter acceptance (#2470)](acceptance/studio-2470.md).
 - [M05 acceptance map](acceptance/M05_ACCEPTANCE_MAP.md) and its runs: [M05 2026-08-16](acceptance/m05-run-2026-08-16/README.md), [M06 2026-08-17](acceptance/m06-run-2026-08-17/README.md) with its [fixture journey demo](acceptance/demos/m06-fixture-journey/README.md), [M07 2026-08-17](acceptance/m07-run-2026-08-17/README.md).
 - M08 and M09 judging: [run 2026-08-18](acceptance/m08-run-2026-08-18/README.md), rejudges [1](acceptance/m08-rejudge-2026-08-18/README.md), [5](acceptance/m08-rejudge5-2026-08-18/README.md), [6](acceptance/m08-rejudge6-2026-08-18/README.md), [7](acceptance/m08-rejudge7-2026-08-18/README.md), [8](acceptance/m08-rejudge8-2026-08-18/README.md), [9](acceptance/m08-rejudge9-2026-08-18/README.md), [judge coverage](acceptance/m08-judge-coverage.md), [M09 judge run](acceptance/m09-judge-run-2026-08-19/README.md).
 - M11 and the MVP: [first compile](acceptance/m11-first-compile-2026-09-11.md), [acting half](acceptance/m11-acting-2026-09-11.md), [architect judgments recipe](acceptance/architect-judgments-recipe.md), [integrated MVP verification](acceptance/mvp-integrated-2026-09-14.md), [optional GPT-6 Astra route](acceptance/gpt-6-astra-migration.md).

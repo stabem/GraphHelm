@@ -935,6 +935,15 @@ fn owner_signature(value: &Value, project: &Path) -> Vec<Finding> {
     else {
         return vec![];
     };
+    // #2537: a checkout with no owner records (fresh clone, worktree) cannot tell a forgery from an
+    // approval signed on another machine; it says so as a warning, never as a flow to fix.
+    if !super::journey_owner::owner_store_on_this_computer(project) {
+        return vec![Finding::new(
+            "flow.approval_unverifiable",
+            "/approved",
+            "approval not on this computer: this checkout has no owner records, so the approval cannot be checked here",
+        )];
+    }
     match super::journey_owner::approved(project, id, digest) {
         Ok(true) => vec![],
         Ok(false) => vec![Finding::new(

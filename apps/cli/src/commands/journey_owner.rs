@@ -378,6 +378,15 @@ pub(crate) fn approved(project: &Path, flow: &str, digest: &str) -> Result<bool,
     has(project, &signal_id(flow, digest), APPROVED_KIND)
 }
 
+/// #2537: whether this computer holds the owner's side of the project at all: the owner's token
+/// or any owner record. A fresh clone or worktree has neither (`.graphhelm/` is not committed), so
+/// it cannot say that an approval is unsigned; it only cannot check it here. A computer with the
+/// owner's token keeps the #534 rule: a missing record there is unsigned.
+pub(crate) fn owner_store_on_this_computer(project: &Path) -> bool {
+    project.join(".graphhelm/events.token").exists()
+        || owner_history(project).is_ok_and(|history| !history.is_empty())
+}
+
 /// Whether a reviewer agent recorded its blind review of `flow` at exactly `digest` (#1130).
 pub(crate) fn reviewed(project: &Path, flow: &str, digest: &str) -> Result<bool, String> {
     has_agent(project, &agent_signal_id(flow, digest))

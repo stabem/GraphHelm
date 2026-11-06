@@ -2107,7 +2107,13 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
             if dir.exists() {
                 record["state"] = json!("remove_incomplete");
                 record["removeError"] = json!(message);
-                let _ = write_record(&ledger_file(root, &lane, &task), &record);
+                if let Err(error) = write_record(&ledger_file(root, &lane, &task), &record) {
+                    // A ledger that cannot be written is leftover too: report it, do not swallow it (#1504).
+                    kept.push(
+                        json!({"lane": lane, "task": task, "reason": "ledger_write_failed",
+                        "message": error.to_string()}),
+                    );
+                }
             }
             kept.push(
                 json!({"lane": lane, "task": task, "reason": "worktree_remove_failed",
@@ -2130,10 +2136,14 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
             "notRemoved": failed}),
         );
     }
-    let leftover = kept.iter().any(|k| k["reason"] == "worktree_remove_failed")
-        || removed
-            .iter()
-            .any(|r| r["notRemoved"].as_array().is_some_and(|n| !n.is_empty()));
+    let leftover = kept.iter().any(|k| {
+        matches!(
+            k["reason"].as_str(),
+            Some("worktree_remove_failed" | "ledger_write_failed")
+        )
+    }) || removed
+        .iter()
+        .any(|r| r["notRemoved"].as_array().is_some_and(|n| !n.is_empty()));
     let data = json!({"root": root.to_string_lossy(), "applied": apply, "removed": removed, "kept": kept,
         "targets": sweep_targets(root, apply, None)});
     if leftover {
@@ -2339,4 +2349,33 @@ mod moved_target_tests {
         assert_eq!(report["removed"].as_array().unwrap().len(), 1);
         assert!(!real.exists());
     }
+}
+
+#[cfg(test)]
+#[test]
+fn sweep_removes_the_leftover_of_a_failed_worktree_removal_and_reports_it() {
+    // Defect (#1504): a `git worktree remove` that failed on a long Windows path left the
+    // directory with no registration; the next sweep kept it forever and reported a plain success.
+    // Cost: local temp files only.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("root");
+    let (lane, task) = ("lane-a", "wt-long");
+    let leftover = workspace_dir(&root, lane, task);
+    let deep = leftover.join("wt").join("deep");
+    std::fs::create_dir_all(&deep).unwrap();
+    std::fs::write(deep.join("file"), b"x").unwrap();
+    write_record(
+        &ledger_file(&root, lane, task),
+        &json!({"schema": SCHEMA, "lane": lane, "task": task,
+            "state": "remove_incomplete", "worktree": leftover.join("wt").to_string_lossy()}),
+    )
+    .unwrap();
+
+    let outcome = run_sweep(&root, true);
+
+    assert!(
+        !leftover.exists(),
+        "the leftover of a failed removal stayed on disk"
+    );
+    assert!(outcome.output.ok, "a finished sweep must report success");
 }

@@ -196,3 +196,44 @@ fn the_guard_catches_a_commonjs_child_launch_without_the_shared_launcher() {
         "{found:?}"
     );
 }
+
+/// #2573: a detached child has no console, so every console program it starts gets a visible
+/// window. No Rust source file may name the detached-process creation flag. Scope: `.rs` files only;
+/// Python hooks (plugins/graphhelm/hooks/session_hook.py) are tracked in a follow-up issue.
+#[test]
+fn no_rust_source_file_names_the_detached_process_flag() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = crate_dir.join("../..").canonicalize().unwrap();
+    let mut files = Vec::new();
+    rust_files(&root, &mut files);
+    let flag = concat!("DETACHED", "_PROCESS");
+    let found: Vec<String> = files
+        .iter()
+        .filter(|path| std::fs::read_to_string(path).is_ok_and(|text| text.contains(flag)))
+        .map(|path| {
+            path.strip_prefix(&root)
+                .unwrap_or(path)
+                .display()
+                .to_string()
+        })
+        .collect();
+    assert!(
+        found.is_empty(),
+        "the detached-process flag is forbidden in Rust (#2573): {found:?}"
+    );
+}
+
+/// The guard must really see the workspace: a floor on the number of source files it scans, so a
+/// broken walk cannot pass by scanning nothing.
+#[test]
+fn the_guard_scans_the_workspace_sources() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = crate_dir.join("../..").canonicalize().unwrap();
+    let mut files = Vec::new();
+    rust_files(&root, &mut files);
+    assert!(
+        files.len() >= 300,
+        "the guard scanned only {} source files",
+        files.len()
+    );
+}

@@ -89,14 +89,14 @@ describe("links, causes and focus (#2532 review)", () => {
       .toContain("review · stalled · waiting on the reviewer · silent time unknown · bravo");
   });
 
-  it("only the live dot is in the tab order, and a non-https link is not rendered as a link", () => {
+  it("every dot takes focus, and a non-https link is not rendered as a link", () => {
     const html = renderToStaticMarkup(<StepDots label="Progress" dots={[
       { step: "plan", state: "done", text: "plan · done", record: null, href: "javascript:alert(1)" },
       { step: "implement", state: "in progress", text: "implement · in progress", record: null, href: null },
     ]} />);
     expect(html).not.toContain("<a ");
-    expect(html).toContain('tabindex="-1"');
-    expect(html).toContain('tabindex="0"');
+    expect(html).not.toContain('tabindex="-1"');
+    expect(html.match(/tabindex="0"/g)).toHaveLength(2);
     expect(html).toContain("curstep");
   });
 });
@@ -112,16 +112,15 @@ describe("the record in the tooltip", () => {
 });
 
 describe("one focus target per dot (#2532 review 2)", () => {
-  it("a linked dot is the link itself, with the live one in the tab order and no link inside aria-hidden", () => {
+  it("a linked dot is the link itself, every dot takes focus, and no link sits inside aria-hidden", () => {
     const html = renderToStaticMarkup(<StepDots label="Progress" dots={[
       { step: "plan", state: "done", text: "plan · done · alpha · record #4", record: "record #4", href: "https://github.com/stabem/GraphHelm/pull/9" },
       { step: "implement", state: "in progress", text: "implement · in progress · alpha · record #12", record: "record #12", href: "https://github.com/stabem/GraphHelm/pull/9" },
     ]} />);
     expect(html).not.toMatch(/aria-hidden="true"[^>]*>[^]*<a /);
-    const tabbable = html.match(/<a [^>]*tabindex="0"/g) ?? [];
-    expect(tabbable).toHaveLength(1);
-    expect(tabbable[0]).toContain("implement · in progress");
-    expect(html).toMatch(/<a [^>]*aria-label="plan · done · alpha · record #4"[^>]*tabindex="-1"/);
+    const focusable = html.match(/<a [^>]*tabindex="0"/g) ?? [];
+    expect(focusable).toHaveLength(2);
+    expect(html).toMatch(/<a [^>]*aria-label="plan · done · alpha · record #4"[^>]*tabindex="0"/);
     expect(html).toContain('role="tooltip"');
     expect(html).not.toMatch(/role="tooltip" aria-hidden/);
   });

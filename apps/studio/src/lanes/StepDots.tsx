@@ -13,7 +13,7 @@ export function StepDots({ dots, label }: { dots: StepDot[]; label: string }) {
         const live = dot.state === "in progress" || dot.state === "stalled";
         const tip = `${base}-tip-${index}`;
         const cls = `step-dot ${dot.state.replace(/ /g, "-")}${dot.state === "in progress" ? " curstep" : ""}`;
-        const common = { className: cls, "aria-label": dot.text, "aria-describedby": tip, tabIndex: live ? 0 : -1 };
+        const common = { className: cls, "aria-label": dot.text, "aria-describedby": tip, tabIndex: 0 };
         const safe = dot.href !== null && /^https:\/\//.test(dot.href);
         const withRecord = safe && dot.record !== null && dot.text.endsWith(dot.record);
         return (

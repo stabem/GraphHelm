@@ -10,7 +10,6 @@ export function StepDots({ dots, label }: { dots: StepDot[]; label: string }) {
   return (
     <span role="group" aria-label={label} className="step-dots">
       {dots.map((dot, index) => {
-        const live = dot.state === "in progress" || dot.state === "stalled";
         const tip = `${base}-tip-${index}`;
         const cls = `step-dot ${dot.state.replace(/ /g, "-")}${dot.state === "in progress" ? " curstep" : ""}`;
         const common = { className: cls, "aria-label": dot.text, "aria-describedby": tip, tabIndex: 0 };

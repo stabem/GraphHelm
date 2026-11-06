@@ -460,6 +460,11 @@ button { font: inherit; }
 .ghost.small { align-self: flex-start; padding: 4px 10px; }
 .serves { font-size: var(--fs-meta); color: var(--accent); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 .serves.unlinked { color: var(--muted); font-style: italic; }
+/* #2530: the 'for:' line selects its request; it reads as a control only when pressed or focused. */
+.serves-ask { all: unset; cursor: pointer; text-decoration: underline; text-decoration-color: transparent; font-size: var(--fs-meta); color: var(--accent); }
+.serves-ask:hover, .serves-ask:focus-visible { text-decoration-color: currentColor; }
+.serves-ask[aria-pressed="true"] { font-weight: 600; }
+.serves-ask:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
 /* #1934: a 300px agent panel that folds to a 40px rail (Lanes.dc.html). */
 .agent-panel { flex: none; width: 300px; border-left: 1px solid var(--edge); padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
 .agent-rail { flex: none; width: 40px; border-left: 1px solid var(--edge); padding: var(--s2) var(--s1); display: flex; flex-direction: column; align-items: center; gap: var(--s2); }

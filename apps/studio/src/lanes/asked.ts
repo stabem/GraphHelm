@@ -108,3 +108,15 @@ export function arrangeAsked(cards: readonly AskedCard[], now: number): Arranged
 export function requestKey(request: OwnerRequest & { key?: string }): string {
   return request.key ?? request.requestId;
 }
+
+/** #2530: the request each lane serves, as its execution-scoped key (the same pick as
+ * `requestTitles`): the newest request whose issues hold one of that lane's open slices. */
+export function requestLanes(requests: readonly OwnerRequest[], all: readonly Agent[], tasks: readonly BoardTask[]): Map<string, string> {
+  const lanes = new Map<string, string>();
+  for (const request of [...requests].reverse()) {
+    for (const agent of agentsFor(request, all, tasks)) {
+      if (!lanes.has(agent.lane)) lanes.set(agent.lane, requestKey(request));
+    }
+  }
+  return lanes;
+}

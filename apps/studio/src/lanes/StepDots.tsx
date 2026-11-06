@@ -6,10 +6,14 @@ export function StepDots({ dots, label }: { dots: StepDot[]; label: string }) {
   return (
     <span role="group" aria-label={label} className="step-dots">
       {dots.map((dot) => {
-        const mark = <span role="img" tabIndex={0} aria-label={dot.text} className={`step-dot ${dot.state.replace(/ /g, "-")}`} />;
+        // Only the live dot (in progress or stalled) is in the tab order; the others stay reachable by pointer.
+        const live = dot.state === "in progress" || dot.state === "stalled";
+        const cls = `step-dot ${dot.state.replace(/ /g, "-")}${dot.state === "in progress" ? " curstep" : ""}`;
+        const mark = <span role="img" tabIndex={live ? 0 : -1} aria-label={dot.text} className={cls} />;
+        const safe = dot.href !== null && /^https:\/\//.test(dot.href);
         return (
           <span key={dot.step} className="step-dot-wrap">
-            {dot.href === null ? mark : <a href={dot.href} aria-label={dot.text}>{mark}</a>}
+            {safe ? <a href={dot.href!} aria-label={dot.text}>{mark}</a> : mark}
             <span role="tooltip" aria-hidden="true" className="step-dot-tip">{dot.text}</span>
           </span>
         );

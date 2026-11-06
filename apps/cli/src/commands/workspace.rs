@@ -489,7 +489,14 @@ fn recover_interrupted_claim(
         }
         if let Err(message) = git_with_timeout(
             repo,
-            &["worktree", "remove", worktree.to_string_lossy().as_ref()],
+            // core.longpaths: sem ele o Git Windows desfaz o registro e falha em caminhos > 260 (#1504).
+            &[
+                "-c",
+                "core.longpaths=true",
+                "worktree",
+                "remove",
+                worktree.to_string_lossy().as_ref(),
+            ],
             GIT_TIMEOUT,
         ) {
             return refuse(
@@ -2052,7 +2059,8 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
             view["lane"].as_str().unwrap_or_default().to_owned(),
             view["task"].as_str().unwrap_or_default().to_owned(),
         );
-        if let Some(reason) = keep_reason(&view) {
+        let incomplete = record["state"] == "remove_incomplete";
+        if let Some(reason) = (!incomplete).then(|| keep_reason(&view)).flatten() {
             if reason != "already_swept" {
                 kept.push(json!({"lane": lane, "task": task, "reason": reason,
                     "link": view["linkInWorktree"], "scanError": view["scanError"]}));
@@ -2066,12 +2074,21 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
         let dir = workspace_dir(root, &lane, &task);
         let worktree = dir.join("wt");
         // `git worktree remove` without --force refuses a dirty tree: a second check at the act.
-        let common = git(
-            &worktree,
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        );
+        let common = if incomplete {
+            Ok(String::new())
+        } else {
+            git(
+                &worktree,
+                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            )
+        };
+        // core.longpaths: sem ele o Git Windows desfaz o registro e falha em caminhos > 260 (#1504).
         let removal = common.and_then(|common| {
+            if incomplete {
+                return Ok(());
+            }
             graphhelm_process::command("git")
+                .args(["-c", "core.longpaths=true"])
                 .arg("--git-dir")
                 .arg(&common)
                 .args(["worktree", "remove"])
@@ -2087,6 +2104,11 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
                 })
         });
         if let Err(message) = removal {
+            if dir.exists() {
+                record["state"] = json!("remove_incomplete");
+                record["removeError"] = json!(message);
+                let _ = write_record(&ledger_file(root, &lane, &task), &record);
+            }
             kept.push(
                 json!({"lane": lane, "task": task, "reason": "worktree_remove_failed",
                 "message": message}),
@@ -2097,6 +2119,7 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
             .iter()
             .copied()
             .filter(|part| remove_tree(&dir.join(part)).is_err())
+            .chain((incomplete && remove_tree(&worktree).is_err()).then_some("worktree"))
             .collect();
         let _ = std::fs::remove_dir(&dir);
         record["state"] = json!("swept");
@@ -2107,11 +2130,25 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
             "notRemoved": failed}),
         );
     }
-    Outcome::success(
-        COMMAND,
-        json!({"root": root.to_string_lossy(), "applied": apply, "removed": removed, "kept": kept,
-            "targets": sweep_targets(root, apply, None)}),
-    )
+    let leftover = kept.iter().any(|k| k["reason"] == "worktree_remove_failed")
+        || removed
+            .iter()
+            .any(|r| r["notRemoved"].as_array().is_some_and(|n| !n.is_empty()));
+    let data = json!({"root": root.to_string_lossy(), "applied": apply, "removed": removed, "kept": kept,
+        "targets": sweep_targets(root, apply, None)});
+    if leftover {
+        // Something stayed on disk: a failure that names what stayed, not a success (#1504).
+        return Outcome {
+            output: crate::output::CommandOutput {
+                ok: false,
+                command: COMMAND,
+                data: Some(data),
+                diagnostics: Vec::new(),
+            },
+            exit_code: 2,
+        };
+    }
+    Outcome::success(COMMAND, data)
 }
 
 #[cfg(test)]

@@ -1101,6 +1101,32 @@ fn the_owner_approval_is_recorded_and_a_copied_approval_is_unsigned() {
 }
 
 #[test]
+fn an_approval_signed_elsewhere_is_not_on_this_computer_and_not_to_fix() {
+    // #2537: a fresh clone or worktree has no owner token and no owner records. The approved YAML
+    // copied from the owner's machine must read as "approval not on this computer" (a warning),
+    // never as `flow.approval_unsigned` (an error, shown as "to fix").
+    let owner = committed(EXAMPLE);
+    let (out, reply) = approve(owner.path());
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let fresh = committed(EXAMPLE);
+    assert!(!fresh.path().join(".graphhelm/events.token").exists());
+    for name in ["checkout.journey.yaml", "checkout.json"] {
+        std::fs::copy(
+            owner.path().join(".graphhelm/journeys").join(name),
+            fresh.path().join(".graphhelm/journeys").join(name),
+        )
+        .unwrap();
+    }
+    let reply = validate(fresh.path());
+    assert!(!finding(&reply, "flow.approval_unsigned"), "{reply}");
+    assert!(finding(&reply, "flow.approval_unverifiable"), "{reply}");
+    assert!(
+        reply.to_string().contains("approval not on this computer"),
+        "{reply}"
+    );
+}
+
+#[test]
 fn an_approval_with_no_owner_store_cannot_be_verified() {
     let dir = committed(EXAMPLE);
     approve(dir.path());

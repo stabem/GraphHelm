@@ -1,0 +1,6 @@
+{
+  "promise": "No Windows, o sweep do merge remove um worktree de caminho longo de uma vez; se sobrar algo, a resposta sai ok:false com o que ficou, e o sweep seguinte termina a limpeza sem --target manual.",
+  "scopePaths": [".graphhelm/cards/issue-1504.json", "apps/cli/src/commands/workspace.rs"],
+  "proof": "cargo +1.97.1 test -p graphhelm-cli --locked -- workspace; cargo +1.97.1 fmt --check; cargo +1.97.1 clippy --locked -p graphhelm-cli; break-once: remover core.longpaths deve deixar o teste de caminho longo vermelho",
+  "exportedSymbols": []
+}

@@ -2644,6 +2644,7 @@ mod tests {
         std::fs::write(&file, canonical(&approved, false)).unwrap();
         let listed = run_flows(&crate::args::JourneyFlowsArgs {
             project: Some(project.path().to_path_buf()),
+            studio_view: false,
         });
         let entry = &listed.output.data.unwrap()["flows"][0];
         assert_eq!(entry["status"], "weak", "{entry}");

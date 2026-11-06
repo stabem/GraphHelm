@@ -9,7 +9,8 @@ import { ActionError, actionErrorDetails, type ActionErrorDetails } from "../sta
 import { readCollapsed, writeCollapsed } from "./panel-rail";
 import { LanesPanels } from "./LanesPanels";
 import { RequestProgress } from "../graph/RequestProgress";
-import { agentsFor, arrangeAsked, askedCards, requestKey, requestColors, requestTitles, unlinkedIssue } from "./asked";
+import { agentsFor, arrangeAsked, askedCards, requestKey, requestColors, requestLanes, requestTitles, unlinkedIssue } from "./asked";
+import { applyAskFilter, readAskParam, withAskParam } from "./request-filter";
 import type { OwnerRequest } from "../graph/requests";
 import { BoardColumn } from "./BoardColumn";
 import { combineBoards, combineRequests, emptyPresence, foldPresence, homeRun, presence, withPresence, type PresenceIndex, type ProjectBoard } from "./project-board";
@@ -62,7 +63,22 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   const [olderShown, setOlderShown] = useState(false);
   // #1901: the owner's requests (WHAT I ASKED) and the one picked to narrow the board, if any.
   const [requests, setRequests] = useState<OwnerRequest[] | null>(null);
-  const [request, setRequest] = useState<string | null>(null);
+  // #2530: the selected request is kept in the URL as ?ask=<key>; Escape or a second click clears it.
+  const [request, setRequest] = useState<string | null>(() => readAskParam(location.search));
+  useEffect(() => {
+    const search = withAskParam(location.search, request);
+    if (search !== location.search) history.replaceState(history.state, "", `${location.pathname}${search}${location.hash}`);
+  }, [request]);
+  useEffect(() => {
+    if (request === null) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if ((event.target as HTMLElement | null)?.closest?.("textarea, input, select")) return;
+      setRequest(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [request]);
   const [actions, setActions] = useState<Record<string, { at: string | null; rows: LaneAction[] }>>({});
   const seen = useRef<Record<string, string | null>>({});
   const readSequence = useRef(0);
@@ -149,9 +165,14 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   const asking = all.filter((agent) => agent.questions.length > 0);
   const idle = all.filter((agent) => agent.idleMinutes === null || agent.idleMinutes >= 30);
   const working = all.filter((agent) => agent.task !== null && agent.questions.length === 0 && agent.idleMinutes !== null && agent.idleMinutes < 30);
-  const pickedRequest = requests?.find((row) => requestKey(row) === request) ?? null;
+  // #2530: the board narrows to the lanes serving the selected request; before the requests load,
+  // or for a key no request has, the board is not narrowed.
+  const requestLaneKeys = requestLanes(requests ?? [], all, board.tasks);
+  // Each request's own lanes (the same set its WHAT I ASKED card counts), so a lane that also
+  // serves a newer request stays on the board for an older one.
+  const pickedRequest = request === null ? null : requests?.find((row) => requestKey(row) === request) ?? null;
   const forRequest = pickedRequest === null ? null : new Set(agentsFor(pickedRequest, all, board.tasks).map((agent) => agent.lane));
-  const shown = (filter === "reply" ? asking : filter === "idle" ? idle : all).filter((agent) => forRequest === null || forRequest.has(agent.lane));
+  const shown = applyAskFilter(filter === "reply" ? asking : filter === "idle" ? idle : all, forRequest);
   const asked = askedCards(requests ?? [], all, board.tasks, journeys ?? [], new Set(board.stalls.map((stall) => stall.key)), new Date(Date.parse(board.now) || Date.now()));
   const arrangedAsked = arrangeAsked(asked, Date.parse(board.now) || Date.now());
   const deliveredShown = deliveredOpen ?? arrangedAsked.open.length === 0;
@@ -221,9 +242,9 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
           {COLUMNS.map((name) => {
             const cards = shown.filter((agent) => agent.column === name);
             return (
-              <BoardColumn key={name} name={name} label={COLUMN_NAME[name]} count={cards.length}>
+              <BoardColumn key={name} name={name} label={COLUMN_NAME[name]} count={cards.length} emptyNote={forRequest === null ? undefined : "no agent for this request"}>
                 <ul aria-label={COLUMN_NAME[name]}>
-                  {cards.map((agent) => <Card key={agent.lane} agent={agent} origins={"origins" in board ? board.origins[agent.lane] ?? [] : null} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} stripe={stripes.get(agent.lane) ?? null} unlinked={!serves.has(agent.lane) && unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
+                  {cards.map((agent) => <Card key={agent.lane} agent={agent} origins={"origins" in board ? board.origins[agent.lane] ?? [] : null} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} serveKey={requestLaneKeys.get(agent.lane) ?? null} askOn={pickedRequest === null ? null : requestKey(pickedRequest)} onAsk={(key) => setRequest((prior) => (prior === key ? null : key))} stripe={stripes.get(agent.lane) ?? null} unlinked={!serves.has(agent.lane) && unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
                 </ul>
               </BoardColumn>
             );
@@ -281,7 +302,7 @@ async function readPresence(runtime: Runtime, ids: readonly string[], prior: Pre
   return index;
 }
 
-export function Card({ agent, origins, selected, serves, stripe, unlinked, last, onPick }: { agent: Agent; origins: string[] | null; selected: boolean; serves: string | null; stripe: string | null; unlinked: boolean; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
+export function Card({ agent, origins, selected, serves, serveKey = null, askOn = null, onAsk = () => {}, stripe, unlinked, last, onPick }: { agent: Agent; origins: string[] | null; selected: boolean; serves: string | null; serveKey?: string | null; askOn?: string | null; onAsk?: (key: string) => void; stripe: string | null; unlinked: boolean; last: LaneAction | undefined; onPick: (lane: string, focus?: boolean) => void }) {
   const task = agent.task;
   const tone = idleTone(agent.idleMinutes);
   const asking = agent.questions[0];
@@ -305,7 +326,10 @@ export function Card({ agent, origins, selected, serves, stripe, unlinked, last,
       <span role="group" aria-label="Request" className="request">
         {task === null ? "no task" : <><span className="mono">#{task.issue ?? "—"}</span> {task.prTitle ?? task.title ?? task.key}{task.pr !== null && <span className="mono"> · PR #{task.pr}</span>}</>}
       </span>
-      {serves !== null && <span role="group" aria-label="For request" className="serves">for: {serves}</span>}
+      {serves !== null && (serveKey === null ? <span role="group" aria-label="For request" className="serves">for: {serves}</span> : (
+        // #2530: the 'for:' line selects its request; the card itself still picks the lane.
+        <button type="button" className="b serves serves-ask" aria-label={`Show only the agents for ${serves}`} aria-pressed={askOn === serveKey} onClick={(event) => { event.stopPropagation(); onAsk(serveKey); }}>for: {serves}</button>
+      ))}
       {unlinked && <span role="group" aria-label="Not linked" className="serves unlinked">not linked to an ask</span>}
       <span role="group" aria-label="Progress" className="blocks">
         {blocks(task?.step ?? null, agent.column === "blocked").map((block, index) => <span key={index} className={`block ${block}`} />)}

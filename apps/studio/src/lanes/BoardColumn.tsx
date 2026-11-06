@@ -8,15 +8,17 @@ interface Props {
   count: number;
   /** The cards; only drawn when the column has some. */
   children: ReactNode;
+  /** #2530: what an empty column says while a request is selected; "empty" by default. */
+  emptyNote?: string;
 }
 
 /** One kanban column of the Lanes board (docs/design/studio/Lanes.dc.html, #1996). A column with no
  * cards folds to a 44px strip - dot, count, the name written down the strip - and opens again as
  * soon as it gets a card, so the columns that hold cards share the width and never break a word. */
-export function BoardColumn({ name, label, count, children }: Props) {
+export function BoardColumn({ name, label, count, children, emptyNote }: Props) {
   if (count === 0) {
     return (
-      <li className={`board-column folded ${name}`} aria-label={`${label}, empty`} title={`${label} · none`}>
+      <li className={`board-column folded ${name}`} aria-label={`${label}, ${emptyNote ?? "empty"}`} title={`${label} · ${emptyNote ?? "none"}`}>
         <span className={`col-dot ${name}`} />
         <span className="mono count">0</span>
         <strong className="folded-name mono">{label}</strong>

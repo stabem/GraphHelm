@@ -1127,6 +1127,34 @@ fn an_approval_signed_elsewhere_is_not_on_this_computer_and_not_to_fix() {
 }
 
 #[test]
+fn the_studio_view_does_not_count_the_runtime_token_as_an_owner_store() {
+    // #2556: a project whose only local owner-side file is the Runtime token (every Studio's
+    // Runtime writes it) reads an approval as not on this computer in the Studio view, and as
+    // unsigned for the owner's own commands (#534), which keep the token rule.
+    let owner = committed(EXAMPLE);
+    owner_token(owner.path());
+    let (out, reply) = approve(owner.path());
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let fresh = committed(EXAMPLE);
+    owner_token(fresh.path());
+    for name in ["checkout.journey.yaml", "checkout.json"] {
+        std::fs::copy(
+            owner.path().join(".graphhelm/journeys").join(name),
+            fresh.path().join(".graphhelm/journeys").join(name),
+        )
+        .unwrap();
+    }
+    let studio = run(fresh.path(), &["validate", "--all", "--studio-view"]).1;
+    assert!(!finding(&studio, "flow.approval_unsigned"), "{studio}");
+    assert!(finding(&studio, "flow.approval_unverifiable"), "{studio}");
+    let owner_view = validate(fresh.path());
+    assert!(
+        finding(&owner_view, "flow.approval_unsigned"),
+        "{owner_view}"
+    );
+}
+
+#[test]
 fn an_approval_with_no_owner_store_cannot_be_verified() {
     let dir = committed(EXAMPLE);
     approve(dir.path());

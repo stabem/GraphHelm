@@ -378,13 +378,28 @@ pub(crate) fn approved(project: &Path, flow: &str, digest: &str) -> Result<bool,
     has(project, &signal_id(flow, digest), APPROVED_KIND)
 }
 
-/// #2537: whether this computer holds the owner's side of the project at all: the owner's token
-/// or any owner record. A fresh clone or worktree has neither (`.graphhelm/` is not committed), so
-/// it cannot say that an approval is unsigned; it only cannot check it here. A computer with the
-/// owner's token keeps the #534 rule: a missing record there is unsigned.
+thread_local! {
+    /// #2556: set by `journey validate --studio-view` and `journey flows --studio-view`. The Studio
+    /// view counts owner records only; the Runtime's token is written by every Studio's Runtime.
+    static STUDIO_VIEW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// #2556: the Studio view for this process's command (a single command per process).
+pub(crate) fn set_studio_view(on: bool) {
+    STUDIO_VIEW.with(|view| view.set(on));
+}
+
+/// #2537/#2556: whether this computer holds the owner's side of the project. The owner's own
+/// commands (`approve`, `sign-legacy`, plain `validate`) count the owner's token as well as owner
+/// records, so a legacy approval on the owner's machine reads as unsigned. The Studio view counts
+/// owner records only: every Studio's Runtime writes the token, so counting it made every
+/// approval read as "to fix" there. A checkout with neither cannot check an approval.
 pub(crate) fn owner_store_on_this_computer(project: &Path) -> bool {
-    project.join(".graphhelm/events.token").exists()
-        || owner_history(project).is_ok_and(|history| !history.is_empty())
+    let records = owner_history(project).is_ok_and(|history| !history.is_empty());
+    if STUDIO_VIEW.with(std::cell::Cell::get) {
+        return records;
+    }
+    records || project.join(".graphhelm/events.token").exists()
 }
 
 /// Whether a reviewer agent recorded its blind review of `flow` at exactly `digest` (#1130).

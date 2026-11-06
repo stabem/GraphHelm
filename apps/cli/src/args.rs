@@ -531,6 +531,9 @@ pub struct JourneyReplayArgs {
 pub struct JourneyFlowsArgs {
     #[arg(long)]
     pub project: Option<PathBuf>,
+    /// #2556: the Studio's view: an approval counts only with an owner record on this computer.
+    #[arg(long)]
+    pub studio_view: bool,
 }
 
 #[derive(Debug, Args)]
@@ -540,6 +543,9 @@ pub struct JourneyValidateArgs {
     /// Check every JSON contract and journey-flow YAML in the project's journeys directory.
     #[arg(long)]
     pub all: bool,
+    /// #2556: the Studio's view: an approval counts only with an owner record on this computer.
+    #[arg(long)]
+    pub studio_view: bool,
     /// The repository root that `scopePaths` are relative to. Defaults to the current directory.
     #[arg(long)]
     pub project: Option<PathBuf>,

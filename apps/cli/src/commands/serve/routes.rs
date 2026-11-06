@@ -2567,9 +2567,15 @@ pub(super) async fn capacity(State(state): State<ServeState>) -> Response {
 /// (`agent_route_allowed` admits no `/v1/journey-flows`).
 pub(super) async fn journey_flows(State(state): State<ServeState>) -> Response {
     flow_command(state, "journey.flows", |project| {
-        crate::commands::journey_flow::run_flows(&crate::args::JourneyFlowsArgs {
+        // #2556: the Studio's view counts owner records only; reset after, so the flag never
+        // outlives this request on a shared worker thread.
+        crate::commands::journey_owner::set_studio_view(true);
+        let answer = crate::commands::journey_flow::run_flows(&crate::args::JourneyFlowsArgs {
             project: Some(project),
-        })
+            studio_view: true,
+        });
+        crate::commands::journey_owner::set_studio_view(false);
+        answer
     })
     .await
 }

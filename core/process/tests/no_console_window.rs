@@ -198,9 +198,10 @@ fn the_guard_catches_a_commonjs_child_launch_without_the_shared_launcher() {
 }
 
 /// #2573: a detached child has no console, so every console program it starts gets a visible
-/// window. No source file may name the detached-process creation flag.
+/// window. No Rust source file may name the detached-process creation flag. Scope: `.rs` files only;
+/// Python hooks (plugins/graphhelm/hooks/session_hook.py) are tracked in a follow-up issue.
 #[test]
-fn no_source_file_names_the_detached_process_flag() {
+fn no_rust_source_file_names_the_detached_process_flag() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = crate_dir.join("../..").canonicalize().unwrap();
     let mut files = Vec::new();
@@ -218,7 +219,7 @@ fn no_source_file_names_the_detached_process_flag() {
         .collect();
     assert!(
         found.is_empty(),
-        "the detached-process flag is forbidden (#2573): {found:?}"
+        "the detached-process flag is forbidden in Rust (#2573): {found:?}"
     );
 }
 

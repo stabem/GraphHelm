@@ -103,3 +103,37 @@ class ReviewStopHook(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewStopHookCardPath(ReviewStopHook):
+    """#1548: the review gate reads .graphhelm/cards/issue-<N>.json on an issue-<N> branch."""
+
+    def setUp(self):
+        # The parent setUp clears os.environ (HOME, USERPROFILE): git needs the environment as it was.
+        self.env_before = dict(os.environ)
+        super().setUp()
+        subprocess.run(["git", "-C", str(self.repo), "checkout", "-qb", "issue-1548-card-path"],
+                       check=True, capture_output=True, env=self.env_before, creationflags=NO_WINDOW)
+        # The parent's patch clears PATH too, so diff_present's git call sees nothing; keep the
+        # environment in this subclass only (the parent's own cases are unchanged, #1548 note).
+        # GIT_CONFIG_* from the host shell (a credential helper) make git exit 128 in the test repo.
+        clean = {k: v for k, v in self.env_before.items() if not k.startswith("GIT_CONFIG_")}
+        patch = mock.patch.dict(os.environ, {**clean, "GRAPHHELM_SELF_REVIEW": "1"}, clear=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+        os.remove(self.repo / ".graphhelm/keel-card.json")
+        (self.repo / "app.py").write_text("x = 2\n", encoding="utf-8")
+
+    def test_per_issue_card_gates_the_turn(self):
+        # Break-once: with the fixed keel-card.json path there is no card here, so nothing blocks.
+        self.card_for_issue("1548")
+        self.assertIn("self-review.json", self.stop({}))
+
+    def test_another_issues_card_does_not_gate(self):
+        self.card_for_issue("9999")
+        self.assertIsNone(self.stop({}))
+
+    def card_for_issue(self, number):
+        path = self.repo / f".graphhelm/cards/issue-{number}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")

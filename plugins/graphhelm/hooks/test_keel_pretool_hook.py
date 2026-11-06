@@ -152,3 +152,53 @@ class KeelPreToolHook(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KeelPreToolCardPath(unittest.TestCase):
+    """#1548: on an issue-<N> branch the pretool hook reads .graphhelm/cards/issue-<N>.json. Defect:
+    it read only keel-card.json, so a PR with the right per-issue card was refused every edit."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name)
+        git(self.repo, "init", "-q", "-b", "main")
+        git(self.repo, "config", "user.email", "t@t")
+        git(self.repo, "config", "user.name", "t")
+        (self.repo / "app.py").write_text("x = 1\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "base")
+        git(self.repo, "checkout", "-qb", "issue-1548-card-path")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def card(self, relative, body):
+        path = self.repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(body))
+
+    def edit(self, path="app.py"):
+        payload = {"cwd": str(self.repo), "tool_name": "Write",
+                   "tool_input": {"file_path": str(self.repo / path), "content": "x = 2\n" * 20}}
+        out = subprocess.run([sys.executable, str(SCRIPT)], input=json.dumps(payload),
+                             capture_output=True, text=True, check=True, creationflags=NO_WINDOW).stdout
+        return json.loads(out)["hookSpecificOutput"] if out.strip() else None
+
+    def test_per_issue_card_lets_the_edit_through(self):
+        # Break-once: with the fixed keel-card.json path this edit is denied (no card there).
+        self.card(".graphhelm/cards/issue-1548.json", {"promise": "p", "scopePaths": ["app.py"],
+                  "proof": "t", "testFirst": False, "testFirstReason": "no testable behavior"})
+        self.assertIsNone(self.edit())
+
+    def test_issue_branch_without_any_card_still_denies(self):
+        result = self.edit()
+        self.assertEqual(result["permissionDecision"], "deny")
+        self.assertIn("keel-card.json", result["permissionDecisionReason"])
+
+    def test_test_first_names_the_per_issue_card(self):
+        # Break-once: with the fixed path the message names keel-card.json, so this fails.
+        self.card(".graphhelm/cards/issue-1548.json", {"promise": "p", "scopePaths": ["app.py"],
+                  "proof": "t"})
+        result = self.edit()
+        self.assertEqual(result["permissionDecision"], "deny")
+        self.assertIn(".graphhelm/cards/issue-1548.json", result["permissionDecisionReason"])

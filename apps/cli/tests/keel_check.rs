@@ -2314,6 +2314,20 @@ fn line_rules_honour_and_print_excuses_and_skip_test_and_existing_code() {
     let (_, reply) = run(repo.path(), None);
     assert_eq!(line_rules(&reply), Vec::<String>::new(), "{reply}");
 
+    // stabem/zuvemo#1569: the observers GraphHelm generates are its own output, not the project's
+    // code; the same line anywhere else is still judged.
+    let observer_line = "# base\nsave(doc, None)\n";
+    let repo = change(
+        ".graphhelm/observers/playwright_observe.py",
+        "# base\n",
+        observer_line,
+    );
+    let (_, reply) = run(repo.path(), None);
+    assert_eq!(line_rules(&reply), Vec::<String>::new(), "{reply}");
+    let repo = change(".graphhelm/other/observe.py", "# base\n", observer_line);
+    let (_, reply) = run(repo.path(), None);
+    assert_eq!(line_rules(&reply), ["keel.names.no_bare_flag"], "{reply}");
+
     // A break that already existed does not block a change that only adds a clean line.
     let repo = change(
         "src/lib.rs",

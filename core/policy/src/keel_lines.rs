@@ -2,7 +2,8 @@
 //!
 //! Only added production lines are judged, so code that already exists never blocks a change (the
 //! ratchet). Test code is out of scope: `#[cfg(test)]` items in Rust and every test path
-//! (`tests/`, `*.test.ts(x)`, `test_*.py`, ...). A finding is excused only by a comment on its line
+//! (`tests/`, `*.test.ts(x)`, `test_*.py`, ...). The journey observers GraphHelm generates under
+//! `.graphhelm/observers/` are not judged either: they are this binary's own output. A finding is excused only by a comment on its line
 //! or the line above, `keel-allow: <rule id> <reason> until <YYYY-MM-DD|#issue>`, and every excuse
 //! that was honoured is reported beside the findings. The rule ids are the ones `KEEL.md` lists.
 //!
@@ -72,7 +73,7 @@ pub fn check_lines(
         let Some(language) = Language::of(&file.path) else {
             continue;
         };
-        if is_test_path(&file.path) {
+        if is_test_path(&file.path) || is_generated_observer(&file.path) {
             continue;
         }
         let text = head_text(&file.path);
@@ -126,6 +127,16 @@ pub fn check_lines(
         }
     }
     report
+}
+
+/// The journey observers GraphHelm itself writes into a project (`graphhelm setup --install-observer`).
+/// They must stay byte-for-byte what this binary ships, or `journey replay` refuses them as stale, so
+/// a `keel-allow` comment cannot be added to them and their lines are not the project's code to judge
+/// (stabem/zuvemo#1569).
+const GENERATED_OBSERVER_DIR: &str = ".graphhelm/observers/";
+
+fn is_generated_observer(path: &str) -> bool {
+    path.starts_with(GENERATED_OBSERVER_DIR)
 }
 
 fn finding(rule: &str, path: &str, line: u32, raw: &str, fix: &str) -> Finding {

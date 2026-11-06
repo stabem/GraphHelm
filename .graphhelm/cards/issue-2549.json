@@ -1,0 +1,11 @@
+{
+  "promise": "graphhelm keel check no longer judges the added lines of .graphhelm/observers/, the journey observers GraphHelm writes into a project and that must stay byte-for-byte what the binary ships; the same line anywhere else is still judged.",
+  "scopePaths": [
+    ".graphhelm/cards/issue-2549.json",
+    "core/policy/src/keel_lines.rs",
+    "apps/cli/tests/keel_check.rs"
+  ],
+  "proof": "graphhelm workspace slot ... -- cargo +1.97.1 test --locked -p graphhelm-cli --test cli -- --test-threads=2 keel_check:: ; break-once: without the observer skip the new case is red (keel.names.no_bare_flag on .graphhelm/observers/playwright_observe.py); cargo +1.97.1 fmt --all -- --check; clippy -p graphhelm-policy -p graphhelm-cli --all-targets --all-features -D warnings; cargo +1.97.1 test --locked -p graphhelm-protocols --test authored_strings_across_the_workspace",
+  "exportedSymbols": [],
+  "journeys": []
+}

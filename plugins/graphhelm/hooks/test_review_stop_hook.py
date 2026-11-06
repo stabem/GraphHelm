@@ -105,29 +105,32 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class ReviewStopHookCardPath(ReviewStopHook):
+class ReviewStopHookCardPath(unittest.TestCase):
     """#1548: the review gate reads .graphhelm/cards/issue-<N>.json on an issue-<N> branch."""
 
+    stop = ReviewStopHook.stop
+
     def setUp(self):
-        # The parent setUp clears os.environ (HOME, USERPROFILE): git needs the environment as it was.
-        self.env_before = dict(os.environ)
-        super().setUp()
-        subprocess.run(["git", "-C", str(self.repo), "checkout", "-qb", "issue-1548-card-path"],
-                       check=True, capture_output=True, env=self.env_before, creationflags=NO_WINDOW)
-        # The parent's patch clears PATH too, so diff_present's git call sees nothing; keep the
-        # environment in this subclass only (the parent's own cases are unchanged, #1548 note).
-        # GIT_CONFIG_* from the host shell (a credential helper) make git exit 128 in the test repo.
-        clean = {k: v for k, v in self.env_before.items() if not k.startswith("GIT_CONFIG_")}
-        patch = mock.patch.dict(os.environ, {**clean, "GRAPHHELM_SELF_REVIEW": "1"}, clear=True)
-        patch.start()
-        self.addCleanup(patch.stop)
+        # A host shell may export GIT_* (a credential helper's GIT_CONFIG_COUNT): git then exits 128
+        # in the test repo. The parent setUp runs git before it patches the environment, so the
+        # environment is sanitized here, first (#1548).
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        clean.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+                      "GIT_TERMINAL_PROMPT": "0"})
+        env_patch = mock.patch.dict(os.environ, clean, clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        ReviewStopHook.setUp(self)
+        git(self.repo, "checkout", "-qb", "issue-1548-card-path")
         os.remove(self.repo / ".graphhelm/keel-card.json")
         (self.repo / "app.py").write_text("x = 2\n", encoding="utf-8")
 
     def test_per_issue_card_gates_the_turn(self):
         # Break-once: with the fixed keel-card.json path there is no card here, so nothing blocks.
         self.card_for_issue("1548")
-        self.assertIn("self-review.json", self.stop({}))
+        reason = self.stop({})
+        self.assertIsNotNone(reason, "the per-issue card did not gate the turn")
+        self.assertIn("self-review.json", reason)
 
     def test_another_issues_card_does_not_gate(self):
         self.card_for_issue("9999")

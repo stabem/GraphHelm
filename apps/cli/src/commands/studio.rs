@@ -888,6 +888,18 @@ fn studio_is_running(port: u16) -> bool {
         })
 }
 
+/// #2539: the first port after `base` that nothing answers on and that this machine can bind. The
+/// scan stops after `STUDIO_PORT_SCAN` candidates; `None` when all of them are taken.
+const STUDIO_PORT_SCAN: u16 = 20;
+
+fn free_studio_port(base: u16) -> Option<u16> {
+    (1..=STUDIO_PORT_SCAN).find_map(|step| {
+        let port = base.checked_add(step)?;
+        let bindable = std::net::TcpListener::bind(("127.0.0.1", port)).is_ok();
+        (bindable && !studio_is_running(port)).then_some(port)
+    })
+}
+
 /// Register the project with the local Studio before opening a reusable deep link.
 fn check_studio_project(project: &Path, port: u16) -> Result<String, String> {
     let expected = super::execution::delivery::project_id(project)
@@ -1137,12 +1149,33 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     if args.no_browser {
         launch.arg(flag("NoBrowser"));
     }
-    // #1767: a Studio already serving ANOTHER project on the Studio port keeps it. This project's
-    // Runtime is started (or reused) on its own, and the project then joins that Studio, instead
-    // of the launcher refusing the port or replacing the other project's Studio.
-    let joining = studio_is_running(STUDIO_PORT);
+    // #1767: a Studio already serving THIS project on the Studio port is joined: its Runtime is
+    // started (or reused) and the project registers with that Studio. #2539: a Studio on the port
+    // that refuses this project belongs to another project; this project then takes the next free
+    // port and starts its own Studio there, and that Studio is not touched.
+    let (studio_port, joining) = if studio_is_running(STUDIO_PORT) {
+        match check_studio_project(&project, STUDIO_PORT) {
+            Ok(_) => (STUDIO_PORT, true),
+            Err(_) => match free_studio_port(STUDIO_PORT) {
+                Some(port) => (port, false),
+                None => {
+                    return refused(
+                        format!(
+                            "the Studio port {STUDIO_PORT} belongs to another project and no free port was found after it; pass a port the launcher can use"
+                        ),
+                        "/port",
+                    );
+                }
+            },
+        }
+    } else {
+        (STUDIO_PORT, false)
+    };
     if joining {
         launch.arg(flag("RuntimeOnly"));
+    }
+    if studio_port != STUDIO_PORT {
+        launch.arg(flag("StudioPort")).arg(studio_port.to_string());
     }
     let launched = match run_forwarding(&mut launch) {
         Ok(status) => status.success(),
@@ -1159,12 +1192,16 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
         "update": freshness,
         "launcherSucceeded": launched,
     });
+    if launched && studio_port != STUDIO_PORT && !joining {
+        data["studioPort"] = json!(studio_port);
+        data["url"] = json!(format!("http://127.0.0.1:{studio_port}/"));
+    }
     if launched && joining {
-        let joined = open_project(&project, STUDIO_PORT, None, args.no_browser);
+        let joined = open_project(&project, studio_port, None, args.no_browser);
         if joined.exit_code != 0 {
             return joined;
         }
-        data["joinedStudioPort"] = json!(STUDIO_PORT);
+        data["joinedStudioPort"] = json!(studio_port);
         if let Some(opened) = joined.output.data {
             data["opened"] = opened["opened"].clone();
             if let Some(url) = opened.get("url") {
@@ -1185,6 +1222,24 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #2539: when the default Studio port is held, the next free port is chosen and the held ones
+    /// are skipped. Fails if a taken port is returned again (the old behaviour refused instead).
+    #[test]
+    fn a_held_studio_port_gives_the_next_free_port() {
+        let base = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let held_default = std::net::TcpListener::bind(("127.0.0.1", base)).unwrap();
+        let next = free_studio_port(base).expect("a free port after the held one");
+        assert!(next > base && next <= base + STUDIO_PORT_SCAN, "{next}");
+        let held_next = std::net::TcpListener::bind(("127.0.0.1", next)).unwrap();
+        let after = free_studio_port(base).expect("a free port past both held ones");
+        assert!(after > next && after <= base + STUDIO_PORT_SCAN, "{after}");
+        drop((held_default, held_next));
+    }
 
     /// #1143: the bar's total counts the lockfile's packages, and only cargo's
     /// `compiler-artifact` lines advance it.

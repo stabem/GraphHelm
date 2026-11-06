@@ -1,69 +1,85 @@
-"""#2573: a hook-launched waiter must not open a visible console window on Windows.
+"""#2573: the hook's detached waiter and helper must not open a visible console window on Windows.
 
-A DETACHED_PROCESS child has no console, so a console program it starts opens a new window.
-The hooks spawn their waiter and helper with CREATE_NO_WINDOW (plus the job breakaway, #919).
-The test counts new visible console windows while such a child tree runs, and subtracts the
-windows of an ambient baseline (a child that starts no console program) so other programs'
-windows do not count. Skipped off Windows.
+Imports the shipped session_hook module (HOOK_PATH overrides the file for a red run) and
+records the creationflags it passes to subprocess.Popen when it starts the waiter and the
+helper. A DETACHED_PROCESS child has no console, so the console program it starts opens a
+window; the shipped flags must carry CREATE_NO_WINDOW and must not carry DETACHED_PROCESS.
+Skipped off Windows.
 """
-import ctypes
-import ctypes.wintypes as wt
+import importlib.util
+import os
 import subprocess
 import sys
-import time
+import tempfile
 import unittest
+from pathlib import Path
 
-CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
-CREATE_BREAKAWAY_FROM_JOB = 0x01000000
-CONSOLE_CLASSES = {"ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "PseudoConsoleWindow"}
+CREATE_NO_WINDOW = 0x08000000
+
+HERE = Path(__file__).resolve().parent
 
 
-def _visible_console_windows(user32):
-    found = set()
-    buf = ctypes.create_unicode_buffer(256)
-    proc = ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
-
-    def visit(hwnd, _):
-        if user32.IsWindowVisible(hwnd):
-            user32.GetClassNameW(hwnd, buf, 256)
-            if buf.value in CONSOLE_CLASSES:
-                found.add(hwnd)
-        return True
-
-    user32.EnumWindows(proc(visit), 0)
-    return found
+def _load_hook():
+    path = Path(os.environ.get("HOOK_PATH", HERE / "session_hook.py"))
+    spec = importlib.util.spec_from_file_location("session_hook_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def _new_windows_during(user32, flags, parent_code):
-    before = _visible_console_windows(user32)
-    child = subprocess.Popen([sys.executable, "-c", parent_code], creationflags=flags,
-                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
-    seen = set()
-    deadline = time.time() + 12
-    while child.poll() is None or time.time() < deadline:
-        seen |= _visible_console_windows(user32) - before
-        if child.poll() is not None and time.time() >= deadline:
-            break
-        time.sleep(0.1)
-    child.wait(timeout=30)
-    return len(seen)
+@unittest.skipUnless(sys.platform == "win32", "console flags are a Windows concern")
+class ShippedSpawnFlagsTest(unittest.TestCase):
+    def _record_popen(self, module, call):
+        recorded = []
 
+        class _Fake:
+            pid = 4242
 
-@unittest.skipUnless(sys.platform == "win32", "console windows exist only on Windows")
-class NoConsoleWindowTest(unittest.TestCase):
-    def test_hook_spawn_flags_open_no_console_window(self):
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
-        console_tree = ("import subprocess;"
-                        "subprocess.run(['cmd','/c','ping -n 4 127.0.0.1 >nul'])")
-        ambient = _new_windows_during(user32, CREATE_NO_WINDOW, "import time;time.sleep(6)")
-        control = _new_windows_during(user32, CREATE_NO_WINDOW | DETACHED_PROCESS, console_tree)
-        self.assertGreater(control - ambient, 0,
-                           "the detached control must open a window, or this test proves nothing")
-        shipped = _new_windows_during(user32, CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB,
-                                      console_tree)
-        self.assertEqual(max(0, shipped - ambient), 0, "the shipped spawn flags open a window")
+            def __init__(self, argv, **kwargs):
+                recorded.append(kwargs)
+
+            def __getattr__(self, name):
+                return lambda *a, **k: None
+
+        real = module.subprocess.Popen
+        module.subprocess.Popen = _Fake
+        try:
+            call()
+        finally:
+            module.subprocess.Popen = real
+        return recorded
+
+    def test_waiter_spawn_flags_hide_the_console_and_do_not_detach(self):
+        module = _load_hook()
+        with tempfile.TemporaryDirectory() as tmp:
+            events = Path(tmp) / "events"
+            events.mkdir()
+            os.environ["GRAPHHELM_EVENTS_DIR"] = str(events)
+            try:
+                payload = {"session_id": "s-2573", "cwd": tmp}
+                bound = ("exec-2573", str(events / "events.json"), "lane-2573", "node", None)
+                recorded = self._record_popen(
+                    module, lambda: module.start_lane_waiter(payload, bound, "codex"))
+            finally:
+                os.environ.pop("GRAPHHELM_EVENTS_DIR", None)
+        self.assertTrue(recorded, "start_lane_waiter did not reach subprocess.Popen")
+        flags = recorded[-1].get("creationflags", 0)
+        self.assertFalse(flags & DETACHED_PROCESS, f"waiter detached: flags=0x{flags:08x}")
+        self.assertTrue(flags & CREATE_NO_WINDOW, f"waiter has no CREATE_NO_WINDOW: 0x{flags:08x}")
+
+    def test_helper_spawn_flags_hide_the_console_and_do_not_detach(self):
+        module = _load_hook()
+        helper = module._HelperClient.__new__(module._HelperClient)
+        helper.host = "codex"
+        helper.process = None
+        helper.failure = None
+        helper._started = __import__("threading").Event()
+        recorded = self._record_popen(module, helper._spawn)
+        self.assertTrue(recorded, "_HelperClient._spawn did not reach subprocess.Popen")
+        flags = recorded[-1].get("creationflags", 0)
+        self.assertFalse(flags & DETACHED_PROCESS, f"helper detached: flags=0x{flags:08x}")
+        self.assertTrue(flags & CREATE_NO_WINDOW, f"helper has no CREATE_NO_WINDOW: 0x{flags:08x}")
 
 
 if __name__ == "__main__":

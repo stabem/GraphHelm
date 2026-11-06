@@ -242,7 +242,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
             return (
               <BoardColumn key={name} name={name} label={COLUMN_NAME[name]} count={cards.length} emptyNote={forRequest === null ? undefined : "no agent for this request"}>
                 <ul aria-label={COLUMN_NAME[name]}>
-                  {cards.map((agent) => <Card key={agent.lane} agent={agent} origins={"origins" in board ? board.origins[agent.lane] ?? [] : null} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} serveKey={requestLaneKeys.get(agent.lane) ?? null} askOn={pickedRequest} onAsk={setRequest} stripe={stripes.get(agent.lane) ?? null} unlinked={!serves.has(agent.lane) && unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
+                  {cards.map((agent) => <Card key={agent.lane} agent={agent} origins={"origins" in board ? board.origins[agent.lane] ?? [] : null} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} serveKey={requestLaneKeys.get(agent.lane) ?? null} askOn={pickedRequest} onAsk={(key) => setRequest((prior) => (prior === key ? null : key))} stripe={stripes.get(agent.lane) ?? null} unlinked={!serves.has(agent.lane) && unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
                 </ul>
               </BoardColumn>
             );

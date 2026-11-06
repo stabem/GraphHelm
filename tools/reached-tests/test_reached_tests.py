@@ -180,6 +180,33 @@ class Reach(unittest.TestCase):
                     if changed == "apps/studio/x.py":
                         self.assertEqual(studio, [changed])
 
+    def test_node_chain_window_test_selects_one_fixed_powershell_step(self):
+        """#2573: the Node-side window test is selected by its own paths, as one fixed PowerShell step."""
+        test = "tools/no-window/test_node_chain.ps1"
+        expected = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", test]
+        with tempfile.TemporaryDirectory() as repo:
+            paths = [test, "tools/no-window/node-chain/hidden-chain.mjs", "tools/no-window/node-chain/detached-control.mjs"]
+            for relative in paths:
+                path = Path(repo, relative)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("", encoding="utf-8")
+            for changed in paths:
+                *_, tools, _, other = reach(changed, repo=repo)
+                self.assertEqual(tools, ["powershell.exe -NoProfile -ExecutionPolicy Bypass -File " + test])
+                self.assertEqual(rt.steps(set(), set(), [], tools, repo=Path(repo)), [
+                    {"argv": expected, "cwd": ".", "slot": False}])
+                self.assertEqual(other, [])
+
+    def test_node_chain_window_test_missing_is_reported_not_skipped(self):
+        """#2573: a missing Node-chain test is named as missing, never silently passed."""
+        with tempfile.TemporaryDirectory() as repo:
+            path = Path(repo, "tools/no-window/node-chain/hidden-chain.mjs")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+            *_, tools, _, other = reach("tools/no-window/node-chain/hidden-chain.mjs", repo=repo)
+            self.assertEqual(tools, [])
+            self.assertIn({"path": "tools/no-window/test_node_chain.ps1", "reason": "no-window Node-chain test is missing"}, other)
+
     def test_no_window_observer_paths_select_one_fixed_powershell_step(self):
         observer = "tools/no-window/test_observe.ps1"
         expected = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",

@@ -19,6 +19,7 @@ https://claude.ai/artifact/WjdL5A6eXFgT2BWVbcmfuL (earlier copy: https://claude.
 | [`2445/`](2445/README.md) | Approved shared alert for failed Studio actions (#2445) |
 | [`2325-2324/`](2325-2324/README.md) | Static before/after mocks (approved 2026-10-31): journeys "to fix" on the rail and the Proof card, and a run "waiting for you" in Graph and Lanes |
 | [`2532-step-dots/`](2532-step-dots/README.md) | Static before/after mock of the step dot tooltip (#2532, approved by Gabriel (owner), 2026-11-06, via the OpenBot confirm card relayed by Shikamaru): the tooltip below the dot row, "record #N" as the link |
+| [`2534-request-bar/`](2534-request-bar/README.md) | Static before/after mock of the request bar's stalled and not-started segments (#2534, approved by Gabriel (owner), 2026-11-06, via the OpenBot confirm card relayed by Shikamaru): a stalled segment outlined and hatched |
 
 The `.dc.html` files use the artifact's Design Component format, and their images point at the
 artifact's asset store (`/_blob/...`). They open in the artifact, not as plain pages. The data on

@@ -15,7 +15,7 @@ export function RequestProgress({ progress }: { progress: Progress }) {
       </span>
       <span role="img" aria-label={`${done} of ${total} issues delivered`} className="req-bar">
         {segs.map((seg) => (
-          <span key={seg.issue} className="req-slot" title={`#${seg.issue} ${seg.state}`}>
+          <span key={seg.issue} className={seg.state === "stalled" ? "req-slot stalled" : "req-slot"} title={`#${seg.issue} ${seg.state}`}>
             <span className="req-fill" style={{ width: `${seg.fill * 100}%`, background: seg.color }} />
           </span>
         ))}

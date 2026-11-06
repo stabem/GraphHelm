@@ -31,4 +31,17 @@ describe("the request progress bar", () => {
     expect(html).toContain('class="req-fill"');
     expect(html).toMatch(/class="req-fill"[^>]*width:30%/);
   });
+
+  // #2534: a stalled segment and a not-started segment, both empty, differ on the bar itself.
+  it("marks a stalled slot apart from a not-started one, on the bar and not only in the legend", () => {
+    const html = renderToStaticMarkup(<RequestProgress progress={{
+      ...progress,
+      segs: [
+        { issue: 201, state: "stalled", color: "#ff6b6b", fill: 0 },
+        { issue: 202, state: "not started", color: "#5b5b63", fill: 0 },
+      ],
+    }} />);
+    expect(html).toContain('class="req-slot stalled" title="#201 stalled"');
+    expect(html).toContain('class="req-slot" title="#202 not started"');
+  });
 });

@@ -648,8 +648,10 @@ button { font: inherit; }
 .request-chip { align-self: flex-start; font-size: var(--fs-meta); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--chip, var(--edge-strong)); color: var(--chip, var(--faint)); }
 .req-head { display: flex; align-items: center; gap: 8px; }
 .req-pct { font-size: var(--fs-meta); color: var(--muted); }
-.req-bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: #2a2a30; }
-.req-bar > span { flex: 1; }
+/* #2529: each issue is its own slot with its own track; the partial fill sits on that track, never on a transparent gradient. */
+.req-bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; }
+.req-slot { flex: 1; position: relative; background: #2a2a30; }
+.req-fill { position: absolute; left: 0; top: 0; bottom: 0; }
 .req-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: var(--fs-meta); color: var(--muted); }
 .req-legend > span { display: inline-flex; gap: 4px; align-items: center; }
 .req-legend i { width: 7px; height: 7px; border-radius: 2px; }

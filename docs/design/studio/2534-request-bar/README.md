@@ -5,4 +5,4 @@ Static before/after mock of the request bar (the same bar as the request card, #
 - `before.html` / `before.png`: today. A stalled segment and a not-started segment both draw the same empty track; only the legend tells them apart.
 - `after.html` / `after.png`: proposed. A stalled segment has a red inset outline and a hatched track; a not-started segment keeps the plain track.
 
-Status: awaiting owner approval (not yet approved).
+Status: approved by Gabriel (owner), 2026-11-06, via the OpenBot confirm card relayed by Shikamaru.

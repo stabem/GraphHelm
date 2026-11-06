@@ -5561,6 +5561,12 @@ Options:
       --shared-target
           Build in `<root>/target-shared` instead of the worktree's own target. UNSAFE for tests: cargo treats another worktree's path-dependency artifacts as fresh, so a run can test bytes it did not build (#361). Opt-in only, for builds whose result does not vouch for a tree
 
+      --pr <PR>
+          Use the PR-scoped target below the workspace root; the existing slot still serializes builds
+
+      --pr-head <PR_HEAD>
+          Full pinned commit for --pr; it must match HEAD both before waiting and after admission
+
       --max-wait <MAX_WAIT>
           Give up after this many minutes of waiting (fractions allowed). Without it a waiter waits as long as it takes (#540). A waiter that gives up keeps its place for 30 minutes: the same lane and label queueing again within that time are served where they first arrived
 

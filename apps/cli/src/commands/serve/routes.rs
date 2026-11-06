@@ -8000,6 +8000,7 @@ pub(super) mod tests {
             instance: Arc::from("test-instance"),
             project_id: None,
             project: None,
+            project_source: crate::commands::serve::ProjectSource::None,
             workspace_root: None,
             workspace_sweep_seconds: None,
             last_workspace_sweep: Arc::new(tokio::sync::Mutex::new(serde_json::Value::Null)),

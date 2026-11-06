@@ -144,6 +144,8 @@ struct ServeState {
     project_id: Option<Arc<str>>,
     /// Explicit document root, independent of model/tool executor wiring.
     project: Option<Arc<Path>>,
+    /// Where `project` came from, named on the startup line (#2360).
+    project_source: ProjectSource,
     /// The agent workspace root (#360), from `--workspace-root`.
     workspace_root: Option<Arc<Path>>,
     workspace_sweep_seconds: Option<u64>,
@@ -359,6 +361,43 @@ fn sibling_worktree(cwd: &Path, events: &Path) -> Option<PathBuf> {
     (common == owner_common && here != owner).then_some(here)
 }
 
+/// Where the Runtime's project came from (#2360), named on its startup line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProjectSource {
+    /// `--project` was given; it always wins.
+    Flag,
+    /// `--project` was omitted and the current directory is an initialised project.
+    CurrentDirectory,
+    /// No project: journey flows are unavailable until one is named.
+    None,
+}
+
+impl ProjectSource {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Flag => "flag",
+            Self::CurrentDirectory => "current-directory",
+            Self::None => "none",
+        }
+    }
+}
+
+/// #2360: without `--project`, an initialised current directory (one with `.graphhelm/`) is the
+/// project. Anything else is left exactly as it was.
+fn with_current_directory_project(args: &ServeArgs) -> (ServeArgs, ProjectSource) {
+    let mut resolved = args.clone();
+    if args.project.is_some() {
+        return (resolved, ProjectSource::Flag);
+    }
+    match std::env::current_dir() {
+        Ok(cwd) if cwd.join(".graphhelm").is_dir() => {
+            resolved.project = Some(cwd);
+            (resolved, ProjectSource::CurrentDirectory)
+        }
+        _ => (resolved, ProjectSource::None),
+    }
+}
+
 fn execute(args: &ServeArgs) -> Result<(), Failure> {
     if args.workspace_sweep_seconds != 0 && !(60..=86400).contains(&args.workspace_sweep_seconds) {
         return Err(argument(
@@ -376,6 +415,8 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         args.workspace_sweep_test_seconds.unwrap_or(seconds)
     };
     let address = parse_loopback_bind(&args.bind)?;
+    let (resolved, project_source) = with_current_directory_project(args);
+    let args = &resolved;
     let derived = args
         .project
         .is_none()
@@ -442,6 +483,7 @@ fn execute(args: &ServeArgs) -> Result<(), Failure> {
         instance: Arc::from(instance),
         project_id: project_id.map(Arc::from),
         project: args.project.as_deref().map(Arc::from),
+        project_source,
         workspace_root: args.workspace_root.as_deref().map(Arc::from),
         workspace_sweep_seconds: (args.workspace_root.is_some() && seconds != 0).then_some(seconds),
         last_workspace_sweep: Arc::new(tokio::sync::Mutex::new(serde_json::Value::Null)),
@@ -930,6 +972,14 @@ async fn serve_forever(
         serde_json::json!({
             "address": bound.to_string(),
             "executors": { "model": executors.model, "tools": executors.tools },
+            "project": {
+                "path": state.project.as_deref(),
+                "id": state.project_id.as_deref(),
+                "source": state.project_source.name(),
+                "hint": (state.project_source == ProjectSource::None).then_some(
+                    "no project: journey flows are unavailable; start with --project <dir>, or from an initialised project directory",
+                ),
+            },
         }),
     )
     .with_warnings(startup_warnings);

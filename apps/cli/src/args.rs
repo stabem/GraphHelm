@@ -1326,7 +1326,7 @@ pub struct WakeWaitArgs {
     pub session_id: String,
 }
 
-#[derive(Debug, Args)]
+#[derive(Clone, Debug, Args)]
 pub struct ServeArgs {
     /// The events directory the server reads and writes through the shared command layer; the
     /// same directory a co-located `graphhelm execution`/`events` invocation would use. Created

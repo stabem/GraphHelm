@@ -1009,6 +1009,52 @@ fn state_of(args: &JourneyPreviewArgs, flow: &Value) -> Result<Option<String>> {
 }
 
 /// [`start`] with the runner probe the reaper uses (a test supplies it).
+/// #2538: one start at a time per flow. Held until the start returns (the runner has its pid by
+/// then). A lock older than `STALE_START_LOCK` is a start that crashed; it is taken over.
+const STALE_START_LOCK: Duration = Duration::from_secs(120);
+
+struct StartLock(PathBuf);
+
+impl StartLock {
+    fn take(path: &Path) -> std::result::Result<Self, String> {
+        for _ in 0..2 {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+            {
+                Ok(mut file) => {
+                    use std::io::Write;
+                    let _ = writeln!(file, "{}", chrono::Utc::now().to_rfc3339());
+                    return Ok(Self(path.to_path_buf()));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(path)
+                        .and_then(|meta| meta.modified())
+                        .ok()
+                        .and_then(|time| time.elapsed().ok())
+                        .is_some_and(|age| age > STALE_START_LOCK);
+                    if !stale {
+                        return Err(format!(
+                            "another start of this journey is in progress (lock {})",
+                            path.display()
+                        ));
+                    }
+                    let _ = std::fs::remove_file(path);
+                }
+                Err(error) => return Err(format!("start lock unavailable: {error}")),
+            }
+        }
+        Err("start lock could not be taken".into())
+    }
+}
+
+impl Drop for StartLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) -> Outcome {
     if args.run {
         return run(args);
@@ -1029,6 +1075,23 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
         Err(failed) => return answer(json!({}), Some(failed)),
     };
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
+    // #2538: the check of the stored run and the write of the new `running` state are one critical
+    // section per flow. Without it, parallel starts all saw "no run" and each overwrote the others'
+    // state. The lock lives under `.graphhelm/`, which the directory check below still validates.
+    let lock_dir = project.join(".graphhelm");
+    let _start = if lock_dir.is_dir() {
+        match StartLock::take(&lock_dir.join(format!("preview-start-{}.lock", args.id))) {
+            Ok(lock) => Some(lock),
+            Err(detail) => {
+                return answer(
+                    json!({"state":"failed","reason":"preview.busy","detail":detail}),
+                    None,
+                );
+            }
+        }
+    } else {
+        None
+    };
     let stored = reap_lost_from_with(&project, &dir, || read_state(&dir), &liveness);
     // The reaper probed the runner once and stored a dead one as failed, so a `running` it hands
     // back is going. A second probe could see a runner that finished in between as dead, and a
@@ -1952,7 +2015,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             app
         }
         Err((code, pointer, _)) => {
-            if let Some(log) = super::journey_live::take_launch_log() {
+            if let Some(log) = super::journey_live::take_launch_log(&args.id) {
                 // Read the original log with secret overlap before bounding its tail. The
                 // launcher's already-cut tail can contain only the suffix of a secret.
                 run.state["launchLog"] = log["path"]
@@ -5321,5 +5384,32 @@ fi
         }
         assert!(severity("fail") > severity("drift") && severity("drift") > severity("pass"));
         assert_eq!(severity("skipped"), 0);
+    }
+}
+
+#[cfg(test)]
+mod start_lock_tests {
+    use super::StartLock;
+
+    /// #2538: a second start of the same flow cannot take the lock while the first holds it; it
+    /// can once the first has returned. Fails if two starts may hold the flow at once.
+    #[test]
+    fn a_second_start_of_the_same_flow_waits_for_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preview-start-checkout.lock");
+        let first = StartLock::take(&path).expect("first start takes the lock");
+        let refused = StartLock::take(&path)
+            .err()
+            .expect("second start is refused");
+        assert!(
+            refused.contains("another start of this journey"),
+            "{refused}"
+        );
+        drop(first);
+        assert!(
+            StartLock::take(&path).is_ok(),
+            "lock free after the first start returns"
+        );
+        assert!(!path.exists(), "lock removed when its start returns");
     }
 }

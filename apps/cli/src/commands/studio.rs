@@ -191,10 +191,34 @@ fn managed_clone(seed: Option<&Path>, progress: &Progress) -> Result<PathBuf, St
     Ok(plain(std::fs::canonicalize(&dir).unwrap_or(dir)))
 }
 
+/// #2471: a Studio already serving on the Studio port runs from the clone it was started from. Moving
+/// that clone or running `npm ci` in it swaps the Studio out from under its users, so the update
+/// waits for the Studio to stop. Returns the skipped state when a Studio answers there.
+fn skipped_for_running_studio(
+    source: &Path,
+    progress: &Progress,
+    studio_port: u16,
+) -> Option<serde_json::Value> {
+    if !studio_is_running(studio_port) {
+        return None;
+    }
+    Progress::say(&progress.warn(&format!(
+        "a Studio is serving on port {studio_port}; {} was NOT moved or reinstalled (stop it, then run again)",
+        source.display()
+    )));
+    Some(json!({
+        "state": "skipped",
+        "reason": format!("a Studio is serving on port {studio_port}"),
+    }))
+}
+
 /// Moves the managed clone to `origin/main`, whatever is in it: nobody edits it, so a change
 /// there is GraphHelm's own leftover and is discarded rather than blocking the update.
-fn sync_managed(source: &Path, progress: Progress) -> serde_json::Value {
+fn sync_managed(source: &Path, progress: Progress, studio_port: u16) -> serde_json::Value {
     let progress = progress.retag("studio");
+    if let Some(skipped) = skipped_for_running_studio(source, &progress, studio_port) {
+        return skipped;
+    }
     if git(source, &["fetch", "--quiet", "origin", "main"]).is_none() {
         Progress::say(&progress.warn("could not fetch origin/main; running the clone as it is"));
         return json!({ "state": "unchecked" });
@@ -273,8 +297,11 @@ fn choose_source(
 
 /// Brings the clone up to `origin/main` when [`freshness`] allows it. Returns what happened, for
 /// the envelope; a clone git cannot read (no git, no remote, offline) is run as it is.
-fn update(source: &Path, progress: Progress) -> serde_json::Value {
+fn update(source: &Path, progress: Progress, studio_port: u16) -> serde_json::Value {
     let progress = progress.retag("studio");
+    if let Some(skipped) = skipped_for_running_studio(source, &progress, studio_port) {
+        return skipped;
+    }
     if git(source, &["fetch", "--quiet", "origin", "main"]).is_none() {
         Progress::say(&progress.warn("could not fetch origin/main; running the clone as it is"));
         return json!({ "state": "unchecked" });
@@ -357,9 +384,9 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
         return check_installed(&source);
     }
     let clone = if managed {
-        sync_managed(&source, progress)
+        sync_managed(&source, progress, STUDIO_PORT)
     } else {
-        update(&source, progress)
+        update(&source, progress, STUDIO_PORT)
     };
     // A clone that could not be fast-forwarded would only rebuild the old code: a long compile
     // that installs nothing new (owner run, 2026-10-12: 18 minutes, 28 commits behind).
@@ -1046,9 +1073,9 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     let freshness = if args.no_update {
         json!({ "state": "skipped" })
     } else if managed {
-        sync_managed(&source, studio_progress)
+        sync_managed(&source, studio_progress, STUDIO_PORT)
     } else {
-        update(&source, studio_progress)
+        update(&source, studio_progress, STUDIO_PORT)
     };
     let head = git(&source, &["rev-parse", "--short", "HEAD"]);
 
@@ -1320,6 +1347,7 @@ mod tests {
         let result = sync_managed(
             &clone,
             Progress::new("test", false, crate::palette::Palette::plain()),
+            free_port(),
         );
 
         assert_eq!(result["state"], "updated", "{result}");
@@ -1328,10 +1356,49 @@ mod tests {
         assert_eq!(
             sync_managed(
                 &clone,
-                Progress::new("test", false, crate::palette::Palette::plain())
+                Progress::new("test", false, crate::palette::Palette::plain()),
+                free_port(),
             )["state"],
             "up_to_date"
         );
+    }
+
+    /// A loopback port nothing listens on, for a test that must not reach a real Studio.
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    /// #2471: a Studio already serving on the port runs from the shared clone, so the clone must
+    /// not be moved or reinstalled under it. The fake answers like a live Studio's identity route.
+    #[test]
+    fn the_shared_source_is_left_alone_while_a_studio_serves_it() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                use std::io::{Read, Write};
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let body = r#"{"reason":"session_required"}"#;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        // Not a git clone: were the guard absent, the sync would fail at `git fetch` instead.
+        let scratch = tempfile::tempdir().unwrap();
+        let result = sync_managed(
+            scratch.path(),
+            Progress::new("test", false, crate::palette::Palette::plain()),
+            port,
+        );
+        assert_eq!(result["state"], "skipped", "{result}");
     }
 
     #[test]

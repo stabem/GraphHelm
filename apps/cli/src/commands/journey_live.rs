@@ -1264,21 +1264,27 @@ fn posix_shell() -> Command {
 
 /// The most of a failed launcher's output the report keeps.
 const LAUNCH_LOG_TAIL: usize = 4096;
-static LAST_LAUNCH_LOG: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+/// #2538: failed launches' output, keyed by flow id. Parallel runs in one process each keep their
+/// own entry; one shared slot let another run take or overwrite this run's cause.
+static LAST_LAUNCH_LOG: std::sync::Mutex<Option<std::collections::HashMap<String, Value>>> =
+    std::sync::Mutex::new(None);
 
 /// Keeps the tail of a failed launch's output (`{path, tail}`) for [`take_launch_log`].
-fn record_launch_log(path: &Path) {
+fn record_launch_log(flow: &str, path: &Path) {
     let bytes = std::fs::read(path).unwrap_or_default();
     let tail =
         String::from_utf8_lossy(&bytes[bytes.len().saturating_sub(LAUNCH_LOG_TAIL)..]).into_owned();
     if let Ok(mut slot) = LAST_LAUNCH_LOG.lock() {
-        *slot = Some(serde_json::json!({"path": path, "tail": tail}));
+        slot.get_or_insert_with(Default::default).insert(
+            flow.to_owned(),
+            serde_json::json!({"path": path, "tail": tail}),
+        );
     }
 }
 
-/// The output of the last failed launch in this process, once.
-pub(super) fn take_launch_log() -> Option<Value> {
-    LAST_LAUNCH_LOG.lock().ok()?.take()
+/// The output of the last failed launch of `flow` in this process, once.
+pub(super) fn take_launch_log(flow: &str) -> Option<Value> {
+    LAST_LAUNCH_LOG.lock().ok()?.as_mut()?.remove(flow)
 }
 
 /// Starts the declared app under test and waits until the flow's base answers.
@@ -1437,7 +1443,7 @@ pub(super) fn launch_within(
             use std::io::Write;
             let _ = writeln!(file, "{why}");
         }
-        record_launch_log(&log_path);
+        record_launch_log(flow, &log_path);
         return Err(failure("watch.launch_failed", "/launcher", 1));
     }
     let _ = std::fs::remove_file(&log_path);
@@ -2241,6 +2247,65 @@ mod launch_tests {
         );
     }
 
+    /// #2538: two failed launches in one process (parallel journeys) each keep their own launcher
+    /// output. The old single slot let the second launch overwrite the first one's cause, so the
+    /// first run's failure named no cause. Fails if the two entries are shared again.
+    #[test]
+    fn parallel_failed_launches_keep_their_own_output() {
+        let fail = |word: &str| {
+            let project = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+            std::fs::write(
+                project.path().join(".graphhelm/journey-fixture.json"),
+                r#"{"schema":"graphhelm-journey-fixture/1","script":"fail.sh"}"#,
+            )
+            .unwrap();
+            std::fs::write(
+                project.path().join("fail.sh"),
+                format!(
+                    "if [ \"$1\" = up ]; then echo {word} >&2; exit 1; fi
+"
+                ),
+            )
+            .unwrap();
+            let port = std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            (project, format!("http://127.0.0.1:{port}"))
+        };
+        let (alpha_dir, alpha_base) = fail("ERR_ALPHA_CONTAINER_IN_USE");
+        let (beta_dir, beta_base) = fail("ERR_BETA_PORT_IN_USE");
+        let short = std::time::Duration::from_secs(2);
+        assert!(
+            super::launch_within(alpha_dir.path(), &alpha_base, "alpha", None, short, |_| Ok(
+                ()
+            ))
+            .is_err()
+        );
+        assert!(
+            super::launch_within(beta_dir.path(), &beta_base, "beta", None, short, |_| Ok(()))
+                .is_err()
+        );
+        let alpha = super::take_launch_log("alpha").expect("alpha launch log kept");
+        let beta = super::take_launch_log("beta").expect("beta launch log kept");
+        assert!(
+            alpha["tail"]
+                .as_str()
+                .unwrap()
+                .contains("ERR_ALPHA_CONTAINER_IN_USE"),
+            "{alpha}"
+        );
+        assert!(
+            beta["tail"]
+                .as_str()
+                .unwrap()
+                .contains("ERR_BETA_PORT_IN_USE"),
+            "{beta}"
+        );
+    }
+
     /// The ml-saas trial: a launcher that failed (`ERR_MODULE_NOT_FOUND`) left only
     /// `watch.launch_failed`; its output went to /dev/null. Fails if the tail is dropped again.
     /// Cost: one short shell run; a POSIX shell, temp files only.
@@ -2275,7 +2340,7 @@ mod launch_tests {
             outcome.err().map(|(code, _, _)| code),
             Some("watch.launch_failed")
         );
-        let log = super::take_launch_log().expect("launch log kept");
+        let log = super::take_launch_log("checkout").expect("launch log kept");
         assert!(
             log["tail"]
                 .as_str()

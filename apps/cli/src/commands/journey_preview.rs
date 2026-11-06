@@ -1952,7 +1952,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
             app
         }
         Err((code, pointer, _)) => {
-            if let Some(log) = super::journey_live::take_launch_log() {
+            if let Some(log) = super::journey_live::take_launch_log(&args.id) {
                 // Read the original log with secret overlap before bounding its tail. The
                 // launcher's already-cut tail can contain only the suffix of a secret.
                 run.state["launchLog"] = log["path"]

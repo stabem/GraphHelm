@@ -810,6 +810,16 @@ def reach(changed, packages, embedded, repo=None):
             # #1808: a tool deleted whole leaves no code to observe and no test of its own to run.
             if not tool.exists():
                 hit = True
+        # #2573: the Node-side window test runs the same observer; it is selected by its own path.
+        if path in ("tools/no-window/test_node_chain.ps1", "tools/no-window/node-chain/hidden-chain.mjs",
+                    "tools/no-window/node-chain/detached-control.mjs"):
+            node_chain = "tools/no-window/test_node_chain.ps1"
+            if root is not None and (root / node_chain).is_file():
+                tools.add(f"powershell.exe -NoProfile -ExecutionPolicy Bypass -File {node_chain}")
+                hit = True
+            elif root is not None:
+                other.append({"path": node_chain, "reason": "no-window Node-chain test is missing"})
+                hit = True
         if path in ("tools/no-window/observe.ps1", "tools/no-window/test_observe.ps1",
                     "tools/no-window/fixture/fixture.sh", "tools/no-window/fixture/server.mjs"):
             observer = "tools/no-window/test_observe.ps1"
@@ -1261,6 +1271,12 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
         elif tool.startswith("python -m pytest "):
             test_path = tool[len("python -m pytest "):]
             out.append({"argv": ["python", "-m", "pytest", test_path], "cwd": ".", "slot": False})
+        elif tool == "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/no-window/test_node_chain.ps1":
+            node_chain = "tools/no-window/test_node_chain.ps1"
+            if repo is None or not (Path(repo) / node_chain).is_file():
+                raise ValueError(f"PowerShell Node-chain test is missing: {node_chain}")
+            out.append({"argv": ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                                  "-File", node_chain], "cwd": ".", "slot": False})
         elif tool == "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/no-window/test_observe.ps1":
             observer = "tools/no-window/test_observe.ps1"
             if repo is None or not (Path(repo) / observer).is_file():

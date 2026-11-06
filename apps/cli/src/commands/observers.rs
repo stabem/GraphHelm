@@ -595,6 +595,21 @@ pub(super) fn ensure_playwright(
     ensure_playwright_with(project, deadline, progress, run_step)
 }
 
+/// The first observer script the project has that differs from this binary's copy, by its
+/// project-relative path. A missing script is not drift: the install writes it.
+fn drifted_script(project: &Path) -> Option<String> {
+    let copies: [(&str, &[u8]); 3] = [
+        (DRIVER_NAME, DRIVER),
+        (JUDGE_NAME, JUDGE),
+        (PLAYWRIGHT.script_name, PLAYWRIGHT.script.as_bytes()),
+    ];
+    copies.into_iter().find_map(|(name, expected)| {
+        let path = project.join(SCRIPT_DIR).join(name);
+        let differs = path.is_file() && std::fs::read(&path).ok().as_deref() != Some(expected);
+        differs.then(|| format!("{SCRIPT_DIR}/{name}"))
+    })
+}
+
 fn ensure_playwright_with(
     project: &Path,
     deadline: Instant,
@@ -603,6 +618,15 @@ fn ensure_playwright_with(
 ) -> Result<serde_json::Value, serde_json::Value> {
     if super::journey_replay::observer_ready(project).is_ok() {
         return Ok(serde_json::json!({"status":"ready", "steps":[]}));
+    }
+    // #2540: an observer the project already has is never rewritten by this automatic path; a
+    // drifted copy is reported, and the explicit `setup --install-observer` replaces it.
+    if let Some(relative) = drifted_script(project) {
+        return Err(serde_json::json!({
+            "code": "observer.drift",
+            "message": format!("{relative} differs from the copy this GraphHelm binary ships; it was left unchanged. Run `setup --install-observer playwright` to replace it."),
+            "path": relative,
+        }));
     }
     let install_deadline = deadline
         .checked_sub(Duration::from_secs(10))
@@ -692,7 +716,7 @@ mod tests {
         .unwrap();
         std::fs::write(project.join(SCRIPT_DIR).join(JUDGE_NAME), "old judge").unwrap();
         commands.clear();
-        ensure_playwright_with(
+        let error = ensure_playwright_with(
             &project,
             deadline,
             |_| {},
@@ -701,20 +725,45 @@ mod tests {
                 Ok(Step::Exited(Some(0), String::new()))
             },
         )
-        .unwrap();
-        assert_eq!(commands, PLAYWRIGHT.install);
+        .expect_err("a drifted observer must be reported, not rewritten");
+        assert_eq!(error["code"], "observer.drift");
+        assert!(commands.is_empty(), "{commands:?}");
         assert_eq!(
             std::fs::read(project.join(SCRIPT_DIR).join(JUDGE_NAME)).unwrap(),
-            JUDGE
+            b"old judge"
         );
     }
 
     #[test]
-    fn a_failed_install_preserves_stale_scripts_and_retries_with_the_exact_failure() {
+    fn a_drifted_observer_is_reported_and_left_alone_without_a_command() {
         let (_root, project, _home) = fixture();
         std::fs::create_dir_all(project.join(SCRIPT_DIR)).unwrap();
+        let stale = project.join(SCRIPT_DIR).join(DRIVER_NAME);
+        std::fs::write(&stale, "committed driver of an older version").unwrap();
+        let error = ensure_playwright_with(
+            &project,
+            Instant::now() + Duration::from_secs(60),
+            |_| panic!("drift reported as an installation"),
+            |_, _, _| panic!("a drifted observer was reinstalled"),
+        )
+        .expect_err("drift must be an error");
+        assert_eq!(error["code"], "observer.drift");
+        let message = error["message"].as_str().unwrap();
+        assert!(message.contains(DRIVER_NAME), "{message}");
+        assert!(
+            message.contains("--install-observer playwright"),
+            "{message}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&stale).unwrap(),
+            "committed driver of an older version"
+        );
+    }
+
+    #[test]
+    fn a_failed_install_publishes_nothing_and_retries_with_the_exact_failure() {
+        let (_root, project, _home) = fixture();
         let driver = project.join(SCRIPT_DIR).join(DRIVER_NAME);
-        std::fs::write(&driver, "old driver").unwrap();
         let deadline = Instant::now() + Duration::from_secs(60);
         let failed = ensure_playwright_with(
             &project,
@@ -736,7 +785,7 @@ mod tests {
                 PLAYWRIGHT.install[0]
             )
         );
-        assert_eq!(std::fs::read_to_string(&driver).unwrap(), "old driver");
+        assert!(!driver.exists(), "a failed install published its scripts");
         ensure_playwright_with(
             &project,
             deadline,

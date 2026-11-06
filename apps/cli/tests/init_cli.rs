@@ -918,3 +918,59 @@ fn a_symlinked_runtime_directory_is_refused_and_its_target_untouched() {
     assert_eq!(value["diagnostics"][0]["path"], "/root");
     assert_eq!(std::fs::read_dir(elsewhere.path()).unwrap().count(), 0);
 }
+
+/// #2540: a project that commits its observer scripts keeps a clean checkout through `init` and
+/// `setup`, and a drifted copy is reported as missing for this GraphHelm version, not rewritten.
+#[test]
+fn a_tracked_observer_is_reported_and_left_alone_by_init_and_setup() {
+    let project = git_project();
+    let observers = project.path().join(".graphhelm/observers");
+    std::fs::create_dir_all(&observers).unwrap();
+    std::fs::write(
+        observers.join("journey_driver.mjs"),
+        "committed driver of an older version\n",
+    )
+    .unwrap();
+    let git = |args: &[&str]| {
+        let out = graphhelm_process::command("git")
+            .arg("-C")
+            .arg(project.path())
+            .args([
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8(out.stdout).unwrap()
+    };
+    git(&["add", ".graphhelm/observers/journey_driver.mjs"]);
+    git(&["commit", "--quiet", "-m", "fixture: tracked observer"]);
+    init(project.path());
+    let home = tempfile::tempdir().unwrap();
+    let output = command()
+        .args(["setup", "--project"])
+        .arg(project.path())
+        .arg("--home")
+        .arg(home.path())
+        .output()
+        .unwrap();
+    let value = json(&output.stdout);
+    assert_eq!(value["ok"], true, "{value}");
+    assert_eq!(
+        value["data"]["observers"]["browser"]["status"], "missing",
+        "{value}"
+    );
+    let missing = value["data"]["observers"]["browser"]["missing"].to_string();
+    assert!(missing.contains("journey_driver.mjs"), "{missing}");
+    assert_eq!(
+        std::fs::read_to_string(observers.join("journey_driver.mjs")).unwrap(),
+        "committed driver of an older version\n"
+    );
+    // `init` may add its own `.gitignore` entry; no observer file may change.
+    let status = git(&["status", "--porcelain", "--", ".graphhelm/observers"]);
+    assert_eq!(status.trim(), "", "an observer changed: {status}");
+}

@@ -1,0 +1,17 @@
+{
+  "promise": "Numa branch issue-<N>-..., com .graphhelm/cards/issue-<N>.json presente, os tres hooks Keel (stop, pretool, review) leem esse card sem keel-card.json; sem card continuam bloqueando; repositorios com keel-card.json nao mudam.",
+  "scopePaths": [
+    ".graphhelm/cards/issue-1548.json",
+    "plugins/graphhelm/hooks/keel_stop_hook.py",
+    "plugins/graphhelm/hooks/keel_pretool_hook.py",
+    "plugins/graphhelm/hooks/review_stop_hook.py",
+    "plugins/graphhelm/hooks/test_keel_stop_hook.py",
+    "plugins/graphhelm/hooks/test_keel_pretool_hook.py",
+    "plugins/graphhelm/hooks/test_review_stop_hook.py"
+  ],
+  "proof": "cd plugins/graphhelm/hooks && python -m unittest test_keel_stop_hook.CardPath; python -m unittest test_keel_stop_hook; break-once: caminho fixo em card_path deve deixar o caso do card por issue vermelho",
+  "exportedSymbols": [
+    "card_path"
+  ],
+  "journeys": []
+}

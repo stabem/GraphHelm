@@ -21,7 +21,7 @@ import sys
 
 import re
 
-from keel_stop_hook import (CARD, TRIVIAL_LINES, _git, _is_doc, _merge_base, code_lines_changed,
+from keel_stop_hook import (TRIVIAL_LINES, _git, _is_doc, _merge_base, card_path, code_lines_changed,
                             toplevel, untracked)
 
 TEST_NAME = re.compile(r"(^|/)(tests?/|test_[^/]*$|[^/]*_test\.[^/]+$|[^/]*\.(test|spec)\.[^/]+$)")
@@ -45,7 +45,7 @@ def test_first(repo: Path, relative: str) -> str | None:
     if is_test(relative):
         return None
     try:
-        card = json.loads((repo / CARD).read_text(encoding="utf-8"))
+        card = json.loads((repo / card_path(repo)).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if not isinstance(card, dict):
@@ -64,7 +64,7 @@ def test_first(repo: Path, relative: str) -> str | None:
     return (f"Keel test first: no test under the card's scopePaths has changed yet. Write the failing "
             f"test first, run it from the repository root and see it fail, then edit {relative}. "
             f"If this change has no testable behavior, set \"testFirst\": false and a "
-            f"\"testFirstReason\" in {CARD.as_posix()}.")
+            f"\"testFirstReason\" in {card_path(repo).as_posix()}.")
 
 
 def _denial_marker(repo: Path) -> Path:
@@ -100,7 +100,8 @@ def decide(repo: Path, target: Path, tool_input: dict) -> str | None:
         return None
     if _is_doc(relative) or relative.startswith(".graphhelm/"):
         return None
-    if (repo / CARD).is_file():
+    card = card_path(repo)
+    if (repo / card).is_file():
         return test_first(repo, relative)
     base = _merge_base(repo)
     if base is None:
@@ -109,7 +110,7 @@ def decide(repo: Path, target: Path, tool_input: dict) -> str | None:
     if small and (is_test(relative) or not _denied_on_branch(repo)):
         return None
     return (f"Keel: this edit takes the branch past the summary-only row and there is no card at "
-            f"{CARD.as_posix()}. Write the card first (promise, scopePaths, proof; shape in "
+            f"{card.as_posix()}. Write the card first (promise, scopePaths, proof; shape in "
             f"docs/keel/KEEL_CHECK.md), then edit {relative}.")
 
 

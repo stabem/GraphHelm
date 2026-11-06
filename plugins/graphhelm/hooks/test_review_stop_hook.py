@@ -103,3 +103,40 @@ class ReviewStopHook(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewStopHookCardPath(unittest.TestCase):
+    """#1548: the review gate reads .graphhelm/cards/issue-<N>.json on an issue-<N> branch."""
+
+    stop = ReviewStopHook.stop
+
+    def setUp(self):
+        # A host shell may export GIT_* (a credential helper's GIT_CONFIG_COUNT): git then exits 128
+        # in the test repo. The parent setUp runs git before it patches the environment, so the
+        # environment is sanitized here, first (#1548).
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        clean.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+                      "GIT_TERMINAL_PROMPT": "0"})
+        env_patch = mock.patch.dict(os.environ, clean, clear=True)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        ReviewStopHook.setUp(self)
+        git(self.repo, "checkout", "-qb", "issue-1548-card-path")
+        os.remove(self.repo / ".graphhelm/keel-card.json")
+        (self.repo / "app.py").write_text("x = 2\n", encoding="utf-8")
+
+    def test_per_issue_card_gates_the_turn(self):
+        # Break-once: with the fixed keel-card.json path there is no card here, so nothing blocks.
+        self.card_for_issue("1548")
+        reason = self.stop({})
+        self.assertIsNotNone(reason, "the per-issue card did not gate the turn")
+        self.assertIn("self-review.json", reason)
+
+    def test_another_issues_card_does_not_gate(self):
+        self.card_for_issue("9999")
+        self.assertIsNone(self.stop({}))
+
+    def card_for_issue(self, number):
+        path = self.repo / f".graphhelm/cards/issue-{number}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")

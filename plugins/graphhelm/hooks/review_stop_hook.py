@@ -13,6 +13,9 @@ always passes, so the hook can never loop.
 import os
 from pathlib import Path
 import subprocess
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from keel_stop_hook import card_path
 
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 REASON = (
@@ -43,7 +46,7 @@ def decide(event, root):
         return None
     if event.get('stop_hook_active'):
         return None
-    card = root / '.graphhelm/keel-card.json'
+    card = root / card_path(root)
     if not card.is_file():
         return None
     record = root / '.graphhelm/self-review.json'

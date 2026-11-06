@@ -14,7 +14,11 @@ export function StepDots({ dots, label }: { dots: StepDot[]; label: string }) {
         return (
           <span key={dot.step} className="step-dot-wrap">
             {safe ? <a href={dot.href!} aria-label={dot.text}>{mark}</a> : mark}
-            <span role="tooltip" aria-hidden="true" className="step-dot-tip">{dot.text}</span>
+            <span role="tooltip" aria-hidden="true" className="step-dot-tip">
+              {safe && dot.record !== null && dot.text.endsWith(dot.record) ? (
+                <>{dot.text.slice(0, dot.text.length - dot.record.length)}<a href={dot.href!}>{dot.record}</a></>
+              ) : dot.text}
+            </span>
           </span>
         );
       })}

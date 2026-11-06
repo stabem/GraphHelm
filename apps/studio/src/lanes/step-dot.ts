@@ -10,6 +10,8 @@ export interface StepDot {
   state: DotState;
   /** One line for the tooltip, the aria-label and the screen reader. */
   text: string;
+  /** The record the dot names last, as its tooltip shows it; `null` for a dot with no record. */
+  record: string | null;
   /** The record or link the dot opens; `null` when the board holds none. */
   href: string | null;
 }
@@ -64,7 +66,7 @@ export function lanesDots(task: BoardTask | null, step: TaskStepName | null, stu
       silentSince: state === "stalled" && lastRecordAt !== null ? when(lastRecordAt, now).text : null,
       href: state === "not started" ? null : prLink(repo, task?.pr),
     };
-    return { step: name, state, text: dotText(name, state, facts), href: facts.href };
+    return { step: name, state, text: dotText(name, state, facts), record: state === "not started" ? null : facts.record ?? "no record in view", href: facts.href };
   });
 }
 
@@ -82,6 +84,6 @@ export function graphDots(task: BoardTask, at: number, stalled: boolean, silentS
       silentSince: state === "stalled" && silentSince !== null ? when(silentSince, now).text : null,
       href: state === "not started" ? null : prLink(repo, task.pr),
     };
-    return { step: name, state, text: dotText(name, state, facts), href: facts.href };
+    return { step: name, state, text: dotText(name, state, facts), record: state === "not started" ? null : facts.record ?? "no record in view", href: facts.href };
   });
 }

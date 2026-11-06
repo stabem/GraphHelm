@@ -62,7 +62,7 @@ describe("the dot row", () => {
   });
 
   it("a dot with a link opens it", () => {
-    const html = renderToStaticMarkup(<StepDots label="Progress" dots={[{ step: "review", state: "done", text: "review · done · bravo", href: "https://example.test/pr/1" }]} />);
+    const html = renderToStaticMarkup(<StepDots label="Progress" dots={[{ step: "review", state: "done", text: "review · done · bravo", record: null, href: "https://example.test/pr/1" }]} />);
     expect(html).toContain('<a href="https://example.test/pr/1" aria-label="review · done · bravo">');
   });
 });
@@ -89,8 +89,8 @@ describe("links, causes and focus (#2532 review)", () => {
 
   it("only the live dot is in the tab order, and a non-https link is not rendered as a link", () => {
     const html = renderToStaticMarkup(<StepDots label="Progress" dots={[
-      { step: "plan", state: "done", text: "plan · done", href: "javascript:alert(1)" },
-      { step: "implement", state: "in progress", text: "implement · in progress", href: null },
+      { step: "plan", state: "done", text: "plan · done", record: null, href: "javascript:alert(1)" },
+      { step: "implement", state: "in progress", text: "implement · in progress", record: null, href: null },
     ]} />);
     expect(html).not.toContain("<a ");
     expect(html).toContain('tabindex="-1"');
@@ -98,3 +98,14 @@ describe("links, causes and focus (#2532 review)", () => {
     expect(html).toContain("curstep");
   });
 });
+
+describe("the record in the tooltip", () => {
+  it("the record is a link to the same target as the dot", () => {
+    const html = renderToStaticMarkup(<StepDots label="Progress" dots={[
+      { step: "review", state: "done", text: "review · done · bravo · record #3", record: "record #3", href: "https://github.com/stabem/GraphHelm/pull/9" },
+    ]} />);
+    expect(html).toContain('<a href="https://github.com/stabem/GraphHelm/pull/9" aria-label="review · done · bravo · record #3">');
+    expect(html).toContain('<a href="https://github.com/stabem/GraphHelm/pull/9">record #3</a>');
+  });
+});
+

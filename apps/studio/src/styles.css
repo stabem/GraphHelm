@@ -708,6 +708,8 @@ button.history-chip:focus-visible { outline: 2px solid var(--accent); outline-of
 .step-dot.done { background: #3ddc97; }
 .step-dot.in-progress { background: var(--accent); }
 .step-dot.stalled { background: #ff6b6b; }
-.step-dot-tip { display: none; position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 10; white-space: nowrap; background: #17171b; border: 1px solid #2a2a30; border-radius: 6px; padding: 4px 8px; font-size: var(--fs-meta); color: #e8e8ea; }
+.step-dot-tip { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 10; white-space: nowrap; background: #17171b; border: 1px solid #2a2a30; border-radius: 6px; padding: 4px 8px; font-size: var(--fs-meta); color: #e8e8ea; }
+.step-dot-tip::before { content: ""; position: absolute; top: -8px; left: 0; right: 0; height: 8px; }
+.step-dot-tip a { color: var(--accent); text-decoration: underline; }
 .step-dot-wrap:hover .step-dot-tip, .step-dot-wrap:focus-within .step-dot-tip { display: block; }
 .step-dot:focus-visible { outline: 2px solid var(--accent); }

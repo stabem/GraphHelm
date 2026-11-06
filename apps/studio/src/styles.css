@@ -700,3 +700,14 @@ button { font: inherit; }
 button.history-chip { cursor: pointer; }
 button.history-chip.on { border-color: var(--accent); }
 button.history-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* #2532: the step dots of an issue or lane card; the tooltip shows on hover or keyboard focus. */
+.step-dots { display: inline-flex; gap: 3px; }
+.step-dot-wrap { position: relative; display: inline-flex; }
+.step-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; background: #2a2a30; outline-offset: 2px; }
+.step-dot.done { background: #3ddc97; }
+.step-dot.in-progress { background: var(--accent); }
+.step-dot.stalled { background: #ff6b6b; }
+.step-dot-tip { display: none; position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 10; white-space: nowrap; background: #17171b; border: 1px solid #2a2a30; border-radius: 6px; padding: 4px 8px; font-size: var(--fs-meta); color: #e8e8ea; }
+.step-dot-wrap:hover .step-dot-tip, .step-dot-wrap:focus-within .step-dot-tip { display: block; }
+.step-dot:focus-visible { outline: 2px solid var(--accent); }

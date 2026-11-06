@@ -8,13 +8,15 @@ import { Empty, Loading } from "../states/ViewState";
 import { ActionError, actionErrorDetails, type ActionErrorDetails } from "../states/ActionError";
 import { readCollapsed, writeCollapsed } from "./panel-rail";
 import { LanesPanels } from "./LanesPanels";
+import { StepDots } from "./StepDots";
+import { lanesDots } from "./step-dot";
 import { RequestProgress } from "../graph/RequestProgress";
 import { agentsFor, arrangeAsked, askedCards, requestKey, requestColors, requestLanes, requestTitles, unlinkedIssue } from "./asked";
 import { applyAskFilter, readAskParam, withAskParam } from "./request-filter";
 import type { OwnerRequest } from "../graph/requests";
 import { BoardColumn } from "./BoardColumn";
 import { combineBoards, combineRequests, emptyPresence, foldPresence, homeRun, presence, withPresence, type PresenceIndex, type ProjectBoard } from "./project-board";
-import { agents, blocks, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
+import { agents, COLUMNS, idleText, idleTone, stepAged, OWNER_ADDRESS, type Agent, type Column } from "./board";
 
 /** How often the board is read again: one tasks read, plus one activity read per lane whose last
  * record moved since the previous read. */
@@ -331,9 +333,7 @@ export function Card({ agent, origins, selected, serves, serveKey = null, askOn 
         <button type="button" className="b serves serves-ask" aria-label={`Show only the agents for ${serves}`} aria-pressed={askOn === serveKey} onClick={(event) => { event.stopPropagation(); onAsk(serveKey); }}>for: {serves}</button>
       ))}
       {unlinked && <span role="group" aria-label="Not linked" className="serves unlinked">not linked to an ask</span>}
-      <span role="group" aria-label="Progress" className="blocks">
-        {blocks(task?.step ?? null, agent.column === "blocked").map((block, index) => <span key={index} className={`block ${block}`} />)}
-      </span>
+      <StepDots label="Progress" dots={lanesDots(task, task?.step ?? null, agent.column === "blocked", agent.lastRecordAt, new Date())} />
       <span role="group" aria-label="Last action" className="mono last-action">{last ? <><When at={last.occurredAt} /> {actionText(last)}</> : agent.lastRecordAt ? <><When at={agent.lastRecordAt} /> last record</> : "no record yet"}</span>
       {asking && (
         <section aria-label="Question" className="question">

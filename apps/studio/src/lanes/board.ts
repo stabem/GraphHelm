@@ -12,7 +12,7 @@ type IdleTone = "ok" | "slow" | "late";
 
 /** The progress blocks: one per timed step of a slice. */
 export const STEPS: readonly TaskStepName[] = ["plan", "critic", "implement", "review", "merge"];
-type Block = "done" | "now" | "stuck" | "todo";
+export type Block = "done" | "now" | "stuck" | "todo";
 
 export interface Agent {
   lane: string;

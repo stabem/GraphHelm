@@ -11,7 +11,9 @@ import { noRequestsText } from "./requests-text";
 import { cards, KANBAN, KANBAN_NAME, requestColor, type OwnerRequest } from "./requests";
 import { requestKey } from "../lanes/asked";
 import { combineBoards, combineRequests, taskRun, type ProjectRequest } from "../lanes/project-board";
-import { arrangeGraph, COLUMN_COLOR, counts, detail, blocks, graphRequests, journeyCards, journeyMeta } from "./layout";
+import { arrangeGraph, COLUMN_COLOR, counts, detail, graphRequests, journeyCards, journeyMeta, stage } from "./layout";
+import { StepDots } from "../lanes/StepDots";
+import { graphDots } from "../lanes/step-dot";
 
 /** The board and the requests are read again this often. */
 /** The orange of a step being worked on: the only square that moves. */
@@ -219,7 +221,7 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof, wai
                       <li key={task.key} style={stripeOf(task.issue) === null ? undefined : ({ "--rq": stripeOf(task.issue) } as CSSProperties)} className={`kanban-card${stripeOf(task.issue) === null ? "" : " rq"}${stepAged(stepMinutes) ? " aged" : ""}`}>
                         <span className="mono small">{task.issue === null ? task.key : `#${task.issue}`}{task.pr === null ? "" : ` · PR #${task.pr}`}</span>
                         <span>{task.prTitle ?? task.title ?? ""}</span>
-                        <span className="gv-bar" aria-hidden="true">{blocks(task, at).map((block) => <span key={block.step} className={`gv-sq small${block.color === LIVE && (at === "implementing" || at === "review") ? " curstep" : ""}`} style={{ background: block.color }} />)}</span>
+                        <StepDots label="Steps" dots={graphDots(task, stage(task, at), at === "ready", board.stalls.find((stall) => stall.key === task.key)?.idleSince ?? null, new Date())} />
                         <span className="muted small">{task.lane ?? "no lane"} · {task.step}{many ? ` · run ${taskRun(task, executionIds)}` : ""}{stepMinutes === null ? "" : " "}{stepMinutes !== null && <span role="group" aria-label="Time in step" className={`mono step-age${stepAged(stepMinutes) ? " aged" : ""}`}>{idleText(stepMinutes)}</span>}</span>
                         {reviewable(at, task.pr) && (
                           <button type="button" className="b ghost small" onClick={() => setReviewing(task)}>Open review</button>

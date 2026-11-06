@@ -9,7 +9,7 @@ import { ActionError, actionErrorDetails, type ActionErrorDetails } from "../sta
 import { readCollapsed, writeCollapsed } from "./panel-rail";
 import { LanesPanels } from "./LanesPanels";
 import { RequestProgress } from "../graph/RequestProgress";
-import { arrangeAsked, askedCards, requestKey, requestColors, requestLanes, requestTitles, unlinkedIssue } from "./asked";
+import { agentsFor, arrangeAsked, askedCards, requestKey, requestColors, requestLanes, requestTitles, unlinkedIssue } from "./asked";
 import { applyAskFilter, readAskParam, withAskParam } from "./request-filter";
 import type { OwnerRequest } from "../graph/requests";
 import { BoardColumn } from "./BoardColumn";
@@ -168,8 +168,10 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   // #2530: the board narrows to the lanes serving the selected request; before the requests load,
   // or for a key no request has, the board is not narrowed.
   const requestLaneKeys = requestLanes(requests ?? [], all, board.tasks);
-  const pickedRequest = request !== null && requests?.some((row) => requestKey(row) === request) === true ? request : null;
-  const forRequest = pickedRequest === null ? null : new Set([...requestLaneKeys].filter(([, key]) => key === pickedRequest).map(([lane]) => lane));
+  // Each request's own lanes (the same set its WHAT I ASKED card counts), so a lane that also
+  // serves a newer request stays on the board for an older one.
+  const pickedRequest = request === null ? null : requests?.find((row) => requestKey(row) === request) ?? null;
+  const forRequest = pickedRequest === null ? null : new Set(agentsFor(pickedRequest, all, board.tasks).map((agent) => agent.lane));
   const shown = applyAskFilter(filter === "reply" ? asking : filter === "idle" ? idle : all, forRequest);
   const asked = askedCards(requests ?? [], all, board.tasks, journeys ?? [], new Set(board.stalls.map((stall) => stall.key)), new Date(Date.parse(board.now) || Date.now()));
   const arrangedAsked = arrangeAsked(asked, Date.parse(board.now) || Date.now());
@@ -242,7 +244,7 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
             return (
               <BoardColumn key={name} name={name} label={COLUMN_NAME[name]} count={cards.length} emptyNote={forRequest === null ? undefined : "no agent for this request"}>
                 <ul aria-label={COLUMN_NAME[name]}>
-                  {cards.map((agent) => <Card key={agent.lane} agent={agent} origins={"origins" in board ? board.origins[agent.lane] ?? [] : null} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} serveKey={requestLaneKeys.get(agent.lane) ?? null} askOn={pickedRequest} onAsk={(key) => setRequest((prior) => (prior === key ? null : key))} stripe={stripes.get(agent.lane) ?? null} unlinked={!serves.has(agent.lane) && unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
+                  {cards.map((agent) => <Card key={agent.lane} agent={agent} origins={"origins" in board ? board.origins[agent.lane] ?? [] : null} selected={agent.lane === selected?.lane} serves={serves.get(agent.lane) ?? null} serveKey={requestLaneKeys.get(agent.lane) ?? null} askOn={pickedRequest === null ? null : requestKey(pickedRequest)} onAsk={(key) => setRequest((prior) => (prior === key ? null : key))} stripe={stripes.get(agent.lane) ?? null} unlinked={!serves.has(agent.lane) && unlinkedIssue(requests, agent.task?.issue)} last={actions[agent.lane]?.rows[0]} onPick={pick} />)}
                 </ul>
               </BoardColumn>
             );

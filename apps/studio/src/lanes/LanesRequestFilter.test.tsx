@@ -104,3 +104,20 @@ it("a request in the URL is applied on load", async () => {
   await flush();
   expect(visible()).toEqual(["alpha"]);
 });
+
+it("a lane holding slices on an older and a newer request stays on the board for the older one", async () => {
+  // "foxtrot" works #7 (the older request r1) and #9 (the newer r2): its card keeps counting in both.
+  const twoRequests = { ...board, tasks: [task("alpha", 7, "implement"), task("foxtrot", 7, "review"), task("foxtrot", 9, "review")] } as unknown as TasksBoard;
+  const twoRuntime = { ...runtime, board: async () => twoRequests } as unknown as Runtime;
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  await act(async () => root!.render(createElement(LanesView, { runtime: twoRuntime, runs: ["fixture"], choices: ["fixture"], filter: null, onFilter: () => {}, journeys: [] })));
+  await flush();
+
+  expect(askCard("Old ask").textContent).toContain("2 agents");
+  await act(async () => askCard("Old ask").click());
+  expect(visible()).toEqual(["alpha", "foxtrot"]);
+  expect(column("Implement")).toEqual(["alpha"]);
+  expect(column("Review")).toEqual(["foxtrot"]);
+});

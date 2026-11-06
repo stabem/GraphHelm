@@ -382,6 +382,8 @@ fn settled_with_path(project: &Path, path: &Path) -> Value {
 #[test]
 fn a_preview_runs_once_keeps_its_result_and_runs_anew_only_when_asked() {
     let dir = draft();
+    // #2540: a stale observer copy is reported, not rewritten; this run needs the install path.
+    std::fs::remove_file(dir.path().join(".graphhelm/observers/journey_driver.mjs")).unwrap();
     let fixture = fixture_path(dir.path(), false);
     let (code, reply) = cli(dir.path(), &["preview", "nowhere"]);
     assert_eq!(code, 2, "{reply}");
@@ -455,7 +457,7 @@ fn a_preview_runs_once_keeps_its_result_and_runs_anew_only_when_asked() {
 }
 
 #[test]
-fn a_preview_installs_a_missing_observer_and_refreshes_a_stale_copy() {
+fn a_preview_installs_a_missing_observer_and_reports_a_stale_copy_without_rewriting_it() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
     let flow = FLOW.replacen("http://localhost:3000", &base, 1);
@@ -536,31 +538,40 @@ fn a_preview_installs_a_missing_observer_and_refreshes_a_stale_copy() {
         2
     );
 
+    // #2540: a stale observer copy is reported and left as it is; `--force` does not replace it.
     std::fs::write(
         dir.path().join(".graphhelm/observers/journey_driver.mjs"),
-        "// stale fixture observer\n",
+        "// stale fixture observer
+",
     )
     .unwrap();
     let (code, forced) = cli_with_path(dir.path(), &["preview", "checkout", "--force"], &fixture);
     assert_eq!(code, 0, "{forced}");
     assert_eq!(forced["data"]["state"], "running", "{forced}");
-    let refreshed = settled_with_path(dir.path(), &fixture);
-    assert_eq!(refreshed["observerSetup"]["state"], "ready", "{refreshed}");
+    let drifted = settled_with_path(dir.path(), &fixture);
+    assert_eq!(drifted["state"], "failed", "{drifted}");
+    assert_eq!(drifted["observerSetup"]["state"], "failed", "{drifted}");
+    assert!(
+        drifted["observerSetup"]["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("--install-observer playwright"),
+        "{drifted}"
+    );
     assert_eq!(
-        refreshed["screens"]["cart"]["result"], "pass",
-        "{refreshed}"
+        std::fs::read_to_string(dir.path().join(".graphhelm/observers/journey_driver.mjs"))
+            .unwrap(),
+        "// stale fixture observer
+",
+        "a drifted observer was rewritten"
     );
     assert_eq!(
         std::fs::read_to_string(dir.path().join(".graphhelm/fixture-install.log"))
             .unwrap()
             .lines()
             .count(),
-        4
-    );
-    assert_eq!(
-        std::fs::read(dir.path().join(".graphhelm/observers/journey_driver.mjs")).unwrap(),
-        include_bytes!("../../../tools/journey-driver/driver.mjs"),
-        "stale observer was not replaced by the shipped driver",
+        2,
+        "a drifted observer ran the install"
     );
 }
 

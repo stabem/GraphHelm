@@ -57,6 +57,8 @@ export type TaskStepName = "plan" | "critic" | "implement" | "review" | "merge" 
 
 export interface BoardTask {
   key: string;
+  /** The project's GitHub repository, `https://github.com/<owner>/<repo>` (the Runtime's `repoUrl`, optional); a PR link is built from it. */
+  repoUrl?: string | null;
   /** #1889: the task a record about this slice names (`task.review_assigned` among them). */
   taskId?: string;
   issue: number | null;

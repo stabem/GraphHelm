@@ -69,15 +69,17 @@ describe("the dot row", () => {
 
 describe("links, causes and focus (#2532 review)", () => {
   it("a PR link is built only from a GitHub owner/name and a PR number", () => {
-    expect(prLink("stabem/GraphHelm", 2542)).toBe("https://github.com/stabem/GraphHelm/pull/2542");
+    expect(prLink("https://github.com/stabem/GraphHelm", 2542)).toBe("https://github.com/stabem/GraphHelm/pull/2542");
+    expect(prLink(undefined, 2542)).toBeNull();
     expect(prLink(null, 2542)).toBeNull();
-    expect(prLink("stabem/GraphHelm", null)).toBeNull();
-    expect(prLink("not a repo", 3)).toBeNull();
-    expect(prLink("stabem/GraphHelm", 0)).toBeNull();
+    expect(prLink("https://github.com/stabem/GraphHelm", null)).toBeNull();
+    expect(prLink("https://example.test/stabem/GraphHelm", 3)).toBeNull();
+    expect(prLink("https://github.com/stabem/GraphHelm/extra", 3)).toBeNull();
+    expect(prLink("https://github.com/stabem/GraphHelm", 0)).toBeNull();
   });
 
   it("a done or current dot with a PR and a repo links to the PR; a not-started dot does not", () => {
-    const dots = lanesDots(task({ pr: 9 }), "implement", false, null, now, "stabem/GraphHelm");
+    const dots = lanesDots(task({ pr: 9, repoUrl: "https://github.com/stabem/GraphHelm" }), "implement", false, null, now);
     expect(dots[1]!.href).toBe("https://github.com/stabem/GraphHelm/pull/9");
     expect(dots[4]!.href).toBeNull();
   });

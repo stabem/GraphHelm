@@ -31,11 +31,12 @@ export interface StepFacts {
 
 const NONE: StepFacts = { cause: null, who: null, when: null, record: null, silentSince: null, href: null };
 
-/** A link to a pull request, built only from a GitHub `owner/name` and a PR number; anything else is no link. */
-export function prLink(repo: string | null, pr: number | null | undefined): string | null {
-  if (repo === null || pr === null || pr === undefined || !Number.isInteger(pr) || pr < 1) return null;
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return null;
-  return `https://github.com/${repo}/pull/${pr}`;
+/** A link to a pull request, built from the task's `repoUrl` (`https://github.com/<owner>/<repo>`)
+ * and its PR number; anything else is no link. */
+export function prLink(repoUrl: string | null | undefined, pr: number | null | undefined): string | null {
+  if (repoUrl === null || repoUrl === undefined || pr === null || pr === undefined || !Number.isInteger(pr) || pr < 1) return null;
+  if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repoUrl)) return null;
+  return `${repoUrl}/pull/${pr}`;
 }
 
 /** The tooltip line for one dot. A dot with no record says "not started" and nothing else. */
@@ -52,7 +53,7 @@ export function dotText(step: TaskStepName, state: DotState, facts: StepFacts = 
 const STATE_OF: Record<Block, DotState> = { done: "done", now: "in progress", stuck: "stalled", todo: "not started" };
 
 /** The dots of a Lanes card: the slice's step, its state from the card's blocks. */
-export function lanesDots(task: BoardTask | null, step: TaskStepName | null, stuck: boolean, lastRecordAt: string | null, now: Date, repo: string | null = null): StepDot[] {
+export function lanesDots(task: BoardTask | null, step: TaskStepName | null, stuck: boolean, lastRecordAt: string | null, now: Date): StepDot[] {
   const states = blocks(step, stuck);
   const current = step === null ? -1 : STEPS.indexOf(step);
   return STEPS.map((name, index) => {
@@ -64,7 +65,7 @@ export function lanesDots(task: BoardTask | null, step: TaskStepName | null, stu
       when: live && task?.clock?.since ? when(task.clock.since, now).text : null,
       record: live && task !== null ? `record #${task.lastSequence}` : null,
       silentSince: state === "stalled" && lastRecordAt !== null ? when(lastRecordAt, now).text : null,
-      href: state === "not started" ? null : prLink(repo, task?.pr),
+      href: state === "not started" ? null : prLink(task?.repoUrl, task?.pr),
     };
     return { step: name, state, text: dotText(name, state, facts), record: state === "not started" ? null : facts.record ?? "no record in view", href: facts.href };
   });
@@ -72,7 +73,7 @@ export function lanesDots(task: BoardTask | null, step: TaskStepName | null, stu
 
 /** The dots of a Graph issue card: squares before the stage are done; the stage is in progress,
  * or stalled when the card sits in the Ready column; the rest are not started. */
-export function graphDots(task: BoardTask, at: number, stalled: boolean, silentSince: string | null, now: Date, repo: string | null = null): StepDot[] {
+export function graphDots(task: BoardTask, at: number, stalled: boolean, silentSince: string | null, now: Date): StepDot[] {
   return STEPS.map((name, index) => {
     const state: DotState = index < at ? "done" : index === at ? (stalled ? "stalled" : "in progress") : "not started";
     const live = index === at;
@@ -82,7 +83,7 @@ export function graphDots(task: BoardTask, at: number, stalled: boolean, silentS
       when: live && task.clock?.since ? when(task.clock.since, now).text : null,
       record: live ? `record #${task.lastSequence}` : null,
       silentSince: state === "stalled" && silentSince !== null ? when(silentSince, now).text : null,
-      href: state === "not started" ? null : prLink(repo, task.pr),
+      href: state === "not started" ? null : prLink(task.repoUrl, task.pr),
     };
     return { step: name, state, text: dotText(name, state, facts), record: state === "not started" ? null : facts.record ?? "no record in view", href: facts.href };
   });

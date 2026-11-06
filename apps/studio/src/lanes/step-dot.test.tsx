@@ -63,7 +63,7 @@ describe("the dot row", () => {
 
   it("a dot with a link opens it", () => {
     const html = renderToStaticMarkup(<StepDots label="Progress" dots={[{ step: "review", state: "done", text: "review · done · bravo", record: null, href: "https://example.test/pr/1" }]} />);
-    expect(html).toContain('<a href="https://example.test/pr/1" aria-label="review · done · bravo">');
+    expect(html).toMatch(/<a [^>]*href="https:\/\/example\.test\/pr\/1"[^>]*aria-label="review · done · bravo"/);
   });
 });
 
@@ -106,8 +106,30 @@ describe("the record in the tooltip", () => {
     const html = renderToStaticMarkup(<StepDots label="Progress" dots={[
       { step: "review", state: "done", text: "review · done · bravo · record #3", record: "record #3", href: "https://github.com/stabem/GraphHelm/pull/9" },
     ]} />);
-    expect(html).toContain('<a href="https://github.com/stabem/GraphHelm/pull/9" aria-label="review · done · bravo · record #3">');
-    expect(html).toContain('<a href="https://github.com/stabem/GraphHelm/pull/9">record #3</a>');
+    expect(html).toMatch(/<a [^>]*href="https:\/\/github\.com\/stabem\/GraphHelm\/pull\/9"[^>]*aria-label="review · done · bravo · record #3"/);
+    expect(html).toContain('<a href="https://github.com/stabem/GraphHelm/pull/9" tabindex="-1">record #3</a>');
+  });
+});
+
+describe("one focus target per dot (#2532 review 2)", () => {
+  it("a linked dot is the link itself, with the live one in the tab order and no link inside aria-hidden", () => {
+    const html = renderToStaticMarkup(<StepDots label="Progress" dots={[
+      { step: "plan", state: "done", text: "plan · done · alpha · record #4", record: "record #4", href: "https://github.com/stabem/GraphHelm/pull/9" },
+      { step: "implement", state: "in progress", text: "implement · in progress · alpha · record #12", record: "record #12", href: "https://github.com/stabem/GraphHelm/pull/9" },
+    ]} />);
+    expect(html).not.toMatch(/aria-hidden="true"[^>]*>[^]*<a /);
+    const tabbable = html.match(/<a [^>]*tabindex="0"/g) ?? [];
+    expect(tabbable).toHaveLength(1);
+    expect(tabbable[0]).toContain("implement · in progress");
+    expect(html).toMatch(/<a [^>]*aria-label="plan · done · alpha · record #4"[^>]*tabindex="-1"/);
+    expect(html).toContain('role="tooltip"');
+    expect(html).not.toMatch(/role="tooltip" aria-hidden/);
+  });
+
+  it("each dot describes itself by its tooltip", () => {
+    const html = renderToStaticMarkup(<StepDots label="Progress" dots={[{ step: "merge", state: "not started", text: "merge · not started", record: null, href: null }]} />);
+    const described = html.match(/aria-describedby="([^"]+)"/)![1]!;
+    expect(html).toContain(`id="${described}"`);
   });
 });
 

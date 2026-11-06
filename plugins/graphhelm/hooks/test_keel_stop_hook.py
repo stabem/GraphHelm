@@ -170,3 +170,50 @@ class KeelStopHook(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CardPath(unittest.TestCase):
+    """#1548: the hooks read .graphhelm/cards/issue-<N>.json on an issue-<N> branch, and the legacy
+    keel-card.json everywhere else. Defect: the hooks read only keel-card.json, so a PR with the
+    right per-issue card was blocked."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.repo = Path(self.tmp)
+        git(self.repo, "init", "-q")
+
+    def on_branch(self, name):
+        git(self.repo, "symbolic-ref", "HEAD", f"refs/heads/{name}")
+
+    def card(self, relative):
+        path = self.repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+
+    def test_issue_branch_uses_its_per_issue_card(self):
+        self.on_branch("issue-1548-card-path")
+        self.card(".graphhelm/cards/issue-1548.json")
+        self.assertEqual(keel_stop_hook.card_path(self.repo).as_posix(),
+                         ".graphhelm/cards/issue-1548.json")
+
+    def test_issue_branch_without_per_issue_card_falls_back(self):
+        self.on_branch("issue-1548-card-path")
+        self.card(".graphhelm/keel-card.json")
+        self.assertEqual(keel_stop_hook.card_path(self.repo).as_posix(), ".graphhelm/keel-card.json")
+
+    def test_a_card_of_another_issue_is_not_used(self):
+        self.on_branch("issue-1548-card-path")
+        self.card(".graphhelm/cards/issue-9999.json")
+        self.assertEqual(keel_stop_hook.card_path(self.repo).as_posix(), ".graphhelm/keel-card.json")
+
+    def test_a_branch_that_is_not_an_issue_keeps_the_legacy_card(self):
+        self.on_branch("feature-x")
+        self.card(".graphhelm/cards/issue-1548.json")
+        self.card(".graphhelm/keel-card.json")
+        self.assertEqual(keel_stop_hook.card_path(self.repo).as_posix(), ".graphhelm/keel-card.json")
+
+    def test_issue_number_must_end_the_name_or_be_followed_by_a_dash(self):
+        self.on_branch("issue-15480-x")
+        self.card(".graphhelm/cards/issue-1548.json")
+        self.assertEqual(keel_stop_hook.card_path(self.repo).as_posix(), ".graphhelm/keel-card.json")

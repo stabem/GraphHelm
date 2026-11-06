@@ -28,6 +28,8 @@ from typing import Callable
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 CARD = Path(".graphhelm") / "keel-card.json"
+# #1548: a branch issue-<N>-... that has .graphhelm/cards/issue-<N>.json uses that card.
+ISSUE_BRANCH = re.compile(r"^issue-(\d+)(?:-|$)")
 TRIVIAL_LINES = 5
 DOC_SUFFIXES = (".md", ".txt", ".rst")
 BASES = ("origin/main", "main", "origin/master", "master")
@@ -89,6 +91,28 @@ def _ref(gitdir: Path, common: Path, name: str, depth: int = 0) -> str | None:
             if ref == name and SHA.fullmatch(sha):
                 return sha
     return None
+
+
+def read_branch(dirs: tuple[Path, Path, Path]) -> str | None:
+    """The branch name from HEAD's symbolic ref, or None (detached, unreadable)."""
+    try:
+        value = (dirs[1] / "HEAD").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return value[len("ref: refs/heads/"):] if value.startswith("ref: refs/heads/") else None
+
+
+def card_path(repo: Path) -> Path:
+    """The card the Keel hooks read, relative to `repo` (#1548). On a branch issue-<N>-... with
+    .graphhelm/cards/issue-<N>.json present, that card; otherwise the legacy keel-card.json."""
+    dirs = git_dirs(repo)
+    branch = read_branch(dirs) if dirs else None
+    match = ISSUE_BRANCH.match(branch or "")
+    if match:
+        per_issue = Path(".graphhelm") / "cards" / f"issue-{match.group(1)}.json"
+        if (repo / per_issue).is_file():
+            return per_issue
+    return CARD
 
 
 def read_head(dirs: tuple[Path, Path, Path]) -> str | None:
@@ -282,10 +306,11 @@ def decide(repo: Path, payload: dict | None = None) -> str | None:
     others = untracked(repo)
     if code_lines_changed(repo, base, others) <= TRIVIAL_LINES:
         return None
-    card = repo / CARD
+    rel = card_path(repo)
+    card = repo / rel
     if not card.is_file():
         return (f"Keel: this branch changes code past the summary-only row, and there is no card at "
-                f"{CARD.as_posix()}. Write the card (promise, scopePaths, proof; shape in "
+                f"{rel.as_posix()}. Write the card (promise, scopePaths, proof; shape in "
                 f"docs/keel/KEEL_CHECK.md), run its proof, then finish.")
     cli = shutil.which("graphhelm")
     if cli is None:
@@ -322,7 +347,7 @@ def decide(repo: Path, payload: dict | None = None) -> str | None:
     except (ValueError, AttributeError):
         pass
     detail = "; ".join(codes[:5]) or "see `graphhelm keel check` output"
-    return (f"Keel: `graphhelm keel check` refuses this diff against {CARD.as_posix()}: {detail}. "
+    return (f"Keel: `graphhelm keel check` refuses this diff against {rel.as_posix()}: {detail}. "
             f"Widen the card and say why, or remove the change.")
 
 

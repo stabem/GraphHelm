@@ -1697,12 +1697,16 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
     // #1972: the entries are built on a few threads, order kept, so one flow's `git log`
     // (`preview_gate`) does not wait for every flow before it.
     let width = files.len().div_ceil(FLOWS_THREADS).max(1);
+    // #2556: the Studio view is a thread-local, so each worker sets it from the request's flag
+    // (a scoped worker does not inherit the caller's thread-local).
+    let studio_view = args.studio_view;
     let flows: Vec<Value> = std::thread::scope(|threads| {
         let jobs: Vec<_> = files
             .chunks(width)
             .map(|chunk| {
                 let project = &project;
                 threads.spawn(move || {
+                    crate::commands::journey_owner::set_studio_view(studio_view);
                     chunk
                         .iter()
                         .map(|file| flow_entry(file, project))

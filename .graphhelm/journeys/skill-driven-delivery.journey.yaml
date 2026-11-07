@@ -1,10 +1,10 @@
 schema: graphhelm.journey-flow/1
 id: skill-driven-delivery
-title: A new session learns its next step and skill from the task alone
-purpose: "An agent given only graphhelm-work asks GraphHelm for next, loads next.skill, and finishes a demo task from claim to cleanup without holding the flow in memory."
+title: An agent given only graphhelm-work finishes each delivery state from next
+purpose: "An agent given only graphhelm-work asks GraphHelm for next, loads next.skill, and moves each task through every delivery state without holding the flow in memory."
 status: draft
 base: http://127.0.0.1:8794
-actors: [author, reviewer, approver]
+actors: [author, reviewer, approver, merger, owner]
 secrets: []
 risks: [recovery, permissions]
 screens:
@@ -12,39 +12,96 @@ screens:
     title: A claimed task says implement and names its author
     url: /tasks/claimed
     state: stable
-    expect: [{role: stdout, name: "\"step\": \"implement\"", because: "a claimed task has no PR yet, so the next step is implement"}, {role: stdout, name: "\"skill\": \"graphhelm-development-contracts:implement\"", because: "the implement skill is the one that owns that step"}]
+    expect: [{role: stdout, name: "\"step\": \"implement\"", because: "a claimed task has no PR yet"}, {role: stdout, name: "\"role\": \"author\"", because: "the claimant is the author"}]
     scope: unknown
   - id: awaiting_verdict
-    title: An open PR without verdict says review by the assigned reviewer
+    title: An open PR without verdict says review by a blind reviewer
     url: /tasks/awaiting-verdict
     state: stable
-    expect: [{role: stdout, name: "\"step\": \"review\"", because: "a PR with no verdict on head is waiting for review"}, {role: stdout, name: "\"actor\": \"reviewer\"", because: "the author must not review own work"}]
+    expect: [{role: stdout, name: "\"step\": \"review\"", because: "a PR with no verdict on head waits for review"}, {role: stdout, name: "\"role\": \"reviewer\"", because: "the author never reviews own work"}]
     scope: unknown
   - id: block_on_head
     title: A BLOCK on head sends the author back to implement
     url: /tasks/block-on-head
     state: stable
-    expect: [{role: stdout, name: "\"step\": \"implement\"", because: "a BLOCK returns the work to the author"}, {role: stdout, name: "\"because\": \"BLOCK on head", because: "the reason names the defect, not only the state"}]
+    expect: [{role: stdout, name: "\"step\": \"implement\"", because: "a BLOCK returns the work to the author"}, {role: stdout, name: "BLOCK on head", because: "the reason names the defect"}]
     scope: unknown
   - id: approved
     title: An APPROVE sends the merge to the approver
     url: /tasks/approved
     state: stable
-    expect: [{role: stdout, name: "\"step\": \"merge\"", because: "an approved head is waiting for merge"}, {role: stdout, name: "\"actor\": \"approver\"", because: "merge is done by the approving reviewer, not the author"}]
+    expect: [{role: stdout, name: "\"step\": \"merge\"", because: "an approved head waits for merge"}, {role: stdout, name: "\"role\": \"approver\"", because: "merge is done by the approving reviewer"}]
+    scope: unknown
+  - id: merged
+    title: A merged task sends cleanup to the merger
+    url: /tasks/merged
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"cleanup\"", because: "the merger removes PR worktrees right after merge"}, {role: stdout, name: "\"role\": \"merger\"", because: "cleanup has a named actor"}]
+    scope: unknown
+  - id: blocked
+    title: A blocked task names its unblocker
+    url: /tasks/blocked
+    state: stable
+    expect: [{role: stdout, name: "\"unblocker\"", because: "the unblocker from #2531 is named"}, {role: stdout, name: "\"step\": \"review\"", because: "a blocked task resumes at the named unblocker's step"}]
+    scope: unknown
+  - id: diagnose
+    title: A block no unblocker resolves goes to the owner
+    url: /tasks/diagnose
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"diagnose\"", because: "diagnose is entered only when no unblocker resolves the block"}, {role: stdout, name: "\"role\": \"owner\"", because: "the owner decides the diagnosis"}]
     scope: unknown
   - id: no_skill
     title: A step with no skill is refused, not treated as done
     url: /tasks/no-skill
     state: stable
-    expect: [{role: stdout, name: "OBSERVER_MISSING", because: "a missing skill or observer is reported, never success"}]
+    expect: [{role: stdout, name: "OBSERVER_MISSING", because: "a missing skill is reported, never success"}]
     scope: unknown
 edges:
-  - id: observe.next_step
+  - id: claim.review
     from: claimed
     to: awaiting_verdict
-    why: "The task moves from claimed to a PR waiting for review; each stop names its next step, skill and actor."
+    why: "The author opens the PR; next moves to review by a blind reviewer."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+  - id: review.block
+    from: awaiting_verdict
+    to: block_on_head
+    why: "The reviewer blocks on head; next returns the author to implement."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+  - id: review.approve
+    from: awaiting_verdict
+    to: approved
+    why: "The reviewer approves on head; next sends the merge to the approver."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+  - id: approve.merge
+    from: approved
+    to: merged
+    why: "The approver merges; next sends cleanup to the merger."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+  - id: review.blocked
+    from: awaiting_verdict
+    to: blocked
+    why: "A stall with a named unblocker; next follows the unblocker."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+  - id: blocked.diagnose
+    from: blocked
+    to: diagnose
+    why: "No unblocker resolves the block; next goes to the owner."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+  - id: claim.no_skill
+    from: claimed
+    to: no_skill
+    why: "next names a skill the agent cannot load; the agent reports OBSERVER_MISSING and stops."
     acts:
       - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
 paths:
-  main: [observe.next_step]
+  main: [claim.review, review.approve, approve.merge]
+  block: [review.block]
+  blocked: [review.blocked, blocked.diagnose]
+  missing_skill: [claim.no_skill]
 drift: []

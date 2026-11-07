@@ -9,10 +9,10 @@ secrets: []
 risks: [recovery, permissions]
 screens:
   - id: claimed
-    title: A claimed task says implement and names its author
+    title: A claimed task says implement, names its author and the minimum skill version
     url: /tasks/claimed
     state: stable
-    expect: [{role: stdout, name: "\"step\": \"implement\"", because: "a claimed task has no PR yet"}, {role: stdout, name: "\"role\": \"author\"", because: "the claimant is the author"}]
+    expect: [{role: stdout, name: "\"step\": \"implement\"", because: "a claimed task has no PR yet"}, {role: stdout, name: "\"role\": \"author\"", because: "the claimant is the author"}, {role: stdout, name: "\"minVersion\"", because: "the agent can judge whether it has the skill it is told to load"}]
     scope: unknown
   - id: awaiting_verdict
     title: An open PR without verdict says review by a blind reviewer
@@ -51,10 +51,10 @@ screens:
     expect: [{role: stdout, name: "\"step\": \"diagnose\"", because: "diagnose is entered only when no unblocker resolves the block"}, {role: stdout, name: "\"role\": \"owner\"", because: "the owner decides the diagnosis"}]
     scope: unknown
   - id: no_skill
-    title: A step with no skill is refused, not treated as done
+    title: A step with no skill is refused, and the agent reports the missing skill
     url: /tasks/no-skill
     state: stable
-    expect: [{role: stdout, name: "OBSERVER_MISSING", because: "a missing skill is reported, never success"}]
+    expect: [{role: stdout, name: "OBSERVER_MISSING", because: "a missing skill is reported, never success"}, {role: stdout, name: "\"skill\": \"graphhelm-work\"", because: "the agent names the skill it could not load in its report"}]
     scope: unknown
 edges:
   - id: claim.review
@@ -62,43 +62,43 @@ edges:
     to: awaiting_verdict
     why: "The author opens the PR; next moves to review by a blind reviewer."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+      - {kind: cli, role: exec, name: graphhelm task next --task fixture-claimed --json}
   - id: review.block
     from: awaiting_verdict
     to: block_on_head
     why: "The reviewer blocks on head; next returns the author to implement."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+      - {kind: cli, role: exec, name: graphhelm task next --task fixture-awaiting-verdict --json}
   - id: review.approve
     from: awaiting_verdict
     to: approved
     why: "The reviewer approves on head; next sends the merge to the approver."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+      - {kind: cli, role: exec, name: graphhelm task next --task fixture-awaiting-verdict --json}
   - id: approve.merge
     from: approved
     to: merged
     why: "The approver merges; next sends cleanup to the merger."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+      - {kind: cli, role: exec, name: graphhelm task next --task fixture-approved --json}
   - id: review.blocked
     from: awaiting_verdict
     to: blocked
     why: "A stall with a named unblocker; next follows the unblocker."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+      - {kind: cli, role: exec, name: graphhelm task next --task fixture-blocked --json}
   - id: blocked.diagnose
     from: blocked
     to: diagnose
     why: "No unblocker resolves the block; next goes to the owner."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+      - {kind: cli, role: exec, name: graphhelm task next --task fixture-diagnose --json}
   - id: claim.no_skill
     from: claimed
     to: no_skill
     why: "next names a skill the agent cannot load; the agent reports OBSERVER_MISSING and stops."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+      - {kind: cli, role: exec, name: graphhelm task next --task fixture-no-skill --json}
 paths:
   main: [claim.review, review.approve, approve.merge]
   block: [review.block]

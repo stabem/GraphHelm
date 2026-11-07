@@ -1,12 +1,14 @@
 {
-  "promise": "The orchestrator hands an agent one entry skill, graphhelm-work. That skill loops: ask GraphHelm next, load next.skill, do the step, record, ask again. A task's status/briefing returns next: {step, skill, actor, because} derived from the task's records. Every step skill ends with its transition table and 'go back to graphhelm-work'. The #2524 wake carries only the task id and 'use graphhelm-work'. A step with no skill or observer returns OBSERVER_MISSING, never success.",
+  "promise": "The orchestrator hands an agent one entry skill, graphhelm-work. That skill loops: ask GraphHelm next, load next.skill, do the step, record, ask again. A task's status/briefing returns next: {step, skill, actor, because, minVersion} derived from the task's records. Every step skill ends with its transition table and 'go back to graphhelm-work'. The #2524 wake carries only the task id and 'use graphhelm-work'. A step with no skill or observer returns OBSERVER_MISSING, never success.",
   "scopePaths": [
-    "core/execution/src/tasks.rs (next_task_step and the per-task field)",
-    "core/execution/src/briefing.rs (status/briefing call site only; next_step unchanged)",
-    "apps/cli (graphhelm task next command; owner: Sasuke)",
-    "plugins/graphhelm/skills/graphhelm-work/SKILL.md (new entry skill; owner plugin: graphhelm)",
-    "plugins/*/skills/*/SKILL.md (transition table in each step skill; owners named per plugin at implementation)",
-    "docs/process/DELIVERY.md and keel/KEEL_PLAN.md (link to the transition map)",
+    "core/execution/src/tasks.rs",
+    "core/execution/src/briefing.rs",
+    "apps/cli/src/commands/task.rs",
+    "plugins/graphhelm/skills/graphhelm-work/SKILL.md",
+    "plugins/graphhelm/skills/graphhelm-team/SKILL.md",
+    "plugins/keel/skills/keel-exec/SKILL.md",
+    "docs/process/DELIVERY.md",
+    "keel/KEEL_PLAN.md",
     ".graphhelm/journeys/skill-driven-delivery.journey.yaml"
   ],
   "exportedSymbols": [
@@ -14,11 +16,11 @@
     "graphhelm-work (skill)",
     "graphhelm task next (CLI)"
   ],
-  "proof": "PLAN ONLY. Proof at implementation: (a) journey .graphhelm/journeys/skill-driven-delivery.journey.yaml covers every mapping with one edge each: claimed->review, awaiting_verdict->block_on_head, awaiting_verdict->approved, approved->merged, awaiting_verdict->blocked, blocked->diagnose, claimed->no_skill; replays green. (b) demo task end to end in an isolated fixture repo and execution, run by agents that received only graphhelm-work; the observer is neither Minato (planner) nor Sasuke (contract author); each receipt is bound to the head sha it observed; the fixture is not resumed and is not product proof. (c) conformance test reads every SKILL.md and fails on a transition naming a missing skill or on a mismatch with the Runtime next mapping. (d) break-once: drop one transition row, conformance must fail.",
+  "proof": "PLAN ONLY. Proof at implementation: (a) journey .graphhelm/journeys/skill-driven-delivery.journey.yaml covers every mapping with one edge each, each edge reading next for its own fixture task id (fixture-claimed, fixture-awaiting-verdict, fixture-block-on-head, fixture-approved, fixture-merged, fixture-blocked, fixture-diagnose, fixture-no-skill), seeded in the isolated fixture; replays green. (b) demo task end to end in an isolated fixture repo and execution, run by agents that received only graphhelm-work; the observer is neither Minato (planner) nor Sasuke (contract author); each receipt is bound to the head sha it observed; the agent's report for a missing skill is recorded in the receipt; the fixture is not resumed and is not product proof. (c) conformance test reads every SKILL.md and fails on a transition naming a missing skill, on a mismatch with the Runtime next mapping, and on a blind-review brief that carries the author's reasoning or an expected verdict. (d) break-once: drop one transition row, conformance must fail.",
   "journeys": ["skill-driven-delivery"],
   "plan": {
     "issue": 2582,
-    "owner": "Minato (plan); Sasuke (Runtime/CLI contract, received); Itachi (independent audit, pending)",
+    "owner": "Minato (plan); Sasuke (Runtime/CLI contract, received); Itachi (independent audit, pending). Implementation card must enumerate every plugins/*/skills/*/SKILL.md it edits, with its plugin owner, before any edit.",
     "exists": [
       "core/execution/src/briefing.rs next_step(): returns NextStep for execution graph nodes only (approve, claim, clear, diagnose, finished), no skill, not delivery steps.",
       "GET /v1/executions/<id>/tasks: already returns stalls[] (block_unanswered, awaiting_verdict, awaiting_merge), owner and liveness.owes. Gives who-owes-what, without skill.",
@@ -27,7 +29,7 @@
       "Owner comment on #2582: entry skill graphhelm-work; #2524 wake carries task id only."
     ],
     "contract": {
-      "shape": "next: {step, skill, actor, because}; step is a fixed enum (claim, implement, review, merge, cleanup, done, diagnose); skill is a name from the transition table or null (null yields OBSERVER_MISSING); actor is {id, role}; because is a fixed reason code plus the record id it came from.",
+      "shape": "next: {step, skill, actor, because, minVersion}; step is a fixed enum (claim, implement, review, merge, cleanup, done, diagnose); skill is a name from the transition table or null (null yields OBSERVER_MISSING); actor is {id, role}; because is a fixed reason code plus the record id it came from; minVersion is the minimum plugin version that provides skill.",
       "actor_contract": "id is the resolved OpenBot actor id or 'owner'; role is one of author, reviewer, approver, merger, owner. The journey asserts role; the conformance test asserts id.",
       "where": "new task-level function next_task_step(TaskState) in core/execution/src/tasks.rs, called from status/briefing and as a per-task field in GET /v1/executions/<id>/tasks. briefing.rs next_step stays for execution nodes; the two stay separate.",
       "reads": [
@@ -48,7 +50,7 @@
       "Idempotency: next is read-only; no write added.",
       "Authority: the author never approves or merges own work; the derivation must not let a claimant see a verdict slot it owns.",
       "Wake payload is only id plus 'use graphhelm-work': the loop depends on next being correct; a wrong next stalls every agent, so the demo task is the gate.",
-      "Missing skill: an agent that cannot load next.skill (missing or older plugin) reports OBSERVER_MISSING with the skill name and stops; it does not improvise. next.minVersion names the minimum plugin version for graphhelm-work.",
+      "Missing skill: an agent that cannot load next.skill (missing or older plugin, judged by minVersion) reports OBSERVER_MISSING with the skill name and stops; it does not improvise.",
       "Blind review: a reviewer running graphhelm-work receives only next.because and record ids, never the author's reasoning or an expected verdict."
     ],
     "cleanup": "next.step cleanup has actor role merger: the merger removes the PR worktrees right after merge (CLAUDE.md multi-agent protocol).",

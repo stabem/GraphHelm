@@ -6,8 +6,7 @@ status: draft
 base: http://127.0.0.1:8794
 actors: [author, reviewer, approver, merger, owner]
 secrets: []
-approved: null
-risks: [recovery, security]
+risks: [recovery, permissions]
 screens:
   - id: entry
     title: A session opens on a claimed task and reads its next

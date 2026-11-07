@@ -1257,8 +1257,14 @@ mod tests {
         let next = free_studio_port(base).expect("a free port after the held one");
         assert!(next > base && next <= base + STUDIO_PORT_SCAN, "{next}");
         let held_next = std::net::TcpListener::bind(("127.0.0.1", next)).unwrap();
+        // #2539: other tests bind ports in this range, so the second port need not be above the
+        // first. The contract is in range and never a port this test holds.
         let after = free_studio_port(base).expect("a free port past both held ones");
-        assert!(after > next && after <= base + STUDIO_PORT_SCAN, "{after}");
+        assert!(after > base && after <= base + STUDIO_PORT_SCAN, "{after}");
+        assert!(
+            after != base && after != next,
+            "{after} is held by this test"
+        );
         drop((held_default, held_next));
     }
 

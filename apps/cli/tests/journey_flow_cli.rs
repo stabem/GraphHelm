@@ -1155,6 +1155,30 @@ fn the_studio_view_does_not_count_the_runtime_token_as_an_owner_store() {
 }
 
 #[test]
+fn the_studio_flow_list_reads_a_copied_approval_as_not_on_this_computer() {
+    // #2556: `journey flows --studio-view` builds its entries on worker threads. The Studio view
+    // must reach them, or a copied approval reads as unsigned in the flow list while `validate`
+    // says "not on this computer".
+    let owner = committed(EXAMPLE);
+    owner_token(owner.path());
+    let (out, reply) = approve(owner.path());
+    assert_eq!(out.status.code(), Some(0), "{reply}");
+    let fresh = committed(EXAMPLE);
+    owner_token(fresh.path());
+    for name in ["checkout.journey.yaml", "checkout.json"] {
+        std::fs::copy(
+            owner.path().join(".graphhelm/journeys").join(name),
+            fresh.path().join(".graphhelm/journeys").join(name),
+        )
+        .unwrap();
+    }
+    let (_, listed) = run(fresh.path(), &["flows", "--studio-view"]);
+    let flows = listed["data"]["flows"].to_string();
+    assert!(!flows.contains("flow.approval_unsigned"), "{listed}");
+    assert!(flows.contains("flow.approval_unverifiable"), "{listed}");
+}
+
+#[test]
 fn an_approval_with_no_owner_store_cannot_be_verified() {
     let dir = committed(EXAMPLE);
     approve(dir.path());

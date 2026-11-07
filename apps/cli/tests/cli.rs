@@ -39,7 +39,6 @@ mod registration {
 
 #[path = "adoption_apply.rs"]
 mod adoption_apply;
-mod skill_transitions;
 #[path = "adoption_backup.rs"]
 mod adoption_backup;
 #[path = "adoption_hosts.rs"]
@@ -206,6 +205,7 @@ mod shipped_package_coverage;
 mod signal_image_evidence_cli;
 #[path = "signal_image_evidence_http.rs"]
 mod signal_image_evidence_http;
+mod skill_transitions;
 #[path = "skills_sync_cli.rs"]
 mod skills_sync_cli;
 #[path = "source_invariants.rs"]

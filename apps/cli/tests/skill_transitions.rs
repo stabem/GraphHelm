@@ -61,18 +61,17 @@ fn every_step_skill_carries_the_canonical_index() {
     }
 }
 
+/// A skill name resolves when an owned tree holds `<name>/SKILL.md` on disk, so renaming or
+/// deleting a skill fails here instead of staying green against a hard-coded list.
+fn skill_exists_on_disk(name: &str) -> bool {
+    OWNED_TREES
+        .iter()
+        .any(|tree| repo_root().join(tree).join(name).join("SKILL.md").is_file())
+}
+
 #[test]
 fn every_skill_named_in_the_index_exists() {
     let canonical = read(CANONICAL);
-    let known: &[&str] = &[
-        "task-plan",
-        "implement",
-        "blind-review",
-        "merge",
-        "journey-prove",
-        "graphhelm-work",
-        "graphhelm-guide",
-    ];
     for line in canonical.lines().filter(|l| l.starts_with('|')) {
         for cell in line.split('|').map(str::trim) {
             let name = cell.split_whitespace().next().unwrap_or("");
@@ -86,8 +85,8 @@ fn every_skill_named_in_the_index_exists() {
                 && candidate.contains(|c: char| c.is_ascii_alphabetic())
             {
                 assert!(
-                    known.contains(&candidate),
-                    "index names unknown skill '{candidate}'"
+                    skill_exists_on_disk(candidate),
+                    "index names unknown skill '{candidate}': no <tree>/{candidate}/SKILL.md under the owned trees"
                 );
             }
         }

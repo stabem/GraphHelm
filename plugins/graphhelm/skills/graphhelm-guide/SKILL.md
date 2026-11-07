@@ -29,6 +29,46 @@ Every task runs the same steps after its issue, in any agent host, each a skill 
 
 Installing this plugin exposes guidance. It does not install the CLI, start the Runtime, rewrite host customization, activate extension packages, or certify an execution. The `graphhelm-setup` skill covers installing and starting.
 
+## The whole flow, in order
+
+One entry skill drives every task. A session that is handed a task loads `graphhelm-work`, asks GraphHelm for `next`, loads the skill it names, does that step, records it, and asks again. The Runtime derives `next` from the task's own records (`claimed`, `pr_opened`, `review_verdict`, `merged`, `blocked`), so a session that wakes up with only a task id knows what to do without remembering the flow.
+
+`next` has four fields: `step` (one of `claim`, `implement`, `review`, `merge`, `cleanup`, `done`, `diagnose`), `skill` (the skill to load, or null), `actor` (`{id, role}`; the role is `author`, `reviewer`, `approver`, `merger` or `owner`) and `because` (a fixed reason code plus the record it came from). A null skill is reported as `OBSERVER_MISSING`, never as success: the session stops and names the missing skill.
+
+```mermaid
+stateDiagram-v2
+    [*] --> claim: task opened
+    claim --> implement: claimed, no PR yet
+    implement --> review: PR opened on head
+    review --> implement: BLOCK on head (same branch)
+    review --> merge: APPROVE on head
+    merge --> cleanup: merged
+    cleanup --> done: worktrees removed
+    review --> diagnose: blocked, no unblocker resolves it
+    diagnose --> implement: owner names the fix
+    diagnose --> done: owner closes it
+    done --> [*]
+```
+
+Read the diagram as: each arrow is one `next` answer, and its label is the record that caused it. Ids match the `step` enum and the journey edge ids, so a session and a conformance check read the same names.
+
+Who acts at each state (the author never reviews or merges their own work):
+
+| State | Acts | Skill |
+|---|---|---|
+| `claim` | the author takes the task | `task-plan` |
+| `implement` | the author writes and pushes the change | `implement` |
+| `review` | one blind reviewer on the pinned head | `blind-review` |
+| `merge` | the approving reviewer merges the pinned head | `merge` |
+| `cleanup` | the merger removes the PR's worktrees and local branch | `merge` |
+| `diagnose` | the owner decides why the task is stuck | none; owner decides |
+
+A blocked task names its unblocker (`cause`, `unblocker`, `where`, from the owner heartbeat). The unblocker's step becomes the next step, so a BLOCK on a PR sends the author back to `implement` on the same branch with the named defect, and a stall that only the owner can clear goes to `diagnose`.
+
+Every step skill ends with its own transition table (what its record leads to, and who acts next) and sends the session back to `graphhelm-work`. If a session is unsure, it reads the "If in doubt" index at the end of its skill, which is the same in every skill.
+
+The proof of this flow is a demo task run end to end by agents that received only `graphhelm-work`: claim, PR, review, BLOCK, fix, APPROVE, merge, cleanup. Each step is taken from `next`, not from memory. A conformance test fails when a skill's transition names a skill that does not exist, or when the diagram omits a state or transition the Runtime maps.
+
 ## Prefer the GraphHelm MCP tools
 
 When the `graphhelm` MCP server is connected, read live state through its tools rather than shelling out (they show as `mcp__graphhelm__*` or `mcp__plugin_graphhelm_graphhelm__*`, depending on the host): `briefing`, `status`, `events`, `evidence`, `resume` and `memory_status`. If neither is connected, use the `graphhelm` CLI with `--json`, and say which source you used. `graphhelm init` registers a project-aware MCP command; `graphhelm setup --resolve home/.claude.json=register-mcp` can install one user-scope entry that resolves the active project by identity. Explicit `--url` and `--token-file` remain available for a deliberately pinned Runtime.

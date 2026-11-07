@@ -125,7 +125,7 @@ pub fn run(args: &JourneyValidateArgs) -> Outcome {
     let mut diagnostics = Vec::new();
     for file in &files {
         let findings = if file.to_string_lossy().ends_with(".journey.yaml") {
-            super::journey_flow::check(file, &project)
+            super::journey_flow::check(file, &project, args.studio_view)
         } else {
             match read(file) {
                 Ok(value) => check(file, &value, &project),

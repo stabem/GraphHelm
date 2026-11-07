@@ -52,8 +52,8 @@ fn every_step_skill_carries_the_canonical_index() {
     let canonical = read(CANONICAL);
     for rel in STEP_SKILLS {
         let text = read(rel);
-        let block = index_block(&text)
-            .unwrap_or_else(|| panic!("{rel} has no '## If in doubt' section"));
+        let block =
+            index_block(&text).unwrap_or_else(|| panic!("{rel} has no '## If in doubt' section"));
         assert!(
             block.trim_end() == canonical.trim_end(),
             "{rel}: 'If in doubt' section differs from the canonical index in {CANONICAL}"
@@ -80,12 +80,59 @@ fn every_skill_named_in_the_index_exists() {
                 continue;
             }
             let candidate = name.trim_matches(|c| c == '(' || c == ')' || c == ',');
-            if candidate.chars().all(|c| c.is_ascii_lowercase() || c == '-') && candidate.contains(|c: char| c.is_ascii_alphabetic()) {
+            if candidate
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c == '-')
+                && candidate.contains(|c: char| c.is_ascii_alphabetic())
+            {
                 assert!(
                     known.contains(&candidate),
                     "index names unknown skill '{candidate}'"
                 );
             }
         }
+    }
+}
+
+/// Every SKILL.md under the owned trees (plugins/graphhelm, plugins/keel, and the two builtin
+/// extensions) carries the canonical index, not only the step skills (owner order, #2592).
+const OWNED_TREES: &[&str] = &[
+    "plugins/graphhelm/skills",
+    "plugins/keel/skills",
+    "extensions/builtin/graphhelm-development-contracts/skills",
+    "extensions/builtin/graphhelm-jpd/skills",
+];
+
+fn collect_skill_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries =
+        fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot list {}: {e}", dir.display()));
+    for entry in entries {
+        let path = entry.expect("readable directory entry").path();
+        if path.is_dir() {
+            collect_skill_files(&path, out);
+        } else if path.file_name().is_some_and(|n| n == "SKILL.md") {
+            out.push(path);
+        }
+    }
+}
+
+#[test]
+fn every_owned_skill_carries_the_canonical_index() {
+    let canonical = read(CANONICAL);
+    let mut found = Vec::new();
+    for tree in OWNED_TREES {
+        collect_skill_files(&repo_root().join(tree), &mut found);
+    }
+    assert!(!found.is_empty(), "no SKILL.md found under the owned trees");
+    for path in &found {
+        let text = fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+        let block = index_block(&text)
+            .unwrap_or_else(|| panic!("{} has no '## If in doubt' section", path.display()));
+        assert!(
+            block.trim_end() == canonical.trim_end(),
+            "{}: 'If in doubt' section differs from the canonical index in {CANONICAL}",
+            path.display()
+        );
     }
 }

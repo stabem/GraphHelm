@@ -99,3 +99,16 @@ does not mean task work has started. The orchestrator never takes a lane's ident
   (`CREATE_NO_WINDOW`) or in the one terminal the session already has (#943).
 - Let a lane record as another lane, or review or approve what it wrote.
 - Report a lane's work as done before its `merged` record exists.
+
+## If in doubt
+
+| Situation | Skill |
+|---|---|
+| New task, no plan yet | task-plan |
+| Writing code for a claimed task | implement |
+| Proving a journey | journey-prove |
+| Asked to review a PR | blind-review |
+| Got a BLOCK on your head | implement (same branch) |
+| Approved and you are the reviewer | merge |
+| Unsure what the next step is | graphhelm-work (asks GraphHelm next) |
+| Unsure about the whole flow | graphhelm-guide |

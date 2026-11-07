@@ -109,3 +109,16 @@ review as `docs/process/DELIVERY.md` says.
 
 `keel` for the card and the proof, `task-plan` when a record reveals a missing criterion, and
 `memory-curator` when a pattern here recurs.
+
+## If in doubt
+
+| Situation | Skill |
+|---|---|
+| New task, no plan yet | task-plan |
+| Writing code for a claimed task | implement |
+| Proving a journey | journey-prove |
+| Asked to review a PR | blind-review |
+| Got a BLOCK on your head | implement (same branch) |
+| Approved and you are the reviewer | merge |
+| Unsure what the next step is | graphhelm-work (asks GraphHelm next) |
+| Unsure about the whole flow | graphhelm-guide |

@@ -95,6 +95,33 @@ fn the_guard_catches_a_bare_spawn_and_bare_flags() {
 
 /// Browser launchers and Node child callers must load the shared hidden launcher first.
 const HIDE_MARKER: &str = "hidden-node-children.mjs";
+/// #2573: a file that is the observer's own negative control may spawn detached on purpose. The one
+/// accepted form is this marker line, with a test name, under `tools/no-window/` only.
+const INTENTIONAL_MARKER: &str = "// graphhelm:intentional-visible-window — negative control for ";
+
+fn intentional_window(at: &str, text: &str) -> bool {
+    let rel = at.replace('\\', "/");
+    rel.starts_with("tools/no-window/")
+        && text.lines().any(|line| {
+            line.trim_start()
+                .strip_prefix(INTENTIONAL_MARKER)
+                .is_some_and(|name| !name.trim().is_empty())
+        })
+}
+
+/// The bypass finding for one launcher file, or `None` when the file is fine.
+fn bypass_finding(at: &str, text: &str, first_call: usize) -> Option<String> {
+    if intentional_window(at, text) {
+        return None;
+    }
+    match text.find(HIDE_MARKER) {
+        None => Some(format!("{at} bypasses the shared hidden Node launcher")),
+        Some(hide) if hide > first_call => Some(format!(
+            "{at} loads the hidden launcher only after its first call"
+        )),
+        Some(_) => None,
+    }
+}
 
 fn script_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -146,15 +173,7 @@ fn browser_launchers_without_the_hide(root: &Path) -> (usize, Vec<String>) {
         };
         launchers += 1;
         let at = path.strip_prefix(root).unwrap().display().to_string();
-        match text.find(HIDE_MARKER) {
-            None => found.push(format!("{at} bypasses the shared hidden Node launcher")),
-            Some(hide) if hide > first_call => {
-                found.push(format!(
-                    "{at} loads the hidden launcher only after its first call"
-                ));
-            }
-            Some(_) => {}
-        }
+        found.extend(bypass_finding(&at, &text, first_call));
     }
     (launchers, found)
 }
@@ -236,4 +255,53 @@ fn the_guard_scans_the_workspace_sources() {
         "the guard scanned only {} source files",
         files.len()
     );
+}
+
+/// #2573: the exemption is narrow. An unmarked detached spawn still fails; the marker helps only
+/// under `tools/no-window/`; an empty test name does not count.
+#[cfg(test)]
+mod negative_control_exemption {
+    use super::*;
+
+    const DETACHED: &str = "spawn(process.execPath, [], { detached: true });
+";
+
+    #[test]
+    fn an_unmarked_detached_spawn_still_fails_the_guard() {
+        let finding = bypass_finding("tools/no-window/node-chain/x.mjs", DETACHED, 0);
+        assert!(
+            finding.as_deref().is_some_and(|f| f.contains("bypasses")),
+            "{finding:?}"
+        );
+    }
+
+    #[test]
+    fn a_marked_negative_control_under_tools_no_window_passes() {
+        let text = format!(
+            "{INTENTIONAL_MARKER}test_node_chain.ps1
+{DETACHED}"
+        );
+        assert_eq!(
+            bypass_finding("tools/no-window/node-chain/x.mjs", &text, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn the_marker_does_not_exempt_a_file_outside_tools_no_window() {
+        let text = format!(
+            "{INTENTIONAL_MARKER}test_node_chain.ps1
+{DETACHED}"
+        );
+        assert!(bypass_finding("tools/other/x.mjs", &text, 0).is_some());
+    }
+
+    #[test]
+    fn a_marker_without_a_test_name_does_not_exempt() {
+        let text = format!(
+            "{INTENTIONAL_MARKER}
+{DETACHED}"
+        );
+        assert!(bypass_finding("tools/no-window/node-chain/x.mjs", &text, 0).is_some());
+    }
 }

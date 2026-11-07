@@ -8,6 +8,12 @@ actors: [author, reviewer, approver, merger, owner]
 secrets: []
 risks: [recovery, permissions]
 screens:
+  - id: entry
+    title: A session opens on a claimed task and reads its next
+    url: /tasks/entry
+    state: stable
+    expect: [{role: exit, name: "0", because: "the entry act ran against the claimed fixture task"}]
+    scope: unknown
   - id: claimed
     title: A claimed task says implement, names its author and the minimum skill version
     url: /tasks/claimed
@@ -57,6 +63,12 @@ screens:
     expect: [{role: stdout, name: "OBSERVER_MISSING", because: "a null skill is reported, never success"}]
     scope: unknown
 edges:
+  - id: entry.claimed
+    from: entry
+    to: claimed
+    why: "A session opening on a claimed task reads its next: implement, the author, and the minimum skill version."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-claimed --json}
   - id: claim.review
     from: claimed
     to: awaiting_verdict
@@ -100,7 +112,7 @@ edges:
     acts:
       - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-no-skill --json}
 paths:
-  main: [claim.review, review.approve, approve.merge]
+  main: [entry.claimed, claim.review, review.approve, approve.merge]
   block: [review.block]
   blocked: [review.blocked, blocked.diagnose]
   missing_skill: [claim.no_skill]

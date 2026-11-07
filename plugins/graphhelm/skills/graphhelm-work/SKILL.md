@@ -9,7 +9,7 @@ This is the one entry skill. Do not work from memory of the flow.
 
 ## Loop
 
-1. Ask GraphHelm for the task's next step: `graphhelm tasks next --task <id> --json` (or the MCP `tasks` tool).
+1. Read the task's state with the GraphHelm MCP `tasks` tool (or `status` and `briefing` when `tasks` is not connected). The `next` field (`step`, `skill`, `actor`, `because`) is planned in #2582 and is not shipped yet: until it is, report `OBSERVER_MISSING` for `next` and stop; do not infer the next step from memory.
 2. Read `step`, `skill`, `actor` and `because` from the answer.
 3. If `actor.id` is not you, stop and report to the orchestrator; do not act for someone else.
 4. If `skill` is null, report `OBSERVER_MISSING` and stop. Never treat a missing skill as success.

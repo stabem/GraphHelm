@@ -5155,10 +5155,6 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         );
     }
 
-    /// #593: a runner killed inside up must leave a record that a reader can reap. Existing
-    /// reaper cells supply a completed launch record and miss this window. Cost: a child test
-    /// process, a shell and temp files; no browser/network, at most 15 seconds waiting for up.
-    #[test]
     /// #2587: the flow's own base is the default; a fixture's run-time override replaces it for
     /// the preview only; an empty override is ignored. The flow's `base` value is never edited.
     #[test]
@@ -5176,6 +5172,10 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         assert_eq!(flow["base"], "http://127.0.0.1:5184");
     }
 
+    /// #593: a runner killed inside up must leave a record that a reader can reap. Existing
+    /// reaper cells supply a completed launch record and miss this window. Cost: a child test
+    /// process, a shell and temp files; no browser/network, at most 15 seconds waiting for up.
+    #[test]
     fn a_preview_records_its_fixture_before_up_returns() {
         use std::process::Stdio;
         use std::sync::{Arc, Mutex};

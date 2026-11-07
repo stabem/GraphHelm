@@ -3456,3 +3456,44 @@ viewports: [web]
         }
     }
 }
+
+#[cfg(test)]
+mod preview_owner_store_tests {
+    use super::*;
+    use crate::commands::journey_owner::{PreviewEvidence, record_previewed, store};
+
+    /// #2589: a preview record written by a Studio run is not an owner-key signature. In the
+    /// Studio view, a project whose only owner-history event is that preview record has no owner
+    /// store, so a copied approval reads as "not on this computer", never as "to fix". Fails on
+    /// the parent commit, where any owner-history event counted.
+    #[test]
+    fn a_preview_record_alone_does_not_make_the_studio_view_an_owner_store() {
+        let project = tempfile::tempdir().unwrap();
+        let store_dir = store(project.path());
+        std::fs::create_dir_all(&store_dir).unwrap();
+        drop(crate::commands::event_store(&store_dir).unwrap());
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let commit = "c".repeat(40);
+        record_previewed(
+            project.path(),
+            "checkout",
+            &digest,
+            &commit,
+            &PreviewEvidence {
+                evidence_sha256: &"e".repeat(64),
+                runner_sha256: &"a1".repeat(32),
+                version: "0.0.9",
+            },
+        )
+        .unwrap();
+        let flow = json!({
+            "id": "checkout",
+            "status": "approved",
+            "approved": {"digest": digest},
+        });
+        let findings = owner_signature(&flow, project.path(), true);
+        let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
+        assert!(codes.contains(&"flow.approval_unverifiable"), "{codes:?}");
+        assert!(!codes.contains(&"flow.approval_unsigned"), "{codes:?}");
+    }
+}

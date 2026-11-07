@@ -200,3 +200,23 @@ point you found, each with its fix. Leave the flow a draft.
 
 `fixture.sh down <fixture dir>` stops only what you started; then delete the throwaway directory.
 Confirm the sabotage is gone (point 6). Leave nothing running.
+
+## What comes next
+
+| After this | Next skill | Who acts |
+|---|---|---|
+| Flow passes all seven points | journey-prove (replay, then deliver) | journey QA agent records the approval; the prover runs it |
+| Flow fails a point | author revises the flow, then keel-journey-qa again | author, then journey QA |
+
+## If in doubt
+
+| Situation | Skill |
+|---|---|
+| New task, no plan yet | task-plan |
+| Writing code for a claimed task | implement |
+| Proving a journey | journey-prove |
+| Asked to review a PR | blind-review |
+| Got a BLOCK on your head | implement (same branch) |
+| Approved and you are the reviewer | merge |
+| Unsure what the next step is | graphhelm-work (asks GraphHelm next) |
+| Unsure about the whole flow | graphhelm-guide |

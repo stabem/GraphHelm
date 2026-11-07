@@ -78,3 +78,24 @@ you did not observe ends with `OBSERVER_MISSING: <what>`.
 
 Next, prove the promise: invoke `journey-prove` when the plan's proof is `journey` or `both`;
 for `tests`, the listed test run on the head is the proof. Then the change goes to one review.
+
+## What comes next
+
+| After this | Next skill | Who acts |
+|---|---|---|
+| PR open, proof kind is journey or both | journey-prove | author |
+| PR open, proof kind is tests (listed tests green on head) | blind-review | assigned reviewer, not the author |
+| BLOCK on your head | implement on the same branch, then a new review on the new head | author |
+
+## If in doubt
+
+| Situation | Skill |
+|---|---|
+| New task, no plan yet | task-plan |
+| Writing code for a claimed task | implement |
+| Proving a journey | journey-prove |
+| Asked to review a PR | blind-review |
+| Got a BLOCK on your head | implement (same branch) |
+| Approved and you are the reviewer | merge |
+| Unsure what the next step is | graphhelm-work (asks GraphHelm next) |
+| Unsure about the whole flow | graphhelm-guide |

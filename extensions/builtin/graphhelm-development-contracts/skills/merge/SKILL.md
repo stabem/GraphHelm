@@ -42,3 +42,23 @@ Step 5 of the per-task graph (`docs/process/DELIVERY.md` §5). Only the approvin
 ## Completion
 
 Delivered means merged into `main` and read back, not an open PR.
+
+## What comes next
+
+| After this | Next skill | Who acts |
+|---|---|---|
+| Merged at the pinned head and read back on main | done; the merger runs the cleanup sweep | merger (the approving reviewer) |
+| Head moved after approval | blind-review on the new head | assigned reviewer |
+
+## If in doubt
+
+| Situation | Skill |
+|---|---|
+| New task, no plan yet | task-plan |
+| Writing code for a claimed task | implement |
+| Proving a journey | journey-prove |
+| Asked to review a PR | blind-review |
+| Got a BLOCK on your head | implement (same branch) |
+| Approved and you are the reviewer | merge |
+| Unsure what the next step is | graphhelm-work (asks GraphHelm next) |
+| Unsure about the whole flow | graphhelm-guide |

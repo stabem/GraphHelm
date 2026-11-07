@@ -90,3 +90,16 @@ Prefer the GraphHelm MCP tools (named `mcp__graphhelm__*` or `mcp__plugin_graphh
 
 If the CLI is absent, point to the [CLI install path](https://github.com/stabem/GraphHelm/blob/main/docs/install/GETTING_STARTED.md)
 and report that CLI setup did not run. Local hook inspection can still run with Python 3.
+
+## If in doubt
+
+| Situation | Skill |
+|---|---|
+| New task, no plan yet | task-plan |
+| Writing code for a claimed task | implement |
+| Proving a journey | journey-prove |
+| Asked to review a PR | blind-review |
+| Got a BLOCK on your head | implement (same branch) |
+| Approved and you are the reviewer | merge |
+| Unsure what the next step is | graphhelm-work (asks GraphHelm next) |
+| Unsure about the whole flow | graphhelm-guide |

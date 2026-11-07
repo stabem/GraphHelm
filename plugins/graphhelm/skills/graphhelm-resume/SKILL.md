@@ -12,3 +12,16 @@ Give the owner **exactly two** distinct, concrete next actions, with **one marke
 3. State status in one short sentence, then present exactly two numbered options. Each option names the action and its expected result. Mark one `Recommended` and give a brief reason. Keep the owner's language and use small words.
 
 If there is not enough evidence to name two implementation tasks, make the options two **discovery** actions: one to inspect the current work record, the other to ask the owner for a goal. Never fill the gap with guesses. If work is already complete, say so before proposing two genuinely new next actions. Do not add a third option or silently proceed with either action.
+
+## If in doubt
+
+| Situation | Skill |
+|---|---|
+| New task, no plan yet | task-plan |
+| Writing code for a claimed task | implement |
+| Proving a journey | journey-prove |
+| Asked to review a PR | blind-review |
+| Got a BLOCK on your head | implement (same branch) |
+| Approved and you are the reviewer | merge |
+| Unsure what the next step is | graphhelm-work (asks GraphHelm next) |
+| Unsure about the whole flow | graphhelm-guide |

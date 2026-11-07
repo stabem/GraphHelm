@@ -19,6 +19,8 @@ import unittest
 import urllib.error
 import urllib.request
 
+# The repo root holds the `plugins` package; put it on sys.path from this file so the import does not depend on the cwd.
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from plugins.graphhelm.hooks import session_hook
 
 # Owner rule: children run hidden in the calling terminal, never in a new console window.

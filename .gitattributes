@@ -123,3 +123,8 @@ docs/design/studio/** text eol=lf
 
 # #2583: this card was merged with CRLF and Tsunade accepted it as merged. Keep its bytes exact.
 .graphhelm/cards/issue-2582.json -text
+
+# Binary assets under the studio/design text globs above: byte-exact, never normalized (19 PNG, 1 WebP, 2 WOFF2).
+*.png binary
+*.webp binary
+*.woff2 binary

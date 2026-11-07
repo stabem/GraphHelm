@@ -1,11 +1,21 @@
 {
   "promise": "The orchestrator hands an agent one entry skill, graphhelm-work. That skill loops: ask GraphHelm next, load next.skill, do the step, record, ask again. A task's status/briefing returns next: {step, skill, actor, because} derived from the task's records. Every step skill ends with its transition table and 'go back to graphhelm-work'. The #2524 wake carries only the task id and 'use graphhelm-work'. A step with no skill or observer returns OBSERVER_MISSING, never success.",
-  "scopePaths": [],
-  "proof": "PLAN ONLY. Proof at implementation: (a) end-to-end demo task run by agents that received ONLY graphhelm-work: claim -> PR -> review -> BLOCK -> fix -> APPROVE -> merge -> cleanup, each step taken from next, not from memory. (b) journey .graphhelm/journeys/skill-driven-delivery.journey.yaml replays green for each next mapping. (c) conformance test reads every SKILL.md and fails on a transition naming a missing skill or on a mismatch with the Runtime next mapping. (d) break-once: drop one transition row, conformance must fail.",
-  "exportedSymbols": [],
-  "journeys": [
-    "skill-driven-delivery"
+  "scopePaths": [
+    "core/execution/src/tasks.rs (next_task_step and the per-task field)",
+    "core/execution/src/briefing.rs (status/briefing call site only; next_step unchanged)",
+    "apps/cli (graphhelm task next command; owner: Sasuke)",
+    "plugins/graphhelm/skills/graphhelm-work/SKILL.md (new entry skill; owner plugin: graphhelm)",
+    "plugins/*/skills/*/SKILL.md (transition table in each step skill; owners named per plugin at implementation)",
+    "docs/process/DELIVERY.md and keel/KEEL_PLAN.md (link to the transition map)",
+    ".graphhelm/journeys/skill-driven-delivery.journey.yaml"
   ],
+  "exportedSymbols": [
+    "next_task_step (core/execution/src/tasks.rs)",
+    "graphhelm-work (skill)",
+    "graphhelm task next (CLI)"
+  ],
+  "proof": "PLAN ONLY. Proof at implementation: (a) journey .graphhelm/journeys/skill-driven-delivery.journey.yaml covers every mapping with one edge each: claimed->review, awaiting_verdict->block_on_head, awaiting_verdict->approved, approved->merged, awaiting_verdict->blocked, blocked->diagnose, claimed->no_skill; replays green. (b) demo task end to end in an isolated fixture repo and execution, run by agents that received only graphhelm-work; the observer is neither Minato (planner) nor Sasuke (contract author); each receipt is bound to the head sha it observed; the fixture is not resumed and is not product proof. (c) conformance test reads every SKILL.md and fails on a transition naming a missing skill or on a mismatch with the Runtime next mapping. (d) break-once: drop one transition row, conformance must fail.",
+  "journeys": ["skill-driven-delivery"],
   "plan": {
     "issue": 2582,
     "owner": "Minato (plan); Sasuke (Runtime/CLI contract, received); Itachi (independent audit, pending)",
@@ -13,32 +23,37 @@
       "core/execution/src/briefing.rs next_step(): returns NextStep for execution graph nodes only (approve, claim, clear, diagnose, finished), no skill, not delivery steps.",
       "GET /v1/executions/<id>/tasks: already returns stalls[] (block_unanswered, awaiting_verdict, awaiting_merge), owner and liveness.owes. Gives who-owes-what, without skill.",
       "keel.plan record: lists skills, not mapped per step or state.",
-      "#2524 (chaser, deadline, wake) and #2531 (cause, unblocker, where): same task-state model; the wake payload should carry next step and skill. This card must not fork that model.",
+      "#2524 (chaser, deadline, wake) and #2531 (cause, unblocker, where): same task-state model; the wake payload carries the same next block. This card must not fork that model.",
       "Owner comment on #2582: entry skill graphhelm-work; #2524 wake carries task id only."
     ],
-    "cost": "Estimate, not measured: next is derived from the task's records for one task, O(records of that task). No scan over all tasks per request.",
-    "risks": [
-      "New public surface: the next field in status/briefing and the tasks endpoint. Needs a named caller (the step skills and Studio).",
-      "Compatibility: older clients ignore next; the field is additive.",
-      "Idempotency: next is read-only; no write added.",
-      "Authority: the author never approves or merges own work; the derivation must not let a claimant see a verdict slot it owns.",
-      "Wake payload is only id plus 'use graphhelm-work': the loop depends on next being correct; a wrong next stalls every agent, so the demo task is the gate."
-    ],
-    "measuredGain": "none claimed",
-    "complexity": "New mapping function in the Runtime; no existing function made more complex in this plan.",
     "contract": {
-      "shape": "next: {step, skill, actor, because}; step is a fixed enum (claim, implement, review, merge, cleanup, done, diagnose); skill is a name from the transition table or null (null yields OBSERVER_MISSING); actor is an OpenBot actor id or 'owner'; because is a fixed reason code plus the record id it came from.",
+      "shape": "next: {step, skill, actor, because}; step is a fixed enum (claim, implement, review, merge, cleanup, done, diagnose); skill is a name from the transition table or null (null yields OBSERVER_MISSING); actor is {id, role}; because is a fixed reason code plus the record id it came from.",
+      "actor_contract": "id is the resolved OpenBot actor id or 'owner'; role is one of author, reviewer, approver, merger, owner. The journey asserts role; the conformance test asserts id.",
       "where": "new task-level function next_task_step(TaskState) in core/execution/src/tasks.rs, called from status/briefing and as a per-task field in GET /v1/executions/<id>/tasks. briefing.rs next_step stays for execution nodes; the two stay separate.",
       "reads": [
         "claimed: claim key, lane, branch",
         "pr_opened: pr, head_sha",
         "review_verdict: round verdicts, review_activity, current_reviewer",
         "merged: merge_sha, completion_recorded",
-        "blocked: blocked_by (+ cause, unblocker, where from #2531)",
+        "blocked: blocked_by plus cause, unblocker, where (#2531)",
         "stall reason: existing enum"
       ],
-      "one_model": "blocked is the owner heartbeat with cause, unblocker, where; next.step for a blocked task is review or implement by the named unblocker; the #2524 wake carries the same next block. Names agreed with #2531; reason stays the stall enum.",
+      "one_model": "blocked is the owner heartbeat with cause, unblocker, where; next.step for a blocked task is review or implement by the named unblocker, not a second state. The #2524 wake carries the same next block. Names agreed with #2531; reason stays the stall enum.",
       "source": "Sasuke contract proposal on #2582, no code"
-    }
+    },
+    "cost": "next_task_step is O(records of one task). GET /v1/executions/<id>/tasks computes it per listed task, so the list costs O(sum of records of the listed tasks). Estimate, not measured.",
+    "risks": [
+      "New public surface: the next field in status/briefing and the tasks endpoint. Needs a named caller (the step skills and Studio).",
+      "Compatibility: older clients ignore next; the field is additive.",
+      "Idempotency: next is read-only; no write added.",
+      "Authority: the author never approves or merges own work; the derivation must not let a claimant see a verdict slot it owns.",
+      "Wake payload is only id plus 'use graphhelm-work': the loop depends on next being correct; a wrong next stalls every agent, so the demo task is the gate.",
+      "Missing skill: an agent that cannot load next.skill (missing or older plugin) reports OBSERVER_MISSING with the skill name and stops; it does not improvise. next.minVersion names the minimum plugin version for graphhelm-work.",
+      "Blind review: a reviewer running graphhelm-work receives only next.because and record ids, never the author's reasoning or an expected verdict."
+    ],
+    "cleanup": "next.step cleanup has actor role merger: the merger removes the PR worktrees right after merge (CLAUDE.md multi-agent protocol).",
+    "diagnose": "diagnose is entered only from blocked when no unblocker resolves the block; actor role owner; it has its own journey screen.",
+    "measuredGain": "none claimed",
+    "complexity": "New mapping function in the Runtime; no existing function made more complex in this plan."
   }
 }
